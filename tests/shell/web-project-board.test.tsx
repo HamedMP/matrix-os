@@ -42,27 +42,30 @@ function gateway() {
     if (path.endsWith("/git")) return Response.json({ git: { branch: null, dirty: false, ahead: 0, behind: 0, changedFiles: 0, pullRequest: null, prStatus: "ok" } });
     if (path === "/api/workspace/events") return Response.json({ events: [], nextCursor: null });
     if (path === "/api/projects/france/tasks/task_1/start") {
-      return Response.json({ task: TASK, session: { ref: "chat_new", kind: "chat", title: "Chat", role: "extra", agentStatus: "idle" } }, { status: 201 });
+      return Response.json({ task: TASK, session: { ref: "chat_new", kind: "chat", title: "Chat", role: "extra", agentStatus: "idle" }, firstMessage: "FR-1: Fix login" }, { status: 201 });
     }
     return new Response("{}", { status: 404 });
   });
 }
 
-function renderBoard(onSelectChat = vi.fn(), onProjectChatsChanged = vi.fn()) {
+function renderBoard(onSelectChat = vi.fn(), onProjectChatsChanged = vi.fn(), onTaskChatStarted = vi.fn()) {
   const fetch = gateway();
   vi.stubGlobal("fetch", fetch);
   render(<WebProjectHome project={{ id: "proj_france", slug: "france", name: "France" }} gatewayUrl="https://example.test/vm/ana" identity="owner"
-    view="board" onViewChange={vi.fn()} onSelectChat={onSelectChat} onProjectChatsChanged={onProjectChatsChanged} />);
-  return { fetch, onSelectChat, onProjectChatsChanged };
+    view="board" onViewChange={vi.fn()} onSelectChat={onSelectChat} onProjectChatsChanged={onProjectChatsChanged}
+    onTaskChatStarted={onTaskChatStarted} />);
+  return { fetch, onSelectChat, onProjectChatsChanged, onTaskChatStarted };
 }
 
 it("asks the Chats rail to reload the project's chats after a task starts a chat", async () => {
-  const { onProjectChatsChanged } = renderBoard();
+  const { onProjectChatsChanged, onTaskChatStarted } = renderBoard();
   fireEvent.click(await screen.findByRole("button", { name: /FR-1: Fix login/ }));
   const sheet = await screen.findByRole("dialog", { name: /FR-1: Fix login/ });
   expect(onProjectChatsChanged).not.toHaveBeenCalled();
   fireEvent.click(within(sheet).getByRole("button", { name: "Start chat" }));
   await waitFor(() => expect(onProjectChatsChanged).toHaveBeenCalledTimes(1));
+  // No model was chosen, so the chat opens with the task text waiting in its composer.
+  expect(onTaskChatStarted).toHaveBeenCalledWith("chat_new", "FR-1: Fix login");
 });
 
 it("shows the project's real board under the Overview | Board switch, without prototype data", async () => {

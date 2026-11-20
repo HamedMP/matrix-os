@@ -37,6 +37,8 @@ const MAX_DETAIL_PAGES = 20;
 
 const POLL_MS = 2_000;
 const POLL_BACKOFF_MS = 10_000;
+/** Chat and terminal agent status changes publish no task events; resync shown statuses this often while subscribed. */
+const STATUS_RESYNC_MS = 20_000;
 const EVENTS_PAGE_SIZE = 100;
 /** The first poll skips the existing backlog; it walks this many pages at most. */
 const MAX_BASELINE_PAGES = 50;
@@ -167,6 +169,7 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
   let baselineDone = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
+  let lastResync = 0;
 
   function schedule(delayMs: number): void {
     if (timer !== null || listeners.length === 0) return;
@@ -184,8 +187,11 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
       const result = await readEvents(baselineDone ? MAX_CATCH_UP_PAGES : MAX_BASELINE_PAGES);
       cursor = result.cursor;
       if (baselineDone) {
-        emit(result.events);
+        const due = Date.now() - lastResync >= STATUS_RESYNC_MS;
+        if (due) lastResync = Date.now();
+        emit(due && result.events.length === 0 ? [{ type: "board.resync" }] : result.events);
       } else {
+        lastResync = Date.now();
         // Subscribers loaded before the cursor was set; anything that changed in
         // between was skipped with the backlog, so ask them to refetch once.
         baselineDone = true;
@@ -302,7 +308,8 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
     },
 
     async startSession(taskId, input) {
-      return (await request(taskPath(tasks, taskId, "/start"), { method: "POST", body: input, schema: StartTaskResponseSchema })).session;
+      const started = await request(taskPath(tasks, taskId, "/start"), { method: "POST", body: input, schema: StartTaskResponseSchema });
+      return started.firstMessage ? { ...started.session, firstMessage: started.firstMessage } : started.session;
     },
 
     async listAttachableSessions() {
