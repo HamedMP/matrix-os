@@ -29,7 +29,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { appendSideChatAnswer } from "./chat/side-chat-draft";
+import { appendSideChatAnswer } from "./chat/useWebChatHistory";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";

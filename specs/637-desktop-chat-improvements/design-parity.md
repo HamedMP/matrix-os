@@ -76,3 +76,11 @@ The unchanged `side-chat-main-draft.test.tsx` and `chat-inspector-layout.test.ts
 ### Terminal discovery beyond the mounted window
 
 A later review found that discovery retained the last 12 bound sessions while a fresh layout mounted the first 11. With 13 running terminals this removed metadata for a visible live tab. Discovery now prioritizes the latest mounted tabs, including tabs opened while its request is pending, then fills spare slots with other bound sessions. Mounted metadata stays last so creating a new terminal evicts unmounted candidates before visible tabs. Three production-hook regressions reproduce the original fault for fresh/saved layouts and an in-flight tab change; the full 33-test inspector suite passes after the correction. Creation beyond the cap additionally checks every mounted terminal remains available without stopping older sessions. This Web runtime correction requires a new production build and refreshed Web comparisons; native runtime source remains unchanged.
+
+### Final integration and first terminal presentation
+
+Restore the three archive, Side chat and paged-native-rail suites retained unchanged during the native size split; only the relocated paging import changes. Update the retained inspector/main-draft tests to the existing owning modules. Provider catalog coalescing counts only the catalog route, so the separately authenticated WebSocket token probe cannot masquerade as a duplicate catalog read.
+
+The production TerminalPane stream regression reproduces a revision-zero snapshot at seq 54 after attach.nextSeq 55: no terminal write occurs before the fix. An unpainted presentation now starts below revision zero; attach's sequence cursor is not evidence of a painted screen. Cache-discard, owner-change and cold-replay timeout resets use the same sentinel, while retained presentations keep their cached watermark. Both cursor-zero and cursor-55 cases must paint once, continue output, and reject a duplicate stale snapshot.
+
+TerminalPane remains a large composition file. Keep this correction in its existing watermark initialization/reset sites; the extraction boundary for further replay work is the snapshot/output transition and its presentation cursor, preserving the real component/socket tests. No additional terminal feature belongs in that composition without this extraction.

@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
-import { SideChatDraftContext, type SideChatDraftRequest } from "@desktop/renderer/src/features/work/SideChatDraftContext";
+import { SideChatDraftContext, type SideChatDraftRequest } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { canonicalChatRecord, createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";

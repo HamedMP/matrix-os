@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/chat-inspector-layout";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/files-navigation";
 
 beforeEach(() => useChatInspectorLayout.setState({ entries: [] }));
 
