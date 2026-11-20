@@ -4,7 +4,8 @@ import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SentIcon } from "@hugeicons/core-free-icons";
 import { activeMentionQuery, actorLabel, insertMention, mentionHandle, type MentionQuery } from "./model.js";
-import { primaryButtonClass, primaryButtonStyle, subtleBorder, textPrimary, textTertiary } from "./presentation.js";
+import { subtleBorder, textPrimary, textTertiary } from "./presentation.js";
+import { BoardButton } from "./controls.js";
 import type { BoardActor } from "./types.js";
 import type { MutationResult } from "./use-message-board.js";
 
@@ -113,10 +114,10 @@ export function BoardComposer({ label, placeholder, submitLabel, actors, viewerI
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         {toolbar}
         <span className="flex-1" />
-        {onCancel ? <button type="button" onClick={onCancel} className="h-8 rounded-[10px] px-2.5 text-[13px] outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textTertiary}>Cancel</button> : null}
-        <button type="button" className={primaryButtonClass} style={primaryButtonStyle} disabled={pending || text.trim().length === 0} onClick={() => void submit()}>
+        {onCancel ? <BoardButton look="plain" onClick={onCancel} className="h-8 rounded-[10px] px-2.5 text-[13px] outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textTertiary}>Cancel</BoardButton> : null}
+        <BoardButton look="primary" disabled={pending || text.trim().length === 0} onClick={() => void submit()}>
           <HugeiconsIcon icon={SentIcon} size={13} aria-hidden /> {submitLabel}
-        </button>
+        </BoardButton>
       </div>
     </div>
     {error ? <p role="alert" className="px-1 pt-1 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p> : null}

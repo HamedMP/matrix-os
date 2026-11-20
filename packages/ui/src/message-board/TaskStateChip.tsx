@@ -1,6 +1,7 @@
 import { HugeiconsIcon } from "@hugeicons/react";
 import { TASK_STATE_LABELS } from "./model.js";
 import { TASK_STATE_ICON, TASK_STATE_STYLE } from "./presentation.js";
+import { BoardButton } from "./controls.js";
 import type { BoardTaskState } from "./types.js";
 
 /** Task state as icon plus word, so state is never carried by color alone. */
@@ -17,7 +18,7 @@ export function LabelChip({ name, value, onRemove }: { name: string; value: stri
   return <span className="inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-px font-mono text-[11px]"
     style={{ borderColor: "var(--border-subtle, var(--border))", color: "var(--text-secondary, var(--muted-foreground))" }}>
     <span className="truncate">{name}={value}</span>
-    {onRemove ? <button type="button" aria-label={`Remove label ${name}`} onClick={onRemove}
-      className="-mr-0.5 rounded px-0.5 leading-none outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]">×</button> : null}
+    {onRemove ? <BoardButton look="plain" aria-label={`Remove label ${name}`} onClick={onRemove}
+      className="-mr-0.5 rounded px-0.5 leading-none outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]">×</BoardButton> : null}
   </span>;
 }

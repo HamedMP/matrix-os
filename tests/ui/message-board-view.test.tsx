@@ -36,8 +36,12 @@ describe("MessageBoard viewer", () => {
     render(<MessageBoard client={live.client} />);
     expect(await screen.findByText("Nothing posted yet")).toBeInTheDocument();
     expect(screen.getByText('matrix board post dev "Login test is flaky"')).toBeInTheDocument();
+    // The board's controls are the shared packages/ui Button and Input, not restyled native ones.
+    expect(screen.getByRole("button", { name: "Post a message" })).toHaveClass("matrix-btn", "matrix-btn-primary");
+    expect(screen.getByRole("button", { name: "Copy command" })).toHaveClass("matrix-btn");
     fireEvent.click(screen.getByRole("button", { name: "Post a message" }));
     expect(await screen.findByRole("region", { name: "New thread" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close new thread" })).toHaveClass("matrix-btn");
   });
 
   it("groups channels by prefix and narrows the thread list to a subtree", async () => {

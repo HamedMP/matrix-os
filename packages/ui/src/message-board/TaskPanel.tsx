@@ -7,13 +7,12 @@ import { POPOVER_LAYER } from "../layering.js";
 import { ChatComposerSelect } from "../chat/composer/ChatComposerSelect.js";
 import type { MessageBoardClient } from "./client.js";
 import { actorLabel, availableTaskActions, formatLeaseCountdown, type PersonTaskAction } from "./model.js";
-import {
-  actionButtonClass, fieldClass, primaryButtonClass, primaryButtonStyle, subtleBorder, textPrimary, textSecondary, textTertiary,
-} from "./presentation.js";
+import { subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
 import { BoardMarkdown } from "./BoardMarkdown.js";
 import { TaskStateChip } from "./TaskStateChip.js";
 import type { BoardTask, BoardTaskNeed } from "./types.js";
 import type { MutationResult } from "./use-message-board.js";
+import { BoardButton, BoardInput } from "./controls.js";
 
 const ACTION_LABEL: Record<PersonTaskAction, string> = {
   claim: "Claim", complete: "Complete", release: "Release", assign: "Assign", block: "Block",
@@ -80,17 +79,17 @@ export function TaskPanel({ taskId, task, needs, viewerId, profiles, nowMs, muta
       <span style={textTertiary}>Needs </span>
       {needs.map((need, index) => <span key={need.id}>
         {index > 0 ? ", " : null}
-        <button type="button" className="underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textPrimary}
-          onClick={() => onOpenThread(need.id)}>{need.title}</button> <TaskStateChip state={need.state} />
+        <BoardButton look="plain" className="underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textPrimary}
+          onClick={() => onOpenThread(need.id)}>{need.title}</BoardButton> <TaskStateChip state={need.state} />
       </span>)}
     </div> : null}
     <div className="mt-2.5 flex flex-wrap gap-1.5">
       {actions.map((action) => {
         const primary = action === "claim" || action === "complete" || action === "unblock" || action === "reopen";
         const onClick = direct[action] ?? (() => setForm(action as FormAction));
-        return <button key={action} type="button" disabled={pending} aria-expanded={action in direct ? undefined : form === action}
-          className={primary ? primaryButtonClass : actionButtonClass} style={primary ? primaryButtonStyle : { ...subtleBorder, ...(action === "cancel" ? { color: "var(--danger-text)" } : textPrimary) }}
-          onClick={onClick}>{ACTION_LABEL[action]}</button>;
+        return <BoardButton key={action} type="button" disabled={pending} aria-expanded={action in direct ? undefined : form === action}
+          look={primary ? "primary" : "action"} style={primary ? undefined : { ...subtleBorder, ...(action === "cancel" ? { color: "var(--danger-text)" } : textPrimary) }}
+          onClick={onClick}>{ACTION_LABEL[action]}</BoardButton>;
       })}
     </div>
     {form ? <TaskForm key={form} action={form} profiles={profiles} current={task.assignedProfile} pending={pending}
@@ -135,16 +134,15 @@ function TaskForm({ action, profiles, current, pending, onSubmit, onCancel }: {
         </div>
       : <label className="flex flex-col gap-1 text-xs" style={textSecondary}>
           {copy.label}
-          <input autoFocus value={value} maxLength={500} placeholder={copy.placeholder} onChange={(event) => setValue(event.currentTarget.value)}
-            className={`${fieldClass} h-8`} style={{ ...subtleBorder, ...textPrimary }} />
+          <BoardInput autoFocus value={value} maxLength={500} placeholder={copy.placeholder} onChange={(event) => setValue(event.currentTarget.value)} />
         </label>}
     {action === "block" ? <label className="flex flex-col gap-1 text-xs" style={textSecondary}>
       Kind
-      <input value={kind} maxLength={48} onChange={(event) => setKind(event.currentTarget.value)} className={`${fieldClass} h-8 font-mono`} style={{ ...subtleBorder, ...textPrimary }} />
+      <BoardInput value={kind} maxLength={48} onChange={(event) => setKind(event.currentTarget.value)} style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)" }} />
     </label> : null}
     <div className="flex justify-end gap-1.5">
-      <button type="button" className={actionButtonClass} style={{ ...subtleBorder, ...textSecondary }} onClick={onCancel}>Back</button>
-      <button type="submit" disabled={pending || (needsReason && value.trim().length === 0)} className={primaryButtonClass} style={primaryButtonStyle}>{copy.submit}</button>
+      <BoardButton look="action" style={{ ...subtleBorder, ...textSecondary }} onClick={onCancel}>Back</BoardButton>
+      <BoardButton look="primary" type="submit" disabled={pending || (needsReason && value.trim().length === 0)}>{copy.submit}</BoardButton>
     </div>
   </form>;
 }

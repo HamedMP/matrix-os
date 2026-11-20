@@ -5,7 +5,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft01Icon, Calendar03Icon, Cancel01Icon, WorkflowSquare03Icon } from "@hugeicons/core-free-icons";
 import type { MessageBoardClient } from "./client.js";
 import { actorLabel, channelScopeLabel } from "./model.js";
-import { chipClass, formatBoardTime, formatUntil, iconButtonClass, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { formatBoardTime, formatUntil, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { BoardButton } from "./controls.js";
 import type { BoardSchedule, BoardWatcher, BoardWatcherAction } from "./types.js";
 import type { MutationResult, Resource } from "./use-message-board.js";
 import type { BoardSidePanel } from "./ChannelSidebar.js";
@@ -44,16 +45,16 @@ export function AutomationPanel({ panel, watchers, schedules, viewerId, nowMs, m
 
   return <section aria-label={title} className="flex h-full min-h-0 flex-col">
     <header className="flex items-start gap-2 border-b px-3 pb-2.5 pt-2.5" style={subtleBorder}>
-      {onBack ? <button type="button" aria-label="Back to channels" className={iconButtonClass} onClick={onBack}>
+      {onBack ? <BoardButton look="icon" aria-label="Back to channels" onClick={onBack}>
         <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
-      </button> : null}
+      </BoardButton> : null}
       <div className="min-w-0 flex-1">
         <h2 className="text-[15px] font-semibold" style={textPrimary}>{title}</h2>
         <p className="mt-0.5 text-xs" style={textTertiary}>{description}</p>
       </div>
-      <button type="button" aria-label={`Close ${title}`} className={iconButtonClass} onClick={onClose}>
+      <BoardButton look="icon" aria-label={`Close ${title}`} onClick={onClose}>
         <HugeiconsIcon icon={Cancel01Icon} size={15} aria-hidden style={textTertiary} />
-      </button>
+      </BoardButton>
     </header>
     <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
       {error ? <p role="alert" className="pb-2 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
@@ -107,7 +108,7 @@ function ScheduleRow({ schedule, viewerId, nowMs, onCancel, onOpenThread }: {
       <dt style={textTertiary}>Posts to</dt>
       <dd className="truncate font-mono" style={textSecondary}>
         {target.kind === "thread"
-          ? <button type="button" className="underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" onClick={() => onOpenThread(target.threadId)}>thread in #{target.channel}</button>
+          ? <BoardButton look="plain" className="underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" onClick={() => onOpenThread(target.threadId)}>thread in #{target.channel}</BoardButton>
           : `#${target.channel}`}
       </dd>
       <dt style={textTertiary}>Next</dt>
@@ -115,7 +116,7 @@ function ScheduleRow({ schedule, viewerId, nowMs, onCancel, onOpenThread }: {
       <dt style={textTertiary}>By</dt><dd style={textSecondary}>{actorLabel(schedule.by, viewerId)}</dd>
     </dl>
     <div className="mt-2 flex justify-end">
-      <button type="button" className={chipClass} style={{ color: "var(--danger-text)" }} onClick={onCancel}>Cancel schedule</button>
+      <BoardButton look="chip" style={{ color: "var(--danger-text)" }} onClick={onCancel}>Cancel schedule</BoardButton>
     </div>
   </div>;
 }

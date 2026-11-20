@@ -7,7 +7,8 @@ import type { MessageBoardClient } from "./client.js";
 import { BoardComposer } from "./BoardComposer.js";
 import { MessageItem } from "./MessageItem.js";
 import { isReservedLabelKey, parseLabelInput, threadTitle } from "./model.js";
-import { actionButtonClass, chipClass, fieldClass, iconButtonClass, subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { subtleBorder, textPrimary, textSecondary, textTertiary } from "./presentation.js";
+import { BoardButton, BoardInput } from "./controls.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { LabelChip, TaskStateChip } from "./TaskStateChip.js";
 import type { BoardActor, BoardMessage, BoardThread } from "./types.js";
@@ -36,11 +37,11 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
   if (!data) {
     return <div className="relative grid h-full place-items-center px-6 text-center text-[13px]" style={textTertiary}>
       {/* Narrow windows hide the lists; the way back must not depend on the thread loading. */}
-      {onBack ? <button type="button" aria-label="Back to threads" className={`${iconButtonClass} absolute left-3 top-2.5`} onClick={onBack}>
+      {onBack ? <BoardButton look="icon" aria-label="Back to threads" className="absolute left-3 top-2.5" onClick={onBack}>
         <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
-      </button> : null}
+      </BoardButton> : null}
       {thread.status === "error"
-        ? <div role="alert"><p>{thread.error}</p><button type="button" className={`${chipClass} mt-2`} onClick={onRetry}>Try again</button></div>
+        ? <div role="alert"><p>{thread.error}</p><BoardButton look="chip" className="mt-2" onClick={onRetry}>Try again</BoardButton></div>
         : <p role="status">Loading thread…</p>}
     </div>;
   }
@@ -55,9 +56,9 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
 
   return <section aria-label="Thread" className="flex h-full min-h-0 flex-col">
     <header className="flex items-start gap-2 border-b px-3 pb-2 pt-2.5" style={subtleBorder}>
-      {onBack ? <button type="button" aria-label="Back to threads" className={iconButtonClass} onClick={onBack}>
+      {onBack ? <BoardButton look="icon" aria-label="Back to threads" onClick={onBack}>
         <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
-      </button> : null}
+      </BoardButton> : null}
       <div className="min-w-0 flex-1">
         <h2 className={`truncate text-[15px] font-semibold${root.deletedAt ? " italic" : ""}`} style={root.deletedAt ? textTertiary : textPrimary}>
           {threadTitle(root.text, Boolean(root.deletedAt))}
@@ -69,9 +70,9 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
         </p>
         <LabelEditor labels={root.labels} onChange={(patch) => mutate((client, board) => client.label(board, root.id, patch))} />
       </div>
-      {onClose ? <button type="button" aria-label="Close thread" className={iconButtonClass} onClick={onClose}>
+      {onClose ? <BoardButton look="icon" aria-label="Close thread" onClick={onClose}>
         <HugeiconsIcon icon={Cancel01Icon} size={15} aria-hidden style={textTertiary} />
-      </button> : null}
+      </BoardButton> : null}
     </header>
     <div className="min-h-0 flex-1 overflow-y-auto pb-2 pt-2">
       {task
@@ -121,15 +122,15 @@ function LabelEditor({ labels, onChange }: {
       }} />)}
     {adding
       ? <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <input autoFocus aria-label="New label (key=value)" placeholder="key=value" value={value} maxLength={330}
+          <BoardInput autoFocus aria-label="New label (key=value)" placeholder="key=value" value={value} maxLength={330}
             onChange={(event) => { setValue(event.currentTarget.value); setError(null); }}
             onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setAdding(false); setError(null); } }}
-            className={`${fieldClass} h-6 w-36 font-mono text-[11px]`} style={{ ...subtleBorder, ...textPrimary }} />
+            wrapperClassName="w-36" style={{ height: 24, fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)" }} />
         </form>
-      : <button type="button" aria-label="Add label" onClick={() => setAdding(true)}
+      : <BoardButton look="plain" aria-label="Add label" onClick={() => setAdding(true)}
           className="inline-flex h-5 items-center gap-0.5 rounded-md px-1 text-[11px] outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--composer-focus,var(--primary,currentColor))]" style={textTertiary}>
           <HugeiconsIcon icon={Add01Icon} size={11} aria-hidden /> Label
-        </button>}
+        </BoardButton>}
     {error ? <span role="alert" className="w-full text-[11px]" style={{ color: "var(--danger-text)" }}>{error}</span> : null}
   </div>;
 }
@@ -148,9 +149,9 @@ function MakeTask({ onMake }: { onMake(): Promise<MutationResult> }) {
     }
   };
   return <div className="mx-3 mb-2">
-    <button type="button" disabled={pending} className={actionButtonClass} style={{ ...subtleBorder, ...textSecondary }} onClick={() => void make()}>
+    <BoardButton look="action" disabled={pending} style={{ ...subtleBorder, ...textSecondary }} onClick={() => void make()}>
       <HugeiconsIcon icon={CheckListIcon} size={14} aria-hidden /> Make this a task
-    </button>
+    </BoardButton>
     {error ? <p role="alert" className="pt-1 text-xs" style={{ color: "var(--danger-text)" }}>{error}</p> : null}
   </div>;
 }

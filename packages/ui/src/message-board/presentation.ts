@@ -19,7 +19,6 @@ export const chipClass = `inline-flex shrink-0 items-center gap-1.5 rounded-full
 export const iconButtonClass = `inline-grid size-7 shrink-0 place-items-center rounded-lg ${focusRing} ${hover}`;
 export const actionButtonClass = `inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[10px] border px-3 text-[13px] font-medium ${focusRing} ${hover} disabled:cursor-not-allowed disabled:opacity-50`;
 export const primaryButtonClass = `inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-medium ${focusRing} hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50`;
-export const primaryButtonStyle: CSSProperties = { background: "var(--primary)", color: "var(--primary-foreground)" };
 export const rowClass = `w-full rounded-lg text-left ${focusRing} ${hover} aria-[current=true]:bg-[var(--bg-selected,var(--bg-hover))]`;
 export const fieldClass = "min-w-0 rounded-[10px] border bg-transparent px-2.5 text-[13px] outline-none focus:border-[var(--text-primary,currentColor)]";
 export const sectionLabelClass = "px-2 pb-1 pt-3 text-xs font-medium";
