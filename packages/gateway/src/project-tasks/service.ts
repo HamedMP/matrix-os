@@ -42,6 +42,12 @@ export interface ProjectTaskServiceOptions {
   projects: ProjectLookup;
   legacyTasks: LegacyTasks;
   publish: TaskEventPublisher;
+  /**
+   * Runs a board write behind the shared-project fence. Preparing a board
+   * (creating its row, importing legacy files) is a write too, so it goes
+   * through here even when a read triggered it.
+   */
+  admit?<T>(caller: TaskCaller, project: ProjectConfig, write: () => Promise<T>): Promise<T>;
 }
 
 /** The caller resolved from the request principal; never from a body. */
@@ -77,22 +83,33 @@ export function payloadHash(value: unknown): string {
 export class ProjectTaskService {
   constructor(private readonly options: ProjectTaskServiceOptions) {}
 
-  /** Resolve and prepare a project's board for the caller; imports legacy tasks once. */
-  async open(caller: TaskCaller, slug: string): Promise<BoardContext> {
+  /** The caller's project, without side effects. */
+  async resolve(caller: TaskCaller, slug: string): Promise<{ project: ProjectConfig; scope: TaskScope }> {
     const result = await this.options.projects.getProject(slug, caller.ownerScope);
     if (!result.ok) {
       if (result.status === 404 || result.status === 400) throw new ProjectTaskError("project_not_found");
       console.warn("[project-tasks] project lookup failed", result.error.code);
       throw new ProjectTaskError("board_unavailable");
     }
-    const scope: TaskScope = { ownerId: caller.ownerScope.id, projectId: result.project.id };
-    let board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
-    if (board.legacy_import_at === null) {
+    return { project: result.project, scope: { ownerId: caller.ownerScope.id, projectId: result.project.id } };
+  }
+
+  /** Resolve the project and its prepared board; the first open creates the board and imports legacy tasks once. */
+  async open(caller: TaskCaller, slug: string): Promise<BoardContext> {
+    const { project, scope } = await this.resolve(caller, slug);
+    const existing = await this.options.repository.getBoard(scope);
+    if (existing && existing.legacy_import_at !== null) return { slug, project, scope, board: existing };
+    const prepare = async () => {
+      const board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
+      if (board.legacy_import_at !== null) return board;
       const legacy = await readLegacyTasks(this.options.legacyTasks, slug, caller.ownerScope);
-      await this.options.repository.importLegacy(scope, legacy ? mapLegacyTasks(legacy) : []);
-      board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
-    }
-    return { slug, project: result.project, scope, board };
+      // A failed read leaves the marker unset, so the next open retries the import.
+      if (!legacy) throw new ProjectTaskError("board_unavailable");
+      await this.options.repository.importLegacy(scope, mapLegacyTasks(legacy));
+      return this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
+    };
+    const board = this.options.admit ? await this.options.admit(caller, project, prepare) : await prepare();
+    return { slug, project, scope, board };
   }
 
   /** Wire tasks for rows, with their relations loaded in one query. */

@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { TASK_LIMITS } from "@matrix-os/contracts/project-tasks";
 import type { LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
 import type { createProjectManager } from "../project-manager.js";
 import { ProjectTaskCommentRepository } from "../project-tasks/comments.js";
@@ -6,7 +7,7 @@ import { ownerActor, readOwnerMember } from "../project-tasks/members.js";
 import { ProjectTaskService } from "../project-tasks/service.js";
 import type { ChannelReply } from "../channels/types.js";
 import type { ProjectTaskRepository } from "../project-tasks/repository.js";
-import { createProjectTaskRoutes } from "../project-tasks/routes.js";
+import { createProjectTaskAdmission, createProjectTaskRoutes } from "../project-tasks/routes.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
 import { createTaskManager } from "../task-manager.js";
@@ -28,6 +29,7 @@ export function registerProjectTaskRoutes(options: {
   /** Push delivery for task notifications (the gateway's channel manager). */
   sendPush?(reply: ChannelReply): Promise<void> | void;
 }): ProjectTaskService | null {
+  const admitProjectTaskWrite = createProjectTaskAdmission(options.collaboration?.projectOperationAdmission);
   const service = options.repository ? new ProjectTaskService({
     repository: options.repository,
     comments: new ProjectTaskCommentRepository(options.repository.db),
@@ -42,7 +44,9 @@ export function registerProjectTaskRoutes(options: {
     },
     projects: options.projectManager,
     // Read-only: the legacy files are imported once per project and left in place.
-    legacyTasks: createTaskManager({ homePath: options.homePath }),
+    legacyTasks: createTaskManager({ homePath: options.homePath, maxDiscoveryIds: TASK_LIMITS.tasksPerProject }),
+    // Board preparation (first open, legacy import) is a write behind the same fence as task writes.
+    admit: (caller, project, write) => admitProjectTaskWrite(caller, project.id, write),
     publish: (event) => options.eventPublisher.publish({
       type: event.type,
       scope: { projectSlug: event.projectSlug, taskId: event.taskId },

@@ -5,7 +5,7 @@
  */
 import { sql, type Selectable } from "kysely";
 import {
-  TASK_LIMITS, TaskRankError, formatTaskKey, rankBetween,
+  TASK_LIMITS, TaskRankError, formatTaskKey, rankBetween, spreadRanks,
   type ActorRef, type ProjectTask, type TaskActivity, type TaskActivityKind, type TaskPriority, type TaskStatus,
 } from "@matrix-os/contracts/project-tasks";
 import type { BoardAutomationColumn, ProjectTaskDatabase, ProjectTaskDb, ProjectTaskTrx } from "./database.js";
@@ -151,6 +151,11 @@ export class ProjectTaskRepository {
       .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).executeTakeFirstOrThrow();
   }
 
+  async getBoard(scope: TaskScope): Promise<BoardRow | undefined> {
+    return this.db.selectFrom("project_board_settings").selectAll()
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).executeTakeFirst();
+  }
+
   async updateBoard(scope: TaskScope, patch: { taskKey?: string; automation?: Partial<BoardAutomationColumn> }): Promise<BoardRow> {
     return this.db.transaction().execute(async (trx) => {
       const current = await trx.selectFrom("project_board_settings").selectAll()
@@ -232,10 +237,8 @@ export class ProjectTaskRepository {
         if (!row || row.deleted_at !== null) throw new ProjectTaskError("task_not_found");
         return { row, created: false };
       }
-      const active = await trx.selectFrom("project_tasks").select(sql<string>`count(*)`.as("count"))
-        .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
-        .where("deleted_at", "is", null).where("archived_at", "is", null).executeTakeFirstOrThrow();
-      if (Number(active.count) >= TASK_LIMITS.tasksPerProject) throw new ProjectTaskError("task_limit_reached");
+      await this.lockBoard(trx, scope);
+      await this.assertBelowLimit(trx, scope);
       if (input.parentTaskId) await this.assertParent(trx, scope, input.id, input.parentTaskId);
       const status = input.status ?? "backlog";
       const rank = await this.rankForInsert(trx, scope, status, input.afterTaskId);
@@ -261,7 +264,11 @@ export class ProjectTaskRepository {
         .where("id", "=", taskId).where("deleted_at", "is", null).executeTakeFirst();
       if (!before) throw new ProjectTaskError("task_not_found");
       if (Number(before.revision) !== baseRevision) throw new RevisionConflict(before);
-      if (patch.parentTaskId) await this.assertParent(trx, scope, taskId, patch.parentTaskId);
+      // Parent chains are checked and written under the board lock, so two edits cannot close a loop between them.
+      if (patch.parentTaskId) {
+        await this.lockBoard(trx, scope);
+        await this.assertParent(trx, scope, taskId, patch.parentTaskId);
+      }
       const at = this.now();
       const blockersChanged = patch.blockedBy !== undefined && await this.replaceBlockers(trx, scope, taskId, patch.blockedBy, at);
       const row = await trx.updateTable("project_tasks").set({
@@ -294,6 +301,8 @@ export class ProjectTaskRepository {
 
   async moveTask(scope: TaskScope, taskId: string, input: MoveInput, actor: ActorRef): Promise<{ row: TaskRow; previousStatus: TaskStatus }> {
     return this.db.transaction().execute(async (trx) => {
+      // Rank choice and save are serialized per board, so two moves into one gap cannot reuse a position.
+      await this.lockBoard(trx, scope);
       const current = await trx.selectFrom("project_tasks").select(["status"])
         .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
         .where("id", "=", taskId).where("deleted_at", "is", null).forUpdate().executeTakeFirst();
@@ -315,6 +324,11 @@ export class ProjectTaskRepository {
   async setArchived(scope: TaskScope, taskId: string, archived: boolean, actor: ActorRef): Promise<{ row: TaskRow; changed: boolean }> {
     return this.db.transaction().execute(async (trx) => {
       const at = this.now();
+      if (!archived) {
+        // Restoring counts against the same active-task limit as creating.
+        await this.lockBoard(trx, scope);
+        await this.assertBelowLimit(trx, scope);
+      }
       const row = await trx.updateTable("project_tasks")
         .set({ archived_at: archived ? at : null, updated_at: at, revision: sql<number>`revision + 1` })
         .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
@@ -402,6 +416,33 @@ export class ProjectTaskRepository {
     }).execute();
   }
 
+  /** Serializes board-wide decisions (ranks, limits, parent chains) for one project. */
+  private async lockBoard(trx: ProjectTaskTrx, scope: TaskScope): Promise<void> {
+    const board = await trx.selectFrom("project_board_settings").select("project_id")
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).forUpdate().executeTakeFirst();
+    if (!board) throw new ProjectTaskError("project_not_found");
+  }
+
+  private async assertBelowLimit(trx: ProjectTaskTrx, scope: TaskScope): Promise<void> {
+    const active = await trx.selectFrom("project_tasks").select(sql<string>`count(*)`.as("count"))
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
+      .where("deleted_at", "is", null).where("archived_at", "is", null).executeTakeFirstOrThrow();
+    if (Number(active.count) >= TASK_LIMITS.tasksPerProject) throw new ProjectTaskError("task_limit_reached");
+  }
+
+  /** Respace a column's ranks in their current order when inserts have used up the room between them. */
+  private async rebalanceColumn(trx: ProjectTaskTrx, scope: TaskScope, status: TaskStatus): Promise<void> {
+    const rows = await trx.selectFrom("project_tasks").select(["id"])
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
+      .where("status", "=", status).where("deleted_at", "is", null)
+      .orderBy("rank", "asc").orderBy("id", "asc").execute();
+    const ranks = spreadRanks(rows.length);
+    for (const [index, row] of rows.entries()) {
+      await trx.updateTable("project_tasks").set({ rank: ranks[index]! })
+        .where("owner_id", "=", scope.ownerId).where("id", "=", row.id).execute();
+    }
+  }
+
   private async allocateNumber(trx: ProjectTaskTrx, scope: TaskScope): Promise<number> {
     const board = await trx.updateTable("project_board_settings").set({ next_number: sql<number>`next_number + 1` })
       .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
@@ -430,24 +471,42 @@ export class ProjectTaskRepository {
   private async rankBetweenNeighbours(
     trx: ProjectTaskTrx, scope: TaskScope, status: TaskStatus, movingId: string | null, afterTaskId?: string, beforeTaskId?: string,
   ): Promise<string> {
+    try {
+      return await this.pickRank(trx, scope, status, movingId, afterTaskId, beforeTaskId);
+    } catch (error: unknown) {
+      if (!(error instanceof TaskRankError) || error.code !== "rank_exhausted") throw error;
+      await this.rebalanceColumn(trx, scope, status);
+      return this.pickRank(trx, scope, status, movingId, afterTaskId, beforeTaskId);
+    }
+  }
+
+  private async pickRank(
+    trx: ProjectTaskTrx, scope: TaskScope, status: TaskStatus, movingId: string | null, afterTaskId?: string, beforeTaskId?: string,
+  ): Promise<string> {
     const column = this.columnRanks(trx, scope, status, movingId);
     const neighbour = async (id: string | undefined) => (id
       ? (await column.where("id", "=", id).executeTakeFirst())?.rank ?? null
       : null);
-    const after = await neighbour(afterTaskId);
-    let before = await neighbour(beforeTaskId);
-    if (after !== null && (before === null || before <= after)) {
+    // Only one named neighbour is trusted; the other side is the card actually next to it now, so a
+    // card that landed in the same gap meanwhile is never skipped and no two cards share a rank.
+    let after = await neighbour(afterTaskId);
+    let before: string | null = null;
+    if (after !== null) {
       before = (await column.where("rank", ">", after).orderBy("rank", "asc").limit(1).executeTakeFirst())?.rank ?? null;
-    }
-    if (after === null && before === null) {
-      // No usable neighbours: the top of the column.
-      before = (await column.orderBy("rank", "asc").limit(1).executeTakeFirst())?.rank ?? null;
+    } else {
+      before = await neighbour(beforeTaskId);
+      if (before !== null) {
+        after = (await column.where("rank", "<", before).orderBy("rank", "desc").limit(1).executeTakeFirst())?.rank ?? null;
+      } else {
+        // No usable neighbours: the top of the column.
+        before = (await column.orderBy("rank", "asc").limit(1).executeTakeFirst())?.rank ?? null;
+      }
     }
     try {
       return rankBetween(after, before);
     } catch (error: unknown) {
-      if (error instanceof TaskRankError) {
-        console.warn("[project-tasks] rank fallback", error.code);
+      if (error instanceof TaskRankError && error.code !== "rank_exhausted") {
+        console.warn("[project-tasks] rank rejected", error.code);
         throw new ProjectTaskError("invalid_request");
       }
       throw error;
