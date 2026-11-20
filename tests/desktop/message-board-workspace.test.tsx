@@ -5,6 +5,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TabPane } from "@desktop/renderer/src/features/mission-control/TabContent";
 import { createDesktopMessageBoardClient } from "@desktop/renderer/src/features/message-board/desktop-board-client";
+import { boardUnauthorizedHandler } from "@desktop/renderer/src/features/message-board/board-session";
+import { advanceRuntimeGeneration, captureRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { createLiveBoard, OWNER } from "../ui/message-board-harness";
@@ -61,6 +63,22 @@ describe("Electron Desktop Message Board", () => {
     });
     await expect(client.listChannels("General")).rejects.toBeTruthy();
     expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
+
+  // Fault detected (review): a 401 from the board of a computer the owner already left (or an
+  // older sign-in) expired the fresh session and signed the owner out.
+  it("lets only the session that sent a request expire the sign-in", () => {
+    useConnection.setState({ authGeneration: 3 });
+    const expire = vi.fn();
+    const current = boardUnauthorizedHandler({ authGeneration: 3, runtimeGeneration: captureRuntimeGeneration() }, expire);
+    current();
+    expect(expire).toHaveBeenCalledOnce();
+    useConnection.setState({ authGeneration: 4 });
+    current();
+    const beforeSwitch = boardUnauthorizedHandler({ authGeneration: 4, runtimeGeneration: captureRuntimeGeneration() }, expire);
+    advanceRuntimeGeneration();
+    beforeSwitch();
+    expect(expire).toHaveBeenCalledOnce();
   });
 
   it("opens the shared viewer in a Message Board tab", async () => {
