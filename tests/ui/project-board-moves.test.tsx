@@ -71,3 +71,18 @@ describe("useProjectBoard moves", () => {
     expect(task("t1")).toMatchObject({ status: "done", revision: 2 });
   });
 });
+
+describe("useProjectBoard list refreshes", () => {
+  it("keeps a move's newer copy when a list read that started before it lands afterwards", async () => {
+    const stale = boardTask("t1", { status: "todo", revision: 1 });
+    const { client, hook, task, emit } = await loadedBoard(() => [stale]);
+    const slowList = deferred<readonly ProjectTask[]>();
+    client.listTasks.mockReturnValueOnce(slowList.promise);
+    act(() => { emit({ type: "task.updated", taskId: "t1", revision: 1 }); });
+    client.moveTask.mockResolvedValueOnce({ ...stale, status: "done", revision: 2 });
+    await act(async () => { await hook.result.current.moveTask("t1", "done", 0); });
+    expect(task("t1")?.status).toBe("done");
+    await act(async () => { slowList.resolve([stale]); await slowList.promise; });
+    expect(task("t1")).toMatchObject({ status: "done", revision: 2 });
+  });
+});
