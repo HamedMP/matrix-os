@@ -382,9 +382,10 @@ whose home is another computer; see Risks.
 3. **Agent reports.** Inside that session the agent runs
    `matrix tasks comment "…"`. The comment appears on the task, attributed to
    the agent session.
-4. **Pull request.** The agent opens a PR for the task branch. Within a minute
-   of the board being open, the card shows the PR and its checks and moves to
-   In review. After merge it moves to Done.
+4. **Pull request.** The agent opens a PR for the task branch. While the board
+   is open, the card shows the PR and its checks and moves to In review within
+   a minute when 20 or fewer visible cards have branches, and within
+   `ceil(cards / 20)` minutes otherwise. After merge it moves to Done.
 5. **Linear.** Link the board to a Linear team and import assigned issues.
    Change a status in Linear: the card moves within the polling interval.
    Move the card in Matrix: the Linear issue changes. Neither change bounces.
