@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
+import { SPEECH_DICTATION_MAX_BYTES, SPEECH_DICTATION_MAX_DURATION_MS } from "../../packages/contracts/src/speech.js";
+import { inspectSpeechWav } from "../../packages/platform/src/speech/media.js";
 import {
   createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
@@ -90,16 +92,20 @@ describe("platform speech PCM recorder", () => {
     });
     try {
       const capture = await createWebPcmSpeechCaptureAdapter({ workletUrl: "https://app.example/worklet.js" }).start({
-        maxBytes: 20 * 1024 * 1024,
+        maxBytes: SPEECH_DICTATION_MAX_BYTES,
         signal: new AbortController().signal,
       });
-      const chunkCount = Math.ceil((600 * SAMPLE_RATE) / CHUNK_SAMPLES);
-      for (let index = 0; index < chunkCount; index += 1) {
-        port.onmessage?.({ data: { type: "audio", bytes: new ArrayBuffer(CHUNK_SAMPLES * 2) } } as MessageEvent<unknown>);
+      // Exactly ten minutes: full worklet chunks, then the partial chunk a flush posts.
+      const totalSamples = 600 * SAMPLE_RATE;
+      for (let sent = 0; sent < totalSamples; sent += CHUNK_SAMPLES) {
+        const samples = Math.min(CHUNK_SAMPLES, totalSamples - sent);
+        port.onmessage?.({ data: { type: "audio", bytes: new ArrayBuffer(samples * 2) } } as MessageEvent<unknown>);
       }
       const recording = await capture.stop();
       expect(recording.type).toBe("audio/wav");
-      expect(recording.size).toBe(44 + chunkCount * CHUNK_SAMPLES * 2);
+      // The speech service must accept what the recorder produced under the advertised policy.
+      const policy = { maxBytes: SPEECH_DICTATION_MAX_BYTES, maxDurationMs: SPEECH_DICTATION_MAX_DURATION_MS };
+      expect(inspectSpeechWav(new Uint8Array(await recording.arrayBuffer()), policy).durationMs).toBe(600_000);
     } finally {
       vi.unstubAllGlobals();
     }

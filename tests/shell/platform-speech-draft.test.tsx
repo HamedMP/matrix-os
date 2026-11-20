@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   platformSpeechControlState,
   SPEECH_LIMIT_STOP_CANCEL_GUARD_MS,
+  speechLimitStopDelayMs,
   usePlatformSpeechDraft,
 } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
@@ -559,5 +560,34 @@ describe("platform speech draft recording", () => {
     vi.spyOn(Date, "now").mockReturnValue(later);
     act(() => hook.result.current.cancel());
     await waitFor(() => expect(speech.cancel).toHaveBeenCalledWith(requestId));
+  });
+
+  it("stops recording a second before the limit so a late timer cannot produce a rejected recording", async () => {
+    // The service rejects audio even one sample over the limit; the previous
+    // timer fired exactly at it.
+    expect(speechLimitStopDelayMs(600_000)).toBe(599_000);
+    expect(speechLimitStopDelayMs(120_000)).toBe(119_000);
+    const tenMinutes = {
+      ...ready,
+      fileTranscription: {
+        ...ready.fileTranscription,
+        dictation: { ...ready.fileTranscription.dictation, maxDurationMs: 600_000 },
+      },
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-limit-margin",
+      client: client({ capabilities: vi.fn(async () => tenMinutes) }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    await act(async () => hook.result.current.start());
+    expect(hook.result.current.phase).toBe("recording");
+    const delays = timers.mock.calls.map(([, delay]) => delay);
+    expect(delays).toContain(599_000);
+    expect(delays).not.toContain(600_000);
+    act(() => hook.result.current.cancel());
   });
 });

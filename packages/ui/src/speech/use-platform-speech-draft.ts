@@ -130,6 +130,16 @@ interface ActiveRecording<TRecording extends PlatformSpeechRecording> {
  */
 export const SPEECH_LIMIT_STOP_CANCEL_GUARD_MS = 2_000;
 
+/**
+ * The service rejects a recording even one sample over the limit, and a timer
+ * can fire late, so recording stops this long before the advertised limit.
+ */
+export const SPEECH_LIMIT_STOP_MARGIN_MS = 1_000;
+
+export function speechLimitStopDelayMs(maxDurationMs: number): number {
+  return maxDurationMs > 10 * SPEECH_LIMIT_STOP_MARGIN_MS ? maxDurationMs - SPEECH_LIMIT_STOP_MARGIN_MS : maxDurationMs;
+}
+
 interface ActiveRequest {
   requestId: string;
   controller: AbortController;
@@ -386,7 +396,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       timeout: setTimeout(() => {
         limitStoppedAtRef.current = Date.now();
         void finishRecording(active);
-      }, policy.maxDurationMs),
+      }, speechLimitStopDelayMs(policy.maxDurationMs)),
       elapsedTimer: setInterval(() => {
         if (generationRef.current === generation) setElapsedMs(Date.now() - startedAt);
       }, 250),
