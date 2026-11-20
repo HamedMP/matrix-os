@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
-import { LabelsSchema } from "@matrix-os/contracts/message-board";
+import { BlockTaskRequestSchema, FailTaskRequestSchema, LabelsSchema } from "@matrix-os/contracts/message-board";
 import { gatewayAuthHeaders, type GatewayFetcher } from "../../kernel/dist/tools/integrations.js";
 
 /**
@@ -9,6 +9,8 @@ import { gatewayAuthHeaders, type GatewayFetcher } from "../../kernel/dist/tools
  * and, inside a Matrix terminal, the pane the agent runs in, never from input.
  */
 const MAX_RESPONSE_BYTES = 256 * 1024;
+/** A whole thread (200 replies of 10,000 characters) can be larger; it is read, then shortened to fit. */
+const MAX_THREAD_BYTES = 8 * 1024 * 1024;
 const Board = z.string().trim().min(1).max(64).optional();
 const MessageId = z.string().regex(/^msg_[A-Za-z0-9]{8,40}$/);
 const Channel = z.string().regex(/^[a-z0-9_-]{1,48}(?:\/[a-z0-9_-]{1,48}){0,7}$/).max(200);
@@ -27,7 +29,22 @@ function terminalCallerHeader(env: NodeJS.ProcessEnv = process.env): string | un
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
-async function call(fetcher: GatewayFetcher, method: string, path: string, board: string | undefined, body?: unknown, timeoutMs = 15_000): Promise<ToolResult> {
+/**
+ * Keeps a thread under the tool's response bound: the root, the task and the
+ * newest replies that fit, with a count of the earlier replies left out.
+ */
+export function fitThread(parsed: Record<string, unknown>, maxBytes = MAX_RESPONSE_BYTES): Record<string, unknown> {
+  const thread = parsed.thread as { replies?: unknown[] } | undefined;
+  if (!thread || !Array.isArray(thread.replies) || JSON.stringify(parsed).length <= maxBytes) return parsed;
+  const replies = [...thread.replies];
+  let omitted = 0;
+  const shaped = () => ({ ...parsed, thread: { ...thread, replies }, omittedEarlierReplies: omitted,
+    note: "Earlier replies were left out to fit; read the whole thread with: matrix board read <id>" });
+  while (replies.length > 0 && JSON.stringify(shaped()).length > maxBytes) { replies.shift(); omitted += 1; }
+  return shaped();
+}
+
+async function call(fetcher: GatewayFetcher, method: string, path: string, board: string | undefined, body?: unknown, timeoutMs = 15_000, maxBytes = MAX_RESPONSE_BYTES): Promise<ToolResult> {
   const base = process.env.GATEWAY_URL ?? "http://localhost:4000";
   const url = new URL(`/api/board${path}`, base);
   if (board) url.searchParams.set("board", board);
@@ -41,13 +58,16 @@ async function call(fetcher: GatewayFetcher, method: string, path: string, board
     });
     if (!(response instanceof Response)) throw new Error("BoardResponseUnavailable");
     const raw = await response.text();
-    if (raw.length > MAX_RESPONSE_BYTES) throw new Error("BoardResponseTooLarge");
-    const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    if (raw.length > maxBytes) throw new Error("BoardResponseTooLarge");
+    let parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
     if (!response.ok) {
       const reason = typeof parsed.reason === "string" ? parsed.reason : "unavailable";
       return { isError: true, content: [{ type: "text", text: `Board operation failed: ${reason}.` }] };
     }
-    return { content: [{ type: "text", text: JSON.stringify(parsed) }] };
+    if (maxBytes > MAX_RESPONSE_BYTES) parsed = fitThread(parsed);
+    const output = JSON.stringify(parsed);
+    if (output.length > MAX_RESPONSE_BYTES) throw new Error("BoardResponseTooLarge");
+    return { content: [{ type: "text", text: output }] };
   } catch (error: unknown) {
     console.warn("[board-tool] unavailable", error instanceof Error ? error.name : "UnknownError");
     return { isError: true, content: [{ type: "text", text: "Board operation failed: unavailable." }] };
@@ -68,7 +88,7 @@ export function registerBoardTools(server: McpServer, fetcher: GatewayFetcher = 
     inputSchema: { board: Board, target: z.union([MessageId, Scope]).optional(), label: z.string().max(400).optional(), text: z.string().max(200).optional(), limit: z.number().int().min(1).max(100).optional() },
     annotations: { readOnlyHint: true },
   }, async (input) => MessageId.safeParse(input.target).success
-    ? call(fetcher, "GET", `/threads/${input.target}`, input.board)
+    ? call(fetcher, "GET", `/threads/${input.target}`, input.board, undefined, 15_000, MAX_THREAD_BYTES)
     : call(fetcher, "GET", `/threads${query({ channel: input.target ?? "*", label: input.label, text: input.text, limit: input.limit ?? 20 })}`, input.board));
 
   server.registerTool("board_post", {
@@ -119,6 +139,11 @@ export function registerBoardTools(server: McpServer, fetcher: GatewayFetcher = 
       : outcome === "release" ? proof
         : outcome === "fail" ? { ...proof, reason: text?.trim() || "Failed" }
           : { ...proof, reason: text?.trim() || "Needs a person", ...(kind ? { kind } : {}) };
+    // Fail and block reasons are shorter than results; refuse here so the claim is not left waiting on a 400.
+    const schema = outcome === "fail" ? FailTaskRequestSchema : outcome === "block" ? BlockTaskRequestSchema : null;
+    if (schema && !schema.safeParse(body).success) {
+      return { isError: true, content: [{ type: "text" as const, text: "A fail or block reason is at most 2,000 characters; put the detail in a reply and settle with a short reason." }] };
+    }
     return call(fetcher, "POST", `/tasks/${id}/${outcome}`, board, body);
   });
 }

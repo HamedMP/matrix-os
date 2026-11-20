@@ -71,7 +71,8 @@ const TaskSettleSchema = z.object({
   outcome: z.enum(["complete", "fail", "release", "block"]),
   text: z.string().max(10_000).optional().describe("Result for complete, reason for fail or block"),
   kind: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/).optional().describe("Block kind, e.g. needs_input"),
-}).strict();
+}).strict().refine((value) => value.outcome === "complete" || value.outcome === "release" || (value.text ?? "").trim().length <= 2_000,
+  "A fail or block reason is at most 2,000 characters");
 
 function text(value: unknown) {
   return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] };
