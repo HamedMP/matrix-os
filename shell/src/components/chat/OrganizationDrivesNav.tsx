@@ -1,6 +1,6 @@
 "use client";
 import {applicableCompanyDriveDraft,useCompanyDriveChatDraft} from "@/stores/company-drive-chat-draft";
-import { useAuth } from "@clerk/nextjs";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 import { getGatewayUrl } from "@/lib/gateway";
 import { useEffect } from "react";
 import { companyDriveChatReference, OrganizationDrivesNavigation, useChatDriveProjects, type ChatAgentClient, type StartAgentChat } from "@matrix-os/ui";
@@ -11,7 +11,7 @@ import { organizationDriveNavigationIdentity, useOrganizationDriveNavigation } f
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 export function OrganizationDrivesNav({chats=[],client,onNewChat,onSelectChat,activeChatId}: {chats?:readonly {id:string;title?:string;updatedAt?:number}[];client?:ChatAgentClient;onNewChat?:StartAgentChat;onSelectChat?(id:string):void;activeChatId?:string}) {
   const { status: organizationStatus } = useCollaborationOrganization();
-  const {userId, sessionId} = useAuth();
+  const {userId, sessionId} = useShellAuthIdentity();
   const identity = organizationDriveNavigationIdentity(userId, sessionId, getGatewayUrl());
   const request=useCompanyDriveChatDraft(state=>state.request);
   // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent -- this consumes a one-shot cross-window navigation request and deliberately hands it to the owning Chat controller.
