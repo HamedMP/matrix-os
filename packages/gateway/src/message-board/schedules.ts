@@ -66,7 +66,8 @@ export class BoardScheduleService {
         id: newBoardId("sch"), owner_id: caller.ownerId, board_id: ctx.board.id, author: caller.actor.id,
         author_actor: JSON.stringify(storedActor(caller.actor)), channel, thread_id: input.thread ?? null, text: input.text,
         next_run_at: new Date(first), every: input.every ?? null, remaining: input.times ?? null,
-        until_at: input.until ? new Date(input.until) : null, run_count: 0, created_at: ctx.now,
+        until_at: input.until ? new Date(input.until) : null, run_count: 0,
+        origin: JSON.stringify(caller.origin ?? null), created_at: ctx.now,
       }).returningAll().executeTakeFirstOrThrow();
       ctx.emit({ type: "schedule.changed", actor: caller.actor, channel, payload: { schedule: row.id } });
       return toSchedule(row);
@@ -107,15 +108,28 @@ export class BoardScheduleService {
   }
 
   private async postOne(id: string, boardId: string, ownerId: string): Promise<boolean> {
-    const preview = await this.board.db.selectFrom("board_schedules").select("author_actor").where("id", "=", id).executeTakeFirst();
+    const preview = await this.board.db.selectFrom("board_schedules").select(["author_actor", "origin"]).where("id", "=", id).executeTakeFirst();
     if (!preview) return false;
-    const caller: BoardCaller = { ownerId, actor: parseActor(preview.author_actor) };
+    const origin = (typeof preview.origin === "string" ? JSON.parse(preview.origin) : preview.origin) as BoardCaller["origin"] | null;
+    const caller: BoardCaller = { ownerId, actor: parseActor(preview.author_actor), ...(origin ? { origin } : {}) };
     return this.board.write(caller, { id: boardId }, async (ctx) => {
       const row = await ctx.trx.selectFrom("board_schedules").selectAll().where("id", "=", id).forUpdate().skipLocked().executeTakeFirst();
       if (!row || new Date(row.next_run_at).getTime() > ctx.now.getTime()) return false;
+      if (row.until_at && ctx.now.getTime() > new Date(row.until_at).getTime()) {
+        // Past its stop time (for example after the gateway was down): end it without posting.
+        await ctx.trx.deleteFrom("board_schedules").where("id", "=", id).execute();
+        return false;
+      }
       await this.board.postInTransaction(ctx, { channel: row.channel, text: row.text, ...(row.thread_id ? { re: row.thread_id } : {}) });
       const remaining = row.remaining === null ? null : row.remaining - 1;
-      const next = row.every ? new Date(Math.max(new Date(row.next_run_at).getTime() + boardDurationMs(row.every), ctx.now.getTime())) : null;
+      // Strictly in the future: missed repetitions are skipped, not posted back to back.
+      let next: Date | null = null;
+      if (row.every) {
+        const step = boardDurationMs(row.every);
+        let at = new Date(row.next_run_at).getTime() + step;
+        if (at <= ctx.now.getTime()) at += Math.ceil((ctx.now.getTime() - at + 1) / step) * step;
+        next = new Date(at);
+      }
       const finished = !next || remaining === 0 || (row.until_at !== null && next.getTime() > new Date(row.until_at).getTime());
       if (finished) {
         await ctx.trx.deleteFrom("board_schedules").where("id", "=", id).execute();

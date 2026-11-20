@@ -134,8 +134,13 @@ export interface BoardSchedulesTable {
   remaining: number | null;
   until_at: NullableTimestamp;
   run_count: number;
+  /** The author's watcher provenance, so scheduled posts keep their loop guard. */
+  origin: Json<{ watcher: string; depth: number } | null>;
   created_at: Timestamp;
 }
+
+/** How far watchers have matched each board's event log; survives restarts and queue overflow. */
+export interface BoardWatcherProgressTable { owner_id: string; board_id: string; cursor: ColumnType<string, string | number, string | number>; updated_at: Timestamp }
 
 export interface BoardGrantsTable {
   id: string;
@@ -163,6 +168,7 @@ export interface MessageBoardDatabase {
   board_watcher_runs: BoardWatcherRunsTable;
   board_schedules: BoardSchedulesTable;
   board_grants: BoardGrantsTable;
+  board_watcher_progress: BoardWatcherProgressTable;
 }
 
 /** Distinct from every other gateway advisory lock key. */
@@ -271,7 +277,11 @@ const v3: BoardMigration = {
       id text PRIMARY KEY, owner_id text NOT NULL, board_id text NOT NULL REFERENCES board_boards(id) ON DELETE CASCADE,
       author text NOT NULL, author_actor jsonb NOT NULL, channel text NOT NULL, thread_id text REFERENCES board_messages(id) ON DELETE CASCADE,
       text text NOT NULL, next_run_at timestamptz NOT NULL, every text, remaining integer, until_at timestamptz,
-      run_count integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL
+      run_count integer NOT NULL DEFAULT 0, origin jsonb, created_at timestamptz NOT NULL
+    )`.execute(trx);
+    await sql`CREATE TABLE board_watcher_progress (
+      owner_id text NOT NULL, board_id text PRIMARY KEY REFERENCES board_boards(id) ON DELETE CASCADE,
+      cursor bigint NOT NULL, updated_at timestamptz NOT NULL
     )`.execute(trx);
     await sql`CREATE INDEX board_schedules_due ON board_schedules(next_run_at)`.execute(trx);
     await sql`CREATE TABLE board_grants (

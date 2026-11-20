@@ -50,6 +50,8 @@ export function registerMessageBoardGatewayRoutes(options: MessageBoardGatewayRo
 export function configureMessageBoardAutomation(runtime: MessageBoardRuntime | null, deps: {
   /** Spec 2692 terminal agents: start a template with a first task. */
   runTerminalAgent?: (input: { projectId?: string; name: string; cwd: string; template?: string; task?: string; labels?: Record<string, string> }) => Promise<unknown>;
+  /** Lists terminal tabs, so a retried run reuses the tab an earlier attempt already started. */
+  listTerminals?: () => Promise<unknown>;
   /** The owner's push channel. */
   push?: (reply: { channelId: "push"; chatId: string; ownerId: string; text: string }) => Promise<void>;
   ownerHandles?: readonly string[];
@@ -60,8 +62,11 @@ export function configureMessageBoardAutomation(runtime: MessageBoardRuntime | n
   runtime.configureAutomation({
     actions: run ? {
       async start(input) {
+        // The tab name carries the run's idempotency key: a retry after a lost outcome finds it and starts nothing.
+        const name = `${input.name.slice(0, 40)} #${input.idempotencyKey.split(":").at(-1)}`.slice(0, 64);
+        if (deps.listTerminals && await terminalNamed(deps.listTerminals, name)) return;
         await run({
-          ...(input.projectId ? { projectId: input.projectId } : {}), name: input.name, cwd: "", template: input.template, task: input.task,
+          ...(input.projectId ? { projectId: input.projectId } : {}), name, cwd: "", template: input.template, task: input.task,
           labels: { "board.watcher": input.origin.watcher, "board.depth": String(input.origin.depth) },
         });
       },
@@ -78,7 +83,10 @@ export interface BoardTerminalAgents {
     resolveCaller(caller: { sessionName: string; paneId: string }): Promise<{ workspaceId: string; tabId: string } | undefined>;
     describe(ref: { workspaceId: string; tabId: string }): Promise<{ labels?: Record<string, string> } | undefined>;
   };
-  kernelTools: { run(input: { projectId?: string; name: string; cwd: string; template?: string; task?: string; labels?: Record<string, string> }): Promise<unknown> };
+  kernelTools: {
+    run(input: { projectId?: string; name: string; cwd: string; template?: string; task?: string; labels?: Record<string, string> }): Promise<unknown>;
+    list(): Promise<unknown>;
+  };
 }
 
 /** Resolves a declared pane to its tab and labels, so watcher-started sessions carry their depth. */
@@ -89,4 +97,11 @@ export function boardTerminalCaller(terminal: BoardTerminalAgents): NonNullable<
     const record = await terminal.agents.describe(ref);
     return { ...ref, ...(record?.labels ? { labels: record.labels } : {}) };
   };
+}
+
+async function terminalNamed(list: () => Promise<unknown>, name: string): Promise<boolean> {
+  const workspaces = await list();
+  if (!Array.isArray(workspaces)) return false;
+  return workspaces.some((workspace) => Array.isArray((workspace as { tabs?: unknown }).tabs)
+    && ((workspace as { tabs: Array<{ name?: unknown }> }).tabs).some((tab) => tab.name === name));
 }

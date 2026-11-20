@@ -76,15 +76,16 @@ export class BoardGrantService {
   /** One grant per principal at the pattern; writing again replaces its permissions. */
   async create(caller: BoardCaller, boardName: string | undefined, input: CreateGrantRequest): Promise<BoardGrant[]> {
     return this.board.write(caller, boardName, async (ctx) => {
-      const count = await ctx.trx.selectFrom("board_grants").select((eb) => eb.fn.countAll<string>().as("count"))
-        .where("board_id", "=", ctx.board.id).executeTakeFirstOrThrow();
-      if (Number(count.count) + input.principals.length > MAX_GRANTS_PER_BOARD) boardFail("limit_reached");
       return this.writeGrants(ctx.trx, ctx.board.id, caller, input.principals, input.channel, input.permissions, ctx.now);
     });
   }
 
   async writeGrants(trx: BoardTrx, boardId: string, caller: BoardCaller, principals: readonly string[], pattern: string,
     permissions: readonly BoardGrantPermission[], now: Date): Promise<BoardGrant[]> {
+    // Every writer (grants and private channels) shares the per-board cap, so reads never truncate.
+    const existing = await trx.selectFrom("board_grants").select(["principal", "pattern"]).where("board_id", "=", boardId).execute();
+    const added = principals.filter((principal) => !existing.some((row) => row.principal === principal && row.pattern === pattern)).length;
+    if (existing.length + added > MAX_GRANTS_PER_BOARD) boardFail("limit_reached");
     const written: BoardGrant[] = [];
     for (const principal of principals) {
       const row = await trx.insertInto("board_grants").values({
