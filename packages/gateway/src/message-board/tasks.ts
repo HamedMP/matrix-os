@@ -155,7 +155,7 @@ export class BoardTaskService {
     let query = ctx.trx.selectFrom("board_tasks as t").innerJoin("board_messages as m", "m.id", "t.root_id").selectAll("t")
       .where("t.board_id", "=", ctx.board.id).where("t.state", "=", "ready").where(scopeSql)
       .where((eb) => eb.or([
-        eb("t.assigned_profile", "=", profile ?? "\u0000"),
+        profile ? eb("t.assigned_profile", "=", profile) : eb.val(false),
         eb.and([eb("t.assigned_profile", "is", null), creatorSql]),
       ]));
     if (request.label) {

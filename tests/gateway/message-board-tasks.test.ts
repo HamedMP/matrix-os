@@ -83,6 +83,9 @@ describe("BoardTaskService", () => {
     const named = await tasks.claim(as(reviewer), undefined, { ready: "dev", from: guest.id });
     expect((await board.getThread(as(owner), undefined, named.taskId)).root.text).toBe("From a guest");
     expect(await reason(tasks.claim(as(reviewer), undefined, { ready: "ops/" }))).toBe("nothing_ready");
+    const plain = { id: "agent:term_3", kind: "agent" as const, name: "term_3" };
+    const open = await create(owner, "Any agent may take this");
+    expect((await tasks.claim(as(plain), undefined, { ready: "dev" })).taskId).toBe(open.root.id);
   });
 
   it("refuses claims on assigned, waiting, blocked and finished tasks with stable reasons", async () => {
