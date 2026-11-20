@@ -22,7 +22,6 @@ skills=(
   app-builder
   app-ui-patterns
   apple-design
-  board
   browser-admin
   chat-import
   collaborative-app-builder
