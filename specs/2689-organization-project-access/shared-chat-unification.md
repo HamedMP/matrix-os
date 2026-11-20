@@ -137,6 +137,21 @@ authentication still signs the canonical path and query separately.
 
 ## Runtime provenance and bounded diagnostics (20 November)
 
+Precise logs show the failed worker was stopped before it reported an error;
+the historical reason was erased to a generic Error. A production-boundary
+regression reproduces a lifecycle defect: expiry of an older identity session
+revokes the actor/scope and aborts a run admitted under a newer fresh session.
+Distinguish the identity clock deadline from authority loss internally. Ignore
+that old identity expiry only while a session for the same actor, scope, org,
+runtime and authority generation still has fresh identity and membership
+evidence. Denial, explicit revocation, generation changes and expiry without a
+fresh matching session remain fail closed. Keep the client-facing expiry event
+unchanged. Extract the session/revocation subscription from the 1056-line wiring
+entrypoint before adding its lifecycle rule; exercise the actual signed-session,
+authority, registry and revocation classes together. The original failure's
+unrecorded cause cannot be proven retrospectively; distinguish that limitation
+from the reproducible cancellation defect and require current live retests.
+
 Reload validation also reproduced a shared URL reopening the personal draft.
 The canonical state hook clears its selected collaboration view when the first
 verified viewer scope replaces its temporary startup scope. Reconcile the

@@ -21,6 +21,7 @@
   "tests/gateway/collaboration-project-transition.test.ts",
   "tests/gateway/collaboration-repository-postgres.test.ts",
   "tests/gateway/collaboration-scoped-app-bridge-postgres.test.ts",
+  "tests/gateway/collaboration-session-expiry.test.ts",
   "tests/gateway/collaboration-standalone-scope-postgres.test.ts",
   "tests/gateway/collaboration-terminal-scope.test.ts",
   "tests/gateway/company-brain-execution-fence.test.ts",
