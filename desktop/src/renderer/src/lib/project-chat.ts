@@ -120,7 +120,6 @@ export async function openProjectChat(
   options: OpenProjectChatOptions = {},
 ): Promise<boolean> {
   const projectView = useProjectView.getState();
-  projectView.setView(projectId, "chats");
   // Only an explicit thread updates the selection; a bare open keeps the
   // persisted conversation the user last had selected.
   if (options.threadId !== undefined) {

@@ -14,7 +14,7 @@ import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../lib/project-chat";
-import { openProjectOverview } from "../../lib/project-navigation";
+import { openProjectBoard, openProjectHome } from "../../lib/project-navigation";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
 import { useShortcutLabel } from "../../stores/shortcuts";
@@ -148,7 +148,6 @@ export default function CommandPalette() {
   const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
-  const cardsByProject = useBoard((s) => s.cardsByProject);
   const shellSessions = useShellSessions((s) => s.sessions);
   const loadShellSessions = useShellSessions((s) => s.load);
   const { data: apps = [], isError: appsError, refetch: refetchApps } = useAppsQuery();
@@ -193,7 +192,7 @@ export default function CommandPalette() {
 
   if (!open) return null;
 
-  const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
+  const boardProject = activeSlug ? projects.find((p) => p.slug === activeSlug) ?? null : null;
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
   const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
   const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary, shellSessions) : [];
@@ -375,22 +374,20 @@ export default function CommandPalette() {
                   key={p.slug}
                   icon={<Kanban size={14} />}
                   label={p.name || p.slug}
-                  onSelect={() => run(() => openProjectOverview(p.slug, p.name || p.slug))}
+                  onSelect={() => run(() => openProjectHome(p.slug, p.name || p.slug))}
                 />
               ))}
             </Command.Group>
           ) : null}
 
-          {showProjects && cards.length > 0 ? (
+          {showProjects && boardProject ? (
             <Command.Group heading="Tasks" style={{ color: "var(--text-tertiary)" }}>
-              {cards.slice(0, 30).map((card) => (
-                <PaletteItem
-                  key={card.id}
-                  icon={<Kanban size={14} />}
-                  label={card.title}
-                  onSelect={() => run(() => openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title }))}
-                />
-              ))}
+              <PaletteItem
+                icon={<Kanban size={14} />}
+                label={`Open ${boardProject.name || boardProject.slug} board`}
+                keywords={["tasks", "kanban", "board"]}
+                onSelect={() => run(() => openProjectBoard(boardProject.slug, boardProject.name || boardProject.slug))}
+              />
             </Command.Group>
           ) : null}
 

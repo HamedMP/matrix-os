@@ -193,7 +193,6 @@ describe("kernel wiring", () => {
     const tabs = useTabs.getState();
     const active = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
     expect(active).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
 
     cleanup();

@@ -5,6 +5,9 @@
 import { ThreadIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
+// The project page's home view. "chats" is a retired value older builds
+// stored; it still parses so their saved selections survive, and reads as
+// "overview".
 export const ProjectViewSchema = z.enum(["overview", "board", "chats"]);
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
 

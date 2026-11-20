@@ -649,10 +649,9 @@ describe("WorkTab rail integration", () => {
       chatId: undefined,
       chatView: "draft",
     });
-    expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
 
     expect(screen.queryByRole("button", { name: "Open Alpha board" })).toBeNull();
-    expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
+    expect(screen.queryByRole("group", { name: "Project view" })).toBeNull();
   });
 
   it("selects Global and Project Chats in the retained Work route", async () => {
@@ -678,7 +677,6 @@ describe("WorkTab rail integration", () => {
       chatId: "chat_alpha",
       chatView: "conversation",
     }));
-    expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
     expect(useTabs.getState().tabs).toHaveLength(1);
   });
 
@@ -795,7 +793,7 @@ describe("WorkTab rail integration", () => {
     if (inspectorRemainsMounted) expect(inspectorProps.active.at(-1)).toBe(false);
   });
 
-  it("keeps the Project on canonical Chat even when a legacy Board preference is restored", async () => {
+  it("keeps an open Project Chat in front of the remembered Board", async () => {
     useProjectView.getState().setView("alpha", "board");
     render(
       <WorkTab route="project" projectSlug="alpha" active initialChatId="chat_alpha" initialChatView="conversation" />,
@@ -803,7 +801,7 @@ describe("WorkTab rail integration", () => {
     await screen.findByRole("button", { name: "Alpha" });
     expect(screen.getByText("Project center")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Board" })).toBeNull();
-    expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
+    expect(useProjectView.getState().viewFor("alpha")).toBe("board");
   });
 
   it("keeps the Chat sidebar fixed while the inspector remains keyboard-resizable", async () => {
