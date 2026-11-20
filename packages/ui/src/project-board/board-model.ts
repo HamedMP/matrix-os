@@ -1,6 +1,6 @@
 import { rollUpTerminalStatus } from "../terminal-agents/attention.js";
 import {
-  TASK_PRIORITY_WEIGHT, TASK_STATUSES, rankBetween,
+  TASK_PRIORITY_WEIGHT, TASK_STATUSES, TaskRankError, rankBetween,
   type ActorRef, type ProjectTask, type TaskAgentStatus, type TaskPriority, type TaskSession, type TaskStatus,
 } from "./types.js";
 
@@ -36,7 +36,21 @@ export function planMove(column: readonly ProjectTask[], taskId: string, targetI
   const index = Math.max(0, Math.min(targetIndex, others.length));
   const after = others[index - 1];
   const before = others[index];
-  return { afterTaskId: after?.id, beforeTaskId: before?.id, rank: rankBetween(after?.rank ?? null, before?.rank ?? null) };
+  return { afterTaskId: after?.id, beforeTaskId: before?.id, rank: localRank(after?.rank ?? null, before?.rank ?? null) };
+}
+
+/**
+ * The optimistic rank shown until the server answers. When the room between two
+ * neighbours has run out, the neighbour ids still go to the server, which
+ * respaces the column; meanwhile the card sits beside its upper neighbour.
+ */
+function localRank(after: string | null, before: string | null): string {
+  try {
+    return rankBetween(after, before);
+  } catch (error: unknown) {
+    if (!(error instanceof TaskRankError)) throw error;
+    return after ?? before ?? "V";
+  }
 }
 
 export interface PendingMove {

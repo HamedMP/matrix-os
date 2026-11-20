@@ -5,7 +5,7 @@
 import type { TaskPriority, TaskStatus } from "@matrix-os/contracts/project-tasks";
 
 export {
-  BOARD_COLUMN_STATUSES, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES, rankBetween,
+  BOARD_COLUMN_STATUSES, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES, TaskRankError, rankBetween,
 } from "@matrix-os/contracts/project-tasks";
 export type {
   ActorRef, AttachableSession, BoardMember, BoardSettings, ProjectTask, TaskActivity, TaskActivityKind, TaskAgentStatus,

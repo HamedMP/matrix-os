@@ -32,3 +32,14 @@ describe("board preferences", () => {
     expect(() => writeBoardPreferences(throwing, "x", DEFAULT_BOARD_PREFERENCES)).not.toThrow();
   });
 });
+
+describe("board preferences with long labels", () => {
+  it("keeps a saved label filter up to the contract's label length", () => {
+    const values: Record<string, string> = {};
+    const storage = { getItem: (key: string) => values[key] ?? null, setItem: (key: string, value: string) => { values[key] = value; } };
+    const label = "l".repeat(48);
+    const saved = { layout: "list" as const, filter: { ...EMPTY_BOARD_FILTER, labels: [label] } };
+    writeBoardPreferences(storage, "k", saved);
+    expect(readBoardPreferences(storage, "k")).toEqual(saved);
+  });
+});
