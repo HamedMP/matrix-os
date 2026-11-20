@@ -1,8 +1,10 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import * as SecureStore from "expo-secure-store";
 
 import { createNotificationChannelsAtStartup, ensureNotificationChannels } from "@/lib/notification-channels";
 import { enablePushNotifications } from "@/lib/push";
+import { syncPushRegistration } from "@/lib/push-registration-sync";
 
 jest.mock("expo-notifications", () => ({
   setNotificationHandler: jest.fn(),
@@ -99,6 +101,20 @@ describe("Android notification channels", () => {
       "token",
     ]);
     expect(events.slice(0, 3).sort()).toEqual(["channel:attention", "channel:default", "channel:replies"]);
+  });
+
+  it("also waits for channels before the launch re-registration permission prompt", async () => {
+    jest.mocked(SecureStore.getItemAsync).mockResolvedValueOnce("ExponentPushToken[previous-install]");
+    notifications.getPermissionsAsync.mockImplementation(async () => {
+      events.push("permission");
+      return { granted: false, canAskAgain: true } as Notifications.NotificationPermissionsStatus;
+    });
+
+    await syncPushRegistration({ clerkToken: "clerk", gatewayUrl: "https://app.matrix-os.com" });
+
+    expect(events.slice(0, 3).sort()).toEqual(["channel:attention", "channel:default", "channel:replies"]);
+    expect(events.indexOf("permission-request")).toBeGreaterThan(2);
+    expect(events.indexOf("token")).toBeGreaterThan(events.indexOf("permission-request"));
   });
 
   it("logs a channel that cannot be created at startup instead of failing the launch", async () => {
