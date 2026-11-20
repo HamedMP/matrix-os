@@ -140,7 +140,7 @@ export class MessageBoardService {
   async listActors(caller: BoardCaller, boardName?: string): Promise<BoardActor[]> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
     const rows = await this.db.selectFrom("board_messages").select(["author", "author_actor"]).distinctOn("author")
-      .where("board_id", "=", board.id).orderBy("author").limit(500).execute();
+      .where("board_id", "=", board.id).where("deleted_at", "is", null).orderBy("author").limit(500).execute();
     return rows.map((row) => parseActor(row.author_actor));
   }
 

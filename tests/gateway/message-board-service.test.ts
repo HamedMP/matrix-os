@@ -198,6 +198,9 @@ describe("MessageBoardService", () => {
     expect(await reason(service.createChannel(as(owner), undefined, "projects/matrix-os"))).toBe("channel_exists");
     await service.post(as(agent), undefined, { channel: "dev", text: "Hi" });
     expect((await service.listActors(as(owner))).map((actor) => actor.id)).toEqual(["agent:chat_abc"]);
+    const gone = await service.post(as(owner), undefined, { channel: "dev", text: "Deleted later" });
+    await service.remove(as(owner), undefined, gone.id, {});
+    expect((await service.listActors(as(owner))).map((actor) => actor.id)).toEqual(["agent:chat_abc"]);
   });
 
   it("rate limits writes per actor", async () => {
