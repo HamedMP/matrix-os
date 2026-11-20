@@ -61,4 +61,18 @@ describe("Message Board viewer against the real board routes", () => {
     const thread = await runtime.service.getThread(agent, undefined, root.id);
     expect(thread.replies.map((item) => item.text)).toEqual(["Rotating it now"]);
   });
+
+  it("pauses a watcher and cancels a schedule from the Automation panels", async () => {
+    const owner = { ownerId: "owner_1", actor: { id: "user:owner_1", kind: "user" as const, name: "You" } };
+    await runtime.service.post(owner, undefined, { channel: "incidents", text: "Seed" });
+    const watcher = await runtime.watchers.create(owner, undefined, { name: "incident-triage", tail: { channel: "incidents" }, action: { kind: "start", template: "incident-responder" } });
+    await runtime.schedules.create(owner, undefined, { channel: "incidents", text: "Weekly summary", in: "1h", every: "7d" });
+    renderLive();
+    fireEvent.click(await screen.findByRole("button", { name: "Watchers" }));
+    fireEvent.click(await screen.findByRole("switch", { name: "Pause incident-triage" }));
+    await waitFor(async () => expect((await runtime.watchers.list(owner, undefined))[0]).toMatchObject({ id: watcher.id, enabled: false }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedules" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel schedule" }));
+    await waitFor(async () => expect(await runtime.schedules.list(owner, undefined)).toEqual([]));
+  });
 });

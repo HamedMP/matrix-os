@@ -36,6 +36,7 @@
     "#messaging-origin": "./src/messaging-origin.ts",
     "#message-board-schemas": "./src/message-board/schemas.ts",
     "#message-board-tasks": "./src/message-board/tasks.ts",
+    "#message-board-automation": "./src/message-board/automation.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",

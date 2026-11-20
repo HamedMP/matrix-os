@@ -1834,7 +1834,7 @@ export async function createGateway(config: GatewayConfig) {
 
   registerDataFeatureRoutes({
     app, upgradeWebSocket, messagingRepository, canvasService, canvasSubscriptionHub, gatewayCollaboration, logUnexpectedWsSendFailure,
-    messageBoard: ownerDatabaseServices?.messageBoard ?? null, ownerName: process.env.MATRIX_HANDLE, resolveTerminalCaller: terminalAgents.agents.resolveCaller,
+    messageBoard: ownerDatabaseServices?.messageBoard ?? null, ownerName: process.env.MATRIX_HANDLE, terminalAgents, push: (reply) => pushAdapter.send(reply),
   });
 
   const socialRoutes = await registerGatewaySyncAndSocialRoutes({
