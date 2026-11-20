@@ -67,6 +67,12 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     foreground: "white",
   },
   whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
+  "message-board": {
+    icon: "messages-square",
+    iconSource: "fixed",
+    background: "var(--surface-info-emphasis, #3B85BA)",
+    foreground: "white",
+  },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {
@@ -90,6 +96,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __browser__: "browser",
   "__cloud-desktop__": "cloud-desktop",
   __notes__: "notes",
+  "__message-board__": "message-board",
   "apps/browser/index.html": "browser",
   "apps/browser/dist/index.html": "browser",
   "apps/notes/index.html": "notes",
@@ -113,7 +120,8 @@ export function osViewBundledIconUrlForPath(path: string): string | undefined {
   if (path === "__cloud-desktop__") return "/system-app-icons/v3/desktop.png";
   if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
-  if (!id || id === "vscode") return undefined;
+  // Message Board has no bundled v2 artwork yet; renderers draw its fixed icon.
+  if (!id || id === "vscode" || id === "message-board") return undefined;
   return `/system-app-icons/v2/${id}.png`;
 }
 

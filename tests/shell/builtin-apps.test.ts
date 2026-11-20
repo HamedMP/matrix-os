@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  builtInLaunchEntry,
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
   isRestorableBuiltInAppPath,
@@ -19,6 +20,16 @@ describe("built-in app helpers", () => {
       expect(normalizeBuiltInLayoutWindow({ path, title: "old", x: 10, y: 20, width: 900, height: 640, state: "minimized" })).toMatchObject({ path, title, state: "minimized" });
     }
     expect(normalizeBuiltInAppPath("apps/browser/index.html")).toBe("__browser__");
+  });
+
+  it("restores Message Board as a built-in with its canonical title", () => {
+    expect(isRestorableBuiltInAppPath("__message-board__")).toBe(true);
+    expect(normalizeBuiltInAppPath("message-board")).toBe("__message-board__");
+    expect(normalizeBuiltInLayoutWindow({ path: "__message-board__", title: "old", x: 10, y: 20, width: 900, height: 640, state: "open" }))
+      .toMatchObject({ path: "__message-board__", title: "Message Board" });
+    expect(builtInLaunchEntry("__message-board__")).toEqual({ path: "__message-board__", name: "Message Board" });
+    expect(builtInLaunchEntry("__workspace__")).toBeNull();
+    expect(builtInLaunchEntry("apps/notes/index.html")).toBeNull();
   });
 
   it("normalizes stale Workspace paths only to a non-restorable tombstone", () => {

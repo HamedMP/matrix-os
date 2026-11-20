@@ -5,6 +5,7 @@ import { shouldOpenChatOnStartup } from "@matrix-os/ui";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { useWindowManager } from "@/hooks/useWindowManager";
+import { builtInLaunchEntry } from "@/lib/builtin-apps";
 
 export function useDesktopChatStartup({
   entryKey, settled, navigationChangedRef, launchAppPath, sharedTerminalScopeId,
@@ -62,7 +63,7 @@ export function useDesktopChatStartup({
       }
       return;
     }
-    const match = apps.find((app) => app.path === launchAppPath);
+    const match = apps.find((app) => app.path === launchAppPath) ?? builtInLaunchEntry(launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchRequestKey;
     openAppOrFocus(match.path, match.name);
