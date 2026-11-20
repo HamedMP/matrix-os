@@ -101,6 +101,41 @@ A4 implementation notes (ENG-453, 2026-11-20):
 
 **A5 · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): kinds, phone timing, previews and Time Sensitive (iOS only). It reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
 
+#### A5 implementation notes (ENG-453)
+
+- App settings → Push notifications opens Notifications. The explicit device
+  switch uses the existing serialized push registration helpers and revocation
+  subscription; owner preference changes never opt a phone into push.
+- A4's strict full document stays transient in Native Mobile. Save adopts the
+  confirmed revision. Failed saves retain edits; a 409 loads the latest version
+  separately and requires **Use latest** or **Keep my changes**, followed by Save.
+  Reapplying changes preserves unrelated edits from the other surface.
+- Client/account/computer changes invalidate old requests and clear the visible
+  draft. Android omits Time Sensitive while preserving its saved value; away-after
+  and device management remain deferred to B2 and B4.
+- Product copy distinguishes today's four coding-agent kind switches from timing
+  and content choices saved for later delivery updates. A1 routing, A3 sync, and
+  the legacy completion dedupe are unchanged.
+- API parsing and draft logic live in focused helpers. The large GatewayClient
+  adds thin delegates only; no new native dependency or persistent phone store.
+- Focused validation: 11 mobile suites / 153 tests pass with normal exit, including
+  retained A1/A3 coverage. Root typecheck and shell typecheck pass. Broad mobile
+  assertions pass (300 suites / 3,785 tests), but worker teardown warns; full mobile
+  typecheck/lint have errors in untouched files. Broader root tests encounter
+  unrelated CI/host-script/UI failures. Native live captures remain unqualified.
+- Design/product review of settings copy and native parity is recommended.
+  Other OS views are not touched by this Native Mobile release; reviewer approval
+  of that release-specific N/A rationale remains required.
+- Public documentation remains a separate private-site PR coordinated by the
+  parent chat. That repository currently returns 404; paste-ready text is in the
+  A5 handoff. No documentation PR or live qualification is claimed here.
+
+| Starting state | Action | Completion / recovery | Authority | Surface and automated boundary |
+| --- | --- | --- | --- | --- |
+| Owner on a connected computer | Edit kinds, durations, phone mode and content; Save; reopen | Confirmed values reload; Android retains hidden Time Sensitive | A4 owner API; full revisioned document | Native Mobile iOS/Android; real screen/controller/client with mocked HTTP and native sheet host |
+| Owner has unsaved edits | Save fails or another surface wins | Draft stays visible; 409 requires explicit recovery, preserving unrelated remote edits | Server revision remains authoritative | Native Mobile; settings-screen integration |
+| Device push off or OS permission revoked | Explicitly enable/disable, or foreground sync | Serialized registration; failure preserves confirmed state; stale computer result ignored | Existing per-device SecureStore token and OS permission | Native Mobile; DevicePushSettings component plus retained A3 sync suites |
+
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
 - Compose `router.onChatEvent` into `onCommittedEvent` (see Integration wiring). Route `run.activity` rows that contain `approval.requested`, `input.requested` or `interaction.requested`.

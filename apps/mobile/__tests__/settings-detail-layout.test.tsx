@@ -46,10 +46,11 @@ describe("settings pages", () => {
 
   it("keeps the back of the pages opened from another page", () => {
     render(<SettingsDetailLayout />);
-    const buttons = ["support", "delete-account"].map(headerButton);
+    const buttons = ["support", "delete-account", "notifications"].map(headerButton);
     mockScreens.length = 0;
     render(<>{buttons}</>);
 
+    expect(screen.getByLabelText("Back to app settings")).toBeTruthy();
     expect(screen.getByLabelText("Back to help")).toBeTruthy();
     expect(screen.getByLabelText("Back")).toBeTruthy();
   });
