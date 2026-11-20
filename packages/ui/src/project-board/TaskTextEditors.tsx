@@ -117,7 +117,7 @@ export function DescriptionEditor({ task, onSave }: { task: ProjectTask; onSave:
       {description.trim()
         ? <div className={markdownClass} style={tone.primary}><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={EXTERNAL_LINKS}>{description}</ReactMarkdown></div>
         : <span className="text-[14px]" style={tone.muted}>No description yet.</span>}
-      <button type="button" onClick={startEditing}
+      <button type="button" onClick={startEditing} aria-label="Edit description"
         className={`${description.trim() ? "absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : "mt-1 block"} ${chipButtonClass}`}
         style={tone.secondary}>{description.trim() ? "Edit description" : "Add a description"}</button>
     </div>;
