@@ -47,13 +47,13 @@ import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from 
 import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
 import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
-import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/files-navigation";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
-import { SideChatDraftContext, type SideChatDraftRequest } from "./SideChatDraftContext";
+import { SideChatDraftContext, type SideChatDraftRequest } from "./WorkSurfaceRuntime";
 
 function ResponsiveWorkInspector({
   detail,

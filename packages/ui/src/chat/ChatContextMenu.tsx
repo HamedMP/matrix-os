@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, Copy, Folder, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, type LucideIcon } from "lucide-react";
+import { Archive, Copy, Folder, ListFilter, Mail, MailOpen, Pencil, Pin, PinOff, Trash2, type LucideIcon } from "lucide-react";
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -108,4 +108,16 @@ export function ChatMenuActionLabel({ label }: { label: string }) {
   const action = actions[label];
   const Icon = action?.icon;
   return <><span aria-hidden style={{ width: 14, height: 14, flexShrink: 0 }}>{Icon ? <Icon size={14}/> : null}</span><span className="min-w-0 flex-1">{label}</span>{action?.shortcut ? <kbd aria-hidden style={{ font: "11px Geist, sans-serif", color: "var(--text-secondary, var(--muted-foreground))" }}>{action.shortcut}</kbd> : null}</>;
+}
+
+import * as Popover from "@radix-ui/react-popover";
+import { ChatImportSourceFilter } from "./ChatImportSource.js";
+import type { ChatImportSourceFilterValue } from "./import-source.js";
+import { POPOVER_LAYER } from "../layering.js";
+
+/** Keep provenance filtering accessible without an extra permanent sidebar row. */
+export function ChatSourceFilterMenu({ value, onChange }: { value: ChatImportSourceFilterValue; onChange(value: ChatImportSourceFilterValue): void }) {
+  return <Popover.Root><Popover.Trigger asChild><button type="button" aria-label="Filter chats" title="Filter chats" aria-pressed={value !== "all"} className="chat-source-filter-trigger"><ListFilter size={14} aria-hidden/></button></Popover.Trigger>
+    <Popover.Portal><Popover.Content side="bottom" align="end" sideOffset={4} className="desktop-chat-design chat-source-filter-menu" style={{ zIndex: POPOVER_LAYER }}><ChatImportSourceFilter value={value} onChange={onChange}/></Popover.Content></Popover.Portal>
+  </Popover.Root>;
 }

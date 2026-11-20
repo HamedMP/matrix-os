@@ -54,7 +54,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
-import { useSideChatDraft } from "../work/SideChatDraftContext";
+import { useSideChatDraft } from "../work/WorkSurfaceRuntime";
 import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";

@@ -83,7 +83,7 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
         </div> : null}
       </article>)}
     </div>
-    {error ? <p role="alert" className="px-3 py-1 text-xs" style={{ color: "var(--danger, var(--destructive))" }}>{error}</p> : null}
+    {error ? <p role="alert" className="px-3 py-1 text-xs" style={{ color: "var(--danger-text, var(--destructive-text, var(--destructive)))" }}>{error}</p> : null}
     <form className="side-chat-composer" onSubmit={event => { event.preventDefault(); void send(); }}>
       <textarea aria-label="Ask side chat" placeholder="Ask on the side…" value={draft} onChange={event => setDraft(event.target.value)} maxLength={8_000} rows={1}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }}/>

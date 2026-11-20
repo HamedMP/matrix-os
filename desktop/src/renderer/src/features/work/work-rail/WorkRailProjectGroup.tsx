@@ -12,7 +12,7 @@ import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-
 import { WorkRailChatRow } from "./WorkRailChatRow";
 import type { DesktopProjectSharingContext } from "../../project/DesktopProjectSharing";
 import { projectShareMenuItems } from "./project-share-action";
-import { useWorkRailPage } from "./useWorkRailPage";
+import { useWorkRailPage } from "./use-work-rail-order";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
 
 const PROJECT_CHAT_PAGE = 5;

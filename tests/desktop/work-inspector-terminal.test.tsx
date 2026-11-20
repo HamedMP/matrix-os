@@ -10,7 +10,7 @@ import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/rend
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/chat-inspector-layout";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/files-navigation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 

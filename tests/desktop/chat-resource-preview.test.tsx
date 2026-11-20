@@ -114,7 +114,7 @@ it("does not copy an image when its selected preview is replaced during the read
   let resolveRead!: (blob: Blob) => void;
   getBlob.mockImplementation(() => new Promise<Blob>((resolve) => { resolveRead = resolve; }));
   const { unmount } = render(<InspectorFilePreview target={home} />);
-  fireEvent.contextMenu(await screen.findByText("chart.png", { selector: "span" }));
+  fireEvent.contextMenu(await screen.findByLabelText("File preview chart.png"));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Copy image chart.png" }));
   unmount();
   await act(async () => resolveRead(new Blob(["png"])));

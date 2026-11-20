@@ -21,10 +21,10 @@ import { resolveWorkFilesScope, type WorkFilesScope } from "./work-files-scope";
 import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
 import { Dialog } from "../../design/primitives";
-import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/chat-inspector-layout";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/files-navigation";
 import { Button, SideChatPanel, ChatInspectorTabs, ChatInspectorNewTab, type InspectorTool, InspectorToolIcon } from "@matrix-os/ui";
 import { useScopedCanonicalChatClient } from "../chat/CanonicalChatClientContext";
-import { useSideChatDraft } from "./SideChatDraftContext";
+import { useSideChatDraft } from "./WorkSurfaceRuntime";
 
 const MAX_TERMINAL_SUMMARY_REFRESH_ATTEMPTS = 4;
 const TERMINAL_SUMMARY_REFRESH_DELAY_MS = 1_000;

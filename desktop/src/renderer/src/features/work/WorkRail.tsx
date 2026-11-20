@@ -675,7 +675,7 @@ export function WorkRail({
         {renameError ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger-text)" }}>{renameError}</p>
         ) : null}
-        {archiveError ? <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger)" }}>{archiveError}</p> : null}
+        {archiveError ? <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger-text)" }}>{archiveError}</p> : null}
       </WorkRailScrollArea>
       {archiveUndo ? <div role="status" className="desktop-chat-design chat-lifecycle-toast">
         <span className="truncate">{archiveUndo.label}</span>
@@ -706,7 +706,7 @@ export function WorkRail({
       <Dialog open={archiveProjectTarget !== null} onClose={() => { if (!bulkArchivePending) setArchiveProjectTarget(null); }} title={`Archive chats in ${archiveProjectTarget?.name ?? "project"}?`} width={420}>
         <div className="p-4 text-sm">
           <p>Archive all idle chats in this project? Running chats will be skipped.</p>
-          {bulkArchiveError ? <p role="alert" className="mt-2" style={{ color: "var(--danger)" }}>{bulkArchiveError}</p> : null}
+          {bulkArchiveError ? <p role="alert" className="mt-2" style={{ color: "var(--danger-text)" }}>{bulkArchiveError}</p> : null}
           <div className="mt-4 flex justify-end gap-3"><Button variant="ghost" size="sm" disabled={bulkArchivePending} onClick={() => setArchiveProjectTarget(null)}>Cancel</Button>
             <Button size="sm" disabled={bulkArchivePending} onClick={() => { void archiveProject(); }}>Archive chats</Button></div>
         </div>
