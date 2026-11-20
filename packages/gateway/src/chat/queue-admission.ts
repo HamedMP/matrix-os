@@ -11,6 +11,7 @@ import {
   canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
+import { chatDefaultExecutionRoot } from "./execution-defaults.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import {
   validateChatProviderSelection,
@@ -62,7 +63,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
   owner: ChatOwner;
   chatId: string;
   input: CanonicalQueueChatTurnRequest;
-  repository: Pick<ChatRepository, "get" | "enqueueQueuedTurn" | "findQueuedAdmission">;
+  repository: Pick<ChatRepository, "get" | "enqueueQueuedTurn" | "findQueuedAdmission">
+    & Partial<Pick<ChatRepository, "getExecutionDefault">>;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
@@ -129,8 +131,12 @@ export async function enqueueCanonicalQueuedTurn(options: {
       400,
     );
   }
-  const rootRef = input.executionRoot
-    ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
+  // A turn that names no root runs where the Chat was set up to run: its default worktree, else its Project.
+  const rootRef = input.executionRoot ?? chatDefaultExecutionRoot(
+    record,
+    record.projectId && options.repository.getExecutionDefault ? await options.repository.getExecutionDefault(options.owner, options.chatId) : null,
+    validated.instance.supports,
+  );
   if (input.executionRoot && record.projectId
       && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
     throw new CanonicalQueueAdmissionError(

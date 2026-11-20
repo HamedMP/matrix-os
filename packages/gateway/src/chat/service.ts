@@ -6,6 +6,7 @@ import { CanonicalUpdateChatReadStateRequestSchema } from "@matrix-os/contracts"
 import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
+  WorktreeIdSchema,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalChatIdSchema,
@@ -168,14 +169,22 @@ export function createCanonicalChatService(
   };
   return {
     navigation: createChatNavigationService({ navigation: options.navigation }),
-    async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
+    /** `server` carries gateway-only settings that no client request can supply. */
+    async create(owner: ChatOwner, input: CanonicalCreateChatRequest, server?: { defaultWorktreeId?: string }): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
+      const defaultWorktreeId = server?.defaultWorktreeId === undefined ? undefined : WorktreeIdSchema.parse(server.defaultWorktreeId);
+      if (defaultWorktreeId !== undefined && request.projectId === undefined) {
+        throw new CanonicalChatOrchestrationError(CanonicalChatSafeErrorSchema.parse({
+          code: "project_required", safeMessage: "A worktree Chat needs a Project.", retryable: false,
+        }), 400);
+      }
       const create = (target: Pick<ChatRepository, "create">) => target.create(owner, {
         id: CanonicalChatIdSchema.parse(`chat_${randomUUID().replaceAll("-", "")}`),
         clientRequestId: request.clientRequestId,
         title: request.title ?? "New chat",
         ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
         ...(request.currentSelection === undefined ? {} : { currentSelection: request.currentSelection }),
+        ...(defaultWorktreeId === undefined ? {} : { defaultWorktreeId }),
       });
       const created = options.projectAssignments
         ? await options.projectAssignments.run(owner, create)
