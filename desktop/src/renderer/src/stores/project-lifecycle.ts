@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { notifyCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import {
+  notifyCollaborationDiscoveryChanged, PROJECT_ACTIONS_UNAVAILABLE, PROJECT_LISTS_STALE, PROJECT_UPDATE_INCOMPLETE,
+  projectLifecycleErrorMessage, projectLifecyclePath,
+} from "@matrix-os/ui";
 import { AppError, categoryMessage } from "../../../shared/app-error";
 import type { ApiClient } from "../lib/api";
 import { readSystemVersionIdentity } from "../lib/system-version";
@@ -15,18 +18,6 @@ type LifecycleAction =
   | { type: "restore" }
   | { type: "delete"; confirmation: string; confirmTerminate: true };
 
-const SAFE_ACTION_ERRORS: Record<string, string> = {
-  project_active: "Stop active project work before continuing.",
-  confirmation_mismatch: "Enter the exact project name to continue.",
-  activity_check_failed: "Project activity could not be checked. Try again.",
-  delete_incomplete: "Project deletion could not be completed. Try again.",
-};
-
-const PROJECT_ACTIONS_UNAVAILABLE =
-  "Project management is unavailable on this computer. Restart Matrix services and try again.";
-const PROJECT_UPDATE_INCOMPLETE =
-  "This computer has not finished applying its update. Restart Matrix services, then try again.";
-
 async function safeActionError(api: ApiClient, error: unknown): Promise<string> {
   if (error instanceof AppError) {
     if (error.category === "notFound" && !error.detail) {
@@ -41,13 +32,9 @@ async function safeActionError(api: ApiClient, error: unknown): Promise<string> 
       }
       return PROJECT_ACTIONS_UNAVAILABLE;
     }
-    return (error.detail && SAFE_ACTION_ERRORS[error.detail]) || categoryMessage(error.category);
+    return projectLifecycleErrorMessage(error.detail) ?? categoryMessage(error.category);
   }
   return categoryMessage("server");
-}
-
-function lifecyclePath(slug: string): string {
-  return `/api/projects/${encodeURIComponent(slug)}/actions`;
 }
 
 interface ProjectLifecycleState {
@@ -87,7 +74,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
     const generation = captureRuntimeGeneration();
     set({ pendingProjectSlug: slug, error: null });
     try {
-      await api.post(lifecyclePath(slug), action);
+      await api.post(projectLifecyclePath(slug), action);
       if (!isCurrentRuntimeGeneration(generation)) return false;
       if (action.type === "delete") notifyCollaborationDiscoveryChanged();
       if (action.type !== "restore") {
@@ -106,7 +93,7 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
         pendingProjectSlug: null,
         error: activeLoaded && archivedLoaded
           ? null
-          : "Project updated, but project lists could not be refreshed. Try again.",
+          : PROJECT_LISTS_STALE,
       });
       return true;
     } catch (error: unknown) {

@@ -1,34 +1,39 @@
 // Presentational per-mode steps for the add-project dialog. State and submit
-// orchestration live in CreateProjectDialog; these components only render
-// fields and forward edits.
-import { Button } from "../../design/primitives";
-import type { Project } from "../../stores/board";
-import ComputerFileBrowser, { type FolderPickerChoice } from "../files/ComputerFileBrowser";
+// orchestration live in AddProjectForm; these components only render fields
+// and forward edits. Each OS view injects its own Button and folder picker.
+import type { ComponentType, CSSProperties, ReactNode } from "react";
+import { projectForFolderPath, resolveProjectFolderChoice, type AddProjectRecord, type FolderPickerChoice } from "./add-project-model.js";
 
-export const FIELD_STYLE: React.CSSProperties = {
+export interface AddProjectButtonProps {
+  variant: "primary" | "subtle";
+  disabled?: boolean;
+  onClick(): void;
+  children: ReactNode;
+}
+
+/** A directories-only browser of the Matrix computer, supplied by each OS view. */
+export interface AddProjectFolderPickerProps {
+  onChooseFolder(path: string): void;
+  onCreateFolder?(path: string): void;
+  resolveFolderChoice?(path: string): FolderPickerChoice;
+  onAlternateFolderAction?(path: string): void;
+}
+
+export const FIELD_STYLE: CSSProperties = {
   background: "var(--bg-raised)",
   color: "var(--text-primary)",
   border: "1px solid var(--border-default)",
   borderRadius: "var(--radius)",
   padding: "8px 10px",
-  fontSize: "var(--text-sm)",
+  fontSize: "var(--text-sm, 0.875rem)",
   width: "100%",
   outline: "none",
 };
+export const DANGER_TEXT = "var(--danger-text, var(--destructive))";
 
 export function CloneStepFields({
-  url,
-  onUrlChange,
-  onUrlBlur,
-  showUrlError,
-  folderName,
-  onFolderNameChange,
-  showFolderNameError,
-  branch,
-  onBranchChange,
-  onBranchBlur,
-  showBranchError,
-  submitting,
+  url, onUrlChange, onUrlBlur, showUrlError, folderName, onFolderNameChange, showFolderNameError,
+  branch, onBranchChange, onBranchBlur, showBranchError, submitting,
 }: {
   url: string;
   onUrlChange: (value: string) => void;
@@ -58,7 +63,7 @@ export function CloneStepFields({
         />
       </label>
       {showUrlError ? (
-        <span className="text-xs" style={{ color: "var(--danger-text)" }}>
+        <span className="text-xs" style={{ color: DANGER_TEXT }}>
           Enter a GitHub URL like https://github.com/owner/repo.
         </span>
       ) : null}
@@ -73,7 +78,7 @@ export function CloneStepFields({
         />
       </label>
       {showFolderNameError ? (
-        <span className="text-xs" style={{ color: "var(--danger-text)" }}>
+        <span className="text-xs" style={{ color: DANGER_TEXT }}>
           Use lowercase letters, numbers, and dashes only.
         </span>
       ) : null}
@@ -89,7 +94,7 @@ export function CloneStepFields({
         />
       </label>
       {showBranchError ? (
-        <span className="text-xs" style={{ color: "var(--danger-text)" }}>That branch name isn't valid.</span>
+        <span className="text-xs" style={{ color: DANGER_TEXT }}>That branch name isn't valid.</span>
       ) : null}
       {submitting ? (
         <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -101,61 +106,18 @@ export function CloneStepFields({
 }
 
 export function ExistingFolderStepFields({
-  name,
-  onNameChange,
-  folderPath,
-  projects,
-  onChooseFolder,
-  onCreateFolder,
-  onOpenProject,
-  submitting,
+  name, onNameChange, folderPath, projects, FolderPicker, onChooseFolder, onCreateFolder, onOpenProject, submitting,
 }: {
   name: string;
   onNameChange: (value: string) => void;
   folderPath: string;
-  projects: Project[];
+  projects: readonly AddProjectRecord[];
+  FolderPicker: ComponentType<AddProjectFolderPickerProps>;
   onChooseFolder: (path: string) => void;
   onCreateFolder: (path: string) => void;
   onOpenProject: (slug: string) => void;
   submitting: boolean;
 }) {
-  const normalizePath = (path: string) => path.replaceAll("\\", "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
-  const projectForPath = (path: string): Project | undefined => {
-    const normalized = normalizePath(path);
-    const exact = projects.find((project) => {
-      const localPath = normalizePath(project.localPath ?? "");
-      return localPath === normalized || localPath.endsWith(`/${normalized}`);
-    });
-    if (exact) return exact;
-
-    // Compatibility only: before MAT-340, projects/<slug> held Matrix-owned
-    // metadata while the real checkout lived below it. Keep the Open action
-    // for those already-connected legacy projects during lazy migration.
-    const segments = normalized.split("/");
-    if (segments.length !== 2 || segments[0] !== "projects") return undefined;
-    return projects.find((project) => {
-      if (project.slug !== segments[1] || project.kind === "folder") return false;
-      const localPath = normalizePath(project.localPath ?? "");
-      return localPath === normalized
-        || localPath.endsWith(`/${normalized}`)
-        || localPath.includes(`/${normalized}/`);
-    });
-  };
-  const resolveFolderChoice = (path: string): FolderPickerChoice => {
-    const project = projectForPath(path);
-    if (project) {
-      return {
-        kind: "alternate",
-        label: `Open ${project.name}`,
-        message: "This folder is already connected to Matrix OS.",
-      };
-    }
-    // Matrix-owned project metadata now lives in system/projects. Every
-    // ordinary owner folder is selectable here; the Gateway remains the
-    // authority for protected paths and managed worktree boundaries.
-    return { kind: "choose" };
-  };
-
   return (
     <>
       <label className="flex flex-col gap-1">
@@ -171,14 +133,12 @@ export function ExistingFolderStepFields({
       </label>
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>Choose a folder on this computer</span>
-        <ComputerFileBrowser
-          compact
-          mode="folder-picker"
+        <FolderPicker
           onChooseFolder={onChooseFolder}
           onCreateFolder={onCreateFolder}
-          resolveFolderChoice={resolveFolderChoice}
+          resolveFolderChoice={(path) => resolveProjectFolderChoice(projects, path)}
           onAlternateFolderAction={(path) => {
-            const project = projectForPath(path);
+            const project = projectForFolderPath(projects, path);
             if (project) onOpenProject(project.slug);
           }}
         />
@@ -191,14 +151,7 @@ export function ExistingFolderStepFields({
 }
 
 export function NewFolderStepFields({
-  name,
-  onNameChange,
-  parentPath,
-  parentPickerOpen,
-  onOpenParentPicker,
-  onChooseParent,
-  onResetParent,
-  submitting,
+  name, onNameChange, parentPath, parentPickerOpen, onOpenParentPicker, onChooseParent, onResetParent, submitting, Button, FolderPicker,
 }: {
   name: string;
   onNameChange: (value: string) => void;
@@ -208,6 +161,8 @@ export function NewFolderStepFields({
   onChooseParent: (path: string) => void;
   onResetParent: () => void;
   submitting: boolean;
+  Button: ComponentType<AddProjectButtonProps>;
+  FolderPicker: ComponentType<AddProjectFolderPickerProps>;
 }) {
   return (
     <>
@@ -237,7 +192,7 @@ export function NewFolderStepFields({
             </Button>
           </div>
         ) : parentPickerOpen ? (
-          <ComputerFileBrowser compact mode="folder-picker" onChooseFolder={onChooseParent} />
+          <FolderPicker onChooseFolder={onChooseParent} />
         ) : (
           <div
             className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"

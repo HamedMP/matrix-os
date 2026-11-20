@@ -1,7 +1,7 @@
 import { UsersIcon } from "@renderer/lib/hugeicons";
 import type { DesktopProjectSharingContext } from "../../project/DesktopProjectSharing";
 import type { WorkRailProjectGroup } from "../work-rail-model";
-import type { ProjectMenuAction } from "./ProjectActionsMenu";
+import type { ProjectMenuAction } from "@matrix-os/ui";
 
 /** Add whole-project sharing to the Chats project actions menu. */
 export function projectShareMenuItems(

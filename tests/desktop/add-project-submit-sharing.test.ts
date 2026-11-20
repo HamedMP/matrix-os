@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  openExistingProject,
-  submitExistingFolder,
-  type AddProjectSubmitContext,
-} from "../../desktop/src/renderer/src/features/board/add-project-submit";
+import { openExistingProject, submitExistingFolder, type AddProjectSubmitContext } from "@matrix-os/ui";
 import { cloneProject } from "../../desktop/src/renderer/src/features/board/clone-project";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import type { Project } from "../../desktop/src/renderer/src/stores/board";
 
 const existingProject: Project = {
@@ -15,15 +12,15 @@ const existingProject: Project = {
   localPath: "projects/existing",
 };
 
-function context(overrides: Partial<AddProjectSubmitContext> = {}): AddProjectSubmitContext {
+function context(overrides: Partial<AddProjectSubmitContext<Project>> = {}): AddProjectSubmitContext<Project> {
   return {
-    api: {} as AddProjectSubmitContext["api"],
-    runtimeSlot: "primary",
     getProjects: () => [existingProject],
     createProject: vi.fn(async () => null),
+    cloneProject: vi.fn(async () => ({ ok: false as const, message: "unused" })),
+    createFolder: vi.fn(async () => ({ ok: false as const, message: "unused" })),
     selectProject: vi.fn(async () => undefined),
     loadProjects: vi.fn(async () => true),
-    openTab: vi.fn(),
+    openProject: vi.fn(),
     isCurrent: () => true,
     setError: vi.fn(),
     close: vi.fn(),
@@ -43,7 +40,7 @@ describe("add-project sharing handoff", () => {
     finish();
     await submission;
     expect(ctx.close).toHaveBeenCalledOnce();
-    expect(ctx.openTab).toHaveBeenCalledWith({kind:"project",projectSlug:existingProject.slug,title:existingProject.name});
+    expect(ctx.openProject).toHaveBeenCalledWith(existingProject);
   });
 
   it("runs completion navigation after the normal Project tab is opened",async()=>{
@@ -51,7 +48,7 @@ describe("add-project sharing handoff", () => {
     const ctx=context({onProjectReady:vi.fn(async()=>complete)});
     await openExistingProject(ctx,existingProject.slug);
     expect(complete).toHaveBeenCalledOnce();
-    expect(vi.mocked(ctx.openTab).mock.invocationCallOrder[0]).toBeLessThan(complete.mock.invocationCallOrder[0]!);
+    expect(vi.mocked(ctx.openProject).mock.invocationCallOrder[0]).toBeLessThan(complete.mock.invocationCallOrder[0]!);
   });
 
   it("preserves the canonical project ID returned by clone creation", async () => {
@@ -59,7 +56,7 @@ describe("add-project sharing handoff", () => {
       post: vi.fn(async () => ({
         project: { id: "proj_clone", slug: "clone", name: "Clone", kind: "github" },
       })),
-    } as unknown as AddProjectSubmitContext["api"];
+    } as unknown as ApiClient;
 
     const result = await cloneProject({
       api,
