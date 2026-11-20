@@ -112,6 +112,39 @@ describe("BoardTaskService", () => {
     expect(renewed.task.needs).toEqual([fix.root.id]);
   });
 
+  it("keeps a released or lapsed dependent waiting when its prerequisite was reopened, and skips it in ready claims", async () => {
+    const first = await create(owner, "First");
+    const second = await create(owner, "Second", { needs: [first.root.id] });
+    const third = await create(owner, "Third");
+    await tasks.claim(as(owner), undefined, { id: first.root.id });
+    await tasks.complete(as(owner), undefined, first.root.id, {});
+    const held = await tasks.claim(as(fixer), undefined, { id: second.root.id });
+    await tasks.reopen(as(owner), undefined, first.root.id);
+    await tasks.release(as(fixer), undefined, second.root.id, { epoch: held.epoch, token: held.token });
+    expect((await board.getThread(as(owner), undefined, second.root.id)).task?.state).toBe("waiting");
+    // A ready-but-blocked-by-prerequisite task never hides other ready work.
+    await db.updateTable("board_tasks").set({ state: "ready" }).where("root_id", "=", second.root.id).execute();
+    const next = await tasks.claim(as(owner), undefined, { ready: "dev" });
+    expect([first.root.id, third.root.id]).toContain(next.taskId);
+    expect(next.taskId).not.toBe(second.root.id);
+  });
+
+  it("never claims a task whose root was deleted", async () => {
+    const task = await create(owner, "Drop me");
+    await board.remove(as(owner), undefined, task.root.id, {});
+    expect(await reason(tasks.claim(as(owner), undefined, { id: task.root.id }))).toBe("message_deleted");
+    expect(await reason(tasks.claim(as(owner), undefined, { ready: "dev" }))).toBe("nothing_ready");
+  });
+
+  it("ends pending claim waits when the service stops", async () => {
+    const pending = tasks.claim(as(fixer), undefined, { ready: "dev", waitSeconds: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const started = Date.now();
+    tasks.stop();
+    expect(await reason(pending)).toMatch(/nothing_ready|unavailable/);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it("refuses claims on assigned, waiting, blocked and finished tasks with stable reasons", async () => {
     const assigned = await create(owner, "Reviewer only", { forProfile: "reviewer" });
     expect(await reason(tasks.claim(as(fixer), undefined, { id: assigned.root.id }))).toBe("task_assigned");

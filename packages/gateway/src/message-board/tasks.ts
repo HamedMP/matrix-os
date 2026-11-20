@@ -35,6 +35,8 @@ export class BoardTaskService {
   private readonly waiters: ClaimWaiter[] = [];
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  /** Set by stop(): pending claim waits end instead of looping until their deadline. */
+  private stopped = false;
 
   static attach(db: Kysely<MessageBoardDatabase>, options: MessageBoardServiceOptions = {}): BoardTaskService {
     let tasks: BoardTaskService | null = null;
@@ -128,16 +130,24 @@ export class BoardTaskService {
     // Real time, not the board clock: a wait is about how long this request stays open.
     const deadline = Date.now() + (request.waitSeconds ?? 0) * 1000;
     for (;;) {
+      if (this.stopped) boardFail("unavailable");
+      const remaining = deadline - Date.now();
+      // Register before looking, so work that appears during the attempt wakes us.
+      const waiter = remaining > 0 ? this.registerWorkWaiter(caller.ownerId, remaining) : null;
       try {
-        return await this.board.write(caller, boardName, async (ctx) => {
+        const claim = await this.board.write(caller, boardName, async (ctx) => {
           const candidate = await this.nextReady(ctx, request);
           return this.claimRow(ctx, candidate ?? boardFail("nothing_ready"), leaseSeconds);
         });
+        waiter?.cancel();
+        return claim;
       } catch (error) {
-        if (!(error instanceof MessageBoardServiceError) || error.reason !== "nothing_ready") throw error;
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw error;
-        await this.waitForWork(caller.ownerId, remaining);
+        if (!(error instanceof MessageBoardServiceError) || error.reason !== "nothing_ready" || !waiter) {
+          waiter?.cancel();
+          throw error;
+        }
+        await waiter.done;
+        if (Date.now() >= deadline) throw error;
       }
     }
   }
@@ -152,7 +162,9 @@ export class BoardTaskService {
     // Task text is instructions: implicitly take only tasks the owner (or this caller) created.
     const creators = [`user:${ctx.caller.ownerId}`, ctx.caller.actor.id, ...(request.from ? [request.from] : [])];
     let query = ctx.trx.selectFrom("board_tasks as t").innerJoin("board_messages as m", "m.id", "t.root_id").selectAll("t")
-      .where("t.board_id", "=", ctx.board.id).where("t.state", "=", "ready").where(scopeSql)
+      .where("t.board_id", "=", ctx.board.id).where("t.state", "=", "ready").where(scopeSql).where("m.deleted_at", "is", null)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM board_task_needs n JOIN board_tasks p ON p.root_id = n.needs_task_id
+        WHERE n.task_id = t.root_id AND p.state <> 'completed')`)
       .where((eb) => eb.or([
         profile ? eb("t.assigned_profile", "=", profile) : eb.val(false),
         eb.and([eb("t.assigned_profile", "is", null), eb("t.owner_actor", "in", creators)]),
@@ -171,6 +183,8 @@ export class BoardTaskService {
     if (row.state === "blocked") boardFail("task_blocked");
     if (FINISHED_STATES.includes(row.state)) boardFail("task_finished");
     if (row.assigned_profile && row.assigned_profile !== ctx.caller.actor.profile) boardFail("task_assigned");
+    const root = await ctx.trx.selectFrom("board_messages").select("deleted_at").where("id", "=", row.root_id).executeTakeFirst();
+    if (!root || root.deleted_at) boardFail("message_deleted");
     const needs = (await needsFor(ctx.trx, [row.root_id])).get(row.root_id) ?? [];
     if (await readinessOf(ctx, needs) !== "ready") boardFail("task_waiting");
     const token = newClaimToken();
@@ -234,7 +248,10 @@ export class BoardTaskService {
   release(caller: BoardCaller, boardName: string | undefined, taskId: string, input: ClaimProofInput) {
     return this.withTask(caller, boardName, taskId, async (ctx, row) => {
       this.requireClaim(ctx, row, input);
-      await this.settle(ctx, row, { state: "ready", claim_holder: JSON.stringify(null), claim_token_hash: null, lease_until: null }, "task.released");
+      const needs = (await needsFor(ctx.trx, [taskId])).get(taskId) ?? [];
+      await this.settle(ctx, row, {
+        state: await readinessOf(ctx, needs), claim_holder: JSON.stringify(null), claim_token_hash: null, lease_until: null,
+      }, "task.released");
     });
   }
 
@@ -363,14 +380,18 @@ export class BoardTaskService {
     let expired = 0;
     for (const { board_id: boardId, owner_id: ownerId } of boards) {
       expired += await this.board.write({ ownerId, actor: SWEEPER }, { id: boardId }, async (ctx) => {
-        const rows = await ctx.trx.updateTable("board_tasks")
-          .set({ state: "ready", claim_holder: JSON.stringify(null), claim_token_hash: null, lease_until: null, updated_at: ctx.now })
-          .where("board_id", "=", boardId).where("state", "=", "claimed").where("lease_until", "<=", ctx.now).returningAll().execute();
-        for (const row of rows) {
-          await mirrorTaskLabel(ctx, row.root_id, "ready");
-          this.emitTask(ctx, row, "task.expired");
+        const lapsed = await ctx.trx.selectFrom("board_tasks").selectAll().where("board_id", "=", boardId)
+          .where("state", "=", "claimed").where("lease_until", "<=", ctx.now).forUpdate().execute();
+        for (const row of lapsed) {
+          // A prerequisite may have been reopened while it was claimed.
+          const state = await readinessOf(ctx, (await needsFor(ctx.trx, [row.root_id])).get(row.root_id) ?? []);
+          const updated = await ctx.trx.updateTable("board_tasks")
+            .set({ state, claim_holder: JSON.stringify(null), claim_token_hash: null, lease_until: null, updated_at: ctx.now })
+            .where("root_id", "=", row.root_id).where("claim_epoch", "=", row.claim_epoch).returningAll().executeTakeFirstOrThrow();
+          await mirrorTaskLabel(ctx, row.root_id, state);
+          this.emitTask(ctx, updated, "task.expired");
         }
-        return rows.length;
+        return lapsed.length;
       }, { internal: true });
     }
     return expired;
@@ -385,6 +406,7 @@ export class BoardTaskService {
 
   start(): void {
     this.stop();
+    this.stopped = false;
     this.sweepTimer = setInterval(() => {
       this.sweepExpiredLeases().catch((error: unknown) => console.error("[message-board] lease sweep failed:", error instanceof Error ? error.name : "UnknownError"));
     }, SWEEP_INTERVAL_MS);
@@ -396,6 +418,7 @@ export class BoardTaskService {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.sweepTimer = null;
@@ -403,9 +426,10 @@ export class BoardTaskService {
     for (const waiter of this.waiters.splice(0)) waiter.wake();
   }
 
-  private waitForWork(ownerId: string, timeoutMs: number): Promise<void> {
+  private registerWorkWaiter(ownerId: string, timeoutMs: number): { done: Promise<void>; cancel(): void } {
     if (this.waiters.length >= MAX_CLAIM_WAITERS) boardFail("unavailable");
-    return new Promise((resolve) => {
+    let wake: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => {
       const waiter: ClaimWaiter = {
         ownerId,
         wake: () => {
@@ -417,7 +441,9 @@ export class BoardTaskService {
       };
       const timer = setTimeout(waiter.wake, timeoutMs);
       this.waiters.push(waiter);
+      wake = waiter.wake;
     });
+    return { done, cancel: () => wake() };
   }
 
   private wakeWaiters(ownerId: string, events: readonly BoardEvent[]): void {
