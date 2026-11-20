@@ -159,6 +159,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "message-board",
     path: "__message-board__",
+    iconUrl: bundledDesktopIconForPath("__message-board__"),
     kind: "message-board",
     icon: MessagesSquare,
     name: "Message Board",
