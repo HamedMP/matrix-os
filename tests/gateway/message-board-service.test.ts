@@ -111,6 +111,12 @@ describe("MessageBoardService", () => {
     const thread = await service.getThread(as(owner), undefined, root.id);
     expect(thread.root).toMatchObject({ text: "", deletedAt: expect.any(String) });
     expect(thread.replies).toHaveLength(1);
+    // With replies the deleted root stays listed as a placeholder; without, it leaves lists and counts.
+    expect((await service.listThreads(as(owner), undefined, { channel: "dev" })).map((item) => item.root.id)).toContain(root.id);
+    const lonely = await service.post(as(agent), undefined, { channel: "dev", text: "Lonely" });
+    await service.remove(as(agent), undefined, lonely.id, {});
+    expect((await service.listThreads(as(owner), undefined, { channel: "dev" })).map((item) => item.root.id)).not.toContain(lonely.id);
+    expect((await service.listChannels(as(owner))).find((channel) => channel.path === "dev")!.threadCount).toBe(1);
     expect(await reason(service.edit(as(agent), undefined, root.id, { text: "Back" }))).toBe("message_deleted");
     expect(await reason(service.remove(as(agent), undefined, root.id, {}))).toBe("message_deleted");
   });
