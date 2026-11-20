@@ -48,6 +48,11 @@ export interface ProjectTaskDatabase {
     worktree_id: string | null;
     branch: string | null;
     pr_number: ColumnType<number | null, number | null | undefined, number | null>;
+    pr_state: ColumnType<string | null, string | null | undefined, string | null>;
+    pr_checks: ColumnType<string | null, string | null | undefined, string | null>;
+    pr_review: ColumnType<string | null, string | null | undefined, string | null>;
+    pr_url: ColumnType<string | null, string | null | undefined, string | null>;
+    pr_refreshed_at: NullableTimestamp;
     legacy_session_id: string | null;
     comment_count: Revision;
     created_by: string;
@@ -83,6 +88,18 @@ export interface ProjectTaskDatabase {
     created_at: Timestamp;
     edited_at: NullableTimestamp;
     deleted_at: NullableTimestamp;
+  };
+  project_task_sessions: {
+    owner_id: string;
+    task_id: string;
+    session_ref: string;
+    kind: string;
+    title: string;
+    role: string;
+    harness: string | null;
+    start_request_id: string | null;
+    created_by: string;
+    created_at: Timestamp;
   };
   project_task_operations: {
     owner_id: string;
@@ -217,6 +234,42 @@ async function migrateTaskCommentsV2(trx: ProjectTaskTrx): Promise<void> {
   `.execute(trx);
 }
 
+async function migrateTaskSessionsV3(trx: ProjectTaskTrx): Promise<void> {
+  await sql.raw(`
+    CREATE TABLE project_task_sessions (
+      ${OWNER},
+      ${TASK_ID("task_id")},
+      session_ref TEXT NOT NULL CHECK (session_ref ~ '^(chat_[A-Za-z0-9_-]{1,128}|term\\.[A-Za-z0-9_-]{1,128}\\.[A-Za-z0-9_-]{1,128})$'),
+      kind TEXT NOT NULL CHECK (kind IN ('chat', 'terminal')),
+      title TEXT NOT NULL CHECK (char_length(title) BETWEEN 1 AND 200),
+      role TEXT NOT NULL CHECK (role IN ('main', 'extra')),
+      harness TEXT CHECK (harness ~ '^[a-z][a-z0-9-]{0,39}$'),
+      start_request_id TEXT CHECK (start_request_id ~ '^req_[A-Za-z0-9_-]{1,128}$'),
+      ${ACTOR("created_by")},
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (owner_id, task_id, session_ref),
+      UNIQUE (owner_id, session_ref),
+      UNIQUE (owner_id, task_id, start_request_id),
+      CHECK ((kind = 'chat') = (left(session_ref, 5) = 'chat_'))
+    )
+  `).execute(trx);
+  await sql`
+    CREATE UNIQUE INDEX idx_project_task_sessions_main ON project_task_sessions(owner_id, task_id) WHERE role = 'main'
+  `.execute(trx);
+  await sql.raw(`
+    ALTER TABLE project_tasks
+      ADD COLUMN pr_state TEXT CHECK (pr_state IN ('open', 'draft', 'merged', 'closed')),
+      ADD COLUMN pr_checks TEXT CHECK (pr_checks IN ('passing', 'failing', 'pending', 'none')),
+      ADD COLUMN pr_review TEXT CHECK (pr_review IN ('approved', 'changes_requested', 'review_required', 'none')),
+      ADD COLUMN pr_url TEXT CHECK (char_length(pr_url) BETWEEN 1 AND 500 AND pr_url ~ '^https://'),
+      ADD COLUMN pr_refreshed_at TIMESTAMPTZ,
+      ADD CONSTRAINT project_tasks_pr_summary CHECK (
+        (pr_state IS NULL AND pr_checks IS NULL AND pr_review IS NULL AND pr_url IS NULL)
+        OR (pr_state IS NOT NULL AND pr_checks IS NOT NULL AND pr_review IS NOT NULL AND pr_url IS NOT NULL AND pr_number IS NOT NULL)
+      )
+  `).execute(trx);
+}
+
 export interface ProjectTaskMigration {
   readonly version: number;
   readonly name: string;
@@ -227,6 +280,7 @@ export interface ProjectTaskMigration {
 export const PROJECT_TASK_MIGRATIONS: ProjectTaskMigration[] = [
   { version: 1, name: "project_tasks", up: migrateProjectTasksV1 },
   { version: 2, name: "task_comments_relations", up: migrateTaskCommentsV2 },
+  { version: 3, name: "task_sessions_pull_requests", up: migrateTaskSessionsV3 },
 ];
 
 export class ProjectTaskSchemaError extends Error {

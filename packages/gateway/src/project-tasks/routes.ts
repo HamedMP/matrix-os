@@ -8,16 +8,17 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import {
-  ArchiveTaskBodySchema, CreateCommentBodySchema, CreateTaskBodySchema, TaskCommentIdSchema, UpdateCommentBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, TASK_LIMITS, TaskIdSchema,
+  ArchiveTaskBodySchema, AttachSessionBodySchema, CreateCommentBodySchema, CreatePullRequestBodySchema, StartTaskBodySchema, TaskSessionRefSchema, CreateTaskBodySchema, TaskCommentIdSchema, UpdateCommentBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, TASK_LIMITS, TaskIdSchema,
   UpdateBoardSettingsBodySchema, UpdateTaskBodySchema, type ActorRef,
 } from "@matrix-os/contracts/project-tasks";
 import { PROJECT_SLUG_REGEX } from "../project-registry.js";
-import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
 import { ProjectFenceError, type LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
 import { ProjectTaskError, projectTaskErrorBody } from "./errors.js";
 import { ownerActor } from "./members.js";
 import type { ProjectTaskService, TaskCaller } from "./service.js";
+import type { ProjectTaskWork } from "./work.js";
 
 const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const ActivityQuerySchema = z.object({
@@ -37,6 +38,10 @@ export interface ProjectTaskRouteOptions {
   /** Agent principals act as `agent:<session ref>`; everyone else as `user:<id>`. */
   getActor?(c: Context, ownerScope: OwnerScope): ActorRef;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  /** Start work, sessions, git and pull requests; null or absent answers 503 on those routes. */
+  work?: ProjectTaskWork | null;
+  /** The request principal, used to admit a chat's first turn on start. */
+  getPrincipal?(c: Context): RequestPrincipal;
 }
 
 class InvalidInput extends Error {}
@@ -120,6 +125,11 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     if (!options.projectOperationAdmission) return run();
     const { project } = await service().resolve(who, slug);
     return admitWrite(who, project.id, run);
+  }
+
+  function work(): ProjectTaskWork {
+    if (!options.work) throw new ProjectTaskError("board_unavailable");
+    return options.work;
   }
 
   const base = "/api/projects/:slug/tasks";
@@ -238,6 +248,63 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const who = caller(c);
       await write(who, slug, () => service().deleteComment(who, slug, taskId, commentId));
       return c.json({ ok: true });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.post(`${base}/:taskId/start`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const who = caller(c);
+      const body = await readBody(c, StartTaskBodySchema);
+      const principal = body.selection ? options.getPrincipal?.(c) : undefined;
+      return c.json(await write(who, slug, () => work().start(who, slug, taskId, body, principal)), 201);
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.post(`${base}/:taskId/sessions`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const who = caller(c);
+      const { ref } = await readBody(c, AttachSessionBodySchema);
+      return c.json({ task: await write(who, slug, () => work().attach(who, slug, taskId, ref)) });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.delete(`${base}/:taskId/sessions/:ref`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const ref = param(TaskSessionRefSchema, c.req.param("ref"));
+      const who = caller(c);
+      return c.json({ task: await write(who, slug, () => work().detach(who, slug, taskId, ref)) });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.get(`${base}/:taskId/git`, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const { git } = await work().git(caller(c), slug, taskId);
+      return c.json({ git });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.post(`${base}/:taskId/pull-request`, limited, async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      const taskId = param(TaskIdSchema, c.req.param("taskId"));
+      const who = caller(c);
+      const { draft } = await readBody(c, CreatePullRequestBodySchema);
+      return c.json(await write(who, slug, () => work().openPullRequest(who, slug, taskId, draft === true)));
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
+  app.get("/api/projects/:slug/board/attachable-sessions", async (c) => {
+    try {
+      const slug = param(SlugSchema, c.req.param("slug"));
+      return c.json({ sessions: await work().attachable(caller(c), slug) });
     } catch (error: unknown) { return respond(c, error); }
   });
 
