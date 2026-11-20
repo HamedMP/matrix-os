@@ -282,8 +282,6 @@ function ChatAppContent({
   const [localUnreadOnly, setUnreadOnly] = useState(false);
   const unreadOnly = mobile && (filterUnreadOnly ?? localUnreadOnly);
   useEffect(()=> { if (!mobile && filterUnreadOnly) onUnreadFilterChange?.(false); },[mobile,filterUnreadOnly,onUnreadFilterChange]);
-  useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
-    active: active && !agentsNavigation?.opened, onRead: onUpdateReadState });
   const [newChatSequence, setNewChatSequence] = useState(0);
   const draftIdentity = composerIdentity ?? agentClient;
   const [agentDraftRequest, setAgentDraftRequest] = useState<(ChatAgentDraftRequest & { ownerIdentity: unknown }) | null>(null);
@@ -381,6 +379,8 @@ function ChatAppContent({
     restoreMany: onRestoreArchivedChats, client: archiveClient, authorityKey,
     projectName: id => webProjects.projects.find(project => project.id === id || project.slug === id)?.name,
   });
+  useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
+    active: active && !agentsNavigation?.opened && (mobile || !archivesOpen), onRead: onUpdateReadState });
   const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({});
   const rememberRenamedTitle = (chatId: string, title: string) => setRenamedTitles(current =>
     Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, title]].slice(-100)));

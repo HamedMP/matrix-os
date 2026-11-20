@@ -189,6 +189,39 @@ describe("Chat canonical provider state", () => {
     expect(screen.queryByRole("complementary", { name: "Chat file preview" })).toBeNull();
   });
 
+  it("keeps an arriving answer unread until its transcript replaces the archive page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const onRead = vi.fn(async () => true);
+    const props = {
+      messages: [{ id: "question", role: "user" as const, content: "Inspect this answer", timestamp: 1000 }],
+      sessionId: "chat_unseen", busy: false, connected: true,
+      conversations: [{ id: "chat_unseen", title: "Selected chat", preview: "", messageCount: 1, updatedAt: 1000 }],
+      onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn(), onUpdateReadState: onRead,
+      archiveClient: { list: vi.fn(async () => ({ items: [] })), search: vi.fn(async () => ({ items: [] })),
+        updateLifecycle: vi.fn(), delete: vi.fn() },
+    };
+    const seen = { unread: false, markedUnread: false, version: 1, readThroughSeq: 1, latestIncomingSeq: 1 };
+    const view = render(<ChatApp {...props} readState={seen} displayedThroughSeq={1} />);
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
+    expect(await screen.findByRole("region", { name: "Archived chats" })).toBeVisible();
+    expect(screen.queryByText("Inspect this answer")).toBeNull();
+    const unseen = { ...seen, unread: true, version: 2, latestIncomingSeq: 2 };
+    view.rerender(<ChatApp {...props} messages={[...props.messages,
+      { id: "answer", role: "assistant", content: "An unseen answer", timestamp: 2000 }]}
+      readState={unseen} displayedThroughSeq={2} />);
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(onRead).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Selected chat", exact: true }));
+    expect(await screen.findByText("An unseen answer")).toBeVisible();
+    await waitFor(() => expect(onRead).toHaveBeenCalledWith("chat_unseen", {
+      type: "mark_read", throughSeq: 2, baseVersion: 2,
+    }));
+  });
+
   it("keeps archive Undo available if restoring the chat rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const restore = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(true);
