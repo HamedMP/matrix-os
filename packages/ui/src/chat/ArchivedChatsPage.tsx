@@ -5,7 +5,7 @@ import { Button } from "../Button.js";
 import { Input } from "../Input.js";
 import { Dialog } from "../Dialog.js";
 import { Tooltip } from "../Tooltip.js";
-import { archiveRestoreLocation } from "./attention-state.js";
+import { resolveCanonicalChatLifecycleGroup } from "./attention-state.js";
 import "./desktop-chat.css";
 
 export interface ChatArchiveClient {
@@ -263,4 +263,11 @@ export function ArchivedChatsPage({ client, projects, onChanged }: {
     <ArchiveUndoNotice rows={actions.undo} projectByRef={projectByRef} busy={actions.busy} onUndo={() => { void actions.undoRestore(); }}/>
     <ArchiveDeleteConfirmation rows={actions.deleting} busy={actions.busy} error={actions.error} onClose={() => actions.setDeleting(null)} onConfirm={() => { if (actions.deleting) void actions.apply(actions.deleting, "delete"); }}/>
   </section>;
+}
+
+
+export function archiveRestoreLocation(record: Parameters<typeof resolveCanonicalChatLifecycleGroup>[0], projectName?: string) {
+  const groupNames = { needsYou: "Needs you", working: "Working", done: "Done", recent: "Done" };
+  const group = groupNames[resolveCanonicalChatLifecycleGroup(record)];
+  return projectName ? `${group} · ${projectName}` : group;
 }

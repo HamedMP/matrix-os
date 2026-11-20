@@ -3,7 +3,7 @@ import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { AgentAvatar, filterChatsByImportSource, type BotConversationSummary, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
-import { useWorkRailPage } from "./useWorkRailPage";
+import { useWorkRailPage } from "./use-work-rail-order";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
 import { Plus, Folder } from "lucide-react";

@@ -5,7 +5,7 @@
   --chat-fill: var(--bg-hover, var(--accent));
   --chat-line: var(--border-subtle, var(--border));
   --chat-input: var(--border-default, var(--input));
-  --chat-danger: var(--danger, var(--destructive));
+  --chat-danger: var(--danger-text, var(--destructive-text, var(--destructive)));
   color: var(--chat-fg); background: var(--chat-bg);
   font-family: Geist, var(--font-ui, var(--font-sans, sans-serif)); font-size: 14px; line-height: 20px;
 }

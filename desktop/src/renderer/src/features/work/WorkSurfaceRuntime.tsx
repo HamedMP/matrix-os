@@ -132,3 +132,11 @@ export function WorkArchiveOutlet({ client, projects, children }: { client: Cano
   const archive = useWorkArchiveNavigation();
   return archive?.open && client ? <ArchivedChatsPage client={client} projects={projects} onChanged={archive.changed}/> : children;
 }
+
+export type SideChatDraftRequest = { id: number; chatId: string; text: string };
+export const SideChatDraftContext = createContext<{
+  pending: SideChatDraftRequest | null;
+  request(chatId: string, text: string): void;
+  consume(id: number): void;
+} | null>(null);
+export function useSideChatDraft() { return useContext(SideChatDraftContext); }

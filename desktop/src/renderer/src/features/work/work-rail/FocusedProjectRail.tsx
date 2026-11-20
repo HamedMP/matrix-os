@@ -5,7 +5,7 @@ import type { Project } from "../../../stores/board";
 import { buildWorkRailModel, type WorkRailProjectGroup } from "../work-rail-model";
 import type { WorkRailSectionKey } from "./WorkRailGroups";
 import { WorkRailSection } from "./WorkRailSection";
-import { useWorkRailPage } from "./useWorkRailPage";
+import { useWorkRailPage } from "./use-work-rail-order";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
 
 /** The focused Project's Chats, including pinned ones, as one lifecycle model. */

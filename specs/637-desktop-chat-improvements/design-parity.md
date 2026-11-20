@@ -22,6 +22,10 @@ WorkTab already exceeds the entrypoint size guideline. Extract responsive layout
 - Restored rows return in both project and status placements; per-group pages and counts stay stable.
 - New captures replace stale qualification claims. Missing runtime access remains a blocker, not visual approval.
 
+### Remaining full-CI consumer regressions
+
+The six failing native suites reproduce ten failures locally. Keep the existing assertions for unread mutations without opening a chat, import filtering, preview-read cancellation, destructive-menu separation and accessible status text. Update the UI entry points and semantic menu-label queries for the approved Figma layout. The status audit stays unchanged; production status/error labels use danger-text instead of fill tokens. Co-locate the small paging, persisted inspector layout, Side draft context, filter menu and archive destination helpers with their existing owning modules so this layer remains within 50 files without dropping tests or adding a PR. The first prepared three suites retain their 14 passing checks.
+
 ### Full-CI unit shard reconciliation
 
 The Linux shard exposed three stale consumer tests: the agent chrome fixture replaced the archive hook, the token audit omitted shared UI CSS, and Done expected its Figma live count to disappear while expanded. Preserve the real archive exports, include shared CSS definitions in the existing token audit, and retain the live-count assertion through collapse/expand. CI supplies red evidence for all four assertions. Archive, Side chat, and paged-rail regression suites are retained unchanged in the final integration layer to keep the native layer at 50 files; none of their assertions are deleted. Runtime source is unchanged by this reconciliation.

@@ -326,7 +326,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
             className="chat-search-filter"
             onClick={() => { setFilter(scope); setSelectedIndex(0); setDeletion(null); }}><Badge style={{ background: activeFilter === scope ? "var(--chat-fill)" : "transparent", color: "inherit", border: "1px solid var(--chat-line)", borderRadius: 6, padding: "0 6px", height: 24, fontSize: 13, lineHeight: "18px", fontWeight: 500, gap: 6 }}>{activeFilter === scope ? <Check size={12} aria-hidden/> : null}{scope}</Badge></button>)}
         </div>
-        {archiveActionError && !deleteTarget ? <p role="alert" className="mt-2 px-1 text-xs" style={{ color: "var(--danger)" }}>{archiveActionError}</p> : null}
+        {archiveActionError && !deleteTarget ? <p role="alert" className="mt-2 px-1 text-xs" style={{ color: "var(--danger-text)" }}>{archiveActionError}</p> : null}
         <SearchArchiveDeleteDialog target={deleteTarget} busy={archiveActionBusy} error={archiveActionError}
           onCancel={() => setDeletion(null)} onConfirm={() => { if (deleteTarget) void applyArchivedAction("delete", deleteTarget); }}/>
         <div className="chat-search-results max-h-[min(480px,60vh)] overflow-y-auto" style={{ borderColor: "var(--border-subtle)" }}>

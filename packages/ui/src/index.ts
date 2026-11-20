@@ -345,7 +345,7 @@ export { ArchivedChatsPage, type ChatArchiveClient } from "./chat/ArchivedChatsP
 export { ChatInspectorTabs, ChatInspectorNewTab, ChatInspectorFileHeader, InspectorToolIcon, type InspectorTabItem, type InspectorTool } from "./chat/ChatInspectorTabs.js";
 export { ChatInspectorResizeHandle } from "./chat/ChatInspectorTabs.js";
 export { ChatMenuActionLabel } from "./chat/ChatContextMenu.js";
-export { ChatSourceFilterMenu } from "./chat/ChatSourceFilterMenu.js";
+export { ChatSourceFilterMenu } from "./chat/ChatContextMenu.js";
 export { SupervisedToolApprovalBar, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard.js";
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
@@ -413,4 +413,4 @@ export { routineOriginChatEligible } from "./chat/routine-origin.js";
 export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
-export { archiveRestoreLocation } from "./chat/attention-state.js";
+export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
