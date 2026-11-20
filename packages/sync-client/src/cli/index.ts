@@ -28,6 +28,7 @@ import { resolveCliVersion } from "./version.js";
 
 const subCommands = {
   routines: () => import("./commands/routines.js").then(module => module.routinesCommand),
+  board: () => import("./commands/board.js").then(module => module.boardCommand),
   login: loginCommand,
   setup: setupCommand,
   logout: logoutCommand,
