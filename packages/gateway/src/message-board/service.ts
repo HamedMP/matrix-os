@@ -17,6 +17,8 @@ export interface BoardCaller {
   /** The computer owner every row belongs to. */
   ownerId: string;
   actor: BoardActor;
+  /** Narrowed permissions for agent sessions; absent means everything the owner has. */
+  can?: readonly ("read" | "post" | "react" | "label" | "manage")[];
 }
 
 export interface MessageBoardLimits {

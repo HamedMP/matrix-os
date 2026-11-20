@@ -18,13 +18,16 @@ export interface DataFeatureRouteOptions {
   gatewayCollaboration: GatewayCollaborationRuntime | null;
   messageBoard: MessageBoardRuntime | null;
   ownerName?: string;
+  resolveTerminalCaller?: Parameters<typeof registerMessageBoardGatewayRoutes>[0]["resolveTerminalCaller"];
   logUnexpectedWsSendFailure(context: string, error: unknown): void;
 }
 
 export function registerDataFeatureRoutes(options: DataFeatureRouteOptions): void {
   const { app, upgradeWebSocket } = options;
   registerGatewayMessagingRoutes(app, options.messagingRepository);
-  registerMessageBoardGatewayRoutes({ app, upgradeWebSocket, runtime: options.messageBoard, ownerName: options.ownerName });
+  registerMessageBoardGatewayRoutes({
+    app, upgradeWebSocket, runtime: options.messageBoard, ownerName: options.ownerName, resolveTerminalCaller: options.resolveTerminalCaller,
+  });
   registerCanvasGatewayRoutes({
     app, upgradeWebSocket, canvasService: options.canvasService, canvasSubscriptionHub: options.canvasSubscriptionHub,
     gatewayCollaboration: options.gatewayCollaboration, logUnexpectedWsSendFailure: options.logUnexpectedWsSendFailure,
