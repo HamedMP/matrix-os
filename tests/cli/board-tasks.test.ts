@@ -2,14 +2,14 @@ import { mkdir, readdir, readFile, stat, symlink, utimes, writeFile } from "node
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runBoardCli } from "../../packages/sync-client/src/cli/commands/board.js";
-import { boardError, claimBody, cleanupHomes, harness, json, TASK_ID, TOKEN } from "./board-harness.js";
+import { boardError, claimBody, cleanupHomes, harness, json, PANE_ENV, TASK_ID, TOKEN } from "./board-harness.js";
 
 afterEach(async () => {
   vi.useRealTimers();
   await cleanupHomes();
 });
 
-const claimsDir = (home: string, profile = "default") => join(home, ".matrixos", "board", "claims", profile);
+const claimsDir = (home: string, profile = "default", caller = "default") => join(home, ".matrixos", "board", "claims", profile, caller);
 const taskResponse = () => json({ task: { state: "completed", needs: [] } });
 
 // Fault detected: a worker agent that claimed a task cannot settle it by ID, or a stale
@@ -165,5 +165,54 @@ describe("matrix board tasks", () => {
 
     await runBoardCli(["tasks", "claim", "msg_fresh00000001"], h.deps);
     expect((await readdir(dir)).sort()).toEqual(["msg_fresh00000001.json", `${TASK_ID}.json`]);
+  });
+  // Fault detected (review): two panes using the same --as shared one claim file, so one
+  // pane's stale settle erased the claim the other had just taken.
+  it("keeps claims per terminal pane, and forgets only the claim whose epoch failed", async () => {
+    const otherPane = { ...PANE_ENV, ZELLIJ_PANE_ID: "8" };
+    const paneA = await harness((call) => call.path.endsWith("/claim") ? json(claimBody()) : taskResponse(), { env: PANE_ENV });
+    const paneB = await harness((call) => call.path.endsWith("/claim") ? json(claimBody({ epoch: 4, token: "e".repeat(64) })) : taskResponse(),
+      { env: otherPane, home: paneA.home });
+    await runBoardCli(["tasks", "claim", TASK_ID, "--as", "worker"], paneA.deps);
+    await runBoardCli(["tasks", "claim", TASK_ID, "--as", "worker"], paneB.deps);
+    const dirA = claimsDir(paneA.home, "worker", `${PANE_ENV.ZELLIJ_SESSION_NAME}_7`);
+    const dirB = claimsDir(paneA.home, "worker", `${PANE_ENV.ZELLIJ_SESSION_NAME}_8`);
+    expect(await readdir(dirA)).toEqual([`${TASK_ID}.json`]);
+    expect(await readdir(dirB)).toEqual([`${TASK_ID}.json`]);
+
+    await runBoardCli(["tasks", "complete", TASK_ID, "--as", "worker"], paneB.deps);
+    expect(paneB.calls.at(-1)!.body).toMatchObject({ epoch: 4, token: "e".repeat(64) });
+    expect(await readdir(dirB)).toEqual([]);
+    expect(await readdir(dirA)).toEqual([`${TASK_ID}.json`]);
+
+    // A newer claim saved while an old settle was in flight survives that settle's failure.
+    const newer = JSON.stringify({ taskId: TASK_ID, epoch: 5, token: "f".repeat(64), board: "General", claimedAt: "x" });
+    const racing = await harness(async (call) => {
+      if (call.path.endsWith("/claim")) return json(claimBody());
+      await writeFile(join(dirA, `${TASK_ID}.json`), newer, { mode: 0o600 });
+      return boardError("claim_lost", 409, "Your claim on this task has lapsed.");
+    }, { env: PANE_ENV, home: paneA.home });
+    expect(await runBoardCli(["tasks", "complete", TASK_ID, "--as", "worker"], racing.deps)).toBe(1);
+    expect(racing.calls.at(-1)!.body).toMatchObject({ epoch: 3 });
+    expect(await readFile(join(dirA, `${TASK_ID}.json`), "utf8")).toBe(newer);
+  });
+
+  // Fault detected (review): pruning measured a claim's age from its first claim, so a
+  // long task renewed every few minutes lost its remembered claim after a day.
+  it("rewrites the remembered claim on renew so pruning measures inactivity", async () => {
+    const h = await harness((call) => call.path.endsWith("/claim")
+      ? json(claimBody({ taskId: (call.body as { id: string }).id }))
+      : json({ task: { state: "claimed", needs: [] } }));
+    await runBoardCli(["tasks", "claim", TASK_ID], h.deps);
+    const file = join(claimsDir(h.home), `${TASK_ID}.json`);
+    const old = new Date(Date.now() - 48 * 3600 * 1000);
+    await utimes(file, old, old);
+
+    expect(await runBoardCli(["tasks", "renew", TASK_ID], h.deps)).toBe(0);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await runBoardCli(["tasks", "claim", "msg_other00000001"], h.deps);
+
+    expect((await readdir(claimsDir(h.home))).sort()).toEqual(["msg_other00000001.json", `${TASK_ID}.json`]);
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ epoch: 3, token: TOKEN });
   });
 });

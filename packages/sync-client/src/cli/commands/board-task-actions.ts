@@ -52,7 +52,7 @@ export async function rememberClaim(ctx: BoardContext, claim: HeldClaim): Promis
 export async function acquireClaim(
   ctx: BoardContext,
   target: ClaimTarget,
-  options: { leaseSeconds?: number; waitMs?: number; signal?: AbortSignal } = {},
+  options: { leaseSeconds?: number; waitMs?: number; signal?: AbortSignal; remember?: boolean } = {},
 ): Promise<HeldClaim> {
   const board = ctx.board ?? BOARD_DEFAULT_NAME;
   const base = {
@@ -72,7 +72,7 @@ export async function acquireClaim(
         ...(options.signal ? { signal: options.signal } : {}),
       });
       const claim = heldClaim(payload, board, options.leaseSeconds);
-      await rememberClaim(ctx, claim);
+      if (options.remember !== false) await rememberClaim(ctx, claim);
       return claim;
     } catch (error: unknown) {
       const again = error instanceof BoardCliError && error.reason === "nothing_ready" && deadline - ctx.deps.now() > 0;
@@ -81,28 +81,44 @@ export async function acquireClaim(
   }
 }
 
+/** Proof of a held claim: from this pane's claim file, or held in memory by `tasks run`. */
+export type ClaimProof = Pick<StoredClaim, "epoch" | "token" | "board" | "leaseSeconds">;
+
 /**
- * Posts a task verb. Holder verbs (`proof`) send the remembered epoch and token,
- * on the board the claim was made on unless `--board` says otherwise.
+ * Posts a task verb. Holder verbs send proof of the claim: `proof: "stored"` reads this
+ * pane's remembered claim, an explicit proof is used as is and never touches the file.
+ * Requests go to the board the claim was made on unless `--board` says otherwise.
  */
 export async function taskVerb(
   ctx: BoardContext,
   verb: string,
   taskId: string,
-  body: (stored: StoredClaim | null) => Record<string, unknown>,
-  options: { proof?: boolean; forget?: boolean; signal?: AbortSignal } = {},
+  body: (proof: ClaimProof | null) => Record<string, unknown>,
+  options: { proof?: "stored" | ClaimProof; forget?: boolean; signal?: AbortSignal } = {},
 ): Promise<Record<string, unknown>> {
-  const stored = options.proof ? await ctx.claims.load(taskId) : null;
-  const client = stored && !ctx.board ? ctx.clientFor(stored.board) : ctx.client;
+  const stored = options.proof === "stored" ? await ctx.claims.load(taskId) : null;
+  const proof: ClaimProof | null = stored ?? (typeof options.proof === "object" ? options.proof : null);
+  const client = proof && !ctx.board ? ctx.clientFor(proof.board) : ctx.client;
   try {
     const payload = await client.request("POST", `/tasks/${taskId}/${verb}`, {
-      body: { ...(stored ? { epoch: stored.epoch, token: stored.token } : {}), ...body(stored) },
+      body: { ...(proof ? { epoch: proof.epoch, token: proof.token } : {}), ...body(proof) },
       ...(options.signal ? { signal: options.signal } : {}),
     });
-    if (options.forget) await ctx.claims.forget(taskId);
+    if (stored && options.forget) await ctx.claims.forget(taskId, stored.epoch);
+    // Rewriting on renew keeps the file's age a measure of inactivity, so pruning spares live claims.
+    else if (stored && verb === "renew") await refreshClaim(ctx, stored);
     return payload;
   } catch (error: unknown) {
-    if (error instanceof BoardCliError && DEAD_CLAIM.has(error.reason)) await ctx.claims.forget(taskId);
+    if (stored && error instanceof BoardCliError && DEAD_CLAIM.has(error.reason)) await ctx.claims.forget(taskId, stored.epoch);
     throw error;
+  }
+}
+
+async function refreshClaim(ctx: BoardContext, stored: StoredClaim): Promise<void> {
+  try {
+    await ctx.claims.save({ ...stored, renewedAt: new Date(ctx.deps.now()).toISOString() });
+  } catch (error: unknown) {
+    const code = (error as { code?: unknown } | null)?.code;
+    ctx.deps.io.stderr(`warning: renewed, but the remembered claim could not be updated (${typeof code === "string" ? code : "write_failed"}).`);
   }
 }
