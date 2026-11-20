@@ -3,17 +3,18 @@ import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { RenameableConversation } from "./ChatTitleRename";
 
-const ProjectsResponseSchema = z.object({
-  projects: z.array(z.object({
-    id: z.string().min(1),
-    slug: z.string().min(1),
-    name: z.string().min(1),
-    // Display-only; an unknown value drops the label instead of the whole list.
-    kind: z.enum(["scratch", "github", "folder"]).optional().catch(undefined),
-    github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).optional().catch(undefined),
-  })),
+export const WebProjectSchema = z.object({
+  id: z.string().min(1),
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  // Display-only; an unknown value drops the label instead of the whole list.
+  kind: z.enum(["scratch", "github", "folder"]).optional().catch(undefined),
+  github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).optional().catch(undefined),
+  // Lets the folder picker recognize a folder that is already connected.
+  localPath: z.string().max(4096).optional().catch(undefined),
 });
-export type WebProject = z.infer<typeof ProjectsResponseSchema>["projects"][number];
+export const ProjectsResponseSchema = z.object({ projects: z.array(WebProjectSchema) });
+export type WebProject = z.infer<typeof WebProjectSchema>;
 // `projects: null` records a failed load for that request key.
 type ProjectsResult = { key: string; projects: WebProject[] | null };
 export interface WebProjectsState {
