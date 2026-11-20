@@ -179,6 +179,7 @@ import { MessageCircleIcon as MessageCircleIconData } from "@hugeicons/core-free
 import { MessageSquare as MessageSquareData } from "@hugeicons/core-free-icons";
 import { MessageSquareIcon as MessageSquareIconData } from "@hugeicons/core-free-icons";
 import { MessageSquarePlus as MessageSquarePlusData } from "@hugeicons/core-free-icons";
+import { MessageMultiple01Icon as MessagesSquareData } from "@hugeicons/core-free-icons";
 import { MicIcon as MicIconData } from "@hugeicons/core-free-icons";
 import { MicOffIcon as MicOffIconData } from "@hugeicons/core-free-icons";
 import { Minimize2 as Minimize2Data } from "@hugeicons/core-free-icons";
@@ -479,6 +480,7 @@ export const MessageCircleIcon: LucideIcon = createIcon(MessageCircleIconData);
 export const MessageSquare: LucideIcon = createIcon(MessageSquareData);
 export const MessageSquareIcon: LucideIcon = createIcon(MessageSquareIconData);
 export const MessageSquarePlus: LucideIcon = createIcon(MessageSquarePlusData);
+export const MessagesSquare: LucideIcon = createIcon(MessagesSquareData);
 export const MicIcon: LucideIcon = createIcon(MicIconData);
 export const MicOffIcon: LucideIcon = createIcon(MicOffIconData);
 export const Minimize2: LucideIcon = createIcon(Minimize2Data);

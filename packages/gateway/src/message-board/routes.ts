@@ -91,8 +91,8 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
   app.get("/actors", handle(async (c, caller) => c.json({ actors: await service.listActors(caller, board(c)) })));
 
   app.get("/threads", handle(async (c, caller) => {
-    const { board: name, ...query } = ThreadsQuerySchema.parse(queryObject(c));
-    return c.json({ threads: await service.listThreads(caller, name, query) });
+    const { board: name, kind, ...query } = ThreadsQuerySchema.parse(queryObject(c));
+    return c.json({ threads: await service.listThreads(caller, name, { ...query, ...(kind === "tasks" ? { tasksOnly: true } : {}) }) });
   }));
   app.get("/threads/:id", handle(async (c, caller) => c.json({ thread: await service.getThread(caller, board(c), messageId(c)) })));
   app.post("/threads/:id/read", limit, handle(async (c, caller) => {

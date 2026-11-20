@@ -11,6 +11,7 @@ const BUILT_IN_APP_VALUES = [
   "__activity-monitor__",
   "__browser__",
   "__cloud-desktop__",
+  "__message-board__",
 ] as const;
 
 const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
@@ -41,6 +42,7 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["system-activity", "__activity-monitor__"],
   ["apps/activity-monitor/index.html", "__activity-monitor__"],
   ["/files/apps/activity-monitor/index.html", "__activity-monitor__"],
+  ["message-board", "__message-board__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
@@ -51,7 +53,15 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__file-browser__", "Files"],
   ["__chat__", "Chat"],
   ["__activity-monitor__", "Activity Monitor"],
+  ["__message-board__", "Message Board"],
 ]);
+
+/** Launcher-only built-ins (not Desktop icons) still need a title for `?launch=` deep links. */
+export function builtInLaunchEntry(path: string): { path: string; name: string } | null {
+  const normalized = normalizeBuiltInAppPath(path);
+  const name = isRestorableBuiltInAppPath(normalized) ? BUILT_IN_APP_TITLES.get(normalized) : undefined;
+  return name ? { path: normalized, name } : null;
+}
 
 export function normalizeBuiltInAppPath(path: string): string {
   if (path.startsWith("__terminal__:")) return "__terminal__";
