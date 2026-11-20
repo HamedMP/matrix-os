@@ -34,6 +34,8 @@ import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailu
 import { MessagingKyselyRepository } from "../messages/repository.js";
 import type { MessageBoardDatabase } from "../message-board/database.js";
 import { startMessageBoardRuntime, type MessageBoardRuntime } from "../message-board/runtime.js";
+import { createMessageBoardKernelTools } from "../message-board/kernel-tools.js";
+import type { MessageBoardKernelTools } from "@matrix-os/kernel";
 import { createPushTokenStore, type PushTokenStore } from "../notifications/push-tokens.js";
 import { bootstrapNotificationDatabase, type NotificationDatabase } from "../notifications/schema.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
@@ -93,6 +95,8 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   pushTokens: PushTokenStore | null;
   /** Owner message board (spec 2700); shares the owner pool and never closes it. */
   messageBoard: MessageBoardRuntime | null;
+  /** Kernel board tools acting as `agent:matrix` for the configured owner (MATRIX_USER_ID). */
+  messageBoardKernelTools: MessageBoardKernelTools | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
@@ -128,7 +132,7 @@ export async function initializeOwnerDatabaseServices(
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
-    pushTokens: null, messageBoard: null,
+    pushTokens: null, messageBoard: null, messageBoardKernelTools: null,
   };
   let failClosedReason = options.initialFailureReason;
   const result = await bootOwnerDatabaseWithFallback({
@@ -203,6 +207,10 @@ export async function initializeOwnerDatabaseServices(
       services.messagingRepository = messagingRepository;
       await messagingRepository.bootstrap();
       services.messageBoard = await startMessageBoardRuntime(kysely as Kysely<MessageBoardDatabase>);
+      const boardOwnerId = process.env.MATRIX_USER_ID?.trim();
+      if (boardOwnerId && boardOwnerId.length <= 160) {
+        services.messageBoardKernelTools = createMessageBoardKernelTools(services.messageBoard, boardOwnerId);
+      }
       await bootstrapNotificationDatabase(kysely as Kysely<NotificationDatabase>);
       services.pushTokens = createPushTokenStore(kysely as Kysely<NotificationDatabase>);
       services.canvasSubscriptionHub = new CanvasSubscriptionHub({

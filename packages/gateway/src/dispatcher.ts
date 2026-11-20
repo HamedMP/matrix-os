@@ -14,6 +14,7 @@ import {
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
   type TerminalAgentKernelTools,
+  type MessageBoardKernelTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -54,6 +55,7 @@ export interface DispatchOptions {
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
   terminalTools?: TerminalAgentKernelTools;
+  boardTools?: MessageBoardKernelTools;
 }
 
 export interface DispatchContext {
@@ -245,6 +247,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         terminalTools: opts.terminalTools,
+        boardTools: opts.boardTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
       };
       try {
@@ -398,6 +401,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
             terminalTools: opts.terminalTools,
+            boardTools: opts.boardTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
           };
 
