@@ -541,7 +541,6 @@ describe("handleNewAgentRunShortcut", () => {
       projectSlug: "matrix-os",
       title: "Chat",
     });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
     expect(useUi.getState().composerOpen).toBe(false);
@@ -567,8 +566,6 @@ describe("handleNewAgentRunShortcut", () => {
       tab.kind === "work" && tab.workRoute === "project"
     ))).toHaveLength(1);
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    expect(useProjectView.getState().viewFor("website")).toBe("overview");
   });
 
   it("keeps the legacy composer open when desktop workspace routing is disabled", () => {
@@ -607,7 +604,6 @@ describe("handleMenuNavigate", () => {
     useBoard.setState({
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
     });
     useTabs.setState({ tabs: [], activeTabId: null });
     vi.restoreAllMocks();
@@ -627,6 +623,7 @@ describe("handleMenuNavigate", () => {
       projectSlug: "matrix",
       title: "Chat",
     });
+    expect(useProjectView.getState().viewFor("matrix")).toBe("board");
   });
 
   it("treats the retired agents kind as unsupported and falls back home", () => {

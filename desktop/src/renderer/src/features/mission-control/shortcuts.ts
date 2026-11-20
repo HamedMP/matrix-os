@@ -4,6 +4,7 @@ import { onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
+import { openProjectBoard } from "../../lib/project-navigation";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -57,11 +58,9 @@ export function handleMenuNavigate(kind: string): void {
     const { activeProjectSlug, projects } = useBoard.getState();
     const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
     if (project) {
-      useTabs.getState().openTab({
-        kind: "project",
-        projectSlug: project.slug,
-        title: project.name || project.slug,
-      });
+      const title = project.name || project.slug;
+      if (kind === "board") openProjectBoard(project.slug, title);
+      else useTabs.getState().openTab({ kind: "project", projectSlug: project.slug, title });
       return;
     }
     useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);

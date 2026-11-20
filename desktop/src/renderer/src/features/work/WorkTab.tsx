@@ -29,7 +29,6 @@ import {
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { useProjectView } from "../../stores/project-view";
 import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -351,11 +350,6 @@ function WorkTabContent({
     setRenamingChatTitle(false);
     setRenameChatError(null);
   }, [initialChatId, client]);
-
-  useLayoutEffect(() => {
-    if (!active || route !== "project" || !projectSlug) return;
-    useProjectView.getState().setView(projectSlug, "chats");
-  }, [active, projectSlug, route]);
 
   useLayoutEffect(() => {
     if (responsive.narrowPaneRouteKey === null || responsive.narrowPaneRouteKey === routeKey) return;
