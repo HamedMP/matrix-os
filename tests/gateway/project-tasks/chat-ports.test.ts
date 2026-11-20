@@ -51,4 +51,11 @@ describe("board chat port over the owner chat store", () => {
     expect(await chats.statuses(OWNER, [first.id, other.id])).toEqual({ [first.id]: "blocked", [other.id]: "error" });
     expect(await chats.statuses({ type: "user", id: "someone_else" }, [first.id])).toEqual({});
   });
+
+  it("binds the task worktree as the chat's default root so later turns without one stay in it", async () => {
+    const chat = await chats.create(OWNER, { clientRequestId: "req_task_wt", title: "BD-2 Task", projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
+    expect(await repository.getExecutionDefault({ type: "personal", ownerId: OWNER.id }, chat.id)).toEqual({ projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
+    const plain = await chats.create(OWNER, { clientRequestId: "req_task_plain", title: "BD-3 Task", projectId: "proj_demo" });
+    expect(await repository.getExecutionDefault({ type: "personal", ownerId: OWNER.id }, plain.id)).toBeNull();
+  });
 });

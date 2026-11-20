@@ -222,7 +222,8 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
   const chats: ChatPort = {
     async create(ownerScope, input) {
       if (!options.chats) throw chatsUnavailable();
-      const record = await options.chats.service.create(chatOwner(ownerScope), input);
+      const { worktreeId, ...request } = input;
+      const record = await options.chats.service.create(chatOwner(ownerScope), request, worktreeId ? { defaultWorktreeId: worktreeId } : undefined);
       return { id: record.chat.id, revision: record.chat.revision };
     },
     async admitFirstTurn(input) {
@@ -302,6 +303,13 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
           .filter((tab) => tab.accessScope !== "chat" && ["starting", "running", "idle"].includes(tab.status))
           .map((tab) => ({ workspaceId: workspace.id, tabId: tab.id, name: tab.name })))
         .slice(0, 500);
+    },
+    async existingRefs(projectId) {
+      const workspaces = await options.terminalRuntime.listWorkspaces();
+      return workspaces
+        .filter((workspace) => workspace.scope === "project" && workspace.projectId === projectId)
+        .flatMap((workspace) => workspace.tabs.map((tab) => terminalRef(workspace.id, tab.id)))
+        .slice(0, 2_000);
     },
     async statuses() {
       const entries = await options.terminalRuntime.listAgentStatuses();

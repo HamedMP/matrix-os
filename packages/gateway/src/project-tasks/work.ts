@@ -10,6 +10,7 @@ import {
   type AttachableSession, type ProjectTask, type StartTaskBodySchema, type TaskGitSummary, type TaskSession,
 } from "@matrix-os/contracts/project-tasks";
 import type { z } from "zod/v4";
+import { ProjectFenceError } from "../collaboration/project-fence.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { ProjectTaskError } from "./errors.js";
 import { PullRequestCache } from "./pr-cache.js";
@@ -20,6 +21,8 @@ import { TaskPortUnavailableError, type PullRequestLookup, type TaskSessionPorts
 import type { ProjectTaskSessionRepository, SessionLinkInput } from "./sessions.js";
 
 type StartTaskBody = z.output<typeof StartTaskBodySchema>;
+/** Runs one board write behind the shared-project fence. */
+export type WriteAdmission = <T>(run: () => Promise<T>) => Promise<T>;
 const BRANCH_MAX = 60;
 const ATTACHABLE_MAX = 200;
 const SUPPORTED_HARNESSES = new Set(["claude", "codex", "opencode", "pi"]);
@@ -77,7 +80,9 @@ export class ProjectTaskWork {
 
     // A retried start whose link already landed skips straight to the remaining steps.
     let link = await sessions.findByStartRequest(context.scope, taskId, requestId);
-    if (!link && view.sessions.length >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
+    // Unavailable links do not count toward the limit; a full task drops them to make room.
+    const prune = view.sessions.filter((session) => session.unavailable).map((session) => session.ref);
+    if (!link && view.sessions.length - prune.length >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
 
     const root = await this.port(() => this.options.ports.projectRoot.resolve(context.project, caller.ownerScope));
     if (!root) throw new ProjectTaskError("task_session_unavailable");
@@ -100,13 +105,15 @@ export class ProjectTaskWork {
     const title = `${view.key} ${view.title}`.slice(0, 160);
 
     let chat: { id: string; revision: number } | null = null;
+    const createChat = () => this.port(() => this.options.ports.chats.create(caller.ownerScope, {
+      clientRequestId: `req_task_${seed.slice(0, 40)}`, title, projectId: context.project.id,
+      ...(worktree ? { worktreeId: worktree.id } : {}),
+    }));
     if (!link) {
       let input: SessionLinkInput;
       if (body.kind === "chat") {
-        chat = await this.port(() => this.options.ports.chats.create(caller.ownerScope, {
-          clientRequestId: `req_task_${seed.slice(0, 40)}`, title, projectId: context.project.id,
-        }));
-        input = { ref: chat.id, kind: "chat", title, startRequestId: requestId };
+        chat = await createChat();
+        input = { ref: chat.id, kind: "chat", title, startRequestId: requestId, prune };
       } else {
         const { workspaceId } = await this.port(() => this.options.ports.terminals.ensureWorkspace(context.project.id));
         const { tabId } = await this.port(() => this.options.ports.terminals.createTab({
@@ -114,7 +121,10 @@ export class ProjectTaskWork {
           env: { MATRIX_TASK_ID: taskId, MATRIX_PROJECT_ID: context.project.id },
           ...(body.harness ? { harness: body.harness } : {}),
         }));
-        input = { ref: `term.${workspaceId}.${tabId}`, kind: "terminal", title, startRequestId: requestId, ...(body.harness ? { harness: body.harness } : {}) };
+        input = {
+          ref: `term.${workspaceId}.${tabId}`, kind: "terminal", title, startRequestId: requestId, prune,
+          ...(body.harness ? { harness: body.harness } : {}),
+        };
       }
       link = (await sessions.link(context.scope, taskId, input, caller.actor, "session_started")).row;
     }
@@ -123,9 +133,7 @@ export class ProjectTaskWork {
     let sent = false;
     if (link.kind === "chat" && body.selection && principal) {
       try {
-        chat ??= await this.port(() => this.options.ports.chats.create(caller.ownerScope, {
-          clientRequestId: `req_task_${seed.slice(0, 40)}`, title, projectId: context.project.id,
-        }));
+        chat ??= await createChat();
         await this.options.ports.chats.admitFirstTurn({
           principal, ownerScope: caller.ownerScope, chatId: link.session_ref, baseRevision: chat.revision,
           clientRequestId: `req_turn_${seed.slice(0, 40)}`, text, selection: body.selection,
@@ -152,7 +160,8 @@ export class ProjectTaskWork {
 
   async attach(caller: TaskCaller, slug: string, taskId: string, ref: string): Promise<ProjectTask> {
     const context = await this.options.tasks.open(caller, slug);
-    await this.options.tasks.requireRow(context, taskId);
+    const view = await this.options.tasks.task(context, await this.options.tasks.requireRow(context, taskId));
+    const prune = view.sessions.filter((session) => session.unavailable).map((session) => session.ref);
     const parsed = parseRef(ref);
     let title: string | undefined;
     if (parsed.kind === "chat") {
@@ -163,7 +172,7 @@ export class ProjectTaskWork {
       title = tabs.find((tab) => tab.workspaceId === parsed.workspaceId && tab.tabId === parsed.tabId)?.name;
     }
     if (!title) throw new ProjectTaskError("task_session_not_found");
-    await this.options.sessions.link(context.scope, taskId, { ref, kind: parsed.kind, title: title.slice(0, 200) || ref }, caller.actor, "session_attached");
+    await this.options.sessions.link(context.scope, taskId, { ref, kind: parsed.kind, title: title.slice(0, 200) || ref, prune }, caller.actor, "session_attached");
     return this.changed(context, taskId);
   }
 
@@ -188,8 +197,13 @@ export class ProjectTaskWork {
     return candidates.filter((candidate) => !bound.has(candidate.ref)).slice(0, ATTACHABLE_MAX);
   }
 
-  /** Branch, working-tree state and the pull request summary, refreshed through the bounded cache. */
-  async git(caller: TaskCaller, slug: string, taskId: string): Promise<{ git: TaskGitSummary; task: ProjectTask }> {
+  /**
+   * Branch, working-tree state and the pull request summary, refreshed through
+   * the bounded cache. Storing the summary (and its automation) is a write, so
+   * it runs through `admitWrite`; when the project fence refuses it, the read is
+   * still served and nothing is stored.
+   */
+  async git(caller: TaskCaller, slug: string, taskId: string, admitWrite: WriteAdmission = (run) => run()): Promise<{ git: TaskGitSummary; task: ProjectTask }> {
     const context = await this.options.tasks.open(caller, slug);
     const row = await this.options.tasks.requireRow(context, taskId);
     const cwd = await this.checkout(context, caller, row);
@@ -197,10 +211,23 @@ export class ProjectTaskWork {
     let lookup: PullRequestLookup = { status: "ok", pullRequest: null };
     if (cwd && row.branch) {
       const key = this.cacheKey(context, taskId, row.branch);
-      lookup = this.cache.get(key) ?? await this.options.ports.pullRequests.find({ cwd, branch: row.branch });
-      this.cache.set(key, lookup);
+      const cached = this.cache.get(key);
+      if (cached) {
+        lookup = cached;
+      } else {
+        // Only a fresh lookup is cached, so frequent reads cannot keep extending the 60 s expiry.
+        lookup = await this.options.ports.pullRequests.find({ cwd, branch: row.branch });
+        this.cache.set(key, lookup);
+      }
     }
-    const task = await this.storeLookup(context, row, lookup);
+    let task: ProjectTask;
+    try {
+      task = await this.storeLookup(context, row, lookup, admitWrite);
+    } catch (error: unknown) {
+      if (!(error instanceof ProjectFenceError)) throw error;
+      console.warn("[project-tasks] pull request summary not stored", error.code);
+      task = await this.options.tasks.task(context, row);
+    }
     return { git: this.summary(row.branch, local, lookup, task), task };
   }
 
@@ -237,11 +264,12 @@ export class ProjectTaskWork {
   }
 
   /** Store a fresh lookup on the task (with forward-only automation); an unavailable lookup keeps the stored summary. */
-  private async storeLookup(context: BoardContext, row: TaskRow, lookup: PullRequestLookup): Promise<ProjectTask> {
+  private async storeLookup(context: BoardContext, row: TaskRow, lookup: PullRequestLookup, admitWrite: WriteAdmission = (run) => run()): Promise<ProjectTask> {
     if (lookup.status !== "ok" || (lookup.pullRequest === null && row.pr_number === null)) return this.options.tasks.task(context, row);
-    const { row: stored, changed } = await this.options.sessions.storePullRequest(
-      context.scope, row.id, lookup.pullRequest, { ...DEFAULT_AUTOMATION, ...context.board.automation },
-    );
+    const pullRequest = lookup.pullRequest;
+    const { row: stored, changed } = await admitWrite(() => this.options.sessions.storePullRequest(
+      context.scope, row.id, pullRequest, { ...DEFAULT_AUTOMATION, ...context.board.automation },
+    ));
     const task = await this.options.tasks.task(context, stored);
     if (changed) await this.options.tasks.signal("task.updated", context, task);
     return task;

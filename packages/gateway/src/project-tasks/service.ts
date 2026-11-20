@@ -53,7 +53,10 @@ export interface ProjectTaskServiceOptions {
   /** Task sessions; without it tasks carry no sessions (layer 1 boards). */
   sessions?: ProjectTaskSessionRepository;
   /** Live agent status of task sessions, read once per request. */
-  agentStatus?: { chats?: Pick<ChatPort, "statuses">; terminals?: Pick<TerminalPort, "statuses"> };
+  agentStatus?: {
+    chats?: Pick<ChatPort, "statuses"> & Partial<Pick<ChatPort, "describe">>;
+    terminals?: Pick<TerminalPort, "statuses"> & Partial<Pick<TerminalPort, "existingRefs">>;
+  };
 }
 
 /** The caller resolved from the request principal; never from a body. */
@@ -126,11 +129,40 @@ export class ProjectTaskService {
       this.options.repository.blockedByFor(context.scope, ids),
       this.options.sessions?.listForTasks(context.scope, ids) ?? Promise.resolve({} as Record<string, SessionRow[]>),
     ]);
-    const statuses = await this.agentStatuses(context, Object.values(links).flat());
+    const all = Object.values(links).flat();
+    const [statuses, unavailable] = await Promise.all([this.agentStatuses(context, all), this.unavailableSessions(context, all)]);
     return rows.map((row) => toProjectTask(row, context.board.task_key, {
       blockedBy: blockedBy[row.id] ?? [],
-      sessions: (links[row.id] ?? []).map((link) => toTaskSession(link, statuses[link.session_ref] ?? "idle")),
+      sessions: (links[row.id] ?? []).map((link) => toTaskSession(link, statuses[link.session_ref] ?? "idle", unavailable.has(link.session_ref))),
     }));
+  }
+
+  /**
+   * Links whose chat is gone or archived, or whose terminal tab closed. A source
+   * that fails or is not wired proves nothing, so its links stay available.
+   */
+  async unavailableSessions(context: BoardContext, links: readonly SessionRow[]): Promise<Set<string>> {
+    const chatIds = links.filter((link) => link.kind === "chat").map((link) => link.session_ref);
+    const terminalRefs = links.filter((link) => link.kind === "terminal").map((link) => link.session_ref);
+    const describe = this.options.agentStatus?.chats?.describe;
+    const existingTabs = this.options.agentStatus?.terminals?.existingRefs;
+    const live = async (source: string, run: () => Promise<string[]>): Promise<Set<string> | null> => {
+      try {
+        return new Set(await run());
+      } catch (error: unknown) {
+        console.warn("[project-tasks] session liveness unavailable", source, error instanceof Error ? error.name : typeof error);
+        return null;
+      }
+    };
+    const [liveChats, liveTabs] = await Promise.all([
+      describe && chatIds.length > 0
+        ? live("chat", async () => (await describe(context.ownerScope, chatIds)).map((chat) => chat.id)) : null,
+      existingTabs && terminalRefs.length > 0 ? live("terminal", () => existingTabs(context.project.id)) : null,
+    ]);
+    return new Set([
+      ...(liveChats ? chatIds.filter((ref) => !liveChats.has(ref)) : []),
+      ...(liveTabs ? terminalRefs.filter((ref) => !liveTabs.has(ref)) : []),
+    ]);
   }
 
   /** Agent status per session ref; a status source that fails reads as idle rather than failing the board. */
@@ -329,9 +361,10 @@ export class ProjectTaskService {
   }
 }
 
-export function toTaskSession(link: SessionRow, agentStatus: TaskAgentStatus): TaskSession {
+export function toTaskSession(link: SessionRow, agentStatus: TaskAgentStatus, unavailable = false): TaskSession {
   return {
     ref: link.session_ref, kind: link.kind as TaskSession["kind"], title: link.title, role: link.role as TaskSession["role"],
-    agentStatus, ...(link.harness ? { harness: link.harness } : {}),
+    agentStatus: unavailable ? "idle" : agentStatus, ...(link.harness ? { harness: link.harness } : {}),
+    ...(unavailable ? { unavailable: true } : {}),
   };
 }

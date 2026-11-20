@@ -22,6 +22,12 @@ export interface SessionLinkInput {
   title: string;
   harness?: string;
   startRequestId?: string;
+  /**
+   * Links of this task the caller found unavailable (chat gone or archived, tab
+   * closed). They do not count toward the session limit: when the task is full,
+   * they are removed in the same transaction to make room.
+   */
+  prune?: readonly string[];
 }
 
 /** Statuses a PR transition may move a task out of; automation only moves forward. */
@@ -80,13 +86,19 @@ export class ProjectTaskSessionRepository {
         if (existing.task_id !== taskId) throw new ProjectTaskError("task_session_taken");
         return { row: existing, created: false };
       }
-      const counted = await trx.selectFrom("project_task_sessions").select(sql<string>`count(*)`.as("count"))
-        .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).executeTakeFirstOrThrow();
-      if (Number(counted.count) >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
       const at = this.now();
+      const countLinks = async () => Number((await trx.selectFrom("project_task_sessions").select(sql<string>`count(*)`.as("count"))
+        .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).executeTakeFirstOrThrow()).count);
+      let count = await countLinks();
+      const prune = (input.prune ?? []).filter((ref) => ref !== input.ref).slice(0, TASK_LIMITS.sessions);
+      if (count >= TASK_LIMITS.sessions && prune.length > 0) {
+        await this.pruneInside(trx, scope, taskId, prune, at);
+        count = await countLinks();
+      }
+      if (count >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
       const row = await trx.insertInto("project_task_sessions").values({
         owner_id: scope.ownerId, task_id: taskId, session_ref: input.ref, kind: input.kind, title: clip(input.title, 200),
-        role: Number(counted.count) === 0 ? "main" : "extra", harness: input.harness ?? null,
+        role: count === 0 ? "main" : "extra", harness: input.harness ?? null,
         start_request_id: input.startRequestId ?? null, created_by: actor, created_at: at,
       }).returningAll().executeTakeFirstOrThrow();
       await this.touch(trx, scope, taskId, at);
@@ -104,15 +116,7 @@ export class ProjectTaskSessionRepository {
         .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).where("session_ref", "=", ref)
         .returningAll().executeTakeFirst();
       if (!removed) throw new ProjectTaskError("task_session_not_found");
-      if (removed.role === "main") {
-        const next = await trx.selectFrom("project_task_sessions").select("session_ref")
-          .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId)
-          .orderBy("created_at", "asc").orderBy("session_ref", "asc").limit(1).executeTakeFirst();
-        if (next) {
-          await trx.updateTable("project_task_sessions").set({ role: "main" })
-            .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).where("session_ref", "=", next.session_ref).execute();
-        }
-      }
+      if (removed.role === "main") await this.promoteMain(trx, scope, taskId);
       const at = this.now();
       await this.touch(trx, scope, taskId, at);
       await this.log(trx, scope, taskId, actor, "session_detached", `Detached ${removed.kind === "chat" ? "a chat" : "a terminal"}: ${removed.title}`, at);
@@ -182,6 +186,30 @@ export class ProjectTaskSessionRepository {
   }
 
   // -------------------------------------------------------------------------
+
+  /** Remove unavailable links (the caller holds the task lock), log each, and keep one main. */
+  private async pruneInside(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, refs: readonly string[], at: Date): Promise<void> {
+    if (refs.length === 0) return;
+    const removed = await trx.deleteFrom("project_task_sessions")
+      .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).where("session_ref", "in", [...refs])
+      .returningAll().execute();
+    if (removed.length === 0) return;
+    if (removed.some((row) => row.role === "main")) await this.promoteMain(trx, scope, taskId);
+    for (const row of removed) {
+      await this.log(trx, scope, taskId, AUTOMATION_ACTOR, "session_detached",
+        `Detached ${row.kind === "chat" ? "a deleted chat" : "a closed terminal"}: ${row.title}`, at);
+    }
+  }
+
+  /** The oldest remaining link becomes main. */
+  private async promoteMain(trx: ProjectTaskTrx, scope: TaskScope, taskId: string): Promise<void> {
+    const next = await trx.selectFrom("project_task_sessions").select("session_ref")
+      .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId)
+      .orderBy("created_at", "asc").orderBy("session_ref", "asc").limit(1).executeTakeFirst();
+    if (!next) return;
+    await trx.updateTable("project_task_sessions").set({ role: "main" })
+      .where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).where("session_ref", "=", next.session_ref).execute();
+  }
 
   private async lockTask(trx: ProjectTaskTrx, scope: TaskScope, taskId: string): Promise<TaskRow> {
     const row = await trx.selectFrom("project_tasks").selectAll()
