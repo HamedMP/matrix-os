@@ -9,7 +9,7 @@ import { boardFail, MessageBoardServiceError } from "./errors.js";
 import { hydrateMessages, storedActor } from "./rows.js";
 import { MessageBoardService, type BoardCaller, type MessageBoardServiceOptions, type WriteContext } from "./service.js";
 import {
-  FINISHED_STATES, hashClaimToken, lockTask, mirrorTaskLabel, needsFor, newClaimToken, orderPlan, readinessOf, taskExtension,
+  claimTokenMatches, FINISHED_STATES, hashClaimToken, lockTask, mirrorTaskLabel, needsFor, newClaimToken, orderPlan, readinessOf, taskExtension,
   toBoardTask, validateNeeds, writeNeeds, type TaskRow,
 } from "./task-store.js";
 
@@ -97,6 +97,7 @@ export class BoardTaskService {
       for (const item of ordered) {
         const root = await this.board.postInTransaction(ctx, { channel: plan.channel, text: item.text, labels: item.labels });
         const needs = (item.needs ?? []).map((ref) => idByKey.get(ref) ?? ref);
+        await validateNeeds(ctx, null, needs);
         idByKey.set(item.key, root.id);
         created.set(item.key, { root, task: await this.insertTask(ctx, root, needs, item.forProfile ?? null) });
       }
@@ -148,15 +149,13 @@ export class BoardTaskService {
     const scopeSql = scope === "*" ? sql<boolean>`true`
       : scope.endsWith("/") ? sql<boolean>`(m.channel = ${scope.slice(0, -1)} OR left(m.channel, ${scope.length}) = ${scope})`
         : sql<boolean>`m.channel = ${scope}`;
-    const ownerUser = `user:${ctx.caller.ownerId}`;
-    const creatorSql = request.from
-      ? sql<boolean>`(t.owner_actor = ${ownerUser} OR t.owner_actor NOT LIKE 'user:%' OR t.owner_actor = ${request.from})`
-      : sql<boolean>`(t.owner_actor = ${ownerUser} OR t.owner_actor NOT LIKE 'user:%')`;
+    // Task text is instructions: implicitly take only tasks the owner (or this caller) created.
+    const creators = [`user:${ctx.caller.ownerId}`, ctx.caller.actor.id, ...(request.from ? [request.from] : [])];
     let query = ctx.trx.selectFrom("board_tasks as t").innerJoin("board_messages as m", "m.id", "t.root_id").selectAll("t")
       .where("t.board_id", "=", ctx.board.id).where("t.state", "=", "ready").where(scopeSql)
       .where((eb) => eb.or([
         profile ? eb("t.assigned_profile", "=", profile) : eb.val(false),
-        eb.and([eb("t.assigned_profile", "is", null), creatorSql]),
+        eb.and([eb("t.assigned_profile", "is", null), eb("t.owner_actor", "in", creators)]),
       ]));
     if (request.label) {
       const filter = parseBoardLabelFilter(request.label);
@@ -172,6 +171,8 @@ export class BoardTaskService {
     if (row.state === "blocked") boardFail("task_blocked");
     if (FINISHED_STATES.includes(row.state)) boardFail("task_finished");
     if (row.assigned_profile && row.assigned_profile !== ctx.caller.actor.profile) boardFail("task_assigned");
+    const needs = (await needsFor(ctx.trx, [row.root_id])).get(row.root_id) ?? [];
+    if (await readinessOf(ctx, needs) !== "ready") boardFail("task_waiting");
     const token = newClaimToken();
     const leaseUntil = new Date(ctx.now.getTime() + leaseSeconds * 1000);
     const updated = await ctx.trx.updateTable("board_tasks").set({
@@ -181,7 +182,6 @@ export class BoardTaskService {
     if (!updated) boardFail("task_claimed");
     await mirrorTaskLabel(ctx, row.root_id, "claimed");
     this.emitTask(ctx, updated, "task.claimed", { epoch: updated.claim_epoch, leaseUntil: leaseUntil.toISOString() });
-    const needs = (await needsFor(ctx.trx, [row.root_id])).get(row.root_id) ?? [];
     return { task: toBoardTask(updated, needs), taskId: row.root_id, epoch: updated.claim_epoch, token };
   }
 
@@ -197,7 +197,7 @@ export class BoardTaskService {
     if (!holds) boardFail(proof.epoch !== undefined || proof.token !== undefined ? "claim_lost" : "claim_not_held");
     if (proof.epoch === undefined || proof.token === undefined) {
       if (ctx.caller.actor.kind !== "user") boardFail("invalid_input");
-    } else if (proof.epoch !== row.claim_epoch || hashClaimToken(proof.token) !== row.claim_token_hash) {
+    } else if (proof.epoch !== row.claim_epoch || !claimTokenMatches(proof.token, row.claim_token_hash)) {
       boardFail("claim_lost");
     }
     if (row.lease_until && new Date(row.lease_until).getTime() <= ctx.now.getTime()) boardFail("claim_lost");
@@ -226,7 +226,8 @@ export class BoardTaskService {
     return this.withTask(caller, boardName, taskId, async (ctx, row) => {
       this.requireClaim(ctx, row, input);
       const leaseUntil = new Date(ctx.now.getTime() + (input.leaseSeconds ?? BOARD_LEASE_DEFAULT_SECONDS) * 1000);
-      return toBoardTask(await this.settle(ctx, row, { lease_until: leaseUntil }, "task.renewed", { leaseUntil: leaseUntil.toISOString() }), []);
+      const renewed = await this.settle(ctx, row, { lease_until: leaseUntil }, "task.renewed", { leaseUntil: leaseUntil.toISOString() });
+      return toBoardTask(renewed, (await needsFor(ctx.trx, [taskId])).get(taskId) ?? []);
     });
   }
 
@@ -282,6 +283,7 @@ export class BoardTaskService {
         state: await readinessOf(ctx, needs), claim_holder: JSON.stringify(null), claim_token_hash: null, lease_until: null,
         result: null, failure_reason: null, cancel_reason: null,
       }, "task.reopened");
+      if (row.state === "completed") await this.unreadyDependents(ctx, taskId);
     });
   }
 
@@ -335,6 +337,19 @@ export class BoardTaskService {
       if (!updated) continue;
       await mirrorTaskLabel(ctx, dependent.root_id, "ready");
       this.emitTask(ctx, updated, "task.ready");
+    }
+  }
+
+  /** A prerequisite that is no longer completed sends unclaimed ready dependents back to waiting. */
+  private async unreadyDependents(ctx: WriteContext, reopenedId: string): Promise<void> {
+    const dependents = await ctx.trx.selectFrom("board_task_needs as n").innerJoin("board_tasks as t", "t.root_id", "n.task_id")
+      .selectAll("t").where("n.needs_task_id", "=", reopenedId).where("t.state", "=", "ready").forUpdate().execute();
+    for (const dependent of dependents) {
+      const updated = await ctx.trx.updateTable("board_tasks").set({ state: "waiting", updated_at: ctx.now })
+        .where("root_id", "=", dependent.root_id).where("state", "=", "ready").returningAll().executeTakeFirst();
+      if (!updated) continue;
+      await mirrorTaskLabel(ctx, dependent.root_id, "waiting");
+      this.emitTask(ctx, updated, "task.needs_changed", { reason: "prerequisite_reopened" });
     }
   }
 

@@ -10,7 +10,7 @@ import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-pr
 import { boardErrorBody, boardErrorStatus, MessageBoardServiceError } from "./errors.js";
 import type { BoardCaller, MessageBoardService } from "./service.js";
 import { EventsQuerySchema } from "@matrix-os/contracts/message-board";
-import { readBoardEvents, type BoardEventHub } from "./events.js";
+import { pollBoardEvents, type BoardEventHub } from "./events.js";
 import { mountTaskRoutes } from "./task-routes.js";
 import type { BoardTaskService } from "./tasks.js";
 
@@ -130,19 +130,8 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
   if (deps.tasks) mountTaskRoutes(app, { tasks: deps.tasks, handle, limit, readBody, withProfile });
 
   app.get("/events", handle(async (c, caller) => {
-    const { board: name, wait, after: requested, limit: pageSize, channel, thread } = EventsQuerySchema.parse(queryObject(c));
-    const deadline = Date.now() + (wait ?? 0) * 1000;
-    let target = await service.resolveBoard(caller.ownerId, name);
-    // Without `after`, waiting starts from the current end of the log.
-    let after = requested ?? String(target.last_cursor);
-    let page = await readBoardEvents(service.db, target, { after, limit: pageSize, channel, thread });
-    while (page.events.length === 0 && !page.missed && deps.hub && Date.now() < deadline) {
-      await deps.hub.waitForEvents(caller.ownerId, target.name, deadline - Date.now());
-      after = page.cursor;
-      target = await service.resolveBoard(caller.ownerId, name);
-      page = await readBoardEvents(service.db, target, { after, limit: pageSize, channel, thread });
-    }
-    return c.json(page);
+    const { board: name, wait, after, limit: pageSize, channel, thread } = EventsQuerySchema.parse(queryObject(c));
+    return c.json(await pollBoardEvents({ service, hub: deps.hub }, caller.ownerId, { board: name, after, waitSeconds: wait, limit: pageSize, channel, thread }));
   }));
 
   return app;

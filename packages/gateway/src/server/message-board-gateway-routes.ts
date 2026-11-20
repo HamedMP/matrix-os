@@ -2,7 +2,7 @@
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import { boardErrorBody } from "../message-board/errors.js";
-import { registerBoardEventsWebSocket } from "../message-board/events-ws.js";
+import { BOARD_EVENTS_WS_PATH, registerBoardEventsWebSocket } from "../message-board/events-ws.js";
 import { createMessageBoardRoutes } from "../message-board/routes.js";
 import type { MessageBoardRuntime } from "../message-board/runtime.js";
 import type { BoardCaller } from "../message-board/service.js";
@@ -29,6 +29,7 @@ export function registerMessageBoardGatewayRoutes(options: MessageBoardGatewayRo
   if (!runtime) {
     // Missing owner database is misconfiguration, not missing data.
     app.all(`${MESSAGE_BOARD_API_PREFIX}/*`, (c) => c.json(boardErrorBody("unavailable"), 503));
+    app.get(BOARD_EVENTS_WS_PATH, (c) => c.json(boardErrorBody("unavailable"), 503));
     return;
   }
   const ownerName = options.ownerName?.trim().slice(0, 64) || "Owner";
