@@ -158,3 +158,28 @@ describe("TaskDetail focus", () => {
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 });
+
+describe("TaskDetail description review fixes", () => {
+  it("opens description links in a new tab without starting an edit", () => {
+    const task = boardTask("t1", { description: "See [the spec](https://example.test/spec)" });
+    render(<TaskDetail {...detailProps(task)} />);
+    const link = screen.getByRole("link", { name: "the spec" });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    fireEvent.click(link);
+    expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
+  });
+
+  it("keeps the description read-only while its save is in flight", async () => {
+    const task = boardTask("t1", { description: "Old" });
+    let finish: (value: UpdateResult) => void = () => {};
+    const onUpdate = vi.fn(() => new Promise<UpdateResult>((resolve) => { finish = resolve; }));
+    render(<TaskDetail {...detailProps(task, { onUpdate })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit description" }));
+    const box = screen.getByRole("textbox", { name: "Description" }) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "New" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(box.readOnly).toBe(true));
+    await act(async () => { finish({ task: { ...task, description: "New", revision: 2 } }); });
+  });
+});

@@ -75,7 +75,15 @@ export function useProjectBoard(client: ProjectBoardClient, options: { includeAr
     try {
       const tasks = await client.listTasks({ includeArchived });
       if (generation.current !== current) return;
-      setServer({ client, tasks });
+      // A list read can start before a move or edit lands and finish after it: keep whichever copy is newer.
+      setServer((previous) => {
+        if (!previous || previous.client !== client) return { client, tasks };
+        const known = new Map(previous.tasks.map((task) => [task.id, task]));
+        return { client, tasks: tasks.map((task) => {
+          const shown = known.get(task.id);
+          return shown && shown.revision > task.revision ? shown : task;
+        }) };
+      });
       setLoadError(false);
     } catch (error: unknown) {
       if (generation.current !== current) return;

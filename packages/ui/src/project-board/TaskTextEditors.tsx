@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chipButtonClass, focusOnMount, focusRing, tone } from "./board-style.js";
@@ -96,6 +96,12 @@ export function TitleEditor({ task, onSave }: { task: ProjectTask; onSave: TextS
   </div>;
 }
 
+/** Links in task text open outside the shell and never start editing the description they sit in. */
+const EXTERNAL_LINKS = {
+  a: ({ href, children }: { href?: string; children?: ReactNode }) => <a href={href} target="_blank" rel="noreferrer noopener"
+    onClick={(event) => event.stopPropagation()}>{children}</a>,
+};
+
 export function DescriptionEditor({ task, onSave }: { task: ProjectTask; onSave: TextSave }) {
   const description = task.description;
   const [editing, setEditing] = useState(false);
@@ -105,12 +111,16 @@ export function DescriptionEditor({ task, onSave }: { task: ProjectTask; onSave:
   const { base, conflict, busy, begin, save, clear } = useTextEdit(onSave);
   if (description !== shown && !editing) { setShown(description); setValue(description); }
   if (!editing) {
-    return <button type="button" onClick={() => { setEditing(true); begin(task); }} aria-label="Edit description"
-      className={`block w-full rounded-[14px] p-2 text-left hover:bg-[var(--bg-hover)] ${focusRing}`}>
+    const startEditing = () => { setEditing(true); begin(task); };
+    // Text and links stay readable and clickable; a separate button starts editing, so a link is never inside a button.
+    return <div className="group relative rounded-[14px] p-2 hover:bg-[var(--bg-hover)]">
       {description.trim()
-        ? <div className={markdownClass} style={tone.primary}><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{description}</ReactMarkdown></div>
-        : <span className="text-[14px]" style={tone.muted}>Add a description…</span>}
-    </button>;
+        ? <div className={markdownClass} style={tone.primary}><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={EXTERNAL_LINKS}>{description}</ReactMarkdown></div>
+        : <span className="text-[14px]" style={tone.muted}>No description yet.</span>}
+      <button type="button" onClick={startEditing}
+        className={`${description.trim() ? "absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" : "mt-1 block"} ${chipButtonClass}`}
+        style={tone.secondary}>{description.trim() ? "Edit description" : "Add a description"}</button>
+    </div>;
   }
   const close = () => { setEditing(false); setPreview(false); clear(); };
   /** `winner`: save over the copy that won a race, after "Keep mine". */
@@ -127,8 +137,10 @@ export function DescriptionEditor({ task, onSave }: { task: ProjectTask; onSave:
         className={chipButtonClass} style={tone.primary}>{mode ? "Preview" : "Write"}</button>)}
     </div>
     {preview
-      ? <div className={`${markdownClass} min-h-[120px] px-1`} style={tone.primary}>{value.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{value}</ReactMarkdown> : <span style={tone.muted}>Nothing to preview</span>}</div>
+      ? <div className={`${markdownClass} min-h-[120px] px-1`} style={tone.primary}>{value.trim() ? <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={EXTERNAL_LINKS}>{value}</ReactMarkdown> : <span style={tone.muted}>Nothing to preview</span>}</div>
       : <textarea aria-label="Description" rows={8} maxLength={TASK_LIMITS.description} value={value} onChange={(event) => setValue(event.currentTarget.value)}
+        // Read-only while a save is in flight, so nothing typed after Save is dropped when it closes.
+        readOnly={busy} aria-busy={busy}
         ref={focusOnMount}
         onKeyDown={(event) => {
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); if (!conflict) void commit(); }
