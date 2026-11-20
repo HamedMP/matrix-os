@@ -121,7 +121,10 @@ export class MessageBoardService {
         eb.fn.max("m.last_activity_at").as("last_activity_at"),
         sql<string>`count(*) FILTER (WHERE m.last_actor <> ${caller.actor.id} AND (r.read_at IS NULL OR m.last_activity_at > r.read_at))`.as("unread"),
       ])
-      .where("m.board_id", "=", board.id).where("m.root_id", "is", null).groupBy("m.channel").execute();
+      .where("m.board_id", "=", board.id).where("m.root_id", "is", null)
+      // A deleted root stays only as a placeholder for its replies.
+      .where((eb) => eb.or([eb("m.deleted_at", "is", null), eb("m.reply_count", ">", 0)]))
+      .groupBy("m.channel").execute();
     const byChannel = new Map(stats.map((row) => [row.channel, row]));
     return channels.map(({ path }) => {
       const stat = byChannel.get(path);
@@ -144,7 +147,8 @@ export class MessageBoardService {
   async listThreads(caller: BoardCaller, boardName: string | undefined, query: Omit<ThreadsQuery, "board">): Promise<BoardThreadSummary[]> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
     let builder = this.db.selectFrom("board_messages as m").selectAll("m")
-      .where("m.board_id", "=", board.id).where("m.root_id", "is", null);
+      .where("m.board_id", "=", board.id).where("m.root_id", "is", null)
+      .where((eb) => eb.or([eb("m.deleted_at", "is", null), eb("m.reply_count", ">", 0)]));
     builder = builder.where(scopeCondition(query.channel ?? "*"));
     if (query.by) builder = builder.where("m.author", "=", query.by);
     if (query.label) {
