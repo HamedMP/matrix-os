@@ -142,7 +142,7 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
   }));
 
   if (deps.tasks) mountTaskRoutes(app, { tasks: deps.tasks, handle, limit, readBody, withProfile });
-  if (deps.automation) mountAutomationRoutes(app, { ...deps.automation, handle, limit, readBody });
+  if (deps.automation) mountAutomationRoutes(app, { ...deps.automation, handle, limit, readBody, withProfile });
 
   app.get("/events", handle(async (c, caller) => {
     const { board: name, wait, after, limit: pageSize, channel, thread } = EventsQuerySchema.parse(queryObject(c));

@@ -47,7 +47,7 @@ const schedule: BoardVerb = {
       ...(isoTime(values.until, "--until") ? { until: isoTime(values.until, "--until") } : {}),
     };
     return async (ctx) => {
-      const { schedule: created } = await ctx.client.request("POST", "/schedules", { body });
+      const { schedule: created } = await ctx.client.request("POST", "/schedules", { body: { ...body, ...(ctx.profile ? { profile: ctx.profile } : {}) } });
       printSuccess(ctx.deps.io, ctx.json, { schedule: created }, `Scheduled ${scheduleLine(created as Json)}`);
     };
   },

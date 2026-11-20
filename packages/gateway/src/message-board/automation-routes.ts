@@ -22,8 +22,9 @@ export function mountAutomationRoutes(app: Hono, deps: {
   handle: Handle;
   limit: MiddlewareHandler;
   readBody(c: Context): Promise<unknown>;
+  withProfile(caller: BoardCaller, profile: string | undefined): BoardCaller;
 }): void {
-  const { watchers, schedules, grants, handle, limit, readBody } = deps;
+  const { watchers, schedules, grants, handle, limit, readBody, withProfile } = deps;
   const board = (c: Context) => BoardQuerySchema.parse({ board: c.req.query("board") }).board;
 
   app.get("/watchers", handle(async (c, caller) => c.json({ watchers: await watchers.list(caller, board(c)) })));
@@ -37,7 +38,11 @@ export function mountAutomationRoutes(app: Hono, deps: {
   }));
 
   app.get("/schedules", handle(async (c, caller) => c.json({ schedules: await schedules.list(caller, board(c)) })));
-  app.post("/schedules", limit, handle(async (c, caller) => c.json({ schedule: await schedules.create(caller, board(c), CreateScheduleRequestSchema.parse(await readBody(c))) }, 201)));
+  app.post("/schedules", limit, handle(async (c, caller) => {
+    const body = CreateScheduleRequestSchema.parse(await readBody(c));
+    // The schedule saves its author with the profile, so the later post appears under it.
+    return c.json({ schedule: await schedules.create(withProfile(caller, body.profile), board(c), body) }, 201);
+  }));
   app.delete("/schedules/:id", limit, handle(async (c, caller) => {
     await schedules.cancel(caller, board(c), BoardScheduleIdSchema.parse(c.req.param("id")));
     return c.json({ ok: true });

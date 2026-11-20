@@ -17,6 +17,9 @@ describe("matrix board schedules, private channels and grants", () => {
     expect(h.calls[0]).toMatchObject({ method: "POST", path: "/api/board/schedules", body: { thread: ROOT_ID, text: "Check CI", in: "5m", every: "1h", times: 3 } });
     expect(await runBoardCli(["schedule", "cancel", "sch_abcdefgh12"], h.deps)).toBe(0);
     expect(h.calls[1]).toMatchObject({ method: "DELETE", path: "/api/board/schedules/sch_abcdefgh12" });
+    // Fault detected (review): `--as` was dropped, so the later post appeared without the chosen profile.
+    expect(await runBoardCli(["schedule", "dev", "Follow up", "--in", "5m", "--as", "reviewer"], h.deps)).toBe(0);
+    expect(h.calls[2]!.body).toMatchObject({ channel: "dev", profile: "reviewer" });
   });
 
   it("rejects bad schedule flags as usage errors before calling the board", async () => {
