@@ -14,7 +14,7 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
-import { webShellIconUrlForApp } from "@/lib/web-desktop-app-launch";
+import { canvasWindowIconUrl } from "@/lib/web-desktop-app-launch";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 const APP_HYDRATION_MARGIN_PX = 320;
@@ -33,11 +33,6 @@ interface CanvasWindowMountProps {
   viewportWidth: number;
   viewportHeight: number;
   iconUrl?: string;
-}
-
-/** Catalog artwork first; launcher-only built-ins (Message Board) are not catalog apps, so use their shipped artwork. */
-export function canvasWindowIconUrl(apps: readonly AppEntry[], path: string): string | undefined {
-  return apps.find((app) => app.path === path)?.iconUrl ?? webShellIconUrlForApp({ path });
 }
 
 export function shouldHydrateCanvasWindow(input: {

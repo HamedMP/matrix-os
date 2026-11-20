@@ -125,3 +125,8 @@ export function webGalleryLauncherIconUrl(apps: readonly { path: string; iconUrl
   const gallery = apps.filter(app => app.path === "matrix-app:app-gallery" || /^apps\/app-gallery\/(?:dist\/)?index\.html$/.test(app.path));
   return gallery.length === 1 && gallery[0]?.iconUrl ? gallery[0].iconUrl : gatewayAssetUrl("/icons/v3-app-gallery.png")!;
 }
+
+/** Catalog artwork first; launcher-only built-ins (Message Board) are not catalog apps, so use their shipped artwork. */
+export function canvasWindowIconUrl(apps: readonly { path: string; iconUrl?: string }[], path: string): string | undefined {
+  return apps.find((app) => app.path === path)?.iconUrl ?? webShellIconUrlForApp({ path });
+}
