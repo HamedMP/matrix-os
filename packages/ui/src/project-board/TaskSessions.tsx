@@ -84,8 +84,9 @@ export function TaskSessionPane({ session, onOpen }: { session: TaskSession; onO
       <span className="inline-flex items-center gap-1"><AgentStatusDot status={session.agentStatus} />Agent {status.toLowerCase()}</span>
       {session.role === "main" ? <span className="rounded-md px-1.5 text-[11px]" style={{ background: "var(--bg-sunken, var(--muted))" }}>main</span> : null}
     </p>
-    <button type="button" className={`${secondaryButtonClass} mt-3`} disabled={!onOpen} onClick={() => onOpen?.(session)}
-      title={onOpen ? undefined : `${kindLabel} can't be opened from here yet`}>
+    {session.unavailable ? <p role="status" className="text-[13px]" style={tone.secondary}>This {kindLabel.toLowerCase()} no longer exists.</p> : null}
+    <button type="button" className={`${secondaryButtonClass} mt-3`} disabled={!onOpen || session.unavailable === true} onClick={() => onOpen?.(session)}
+      title={session.unavailable ? `This ${kindLabel.toLowerCase()} no longer exists` : onOpen ? undefined : `${kindLabel} can't be opened from here yet`}>
       <ExternalLink size={13} aria-hidden />Open in {kindLabel}
     </button>
   </div>;

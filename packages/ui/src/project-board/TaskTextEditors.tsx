@@ -82,6 +82,8 @@ export function TitleEditor({ task, onSave }: { task: ProjectTask; onSave: TextS
   };
   return <div className="shrink-0 px-5 pb-2">
     <textarea aria-label="Task title" rows={1} maxLength={TASK_LIMITS.title} value={value} onChange={(event) => setValue(event.currentTarget.value)}
+      // One title save at a time: a second edit against the same base would be overwritten when the first lands.
+      readOnly={busy} aria-busy={busy}
       onFocus={() => { setFocused(true); if (!conflict && !base) begin(task); }}
       onBlur={() => { setFocused(false); if (!conflict) commit(); }}
       onKeyDown={(event) => {
