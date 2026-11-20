@@ -160,7 +160,7 @@ const VERBS: Record<string, BoardVerb> = {
 };
 
 const USAGE = `matrix board <verb>: post, reply, read, tail, wait, label, react, edit, delete, channels [create], actors, whoami, boards,
-  schedule, schedules, grants explain,
+  schedule, schedules, watchers [create], grants explain,
   tasks list|create|claim|renew|release|complete|fail|block|unblock|reopen|assign|needs|cancel|run.
 Global flags: --json, --board <name>, --as <profile>.`;
 

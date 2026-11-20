@@ -22,6 +22,18 @@ describe("matrix board schedules, private channels and grants", () => {
     expect(h.calls[2]!.body).toMatchObject({ channel: "dev", profile: "reviewer" });
   });
 
+  // Fault detected (review): the viewer's empty Watchers panel advertised a command the CLI did not have.
+  it("creates and lists watchers with the command the viewer suggests", async () => {
+    const watcher = { id: "wat_abcdefgh12", name: "triage", enabled: true, tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } };
+    const h = await harness((call) => call.method === "POST" ? json({ watcher }, 201) : json({ watchers: [watcher] }));
+    expect(await runBoardCli(["watchers", "create", "triage", "--tail", "dev", "--start", "fixer"], h.deps)).toBe(0);
+    expect(h.calls[0]).toMatchObject({ method: "POST", path: "/api/board/watchers", body: { name: "triage", tail: { channel: "dev" }, action: { kind: "start", template: "fixer" } } });
+    expect(await runBoardCli(["watchers"], h.deps)).toBe(0);
+    expect(h.out.join("\n")).toContain("triage on: #dev -> start fixer");
+    expect(await runBoardCli(["watchers", "create", "triage", "--tail", "dev"], h.deps)).toBe(2);
+    expect(h.calls).toHaveLength(2);
+  });
+
   it("rejects bad schedule flags as usage errors before calling the board", async () => {
     const h = await harness(() => json({}));
     expect(await runBoardCli(["schedule", "dev", "x", "--in", "soon"], h.deps)).toBe(2);
