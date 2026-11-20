@@ -152,5 +152,10 @@ describe("MessageBoard viewer", () => {
     expect(await screen.findByRole("list", { name: "Threads" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to channels" }));
     expect(await screen.findByRole("navigation", { name: "Channels" })).toBeInTheDocument();
+    // A thread that fails to load still offers the way back.
+    fireEvent.click(screen.getByRole("button", { name: /^dev/ }));
+    live.state.failing = true;
+    fireEvent.click(await screen.findByRole("button", { name: /Deploy notes for 0.42/ }));
+    expect(await screen.findByRole("button", { name: "Back to threads" })).toBeInTheDocument();
   });
 });

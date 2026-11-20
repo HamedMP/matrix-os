@@ -34,7 +34,11 @@ export function ThreadView({ thread, viewerId, actors, nowMs, mutate, onOpenThre
   useEffect(() => { end.current?.scrollIntoView?.({ block: "end" }); }, [rootId, replyCount]);
 
   if (!data) {
-    return <div className="grid h-full place-items-center px-6 text-center text-[13px]" style={textTertiary}>
+    return <div className="relative grid h-full place-items-center px-6 text-center text-[13px]" style={textTertiary}>
+      {/* Narrow windows hide the lists; the way back must not depend on the thread loading. */}
+      {onBack ? <button type="button" aria-label="Back to threads" className={`${iconButtonClass} absolute left-3 top-2.5`} onClick={onBack}>
+        <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
+      </button> : null}
       {thread.status === "error"
         ? <div role="alert"><p>{thread.error}</p><button type="button" className={`${chipClass} mt-2`} onClick={onRetry}>Try again</button></div>
         : <p role="status">Loading thread…</p>}
