@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
+import type { TerminalCaller } from "./terminal-agent-client.js";
 
 /** Claims older than a day are long past any lease (at most an hour). */
 const CLAIM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -16,6 +17,7 @@ const StoredClaimSchema = z.object({
   board: z.string().min(1).max(64),
   claimedAt: z.string().max(64),
   leaseSeconds: z.number().int().min(10).max(3_600).optional(),
+  renewedAt: z.string().max(64).optional(),
 });
 export type StoredClaim = z.infer<typeof StoredClaimSchema>;
 
@@ -24,16 +26,22 @@ function isCode(error: unknown, ...codes: string[]): boolean {
   return typeof code === "string" && codes.includes(code);
 }
 
+/** The directory name for one caller: a Matrix terminal pane `<session>_<pane>`, else `default`. */
+export function claimCallerKey(caller: TerminalCaller | undefined): string {
+  return caller ? `${caller.sessionName}_${caller.paneId}` : "default";
+}
+
 /**
  * Claims this CLI holds, one owner-only file per task under
- * `~/.matrixos/board/claims/<profile|default>/`, so settle verbs need only the ID.
+ * `~/.matrixos/board/claims/<profile|default>/<pane|default>/`, so settle verbs need
+ * only the ID and two panes using the same profile never share a claim file.
  */
 export class BoardClaimStore {
   private readonly dir: string;
   private readonly now: () => number;
 
-  constructor(options: { home: string; profile?: string; now?: () => number }) {
-    this.dir = join(options.home, ".matrixos", "board", "claims", options.profile ?? "default");
+  constructor(options: { home: string; profile?: string; caller?: TerminalCaller; now?: () => number }) {
+    this.dir = join(options.home, ".matrixos", "board", "claims", options.profile ?? "default", claimCallerKey(options.caller));
     this.now = options.now ?? Date.now;
   }
 
@@ -79,11 +87,12 @@ export class BoardClaimStore {
     }
   }
 
-  async forget(taskId: string): Promise<void> {
+  /** Removes the remembered claim, but only while it is still the claim of `epoch`. */
+  async forget(taskId: string, epoch: number): Promise<void> {
     const path = this.file(taskId);
     try {
-      const info = await lstat(path);
-      if (!info.isFile() || info.isSymbolicLink()) return;
+      const current = await this.load(taskId);
+      if (!current || current.epoch !== epoch) return;
       await unlink(path);
     } catch (error: unknown) {
       if (!isCode(error, "ENOENT", "ENOTDIR")) throw error;

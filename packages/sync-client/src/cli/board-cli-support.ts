@@ -16,6 +16,7 @@ export interface BoardIo {
 
 /** The parts of a child process `tasks run` uses. */
 export interface BoardChild {
+  readonly pid?: number | undefined;
   kill(signal?: NodeJS.Signals): boolean;
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   once(event: "error", listener: (error: Error) => void): unknown;
@@ -26,6 +27,14 @@ export interface BoardSignals {
   off(signal: "SIGINT" | "SIGTERM", handler: () => void): void;
 }
 
+export interface BoardSpawnOptions {
+  env: NodeJS.ProcessEnv;
+  /** `inherit`, or under --json the child's stdout sent to our stderr. */
+  stdio: "inherit" | ["inherit", 2, "inherit"];
+  /** Its own process group, so stopping it reaches everything it started. */
+  detached: true;
+}
+
 export interface BoardConnection { gatewayUrl: string; token: string; local: boolean }
 
 export interface BoardDeps {
@@ -34,7 +43,9 @@ export interface BoardDeps {
   fetch?: typeof fetch;
   io: BoardIo;
   resolveConnection(flags: Record<string, unknown>, env: NodeJS.ProcessEnv): Promise<BoardConnection>;
-  spawn?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: "inherit" }) => BoardChild;
+  spawn?: (command: string, args: string[], options: BoardSpawnOptions) => BoardChild;
+  /** Signals a process or, with a negative pid, a process group (`process.kill`). */
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
   signals: BoardSignals;
   now(): number;
 }
@@ -241,7 +252,8 @@ export async function openBoardContext(deps: BoardDeps, values: ParsedValues): P
   const profile = profileName(values.as);
   const connection = await deps.resolveConnection(values, deps.env);
   // The pane header names this terminal's agent; it only means something on the loopback path.
-  const caller = connection.local ? terminalCallerFromEnv(deps.env) : undefined;
+  const paneCaller = terminalCallerFromEnv(deps.env);
+  const caller = connection.local ? paneCaller : undefined;
   const clientFor = (name: string | undefined) => createBoardClient({
     gatewayUrl: connection.gatewayUrl, token: connection.token,
     ...(name ? { board: name } : {}), ...(caller ? { caller } : {}), ...(deps.fetch ? { fetch: deps.fetch } : {}),
@@ -249,7 +261,8 @@ export async function openBoardContext(deps: BoardDeps, values: ParsedValues): P
   return {
     deps, json: values.json === true, client: clientFor(board), clientFor,
     ...(board ? { board } : {}), ...(profile ? { profile } : {}),
-    claims: new BoardClaimStore({ home: deps.home, ...(profile ? { profile } : {}), now: deps.now }),
+    // Claims are kept per pane even on the profile path, so panes never share a claim file.
+    claims: new BoardClaimStore({ home: deps.home, ...(profile ? { profile } : {}), ...(paneCaller ? { caller: paneCaller } : {}), now: deps.now }),
   };
 }
 

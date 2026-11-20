@@ -122,7 +122,7 @@ function verb(name: string, done: string, shape: Shape, options: { proof?: boole
       const taskId = messageId(id, "task ID");
       const body = shape(rest, values);
       return async (ctx: BoardContext) => {
-        const payload = await taskVerb(ctx, name, taskId, body, { ...(options.proof ? { proof: true } : {}), ...(options.forget ? { forget: true } : {}) });
+        const payload = await taskVerb(ctx, name, taskId, body, { ...(options.proof ? { proof: "stored" as const } : {}), ...(options.forget ? { forget: true } : {}) });
         printSuccess(ctx.deps.io, ctx.json, { id: taskId, ...payload }, `${done} ${taskId}.`);
       };
     },
