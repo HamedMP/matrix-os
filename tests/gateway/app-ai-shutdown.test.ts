@@ -44,6 +44,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     codingAgentTurnLifecycle: service("turns"), codexEventBridge: null, codingAgentThreadStream: null,
     codingAgentAttentionNotifications: null, pushAdapter: service("push"), codingAgentSessionStopReconciler: service("reconciler"),
     drainReconnectableAbortEntries: vi.fn(), reconnectableAbortControllers: new Map(), canvasCleanupTimer: null, canvasSubscriptionHub: null,
+    ownerDatabaseServices: { messageBoard: service("message board") },
     systemActivityCandidates: new Set(), channelManager: service("channels"), customMcp: service("custom MCP"),
     processManager: service("processes"), forwardTunnelHub: service("tunnels"), watcher: service("watcher"),
     homeMirrorLifecycle: { mirror: null, startup: null }, syncR2: null,
@@ -85,6 +86,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("push.dispose")).toBeGreaterThan(-1);
   expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
+  // The board's sweeper, scheduler and event subscribers stop before the owner database closes.
+  expect(shutdown.calls.indexOf("message board.close")).toBeGreaterThan(-1);
+  expect(shutdown.calls.indexOf("message board.close")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.slice(0, 3)).toEqual(["native Claude.beginShutdown", "managed feature restart.close", "GitHub developer setup.close"]);
 });
 
