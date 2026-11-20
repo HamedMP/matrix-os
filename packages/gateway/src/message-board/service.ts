@@ -215,12 +215,13 @@ export class MessageBoardService {
 
   async listMessages(caller: BoardCaller, boardName: string | undefined, query: Omit<MessagesQuery, "board">): Promise<BoardMessage[]> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
-    let builder = this.db.selectFrom("board_messages as m").selectAll("m").where("m.board_id", "=", board.id);
+    // Tombstones stay in thread views (replies keep their place) but never fill message lists.
+    let builder = this.db.selectFrom("board_messages as m").selectAll("m").where("m.board_id", "=", board.id).where("m.deleted_at", "is", null);
     if (query.channel) builder = builder.where(scopeCondition(query.channel));
     if (query.re) builder = builder.where("m.root_id", "=", query.re);
     if (query.by) builder = builder.where("m.author", "=", query.by);
     if (query.mentions) builder = builder.where(sql<boolean>`m.mentions @> ${JSON.stringify([query.mentions])}::jsonb`);
-    if (query.text) builder = builder.where("m.deleted_at", "is", null).where("m.text", "ilike", `%${escapeLike(query.text)}%`);
+    if (query.text) builder = builder.where("m.text", "ilike", `%${escapeLike(query.text)}%`);
     if (query.label) {
       const filter = parseBoardLabelFilter(query.label);
       builder = builder.where(({ exists, selectFrom }) => exists(
