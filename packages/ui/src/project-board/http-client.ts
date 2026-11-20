@@ -7,7 +7,7 @@ import {
 } from "@matrix-os/contracts/project-tasks";
 import {
   GENERIC_BOARD_ERROR, PROJECT_BOARD_EVENT_TYPES, ProjectBoardRequestError, TaskAgentWorkingError, TaskConflictError,
-  type ProjectBoardClient, type ProjectBoardEvent, type ProjectBoardEventType,
+  type ProjectBoardClient, type ProjectBoardEvent, type ProjectBoardEventType, type ProjectBoardTaskEvent,
 } from "./client.js";
 import type { ProjectTask } from "./types.js";
 
@@ -28,6 +28,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** 500 tasks with full descriptions stay under this; anything larger is refused. */
 const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 const LIST_PAGE_SIZE = TASK_LIMITS.listMax;
+const ACTIVE_LIST_PAGES = Math.ceil(TASK_LIMITS.tasksPerProject / LIST_PAGE_SIZE);
+/** Archived history is a bounded extra: it walks this many pages and keeps this many archived tasks at most. */
+const ARCHIVE_LIST_PAGES = 2;
+const MAX_ARCHIVED_TASKS = 1_000;
 /** Comments and activity follow `nextCursor` this many pages at most. */
 const MAX_DETAIL_PAGES = 20;
 
@@ -177,9 +181,16 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
     inFlight = true;
     let delay = POLL_MS;
     try {
-      const fresh = await readEvents(baselineDone ? MAX_CATCH_UP_PAGES : MAX_BASELINE_PAGES);
-      if (baselineDone) emit(fresh);
-      baselineDone = true;
+      const result = await readEvents(baselineDone ? MAX_CATCH_UP_PAGES : MAX_BASELINE_PAGES);
+      cursor = result.cursor;
+      if (baselineDone) {
+        emit(result.events);
+      } else {
+        // Subscribers loaded before the cursor was set; anything that changed in
+        // between was skipped with the backlog, so ask them to refetch once.
+        baselineDone = true;
+        emit([{ type: "board.resync" }]);
+      }
     } catch (error: unknown) {
       console.warn("[project-board] change poll failed", errorName(error));
       delay = POLL_BACKOFF_MS;
@@ -189,11 +200,13 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
     schedule(delay);
   }
 
-  async function readEvents(maxPages: number): Promise<ProjectBoardEvent[]> {
-    const found: ProjectBoardEvent[] = [];
+  /** Reads from the shared cursor without moving it; `poll` commits the returned cursor only when every page succeeded. */
+  async function readEvents(maxPages: number): Promise<{ events: ProjectBoardEvent[]; cursor: string | undefined }> {
+    const found: ProjectBoardTaskEvent[] = [];
+    let next = cursor;
     for (let page = 0; page < maxPages; page += 1) {
       const result = await request("/api/workspace/events", {
-        query: { projectSlug: slug, cursor, limit: String(EVENTS_PAGE_SIZE) }, schema: WorkspaceEventsResponseSchema,
+        query: { projectSlug: slug, cursor: next, limit: String(EVENTS_PAGE_SIZE) }, schema: WorkspaceEventsResponseSchema,
       });
       for (const event of result.events) {
         const taskId = event.scope.taskId;
@@ -202,11 +215,13 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
         found.push({ type: event.type as ProjectBoardEventType, taskId, revision });
       }
       const last = result.events.at(-1);
-      if (last) cursor = last.id;
+      if (last) next = last.id;
       if (!result.nextCursor || !last) break;
     }
-    // One signal per task per poll: listeners refetch, so repeats only cost requests.
-    return found.filter((event, index) => !found.slice(index + 1).some((later) => later.taskId === event.taskId));
+    // One signal per task per poll, at its latest position: listeners refetch, so repeats only cost requests.
+    const latest = new Map<string, number>();
+    found.forEach((event, index) => latest.set(event.taskId, index));
+    return { events: found.filter((event, index) => latest.get(event.taskId) === index), cursor: next };
   }
 
   function emit(events: readonly ProjectBoardEvent[]): void {
@@ -223,13 +238,22 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
 
   return {
     async listTasks(listOptions = {}) {
-      return collect(async (pageCursor) => {
+      const walk = (includeArchived: boolean, maxPages: number) => collect(async (pageCursor) => {
         const page = await request(tasks, {
-          query: { limit: String(LIST_PAGE_SIZE), includeArchived: listOptions.includeArchived ? "true" : "false", cursor: pageCursor },
+          query: { limit: String(LIST_PAGE_SIZE), includeArchived: includeArchived ? "true" : "false", cursor: pageCursor },
           schema: ListTasksResponseSchema,
         });
         return { items: page.tasks, nextCursor: page.nextCursor };
-      }, Math.ceil(TASK_LIMITS.tasksPerProject / LIST_PAGE_SIZE), TASK_LIMITS.tasksPerProject);
+      }, maxPages);
+      // The server's task cap counts active tasks only, so they get their own
+      // walk: archived history, listed oldest first, cannot crowd them out.
+      const active = (await walk(false, ACTIVE_LIST_PAGES)).slice(0, TASK_LIMITS.tasksPerProject);
+      if (!listOptions.includeArchived) return active;
+      const seen = new Set(active.map((task) => task.id));
+      const archived = (await walk(true, ARCHIVE_LIST_PAGES))
+        .filter((task) => task.archivedAt !== null && !seen.has(task.id))
+        .slice(0, MAX_ARCHIVED_TASKS);
+      return [...active, ...archived].sort((left, right) => left.number - right.number);
     },
 
     async getTask(taskId) {

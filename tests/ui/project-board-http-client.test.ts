@@ -49,10 +49,10 @@ describe("createHttpProjectBoardClient requests", () => {
       () => json({ tasks: [task(1)], nextCursor: "page_2" }),
       () => json({ tasks: [task(2)], nextCursor: null }),
     );
-    const tasks = await client(fetch).listTasks({ includeArchived: true });
+    const tasks = await client(fetch).listTasks();
     expect(tasks.map((entry) => entry.key)).toEqual(["MOS-1", "MOS-2"]);
     expect(calls[0]!.url.origin + calls[0]!.url.pathname).toBe(`${GATEWAY}/api/projects/my-proj/tasks`);
-    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ limit: "500", includeArchived: "true" });
+    expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ limit: "500", includeArchived: "false" });
     expect(calls[1]!.url.searchParams.get("cursor")).toBe("page_2");
     expect(calls[0]!.init.credentials).toBe("same-origin");
     expect(calls[0]!.init.redirect).toBe("error");
@@ -66,6 +66,37 @@ describe("createHttpProjectBoardClient requests", () => {
     expect(calls).toHaveLength(10);
     expect(tasks).toHaveLength(5_000);
     expect(calls[0]!.url.searchParams.get("includeArchived")).toBe("false");
+  });
+
+  it("lists active tasks separately so archived history cannot push newer active tasks past the cap", async () => {
+    const archivedAt = "2026-11-02T00:00:00.000Z";
+    const archivedPage = Array.from({ length: 500 }, (_, index) => task(index + 1, { archivedAt }));
+    const activePage = Array.from({ length: 500 }, (_, index) => task(10_001 + index));
+    const { fetch, calls } = fakeFetch(
+      // Active tasks only: all 5,000 come back even though 5,000 archived tasks are older.
+      ...Array.from({ length: 10 }, (_, index) => () => json({ tasks: activePage.map((entry) => ({ ...entry, id: `task_${10_001 + index * 500 + entry.number - 10_001}`, number: 10_001 + index * 500 + entry.number - 10_001 })), nextCursor: index < 9 ? `active_${index + 2}` : null })),
+      // The archive walk is bounded and only contributes archived tasks.
+      ...Array.from({ length: 10 }, (_, index) => () => json({ tasks: archivedPage.map((entry) => ({ ...entry, id: `task_${index * 500 + entry.number}`, number: index * 500 + entry.number })), nextCursor: `archive_${index + 2}` })),
+    );
+    const tasks = await client(fetch).listTasks({ includeArchived: true });
+    const active = tasks.filter((entry) => entry.archivedAt === null);
+    const archived = tasks.filter((entry) => entry.archivedAt !== null);
+    expect(active).toHaveLength(5_000);
+    expect(active.at(-1)!.number).toBe(15_000);
+    expect(archived.length).toBeGreaterThan(0);
+    expect(archived.length).toBeLessThanOrEqual(1_000);
+    expect(calls.slice(0, 10).every((call) => call.url.searchParams.get("includeArchived") === "false")).toBe(true);
+    expect(calls.slice(10).every((call) => call.url.searchParams.get("includeArchived") === "true")).toBe(true);
+    expect(calls).toHaveLength(12);
+  });
+
+  it("dedupes tasks seen in both the active and archive listings by id", async () => {
+    const { fetch } = fakeFetch(
+      () => json({ tasks: [task(1), task(3)], nextCursor: null }),
+      () => json({ tasks: [task(1), task(2, { archivedAt: "2026-11-02T00:00:00.000Z" }), task(3)], nextCursor: null }),
+    );
+    const tasks = await client(fetch).listTasks({ includeArchived: true });
+    expect(tasks.map((entry) => entry.id)).toEqual(["task_1", "task_2", "task_3"]);
   });
 
   it("rejects a response that does not match the contract with a generic error", async () => {
@@ -222,7 +253,9 @@ describe("createHttpProjectBoardClient subscribe", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(calls[0]!.url.pathname).toBe("/vm/ana/api/workspace/events");
     expect(Object.fromEntries(calls[0]!.url.searchParams)).toEqual({ projectSlug: "my-proj", limit: "100" });
-    expect(listener).not.toHaveBeenCalled();
+    // The backlog is skipped, but subscribers get one resync once the cursor is set.
+    expect(listener.mock.calls.map(([event]) => event)).toEqual([{ type: "board.resync" }]);
+    listener.mockClear();
 
     await vi.advanceTimersByTimeAsync(2_000);
     expect(calls[1]!.url.searchParams.get("cursor")).toBe("evt_old");
@@ -236,6 +269,48 @@ describe("createHttpProjectBoardClient subscribe", () => {
     stop();
     await vi.advanceTimersByTimeAsync(20_000);
     expect(calls).toHaveLength(3);
+  });
+
+  it("signals a resync after the baseline so a change between the first load and the baseline is not lost", async () => {
+    // The board loaded its tasks, then task_5 changed, then the baseline ran past that change.
+    const { fetch } = fakeFetch(
+      () => events([{ id: "evt_1", type: "task.updated", taskId: "task_5", revision: 2 }]),
+      () => events([]),
+    );
+    const board = client(fetch);
+    const listener = vi.fn();
+    board.subscribe(listener);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ type: "board.resync" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not advance the cursor past a page when a later page in the same poll fails", async () => {
+    const { fetch, calls } = fakeFetch(
+      () => events([]),
+      () => events([{ id: "evt_1", type: "task.moved", taskId: "task_1", revision: 2 }], "evt_1"),
+      () => new Response("nope", { status: 500 }),
+      () => events([{ id: "evt_1", type: "task.moved", taskId: "task_1", revision: 2 }], "evt_1"),
+      () => events([{ id: "evt_2", type: "task.updated", taskId: "task_2", revision: 3 }]),
+    );
+    const listener = vi.fn();
+    client(fetch).subscribe(listener);
+    await vi.advanceTimersByTimeAsync(0);
+    listener.mockClear();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(calls).toHaveLength(3);
+    expect(listener).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls[3]!.url.searchParams.get("cursor")).toBeNull();
+    expect(calls[4]!.url.searchParams.get("cursor")).toBe("evt_1");
+    expect(listener.mock.calls.map(([event]) => event)).toEqual([
+      { type: "task.moved", taskId: "task_1", revision: 2 },
+      { type: "task.updated", taskId: "task_2", revision: 3 },
+    ]);
   });
 
   it("keeps one poll in flight and backs off to 10s after a failure", async () => {
@@ -282,6 +357,7 @@ describe("createHttpProjectBoardClient subscribe", () => {
     for (const listener of rest) board.subscribe(listener);
     await vi.advanceTimersByTimeAsync(2_000);
     expect(first).not.toHaveBeenCalled();
-    expect(rest.every((listener) => listener.mock.calls.length === 1)).toBe(true);
+    // Each remaining listener gets the baseline resync, then the task change.
+    expect(rest.every((listener) => listener.mock.calls.length === 2)).toBe(true);
   });
 });
