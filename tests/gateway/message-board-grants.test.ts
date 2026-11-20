@@ -88,6 +88,9 @@ describe("grants on the board", () => {
     caller = ownerCaller;
     const explained = await (await app.request("/api/board/grants/explain?channel=security%2Fprivate&principal=user%3Aguest_1")).json() as { explanation: { permissions: string[]; source: string } };
     expect(explained.explanation).toMatchObject({ permissions: [], source: "grants" });
+    // The owner's terminal agents are never narrowed by grants; the explanation says so.
+    const agentView = await (await app.request("/api/board/grants/explain?channel=security%2Fprivate&principal=agent%3Atws_1.tt_1")).json() as { explanation: { permissions: string[]; source: string } };
+    expect(agentView.explanation).toEqual(expect.objectContaining({ permissions: ["read", "post", "react", "label"], source: "owner" }));
     expect((await runtime.service.getThread(ownerCaller, undefined, secret.id)).root.text).toBe("Rotate the key");
   });
 
@@ -99,6 +102,14 @@ describe("grants on the board", () => {
     await runtime.service.post(guestCaller, undefined, { channel: "ops", text: "now I can" });
     await runtime.grants.remove(ownerCaller, undefined, created!.id);
     expect(await runtime.grants.list(ownerCaller, undefined)).toEqual([]);
+    // Fault detected (review): changes left no record of what access changed or who changed it.
+    const audit = await db.selectFrom("board_events").select(["actor", "payload"]).where("type", "=", "grant.changed").orderBy("cursor").execute();
+    expect(audit.map((row) => ({ by: (typeof row.actor === "string" ? JSON.parse(row.actor) : row.actor).id, ...(typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) })))
+      .toEqual([
+        { by: owner.id, grant: created!.id, principal: "user:guest_1", pattern: "ops", permissions: ["read"], change: "set" },
+        { by: owner.id, grant: created!.id, principal: "user:guest_1", pattern: "ops", permissions: ["read", "post"], change: "set" },
+        { by: owner.id, grant: created!.id, principal: "user:guest_1", pattern: "ops", permissions: [], change: "removed" },
+      ]);
     expect(await reason(runtime.grants.remove(ownerCaller, undefined, created!.id))).toBe("not_found");
   });
 });

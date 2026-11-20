@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_BOARD_CAN } from "./caller.js";
 import type { Kysely, Selectable } from "kysely";
 import {
   BOARD_GRANT_PERMISSIONS, type BoardGrant, type BoardGrantExplanation, type BoardGrantPermission, type CreateGrantRequest,
@@ -76,7 +77,9 @@ export class BoardGrantService {
   /** One grant per principal at the pattern; writing again replaces its permissions. */
   async create(caller: BoardCaller, boardName: string | undefined, input: CreateGrantRequest): Promise<BoardGrant[]> {
     return this.board.write(caller, boardName, async (ctx) => {
-      return this.writeGrants(ctx.trx, ctx.board.id, caller, input.principals, input.channel, input.permissions, ctx.now);
+      const written = await this.writeGrants(ctx.trx, ctx.board.id, caller, input.principals, input.channel, input.permissions, ctx.now);
+      for (const grant of written) ctx.emit(grantChanged(caller, grant, "set"));
+      return written;
     });
   }
 
@@ -102,14 +105,17 @@ export class BoardGrantService {
     return this.board.write(caller, boardName, async (ctx) => {
       const row = await ctx.trx.updateTable("board_grants").set({ permissions: JSON.stringify([...new Set(permissions)]) })
         .where("id", "=", id).where("board_id", "=", ctx.board.id).returningAll().executeTakeFirst();
-      return toGrant(row ?? boardFail("not_found"));
+      const grant = toGrant(row ?? boardFail("not_found"));
+      ctx.emit(grantChanged(caller, grant, "set"));
+      return grant;
     });
   }
 
   async remove(caller: BoardCaller, boardName: string | undefined, id: string): Promise<void> {
     await this.board.write(caller, boardName, async (ctx) => {
-      const deleted = await ctx.trx.deleteFrom("board_grants").where("id", "=", id).where("board_id", "=", ctx.board.id).returning("id").execute();
+      const deleted = await ctx.trx.deleteFrom("board_grants").where("id", "=", id).where("board_id", "=", ctx.board.id).returningAll().execute();
       if (deleted.length === 0) boardFail("not_found");
+      ctx.emit(grantChanged(caller, toGrant(deleted[0]!), "removed"));
     });
   }
 
@@ -118,6 +124,10 @@ export class BoardGrantService {
     const subjectPrincipal = principal ?? caller.actor.id;
     if (subjectPrincipal === `user:${caller.ownerId}`) {
       return { channel, principal: subjectPrincipal, pattern: null, permissions: [...BOARD_GRANT_PERMISSIONS], grants: [], source: "owner" };
+    }
+    // Agents on this computer act for the owner: grants never narrow them (see `grantSubject`), only their `can` set.
+    if (subjectPrincipal.startsWith("agent:")) {
+      return { channel, principal: subjectPrincipal, pattern: null, permissions: [...DEFAULT_AGENT_BOARD_CAN], grants: [], source: "owner" };
     }
     const resolved = resolveGrants(await this.listForBoard(this.board.db, board.id), [subjectPrincipal], channel);
     return { channel, principal: subjectPrincipal, ...resolved, source: resolved.pattern === null ? "default" : "grants" };
@@ -138,4 +148,12 @@ export class BoardGrantService {
     const grants = await this.listForBoard(executor, boardId);
     return channels.filter((channel) => resolveGrants(grants, subject, channel).permissions.includes("read"));
   }
+}
+
+/** The audit record of a permission change, committed with it as a board event. */
+function grantChanged(caller: BoardCaller, grant: BoardGrant, change: "set" | "removed") {
+  return {
+    type: "grant.changed" as const, actor: caller.actor,
+    payload: { grant: grant.id, principal: grant.principal, pattern: grant.channel, permissions: change === "removed" ? [] : grant.permissions, change },
+  };
 }

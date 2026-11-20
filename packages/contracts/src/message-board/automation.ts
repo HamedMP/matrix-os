@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import {
-  BOARD_TEXT_MAX, BoardActorIdSchema, BoardMessageIdSchema, ChannelPathSchema, ChannelScopeSchema, LabelFilterSchema,
+  BOARD_TEXT_MAX, BoardActorIdSchema, BoardMessageIdSchema, ChannelPathSchema, ChannelScopeSchema, LabelFilterSchema, ProfileNameSchema,
   type BoardActor,
 } from "#message-board-schemas";
 
@@ -90,6 +90,8 @@ export const CreateScheduleRequestSchema = z.object({
   every: BoardDurationSchema.optional(),
   times: z.number().int().min(1).max(10_000).optional(),
   until: z.iso.datetime({ offset: true }).optional(),
+  /** An agent's profile name for the later post, as on a normal post. */
+  profile: ProfileNameSchema.optional(),
 }).strict()
   .refine((value) => Boolean(value.channel) !== Boolean(value.thread), "Give a channel or a thread")
   .refine((value) => !(value.in && value.at), "Give --in or --at, not both")

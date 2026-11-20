@@ -289,7 +289,7 @@ export class BoardWatcherService {
     }
     if (!paused) return;
     this.options.notifier?.notify({
-      ownerId, dedupeKey: `board:watcher:${watcher.name}:paused:${now.toISOString().slice(0, 13)}`,
+      ownerId, dedupeKey: `board:watcher:${watcher.id}:paused:${now.toISOString().slice(0, 13)}`,
       title: "Watcher paused", body: `${watcher.name} reached ${watcher.max_runs_per_hour} runs this hour.`,
     });
   }

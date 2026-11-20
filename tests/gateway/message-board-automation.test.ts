@@ -125,7 +125,8 @@ describe("watchers", () => {
     expect(described!.enabled).toBe(false);
     const notices = await runtime.service.listMessages(owner, undefined, { by: "watcher:busy" });
     expect(notices).toHaveLength(1);
-    expect(notifications.filter((key) => key.startsWith("board:watcher:busy:paused"))).toHaveLength(1);
+    // Keyed by watcher ID: same-named watchers on two boards never share one alert.
+    expect(notifications.filter((key) => key.startsWith(`board:watcher:${described!.id}:paused`))).toHaveLength(1);
   });
 
   it("caps watchers per board and keeps names unique", async () => {
@@ -171,6 +172,21 @@ describe("schedules", () => {
     await db.updateTable("board_schedules").set({ next_run_at: new Date(0) }).execute();
     expect(await runtime.schedules.runDue()).toBe(1);
     expect(await runtime.schedules.list(owner, undefined)).toEqual([]);
+  });
+
+  it("posts a scheduled message under the profile it was scheduled with", async () => {
+    const app = new Hono();
+    app.route("/api/board", createMessageBoardRoutes({
+      service: runtime.service, tasks: runtime.tasks, hub: runtime.hub, resolveCaller: () => agent,
+      automation: { watchers: runtime.watchers, schedules: runtime.schedules, grants: runtime.grants },
+    }));
+    const response = await app.request("/api/board/schedules", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel: "dev", text: "Follow up", in: "1m", profile: "reviewer" }) });
+    expect(response.status).toBe(201);
+    await db.updateTable("board_schedules").set({ next_run_at: new Date(0) }).execute();
+    await runtime.schedules.runDue();
+    const [posted] = await runtime.service.listMessages(owner, undefined, { text: "Follow up" });
+    expect(posted!.by).toMatchObject({ id: agentActor.id, profile: "reviewer" });
   });
 
   it("validates timing, lets the creator or owner cancel, and serves the routes", async () => {

@@ -157,7 +157,7 @@ export const BOARD_EVENT_TYPES = [
   "task.created", "task.ready", "task.claimed", "task.renewed", "task.released", "task.completed", "task.failed",
   "task.blocked", "task.unblocked", "task.canceled", "task.reopened", "task.assigned",
   "task.needs_changed", "task.expired",
-  "watcher.changed", "schedule.changed",
+  "watcher.changed", "schedule.changed", "grant.changed",
 ] as const;
 export type BoardEventType = (typeof BOARD_EVENT_TYPES)[number];
 
