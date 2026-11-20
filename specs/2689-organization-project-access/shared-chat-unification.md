@@ -134,3 +134,21 @@ The optional request `messageId` is returned only when the new client asks for
 `includeMessageIds=1`. Default responses retain the old strict shape during
 rolling updates. Validate the bounded opt-in query and reject duplicate keys;
 authentication still signs the canonical path and query separately.
+
+## Runtime provenance and bounded diagnostics (20 November)
+
+Recheck the installed owner and peer release and gateway code before every live
+acceptance run. A newer stable build can replace an unmerged PR build without
+containing its fixes. November20 stable2087 restored discovery-dependent reads;
+reinstalling the reviewed source as2088 reduced the same reads from4–8seconds
+to153–261ms. The fresh Claude peer request completed, but the fresh Codex run
+was interrupted inside its isolated worker; its underlying cause remains under
+investigation. Do not qualify the entire feature from successful admission.
+
+Diagnostic logs must distinguish Codex process exit, malformed events, incomplete
+results and failed turns, and report only fixed codes and numeric statuses.
+Record allowlisted broker refusals at the loopback boundary and upstream refusal
+status at the owner broker. Never retain CLI stderr, prompt/response bodies,
+credentials or account identifiers in these diagnostics. Client errors remain
+generic. Exercise the production parser, broker and real Unix bridge in tests,
+then repeat the failing job through the normal shared Chat interface.
