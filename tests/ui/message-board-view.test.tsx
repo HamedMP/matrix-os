@@ -86,14 +86,53 @@ describe("MessageBoard viewer", () => {
     expect(await screen.findByText("Promoting to canary")).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("textbox", { name: /Filter by label/ }), { target: { value: "kind=bug|chore" } });
-    const list = screen.getByRole("list", { name: "Threads" });
-    await waitFor(() => expect(within(list).getAllByRole("button")).toHaveLength(2));
+    await waitFor(() => expect(within(screen.getByRole("list", { name: "Threads" })).getAllByRole("button")).toHaveLength(2));
 
     live.state.failing = true;
     fireEvent.change(reply, { target: { value: "Will fail" } });
     fireEvent.keyDown(reply, { key: "Enter" });
     expect((await screen.findAllByText("The board is not reachable right now. Try again.")).length).toBeGreaterThan(0);
     expect(reply).toHaveValue("Will fail");
+  });
+
+  it("shows the Tasks empty state for a channel without tasks and explains a failed conversion", async () => {
+    await live.runtime.service.post(live.as(OWNER), undefined, { channel: "notes", text: "Plain note" });
+    render(<MessageBoard client={live.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Plain note/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
+    expect(await screen.findByText("No tasks here")).toBeInTheDocument();
+    live.state.failing = true;
+    fireEvent.click(await screen.findByRole("button", { name: /Make this a task/ }));
+    expect((await screen.findAllByText("The board is not reachable right now. Try again.")).length).toBeGreaterThan(0);
+  });
+
+  it("refuses to overwrite an edit made elsewhere since the editor opened", async () => {
+    const root = await live.runtime.service.post(live.as(OWNER), undefined, { channel: "dev", text: "Draft one" });
+    render(<MessageBoard client={live.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Draft one/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit message" }));
+    await live.runtime.service.edit(live.as(OWNER), undefined, root.id, { text: "Edited in another tab" });
+    const editor = await screen.findByRole("textbox", { name: "Edit message" });
+    fireEvent.change(editor, { target: { value: "Stale draft" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    expect(await screen.findByText("This message changed since you opened it. Close the editor and try again.")).toBeInTheDocument();
+    expect((await live.runtime.service.getThread(live.as(OWNER), undefined, root.id)).root.text).toBe("Edited in another tab");
+  });
+
+  it("marks a reply read when it arrives while its thread is on screen", async () => {
+    const root = await live.runtime.service.post(live.as(OWNER), undefined, { channel: "dev", text: "Watching this" });
+    render(<MessageBoard client={live.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Watching this/ }));
+    await screen.findByRole("textbox", { name: "Reply" });
+    await live.runtime.service.post(live.as(FIXER), undefined, { channel: "dev", text: "New progress", re: root.id });
+    // Any refresh (here: reacting to the root) brings the reply in while the thread stays open.
+    fireEvent.click(screen.getAllByRole("button", { name: "Add reaction" })[0]!);
+    fireEvent.click(await screen.findByRole("button", { name: "React with 👀" }));
+    await screen.findByText("New progress");
+    await waitFor(async () => {
+      const [thread] = await live.runtime.service.listThreads(live.as(OWNER), undefined, { channel: "dev" });
+      expect(thread!.unread).toBe(false);
+    });
   });
 
   it("collapses to one pane with back navigation in a narrow window", async () => {

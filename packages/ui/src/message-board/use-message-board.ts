@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useEffectEvent, useState } from "react";
+import { parseLabelFilter } from "./model.js";
 import type { MessageBoardClient } from "./client.js";
 import { messageBoardErrorCopy } from "./presentation.js";
 import type {
-  BoardActor, BoardChannel, BoardSchedule, BoardSummary, BoardThread, BoardThreadSummary, BoardWatcher,
+  BoardActor, BoardChannel, BoardSchedule, BoardSummary, BoardThread, BoardThreadFilter, BoardThreadSummary, BoardViewMode, BoardWatcher,
 } from "./types.js";
 
 export type ResourceStatus = "idle" | "loading" | "ready" | "error";
@@ -16,6 +17,8 @@ export interface Resource<T> {
 }
 
 const IDLE = { status: "idle", data: null, error: null } as const;
+const THREAD_PAGE = 100;
+const MAX_THREAD_LIMIT = 500;
 /** Bursts of events (an agent posting and renewing) settle into one reload. */
 const EVENT_COALESCE_MS = 60;
 
@@ -62,6 +65,15 @@ export interface MessageBoardController {
   selectBoard(name: string): void;
   selectScope(scope: string): void;
   selectThread(id: string | null): void;
+  mode: BoardViewMode;
+  filter: BoardThreadFilter;
+  limit: number;
+  setMode(mode: BoardViewMode): void;
+  setFilter(patch: Partial<BoardThreadFilter>): void;
+  /** Asks the board for more threads, up to its page maximum. */
+  showMore(): void;
+  /** Marks a thread read again, e.g. when a reply arrives while it is on screen. */
+  markRead(id: string): void;
   /** Runs a write; the next event (or this call) refreshes every view. */
   mutate(work: (client: MessageBoardClient, board: string) => Promise<unknown>): Promise<MutationResult>;
   reload(): void;
@@ -71,11 +83,16 @@ export function useMessageBoard(client: MessageBoardClient, initialBoard = "Gene
   const [board, setBoard] = useState(initialBoard);
   const [scope, setScope] = useState("*");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [mode, setMode] = useState<BoardViewMode>("threads");
+  const [filter, setFilterState] = useState<BoardThreadFilter>({});
+  const [limit, setLimit] = useState(THREAD_PAGE);
+  // Typing in search must not refetch on every keystroke.
+  const deferredText = useDeferredValue(filter.text ?? "");
   const [version, setVersion] = useState(0);
   const bump = useCallback(() => setVersion((value) => value + 1), []);
 
   const [eventsPending, setEventsPending] = useState(false);
-  useEffect(() => client.subscribe(board, () => setEventsPending(true)), [client, board]);
+  useEffect(() => client.subscribe(board, () => setEventsPending(true), () => setEventsPending(true)), [client, board]);
   useEffect(() => {
     if (!eventsPending) return;
     const timer = setTimeout(() => { setEventsPending(false); bump(); }, EVENT_COALESCE_MS);
@@ -86,18 +103,30 @@ export function useMessageBoard(client: MessageBoardClient, initialBoard = "Gene
   const boards = useResource(() => client.listBoards(), "boards", version);
   const actors = useResource(() => client.listActors(board), `actors:${board}`, version);
   const channels = useResource(() => client.listChannels(board), `channels:${board}`, version);
-  const threads = useResource(() => client.listThreads(board, scope), `threads:${board}:${scope}`, version);
+  const query = {
+    ...(filter.label && parseLabelFilter(filter.label) ? { label: filter.label.trim() } : {}),
+    ...(filter.author ? { author: filter.author } : {}),
+    ...(filter.taskState ? { taskState: filter.taskState } : {}),
+    ...(deferredText.trim() ? { text: deferredText.trim() } : {}),
+    ...(mode === "tasks" ? { tasksOnly: true } : {}),
+    limit,
+  };
+  const queryKey = JSON.stringify(query);
+  const threads = useResource(() => client.listThreads(board, scope, query), `threads:${board}:${scope}:${queryKey}`, version);
   const thread = useResource(selectedThreadId ? () => client.getThread(board, selectedThreadId) : null, `thread:${board}:${selectedThreadId ?? ""}`, version);
   const watchers = useResource(() => client.listWatchers(board), `watchers:${board}`, version);
   const schedules = useResource(() => client.listSchedules(board), `schedules:${board}`, version);
 
-  const selectThread = useCallback((id: string | null) => {
-    setSelectedThreadId(id);
-    if (!id) return;
+  const markRead = useCallback((id: string) => {
     client.markRead(board, id).then(bump, (error: unknown) => {
       console.warn("[message-board] mark read failed", error instanceof Error ? error.message : error);
     });
   }, [board, bump, client]);
+
+  const selectThread = useCallback((id: string | null) => {
+    setSelectedThreadId(id);
+    if (id) markRead(id);
+  }, [markRead]);
 
   const mutate = useCallback(async (work: (client: MessageBoardClient, board: string) => Promise<unknown>): Promise<MutationResult> => {
     try {
@@ -113,9 +142,14 @@ export function useMessageBoard(client: MessageBoardClient, initialBoard = "Gene
 
   return {
     me, boards, actors, channels, threads, thread, watchers, schedules, board, scope, selectedThreadId,
-    selectBoard: useCallback((name: string) => { setBoard(name); setScope("*"); setSelectedThreadId(null); }, []),
-    selectScope: useCallback((next: string) => { setScope(next); setSelectedThreadId(null); }, []),
+    selectBoard: useCallback((name: string) => { setBoard(name); setScope("*"); setSelectedThreadId(null); setLimit(THREAD_PAGE); }, []),
+    selectScope: useCallback((next: string) => { setScope(next); setSelectedThreadId(null); setLimit(THREAD_PAGE); }, []),
     selectThread,
+    mode, filter, limit,
+    setMode: useCallback((next: BoardViewMode) => { setMode(next); setLimit(THREAD_PAGE); }, []),
+    setFilter: useCallback((patch: Partial<BoardThreadFilter>) => { setFilterState((current) => ({ ...current, ...patch })); setLimit(THREAD_PAGE); }, []),
+    showMore: useCallback(() => setLimit((current) => Math.min(current + THREAD_PAGE, MAX_THREAD_LIMIT)), []),
+    markRead,
     mutate,
     reload: bump,
   };

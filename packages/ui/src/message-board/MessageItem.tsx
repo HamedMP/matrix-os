@@ -24,12 +24,16 @@ export interface MessageItemProps {
   nowMs: number;
   isRoot?: boolean;
   onReact(emoji: string, on: boolean): Promise<MutationResult>;
-  onEdit(text: string): Promise<MutationResult>;
+  /** `revision` is the one the editor opened on, so a newer edit elsewhere is a conflict, not overwritten. */
+  onEdit(text: string, revision: number): Promise<MutationResult>;
   onDelete(): Promise<MutationResult>;
 }
 
 export function MessageItem({ message, viewerId, actors, nowMs, isRoot, onReact, onEdit, onDelete }: MessageItemProps) {
-  const [editing, setEditing] = useState(false);
+  // The revision the editor opened on; null while not editing.
+  const [editRevision, setEditRevision] = useState<number | null>(null);
+  const editing = editRevision !== null;
+  const setEditing = (open: boolean) => setEditRevision(open ? message.revision : null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const own = message.by.id === viewerId;
@@ -59,7 +63,7 @@ export function MessageItem({ message, viewerId, actors, nowMs, isRoot, onReact,
         : editing ? <div className="mt-1">
             <BoardComposer label="Edit message" placeholder="Edit message" submitLabel="Save" actors={actors} viewerId={viewerId}
               initialText={message.text} autoFocus onCancel={() => setEditing(false)}
-              onSubmit={async (text) => { const result = await onEdit(text); if (result.ok) setEditing(false); return result; }} />
+              onSubmit={async (text) => { const result = await onEdit(text, editRevision ?? message.revision); if (result.ok) setEditing(false); return result; }} />
           </div>
         : <div className="mt-0.5"><BoardMarkdown text={message.text} /></div>}
       {!deleted && !editing ? <Reactions message={message} viewerId={viewerId} actors={actors} onToggle={(emoji, on) => void run(() => onReact(emoji, on))} /> : null}

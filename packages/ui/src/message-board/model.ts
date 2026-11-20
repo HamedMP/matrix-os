@@ -1,5 +1,5 @@
 import type {
-  BoardActor, BoardChannel, BoardTask, BoardTaskState, BoardThreadFilter, BoardThreadSummary,
+  BoardActor, BoardChannel, BoardTask, BoardTaskState, BoardThreadSummary,
 } from "./types.js";
 
 const CHANNEL_SEGMENT = /^[a-z0-9_-]{1,48}$/;
@@ -116,21 +116,6 @@ export function sortThreadsByActivity(threads: readonly BoardThreadSummary[]): B
   return [...threads].sort((left, right) => {
     const delta = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
     return delta !== 0 ? delta : right.root.id.localeCompare(left.root.id);
-  });
-}
-
-export function filterThreads(threads: readonly BoardThreadSummary[], filter: BoardThreadFilter): BoardThreadSummary[] {
-  const label = filter.label ? parseLabelFilter(filter.label) : null;
-  const text = filter.text?.trim().toLowerCase() ?? "";
-  return threads.filter((thread) => {
-    if (label && !matchesLabelFilter(label, thread.root.labels)) return false;
-    if (filter.author && thread.root.by.id !== filter.author) return false;
-    if (filter.taskState && thread.task?.state !== filter.taskState) return false;
-    if (text) {
-      const haystack = [thread.root.deletedAt ? "" : thread.root.text, thread.latestReply?.deletedAt ? "" : thread.latestReply?.text ?? ""];
-      if (!haystack.some((value) => value.toLowerCase().includes(text))) return false;
-    }
-    return true;
   });
 }
 

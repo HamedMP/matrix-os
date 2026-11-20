@@ -21,11 +21,15 @@ export async function createLiveBoard() {
     resolveCaller: () => ({ ownerId: "owner_1", actor: OWNER }),
   }));
   const state = { failing: false };
+  // PGlite runs every query on one connection; real Postgres has a pool. Serve one request at a time.
+  let queue: Promise<unknown> = Promise.resolve();
   const client = createHttpMessageBoardClient({
     baseUrl: "http://gateway.test",
     fetch: (async (url: string, init?: RequestInit) => {
       if (state.failing) throw new TypeError("network down");
-      return app.request(url.replace("http://gateway.test", ""), init);
+      const next = queue.then(() => app.request(url.replace("http://gateway.test", ""), init));
+      queue = next.catch(() => undefined);
+      return next;
     }) as typeof fetch,
   });
   const as = (actor: BoardActor) => ({ ownerId: "owner_1", actor });

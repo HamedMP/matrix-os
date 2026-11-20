@@ -1,4 +1,4 @@
-import { MESSAGE_BOARD_ERROR_REASONS, type BoardSocketFrame, type MessageBoardErrorReason } from "@matrix-os/contracts/message-board";
+import { BoardSocketServerFrameSchema, MESSAGE_BOARD_ERROR_REASONS, type MessageBoardErrorReason } from "@matrix-os/contracts/message-board";
 import { MessageBoardError, type BoardEventListener, type MessageBoardClient } from "./client.js";
 import type {
   BoardActor, BoardChannel, BoardMessage, BoardSchedule, BoardSummary, BoardThread, BoardThreadSummary, BoardWatcher,
@@ -114,8 +114,11 @@ export function createHttpMessageBoardClient(options: HttpMessageBoardClientOpti
     listBoards: async () => (await request<{ boards: BoardSummary[] }>("GET", "/boards", undefined)).boards,
     listActors: async (board) => (await request<{ actors: BoardActor[] }>("GET", "/actors", board)).actors,
     listChannels: async (board) => (await request<{ channels: BoardChannel[] }>("GET", "/channels", board)).channels,
-    async listThreads(board, channel) {
-      const { threads } = await request<{ threads: BoardThreadSummary[] }>("GET", "/threads", board, undefined, { channel, limit: THREAD_PAGE });
+    async listThreads(board, channel, query = {}) {
+      const { threads } = await request<{ threads: BoardThreadSummary[] }>("GET", "/threads", board, undefined, {
+        channel, label: query.label, by: query.author, text: query.text, taskState: query.taskState,
+        kind: query.tasksOnly ? "tasks" : undefined, limit: query.limit ?? THREAD_PAGE,
+      });
       for (const thread of threads) remember(thread.root.id, thread.root.channel);
       return threads;
     },
@@ -169,8 +172,8 @@ export function createHttpMessageBoardClient(options: HttpMessageBoardClientOpti
     listSchedules: (board) => optionalList<BoardSchedule>("/schedules", board, "schedules"),
     cancelSchedule: (board, id) => request<unknown>("DELETE", `/schedules/${id}`, board, {}).then(() => undefined),
 
-    subscribe(board, listener) {
-      return subscribeToBoard({ board, listener, eventsUrl: options.eventsUrl, createSocket: options.createSocket, setTimer, clearTimer, now });
+    subscribe(board, listener, onResync) {
+      return subscribeToBoard({ board, listener, onResync, eventsUrl: options.eventsUrl, createSocket: options.createSocket, setTimer, clearTimer, now });
     },
   };
 }
@@ -179,6 +182,7 @@ export function createHttpMessageBoardClient(options: HttpMessageBoardClientOpti
 function subscribeToBoard(input: {
   board: string;
   listener: BoardEventListener;
+  onResync?: () => void;
   eventsUrl?: HttpMessageBoardClientOptions["eventsUrl"];
   createSocket?: HttpMessageBoardClientOptions["createSocket"];
   setTimer: (callback: () => void, ms: number) => unknown;
@@ -258,22 +262,30 @@ function subscribeToBoard(input: {
       if (socket !== opened || stopped) return;
       lastFrameAt = now();
       if (typeof event.data !== "string" || event.data.length > MAX_FRAME_CHARS) return;
-      let frame: BoardSocketFrame;
+      let raw: unknown;
       try {
-        frame = JSON.parse(event.data) as BoardSocketFrame;
+        raw = JSON.parse(event.data);
       } catch (error: unknown) {
         if (!(error instanceof SyntaxError)) console.warn("[message-board] frame unreadable", error instanceof Error ? error.name : "UnknownError");
         return;
       }
-      if (frame.type === "event" && frame.event && typeof frame.event.cursor === "string") {
-        cursor = frame.event.cursor;
+      const parsed = BoardSocketServerFrameSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const frame = parsed.data;
+      const notify = (run: () => void) => {
         try {
-          input.listener(frame.event);
+          run();
         } catch (error: unknown) {
           console.warn("[message-board] listener failed", error instanceof Error ? error.name : "UnknownError");
         }
-      } else if ((frame.type === "ready" || frame.type === "missed") && typeof frame.cursor === "string") {
+      };
+      if (frame.type === "event") {
+        cursor = frame.event.cursor;
+        notify(() => input.listener(frame.event));
+      } else if (frame.type === "ready" || frame.type === "missed") {
+        // Anything written between the last read and this point may not be on screen: reload.
         cursor = frame.cursor;
+        if (input.onResync) notify(input.onResync);
       }
     };
     opened.onclose = () => drop(opened);

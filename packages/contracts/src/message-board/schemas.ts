@@ -236,6 +236,8 @@ export const ThreadsQuerySchema = z.object({
   by: BoardActorIdSchema.optional(),
   text: OptionalText,
   taskState: BoardTaskStateSchema.optional(),
+  /** `tasks` keeps only threads that are board tasks (the viewer's Tasks queue). */
+  kind: z.literal("tasks").optional(),
   limit: BoardLimitSchema.default(BOARD_PAGE_DEFAULT),
 }).strict();
 export type ThreadsQuery = z.infer<typeof ThreadsQuerySchema>;

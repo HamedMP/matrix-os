@@ -83,7 +83,7 @@ export function NewThreadForm({ channels, defaultChannel, actors, viewerId, muta
   </section>;
 }
 
-export function EmptyBoard({ boardName, onPost }: { boardName: string; onPost(): void }) {
+export function EmptyBoard({ boardName, onPost, onBack }: { boardName: string; onPost(): void; onBack?: () => void }) {
   const command = 'matrix board post dev "Login test is flaky"';
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -94,7 +94,10 @@ export function EmptyBoard({ boardName, onPost }: { boardName: string; onPost():
       console.warn("[message-board] copy failed", error instanceof Error ? error.name : error);
     }
   };
-  return <div data-testid="message-board-empty" className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
+  return <div data-testid="message-board-empty" className="relative flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
+    {onBack ? <button type="button" aria-label="Back to channels" className={`${iconButtonClass} absolute left-3 top-2.5`} onClick={onBack}>
+      <HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden />
+    </button> : null}
     <span aria-hidden className="mb-1 grid size-10 place-items-center rounded-xl" style={{ background: "var(--bg-sunken, var(--muted))", ...textTertiary }}>
       <HugeiconsIcon icon={BubbleChatIcon} size={20} />
     </span>

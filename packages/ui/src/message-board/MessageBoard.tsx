@@ -9,7 +9,6 @@ import { EmptyBoard, NewThreadForm } from "./NewThreadForm.js";
 import { subtleBorder, textPrimary, textTertiary } from "./presentation.js";
 import { ThreadList } from "./ThreadList.js";
 import { ThreadView } from "./ThreadView.js";
-import type { BoardThreadFilter, BoardViewMode } from "./types.js";
 import { useMessageBoard } from "./use-message-board.js";
 
 export interface MessageBoardProps {
@@ -55,8 +54,6 @@ export function MessageBoard({ client, initialBoard, headerAccessory }: MessageB
   const board = useMessageBoard(client, initialBoard);
   const { ref, width } = useContainerWidth();
   const capacity = paneCapacity(width);
-  const [mode, setMode] = useState<BoardViewMode>("threads");
-  const [filter, setFilter] = useState<BoardThreadFilter>({});
   const [panel, setPanel] = useState<BoardSidePanel | null>(null);
   const [detail, setDetail] = useState<Detail>(null);
   const [focus, setFocus] = useState<Pane>(1);
@@ -96,6 +93,18 @@ export function MessageBoard({ client, initialBoard, headerAccessory }: MessageB
     return focus === 2 ? pane >= 1 : pane <= 1;
   };
   const sidebarHidden = !showPane(0);
+  // A reply that arrives while its thread is on screen is read; a hidden pane does not count.
+  const shown = activeDetail === "thread" && showPane(2) ? board.thread.data : null;
+  const shownLatest = shown ? `${shown.root.id}:${shown.replies.at(-1)?.id ?? ""}` : null;
+  const lastShown = useRef<string | null>(null);
+  const markRead = board.markRead;
+  useEffect(() => {
+    const previous = lastShown.current;
+    lastShown.current = shownLatest;
+    if (!shownLatest || !previous) return;
+    const [rootId] = shownLatest.split(":");
+    if (previous !== shownLatest && previous.startsWith(`${rootId}:`)) markRead(rootId!);
+  }, [shownLatest, markRead]);
   const backToList = capacity < 3 ? () => setFocus(1) : undefined;
   const backToSidebar = sidebarHidden ? () => setFocus(0) : undefined;
   const defaultChannel = board.scope === "*" || board.scope.endsWith("/") ? (channels?.[0]?.path ?? "dev") : board.scope;
@@ -130,13 +139,13 @@ export function MessageBoard({ client, initialBoard, headerAccessory }: MessageB
               mutate={board.mutate} onClose={() => setPanel(null)} onBack={backToSidebar} onOpenThread={openThread} />
           </div>
         : boardEmpty && activeDetail !== "new" && (showPane(1) || showPane(2))
-          ? <div className="min-h-0 min-w-0 flex-1"><EmptyBoard boardName={board.board} onPost={startNew} /></div>
+          ? <div className="min-h-0 min-w-0 flex-1"><EmptyBoard boardName={board.board} onPost={startNew} onBack={backToSidebar} /></div>
           : <>
               {showPane(1) ? <div className={`${!showPane(2) ? "flex-1" : capacity === 3 ? "w-[22rem] shrink-0 border-r" : "w-[45%] shrink-0 border-r"} min-h-0 min-w-0`} style={subtleBorder}>
                 <ThreadList title={channelScopeLabel(board.scope)} threads={board.threads.data} status={board.threads.status} error={board.threads.error}
-                  mode={mode} filter={filter} actors={actors} viewerId={viewerId} nowMs={nowMs} selectedId={activeDetail === "thread" ? board.selectedThreadId : null}
+                  mode={board.mode} filter={board.filter} limit={board.limit} onShowMore={board.showMore} actors={actors} viewerId={viewerId} nowMs={nowMs} selectedId={activeDetail === "thread" ? board.selectedThreadId : null}
                   showScope={board.scope === "*" || board.scope.endsWith("/")}
-                  onModeChange={setMode} onFilterChange={(patch) => setFilter((current) => ({ ...current, ...patch }))}
+                  onModeChange={board.setMode} onFilterChange={board.setFilter}
                   onSelect={openThread} onNewThread={startNew} onRetry={board.reload} onBack={backToSidebar} />
               </div> : null}
               {showPane(2) ? <div className="min-h-0 min-w-0 flex-1" style={{ background: "var(--bg-surface, var(--card))" }}>{detailPane}</div> : null}
