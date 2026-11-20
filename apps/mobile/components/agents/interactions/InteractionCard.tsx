@@ -7,7 +7,10 @@ import { StatusDot } from "@/components/ui";
 export interface InteractionCardProps {
   /** What the agent is waiting for, beside the waiting dot. */
   label: string;
-  title?: string;
+  title?: ReactNode;
+  headerAccessory?: ReactNode;
+  waiting?: boolean;
+  accessibilityLabel?: string;
   children?: ReactNode;
   /** Why the last answer did not go through, in plain words. Drawn last. */
   error?: string | null;
@@ -15,12 +18,15 @@ export interface InteractionCardProps {
 }
 
 /** The outlined card an agent's request to the person is drawn in. */
-export function InteractionCard({ label, title, children, error, testID }: InteractionCardProps) {
+export function InteractionCard({ label, title, children, error, testID, headerAccessory, waiting = true, accessibilityLabel }: InteractionCardProps) {
   return (
-    <View testID={testID} style={styles.card}>
+    <View testID={testID} accessibilityLabel={accessibilityLabel} style={styles.card}>
       <View testID={testID ? `${testID}-label` : undefined} style={styles.labelRow}>
-        <StatusDot tone="waiting" />
-        <Text style={styles.label}>{label}</Text>
+        <View style={styles.labelContent}>
+          {waiting ? <StatusDot tone="waiting" /> : null}
+          <Text style={styles.label}>{label}</Text>
+        </View>
+        {headerAccessory}
       </View>
       {title ? <Text accessibilityRole="header" style={styles.title}>{title}</Text> : null}
       {children}
@@ -60,11 +66,14 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.v2.space[16],
   },
   labelRow: {
+    justifyContent: "space-between",
     flexDirection: "row",
     alignItems: "center",
     gap: theme.v2.space[6],
   },
+  labelContent: { flexDirection: "row", alignItems: "center", gap: theme.v2.space[6], flexShrink: 1 },
   label: {
+    flexShrink: 1,
     ...theme.v2.text.footnoteMedium,
     color: theme.v2.colors.textSubtle,
   },
