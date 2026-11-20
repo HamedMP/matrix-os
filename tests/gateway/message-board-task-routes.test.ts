@@ -61,6 +61,8 @@ describe("/api/board/tasks routes", () => {
     expect((await post("/tasks/claim", { ready: "dev", leaseSeconds: 99999 })).status).toBe(400);
     expect((await post(`/tasks/${message.message.id}/block`, { reason: "" })).status).toBe(400);
     expect((await post("/tasks", { channel: "dev", tasks: Array.from({ length: 16 }, (_, index) => ({ key: `k${index}`, text: "x" })) })).status).toBe(400);
+    const big = await post("/tasks", { channel: "dev", tasks: Array.from({ length: 15 }, (_, index) => ({ key: `b${index}`, text: "y".repeat(10_000) })) });
+    expect(big.status).toBe(201);
     expect((await post(`/tasks/${message.message.id}/cancel`, { reason: "Dropped" })).status).toBe(200);
     expect((await post(`/tasks/${message.message.id}/reopen`, {})).status).toBe(200);
   });

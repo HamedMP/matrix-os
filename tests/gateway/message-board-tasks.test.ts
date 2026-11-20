@@ -244,6 +244,19 @@ describe("BoardTaskService", () => {
     expect((await board.listThreads(as(owner), undefined, { channel: "*", limit: 50 })).length).toBe(before);
   });
 
+  it("charges a waiting claim against the write limit once, not once per retry", async () => {
+    const limited = BoardTaskService.attach(db, { now: () => new Date(clock), limits: { writesPerMinute: 3 } });
+    const pending = limited.claim(as(fixer), undefined, { ready: "dev", waitSeconds: 2 });
+    for (let index = 0; index < 3; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await limited.create(as(owner), undefined, { channel: "ops", text: `unrelated ${index}` });
+    }
+    expect(await reason(pending)).toBe("nothing_ready");
+    // One slot went to the claim; the other two are still free.
+    expect(await reason(limited.board.post(as(fixer), undefined, { channel: "dev", text: "one" }))).toBe("resolved");
+    expect(await reason(limited.board.post(as(fixer), undefined, { channel: "dev", text: "two" }))).toBe("resolved");
+  });
+
   it("claims with a server-side wait once a task becomes ready", async () => {
     const pending = tasks.claim(as(fixer), undefined, { ready: "dev", waitSeconds: 2 });
     await new Promise((resolve) => setTimeout(resolve, 50));

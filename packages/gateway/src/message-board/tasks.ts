@@ -129,6 +129,8 @@ export class BoardTaskService {
     }
     // Real time, not the board clock: a wait is about how long this request stays open.
     const deadline = Date.now() + (request.waitSeconds ?? 0) * 1000;
+    // The request is charged against the write limit once, not once per server-side retry.
+    let attempt = 0;
     for (;;) {
       if (this.stopped) boardFail("unavailable");
       const remaining = deadline - Date.now();
@@ -138,7 +140,7 @@ export class BoardTaskService {
         const claim = await this.board.write(caller, boardName, async (ctx) => {
           const candidate = await this.nextReady(ctx, request);
           return this.claimRow(ctx, candidate ?? boardFail("nothing_ready"), leaseSeconds);
-        });
+        }, { internal: attempt++ > 0 });
         waiter?.cancel();
         return claim;
       } catch (error) {
