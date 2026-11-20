@@ -17,7 +17,7 @@ describe("board chat port over the owner chat store", () => {
     await repository.bootstrap();
     chats = createTaskSessionPorts({
       homePath: "/home/owner", projectManager: {} as never, worktreeManager: {} as never,
-      chats: { service: createCanonicalChatService(repository), repository }, terminalRuntime: {} as never,
+      chats: { service: createCanonicalChatService(repository), repository }, sessionCredentials: {} as never, terminalRuntime: {} as never,
     }).chats;
   });
   afterEach(async () => { await repository.kysely.destroy(); });

@@ -1,6 +1,6 @@
 import { ROUTINE_CLI_EXECUTION_PATH } from "@matrix-os/contracts/routine-cli";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { isDirectLoopbackCaller, isLocalTerminalAgentRoute } from "./terminal-agent/local-token.js";
+import { isDirectLoopbackCaller, isLocalTerminalAgentRoute, LOCAL_TERMINAL_AGENT_CONTEXT_KEY } from "./terminal-agent/local-token.js";
 import type { Context, MiddlewareHandler } from "hono";
 import {
   PREVIEW_TERMINAL_ACCESS_HEADER,
@@ -413,6 +413,7 @@ export function authMiddleware(
         return unauthorized(c);
       }
       markVerifiedRuntimeBearer(c);
+      c.set(LOCAL_TERMINAL_AGENT_CONTEXT_KEY as never, true as never);
       return nextWithReady(c, next);
     }
 

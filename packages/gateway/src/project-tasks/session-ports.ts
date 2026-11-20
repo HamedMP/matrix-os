@@ -90,7 +90,8 @@ export interface TerminalPort {
   ensureWorkspace(projectId: string): Promise<{ workspaceId: string }>;
   /**
    * Create a tab, or return the existing one with the same `tabId`. The tab's
-   * environment gets `MATRIX_TASK_ID` and `MATRIX_PROJECT_ID`.
+   * environment gets `MATRIX_TASK_ID`, `MATRIX_PROJECT_ID` and the tab's signed
+   * `MATRIX_TASK_SESSION_TOKEN`.
    */
   createTab(input: {
     workspaceId: string;

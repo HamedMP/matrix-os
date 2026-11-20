@@ -1,7 +1,7 @@
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import { isKernelResultFailureText } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { KernelEvent } from "@matrix-os/kernel";
+import type { KernelEvent, ProjectTaskKernelBinding } from "@matrix-os/kernel";
 import type { Dispatcher } from "../dispatcher.js";
 import { KernelCredentialAccessSourceIdSchema } from "../kernel-credentials.js";
 import { KernelEffortSchema, KernelModelSchema } from "../kernel-settings.js";
@@ -42,8 +42,16 @@ function selectedAccessSource(input: CanonicalProviderRunInput<KernelChatState>)
   return KernelCredentialAccessSourceIdSchema.parse(input.selection.instanceId.slice(prefix.length));
 }
 
+/** The board binding of a kernel run in a project (spec 2699 section 5); null keeps the run off the board. */
+export type KernelProjectTaskBindings = (input: {
+  owner: CanonicalProviderRunInput["owner"];
+  chatId: string;
+  projectSlug?: string;
+}) => Promise<ProjectTaskKernelBinding | null>;
+
 export function createKernelChatProviderAdapter(options: {
   dispatcher: Pick<Dispatcher, "dispatch">;
+  projectTasks?: KernelProjectTaskBindings;
 }): CanonicalChatProviderAdapter<KernelChatState> {
   if (!options.dispatcher) throw new Error("Kernel dispatcher is required");
 
@@ -139,7 +147,18 @@ export function createKernelChatProviderAdapter(options: {
       }
     };
 
-    void options.dispatcher.dispatch(
+    const projectTasks = async (): Promise<ProjectTaskKernelBinding | undefined> => {
+      if (!options.projectTasks || !input.projectSlug || input.sharedScopeId) return undefined;
+      try {
+        return await options.projectTasks({ owner: input.owner, chatId: input.chatId, projectSlug: input.projectSlug }) ?? undefined;
+      } catch (error: unknown) {
+        // The run still works; it only lacks the board tools.
+        console.warn("[chat/kernel] project board binding unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return undefined;
+      }
+    };
+
+    void projectTasks().then((projectTaskBinding) => options.dispatcher.dispatch(
       input.prompt,
       resumeState?.sessionId,
       onEvent,
@@ -154,8 +173,9 @@ export function createKernelChatProviderAdapter(options: {
         accessSourceId,
         ...(effort ? { effort } : {}),
         ...(input.executionRoot ? { workingDirectory: input.executionRoot } : {}),
+        ...(projectTaskBinding ? { projectTasks: projectTaskBinding } : {}),
       },
-    ).then(() => {
+    )).then(() => {
       if (!terminal) {
         pushTerminal(controller.signal.aborted
           ? { type: "run.completed", outcome: "aborted" }

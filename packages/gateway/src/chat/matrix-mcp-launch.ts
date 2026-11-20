@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { previewDriveActionCanonical } from "@matrix-os/contracts";
+import { isProjectTaskAgentRoute } from "../project-tasks/agent-access.js";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 import { createIntegrationToolAuthority } from "./integration-tool-authority.js";
 
@@ -42,8 +43,16 @@ export interface PreviewDriveRunContext {
   consumeActionGrant(action: unknown, receipt?: string): string | null;
 }
 
+/** A chat run's own project board (spec 2699): the run token reaches it as `agent:<chatId>`. */
+export interface MatrixMcpBoardGrant {
+  chatId: string;
+  projectSlug: string;
+}
+
 export interface MatrixMcpRunContext {
   actorId: string;
+  /** Present when the run belongs to a project; `readOnly` for a discovery run. */
+  board?: MatrixMcpBoardGrant & { readOnly: boolean };
   runId: string;
   scope: MatrixMcpRunScope;
   consumeIntegrationRequest?: ReturnType<typeof createIntegrationToolAuthority>["consumeIntegrationRequest"];
@@ -149,7 +158,8 @@ export interface MatrixMcpRunCapability {
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean; driveContext?: boolean; integrationRead?: boolean }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; fullAccess?: boolean; driveContext?: boolean; integrationRead?: boolean;
+    board?: MatrixMcpBoardGrant }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -163,6 +173,14 @@ export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
 
 function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+const BOARD_CHAT_ID = /^chat_[A-Za-z0-9_-]{1,128}$/;
+const BOARD_PROJECT_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+function boardPermitted(method: string, path: string, scope: MatrixMcpRunScope, board: MatrixMcpBoardGrant | undefined): boolean {
+  return board !== undefined && (scope === "chat_call" || scope === "chat_discovery")
+    && isProjectTaskAgentRoute(method, path, { slug: board.projectSlug, readOnly: scope === "chat_discovery" });
 }
 
 function permitted(method: string, path: string, scope: MatrixMcpRunScope, integrationRead = false): boolean {
@@ -192,6 +210,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
   const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean; expiresAt: number;
+    board?: MatrixMcpBoardGrant;
     authority?: ReturnType<typeof createIntegrationToolAuthority>; previewDrive?: PreviewDriveRunContext;
     onRevoke?: () => void }>();
   const previewRuns = new Map<string, { actorId: string; chatId: string; runGrant: string; expiresAt: number;
@@ -214,11 +233,13 @@ export function createMatrixMcpCapabilityRegistry(options: {
     sweep();
     const grant = active.get(digest(token));
     return grant && (permitted(method, path, grant.scope, grant.integrationRead)
+      || boardPermitted(method, path, grant.scope, grant.board)
       || (grant.driveContext === true && method === "POST"
         && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
       ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope,
         ...(grant.driveContext ? { driveContext: true } : {}),
         ...(grant.integrationRead ? { integrationRead: true } : {}),
+        ...(grant.board ? { board: { ...grant.board, readOnly: grant.scope !== "chat_call" } } : {}),
         ...(grant.authority && !grant.previewDrive ? { consumeIntegrationRequest: grant.authority.consumeIntegrationRequest } : {}),
         ...(grant.previewDrive ? { previewDrive: grant.previewDrive } : {}) }
       : null;
@@ -308,7 +329,10 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || input.owner.type !== "personal"
         || input.owner.ownerId !== options.configuredOwnerId
         || !["discovery", "call", "integration_read", "chat_call", "chat_discovery"].includes(input.scope)
-        || (input.driveContext && input.scope === "integration_read")) return null;
+        || (input.driveContext && input.scope === "integration_read")
+        // A board grant is server-set for a chat run in a project; anything else is a wiring fault.
+        || (input.board !== undefined && (!["chat_call", "chat_discovery"].includes(input.scope)
+          || !BOARD_CHAT_ID.test(input.board.chatId) || !BOARD_PROJECT_SLUG.test(input.board.projectSlug)))) return null;
       if (active.size >= MAX_ACTIVE) return null;
       const token = randomBytes(32).toString("hex");
       const key = digest(token);
@@ -317,7 +341,8 @@ export function createMatrixMcpCapabilityRegistry(options: {
         now, fullAccess: input.fullAccess === true,
         live: () => !closed && active.has(key) && now() < expiresAt,
       }) : undefined;
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority,
+        ...(input.board ? { board: { chatId: input.board.chatId, projectSlug: input.board.projectSlug } } : {}) });
       // Chat-call grants carry an authority bound to the original expiry; they are not renewable.
       const renewable = input.scope === "call" || input.scope === "discovery";
       return { token, revoke: () => { active.delete(key); },
