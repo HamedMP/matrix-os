@@ -61,7 +61,7 @@ const launch = {
   scopeHandle: SCOPE_HANDLE,
   workload: "chat_ai" as const,
   adapterId: "claude-code",
-  harnessVersion: "2.1.240",
+  harnessVersion: "2.1.301",
   executionGeneration: "7",
 };
 
@@ -106,7 +106,7 @@ describe("scope runtime systemd launcher", () => {
       })),
     });
     await expect(verified.supportedAdapters?.()).resolves.toEqual([
-      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+      { adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai"] },
       { adapterId: "codex", harnessVersion: "0.162.1", workloads: ["chat_ai"] },
     ]);
 
@@ -117,7 +117,7 @@ describe("scope runtime systemd launcher", () => {
       })),
     });
     await expect(changed.supportedAdapters?.()).resolves.toEqual([
-      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+      { adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai"] },
     ]);
   });
 
@@ -130,7 +130,7 @@ describe("scope runtime systemd launcher", () => {
     });
 
     await expect(launcher.supportedAdapters?.()).resolves.toEqual([
-      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+      { adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai"] },
     ]);
   });
 
@@ -167,7 +167,7 @@ describe("scope runtime systemd launcher", () => {
       SCOPE_HANDLE,
       "chat_ai",
       "claude-code",
-      "2.1.240",
+      "2.1.301",
       "7",
     ]);
     expect(JSON.stringify(args)).not.toMatch(/OWNER_TOKEN|\/home\/matrix|\/run\/systemd\/private/);
