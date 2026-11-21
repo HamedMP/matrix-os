@@ -40,6 +40,7 @@ Keep the provider buffer in its own module for the same reason.
 | Web queue rejected | Submit correction | Draft remains retryable | Web composer test |
 | Active run finishes before Queue reaches the server | Retry unchanged draft after definite rejection | Retry can use Send; uncertain delivery retains original Queue ID | Canonical authority tests for 409, 408, 503 |
 | Queued draft has an uploaded attachment | Queue returns HTTP 408/503 | Keep the uploaded file for potentially committed Queue entries; definite 409 rejection still cleans it | Canonical authority attachment cleanup regression |
+| Web Mobile Chat composer | Tap Send or Queue next | The floating support launcher cannot intercept the action; Support remains in the mobile header | Real MobileShell and SDK container/CSS regression |
 | Desktop steering pending, newer snapshot | Accept correction | Message appears once; newer metadata retained; queue row removed | Desktop steering recovery tests |
 | Desktop steering pending, another Chat selected | Late failure | No old-Chat reload or error in the new Chat | Desktop steering recovery tests |
 | Claude child closing | Two corrections | Both committed instructions reach resumed process once | Real orchestrator/repository + controlled CLI test |
@@ -60,6 +61,18 @@ built-in browser. Queue, steer, cancel, and retry at wide and narrow widths.
 Gateway, provider, sign-in, and persistence callbacks are synthetic in this
 preview; its banner makes that limitation visible. It cannot qualify deployment,
 native Electron, or Native Mobile.
+
+Live validation on the exact `4ad8d06` private client preview reproduced a mobile
+control collision at 390×844: the PostHog launcher at bottom 100px covered Send,
+and tapping Send opened Support. The repair extracts the existing mobile header
+into a focused component with a shared-library Support button, and hides only
+the closed floating launcher while MobileShell is mounted. Explicitly opened
+support conversations and non-mobile launcher placement remain available.
+The production MobileShell/CSS test failed before the fix, then passed alongside
+the real Support-button wiring test. These replace the two isolated selector and
+100px-string assertions in launcher-artwork: equivalent desktop/open-panel
+coverage is retained against the actual mounted shell and computed stylesheet.
+Captures remain outside Git under the task evidence directory.
 
 ## Surface and evidence gates
 
