@@ -5,7 +5,12 @@ import { TERMINAL_WINDOW_EVENT_CHANNELS, TERMINAL_WINDOW_INVOKE_CHANNELS } from 
 
 function setup(role: "main" | "terminal") {
   const ipc = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(), removeListener: vi.fn() };
-  return { ipc, bridge: createOperatorBridge(ipc, role) };
+  const bridge = createOperatorBridge(ipc, role);
+  // The Terminal window's preload takes local terminal ports from the start
+  // (local-terminal-streams.test.ts); these tests are about event subscriptions.
+  expect(ipc.on.mock.calls.map(([channel]) => channel)).toEqual(role === "terminal" ? ["local-terminal:port"] : []);
+  ipc.on.mockClear();
+  return { ipc, bridge };
 }
 
 describe("operator preload bridge", () => {

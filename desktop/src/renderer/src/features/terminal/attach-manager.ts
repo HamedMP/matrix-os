@@ -86,7 +86,7 @@ export class AttachManager {
       onState: (state: ShellSocketState, detail?: { code?: string }) => {
         if (this.isLive(generation)) events.onState(state, detail);
       },
-      onOutput: (data: string, seq: number, written?: () => void) => {
+      onOutput: (data: string | Uint8Array, seq: number, written?: () => void) => {
         if (this.isLive(generation)) events.onOutput(data, seq, written);
         // Output for a view that is gone is dropped; that still counts as taken.
         else written?.();

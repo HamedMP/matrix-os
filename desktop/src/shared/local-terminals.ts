@@ -3,12 +3,11 @@
 // herdr-core socket, its path, or raw JSON-RPC.
 import { z } from "zod/v4";
 import {
-  HC_TERMINAL_ID_PATTERN, HC_TERMINAL_LIST_MAX, HC_TERMINAL_MAX_OUTPUT_CHARS, HcTerminalIdSchema, HcTerminalSchema, HcTerminalStatusSchema,
+  HC_TERMINAL_ID_PATTERN, HC_TERMINAL_LIST_MAX, HcTerminalIdSchema, HcTerminalSchema, HcTerminalStatusSchema,
   type HcTerminal, type HcTerminalStatus,
 } from "@matrix-os/herdr-core-client/terminal";
 
 export const LOCAL_TERMINAL_LIST_MAX = HC_TERMINAL_LIST_MAX;
-export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = HC_TERMINAL_MAX_OUTPUT_CHARS;
 export const LOCAL_TERMINAL_ID_PATTERN = HC_TERMINAL_ID_PATTERN;
 
 export const LOCAL_TERMINAL_VERSION = "0.1.19";
@@ -90,26 +89,31 @@ export const LOCAL_TERMINAL_INVOKE = {
       z.strictObject({ ok: z.literal(false) }),
     ]),
   },
-  "local-terminal:input": {
-    // Binary input carries one byte per character; anything wider is refused
-    // rather than silently truncated.
-    request: z.strictObject({ attachId: AttachIdSchema, data: z.string().max(MAX_INPUT_CHARS), binary: z.boolean().optional() })
-      .refine((input) => input.binary !== true || BYTE_STRING.test(input.data)),
-    response: Ok,
-  },
   "local-terminal:resize": { request: z.strictObject({ attachId: AttachIdSchema, ...Size }), response: Ok },
-  // Output the window has taken, so the trusted core can let more through.
-  "local-terminal:ack": {
-    request: z.strictObject({ attachId: AttachIdSchema, count: z.number().int().min(1).max(LOCAL_TERMINAL_MAX_ACK_COUNT) }),
-    response: Ok,
-  },
   "local-terminal:detach": { request: z.strictObject({ attachId: AttachIdSchema }), response: Ok },
 } as const;
 
-export const LOCAL_TERMINAL_EVENTS = {
-  "local-terminal:output": z.strictObject({ attachId: AttachIdSchema, data: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS) }),
-  "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema }),
-} as const;
+// Output, typing and acknowledgements of one attachment travel over a
+// MessagePort of its own, which the trusted core hands to the Terminal
+// window's preload only (spec 2701 layer 6): output stays bytes from the core
+// to xterm, and nothing is routed through every listener in the window.
+export const LOCAL_TERMINAL_PORT_CHANNEL = "local-terminal:port";
+/** What accompanies an attachment's port. */
+export const LocalTerminalPortSchema = z.strictObject({ attachId: AttachIdSchema });
+/** The most output one message may carry: herdr-core's frame cap. */
+export const LOCAL_TERMINAL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+/** What the window sends over an attachment's port. Main validates it again. */
+export const LocalTerminalStreamRequestSchema = z.discriminatedUnion("type", [
+  // Binary input carries one byte per character; anything wider is refused
+  // rather than silently truncated.
+  z.strictObject({ type: z.literal("input"), data: z.string().max(MAX_INPUT_CHARS), binary: z.boolean().optional() })
+    .refine((input) => input.binary !== true || BYTE_STRING.test(input.data)),
+  // Output the window has taken, so the trusted core can let more through.
+  z.strictObject({ type: z.literal("ack"), count: z.number().int().min(1).max(LOCAL_TERMINAL_MAX_ACK_COUNT) }),
+]);
+export type LocalTerminalStreamRequest = z.infer<typeof LocalTerminalStreamRequestSchema>;
+/** Main tells the window the attachment has ended; every other message is output bytes. */
+export const LOCAL_TERMINAL_STREAM_CLOSED = { type: "closed" } as const;
+
 
 export const LOCAL_TERMINAL_INVOKE_CHANNELS = Object.keys(LOCAL_TERMINAL_INVOKE) as Array<keyof typeof LOCAL_TERMINAL_INVOKE>;
-export const LOCAL_TERMINAL_EVENT_CHANNELS = Object.keys(LOCAL_TERMINAL_EVENTS) as Array<keyof typeof LOCAL_TERMINAL_EVENTS>;

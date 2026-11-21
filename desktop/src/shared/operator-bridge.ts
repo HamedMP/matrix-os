@@ -2,6 +2,7 @@
 // and again in main. A Terminal window gets only its allowlisted channels.
 import { EVENT_CHANNELS, INVOKE_CHANNELS, type EventChannel, type InvokeChannel } from "./ipc-contract";
 import { windowMayInvoke, windowMayListen, type WindowRole } from "./terminal-window";
+import { createLocalTerminalStreamBridge } from "./local-terminal-stream-bridge";
 
 export type OperatorBridgeRole = WindowRole;
 
@@ -12,7 +13,10 @@ interface IpcRendererLike {
 }
 
 export function createOperatorBridge(ipc: IpcRendererLike, role: OperatorBridgeRole) {
+  // Only the Terminal window hosts local terminals, so only it takes their ports.
+  const localTerminalStream = role === "terminal" ? createLocalTerminalStreamBridge(ipc) : null;
   return {
+    ...(localTerminalStream ? { localTerminalStream } : {}),
     invoke(channel: string, payload: unknown): Promise<unknown> {
       const entry = Object.hasOwn(INVOKE_CHANNELS, channel) ? INVOKE_CHANNELS[channel as InvokeChannel] : undefined;
       if (!entry || !windowMayInvoke(role, channel, payload)) return Promise.reject(new Error("unknown channel"));
