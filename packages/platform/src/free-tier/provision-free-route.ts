@@ -27,7 +27,7 @@ export interface FreeProvisionRouteDeps {
 }
 
 /** Outcomes that mean "this owner is not on the free plan"; the implicit path answers them as billing required. */
-const NOT_FREE: ReadonlySet<FreeProvisionOutcome['kind']> = new Set(['waitlisted', 'plan_unavailable', 'runtime_exists']);
+const NOT_FREE: ReadonlySet<FreeProvisionOutcome['kind']> = new Set(['waitlisted', 'plan_unavailable', 'runtime_exists', 'checkout_pending']);
 
 /** Maps each outcome to a fixed client response; no provider or database detail reaches the client. */
 function respond(c: Context, clerkUserId: string, outcome: FreeProvisionOutcome): Response {
@@ -46,6 +46,8 @@ function respond(c: Context, clerkUserId: string, outcome: FreeProvisionOutcome)
       return c.json({ error: 'Free plan unavailable', code: 'free_plan_unavailable' }, 409);
     case 'deletion_pending':
       return c.json({ error: 'Account deletion is pending', code: 'account_deletion_pending' }, 409);
+    case 'checkout_pending':
+      return c.json({ error: 'A paid checkout is in progress', code: 'checkout_pending' }, 409);
     case 'provisioning_unavailable':
       c.header('Retry-After', SETUP_RETRY_AFTER_SECONDS);
       return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);

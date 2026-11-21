@@ -1258,6 +1258,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
+    metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
@@ -1281,6 +1282,8 @@ async function startPlatformServerWithCleanup(
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
+        // Drain the metal maintenance pass (DB writes, hostd deletes) before the pool closes.
+        await metalRuntime?.shutdown();
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),

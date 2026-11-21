@@ -79,6 +79,8 @@ export function startMetalMaintenanceWorker(input: {
 
 export interface MetalRuntime {
   provisioner: MetalProvisioner;
+  /** Stops scheduling maintenance passes (synchronous; call first on shutdown). */
+  stop(): void;
   /** Stops the maintenance pass, waits for the one in flight, and closes hostd connections. */
   shutdown(): Promise<void>;
 }
@@ -120,6 +122,9 @@ export function createConfiguredMetalRuntime(input: {
   let closing: Promise<void> | undefined;
   return {
     provisioner,
+    stop() {
+      worker?.stop();
+    },
     shutdown() {
       return closing ??= (async () => {
         worker?.stop();

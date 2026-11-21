@@ -1,5 +1,6 @@
 import { getRuntimeAccessDecision, type BillingEntitlement } from './billing.js';
 import type { CustomerVpsService } from './customer-vps.js';
+import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { getActiveUserMachineByClerkId, type PlatformDB } from './db.js';
 import { FREE_RUNTIME_SLOT } from './free-tier/free-entitlement.js';
@@ -78,7 +79,7 @@ export function createJourneyProvisioner(
       case 'provisioning_unavailable':
         throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
       case 'deletion_pending':
-        throw new CustomerVpsError(409, 'invalid_state', 'Account deletion is pending');
+        throw new AccountDeletionAdmissionError();
       default:
         return null;
     }

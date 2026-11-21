@@ -9,6 +9,7 @@ import {
 import { loadJourney, type JourneyReadinessAnnotation } from './journey.js';
 import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
+import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
 
@@ -113,7 +114,8 @@ export interface JourneyRoutesOptions {
   settlingWindowMs?: number;
   now?: () => Date;
   /** Optional readiness annotation provider for the ready phase (Phase C wires this). */
-  resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;  /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
+  resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;
+  /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
   resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
 }
 
@@ -204,6 +206,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       await options.provisionRuntime(clerkUserId, runtimeSlot);
       return c.json({ status: 'started', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
     } catch (err: unknown) {
+      if (err instanceof AccountDeletionAdmissionError) return c.json({ error: 'account_deletion_pending' }, 409);
       if (err instanceof CustomerVpsError) {
         if (err.code === 'billing_required') return c.json({ error: 'billing_required' }, 402);
         if (err.code === 'retry_exhausted') return c.json({ error: 'retry_exhausted' }, 409);

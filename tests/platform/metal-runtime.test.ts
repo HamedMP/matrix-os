@@ -120,6 +120,19 @@ describe('metal runtime composition', () => {
     expect(logs).toEqual(['metal_provisioning_unconfigured']);
   });
 
+  it('stop clears the maintenance timer and shutdown waits for the pass in flight', async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createConfiguredMetalRuntime({ db, env: metalEnv, customerVps, backgroundWorkersEnabled: true, log: () => {} });
+      expect(vi.getTimerCount()).toBe(1);
+      runtime?.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      await runtime?.shutdown();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('composes a provisioner without starting maintenance when background workers are off', async () => {
     vi.useFakeTimers();
     try {

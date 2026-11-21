@@ -4,6 +4,7 @@ import type { BillingEntitlement } from '../../packages/platform/src/billing.js'
 import { createBillingRoutes, type StripeBillingClient } from '../../packages/platform/src/billing-routes.js';
 import {
   getAccessibleRunningUserMachineByClerkIdForUpdate,
+  insertCheckoutAttempt,
   insertUserMachine,
   upsertBillingEntitlement,
   type PlatformDB,
@@ -88,6 +89,12 @@ describe('/billing/status for the free plan on metal', () => {
       provisionedAt: NOW.toISOString(), substrate: 'metal', metalHostId: 'host-a',
     });
     expect((await status()).access.runtimeProxyAllowed).toBe(true);
+  });
+
+  it('does not report free access while a paid checkout is settling', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await insertCheckoutAttempt(db, { id: 'att-1', clerkUserId: OWNER, stripeSessionId: 'cs_open', createdAt: new Date(Date.now() - 60_000).toISOString() });
+    expect((await status()).access.runtimeProxyAllowed).toBe(false);
   });
 
   it('keeps an uninvited owner on billing required', async () => {

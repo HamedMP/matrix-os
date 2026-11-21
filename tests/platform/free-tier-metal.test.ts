@@ -9,6 +9,7 @@ import type { CustomerVpsService } from '../../packages/platform/src/customer-vp
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import {
   getBillingEntitlement,
+  insertCheckoutAttempt,
   insertUserMachine,
   promoteHostBundleChannel,
   upsertBillingEntitlement,
@@ -19,6 +20,7 @@ import { loadConfiguredFreeTier, type FreeTierConfig } from '../../packages/plat
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
 import { addFreeTierInvite, getFreeTierInvite } from '../../packages/platform/src/free-tier/invites.js';
 import { createFreeTierRuntime } from '../../packages/platform/src/free-tier/provision-free-runtime.js';
+import { createPrebillingIntent } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import {
   getRuntimeEntitlementDecisionForUser,
   resolveEffectiveBillingEntitlement,
@@ -298,6 +300,36 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_old' });
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
     expect(await metalRows()).toHaveLength(0);
+  });
+
+  it('gives an invited owner with a settling paid checkout no free admission', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await insertCheckoutAttempt(db, { id: 'att-1', clerkUserId: OWNER, stripeSessionId: 'cs_open', createdAt: new Date(Date.now() - 60_000).toISOString() });
+    const routes = routesFor().routes;
+
+    expect((await request(routes)).status).toBe(402);
+    const explicit = await request(routes, { planSlug: 'matrix_free' });
+    expect(explicit.status).toBe(409);
+    expect(await explicit.json()).toMatchObject({ code: 'checkout_pending' });
+    expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
+    expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
+    expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
+  it('gives an invited owner with an active prebilling intent no free admission', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    // The checkout attempt itself has expired; only the prebilling intent is still active.
+    await insertCheckoutAttempt(db, {
+      id: 'checkout-1', clerkUserId: OWNER, stripeSessionId: 'cs_old', status: 'expired', createdAt: '2026-11-01T00:00:00.000Z',
+    });
+    await createPrebillingIntent(db, {
+      id: 'intent-1', checkoutAttemptId: 'checkout-1', clerkUserId: OWNER, runtimeSlot: 'primary',
+      planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+      serverType: 'cpx32', developerTools: [], createdAt: NOW.toISOString(),
+    });
+    expect((await request(routesFor().routes)).status).toBe(402);
+    expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
+    expect(hostd.createVm).not.toHaveBeenCalled();
   });
 
   it('leaves the paid path unchanged for an entitled paid owner', async () => {

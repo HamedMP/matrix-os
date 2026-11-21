@@ -1,7 +1,14 @@
 import { sql } from 'kysely';
 import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { toBillingEntitlementRow } from '../database/billing-records.js';
-import { getActiveUserMachineByClerkId, type PlatformDB } from '../db.js';
+import {
+  getActiveCheckoutAttempt,
+  getActiveUserMachineByClerkId,
+  getSettlingCheckoutAttempt,
+  type PlatformDB,
+} from '../db.js';
+import { DEFAULT_SETTLING_WINDOW_MS } from '../journey.js';
+import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
 import type { MetalProvisioner } from '../substrates/metal-provisioner.js';
 import type { FreeTierConfig } from './config.js';
 import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
@@ -41,6 +48,7 @@ export type FreeProvisionOutcome =
   | { kind: 'runtime_exists' }
   | { kind: 'plan_unavailable' }
   | { kind: 'deletion_pending' }
+  | { kind: 'checkout_pending' }
   | { kind: 'provisioning_unavailable' };
 
 export interface FreeRuntimeProvisionerDeps {
@@ -56,7 +64,22 @@ const CAPACITY_LOCK_KEY = 'matrix:free-tier:runtime-capacity';
 type Admission =
   | { kind: 'admitted' }
   | { kind: 'existing'; runtime: FreeRuntimeRecord }
-  | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' };
+  | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' | 'checkout_pending' };
+
+/**
+ * A paid checkout for the free slot is in flight: a confirmed (`paid`) attempt,
+ * an `open`/`creating` one inside the journey's settling window, or an active
+ * prebilling intent. The paid flow owns the slot then, exactly as the journey's
+ * payment_settling phase does, so free admission must not race it.
+ */
+async function paidCheckoutPending(db: PlatformDB, clerkUserId: string, now: Date): Promise<boolean> {
+  const withinWindow = (createdAt: string) => now.getTime() - Date.parse(createdAt) <= DEFAULT_SETTLING_WINDOW_MS;
+  const settling = await getSettlingCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT);
+  if (settling && (settling.status === 'paid' || withinWindow(settling.createdAt))) return true;
+  const active = await getActiveCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT);
+  if (active && withinWindow(active.createdAt)) return true;
+  return Boolean(await getActivePrebillingIntent(db, clerkUserId, FREE_RUNTIME_SLOT));
+}
 
 function toRecord(machine: { machineId: string; handle: string; runtimeSlot: string; status: string }): FreeRuntimeRecord {
   return { machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, status: machine.status };
@@ -78,6 +101,8 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
         // A metal runtime without a free entitlement is a paid or operator runtime, not this plan's.
         return entitlement ? { kind: 'existing', runtime: toRecord(current) } : { kind: 'runtime_exists' };
       }
+      // Checked under the billing owner lock, which checkout creation also takes.
+      if (await paidCheckoutPending(trx, clerkUserId, now())) return { kind: 'checkout_pending' };
       // Already admitted: the invite was redeemed and the owner is counted.
       if (entitlement) return { kind: 'admitted' };
       if (config.inviteRequired) {
@@ -111,9 +136,11 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (current && current.substrate !== 'metal') return false;
       const entitlement = await db.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
-      if (entitlement) return entitlement.source === 'free';
+      if (entitlement && entitlement.source !== 'free') return false;
+      if (entitlement) return !(await paidCheckoutPending(db, clerkUserId, now()));
       // A metal runtime without a free entitlement belongs to another plan.
       if (current && current.status !== 'failed') return false;
+      if (await paidCheckoutPending(db, clerkUserId, now())) return false;
       if (!config.inviteRequired) return true;
       const invite = await getFreeTierInvite(db, clerkUserId);
       return Boolean(invite && !invite.consumedAt);

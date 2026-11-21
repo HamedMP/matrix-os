@@ -6,6 +6,7 @@ import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/cu
 import type { CustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import {
   getBillingEntitlement,
+  insertCheckoutAttempt,
   insertUserMachine,
   promoteHostBundleChannel,
   upsertBillingEntitlement,
@@ -19,6 +20,7 @@ import { createFreeTierRuntime } from '../../packages/platform/src/free-tier/pro
 import { createJourneyProvisioner } from '../../packages/platform/src/journey-provisioning.js';
 import { deriveJourneyPhase } from '../../packages/platform/src/journey.js';
 import { createJourneyRoutes } from '../../packages/platform/src/journey-routes.js';
+import { AccountDeletionAdmissionError } from '../../packages/platform/src/account-deletion/admission.js';
 import { resolveEffectiveBillingEntitlement } from '../../packages/platform/src/runtime-entitlement.js';
 import type { HostdClient } from '../../packages/platform/src/substrates/hostd-client.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
@@ -198,6 +200,27 @@ describe('onboarding journey on the free plan', () => {
     expect(provision).toHaveBeenCalledTimes(1);
     expect(createVm).not.toHaveBeenCalled();
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
+  });
+
+  it('keeps an invited owner with a settling paid checkout on the paid flow', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await insertCheckoutAttempt(db, { id: 'att-1', clerkUserId: OWNER, stripeSessionId: 'cs_open', createdAt: new Date(Date.now() - 60_000).toISOString() });
+    const { app, provision } = journeyApp();
+    expect((await journey(app)).phase).toBe('payment_settling');
+    expect((await retry(app)).status).toBe(402);
+    expect(createVm).not.toHaveBeenCalled();
+    expect(provision).not.toHaveBeenCalled();
+    expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
+  });
+
+  it('answers a pending account deletion during journey provisioning with its own code', async () => {
+    const app = createJourneyRoutes({
+      db, resolveUserId: async () => OWNER, appOrigin: APP_ORIGIN, env: {}, maxProvisionAttempts: 3, now: () => NOW,
+      provisionRuntime: async () => { throw new AccountDeletionAdmissionError(); },
+    });
+    const response = await app.request('/api/journey/retry-provision', { method: 'POST', body: '{}' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'account_deletion_pending' });
   });
 
   it('keeps a lapsed paid owner on plan_required even with an invite', async () => {
