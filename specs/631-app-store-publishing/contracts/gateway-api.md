@@ -12,10 +12,10 @@ These routes are served by the per-user gateway.
 | --- | --- | --- | --- |
 | GET | `/api/app-store/publishable-apps` | — | `{ apps: AppStorePublishableApp[] }` `{ slug, name, icon?, description?, eligible: boolean, reason? }` |
 | GET | `/api/app-store/drafts` | — | `{ drafts: AppStoreDraftSummary[] }` |
-| POST | `/api/app-store/drafts` | `{ app: slug, aiConsent: { provider, disclosureVersion, consent: true } }` | `AppStoreDraftSummary` (201), starts the pipeline |
+| POST | `/api/app-store/drafts` | `{ app: slug, aiConsent?: { accessSourceId } }` | `AppStoreDraftSummary` (201), starts the pipeline |
 | GET | `/api/app-store/drafts/:draftId` | — | `AppStoreDraftDetail` (findings before/after, report, listing draft, changed files, AI status) |
 | GET | `/api/app-store/drafts/:draftId/diff` | `?path=` | `{ path, change: added\|removed\|modified, before?: string, after?: string, truncated }` (≤ 256 KiB per side) |
-| POST | `/api/app-store/drafts/:draftId/revise` | `{ instructions: string ≤ 1000 }` | `AppStoreDraftSummary` (202) |
+| POST | `/api/app-store/drafts/:draftId/revise` | `{ instructions: string ≤ 1000, aiConsent?: { accessSourceId } }` | `AppStoreDraftSummary` (202) |
 | POST | `/api/app-store/drafts/:draftId/listing` | `AppStoreListingDraftPatch` | `AppStoreDraftDetail` |
 | POST | `/api/app-store/drafts/:draftId/submit` | `AppStoreSubmitDraft` `{ consent: true, license }`; listing fields come from the draft | `AppStoreDraftSummary` |
 | POST | `/api/app-store/drafts/:draftId/delete` | `{}` | `{ deleted: true }` |
@@ -52,4 +52,4 @@ Platform errors map to the same `AppStoreErrorCode`. The gateway never forwards 
 
 Install/update downloads only approved source. Gateway verifies the authenticated grant/signature/digest/length/file hashes and capability consent, fetches pinned dependencies with the restricted registry broker, then runs offline install/build inside the OS isolation adapter. No host Vite invocation is allowed. It publishes source plus its own locally generated dist only after success, then records the install metric. Missing isolation/signing trust returns unavailable; build failure keeps the old install intact. Repeated installs reuse an active job for the same source/version. Job polling has owner auth, UUID validation, bounds and finished-job TTL; app frames cannot poll another owner's jobs.
 
-Provider consent must precede AI source transmission and name the selected provider. It is separate from final submission consent. The exact API schema for obtaining/revising provider consent must be shared across UI and gateway before implementation; do not silently treat draft creation or platform-upload consent as provider consent.
+Provider consent must precede AI source transmission and name the selected provider. It is separate from final submission consent. `aiConsent: { accessSourceId }` is optional on create/revise: its presence is explicit consent to the source disclosure displayed for that selected access source. Omission permits deterministic preparation only, with AI unavailable; it never authorizes SDK transmission. The service resolves the selected source server-side and records the disclosure/consent time. A changed source needs new explicit consent. Do not treat draft creation or final platform-upload consent alone as provider consent.
