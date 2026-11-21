@@ -1,4 +1,5 @@
 import { getGatewayUrl } from "./gateway";
+import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
 import { isCanonicalShellSessionId } from "../components/terminal/terminal-session-id";
 
 const QUEUE_KEY = "matrix:provider-terminal-session-queue";
@@ -171,6 +172,10 @@ async function readBoundedJson(response: Response, limit: number): Promise<unkno
  * One known tab, looked up on its own: used when the workspace list is too big to
  * read (finished history counts toward its limits). "gone" when it ended or vanished.
  */
+function isHerdrTerminalRefKey(terminalRef: string): boolean {
+  return terminalRef.startsWith(`${HERDR_TERMINAL_WORKSPACE_ID}:`);
+}
+
 async function lookUpTerminalRef(fetcher: Fetcher, terminalRef: string): Promise<"live" | "gone" | "unknown"> {
   const [workspaceId, tabId] = terminalRef.split(":");
   if (!workspaceId || !tabId || !WORKSPACE_ID_PATTERN.test(workspaceId) || !TAB_ID_PATTERN.test(tabId)) return "gone";
@@ -243,8 +248,9 @@ export async function drainExistingTerminalSessionQueue(
     const settledEntries = new Set<QueuedSession>();
     const acceptedRefs = new Set<string>();
     for (const entry of matched) {
-      if (entry.terminalRef && !active.authoritative) {
-        // The list was too big or unreadable: ask about this one tab instead.
+      if (entry.terminalRef && (!active.authoritative || isHerdrTerminalRefKey(entry.terminalRef))) {
+        // The list was too big or unreadable, or the tab is a Herdr terminal,
+        // which workspace lists never include (spec 2701): ask about this tab.
         const found = await lookUpTerminalRef(options.fetcher ?? fetch, entry.terminalRef);
         if (found !== "unknown") settledEntries.add(entry);
         if (found === "live") acceptedRefs.add(entry.terminalRef);
