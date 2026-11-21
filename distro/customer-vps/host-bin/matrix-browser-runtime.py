@@ -202,7 +202,8 @@ class Runtime:
         values = {}
         for line in text.splitlines():
             if line.startswith(('MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=',
-                                'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=')):
+                                'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=',
+                                'MATRIX_SELF_HOSTED=')):
                 key, value = line.split('=', 1)
                 if key in values:
                     raise ValueError('Duplicate Browser host configuration')
@@ -211,10 +212,16 @@ class Runtime:
         # A root-owned journal can still be rolled back after the opt-in is withdrawn.
         eligible_slot = slot == 'primary' or (slot == 'dev'
             and (recovering_activation or values.get('MATRIX_BROWSER_DEV_SETUP') == 'true'))
-        if (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', values.get('MATRIX_MACHINE_ID', ''))
+        # Self-host (spec 2701) has no Clerk or platform machine id; the installer writes
+        # self-host-<handle> for both. The flag must be exact and the Clerk shape is then refused.
+        self_hosted = 'MATRIX_SELF_HOSTED' in values
+        machine_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+        owner_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'user_[A-Za-z0-9]{1,128}'
+        if ((self_hosted and (values['MATRIX_SELF_HOSTED'] != '1' or slot != 'primary'))
+            or not re.fullmatch(machine_pattern, values.get('MATRIX_MACHINE_ID', ''))
             or not re.fullmatch(r'[a-z][a-z0-9-]{0,62}', values.get('MATRIX_HANDLE', ''))
             or values['MATRIX_HANDLE'].startswith(('pv-', 'pr-')) or not eligible_slot
-            or not re.fullmatch(r'user_[A-Za-z0-9]{1,128}', values.get('MATRIX_CLERK_USER_ID', ''))
+            or not re.fullmatch(owner_pattern, values.get('MATRIX_CLERK_USER_ID', ''))
             or values.get('MATRIX_USER_ID', values.get('MATRIX_CLERK_USER_ID')) != values.get('MATRIX_CLERK_USER_ID')
             or values.get('MATRIX_BROWSER_LAB', 'true') not in ('true', 'false')):
             raise ValueError('Customer Browser requires bound owner identity')
@@ -358,9 +365,15 @@ class Runtime:
 
     service_names = ('matrix-browser-lab-vnc.service', 'matrix-browser-lab-wm.service', 'matrix-browser-lab-desktop.service', 'matrix-browser-lab-panel.service', 'matrix-browser-lab-chrome.service', 'matrix-browser-lab.service')
 
+    def nginx_site(self):
+        # The self-host installer owns a separately named site; managed hosts keep theirs.
+        _, values = self.environment(recovering_activation=True)
+        return self.path('/etc/nginx/sites-available/matrix-self-host' if 'MATRIX_SELF_HOSTED' in values
+                         else '/etc/nginx/sites-available/matrix')
+
     def destination(self, name):
         if name == 'nginx':
-            return self.path('/etc/nginx/sites-available/matrix')
+            return self.nginx_site()
         if name == 'tint2rc':
             return self.prefix / name
         if name not in self.service_names:
@@ -638,7 +651,7 @@ class Runtime:
                 raise ValueError('Invalid Browser service payload')
             if json.loads(self.read(self.path('/opt/matrix/release.json'))).get('version') != version or self.installed_version() != version:
                 raise ValueError('Browser release changed during reconciliation')
-            nginx = self.path('/etc/nginx/sites-available/matrix')
+            nginx = self.nginx_site()
             files['nginx'] = viewer_location(self.read(nginx).decode())
             self.activate(incoming, files)
         self.write(self.prefix / 'installed-release', version + '\n')
