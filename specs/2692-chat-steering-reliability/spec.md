@@ -171,3 +171,12 @@ extract its shared fixture and attachment cases into focused modules.
 The mentioned-draft retry suite also needs mode-specific button selectors before
 and after its active-state transition. Keep both original-operation and request-ID
 assertions, and include the suite in the repeatable lane.
+
+Completed Linux shard logs identified three further Send selectors in queued
+failure and upload-race cases. Use Queue next only for active queue mode; keep
+idle and queued-edit Send. Preserve every draft, upload, failure, client-refresh
+and receipt assertion, and include both full suites in the steering lane.
+The three selector failures reproduced before the update; both consumer suites
+pass all eight cases afterwards. The expanded steering lane passes 464 tests in
+29 files, and a separate sweep of all 49 native canonical Chat consumer suites
+passes 456 tests without skips. These overlapping runs are reported separately.

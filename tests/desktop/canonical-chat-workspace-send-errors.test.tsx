@@ -157,7 +157,7 @@ describe("CanonicalChatWorkspace send failures", () => {
     const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
     await setSharedComposerText(editor, "Keep this message if queueing fails");
 
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
     await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledTimes(1));
     expect(editor.textContent).toBe("Keep this message if queueing fails");
     expect(screen.getByText("Keep this message if queueing fails")).toBeTruthy();
