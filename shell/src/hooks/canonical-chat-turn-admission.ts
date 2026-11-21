@@ -1,6 +1,6 @@
 import { createCanonicalChatAdmissionTracker, routineReceiptMessage } from "@matrix-os/ui";
 import type { CanonicalChatDetailResponse, CanonicalChatRecord, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
-import { CanonicalShellChatRequestError, isDefinitiveCanonicalChatRejection, type CanonicalShellChatClient } from "@/lib/canonical-chat-client";
+import { isDefinitiveCanonicalChatRejection, type CanonicalShellChatClient } from "@/lib/canonical-chat-client";
 
 /** A committed receipt only appends history, so it cannot invalidate a prepared foreground send. */
 export function advanceChatRecordForRoutineReceipts(
@@ -31,6 +31,5 @@ export function admitShellChatTurn(options: {
   return options.tracker.send(attempt, { post: request => options.client.admitTurn(options.record.chat.id, request),
     read: () => options.client.detail(options.record.chat.id), current: options.current,
     isCurrent: options.isCurrent, onRejected: options.onRejected, onAccepted: options.onAccepted, onConfirmed: () => options.onConfirmed(attempt.id),
-    definitive: error => isDefinitiveCanonicalChatRejection(error)
-      && !(error instanceof CanonicalShellChatRequestError && error.status === 408) });
+    definitive: isDefinitiveCanonicalChatRejection });
 }

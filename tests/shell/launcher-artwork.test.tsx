@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import React from "react";
-import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppTile } from "@/components/AppTile";
@@ -37,22 +36,5 @@ describe("launcher artwork across Web Canvas and Web Mobile", () => {
   expect(screen.getByRole("button",{name:"Terminal"}).querySelector("img")?.getAttribute("src")).toBe(icon);
   expect(screen.getByRole("button",{name:"Apps"}).querySelector("img")?.getAttribute("src")).toContain("v3-app-gallery.png");
   expect(webGalleryLauncherIconUrl([{name:"App Gallery",path:"apps/app-gallery/index.html",iconUrl:"/owner-gallery.png"}])).toBe("/owner-gallery.png");
- });
-});
-
-describe("support launcher placement", () => {
- const css = readFileSync("shell/src/app/globals.css", "utf8");
- const rule = css.slice(css.indexOf("/* The SDK launcher"));
- const selector = rule.slice(rule.indexOf("body:"), rule.indexOf("{")).trim();
- it("moves only the closed support launcher above a mounted mobile dock", () => {
-  const { container } = render(<><main data-testid="mobile-shell" /><div id="ph-conversations-widget-container"><div><button aria-label="Open chat (2 unread)">Support</button></div></div></>);
-  expect(document.querySelectorAll(selector)).toHaveLength(1);
-  expect(rule).toContain("100px + env(safe-area-inset-bottom");
-  container.querySelector("main")!.removeAttribute("data-testid");
-  expect(document.querySelectorAll(selector)).toHaveLength(0);
- });
- it("leaves an explicitly opened conversation in its normal placement", () => {
-  render(<><main data-testid="mobile-shell" /><div id="ph-conversations-widget-container"><div><button aria-label="Close chat">Close</button></div></div></>);
-  expect(document.querySelectorAll(selector)).toHaveLength(0);
  });
 });

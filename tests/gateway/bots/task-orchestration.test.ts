@@ -911,7 +911,7 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
     for (let index = 0; index < 2; index++) {
       const events = await collect(x.adapter.start({ ...turn(undefined, `run_recipe_input_${index}`, ""), prompt: "Inspect attached files", parts }));
       expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
-      expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER" });
+      expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER", messageId: "assistant_2" });
     }
     expect(observed).toBe(2); expect(faux.state.callCount).toBe(4); expect(x.registry.size).toBe(0);
     expect(inputHistory).toHaveBeenCalledTimes(2);

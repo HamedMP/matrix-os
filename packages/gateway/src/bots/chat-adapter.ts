@@ -61,8 +61,12 @@ export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?:
   switch (event.type) {
     case "assistant_delta": {
       const deltas: CanonicalProviderRunEvent[] = [];
-      for (let index = 0; index < event.text.length; index += MAX_DELTA_CHARS) {
-        deltas.push({ type: "assistant.delta", delta: event.text.slice(index, index + MAX_DELTA_CHARS) });
+      for (let index = 0; index < event.text.length;) {
+        let end = Math.min(index + MAX_DELTA_CHARS, event.text.length);
+        if (end < event.text.length && /[\uD800-\uDBFF]/u.test(event.text[end - 1]!)) end--;
+        deltas.push({ type: "assistant.delta", delta: event.text.slice(index, end),
+          ...(event.messageId ? { messageId: safeRef("message", event.messageId) } : {}) });
+        index = end;
       }
       return deltas;
     }

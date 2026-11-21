@@ -1518,9 +1518,8 @@ pre {
 }
 
 
-/* The SDK launcher sits outside the shell tree. Reserve the mobile dock and safe area,
-   while leaving an explicitly opened support conversation at its normal placement. */
-body:has([data-testid="mobile-shell"]) #ph-conversations-widget-container > div:has(button[aria-label^="Open chat"]) {
-  bottom: calc(100px + env(safe-area-inset-bottom, 0px)) !important;
-  right: 12px !important;
+/* The SDK launcher sits outside the shell tree and covers mobile app controls.
+   MobileShellHeader provides Support; an opened conversation keeps its placement. */
+body:has([data-testid="mobile-shell"]) #ph-conversations-widget-container > div:has(button[aria-label^="Open chat"]):not(:has(button[aria-label="Close"])) {
+  display: none !important;
 }

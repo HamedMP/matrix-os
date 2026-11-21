@@ -269,6 +269,12 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     if (budgetExhausted) return { status: "blocked" as const, blockedReason: "budget_exhausted" as const };
     if (tools.waitingForPerson) return { status: "waiting_person" as const };
     if (agent.state.errorMessage) return { status: "failed" as const, failureCode: "unavailable" as const };
+    // Pi can exhaust generation on reasoning alone without setting an error.
+    // Earlier output does not answer a later steer; inspect the final reply.
+    const last = agent.state.messages.at(-1);
+    if (last?.role === "assistant" && last.stopReason === "length" && !textOf(last).trim()) {
+      return { status: "failed" as const, failureCode: "unavailable" as const };
+    }
     return { status: "completed" as const };
   })();
 

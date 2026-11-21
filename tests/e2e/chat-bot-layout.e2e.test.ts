@@ -104,6 +104,11 @@ it.each([320, 480, 720, 900])("keeps the shared Web Desktop/Web Canvas composer 
     await page.getByRole("button", { name: "Toggle Web bot", exact: true }).click();
     expect(await model.count()).toBe(0);
     expect(await page.getByRole("textbox", { name: "Message chat" }).inputValue()).toBe("Unsaved fixture draft");
+    // Busy drafts now queue like Electron. Acceptance clears the draft and
+    // restores Stop; retain both actions instead of waiting for an absent Stop.
+    await page.getByRole("button", { name: "Queue next", exact: true }).click();
+    expect(await page.locator("#fixture-action").textContent()).toBe("send");
+    expect(await page.getByRole("textbox", { name: "Message chat" }).inputValue()).toBe("");
     await page.getByRole("button", { name: "Stop", exact: true }).click();
     expect(await page.locator("#fixture-action").textContent()).toBe("stop");
   } finally { await page.close(); }
