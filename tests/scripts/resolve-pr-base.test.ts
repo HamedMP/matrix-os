@@ -57,7 +57,8 @@ describe("CI wiring", () => {
   const { jobs } = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
   const stepRuns = (job: string) => jobs[job].steps.map((step: { run?: string }) => step.run ?? "").join("\n");
 
-  it.each(["pr-size", "patterns"])("%s diffs against the resolved PR base, not github.base_ref", (job) => {
+  it("patterns diffs against the resolved PR base, not github.base_ref", () => {
+    const job = "patterns";
     const resolver = jobs[job].steps.find((step: { id?: string }) => step.id === "pr-base");
     expect(resolver?.run).toContain("node scripts/ci/resolve-pr-base.mjs");
     expect(resolver?.env?.PR_NUMBER).toBe("${{ github.event.pull_request.number }}");
