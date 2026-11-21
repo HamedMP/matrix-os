@@ -1417,7 +1417,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   registerLifecycleRoutes({ app, readStatus: () => readLifecycleStatus(gatewayLifecycleSources({
     chatDb: chatRepository?.kysely ?? null, routinesEnabled: Boolean(botServices?.routines),
-    terminals: terminalLiveOwnership, backgroundAgents: backgroundAgentRuntime, cron: cronService, heartbeat: proactiveHeartbeat,
+    terminals: terminalLiveOwnership, backgroundAgents: backgroundAgentRuntime, cron: cronService,
   })) });
 
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)

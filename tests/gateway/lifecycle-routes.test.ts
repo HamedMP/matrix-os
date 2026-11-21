@@ -15,7 +15,7 @@ function app(readStatus: Parameters<typeof registerLifecycleRoutes>[0]["readStat
 
 describe("GET /api/system/lifecycle", () => {
   it("401 without auth", async () => {
-    const readStatus = vi.fn(async () => ({ busy: false, busyReasons: [], nextScheduledAt: null }));
+    const readStatus = vi.fn(async () => ({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: true }));
     const res = await app(readStatus).request("/api/system/lifecycle");
     expect(res.status).toBe(401);
     expect(readStatus).not.toHaveBeenCalled();
@@ -23,11 +23,12 @@ describe("GET /api/system/lifecycle", () => {
 
   it("returns the lifecycle status for the owner bearer", async () => {
     const at = "2026-11-21T13:00:00.000Z";
-    const res = await app(async () => ({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: at }))
+    const res = await app(async () => ({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: at, scheduleComplete: true }))
       .request("/api/system/lifecycle", { headers: { Authorization: `Bearer ${TOKEN}` } });
     expect(res.status).toBe(200);
+    expect(RuntimeLifecycleStatusSchema.safeParse({ busy: false, busyReasons: [], nextScheduledAt: null }).success).toBe(false);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(RuntimeLifecycleStatusSchema.parse(await res.json())).toEqual({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: at });
+    expect(RuntimeLifecycleStatusSchema.parse(await res.json())).toEqual({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: at, scheduleComplete: true });
   });
 
   it("returns a generic 503 when the status cannot be read", async () => {
@@ -43,7 +44,7 @@ describe("GET /api/system/lifecycle", () => {
   });
 
   it("is GET-only", async () => {
-    const res = await app(async () => ({ busy: false, busyReasons: [], nextScheduledAt: null }))
+    const res = await app(async () => ({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: true }))
       .request("/api/system/lifecycle", { method: "POST", headers: { Authorization: `Bearer ${TOKEN}` } });
     expect(res.status).toBe(404);
   });

@@ -21,8 +21,8 @@ export interface LifecycleSources {
     hasActiveFire(now: Date): Promise<boolean>;
     nextFireAt(now: Date): Promise<Date | null>;
   };
+  /** The heartbeat is deliberately absent: it runs only while awake and never schedules a wake. */
   cron?: { nextRunAt(): Date | null };
-  heartbeat?: { nextRunAt(): Date | null };
   now?: () => Date;
   timeoutMs?: number;
 }
@@ -60,7 +60,6 @@ export function gatewayLifecycleSources(deps: {
   terminals: LifecycleSources["terminals"];
   backgroundAgents: LifecycleSources["backgroundAgents"];
   cron: LifecycleSources["cron"];
-  heartbeat: LifecycleSources["heartbeat"];
 }): LifecycleSources {
   const { chatDb } = deps;
   const routines = chatDb && deps.routinesEnabled ? createBotRoutinesRepository(ownerBotExecutor(chatDb)) : undefined;
@@ -75,7 +74,6 @@ export function gatewayLifecycleSources(deps: {
     terminals: deps.terminals,
     backgroundAgents: deps.backgroundAgents,
     cron: deps.cron,
-    heartbeat: deps.heartbeat,
   };
 }
 
@@ -102,11 +100,11 @@ function logSourceFailure(source: string, error: unknown): void {
   console.warn(`[lifecycle] ${source} unavailable:`, error instanceof Error ? error.name : "UnknownError");
 }
 
-/** Never throws: a failed busy source reports `unknown` (stay awake); a failed schedule source yields null. */
+/** Never throws: a failed busy source reports `unknown` (stay awake); a failed schedule source clears `scheduleComplete`. */
 export async function readLifecycleStatus(sources: LifecycleSources): Promise<RuntimeLifecycleStatus> {
   const now = (sources.now ?? (() => new Date()))();
   const timeoutMs = sources.timeoutMs ?? LIFECYCLE_SOURCE_TIMEOUT_MS;
-  const { chatRuns, terminals, backgroundAgents, routines, cron, heartbeat } = sources;
+  const { chatRuns, terminals, backgroundAgents, routines, cron } = sources;
 
   const busyChecks: Array<[RuntimeBusyReason, (() => boolean | Promise<boolean>) | undefined]> = [
     ["chat_run", chatRuns && (() => chatRuns.hasActiveRun(now))],
@@ -117,7 +115,6 @@ export async function readLifecycleStatus(sources: LifecycleSources): Promise<Ru
   const scheduleChecks: Array<[string, (() => Date | null | Promise<Date | null>) | undefined]> = [
     ["cron", cron && (() => cron.nextRunAt())],
     ["routine schedule", routines && (() => routines.nextFireAt(now))],
-    ["heartbeat", heartbeat && (() => heartbeat.nextRunAt())],
   ];
 
   const [busyResults, scheduleResults] = await Promise.all([
@@ -155,7 +152,8 @@ export async function readLifecycleStatus(sources: LifecycleSources): Promise<Ru
   return {
     busy: busyReasons.length > 0,
     busyReasons,
-    // A partial minimum could schedule the wake after a job it failed to read.
-    nextScheduledAt: scheduleFailed || earliest === null ? null : new Date(earliest).toISOString(),
+    nextScheduledAt: earliest === null ? null : new Date(earliest).toISOString(),
+    // A partial minimum could fall after a job that was not read, so the caller must not suspend on it.
+    scheduleComplete: !scheduleFailed,
   };
 }

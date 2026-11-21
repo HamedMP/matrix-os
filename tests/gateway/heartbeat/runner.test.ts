@@ -56,18 +56,6 @@ describe("T120c: Heartbeat runner", () => {
     expect(onError).toHaveBeenCalledOnce();
   });
 
-  it("reports the next heartbeat tick only while started", async () => {
-    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
-    const runner = createHeartbeatRunner({ homePath, dispatcher: mockDispatcher(), everyMinutes: 30 });
-    expect(runner.nextRunAt()).toBeNull();
-    runner.start();
-    expect(runner.nextRunAt()?.toISOString()).toBe("2026-11-21T12:30:00.000Z");
-    await vi.advanceTimersByTimeAsync(30 * 60_000);
-    expect(runner.nextRunAt()?.toISOString()).toBe("2026-11-21T13:00:00.000Z");
-    runner.stop();
-    expect(runner.nextRunAt()).toBeNull();
-  });
-
   it("invokes dispatcher on interval", async () => {
     const dispatcher = mockDispatcher();
     const runner = createHeartbeatRunner({

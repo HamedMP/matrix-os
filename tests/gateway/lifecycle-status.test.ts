@@ -10,6 +10,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { createBotRoutinesRepository } from "../../packages/gateway/src/bots/repositories/routines.js";
 import { createCronStore } from "../../packages/gateway/src/cron/store.js";
 import { createCronService, type CronService } from "../../packages/gateway/src/cron/service.js";
+import { createHeartbeatRunner } from "../../packages/gateway/src/heartbeat/runner.js";
 import { createTerminalLiveOwnership } from "../../packages/gateway/src/terminal-live-ownership.js";
 import { createChatRunActivity, readLifecycleStatus } from "../../packages/gateway/src/lifecycle/status.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
@@ -60,7 +61,7 @@ describe("lifecycle status", () => {
   it("busy with chat_run while a run is running", async () => {
     await insertRun("running", new Date(NOW.getTime() - 3 * 24 * HOUR));
     const status = await readLifecycleStatus({ chatRuns: createChatRunActivity(db), now: () => NOW });
-    expect(RuntimeLifecycleStatusSchema.parse(status)).toEqual({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: null });
+    expect(RuntimeLifecycleStatusSchema.parse(status)).toEqual({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: null, scheduleComplete: true });
   });
 
   it("busy with an accepted run", async () => {
@@ -75,7 +76,7 @@ describe("lifecycle status", () => {
     await insertRun("completed", NOW);
     await insertRun("failed", NOW);
     const status = await readLifecycleStatus({ chatRuns: createChatRunActivity(db), now: () => NOW });
-    expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null });
+    expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: true });
   });
 
   it("busy with a waiting run updated within 24 h", async () => {
@@ -97,6 +98,7 @@ describe("lifecycle status", () => {
       busy: true,
       busyReasons: ["terminal_attached", "background_agent", "routine"],
       nextScheduledAt: null,
+      scheduleComplete: true,
     });
   });
 
@@ -109,14 +111,23 @@ describe("lifecycle status", () => {
         timeoutMs: 20,
         now: () => NOW,
       });
-      expect(status).toEqual({ busy: true, busyReasons: ["unknown"], nextScheduledAt: null });
+      expect(status).toEqual({ busy: true, busyReasons: ["unknown"], nextScheduledAt: null, scheduleComplete: true });
       expect(RuntimeLifecycleStatusSchema.parse(status).busyReasons).toEqual(["unknown"]);
     } finally {
       warn.mockRestore();
     }
   });
 
-  it("returns a null nextScheduledAt when a schedule source fails, without failing busy", async () => {
+  it("marks the schedule complete when every schedule source answers", async () => {
+    const status = await readLifecycleStatus({
+      cron: { nextRunAt: () => new Date(NOW.getTime() + 2 * HOUR) },
+      routines: { hasActiveFire: async () => false, nextFireAt: async () => new Date(NOW.getTime() + HOUR) },
+      now: () => NOW,
+    });
+    expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: new Date(NOW.getTime() + HOUR).toISOString(), scheduleComplete: true });
+  });
+
+  it("marks the schedule incomplete with the answering source's time when one schedule source throws", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const status = await readLifecycleStatus({
@@ -124,20 +135,51 @@ describe("lifecycle status", () => {
         routines: { hasActiveFire: async () => false, nextFireAt: async () => { throw new Error("db down"); } },
         now: () => NOW,
       });
-      expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null });
+      expect(RuntimeLifecycleStatusSchema.parse(status)).toEqual({
+        busy: false, busyReasons: [], nextScheduledAt: new Date(NOW.getTime() + HOUR).toISOString(), scheduleComplete: false,
+      });
     } finally {
       warn.mockRestore();
     }
   });
 
-  it("ignores scheduled times in the past and reports the heartbeat when it is earliest", async () => {
+  it("marks the schedule incomplete with a null time when every schedule source fails or times out", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const status = await readLifecycleStatus({
+        cron: { nextRunAt: () => { throw new Error("cron broken"); } },
+        routines: { hasActiveFire: async () => false, nextFireAt: () => new Promise<Date | null>(() => undefined) },
+        timeoutMs: 20,
+        now: () => NOW,
+      });
+      expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: false });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("ignores scheduled times in the past", async () => {
     const status = await readLifecycleStatus({
       cron: { nextRunAt: () => new Date(NOW.getTime() - 60_000) },
       routines: { hasActiveFire: async () => false, nextFireAt: async () => new Date(NOW.getTime() + 2 * HOUR) },
-      heartbeat: { nextRunAt: () => new Date(NOW.getTime() + HOUR) },
       now: () => NOW,
     });
-    expect(status.nextScheduledAt).toBe(new Date(NOW.getTime() + HOUR).toISOString());
+    expect(status.nextScheduledAt).toBe(new Date(NOW.getTime() + 2 * HOUR).toISOString());
+  });
+
+  it("a pending heartbeat does not set nextScheduledAt", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(NOW);
+    const heartbeat = createHeartbeatRunner({ homePath: tmpdir(), dispatcher: {} as never, everyMinutes: 30 });
+    heartbeat.start();
+    try {
+      // A gateway-shaped source bag that still carries the heartbeat must not let it drive wake-ups.
+      const sources = { heartbeat, cron: { nextRunAt: () => null }, now: () => NOW };
+      expect(await readLifecycleStatus(sources)).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: true });
+    } finally {
+      heartbeat.stop();
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -185,7 +227,7 @@ describe("lifecycle nextScheduledAt with real cron and routines", () => {
 
     cronService.addJob({ id: "cron_soon", name: "soon", message: "m", createdAt: created, schedule: { type: "interval", intervalMs: 30 * 60_000 } });
     const status = await readLifecycleStatus(sources);
-    expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: new Date(NOW.getTime() + 30 * 60_000).toISOString() });
+    expect(status).toEqual({ busy: false, busyReasons: [], nextScheduledAt: new Date(NOW.getTime() + 30 * 60_000).toISOString(), scheduleComplete: true });
   });
   it("counts claimed and leased routine fires as executing, and deferred retries as scheduled", async () => {
     const chat = "chat_lifecycle_fire", bot = "bot_fedcba9876543210";

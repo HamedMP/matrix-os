@@ -17,8 +17,10 @@ export type RuntimeBusyReason = z.infer<typeof RuntimeBusyReasonSchema>;
 export const RuntimeLifecycleStatusSchema = z.object({
   busy: z.boolean(),
   busyReasons: z.array(RuntimeBusyReasonSchema).max(RuntimeBusyReasonSchema.options.length),
-  /** Earliest future cron, routine or heartbeat time (ISO 8601), or null when none is known. */
+  /** Earliest future cron or routine time (ISO 8601) among the sources that answered, or null. */
   nextScheduledAt: z.iso.datetime().nullable(),
+  /** False when any schedule source failed or timed out; callers must not suspend on an incomplete schedule. */
+  scheduleComplete: z.boolean(),
 }).strict().refine((status) => status.busy === status.busyReasons.length > 0, {
   message: "busy must match busyReasons",
 });
