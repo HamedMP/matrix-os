@@ -120,6 +120,36 @@ component lives in `packages/ui` so Web can adopt it later.
 Binary frames, one connection per computer and Herdr-backed computer terminals
 are a following stack.
 
+## Integration wiring
+
+Startup (`packages/terminal-runtime/src/service.ts`):
+
+1. Load the workspace store.
+2. Create the exit recorder at `~/system/terminal-workspaces/exits` and create
+   the directory (0700) before the runtime is constructed, so the first tab
+   launched can already write to it.
+3. Construct the runtime with the recorder and recover saved tabs. A tab whose
+   launch was cut short keeps its saved `exitRecorded` choice (it is saved
+   before the program starts).
+4. Start the 2 s sweep: read exit files first, then run the `list-panes`
+   sweep only for workspaces with a command tab that does not record its own
+   exit (shell tabs close on exit and are never asked about). Shutdown sets `shuttingDown`, stops the timer, and
+   lets a pass in flight finish.
+
+Status path (layer 4): runtime store (`status: exited`, `exitCode`) → the
+gateway's existing terminal status pipeline (2692) → `/ws/terminal/events` →
+the Terminal window's per-computer subscription → sidebar rows. Local
+terminals take the herdr-core `events.subscribe` path instead.
+
+End-to-end checkpoint, added with layer 4 before the sidebar is wired in:
+create a command tab through the real runtime and wrapper (`/bin/sh`), let the
+program exit with code 4, and assert in one test: the stored tab is `exited`
+with code 4, `/ws/terminal/events` emits that exit for the tab's ref, and the
+sidebar model files the row under Done. A second case stops the runtime, writes
+an exit file while it is down, starts a new runtime on the same store and
+directory, and asserts the exit is recorded on the first sweep and reaches the
+event stream. Each layer's own tests do not replace this one.
+
 ## Acceptance
 
 - Idle Matrix tab in the Terminal window: no output frames for 30 s when its
