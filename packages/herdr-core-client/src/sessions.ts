@@ -27,7 +27,10 @@ const ListedTerminalSchema = z.object({
   name: z.string().nullable().optional().catch(null),
   status: z.object({ state: z.string().max(32), msg: z.string().optional().catch(undefined) }).nullable().optional().catch(null),
   labels: z.record(z.string(), z.string()).nullable().optional().catch(null),
+  argv: z.array(z.string()).max(4_096).nullable().optional().catch(null),
 });
+/** The label `hc run --label where=…` sets; Herdr shows it as the terminal's place. */
+const WHERE_LABEL = "where";
 /** The label a rename sets; it wins over the program's own title. */
 export const TERMINAL_TITLE_LABEL = "matrix.title";
 const PutResultSchema = z.object({ path: z.string().min(1).max(4096) });
@@ -37,6 +40,10 @@ const UNSAFE_TITLE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e
 
 function safeStatusMessage(value: string): string {
   return value.replace(UNSAFE_TITLE_CHARS, "").trim().slice(0, 200);
+}
+
+function programName(command: string | undefined): string | undefined {
+  return command?.slice(command.lastIndexOf("/") + 1);
 }
 
 export function safeTerminalTitle(...candidates: Array<string | null | undefined>): string {
@@ -145,7 +152,12 @@ export function createHcSessions(options: {
         const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
         terminals.push({
           id: terminal.data.address,
-          title: safeTerminalTitle(terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name),
+          // Terminals started from Herdr often carry no title of their own; its
+          // where label, then the program's name, tell them apart.
+          title: safeTerminalTitle(
+            terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name,
+            terminal.data.labels?.[WHERE_LABEL], programName(terminal.data.argv?.[0]),
+          ),
           status: state.success ? state.data : null,
           ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
         });
