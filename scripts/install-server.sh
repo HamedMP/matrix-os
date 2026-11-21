@@ -1595,13 +1595,14 @@ main() {
   install_systemd_units
   INSTALL_PHASE="private_network"
   configure_private_network
+  # First: an HTTP fallback changes the tailnet address recorded for the gateway.
+  [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
   write_env
   INSTALL_PHASE="nginx"
   configure_nginx
   grant_run_user_access "$MATRIX_RUN_USER"
   INSTALL_PHASE="services"
   start_services
-  [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
   INSTALL_PHASE="browser"
   configure_browser
   INSTALL_PHASE="verify"

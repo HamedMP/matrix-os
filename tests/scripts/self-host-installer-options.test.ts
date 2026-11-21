@@ -276,6 +276,16 @@ exit 0
     expect(result.stdout + result.stderr).toMatch(/HTTPS/);
   });
 
+  it("serves on the tailnet before recording its address, so the gateway learns an HTTP fallback", () => {
+    const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
+    const join = main.indexOf("configure_private_network");
+    const serve = main.indexOf("configure_tailscale_serve");
+    const record = main.indexOf("write_env", join);
+    expect(join).toBeGreaterThan(-1);
+    expect(serve).toBeGreaterThan(join);
+    expect(serve).toBeLessThan(record);
+  });
+
   it("records only the chosen options in telemetry", () => {
     const result = run(
       `curl() { for arg; do case "$arg" in {*) printf '%s\\n' "$arg" >"${join(dir, "payload.json")}";; esac; done; }
