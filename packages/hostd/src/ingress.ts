@@ -13,6 +13,11 @@ import type { VmState, VmStore } from "./vm-store.js";
 // private bridge. It never wakes a VM: waking is the platform's job via hostd.
 
 export const HOST_AUTH_HEADER = "x-matrix-host-auth";
+// Marks an error answer the ingress generated itself. The platform treats a
+// 503 as "VM asleep" (and retries non-idempotent requests) only when it
+// carries this header with `runtime_asleep`, so a VM-originated copy is always
+// stripped before relaying: a VM must never be able to forge it.
+export const INGRESS_ERROR_HEADER = "x-matrix-ingress-error";
 export const MAX_INDEXED_HANDLES = 10_000;
 export const INDEX_MAX_AGE_MS = 2_000;
 export const UPSTREAM_CONNECT_TIMEOUT_MS = 5_000;
@@ -138,10 +143,12 @@ export function hasAmbiguousFraming(req: IncomingMessage): boolean {
   return req.headers["transfer-encoding"] !== undefined && req.headers["content-length"] !== undefined;
 }
 
-function stripHopByHop(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
+// Response headers relayed from a VM: hop-by-hop headers and any forged
+// ingress error marker are dropped.
+function relayedHeaders(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
   const out: OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (value === undefined || HOP_BY_HOP.has(name)) continue;
+    if (value === undefined || HOP_BY_HOP.has(name) || name === INGRESS_ERROR_HEADER) continue;
     out[name] = value;
   }
   return out;
@@ -156,6 +163,7 @@ function errorHeaders(code: IngressErrorCode, body: string): Record<string, stri
     "content-type": "application/json",
     "cache-control": "no-store",
     "content-length": String(Buffer.byteLength(body)),
+    [INGRESS_ERROR_HEADER]: code,
   };
   if (code === "runtime_asleep") headers["retry-after"] = "2";
   return headers;
@@ -363,7 +371,7 @@ export function createIngress(deps: IngressDeps): Ingress {
       if (!res.writableFinished) upstream.destroy();
     });
     upstream.once("response", (up) => {
-      res.writeHead(up.statusCode ?? 502, up.statusMessage, stripHopByHop(up.headers));
+      res.writeHead(up.statusCode ?? 502, up.statusMessage, relayedHeaders(up.headers));
       pipeline(up, res, (error) => {
         if (error) log("ingress.response_stream_failed", { id: entry.id, ...errorFields(error) });
       });
@@ -414,7 +422,11 @@ export function createIngress(deps: IngressDeps): Ingress {
     socket.once("close", () => upstream.destroy());
     upstream.once("upgrade", (up, upSocket: Socket, upHead: Buffer) => {
       const lines = [`HTTP/1.1 ${up.statusCode ?? 101} ${up.statusMessage ?? "Switching Protocols"}`];
-      for (let i = 0; i < up.rawHeaders.length; i += 2) lines.push(`${up.rawHeaders[i]}: ${up.rawHeaders[i + 1]}`);
+      for (let i = 0; i < up.rawHeaders.length; i += 2) {
+        const name = up.rawHeaders[i]!;
+        if (name.toLowerCase() === INGRESS_ERROR_HEADER) continue;
+        lines.push(`${name}: ${up.rawHeaders[i + 1]}`);
+      }
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);
       if (upHead.length > 0) socket.write(upHead);
       if (head.length > 0) upSocket.write(head);
@@ -428,7 +440,7 @@ export function createIngress(deps: IngressDeps): Ingress {
     upstream.once("response", (up) => {
       // The VM declined the upgrade (for example its own auth check): relay it.
       const lines = [`HTTP/1.1 ${up.statusCode ?? 502} ${up.statusMessage ?? ""}`];
-      for (const [name, value] of Object.entries(stripHopByHop(up.headers))) {
+      for (const [name, value] of Object.entries(relayedHeaders(up.headers))) {
         for (const v of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${v}`);
       }
       lines.push("connection: close");

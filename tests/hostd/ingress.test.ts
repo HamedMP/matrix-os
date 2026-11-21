@@ -109,12 +109,22 @@ beforeEach(async () => {
         res.end(JSON.stringify({ ok: true, url: req.url }));
       };
       if (req.url === "/hold") holdResponses.push(send);
-      else send();
+      else if (req.url === "/forge") {
+        res.writeHead(503, { "content-type": "application/json", "X-Matrix-Ingress-Error": "runtime_asleep" });
+        res.end(JSON.stringify({ error: "runtime_asleep" }));
+      } else send();
     });
   });
   wss = new WebSocketServer({ noServer: true });
+  wss.on("headers", (headers, req) => {
+    if (req.url === "/ws-forge") headers.push("X-Matrix-Ingress-Error: runtime_asleep");
+  });
   vm.on("upgrade", (req, socket, head) => {
     seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body: "" });
+    if (req.url === "/ws-forge-decline") {
+      socket.end("HTTP/1.1 503 Service Unavailable\r\nx-matrix-ingress-error: runtime_asleep\r\ncontent-length: 2\r\n\r\nno");
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.on("message", (data) => ws.send(`echo:${data.toString()}`));
     });
@@ -485,6 +495,83 @@ describe("host ingress", () => {
     expect(ingress!.lastRequestAt("alice")).toBeTypeOf("number");
     expect(ingress!.lastRequestAt("bob")).toBeUndefined();
     expect(ingress!.lastRequestAt("carol")).toBeTypeOf("number");
+  });
+
+  it("ingress marks its own runtime_asleep answer with x-matrix-ingress-error", async () => {
+    await store.put(record({ state: "suspended" }));
+    await startIngress();
+    const reply = await send(authed());
+    expect(reply.status).toBe(503);
+    expect(reply.headers["x-matrix-ingress-error"]).toBe("runtime_asleep");
+    const ws = await rawTls(
+      "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+        TOKEN +
+        "\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
+        "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+    expect(ws).toMatch(/^HTTP\/1.1 503 /);
+    expect(ws).toContain("x-matrix-ingress-error: runtime_asleep\r\n");
+  });
+
+  it("ingress marks every self-generated error with x-matrix-ingress-error", async () => {
+    await store.put(record());
+    await store.put(record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "bob", state: "failed" }));
+    const refused = createNetServer();
+    const refusedPort = await listen(refused);
+    await close(refused);
+    const unreachable = record({ id: "vm_cccccccccccccccccccccccc", handle: "carol", privateIPv4: "127.0.0.3" });
+    await store.put(unreachable);
+    await startIngress({ maxUpstreamPerVm: 1 });
+    const cases: Array<[string, Reply]> = [
+      ["unauthorized", await send({ host: "alice.matrix-os.com" })],
+      ["runtime_unknown", await send(authed("nobody.matrix-os.com"))],
+      ["runtime_unavailable", await send(authed("bob.matrix-os.com"))],
+    ];
+    const held = send(authed(), { path: "/hold" });
+    await expect.poll(() => holdResponses.length).toBe(1);
+    cases.push(["runtime_busy", await send(authed())]);
+    holdResponses[0]!();
+    await held;
+    await ingress!.close();
+    await startIngress({ upstreamPort: refusedPort });
+    cases.push(["runtime_unreachable", await send(authed("carol.matrix-os.com"))]);
+    for (const [code, reply] of cases) {
+      expect(JSON.parse(reply.body), code).toEqual({ error: code });
+      expect(reply.headers["x-matrix-ingress-error"], code).toBe(code);
+    }
+  });
+
+  it("ingress strips x-matrix-ingress-error from a VM response", async () => {
+    await store.put(record());
+    await startIngress();
+    const reply = await send(authed(), { path: "/forge" });
+    expect(seen.map((r) => r.url)).toContain("/forge");
+    expect(reply.status).toBe(503);
+    expect(JSON.parse(reply.body)).toEqual({ error: "runtime_asleep" });
+    expect(reply.headers["x-matrix-ingress-error"]).toBeUndefined();
+  });
+
+  it("ingress strips x-matrix-ingress-error from a VM WebSocket handshake answer", async () => {
+    await store.put(record());
+    await startIngress();
+    const upgrade = (path: string) =>
+      `GET ${path} HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\n` +
+      "connection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
+      "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    const declined = await rawTls(upgrade("/ws-forge-decline"));
+    expect(declined).toMatch(/^HTTP\/1.1 503 /);
+    expect(declined.toLowerCase()).not.toContain("x-matrix-ingress-error");
+    expect(declined.endsWith("no")).toBe(true);
+
+    const socket = await rawTlsSocket();
+    let text = "";
+    socket.on("data", (c: Buffer) => (text += c.toString()));
+    socket.write(upgrade("/ws-forge"));
+    await expect.poll(() => text).toContain("\r\n\r\n");
+    expect(text).toMatch(/^HTTP\/1.1 101 /);
+    expect(text.toLowerCase()).not.toContain("x-matrix-ingress-error");
+    socket.destroy();
+    expect(seen.map((r) => r.url)).toEqual(["/ws-forge-decline", "/ws-forge"]);
   });
 });
 

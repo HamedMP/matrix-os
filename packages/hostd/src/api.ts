@@ -78,7 +78,9 @@ const CreateVmRequest = z.strictObject({
   goldenVersion: z.string().regex(SAFE_VERSION),
 });
 
-const ResumeRequest = z.strictObject({ budgetMs: z.int().min(0) });
+const ExpectedGeneration = z.int().min(1).optional();
+const ResumeRequest = z.strictObject({ budgetMs: z.int().min(0), expectedGeneration: ExpectedGeneration });
+const SuspendRequest = z.strictObject({ expectedGeneration: ExpectedGeneration });
 const PolicyRequest = z.strictObject({ tier: z.enum(["free", "paid"]), maxMiB: mib(131_072) });
 const VmId = z.string().regex(VM_ID_PATTERN);
 
@@ -113,10 +115,12 @@ function vmId(c: Context): string {
   return parsed.data;
 }
 
-async function readBody<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
+// `emptyAs` is the value an absent body stands for, on routes where the body is optional.
+async function readBody<T>(c: Context, schema: z.ZodType<T>, emptyAs?: unknown): Promise<T> {
   let raw: unknown;
   try {
-    raw = await c.req.json();
+    const text = await c.req.text();
+    raw = text.length === 0 && emptyAs !== undefined ? emptyAs : JSON.parse(text);
   } catch (error: unknown) {
     if (error instanceof SyntaxError) throw new ApiError("bad_request");
     throw error;
@@ -165,19 +169,47 @@ export function createHostApi(deps: HostApiDeps): Hono {
 
   app.post("/v1/vms/:id/resume", limit, async (c) => {
     const id = vmId(c);
-    const { budgetMs } = await readBody(c, ResumeRequest);
-    const state = await lifecycle.resume(id, Math.min(budgetMs, MAX_RESUME_BUDGET_MS));
+    const { budgetMs, expectedGeneration } = await readBody(c, ResumeRequest);
+    const budget = Math.min(budgetMs, MAX_RESUME_BUDGET_MS);
+    // The generation fence is enforced inside the lifecycle's per-VM queue.
+    const state =
+      expectedGeneration === undefined
+        ? await lifecycle.resume(id, budget)
+        : await lifecycle.resume(id, budget, { expectedGeneration });
     return c.json({ state });
   });
 
   app.post("/v1/vms/:id/suspend", limit, async (c) => {
     const id = vmId(c);
+    const { expectedGeneration } = await readBody(c, SuspendRequest, {});
     await loadVm(id);
+    const logFailure = (error: unknown) =>
+      log("api.suspend_failed", { id, code: error instanceof LifecycleError ? error.code : "internal" });
     // Snapshotting takes seconds: answer now; the platform reads the outcome
     // with GET. A failed snapshot leaves the VM running, which GET shows.
-    lifecycle.suspend(id).catch((error: unknown) => {
-      log("api.suspend_failed", { id, code: error instanceof LifecycleError ? error.code : "internal" });
+    if (expectedGeneration === undefined) {
+      lifecycle.suspend(id).catch(logFailure);
+      return c.json({ state: "suspending" as const }, 202);
+    }
+    // Fenced: wait until the queued suspend has passed its generation check
+    // (a mismatch answers 409 here), then answer while it snapshots.
+    let accepted = false;
+    let markAccepted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markAccepted = resolve;
     });
+    const done = lifecycle.suspend(id, {
+      expectedGeneration,
+      onAccepted: () => {
+        accepted = true;
+        markAccepted();
+      },
+    });
+    done.catch((error: unknown) => {
+      // A failure before acceptance is the client's answer, not a background failure.
+      if (accepted) logFailure(error);
+    });
+    await Promise.race([started, done]);
     return c.json({ state: "suspending" as const }, 202);
   });
 

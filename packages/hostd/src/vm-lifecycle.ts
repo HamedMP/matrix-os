@@ -100,11 +100,23 @@ export interface VmLifecycleDeps {
 
 export type ResumeResult = "running" | "starting";
 
+// Fences an operation on the VM's generation: checked inside the per-VM queue,
+// when the operation runs, so no other operation can slip between the check
+// and the act. A mismatch rejects with `conflict` without touching the VM.
+export interface GenerationFence {
+  expectedGeneration?: number;
+}
+
+export interface SuspendOptions extends GenerationFence {
+  // Called once the queued suspend has passed its checks and starts acting.
+  onAccepted?: () => void;
+}
+
 export interface VmLifecycle {
   create(spec: CreateVmSpec): Promise<VmRecord>;
   start(id: string): Promise<VmRecord>;
-  suspend(id: string): Promise<VmRecord>;
-  resume(id: string, budgetMs: number): Promise<ResumeResult>;
+  suspend(id: string, options?: SuspendOptions): Promise<VmRecord>;
+  resume(id: string, budgetMs: number, options?: GenerationFence): Promise<ResumeResult>;
   stop(id: string): Promise<VmRecord>;
   destroy(id: string): Promise<void>;
   // Hotplugs or unplugs memory to targetMiB; refuses unless the VM is running.
@@ -189,7 +201,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const { store, exec } = deps;
   const clock = deps.clock ?? systemClock;
   const log = deps.log ?? ((event, fields) => console.error(JSON.stringify({ event, ...fields })));
-  const inflight = new Map<string, { kind: string; promise: Promise<unknown> }>();
+  const inflight = new Map<string, { kind: string; promise: Promise<unknown>; accepted: Promise<void> }>();
   let allocation: Promise<unknown> = Promise.resolve();
 
   const vmUnit = (id: string) => `matrix-vm@${id}.service`;
@@ -199,24 +211,54 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const sh = (argv: readonly [string, ...string[]]) => run(exec, argv, AbortSignal.timeout(cfg.execTimeoutMs));
   const chSignal = () => AbortSignal.timeout(cfg.chTimeoutMs);
 
-  function enqueue<T>(id: string, kind: string, operation: () => Promise<T>): Promise<T> {
+  // `accept` marks the point an operation has passed its checks; it is implied
+  // when the operation resolves. A caller joining the tail is notified through
+  // the same entry, since the kind (which includes any fence) is identical.
+  function enqueue<T>(
+    id: string,
+    kind: string,
+    operation: (accept: () => void) => Promise<T>,
+    onAccepted?: () => void,
+  ): Promise<T> {
     const tail = inflight.get(id);
-    if (tail?.kind === kind) return tail.promise as Promise<T>;
+    if (tail?.kind === kind) {
+      if (onAccepted) void tail.accepted.then(onAccepted);
+      return tail.promise as Promise<T>;
+    }
     if (tail === undefined && inflight.size >= cfg.maxInFlight) {
       return Promise.reject(new LifecycleError("busy", "too many VM operations in flight"));
     }
+    let accept!: () => void;
+    const accepted = new Promise<void>((resolve) => {
+      accept = resolve;
+    });
+    if (onAccepted) void accepted.then(onAccepted);
     const previous = tail?.promise ?? Promise.resolve();
     const promise = previous.then(
-      () => operation(),
-      () => operation(),
+      () => operation(accept),
+      () => operation(accept),
     );
-    const entry = { kind, promise };
+    const entry = { kind, promise, accepted };
     inflight.set(id, entry);
     const settle = () => {
       if (inflight.get(id) === entry) inflight.delete(id);
     };
-    promise.then(settle, settle);
+    promise.then(() => {
+      accept();
+      settle();
+    }, settle);
     return promise;
+  }
+
+  const fencedKind = (kind: string, fence: GenerationFence) =>
+    fence.expectedGeneration === undefined ? kind : `${kind}@${fence.expectedGeneration}`;
+
+  async function loadFenced(id: string, fence: GenerationFence): Promise<VmRecord> {
+    const record = await load(id);
+    if (fence.expectedGeneration !== undefined && record.generation !== fence.expectedGeneration) {
+      throw new LifecycleError("conflict", "VM generation does not match");
+    }
+    return record;
   }
 
   async function load(id: string): Promise<VmRecord> {
@@ -602,10 +644,22 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       enqueue(id, `policy:${policy.tier}:${policy.maxMiB}`, () => setPolicy(id, policy)),
     idle,
     start: (id) => enqueue(id, "start", async () => wake(await load(id))),
-    suspend: (id) => enqueue(id, "suspend", async () => suspend(await load(id))),
-    async resume(id, budgetMs) {
+    suspend: (id, options = {}) =>
+      enqueue(
+        id,
+        fencedKind("suspend", options),
+        async (accept) => {
+          const record = await loadFenced(id, options);
+          accept();
+          return suspend(record);
+        },
+        options.onAccepted,
+      ),
+    async resume(id, budgetMs, fence = {}) {
       const deadline = clock.now() + Math.max(0, budgetMs);
-      return enqueue(id, "resume", async () => waitHealthy(await wake(await load(id)), deadline));
+      return enqueue(id, fencedKind("resume", fence), async () =>
+        waitHealthy(await wake(await loadFenced(id, fence)), deadline),
+      );
     },
     stop: (id) => enqueue(id, "stop", async () => stop(await load(id))),
     destroy: (id) => enqueue(id, "destroy", () => destroy(id)),

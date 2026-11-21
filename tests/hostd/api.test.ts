@@ -323,6 +323,89 @@ describe("hostd API", () => {
     expect(logs).toContainEqual({ event: "api.suspend_failed", fields: { id: record().id, code: "pool_full" } });
   });
 
+  it("resume with a mismatched expectedGeneration returns 409 and does not resume", async () => {
+    await store.put(record());
+    await mkdir(join(root, "vms", record().id), { recursive: true });
+    const res = await send(api(), "POST", `/v1/vms/${record().id}/resume`, {
+      body: { budgetMs: 1000, expectedGeneration: 2 },
+      headers: auth,
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "conflict" });
+    await expect(store.get(record().id)).resolves.toMatchObject({ state: "suspended", generation: 1 });
+  });
+
+  it("suspend with a mismatched expectedGeneration returns 409 and does not suspend", async () => {
+    const app = api();
+    const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
+    const res = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { body: { expectedGeneration: 3 }, headers: auth });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "conflict" });
+    await lifecycle.idle();
+    await expect(store.get(created.id)).resolves.toMatchObject({ state: "running", snapshot: null });
+    expect(logs.map((l) => l.event)).not.toContain("api.suspend_failed");
+  });
+
+  it("resume/suspend without expectedGeneration behave as before", async () => {
+    const app = api();
+    const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
+    const suspended = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { headers: auth });
+    expect(suspended.status).toBe(202);
+    await lifecycle.idle();
+    await expect(store.get(created.id)).resolves.toMatchObject({ state: "suspended" });
+    const resumed = await send(app, "POST", `/v1/vms/${created.id}/resume`, { body: { budgetMs: 1000 }, headers: auth });
+    expect(await resumed.json()).toEqual({ state: "running" });
+    const emptyObject = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { body: {}, headers: auth });
+    expect(emptyObject.status).toBe(202);
+    await lifecycle.idle();
+    await expect(store.get(created.id)).resolves.toMatchObject({ state: "suspended" });
+  });
+
+  it("resume and suspend with a matching expectedGeneration act on the VM", async () => {
+    const app = api();
+    const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
+    const suspended = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { body: { expectedGeneration: 2 }, headers: auth });
+    expect(suspended.status).toBe(202);
+    expect(await suspended.json()).toEqual({ state: "suspending" });
+    await lifecycle.idle();
+    await expect(store.get(created.id)).resolves.toMatchObject({ state: "suspended" });
+    const resumed = await send(app, "POST", `/v1/vms/${created.id}/resume`, {
+      body: { budgetMs: 1000, expectedGeneration: 2 },
+      headers: auth,
+    });
+    expect(await resumed.json()).toEqual({ state: "running" });
+  });
+
+  it("rejects an invalid expectedGeneration or suspend body with 400", async () => {
+    await store.put(record());
+    const app = api();
+    const path = `/v1/vms/${record().id}`;
+    for (const expectedGeneration of [0, -1, 1.5, "1"]) {
+      const resume = await send(app, "POST", `${path}/resume`, { body: { budgetMs: 1, expectedGeneration }, headers: auth });
+      expect(resume.status).toBe(400);
+      const suspend = await send(app, "POST", `${path}/suspend`, { body: { expectedGeneration }, headers: auth });
+      expect(suspend.status).toBe(400);
+    }
+    expect((await send(app, "POST", `${path}/suspend`, { body: "{nope", headers: auth })).status).toBe(400);
+    expect((await send(app, "POST", `${path}/suspend`, { body: { other: 1 }, headers: auth })).status).toBe(400);
+    expect((await send(app, "POST", `${path}/suspend`, { body: "x".repeat(70_000), headers: auth })).status).toBe(413);
+  });
+
+  it("a suspend failure after the generation check is logged and still answers 202", async () => {
+    await store.put(record({ state: "running", snapshot: null }));
+    const suspend = vi.fn(async (_id: string, options?: { onAccepted?: () => void }) => {
+      options?.onAccepted?.();
+      throw new LifecycleError("pool_full", "full");
+    });
+    const res = await send(api({ lifecycle: { ...lifecycle, suspend } }), "POST", `/v1/vms/${record().id}/suspend`, {
+      body: { expectedGeneration: 1 },
+      headers: auth,
+    });
+    expect(res.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(logs).toContainEqual({ event: "api.suspend_failed", fields: { id: record().id, code: "pool_full" } });
+  });
+
   it("stop, policy and delete act on the VM", async () => {
     const app = api();
     const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };

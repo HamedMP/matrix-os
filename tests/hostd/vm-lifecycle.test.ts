@@ -301,6 +301,51 @@ describe("VM lifecycle", () => {
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
   });
 
+  it("resume with a mismatched expectedGeneration rejects conflict inside the queue and does not resume", async () => {
+    const vm = await createRunning();
+    trimGate = deferred();
+    const suspending = lifecycle.suspend(vm.id);
+    await Promise.resolve();
+    // Queued behind the suspend: the fence is checked when it runs, not now.
+    const resuming = lifecycle.resume(vm.id, 2000, { expectedGeneration: 2 });
+    trimGate.resolve();
+    await suspending;
+    await expect(resuming).rejects.toMatchObject({ code: "conflict" });
+    expect(execCalls.some((c) => c[1] === "start")).toBe(false);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "suspended" });
+  });
+
+  it("suspend with a mismatched expectedGeneration rejects conflict and does not suspend", async () => {
+    const vm = await createRunning();
+    let accepted = false;
+    await expect(
+      lifecycle.suspend(vm.id, { expectedGeneration: 7, onAccepted: () => (accepted = true) }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(accepted).toBe(false);
+    expect(count("ch:snapshot")).toBe(0);
+    expect(count("trim")).toBe(0);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("a matching expectedGeneration suspends and resumes; onAccepted fires for joined callers", async () => {
+    const vm = await createRunning();
+    trimGate = deferred();
+    const order: string[] = [];
+    const first = lifecycle.suspend(vm.id, { expectedGeneration: 1, onAccepted: () => order.push("a") });
+    const joined = lifecycle.suspend(vm.id, { expectedGeneration: 1, onAccepted: () => order.push("b") });
+    await expect.poll(() => order).toEqual(["a", "b"]);
+    trimGate.resolve();
+    await Promise.all([first, joined]);
+    expect(count("ch:snapshot")).toBe(1);
+    await expect(lifecycle.resume(vm.id, 2000, { expectedGeneration: 1 })).resolves.toBe("running");
+    // An operation that settles without calling accept still notifies a joiner.
+    const plain = lifecycle.suspend(vm.id);
+    await plain;
+    let late = false;
+    await lifecycle.suspend(vm.id, { onAccepted: () => (late = true) });
+    expect(late).toBe(true);
+  });
+
   it("concurrent resume calls share one restore", async () => {
     const vm = await createSuspended();
     const results = await Promise.all([
