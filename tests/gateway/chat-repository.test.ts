@@ -216,6 +216,7 @@ describe("ChatRepository", () => {
       "chat_credentials",
       "chat_deletions",
       "chat_drive_projects",
+      "chat_execution_defaults",
       "chat_import_jobs",
       "chat_import_messages",
       "chat_legacy_imports",
