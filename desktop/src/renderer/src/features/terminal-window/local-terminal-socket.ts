@@ -28,6 +28,13 @@ function warn(action: string, error: unknown): void {
   console.warn(`[local-terminal] ${action} failed:`, error instanceof Error ? error.name : "UnknownError");
 }
 
+/** How the shared terminal view reaches local terminals: by session prefix, repainted by the core on attach. */
+export const LOCAL_TERMINAL_SOCKETS = {
+  prefix: LOCAL_TERMINAL_SESSION_PREFIX,
+  create: (sessionName: string, events: ShellSocketEvents) => createLocalTerminalSocket(sessionName, events),
+  repaintsOnAttach: true,
+} as const;
+
 export function createLocalTerminalSocket(sessionName: string, events: ShellSocketEvents): SocketControl {
   const id = sessionName.slice(LOCAL_TERMINAL_SESSION_PREFIX.length);
   let size = DEFAULT_SIZE;
@@ -159,6 +166,9 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           // The core sizes a terminal to its latest viewer: the attach size is now its grid.
           events.onCanonicalSize?.(requested);
           events.onState("attached");
+          // The core's first paint is the whole terminal: start from nothing,
+          // so nothing the view still shows ends up above or below it.
+          events.onRepaint?.();
           const held = early;
           early = [];
           for (const event of held) if (event.attachId === result.attachId) deliver(event.data);
