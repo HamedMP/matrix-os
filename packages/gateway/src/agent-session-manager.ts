@@ -40,7 +40,7 @@ import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environ
 import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 import { confirmStoppedCodexSession } from "./coding-agents/confirm-stopped-codex-session.js";
-import { createCoreMcpSessionGrants } from "./coding-agents/core-mcp-session-grants.js";
+import { createCoreMcpSessionGrants, CORE_MCP_RENEW_INTERVAL_MS } from "./coding-agents/core-mcp-session-grants.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -337,7 +337,6 @@ async function releaseSessionLease(worktreeManager: WorktreeManager, session: Pi
   return true;
 }
 
-const CORE_MCP_RENEW_INTERVAL_MS = 5 * 60_000;
 
 export function createAgentSessionManager(options: {
   homePath: string;
