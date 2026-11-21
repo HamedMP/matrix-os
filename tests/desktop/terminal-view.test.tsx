@@ -205,6 +205,8 @@ describe("TerminalView session switching", () => {
       resize: attachmentResize,
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
+      focus: vi.fn(),
+      facts: vi.fn(),
     }));
     attachmentResize.mockReset();
     attachmentWrite.mockReset();

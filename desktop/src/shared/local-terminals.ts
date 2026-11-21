@@ -300,6 +300,7 @@ export const LOCAL_TERMINAL_PORT_CHANNEL = "local-terminal:port";
 export const LocalTerminalPortSchema = z.strictObject({ attachId: AttachIdSchema });
 /** The most output one message may carry: herdr-core's frame cap. */
 export const LOCAL_TERMINAL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const HexColorSchema = z.string().regex(/^#[0-9a-f]{6}$/i);
 /** What the window sends over an attachment's port. Main validates it again. */
 export const LocalTerminalStreamRequestSchema = z.discriminatedUnion("type", [
   // Binary input carries one byte per character; anything wider is refused
@@ -308,6 +309,16 @@ export const LocalTerminalStreamRequestSchema = z.discriminatedUnion("type", [
     .refine((input) => input.binary !== true || BYTE_STRING.test(input.data)),
   // Output the window has taken, so the trusted core can let more through.
   z.strictObject({ type: z.literal("ack"), count: z.number().int().min(1).max(LOCAL_TERMINAL_MAX_ACK_COUNT) }),
+  // The terminal gained or lost focus, for programs that asked for focus reports.
+  z.strictObject({ type: z.literal("focus"), focused: z.boolean() }),
+  // The terminal's colours and cell size, which the core answers the program's queries from.
+  z.strictObject({
+    type: z.literal("facts"),
+    fg: HexColorSchema.optional(),
+    bg: HexColorSchema.optional(),
+    cursor: HexColorSchema.optional(),
+    cell: z.tuple([z.number().int().min(1).max(1_024), z.number().int().min(1).max(1_024)]).optional(),
+  }),
 ]);
 export type LocalTerminalStreamRequest = z.infer<typeof LocalTerminalStreamRequestSchema>;
 /** Main tells the window the attachment has ended; every other message is output bytes. */

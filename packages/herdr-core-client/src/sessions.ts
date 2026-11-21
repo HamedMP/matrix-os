@@ -9,6 +9,7 @@ import {
   HcTerminalStatusSchema as LocalTerminalStatusSchema, type HcTerminal as LocalTerminal,
 } from "#terminal";
 import type { HcConnection, HcStream } from "#client";
+import type { HcDisplayFacts } from "#protocol";
 
 // Every pane of the Terminal window streams live: a full tab of 16 panes, plus
 // room for the panes of the tab being switched to and the main window's terminals.
@@ -264,6 +265,18 @@ export function createHcSessions(options: {
     input(attachId: number, data: string, binary: boolean): boolean {
       const stream = attachments.get(attachId)?.stream;
       stream?.write(Buffer.from(data, binary ? "latin1" : "utf8"));
+      return stream != null;
+    },
+
+    focus(attachId: number, focused: boolean): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.focus(focused);
+      return stream != null;
+    },
+
+    facts(attachId: number, display: HcDisplayFacts): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.facts(display);
       return stream != null;
     },
 

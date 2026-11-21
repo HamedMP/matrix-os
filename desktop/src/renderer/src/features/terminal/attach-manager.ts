@@ -13,9 +13,16 @@ export interface SocketControl {
   sendBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  /** The view gained or lost focus (herdr-core passes it to programs that ask). */
+  focus?(focused: boolean): void;
+  /** The view's colours and cell size, for the program's queries. */
+  facts?(display: TerminalDisplayFacts): void;
   detach(): void;
   dispose(): void;
 }
+
+/** A terminal view's default colours (`#rrggbb`) and cell size in pixels. */
+export interface TerminalDisplayFacts { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }
 
 export interface TerminalDimensions {
   cols: number;
@@ -44,6 +51,8 @@ export interface ActiveAttachment {
   writeBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  focus(focused: boolean): void;
+  facts(display: TerminalDisplayFacts): void;
 }
 
 interface ActiveSocket {
@@ -131,6 +140,8 @@ export class AttachManager {
       resize: (cols: number, rows: number) => {
         if (this.isLive(generation)) socket.resize(cols, rows);
       },
+      focus: (focused) => { if (this.isLive(generation)) socket.focus?.(focused); },
+      facts: (display) => { if (this.isLive(generation)) socket.facts?.(display); },
     };
   }
 

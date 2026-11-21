@@ -23,9 +23,14 @@ export interface LocalTerminalStreamHandlers {
   closed(): void;
 }
 
+/** The terminal's colours (`#rrggbb`) and cell size in pixels. */
+export interface LocalTerminalDisplayFacts { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }
+
 export interface LocalTerminalStream {
   input(data: string, binary: boolean): void;
   ack(count: number): void;
+  focus(focused: boolean): void;
+  facts(display: LocalTerminalDisplayFacts): void;
   close(): void;
 }
 
@@ -122,6 +127,8 @@ export function createLocalTerminalStreamBridge(ipc: IpcRendererLike) {
     return {
       input: (data, binary) => send(binary ? { type: "input", data, binary: true } : { type: "input", data }),
       ack: (count) => send({ type: "ack", count }),
+      focus: (focused) => send({ type: "focus", focused }),
+      facts: (display) => send({ ...display, type: "facts" }),
       close: finish,
     };
   };

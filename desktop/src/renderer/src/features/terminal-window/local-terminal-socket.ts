@@ -169,6 +169,8 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
     },
     sendInput: (data) => send(data, false),
     sendBinary: (data) => send(data, true),
+    focus: (focused) => { if (!released) stream?.focus(focused); },
+    facts: (display) => { if (!released) stream?.facts(display); },
     resize(cols, rows) {
       size = { cols: Math.min(500, Math.max(20, Math.floor(cols))), rows: Math.min(200, Math.max(5, Math.floor(rows))) };
       if (attachId !== null && !released) {
