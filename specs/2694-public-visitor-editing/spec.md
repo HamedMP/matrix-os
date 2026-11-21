@@ -64,7 +64,7 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 
 ## Write log (owner-only)
 
-`public._site_visitor_writes(id bigint identity PK, site_id uuid, app_slug text, table_name text, row_id text, op text, before jsonb, after jsonb, visitor_hash text, created_at timestamptz)` in owner Postgres, index `(site_id, created_at, id)`.
+`public._site_visitor_writes(id bigint identity PK, site_id uuid, app_slug text, table_name text, row_id text, op text, before jsonb, after jsonb, visitor_hash text, created_at timestamptz)` in owner Postgres, index `(site_id, id)`: both retention deletes filter by `site_id` and walk entries in `id` order (identity order is insertion order, so the oldest ids are the oldest entries).
 
 - Every visitor `insert`, `update`, `delete`, bulk row, successful `compareAndSwap` and `kvWrite` appends one entry per affected row **inside the same transaction** as the write. Updates and deletes lock the row with `SELECT … FOR UPDATE` to read `before`; writes use `RETURNING *` for `after`. KV entries use `table_name = '_kv'` and the key as `row_id`. If the log insert fails, the write rolls back and the visitor gets `Shared data is unavailable`.
 - `visitor_hash = HMAC-SHA256(key derived from the platform secret, siteId ‖ source IP)`, computed on the platform. Raw IPs never reach the owner VPS and the hash cannot be joined across sites.
