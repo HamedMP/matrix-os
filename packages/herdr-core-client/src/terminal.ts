@@ -23,6 +23,6 @@ export const HcTerminalSchema = z.strictObject({
   id: HcTerminalIdSchema,
   title: z.string().max(256),
   status: HcTerminalStatusSchema.nullable(),
-  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]*$/).optional(),
+  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
 });
 export type HcTerminal = z.infer<typeof HcTerminalSchema>;
