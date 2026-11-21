@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import type { FileResourceRef } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { InspectorTool, SideChatClient } from "@matrix-os/ui";
@@ -14,6 +14,19 @@ import {
   type Tab,
   type Session,
 } from "./web-chat-inspector-state";
+
+/** Keep a previously opened panel mounted only within this verified Chat scope. */
+export function useWebChatInspectorVisibility(identity: string) {
+  const [session, setSession] = useState({ identity, open: false, opened: false });
+  const setOpen = useCallback((update: boolean | ((open: boolean) => boolean)) => {
+    setSession(previous => {
+      const current = previous.identity === identity ? previous : { identity, open: false, opened: false };
+      const open = typeof update === "function" ? update(current.open) : update;
+      return { identity, open, opened: current.opened || open };
+    });
+  }, [identity]);
+  return { open: session.identity === identity && session.open, opened: session.identity === identity && session.opened, setOpen };
+}
 
 export interface WebChatInspectorProps {
   active?: boolean;

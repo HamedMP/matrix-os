@@ -427,3 +427,20 @@ it('retains an unsent side question through inspector tab switches',async()=>{
  fireEvent.click(screen.getByRole('tab',{name:'Files'}));fireEvent.click(screen.getByRole('tab',{name:'Side chat'}));
  expect((screen.getByRole('textbox',{name:'Ask side chat'}) as HTMLTextAreaElement).value).toBe('Unsent question');
 });
+
+it('preserves the selected Side chat and unsent draft while the Web inspector is hidden', async () => {
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({projects:[],entries:[]})));
+ const client=inspectorProps().sideChatClient;
+ render(<ChatApp messages={[]} sessionId="chat_visibility" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={client}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));
+ fireEvent.click(screen.getByRole('button',{name:'Add inspector tab'}));
+ fireEvent.click(screen.getByRole('button',{name:/Side chat/}));
+ const draft=await screen.findByRole('textbox',{name:'Ask side chat'});
+ fireEvent.change(draft,{target:{value:'Keep my unsent review note'}});
+ fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));
+ expect(screen.queryByRole('textbox',{name:'Ask side chat'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));
+ expect(screen.getByRole('tab',{name:'Side chat',exact:true}).getAttribute('aria-selected')).toBe('true');
+ expect((await screen.findByRole('textbox',{name:'Ask side chat'})) as HTMLTextAreaElement).toHaveProperty('value','Keep my unsent review note');
+});

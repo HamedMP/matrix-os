@@ -10,6 +10,7 @@ import { ArchivedChatsPage, type ChatArchiveClient } from "@matrix-os/ui";
 import { WebChatSearchDialog } from "./chat/WebChatSearchDialog";
 import { useWebChatHistory, useInlineChatSearch, useWebChatRowShortcuts } from "./chat/useWebChatHistory";
 import { WebChatInspector } from "./chat/WebChatInspector";
+import { useWebChatInspectorVisibility } from "./chat/useWebChatInspector";
 import type { SideChatClient } from "@matrix-os/ui";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { EmptyState, AssistantBubble } from "./chat/ChatAppContentViews";
@@ -354,7 +355,9 @@ function ChatAppContent({
   const [filePreview, setPreviewFile] = useState<{ chatId: string; scopeKey: string; path: string; resource?: FileResourceRef } | null>(null);
   const previewFile = filePreview?.scopeKey === fileScopeKey ? filePreview : null;
   const previewResource = toGatewayProjectFileResource(previewFile?.resource, activeFileProject);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const { open: inspectorOpen, opened: inspectorOpened, setOpen: setInspectorOpen } = useWebChatInspectorVisibility(
+    JSON.stringify([authorityKey, projectGatewayUrl, sessionId]),
+  );
   const [rootWidth, setRootWidth] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -999,14 +1002,14 @@ function ChatAppContent({
         </BotChatPanel>
         </>}
       </main>
-      {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} worktreeId={activeFileWorktreeId}
+      {sessionId && sideChatClient && inspectorOpened && !archivesOpen && !collaborationView && !mobile ? <div hidden={!inspectorOpen} className={inspectorOpen ? "contents" : "hidden"}><WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
+        active={active && visible && inspectorOpen} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} worktreeId={activeFileWorktreeId}
         projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={fileScopeUnavailable || Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} fileOpenRequest={previewFile ?? undefined} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         fileResource={previewFile?.chatId === sessionId ? previewResource : undefined}
         onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, scopeKey: fileScopeKey, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, worktreeId: activeFileWorktreeId, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
-        onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
+        onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /></div> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
         ? <ChatFilePanel path={previewFile.path} resource={previewResource} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
       </ChatAgentsContent></BotModelRecoveryProvider> : null}
