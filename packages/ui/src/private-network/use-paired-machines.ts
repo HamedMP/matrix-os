@@ -25,6 +25,8 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [loadRevision, setLoadRevision] = useState(0);
+  // The load revision whose read has settled; the next poll waits for it.
+  const [settledRevision, setSettledRevision] = useState(-1);
   const lifetime = useRef<AbortController | null>(null);
   const listRef = useRef<PairedMachinesResponse | null>(null);
 
@@ -59,20 +61,25 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
         setError(PRIVATE_NETWORK_ERRORS.machines);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (controller.signal.aborted) return;
+        setLoading(false);
+        setSettledRevision(loadRevision);
       });
     return () => controller.abort();
   }, [client, loadRevision, applyList]);
 
   const joinCodeActive = joinCode !== null && minutesLeft(joinCode.expiresAt, now) > 0;
+  const loadSettled = settledRevision === loadRevision;
   useEffect(() => {
-    if (!joinCodeActive) return;
-    const timer = setInterval(() => {
+    // Chain polls: a read can take up to the gateway's `tailscale status` wait,
+    // so the next one starts only after the current read settles.
+    if (!joinCodeActive || !loadSettled) return;
+    const timer = setTimeout(() => {
       setNow(Date.now());
       setLoadRevision((revision) => revision + 1);
     }, MACHINES_POLL_MS);
-    return () => clearInterval(timer);
-  }, [joinCodeActive]);
+    return () => clearTimeout(timer);
+  }, [joinCodeActive, loadSettled]);
 
   const reload = useCallback(() => {
     setError(null);

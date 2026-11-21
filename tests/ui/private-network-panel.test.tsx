@@ -241,7 +241,8 @@ describe("PrivateNetworkPanel", () => {
     await flush();
     expect(screen.getByText("first-command")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add a machine" })).toBeNull();
-    await flush(65_000);
+    // Polls are chained, so step through each 5 s poll.
+    for (let tick = 0; tick < 13; tick += 1) await flush(5_000);
     expect(screen.getByText("Expired")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
     await flush();
@@ -307,6 +308,45 @@ describe("PrivateNetworkPanel", () => {
     await flush();
     expect(screen.queryByText("studio")).toBeNull();
     expect(screen.getByText("No other machines yet")).toBeTruthy();
+  });
+
+  it("waits for a slow machine-list read instead of aborting it on the next poll", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-11-21T10:00:00Z"));
+    const aborted: boolean[] = [];
+    const machines = vi
+      .fn<PrivateNetworkClient["machines"]>()
+      .mockResolvedValueOnce({ revision: 1, machines: [] })
+      .mockImplementationOnce((signal) => new Promise((resolve) => {
+        // The gateway can wait on `tailscale status` for up to 10 s.
+        setTimeout(() => {
+          aborted.push(signal.aborted);
+          resolve(machineList);
+        }, 6_000);
+      }))
+      .mockResolvedValue(machineList);
+    const client = fakeClient({
+      status: vi.fn(async () => connected),
+      machines,
+      createJoinCode: vi.fn(async () => ({ code: "ABCD-1234", command: "join", expiresAt: "2026-11-21T10:15:00Z" })),
+    });
+    render(<PrivateNetworkPanel client={client} />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
+    await flush();
+    await flush(5_000);
+    expect(machines).toHaveBeenCalledTimes(2);
+    await flush(5_000);
+    // No new read while the slow one is still running.
+    expect(machines).toHaveBeenCalledTimes(2);
+    await flush(1_000);
+    expect(aborted).toEqual([false]);
+    expect(screen.getByText("studio")).toBeTruthy();
+    // The next poll is scheduled only after the slow read settled.
+    await flush(4_000);
+    expect(machines).toHaveBeenCalledTimes(2);
+    await flush(1_000);
+    expect(machines).toHaveBeenCalledTimes(3);
   });
 
   it("never renders server error text", async () => {
