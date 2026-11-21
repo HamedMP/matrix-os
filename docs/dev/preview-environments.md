@@ -534,6 +534,39 @@ Hetzner token on preview); enabling it is a deliberate follow-up (a
 preview-scoped Hetzner token + VPS reaping). For that slice today, use the
 feature-VPS path in [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
+### Host bundles for the preview platform
+
+`.github/workflows/preview-host-bundle.yml` (manual dispatch) builds a host
+bundle from any branch, tag, or commit and registers it with the **preview**
+platform, so staging end-to-end tests can pin a VM to that exact bundle
+without anyone handling bundle-store or platform secrets:
+
+```bash
+gh workflow run preview-host-bundle.yml -f ref=<branch-or-sha>   # register only
+gh workflow run preview-host-bundle.yml -f ref=<branch> -f channel=dev
+```
+
+- **Build** checks out `ref` and runs `./scripts/build-host-bundle.sh` with the
+  release workflow's build environment (Node 24, frozen lockfile,
+  `NEXT_PUBLIC_*`). It holds no publish credentials, and no PostHog
+  source-map credentials.
+- **Publish** runs in the `Preview` environment from the workflow's own
+  revision, not from `ref`. It uploads to the shared bundle store with the
+  release workflow's bundle-store secrets. It reads the preview operator secret
+  `platform-preview-secret` through workload identity and masks it. Then it
+  registers the bundle at `PREVIEW_PUBLIC_URL` (default
+  `https://preview.matrix-os.com`) and checks that the platform reports the
+  same sha256. `scripts/ci/resolve-preview-platform-url.sh` stops the run when
+  the target is not a bare HTTPS origin or is a production host.
+- **Versions** default to `v<date>-preview-<sha12>-<run>-<attempt>`. A custom
+  `version` must contain `-preview-`, so a preview upload can never take an
+  immutable production release key in the shared store. Preview bundles are
+  never golden-snapshot eligible. The job summary lists the version and sha256
+  for the test to pin.
+- To run it before the workflow is on `main`, dispatch it from the branch that
+  adds it (`--ref <branch>`). The publish step then uses that branch's
+  publish tooling.
+
 ### One-time infrastructure setup
 
 The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
