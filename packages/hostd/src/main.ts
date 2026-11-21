@@ -221,14 +221,22 @@ export async function main(env: Record<string, string | undefined>, proc: MainPr
   return hostd;
 }
 
-/* v8 ignore start -- process entry, exercised by the systemd unit */
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.env, process).catch((error: unknown) => {
-    defaultLog("hostd.start_failed", {
+// Starts hostd; a startup failure (bad config, port in use) logs the error
+// name and the offending config keys, never values, and exits 1.
+export function runMain(
+  env: Record<string, string | undefined>,
+  proc: MainProcess,
+  overrides: HostdOverrides = {},
+): Promise<Hostd | undefined> {
+  const log = overrides.log ?? defaultLog;
+  return main(env, proc, overrides).catch((error: unknown) => {
+    log("hostd.start_failed", {
       error: error instanceof Error ? error.name : String(error),
-      keys: (error as { keys?: unknown }).keys,
+      keys: (error as { keys?: unknown } | null)?.keys,
     });
-    process.exit(1);
+    proc.exit(1);
+    return undefined;
   });
 }
-/* v8 ignore stop */
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) void runMain(process.env, process);

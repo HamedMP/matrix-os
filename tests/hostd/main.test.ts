@@ -9,7 +9,7 @@ import type { ChClient } from "../../packages/hostd/src/ch-client.js";
 import type { HostdConfig } from "../../packages/hostd/src/config.js";
 import type { Exec } from "../../packages/hostd/src/exec.js";
 import type { GuestClient } from "../../packages/hostd/src/guest-client.js";
-import { createGatewayHealth, main, poolFreeBytes, startHostd, type Hostd, type HostdOverrides } from "../../packages/hostd/src/main.js";
+import { createGatewayHealth, main, poolFreeBytes, runMain, startHostd, type Hostd, type HostdOverrides } from "../../packages/hostd/src/main.js";
 import { createVmStore, type VmRecord } from "../../packages/hostd/src/vm-store.js";
 
 const API_TOKEN = "api-token-0123456789abcdef0123456789abcdef";
@@ -252,11 +252,13 @@ describe("hostd main", () => {
     ]);
   });
 
-  it("a repeated create of a failed VM recreates it", async () => {
+  it("a repeated create recreates a VM whose create failed and refuses one that failed later", async () => {
     hostd = await startHostd(config, overrides());
     const first = JSON.parse((await apiCall("POST", "/v1/vms", createBody)).body) as { id: string };
     const record = (await hostd.store.get(first.id))!;
     await hostd.store.put({ ...record, state: "failed" });
+    expect((await apiCall("POST", "/v1/vms", createBody)).status).toBe(409);
+    await hostd.store.put({ ...record, state: "failed", failedDuring: "create" });
     const again = await apiCall("POST", "/v1/vms", createBody);
     expect(again.status).toBe(201);
     expect(JSON.parse(again.body).id).not.toBe(first.id);
@@ -370,6 +372,29 @@ describe("hostd main (production defaults)", () => {
     await new Promise((r) => raw.once("connect", r));
     raw.end("not tls\r\n\r\n");
     await expect.poll(() => error.mock.calls.some((c) => String(c[0]).includes("api.tls_client_error"))).toBe(true);
+  });
+
+  it("runMain exits 1 on a startup failure, logging the config keys only", async () => {
+    const exits: number[] = [];
+    const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const proc = { once: () => undefined, exit: (code: number) => exits.push(code) };
+    await expect(
+      runMain({ HOSTD_API_TOKEN: API_TOKEN }, proc, overrides({ log: (event, fields) => logs.push({ event, fields }) })),
+    ).resolves.toBeUndefined();
+    expect(exits).toEqual([1]);
+    expect(logs).toContainEqual({
+      event: "hostd.start_failed",
+      fields: { error: "ConfigError", keys: ["HOSTD_INGRESS_TOKEN", "HOSTD_TLS_CERT_PATH", "HOSTD_TLS_KEY_PATH"] },
+    });
+    expect(JSON.stringify(logs)).not.toContain(API_TOKEN);
+  });
+
+  it("runMain logs a startup failure through the default logger", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exits: number[] = [];
+    await runMain({}, { once: () => undefined, exit: (code: number) => exits.push(code) });
+    expect(exits).toEqual([1]);
+    expect(error.mock.calls.some((c) => String(c[0]).includes("hostd.start_failed"))).toBe(true);
   });
 
   it("logs a non-Error drain failure", async () => {
