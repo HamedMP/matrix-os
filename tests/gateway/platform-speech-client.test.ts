@@ -44,7 +44,7 @@ describe("platform speech runtime client", () => {
       runtimeAuthToken: "r".repeat(64),
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       requestOwnerId: "user_alice",
-      requestTimeoutMs: 65_000,
+      requestTimeoutMs: 85_000,
     });
 
     expect(loadPlatformSpeechRuntimeConfig({
@@ -67,7 +67,7 @@ describe("platform speech runtime client", () => {
         runtimeSlot: "pr-1620",
       },
       requestOwnerId: "user_alice",
-      requestTimeoutMs: 65_000,
+      requestTimeoutMs: 85_000,
     });
     expect(() => loadPlatformSpeechRuntimeConfig({
       ...runtimeEnv,
@@ -103,7 +103,13 @@ describe("platform speech runtime client", () => {
     expect(fetchFn.mock.calls[0]?.[1]).toMatchObject({
       method: "GET",
       redirect: "error",
-      headers: { authorization: `Bearer ${"r".repeat(64)}`, accept: "application/json" },
+      headers: {
+        authorization: `Bearer ${"r".repeat(64)}`,
+        accept: "application/json",
+        // Opts this gateway in to the extended dictation policy; without it
+        // the platform advertises the legacy two-minute limits.
+        "x-matrix-speech-dictation": "extended",
+      },
     });
     expect(fetchFn.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });

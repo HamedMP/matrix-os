@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade only Matrix-managed publishing locations; validate before reloading."""
+"""Upgrade only Matrix-managed API locations; validate before reloading."""
 import argparse
 import fcntl
 import os
@@ -12,6 +12,10 @@ from contextlib import ExitStack
 
 MARKER = "# matrix-sites-publish-timeout-v1"
 LOCATION = 'location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site$" {'
+# A ten-minute dictation is a 19.2 MB WAV and transcribes for longer than the
+# default read budget. Only the exact transcription path gets the larger limits.
+SPEECH_MARKER = "# matrix-speech-upload-limit-v1"
+SPEECH_LOCATION = "location = /api/speech/transcriptions {"
 API = re.compile(r"(?m)^(?P<indent>[ \t]*)location /api/ \{\n(?P<body>(?:[^\n{}]*\n)+?)(?P=indent)\}")
 MAX_BYTES = 1024 * 1024
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
@@ -42,17 +46,30 @@ def upgrade(text):
     if body.count("proxy_pass http://127.0.0.1:4000;") != 1:
         raise ValueError("Unknown API upstream")
     # Clone every existing API header/auth directive, including self-host bearer
-    # includes. Only this exact publishing path gets the larger read budget.
+    # includes. Only these exact paths get the larger budgets.
     body = re.sub(r"(?m)^[ \t]*proxy_read_timeout[^;\n]*;\n", "", body)
     block = (indent + MARKER + "\n" + indent + LOCATION + "\n"
              + indent + "  proxy_read_timeout 300s;\n" + body + indent + "}\n\n")
+    speech = (indent + SPEECH_MARKER + "\n" + indent + SPEECH_LOCATION + "\n"
+              + indent + "  client_max_body_size 21m;\n" + indent + "  proxy_read_timeout 90s;\n"
+              + re.sub(r"(?m)^[ \t]*client_max_body_size[^;\n]*;\n", "", body) + indent + "}\n\n")
     if MARKER in text:
         if text.count(MARKER) != 1 or block + match[0] not in text:
             raise ValueError("Changed managed publishing location")
-        return text
-    if LOCATION in text:
+    elif LOCATION in text:
         raise ValueError("Unrecognized publishing location")
-    return text[:match.start()] + block + text[match.start():]
+    else:
+        text = text[:match.start()] + block + text[match.start():]
+    # The publishing block stays directly above the API location, which is what
+    # earlier versions of this helper verify; the speech block goes above both.
+    if SPEECH_MARKER in text:
+        if text.count(SPEECH_MARKER) != 1 or speech + block + match[0] not in text:
+            raise ValueError("Changed managed speech location")
+        return text
+    if SPEECH_LOCATION in text:
+        raise ValueError("Unrecognized speech location")
+    anchor = text.index(block + match[0])
+    return text[:anchor] + speech + text[anchor:]
 
 
 def replace(fd, name, data, info):
