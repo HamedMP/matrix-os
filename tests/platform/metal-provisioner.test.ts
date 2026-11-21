@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
-import { sql } from 'kysely';
+import { sql, type KyselyPlugin, type QueryId } from 'kysely';
 import {
   getUserMachine,
   insertUserMachine,
@@ -45,6 +45,32 @@ async function pinStableBundle(db: PlatformDB) {
     sha256: BUNDLE_SHA, size: 100, createdAt: NOW.toISOString(),
   });
   await promoteHostBundleChannel(db, 'stable', BUNDLE_VERSION, NOW.toISOString());
+}
+
+/**
+ * A PlatformDB whose first VM-record update commits in Postgres but reports an
+ * error to the caller, as when the connection drops after commit.
+ */
+function commitThenFailFirstVmRecord(db: PlatformDB): PlatformDB {
+  const recordQueries = new Set<QueryId>();
+  let failed = false;
+  const plugin: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      const text = JSON.stringify(node);
+      if (node.kind === 'UpdateQueryNode' && text.includes('"metal_vm_id"') && text.includes('"private_address"')) {
+        recordQueries.add(queryId);
+      }
+      return node;
+    },
+    async transformResult({ queryId, result }) {
+      if (recordQueries.delete(queryId) && !failed) {
+        failed = true;
+        throw new Error('connection terminated after commit');
+      }
+      return result;
+    },
+  };
+  return { ...db, executor: db.executor.withPlugin(plugin), transaction: (fn) => db.transaction(fn) };
 }
 
 /** Makes the next `failures` updates that set user_machines.metal_vm_id fail inside Postgres. */
@@ -137,10 +163,10 @@ describe('metal provisioner', () => {
     return fake;
   }
 
-  function provisioner(overrides: { machineIds?: string[]; imageVersion?: string } = {}) {
+  function provisioner(overrides: { machineIds?: string[]; imageVersion?: string; db?: PlatformDB } = {}) {
     const machineIds = [...(overrides.machineIds ?? [MACHINE_ID])];
     return createMetalProvisioner({
-      db,
+      db: overrides.db ?? db,
       hosts: createMetalHostsRepository(db.kysely),
       clientFor: (host: Pick<MetalHost, 'id'>) => {
         const fake = fakes.get(host.id);
@@ -360,6 +386,36 @@ describe('metal provisioner', () => {
       privateAddress: '10.77.0.9',
     });
     expect(await db.executor.selectFrom('metal_vm_deletions').select('id').execute()).toEqual([]);
+  });
+
+  it('a retry after an ambiguous commit recognises its own VM record and keeps the runtime', async () => {
+    await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    expect(await provisioner({ db: commitThenFailFirstVmRecord(db) })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: MACHINE_ID });
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({
+      status: 'provisioning',
+      metalVmId: 'vm_0123456789abcdef01234567',
+      privateAddress: '10.77.0.9',
+    });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('id').execute()).toEqual([]);
+  });
+
+  it('still treats a row holding a different VM id as superseded', async () => {
+    await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await sql.raw(`
+      CREATE FUNCTION claim_other_vm() RETURNS trigger AS $$
+      BEGIN NEW.metal_vm_id := 'vm_ffffffffffffffffffffffff'; RETURN NEW; END $$ LANGUAGE plpgsql
+    `).execute(db.executor);
+    await sql.raw(`
+      CREATE TRIGGER claim_other_vm BEFORE INSERT ON user_machines FOR EACH ROW EXECUTE FUNCTION claim_other_vm()
+    `).execute(db.executor);
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ error: 'unavailable' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
+      .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
   });
 
   it('gives up recording the created VM after bounded retries, fails the row and queues teardown with the VM id', async () => {

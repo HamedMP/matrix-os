@@ -343,13 +343,16 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
           .set({ metal_vm_id: vm.id, private_address: vm.privateIPv4 })
           .where('machine_id', '=', machineId)
           .where('metal_host_id', '=', host.id)
-          .where('metal_vm_id', 'is', null)
+          // Idempotent on this VM: a retry after an attempt that committed but
+          // reported an error matches its own write instead of looking superseded.
+          .where((eb) => eb.or([eb('metal_vm_id', 'is', null), eb('metal_vm_id', '=', vm.id)]))
           .where('status', 'in', ['provisioning', 'running'])
           .where('deleted_at', 'is', null)
           .returning('machine_id')
           .executeTakeFirst();
         if (recorded) return { machineId };
-        // The row left provisioning while hostd was creating (deleted or failed): tear the VM down.
+        // The row left provisioning while hostd was creating (deleted, failed, or
+        // holding a different VM): tear this VM down.
         log('provision_superseded', { machineId, hostId: host.id });
         await enqueueMetalVmDeletion(db, {
           metalHostId: host.id, machineId, generation: 1, metalVmId: vm.id, reason: 'provision_superseded', now: now(),
