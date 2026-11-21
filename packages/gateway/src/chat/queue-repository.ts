@@ -196,6 +196,7 @@ export interface SharedQueuedTurn {
   state: "queued" | "claimed" | "running" | "waiting_for_approval" | "waiting_for_input"
     | "completed" | "failed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
   runId?: string;
+  messageId?: string;
   parts: CanonicalQueueChatTurnRequest["parts"];
   selection: CanonicalQueueChatTurnRequest["selection"];
   createdAt: string;
@@ -511,9 +512,12 @@ export class ChatQueueRepository {
     if (!owned) return [];
     const rows = await this.kysely.selectFrom("chat_queued_turns as queued")
       .leftJoin("chat_runs as run", "run.id", "queued.claimed_run_id")
+      .leftJoin("chat_turns as turn", join => join
+        .onRef("turn.id", "=", "queued.claimed_turn_id").onRef("turn.chat_id", "=", "queued.chat_id"))
       .selectAll("queued")
       .select([
         "run.id as projected_run_id",
+        "turn.input_message_id as projected_message_id",
         "run.status as projected_run_status",
         "run.updated_at as projected_run_updated_at",
       ])
@@ -894,6 +898,7 @@ export class ChatQueueRepository {
         ])
         .where("chat_id", "=", chatId).where("status", "=", "queued")
         .$if(collaborationScopeId !== undefined, (query) => query.where("collaboration_scope_id", "=", collaborationScopeId!))
+        .$if(collaborationScopeId === undefined, (query) => query.where("collaboration_scope_id", "is", null))
         .orderBy("position").executeTakeFirst()
       : undefined;
     let freshAuthority: Awaited<ReturnType<SharedChatAuthorizer>> | undefined;
@@ -954,6 +959,7 @@ export class ChatQueueRepository {
         .where("status", "=", "queued")
         .$if(collaborationScopeId !== undefined, (query) =>
           query.where("collaboration_scope_id", "=", collaborationScopeId!))
+        .$if(collaborationScopeId === undefined, (query) => query.where("collaboration_scope_id", "is", null))
         .orderBy("position")
         .executeTakeFirst();
       if (preflight && candidateScope?.id !== preflight.id) return null;
@@ -1037,6 +1043,7 @@ export class ChatQueueRepository {
         .where("status", "=", "queued")
         .$if(collaborationScopeId !== undefined, (query) =>
           query.where("collaboration_scope_id", "=", collaborationScopeId!))
+        .$if(collaborationScopeId === undefined, (query) => query.where("collaboration_scope_id", "is", null))
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
@@ -1374,6 +1381,7 @@ export class ChatQueueRepository {
 
 function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable> & {
   projected_run_id?: string | null;
+  projected_message_id?: string | null;
   projected_run_status?: Selectable<ChatRunsTable>["status"] | null;
   projected_run_updated_at?: Date | string | null;
 }): SharedQueuedTurn {
@@ -1394,6 +1402,7 @@ function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable> & {
     ...(row.retry_of_queued_turn_id ? { retryOfRequestId: row.retry_of_queued_turn_id } : {}),
     state: projectedSharedRequestState(row.status, row.projected_run_status),
     ...(row.projected_run_id ? { runId: row.projected_run_id } : {}),
+    ...(row.projected_message_id ? { messageId: row.projected_message_id } : {}),
     parts: CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(row.parts)),
     selection: CanonicalChatModelSelectionSchema.parse(parseJson(row.selection)),
     createdAt,
