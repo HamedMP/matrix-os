@@ -40,6 +40,9 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   // exits (a shell's exit closes its pane). Set at activation; absent in older
   // state, where the tab is treated as possibly held.
   heldOnExit: z.boolean().optional(),
+  // The command writes its exit code to an exit file (spec 2706), so the
+  // held-pane sweep never needs to ask Zellij about it.
+  exitRecorded: z.boolean().optional(),
 }).strict();
 const InternalWorkspaceBaseSchema = z.object({
   id: TerminalWorkspaceIdSchema,
@@ -275,7 +278,7 @@ export class TerminalWorkspaceStore {
    */
   async activateTab(
     refInput: TerminalRef,
-    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date },
+    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date; exitRecorded?: boolean },
   ): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const zellijTabId = z.number().int().min(0).parse(runtimeIds.tabId);
@@ -293,7 +296,10 @@ export class TerminalWorkspaceStore {
       // A tab from older state keeps no time until its pane changes.
       if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
-      if (tab.startupCommand !== undefined) tab.heldOnExit = tab.startupCommand.length > 0;
+      if (tab.startupCommand !== undefined) {
+        tab.heldOnExit = tab.startupCommand.length > 0;
+        tab.exitRecorded = runtimeIds.exitRecorded === true;
+      }
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
       if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
@@ -701,6 +707,7 @@ export class TerminalWorkspaceStore {
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
       heldOnExit: _heldOnExit,
+      exitRecorded: _exitRecorded,
       ...publicTab
     } = tab;
     return TerminalTabSchema.parse({ ...publicTab, incarnation: terminalTabIncarnation(tab) });
