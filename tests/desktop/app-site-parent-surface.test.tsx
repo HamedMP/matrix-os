@@ -10,7 +10,7 @@ import type { DesktopSurfaceMode } from "../../desktop/src/renderer/src/stores/d
 import type { Tab } from "../../desktop/src/renderer/src/stores/tabs";
 import { invoke } from "../../desktop/src/renderer/src/lib/operator";
 
-const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
 vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(async (channel: string) => channel === "embed:open" ? { embedId: "notes-embed", state: "ready" } : { ok: true }),
