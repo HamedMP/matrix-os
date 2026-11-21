@@ -36,6 +36,7 @@ Keep the provider buffer in its own module for the same reason.
 | --- | --- | --- | --- |
 | Web run streaming, plain draft | Enter or Queue next | Durable queued turn; draft clears after acceptance | Web composer and canonical authority tests |
 | Web queue rejected | Submit correction | Draft remains retryable | Web composer test |
+| Active run finishes before Queue reaches the server | Retry unchanged draft after definite rejection | Retry can use Send; uncertain delivery retains original Queue ID | Canonical authority tests for 409, 408, 503 |
 | Desktop steering pending, newer snapshot | Accept correction | Message appears once; newer metadata retained; queue row removed | Desktop steering recovery tests |
 | Desktop steering pending, another Chat selected | Late failure | No old-Chat reload or error in the new Chat | Desktop steering recovery tests |
 | Claude child closing | Two corrections | Both committed instructions reach resumed process once | Real orchestrator/repository + controlled CLI test |

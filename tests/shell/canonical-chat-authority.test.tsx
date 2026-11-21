@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createChatNavigationStore, useBotConversationSummaries, type ChatAgentClient } from "@matrix-os/ui";
 import { useAgentRailLibrary } from "../../packages/ui/src/chat-agents/bots/use-agent-rail-library";
 import type { CanonicalChatDetailResponse, CanonicalChatNavigationResponse } from "@matrix-os/contracts";
-import type { CanonicalShellChatClient } from "../../shell/src/lib/canonical-chat-client";
+import { CanonicalShellChatRequestError, type CanonicalShellChatClient } from "../../shell/src/lib/canonical-chat-client";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
 import { routineReceiptReadFixture } from "../contracts/fixtures/canonical-chat";
@@ -43,6 +43,31 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); state.store.dispose(); vi.restoreAllMocks(); });
 const mount = () => renderHook(() => useCanonicalChatState({ navigationScope: "owner/runtime/main", navigationGeneration: "same_session" }));
 const options = { instanceId: "pi_default", model: "model", interactionMode: "default" as const, permissionMode: "supervised" as const };
+it.each([409, 408, 503])("retries queue status %s with the correct operation after the run finishes", async status => {
+  const running = detail();
+  running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };
+  vi.mocked(state.client.detail).mockResolvedValue(running);
+  state.client.queueTurn = vi.fn().mockRejectedValue(new CanonicalShellChatRequestError(status, "run_unavailable"));
+  // Stop after admission routing; the agent/model boundary is outside this regression.
+  vi.mocked(state.client.admitTurn).mockRejectedValue(new CanonicalShellChatRequestError(400, "model_unavailable"));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.activeRunId).toBe("run_same"));
+  await act(async () => { expect(await hook.result.current.submitMessage("Keep my correction", undefined, options)).toBe(false); });
+  const first = vi.mocked(state.client.queueTurn).mock.calls[0]![1];
+  vi.mocked(state.client.detail).mockResolvedValue(detail());
+  await act(async () => { hook.result.current.switchConversation("chat_same"); });
+  await waitFor(() => expect(hook.result.current.activeRunId).toBeUndefined());
+  await act(async () => { await hook.result.current.submitMessage("Keep my correction", undefined, options); });
+  if (status === 409) {
+    expect(state.client.queueTurn).toHaveBeenCalledTimes(1);
+    expect(state.client.admitTurn).toHaveBeenCalledTimes(1);
+  } else {
+    // A timeout/5xx may have delivered the queue POST. Reconcile with its original identity.
+    expect(state.client.admitTurn).not.toHaveBeenCalled();
+    expect(state.client.queueTurn).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(state.client.queueTurn).mock.calls[1]![1].clientRequestId).toBe(first.clientRequestId);
+  }
+});
 it("sends plain-text corrections to the durable queue while a run is active", async () => {
   const running = detail();
   running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };

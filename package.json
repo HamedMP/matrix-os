@@ -56,7 +56,7 @@
     "release:enqueue-golden-snapshot": "node scripts/enqueue-golden-snapshot.mjs",
     "release-notes:validate": "node scripts/release-notes/validate.mjs",
     "test": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage\" node node_modules/vitest/vitest.mjs run \"$@\"' --",
-    "test:chat-steering": "bun run test -- --maxWorkers=2 tests/shell/web-chat-composer-parity.test.tsx tests/shell/canonical-chat-authority.test.tsx tests/desktop/chat-steering-recovery.test.tsx tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/chat-claude-steer-transcript.test.tsx tests/gateway/*steer*.test.ts",
+    "test:chat-steering": "bun run test -- --maxWorkers=2 tests/shell/web-chat-composer-parity.test.tsx tests/shell/canonical-chat-authority.test.tsx tests/desktop/chat-steering-recovery.test.tsx tests/desktop/canonical-chat-route-controller.test.tsx tests/desktop/chat-claude-steer-transcript.test.tsx tests/gateway/chat-claude-provider.test.ts tests/gateway/chat-claude-native-session-wiring.test.ts tests/gateway/*steer*.test.ts",
     "test:chat-steering:preview": "pnpm --filter @matrix-os/brand build && node scripts/testing/preview-chat-steering.mjs",
     "test:isolated": "node scripts/dev/isolated-test-job.mjs -- bun run test -- --maxWorkers=1",
     "test:prepare": "node packages/gateway/native/build.mjs && pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build",

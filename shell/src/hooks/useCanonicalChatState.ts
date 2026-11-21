@@ -48,6 +48,7 @@ import {
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
 import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
+import { queueShellChatTurn } from "./canonical-chat-queue-submission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -576,7 +577,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           operation = attempt.operation;
         }
         if (operation === "queue") {
-          const queued = await client.queueTurn(record.chat.id, input);
+          const queued = await queueShellChatTurn(client, mentionRequests, record.chat.id, input);
           if (!isCurrent()) return false;
           turnAdmitted = true;
           mentionRequests.accepted(requestScope, input.clientRequestId);
