@@ -108,6 +108,28 @@ printf '%s|%s\\n' "$MATRIX_RUN_USER" "$MATRIX_HOME_DIR"`,
     expect(switching.stderr).toContain("already runs Matrix as matrix");
   });
 
+  it("creates a missing --user account instead of stopping on the passwd lookup", () => {
+    // getent exits 2 for an unknown account; under set -e and pipefail that
+    // used to end the installer before ensure_matrix_user could create it.
+    const missing = `getent() { return 2; }\n`;
+    const named = run(
+      `${missing}parse_args --user alice
+resolve_run_user
+printf '%s|%s|%s|%s\\n' "$MATRIX_RUN_USER" "$MATRIX_RUN_USER_HOME" "$MATRIX_HOME_DIR" "$MATRIX_RUN_GROUP"`,
+      { MATRIX_EXISTING_HOST_ENV: join(dir, "missing.env") },
+    );
+    expect(named.status, named.stderr).toBe(0);
+    expect(named.stdout.trim()).toBe("alice|/home/alice|/home/alice/matrix|alice");
+    const fallback = run(
+      `${missing}parse_args
+resolve_run_user
+printf '%s|%s\\n' "$MATRIX_RUN_USER" "$MATRIX_HOME_DIR"`,
+      { MATRIX_EXISTING_HOST_ENV: join(dir, "missing.env") },
+    );
+    expect(fallback.status, fallback.stderr).toBe(0);
+    expect(fallback.stdout.trim()).toBe("matrix|/home/matrix/home");
+  });
+
   it("keeps MATRIX_HOME inside the run user's home", () => {
     const result = run(
       `getent() { printf 'alice:x:1001:1001::/home/alice:/bin/bash\\n'; }
@@ -287,6 +309,81 @@ exit 0
     expect(join).toBeGreaterThan(-1);
     expect(serve).toBeGreaterThan(join);
     expect(serve).toBeLessThan(record);
+  });
+
+  it("allows the private-network address as the gateway's browser origin", () => {
+    // Without SHELL_ORIGIN the self-host gateway trusts only app.matrix-os.com,
+    // so browser setup and the viewer failed from the printed tailnet link.
+    const origin = (args: string) => run(`self_host_shell_origin ${args}`);
+    expect(origin("tailscale https://box.tail1.ts.net ''").stdout.trim()).toBe("https://box.tail1.ts.net");
+    expect(origin("headscale http://box.hs.example ''").stdout.trim()).toBe("http://box.hs.example");
+    // A malformed recorded address is never trusted; an operator value survives.
+    expect(origin("tailscale 'https://box/evil' ''").stdout.trim()).toBe("");
+    expect(origin("tailscale 'https://box.ts.net\nX=1' ''").stdout.trim()).toBe("");
+    expect(origin("public '' https://matrix.example.com").stdout.trim()).toBe("https://matrix.example.com");
+    expect(origin("public '' 'https://evil.example/\nX=1'").stdout.trim()).toBe("");
+    const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+    expect(writeEnv).toContain('self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL"');
+    expect(writeEnv).toContain(`printf 'SHELL_ORIGIN=%s\\n' "$shell_origin" >>/opt/matrix/env/host.env`);
+    expect(writeEnv).toContain('browser_lab="$(browser_lab_value "$OPT_BROWSER" "$browser_lab")"');
+  });
+
+  it("writes the browser opt-out so the gateway and lifecycle stop offering it", () => {
+    const flag = (args: string) => run(`browser_lab_value ${args}`).stdout.trim();
+    expect(flag("off true")).toBe("false");
+    expect(flag("off ''")).toBe("false");
+    // Opting back in clears the opt-out; the lifecycle writes true once Chrome is healthy.
+    expect(flag("on false")).toBe("");
+    expect(flag("on true")).toBe("true");
+  });
+
+  it("stops browser use on --no-browser without deleting the saved Chrome profile", () => {
+    const units = join(dir, "units");
+    spawnSync("mkdir", ["-p", units]);
+    writeFileSync(join(units, "matrix-browser-runtime.service"), "[Service]\n");
+    writeFileSync(join(units, "matrix-browser-lab.service"), "[Service]\n");
+    writeFileSync(join(units, "matrix-browser-lab-chrome.service"), "[Service]\n");
+    const result = run(
+      `systemctl() { printf '%s\\n' "$*" >>"${join(dir, "calls")}"; }
+timeout() { shift; "$@"; }
+rm() { printf 'rm %s\\n' "$*" >>"${join(dir, "calls")}"; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_SYSTEMD_UNIT_DIR="${units}" OPT_BROWSER=off configure_browser`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+    // The lifecycle goes first so it cannot restart Chrome behind the opt-out.
+    expect(calls).toEqual([
+      "rm -f /etc/sudoers.d/matrix-browser-runtime",
+      "disable --now matrix-browser-runtime.service",
+      "disable --now matrix-browser-lab-chrome.service",
+      "disable --now matrix-browser-lab.service",
+    ]);
+  });
+
+  it("leaves systemd alone on --no-browser when browser use was never installed", () => {
+    const result = run(
+      `systemctl() { printf '%s\\n' "$*" >>"${join(dir, "calls")}"; }
+timeout() { shift; "$@"; }
+rm() { :; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_SYSTEMD_UNIT_DIR="${join(dir, "none")}" OPT_BROWSER=off configure_browser`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(join(dir, "calls"))).toBe(false);
+  });
+
+  it("extracts the bundle as the installing account with non-writable modes whatever the caller's umask", () => {
+    const src = join(dir, "src");
+    spawnSync("mkdir", ["-p", join(src, "bin")]);
+    writeFileSync(join(src, "release.json"), '{"version":"v1"}\n', { mode: 0o664 });
+    writeFileSync(join(src, "bin/matrix-install-browser"), "x\n", { mode: 0o775 });
+    const bundle = join(dir, "b.tgz");
+    spawnSync("tar", ["-czf", bundle, "-C", src, "."]);
+    const dest = join(dir, "opt");
+    spawnSync("mkdir", ["-p", dest]);
+    const result = run(`umask 002\nextract_bundle "${bundle}" "${dest}"\nstat -c '%a %n' "${dest}/release.json" "${dest}/bin"`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`644 ${dest}/release.json`);
+    expect(result.stdout).toContain(`755 ${dest}/bin`);
   });
 
   it("records only the chosen options in telemetry", () => {

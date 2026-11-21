@@ -416,7 +416,9 @@ finalize_access_choice() {
 }
 
 passwd_entry() {
-  getent passwd "$1" 2>/dev/null | head -n1
+  # A missing account is normal here (ensure_matrix_user creates it later); getent
+  # exits 2 for it, which would otherwise end the installer under pipefail.
+  { getent passwd "$1" 2>/dev/null || true; } | head -n1
 }
 
 # Resolves MATRIX_RUN_USER, its group and home, and MATRIX_HOME_DIR (S1, spec 2701).
@@ -884,9 +886,38 @@ configure_private_network() {
   record_tailscale_owner
 }
 
+# Native units the browser lifecycle enables (matrix-browser-runtime.py service_names).
+BROWSER_NATIVE_UNITS=(matrix-browser-lab-vnc.service matrix-browser-lab-wm.service matrix-browser-lab-desktop.service matrix-browser-lab-panel.service matrix-browser-lab-chrome.service matrix-browser-lab.service)
+
+# browser_lab_value <on|off> <saved MATRIX_BROWSER_LAB>: the value write_env records.
+# Opting out writes false, which the gateway and lifecycle both honor. Opting back in
+# clears a saved false; the lifecycle writes true once Chrome passes its health check.
+browser_lab_value() {
+  if [ "$1" != "on" ]; then
+    printf 'false\n'
+  elif [ -n "$2" ] && [ "$2" != "false" ]; then
+    printf '%s\n' "$2"
+  fi
+  return 0
+}
+
+# Stops a previous browser install on --no-browser. Keeps /opt/matrix-browser-lab,
+# the Chrome profile and the viewer credentials, so opting back in resumes signed in.
+stop_browser_use() {
+  local unit_dir="${MATRIX_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" unit
+  # The lifecycle goes first so it cannot restart Chrome behind the opt-out.
+  for unit in matrix-browser-runtime.service "${BROWSER_NATIVE_UNITS[@]}"; do
+    [ -e "${unit_dir}/${unit}" ] || continue
+    timeout 120 systemctl disable --now "$unit" >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || warn "could not stop ${unit}; run: sudo systemctl disable --now ${unit}"
+  done
+  return 0
+}
+
 configure_browser() {
   if [ "$OPT_BROWSER" != "on" ]; then
     rm -f /etc/sudoers.d/matrix-browser-runtime
+    stop_browser_use
     return 0
   fi
   section "Setting up browser use"
@@ -1071,10 +1102,23 @@ read_env_value() {
   printf '%s\n' "$value"
 }
 
+# self_host_shell_origin <access> <tailnet url> <saved SHELL_ORIGIN>: the browser
+# origin the gateway trusts. Without it a self-host gateway trusts only
+# app.matrix-os.com, so pages opened at the printed tailnet link are refused.
+self_host_shell_origin() {
+  local pattern='^https?://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$'
+  if [ "$1" != "public" ] && [[ "$2" =~ $pattern ]]; then
+    printf '%s\n' "$2"
+  elif [[ "$3" =~ $pattern ]]; then
+    printf '%s\n' "$3"
+  fi
+  return 0
+}
+
 write_env() {
   local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   local platform_speech_enabled platform_speech_origin platform_speech_runtime_token
-  local browser_lab browser_viewer_auth skip_legacy_migration
+  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
@@ -1094,6 +1138,8 @@ write_env() {
   if [ -z "$MATRIX_TAILNET_URL" ]; then
     MATRIX_TAILNET_URL="$(read_env_value /opt/matrix/env/host.env MATRIX_TAILNET_URL || true)"
   fi
+  browser_lab="$(browser_lab_value "$OPT_BROWSER" "$browser_lab")"
+  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)")"
   skip_legacy_migration=0
   [ "$MATRIX_RUN_USER" = "matrix" ] || skip_legacy_migration=1
 
@@ -1148,8 +1194,18 @@ EOF
   if [ -n "$browser_viewer_auth" ]; then
     printf 'MATRIX_BROWSER_LAB_VIEWER_AUTH=%s\n' "$browser_viewer_auth" >>/opt/matrix/env/host.env
   fi
+  if [ -n "$shell_origin" ]; then
+    printf 'SHELL_ORIGIN=%s\n' "$shell_origin" >>/opt/matrix/env/host.env
+  fi
   chmod 0640 /opt/matrix/env/host.env
   chown root:matrix /opt/matrix/env/host.env
+}
+
+# As root, tar keeps the build machine's numeric owner and modes; the terminal
+# runtime and browser lifecycle trust only root-owned files that no group or other
+# account can write. A fixed umask keeps that true under a permissive sudo umask.
+extract_bundle() {
+  (umask 022 && tar --no-same-owner --no-same-permissions -xzf "$1" -C "$2")
 }
 
 install_bundle() {
@@ -1181,9 +1237,7 @@ install_bundle() {
 
   ok "Host bundle checksum verified"
   section "Extracting Matrix OS"
-  # As root, tar keeps the build machine's numeric owner; the terminal runtime and
-  # other integrity checks trust only root-owned (or run-user) files.
-  tar --no-same-owner --no-same-permissions -xzf "$tmp_bundle" -C /opt/matrix
+  extract_bundle "$tmp_bundle" /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
   if [ -f /opt/matrix/bin/matrix-claude-native-recovery.py ] && [ ! -L /opt/matrix/bin/matrix-claude-native-recovery.py ]; then
     install -d -o root -g root -m 0755 /usr/local/libexec/matrix-claude-native-recovery

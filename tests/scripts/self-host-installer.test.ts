@@ -25,7 +25,8 @@ describe("self-host server installer", () => {
     expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
     // Root extraction keeps the build machine's numeric owner unless told not to, and the
     // terminal runtime refuses files owned by anyone but root or its own account.
-    expect(script).toContain("tar --no-same-owner --no-same-permissions -xzf \"$tmp_bundle\" -C /opt/matrix");
+    expect(script).toContain("(umask 022 && tar --no-same-owner --no-same-permissions -xzf \"$1\" -C \"$2\")");
+    expect(script).toContain('extract_bundle "$tmp_bundle" /opt/matrix');
     expect(script).toContain("MATRIX_SELF_HOSTED=1");
     expect(script).toContain("MATRIX_AUTH_TOKEN=${auth_token}");
     expect(script).toContain("MATRIX_CODE_PROXY_TOKEN=${code_token}");
