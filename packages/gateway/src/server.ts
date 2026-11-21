@@ -219,7 +219,6 @@ import { AiProviderService } from "./ai-providers/service.js";
 import type { KvStore } from "./app-db-kv.js";
 import type { QueryEngine } from "./app-db-query.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import { createSitePublicAppResolver } from "./sites/public-app-resolver.js";
 import type { CanvasRepository } from "./canvas/repository.js";
 import type { CanvasService } from "./canvas/service.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
@@ -1340,15 +1339,7 @@ export async function createGateway(config: GatewayConfig) {
 
 
   const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
-    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
-    sitePublicData: {
-      // Public site visitors reach only the published app's registry record (2694).
-      resolveApp: createSitePublicAppResolver({
-        ensureProvisioned: ensureAppProvisioned,
-        getRecord: async (appSlug) => appRegistry ? appRegistry.get(appSlug) : null,
-      }),
-      onChange: ({ app: changedApp, key }) => broadcast({ type: "data:change", app: changedApp, key }),
-    },
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl, sitePublicApps: { ensureProvisioned: ensureAppProvisioned, getRecord: async (slug) => appRegistry ? appRegistry.get(slug) : null, onChange: ({ app: changedApp, key }) => broadcast({ type: "data:change", app: changedApp, key }) },
     ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
