@@ -9,6 +9,7 @@ import { SitePublicDataRepository } from "../../packages/gateway/src/sites/publi
 import { createSitePublicDataLimiter, createSitePublicDataRoutes } from "../../packages/gateway/src/sites/public-data-routes.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { registerSiteRuntime } from "../../packages/gateway/src/sites/wiring.js";
+import { BridgeQueryBodySchema } from "../../packages/gateway/src/app-db-contracts.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 
 const SECRET = "runtime-bound-token";
@@ -120,6 +121,20 @@ describe("public site visitor data at the owner gateway", () => {
     await call(capability({ kind: "kvWrite", key: "theme", value: "dark" }));
     expect((await call(capability({ kind: "kvRead", key: "theme" }))).body.result).toEqual({ value: "dark" });
     expect((await created.db.raw(`SELECT value FROM public._kv WHERE app = 'private-notes'`)).rows).toEqual([{ value: "owner-only" }]);
+  });
+
+  it("rejects db.* for a digit-leading app slug as invalid, like the owner bridge, while keys still work", async () => {
+    // The owner bridge refuses this app identity for db.* at request validation (400) and still serves keys.
+    expect(BridgeQueryBodySchema.safeParse({ app: "2048", action: "appInfo" }).success).toBe(false);
+    const resolveApp = vi.fn((slug: string) => registry.get(slug));
+    repository = new SitePublicDataRepository(created.kysely, { resolveApp });
+    app = new Hono();
+    app.route("/", createSitePublicDataRoutes({ serviceSecret: SECRET, repository, env }));
+    expect(await call(db({ action: "appInfo" }, "2048"))).toEqual({ status: 400, body: { error: "Invalid change" } });
+    expect(await call(db({ action: "find", table: "tiles" }, "2048"))).toEqual({ status: 400, body: { error: "Invalid change" } });
+    expect(resolveApp).not.toHaveBeenCalled();
+    expect((await call(capability({ kind: "kvWrite", key: "best", value: "64" }, "2048"))).status).toBe(200);
+    expect((await call(capability({ kind: "kvRead", key: "best" }, "2048"))).body.result).toEqual({ value: "64" });
   });
 
   it("supports bulk and compare-and-swap writes with per-row log entries", async () => {
