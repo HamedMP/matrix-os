@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
+import { createClaudeSteeringBuffer } from "./claude-steering-buffer.js";
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { contextPrompt } from "./agent-context.js";
 import { createRoutineCreationLatch } from "./routine-creation-latch.js";
@@ -241,6 +243,7 @@ export function createClaudeChatProviderAdapter(options: {
     let emittedState = resumeState;
     let protectedSessionId: string | undefined;
     let steerPrompt: string | undefined;
+    const steering = createClaudeSteeringBuffer();
     let protectedSteerInput: CanonicalProviderRunInput<ClaudeChatState> | undefined;
     let cancellationRequested = false;
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
@@ -337,7 +340,9 @@ export function createClaudeChatProviderAdapter(options: {
       },
       async steer(prompt: string) {
         if (!emittedState) throw new Error("Claude Run state unavailable");
-        if (emittedState.canonicalHistoryRequired) {
+        if (sawResult || cancellationRequested || input.signal.aborted
+          || (processSignal.aborted && !steerPrompt)) throw new ChatSteerNotDeliveredError();
+        if (emittedState.canonicalHistoryRequired && !protectedSteerInput) {
           if (!input.prepareSteeringContext || sawResult) throw new Error("Steering context unavailable");
           const context = await boundedOperation(input.prepareSteeringContext, 5_000, processSignal);
           if (sawResult || processSignal.aborted || activeRuns.get(input.runId) !== activeRun) throw new Error("Claude Run state unavailable");
@@ -346,7 +351,12 @@ export function createClaudeChatProviderAdapter(options: {
             parts: [{ type: "text", text: prompt }], nativeScheduled: undefined, resumeState: undefined,
           });
         }
-        steerPrompt = prompt;
+        steerPrompt = steering.append(prompt);
+        if (protectedSteerInput) protectedSteerInput = {
+          ...protectedSteerInput,
+          prompt: contextPrompt(steerPrompt, protectedSteerInput.context, { deferIntegrationGuidance: true }),
+          parts: [{ type: "text", text: steerPrompt }],
+        };
         revokeApproval("steer");
         processController.abort();
       },
