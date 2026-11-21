@@ -63,6 +63,10 @@ import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
+import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createOrgMcpPresetGate } from './org-mcp/preset-gate.js';
+import { BOKIO_PRESET } from './bokio-integration.js';
+import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
@@ -258,6 +262,7 @@ type CreatePlatformApp = (deps: {
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
   externalCoreMcp?: ExternalCoreMcp;
+  orgMcpRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -528,6 +533,11 @@ async function startPlatformServerWithCleanup(
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: process.env, collaboration, logError: logPlatformRouteError,
   });
+  // Spec 2691 layer 5: org governance of Matrix Core MCP (call-time policy + Organization → Connections routes).
+  const orgMcp = await createPlatformOrgMcp({ db: db.kysely as never,
+    organizations: 'organizations' in collaboration ? collaboration.organizations : undefined,
+    connectionsAvailable: process.env.CUSTOM_MCP_ENABLED === 'true',
+    resolveActor: createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret }) });
   const slack = await bootstrapPlatformSlack({
     env: process.env, db, platformSecret, platformJwtSecret,
     clerkAuth, collaboration, customerVpsProxyDispatcher,
@@ -750,7 +760,7 @@ async function startPlatformServerWithCleanup(
     });
     // Matrix Core MCP (spec 2691): one tool service over this broker; usage rows go to platform Postgres.
     const coreMcp = await createPlatformCoreMcp({ db: db.kysely as never, coreModule: coreToolsModule, broker,
-      approvals: customDb, maintenance: backgroundWorkersEnabled });
+      approvals: customDb, maintenance: backgroundWorkersEnabled, orgPolicy: orgMcp.policy });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
       if (customMcpClosed) return;
@@ -766,11 +776,15 @@ async function startPlatformServerWithCleanup(
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
     deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
-    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    // Spec 2691: org policy also governs preset calls made through Integrations, which bypass the Core tool service.
+    const orgPresetGate = createOrgMcpPresetGate({ policy: orgMcp.policy,
+      resolveActorId: async userId => (await customDb.getUserById(userId))?.clerk_id });
+    const governedBroker = orgPresetGate.governBroker(broker);
+    const granolaBroker = createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager });
     managedMcpPresetBroker = createManagedPresetRouter({
       granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
-      bokio: bokioBroker,
+      bokio: orgPresetGate.governPresetBroker(bokioBroker, BOKIO_PRESET.url),
     });
     const managedOAuthFlow = managedLifecycle.oauth;
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
@@ -1160,6 +1174,7 @@ async function startPlatformServerWithCleanup(
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
     externalCoreMcp,
+    orgMcpRoutes: orgMcp.routes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,

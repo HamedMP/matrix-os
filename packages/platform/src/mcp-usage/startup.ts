@@ -8,7 +8,7 @@ import { bootstrapMcpUsageDatabase, createMcpUsageRepository, type McpUsageDatab
 import { createMcpUsageWriter, startMcpUsageMaintenance } from "./writer.js";
 
 export interface GatewayCoreToolsModule {
-  CoreToolService: new (options: { broker: unknown; approvals?: unknown; usage?: { record(row: McpUsageEventRow): void } }) => unknown;
+  CoreToolService: new (options: { broker: unknown; approvals?: unknown; usage?: { record(row: McpUsageEventRow): void }; orgPolicy?: unknown }) => unknown;
 }
 
 export async function createPlatformCoreMcp(options: {
@@ -16,6 +16,8 @@ export async function createPlatformCoreMcp(options: {
   coreModule: GatewayCoreToolsModule;
   broker: unknown;
   approvals: unknown;
+  /** Call-time org governance (spec 2691 layer 5); absent when organizations are not configured. */
+  orgPolicy?: unknown;
   /** Rollup/retention run on one worker class only; every instance writes rows. */
   maintenance: boolean;
 }): Promise<{ core: unknown; shutdown(): Promise<void> }> {
@@ -24,7 +26,8 @@ export async function createPlatformCoreMcp(options: {
   const writer = createMcpUsageWriter({ insert: rows => repository.insertEvents(rows) });
   writer.start();
   const maintenance = options.maintenance ? startMcpUsageMaintenance({ repository }) : undefined;
-  const core = new options.coreModule.CoreToolService({ broker: options.broker, approvals: options.approvals, usage: writer });
+  const core = new options.coreModule.CoreToolService({ broker: options.broker, approvals: options.approvals, usage: writer,
+    ...(options.orgPolicy ? { orgPolicy: options.orgPolicy } : {}) });
   let closing: Promise<void> | undefined;
   return {
     core,

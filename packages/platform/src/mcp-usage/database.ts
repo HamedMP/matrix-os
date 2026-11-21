@@ -20,7 +20,8 @@ const RETENTION_BATCH = 5_000;
 const RETENTION_MAX_BATCHES = 20;
 /** Days recomputed per rollup run while catching up after an outage. */
 export const MCP_USAGE_ROLLUP_MAX_DAYS = 45;
-const ROLLUP_SCOPE = "daily";
+export const MCP_USAGE_ROLLUP_SCOPE = "daily";
+const ROLLUP_SCOPE = MCP_USAGE_ROLLUP_SCOPE;
 const DAY_MS = 24 * 60 * 60_000;
 
 export interface McpUsageEventsTable {

@@ -26,7 +26,9 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).not.toContain("!oauthClientId || !oauthRedirectUri");
     expect(source).not.toContain("Custom MCP requires MCP_OAUTH_CLIENT_ID");
     expect(source).toContain("clientId: oauthClientId");
-    expect(source).toContain("createGranolaPresetBroker({ broker, oauth: oauthManager })");
+    // Preset brokers get the org-policy-governed broker (spec 2691), never the raw one.
+    expect(source).toContain("createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager })");
+    expect(source).toContain("createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager })");
   });
 
   it("registers the built approval route with the Platform-owned store and proof verifier", async () => {
