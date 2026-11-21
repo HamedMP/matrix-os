@@ -1,6 +1,6 @@
 # Figma parity correction · ENG-461
 
-The November 16 side-by-side audit supersedes the previous visual-readiness assessment. UI PRs #3320 and #3321 remain drafts until new equivalent-state Web and Electron screenshots and recordings match the original Figma section 2343:13253. No Slack messages are authorized.
+The November 16 side-by-side audit supersedes the previous visual-readiness assessment. The existing PRs stay out of draft at the requester’s instruction; final review readiness still requires fresh equivalent-state Web and Electron captures against Figma section 2343:13253, trusted Greptile 5/5 and green CI. No Slack messages are authorized.
 
 ## Correction sequence
 
@@ -37,3 +37,12 @@ The Linux shard exposed three stale consumer tests: the agent chrome fixture rep
 ## Retained archive protection
 
 The bespoke Web archive dialog and its three tests are replaced by the shared full-page archive implementation. The shared archive suite retains title/message search with cursor paging, restore and confirmed deletion, late-page rejection, failures/retry and Undo coverage. Web navigation tests additionally exercise Search → Archived → full page and restoring an older chat back into an already-expanded project. Project filter chips were an implementation addition absent from the Figma; the archive page keeps project context and searches all projects.
+
+
+### Canonical file-scope review correction
+
+Extract active/latest run-root selection into the pure shared `canonicalChatFileScope` contract helper, with missing-run and mismatched-project roots failing closed. Keep useCanonicalChatState as a projection call and pass its result through Web Desktop, Web Canvas and Web Mobile adapters. Inspector consumers retain worktree IDs for browsing and previews. The follow-up composition extraction for the existing large ChatApp/useCanonicalChatState entrypoints remains scoped to their routing and rendering responsibilities; this fix adds no duplicate run-root business rules there. Native scope adapts the same shared selector while preserving its verified project slug lookup.
+
+### Paged read and restored search correction
+
+Successful read mutations publish a versioned, owner/runtime-scoped cache of at most 500 recently updated chat records. Project and status placements merge that read projection without resetting rows, cursor positions, counts, or transcript metadata; unread-only project rows filter the merged state. Older records are not inserted into the initial global navigation window. Restored search tombstones affect Archived only; permanent deletions affect every lifecycle, including subsequent pages. Focused production-boundary regressions exercise the state producer, retained page consumer, and restoration across active search scopes. Broad unit qualification completes in exact-head CI under the requester’s recorded exception; focused tests, typecheck, patterns and React review still run locally.

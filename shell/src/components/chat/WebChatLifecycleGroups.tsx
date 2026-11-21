@@ -3,7 +3,7 @@ import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, resol
 import type { RenameableConversation } from './ChatTitleRename';
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from '@matrix-os/contracts';
 import { orderWebChatRows } from "./useWebChatRailOrder";
-import { usePagedStatusGroup } from './usePagedProjectChats';
+import { usePagedStatusGroup, withConversationReadUpdates } from './usePagedProjectChats';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
 export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {
@@ -19,9 +19,10 @@ export function groupWebChats(items: readonly RenameableConversation[]): Record<
   return result;
 }
 
-export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, navigationUpdatedAt, loadPage, excludedChatIds, unreadOnly = false, sourceFilter = 'all', renderRow }: {
+export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, navigationUpdatedAt, loadPage, excludedChatIds, unreadOnly = false, sourceFilter = 'all', chatReadStateUpdates = [], renderRow }: {
   attentionCount?: number; scopeKey?: string;
   navigationUpdatedAt?: number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
   loadPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
   excludedChatIds?: readonly string[];
   unreadOnly?: boolean;
@@ -41,7 +42,7 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
   const section = (key: GroupKey, label: string, extra?: ReactNode) => {
     const page = pages[key];
     const unordered = page && loadPage && !page.loading && !page.error || page && loadPage && page.rows.length
-      ? filterChatsByImportSource(page!.rows.filter(row => !excludedChatIds?.includes(row.id) && (!unreadOnly || row.readState?.unread)), sourceFilter, row => row.canonicalRecord?.importSource)
+      ? filterChatsByImportSource(page!.rows.map(row => withConversationReadUpdates(row, chatReadStateUpdates)).filter(row => !excludedChatIds?.includes(row.id) && (!unreadOnly || row.readState?.unread)), sourceFilter, row => row.canonicalRecord?.importSource)
       : loadPage ? groups[key].slice(0, 10) : groups[key];
     const rows = orderWebChatRows(unordered, order.chatIds, row=>row.id);
     const count = page && loadPage && (page.rows.length > 0 || !page.loading && !page.error) ? page.count : groups[key].length;

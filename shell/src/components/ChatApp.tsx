@@ -193,6 +193,7 @@ interface ChatAppProps {
   navigationFresh?:boolean;
   navigationTruncated?:boolean;
   chatChangeRevision?:number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
   chatRunStatusChange?:import("@/hooks/useChatState").ChatState["chatRunStatusChange"];
   loadNavigationPage?: (input: import("@matrix-os/contracts").CanonicalChatNavigationPageQuery) => Promise<import("@matrix-os/contracts").CanonicalChatNavigationPageResponse>;
   searchConversations?: (query: string, input?: { lifecycle?: "active" | "archived"; limit?: number; cursor?: string }) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
@@ -204,6 +205,7 @@ interface ChatAppProps {
   canSteerQueuedTurns?: boolean;
   /** The Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
   projectSkillRootAvailable?: boolean;
   /** Puts a new Chat in a project or moves the active one; null removes it. */
   onSetChatProject?: (projectId: string | null) => void;
@@ -255,7 +257,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, sideChatClient, terminalSessionIds = [], composerIdentity, isCurrentAuthority, botEventRevision,routineOriginChat,navigationTruncated,chatChangeRevision,chatRunStatusChange,navigationClassifications,navigationFresh,loadNavigationPage,searchConversations,navigationUpdatedAt, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, sideChatClient, terminalSessionIds = [], composerIdentity, isCurrentAuthority, botEventRevision,routineOriginChat,navigationTruncated,chatChangeRevision,chatReadStateUpdates,chatRunStatusChange,navigationClassifications,navigationFresh,loadNavigationPage,searchConversations,navigationUpdatedAt, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -697,12 +699,12 @@ function ChatAppContent({
             </section> : focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
-              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion}/> : <>
-            <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} unreadOnly={unreadOnly} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
+              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion} chatReadStateUpdates={chatReadStateUpdates}/> : <>
+            <WebChatLifecycleGroups chatReadStateUpdates={chatReadStateUpdates} conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} unreadOnly={unreadOnly} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
                 onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
-                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion}/>
+                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion} chatReadStateUpdates={chatReadStateUpdates}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={renderRailRow}/>

@@ -1,7 +1,7 @@
 import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
 import { createCanonicalChatRowActions } from "@/lib/canonical-chat-client";
-import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
+import { browserPermissionRequest, canonicalChatFileScope, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
 import {
   generatedChatTitle,
@@ -233,6 +233,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [botEventRevision, setBotEventRevision] = useState(0);
   // Bumps only when a Chat may have been added, moved, removed or reclassified, so scoped reads can refresh.
   const [chatChangeRevision, setChatChangeRevision] = useState(0);
+  // Retain the newest 500 read mutations, scoped to the verified owner/runtime.
+  // Older paged rows are not inserted into the global navigation window.
+  const [readUpdates, setReadUpdates] = useState<{ identity: string; records: ChatNavigationRecord[] }>({ identity: navigationIdentity, records: [] });
+  const rememberReadState = useCallback((record: ChatNavigationRecord) => {
+    if (!isCurrent() || !record.readState) return;
+    setReadUpdates(previous => {
+      const records = previous.identity === navigationIdentity ? previous.records : [];
+      const known = records.find(item => item.chat.id === record.chat.id);
+      const latest = known ? mergeChatReadState(known, record) : record;
+      return { identity: navigationIdentity, records: [...records.filter(item => item.chat.id !== record.chat.id).slice(-499), latest] };
+    });
+  }, [navigationIdentity, isCurrent]);
   const [chatRunStatusChange, setChatRunStatusChange] = useState<ChatRunStatusChanges>(() => appendChatRunStatusChange(undefined, null));
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
@@ -1043,6 +1055,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     try {
       const response = await client.updateReadState(chatId, input);
       if (!isCurrent()) return false;
+      rememberReadState(response);
       setRecords((current) => current.map((record) => mergeChatReadState(record, response)));
       const current = detailRef.current;
       if (current?.record.chat.id === chatId) {
@@ -1057,7 +1070,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setSafeError("The Chat could not be updated. Try again.");
       return false;
     }
-  }, [client, setRecords, isCurrent]);
+  }, [client, setRecords, isCurrent, rememberReadState]);
 
   const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
   const messages = selectedDetail ? projectCanonicalTranscript(withPendingCanonicalTurn(selectedDetail, pendingTurn)) : [];
@@ -1110,6 +1123,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     cancelQueuedTurn,
     steerQueuedTurn,
     chatProjectId: activeChatId ? activeRecord?.projectId : draftProjectId,
+    chatFileScope: activeChatId ? canonicalChatFileScope(selectedDetail) : draftProjectId
+      ? { kind: "project" as const, projectId: draftProjectId } : { kind: "home" as const },
     projectSkillRootAvailable: activeChatId ? canUseProjectSkillRoot(selectedDetail) : Boolean(draftProjectId),
     setChatProject,
     canSteerQueuedTurns: selectedDetail?.runs.find((run) => run.id === selectedDetail.record.activeRun?.runId)?.capabilitySnapshot.steering === "same_run",
@@ -1122,6 +1137,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     navigationFresh:navigation.fresh,
     navigationTruncated:navigation.truncated,
     chatChangeRevision,
+    chatReadStateUpdates: readUpdates.identity === navigationIdentity && sameAuthority ? readUpdates.records : [],
     chatRunStatusChange,
     navigationPage: client.navigationPage,
     searchConversations: client.search,

@@ -1,5 +1,5 @@
-import { chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { mergeChatReadState, type ChatNavigationRecord, chatImportSourceVersionUrl } from "@matrix-os/ui";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import type { WebProject } from "./web-projects";
 import type { CanonicalChatNavigationItem, CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
@@ -15,6 +15,16 @@ export type FetchedProjectChat = { id: string; title: string; titleVersion: numb
 type LoadNavigationPage = (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 type PageCursors = { id?: string | null; slug?: string | null };
 const MAX_RETAINED_PROJECT_ROWS = 500;
+const NO_READ_UPDATES: readonly ChatNavigationRecord[] = [];
+export function withChatReadStateUpdates<T extends ChatNavigationRecord>(record: T, updates: readonly ChatNavigationRecord[]): T {
+  const update = updates.find(item => item.chat.id === record.chat.id);
+  return update ? mergeChatReadState(record, update) : record;
+}
+export function withConversationReadUpdates(row: RenameableConversation, updates: readonly ChatNavigationRecord[]): RenameableConversation {
+  if (!row.canonicalRecord) return row;
+  const record = withChatReadStateUpdates(row.canonicalRecord, updates);
+  return record === row.canonicalRecord ? row : { ...row, canonicalRecord: record, readState: record.readState };
+}
 async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: string | null, unreadOnly: boolean, signal: AbortSignal) {
   const query = new URLSearchParams({ projectId, limit: cursor ? "20" : "5" });
   if (cursor) query.set("cursor", cursor);
@@ -28,7 +38,7 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0, membershipVersion = "") {
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0, membershipVersion = "", readUpdates: readonly ChatNavigationRecord[] = NO_READ_UPDATES) {
   const initialCursors = useCallback((): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) }), [project.id, project.slug]);
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
@@ -122,7 +132,10 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const retry = () => { setLoading(true); setError(false); setRetryCount(value => value + 1); };
   const loadMore = () => { setLoading(true); setError(false); setPageCursors(nextCursors); };
   const capped = false;
-  return { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, capped,
+  const visible = useMemo(() => fetched.map(row => row.canonicalRecord
+    ? { ...row, canonicalRecord: withChatReadStateUpdates(row.canonicalRecord, readUpdates) } : row)
+    .filter(row => !unreadOnly || !row.canonicalRecord || row.canonicalRecord.readState.unread), [fetched, readUpdates, unreadOnly]);
+  return { expanded, toggleExpanded, fetched: visible, loading, error, retry, loadMore, capped,
     hasMore: Boolean(nextCursors.id || nextCursors.slug) };
 }
 

@@ -76,7 +76,7 @@ export function WebChatSearchDialog({
   const [error, setError] = useState(false);
   const [deletion, setDeletion] = useState<ChatNavigationRecord | null>(null);
   const generation = useRef(0),
-    removed = useRef<string[]>([]),
+    removed = useRef<Array<{ id: string; action: "restore" | "delete" }>>([]),
     alive = useRef(true);
   const listId = useId();
   const phrase = query.trim();
@@ -116,7 +116,7 @@ export function WebChatSearchDialog({
           .then((value) => {
             if (generation.current === current)
               setPage({
-                rows: value.items.filter((row) => !removed.current.includes(row.chat.id)).slice(0, 500),
+                rows: value.items.filter((row) => !removed.current.some(item => item.id === row.chat.id && (item.action === "delete" || scope === "Archived"))).slice(0, 500),
                 cursor: value.nextCursor,
                 loading: false,
                 error: false,
@@ -190,7 +190,7 @@ export function WebChatSearchDialog({
     return request
       .then((restored) => {
         if (!alive.current) return;
-        removed.current = [...removed.current.slice(-499), record.chat.id];
+        removed.current = [...removed.current.filter(item => item.id !== record.chat.id).slice(-499), { id: record.chat.id, action }];
         setPage((value) => ({
           ...value,
           rows: value.rows.filter((row) => row.chat.id !== record.chat.id),
@@ -230,7 +230,7 @@ export function WebChatSearchDialog({
             ...previous.rows,
             ...value.items.filter(
               (row) =>
-                !previous.rows.some((item) => item.chat.id === row.chat.id) && !removed.current.includes(row.chat.id),
+                !previous.rows.some((item) => item.chat.id === row.chat.id) && !removed.current.some(item => item.id === row.chat.id && (item.action === "delete" || scope === "Archived")),
             ),
           ].slice(-500),
           cursor: value.nextCursor,

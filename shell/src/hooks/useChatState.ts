@@ -32,6 +32,7 @@ export interface ChatState {
   navigationTruncated?:boolean;
   /** Changes on every Chat change except streamed run text. */
   chatChangeRevision?:number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
   /** The newest run start/end/wait changes, each tagged with its revision. */
   chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
   navigationPage?: import("@/lib/canonical-chat-client").CanonicalShellChatClient["navigationPage"];
@@ -63,6 +64,8 @@ export interface ChatState {
   canSteerQueuedTurns?: boolean;
   /** The open Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  /** Verified active/latest-run scope; unavailable must never fall back to main. */
+  chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
   projectSkillRootAvailable?: boolean;
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
