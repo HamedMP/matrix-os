@@ -108,6 +108,8 @@ export interface UserMachinesTable {
   private_address: Generated<string | null>;
   last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  metal_host_id: Generated<string | null>;
+  metal_vm_id: Generated<string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -859,6 +861,7 @@ export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
