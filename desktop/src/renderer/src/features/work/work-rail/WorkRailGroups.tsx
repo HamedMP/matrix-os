@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { AgentAvatar, filterChatsByImportSource, type BotConversationSummary, type ChatImportSourceFilterValue } from "@matrix-os/ui";
@@ -10,6 +10,8 @@ import { Plus, Folder } from "lucide-react";
 import { WorkRailSection } from "./WorkRailSection";
 
 export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
+type StatusGroup = Exclude<WorkRailSectionKey, "projects">;
+const INITIAL_FALLBACK_LIMITS = { pinned: 10, needsYou: 10, working: 10, done: 10 };
 export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest,
   client = null, scopeKey = "", navigationUpdatedAt = 0, sourceFilter = "all", orderRows, registerVisibleChats }: {
   model: WorkRailModel;
@@ -32,21 +34,30 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   registerVisibleChats?: (ids: readonly string[]) => void;
 }) {
   const pendingBots = bots.filter(bot => bot.pendingApprovalCount > 0);
+  const [fallback, setFallback] = useState(() => ({ scopeKey, limits: INITIAL_FALLBACK_LIMITS }));
+  const fallbackLimit = (group: StatusGroup) => fallback.scopeKey === scopeKey ? fallback.limits[group] : 10;
   const pinnedPage = useWorkRailPage(client, { group: "pinned" }, scopeKey, navigationUpdatedAt, 10);
   const needsPage = useWorkRailPage(client, { group: "needsYou" }, scopeKey, navigationUpdatedAt, 10);
   const workingPage = useWorkRailPage(client, { group: "working" }, scopeKey, navigationUpdatedAt, 10);
   const donePage = useWorkRailPage(client, { group: "done" }, scopeKey, navigationUpdatedAt, 10);
-  const rows = (page: typeof pinnedPage, fallback: ChatNavigationRecord[]) => client?.navigationPage && (page.rows.length || !page.loading && !page.error)
-    ? (orderRows?.(filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) ?? filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) : fallback.slice(0, 10);
-  const pinned = rows(pinnedPage, model.pinned);
-  const needsYou = rows(needsPage, model.needsYou);
-  const working = rows(workingPage, model.working);
-  const done = rows(donePage, model.doneDisplay);
+  const usesServer = (page: typeof pinnedPage) => Boolean(client?.navigationPage && (page.rows.length || !page.loading && !page.error));
+  const rows = (page: typeof pinnedPage, records: ChatNavigationRecord[], group: StatusGroup) => usesServer(page)
+    ? (orderRows?.(filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) ?? filterChatsByImportSource(page.rows, sourceFilter, record => record.importSource)) : records.slice(0, fallbackLimit(group));
+  const pinned = rows(pinnedPage, model.pinned, "pinned");
+  const needsYou = rows(needsPage, model.needsYou, "needsYou");
+  const working = rows(workingPage, model.working, "working");
+  const done = rows(donePage, model.doneDisplay, "done");
   const visibleIds = [...pinned, ...needsYou, ...working, ...done].map(record => record.chat.id).join("\0");
   useEffect(() => { registerVisibleChats?.(visibleIds.split("\0").filter(Boolean)); }, [registerVisibleChats, visibleIds]);
   const count = (page: typeof pinnedPage, fallback: number) => client?.navigationPage && !page.error && (!page.loading || page.rows.length) ? page.count : fallback;
-  const more = (page: typeof pinnedPage, label: string) => page.cursor ? <button type="button" aria-label={`Show more ${label} chats`}
-    className="rounded-[8px] px-2.5 py-1 text-left text-xs" disabled={page.loading} onClick={page.loadMore}>Show more</button> : null;
+  const more = (page: typeof pinnedPage, label: string, group: StatusGroup, fallbackCount: number) => (usesServer(page) ? page.cursor : fallbackCount > fallbackLimit(group)) ? <button type="button" aria-label={`Show more ${label} chats`}
+    className="rounded-[8px] px-2.5 py-1 text-left text-xs" disabled={page.loading} onClick={() => {
+      if (usesServer(page)) { page.loadMore(); return; }
+      setFallback(current => {
+        const limits = current.scopeKey === scopeKey ? current.limits : INITIAL_FALLBACK_LIMITS;
+        return { scopeKey, limits: { ...limits, [group]: Math.min(limits[group] + 20, fallbackCount) } };
+      });
+    }}>Show more</button> : null;
   return <>
 
         {pinned.length + model.pinnedProjects.length > 0 || pinnedPage.cursor ? <WorkRailSection
@@ -56,7 +67,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
           onToggle={() => onToggle("pinned")}
         >
           {model.pinnedProjects.map(renderProject)}
-          {pinned.map((record) => renderChat(record, "pinned"))}{more(pinnedPage, "Pinned")}
+          {pinned.map((record) => renderChat(record, "pinned"))}{more(pinnedPage, "Pinned", "pinned", model.pinned.length)}
         </WorkRailSection> : null}
 
         <WorkRailSection
@@ -72,7 +83,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         </WorkRailSection>
 
         <WorkRailSection label="Needs you" attention count={count(needsPage, model.needsYou.length) + pendingBots.length} expanded={sections.needsYou} onToggle={() => onToggle("needsYou")}>
-          {needsYou.map(record => renderChat(record, "recent"))}{more(needsPage, "Needs you")}
+          {needsYou.map(record => renderChat(record, "recent"))}{more(needsPage, "Needs you", "needsYou", model.needsYou.length)}
           {pendingBots.map(bot => <button
             key={bot.chatId} type="button" aria-label={`Review ${bot.name} approval`} aria-current={activeChatId === bot.chatId ? "page" : undefined}
             disabled={!onOpenBotChat} className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
@@ -83,10 +94,10 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
           </button>)}
         </WorkRailSection>
         <WorkRailSection label="Working" count={count(workingPage, model.working.length)} expanded={sections.working} onToggle={() => onToggle("working")}>
-          {working.map(record => renderChat(record, "recent"))}{more(workingPage, "Working")}
+          {working.map(record => renderChat(record, "recent"))}{more(workingPage, "Working", "working", model.working.length)}
         </WorkRailSection>
         <WorkRailSection label="Done" count={count(donePage, model.doneDisplay.length)} expanded={sections.done} onToggle={() => onToggle("done")}>
-          {done.map(record => renderChat(record, "recent"))}{more(donePage, "Done")}
+          {done.map(record => renderChat(record, "recent"))}{more(donePage, "Done", "done", model.doneDisplay.length)}
         </WorkRailSection>
   </>;
 }

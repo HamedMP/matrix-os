@@ -27,6 +27,7 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
   const [readAttempt, setReadAttempt] = useState(0);
   const draftRevision = useRef(0);
   const generation = useRef(0);
+  const submission = useRef<{ generation: number; revision: number; text: string; id: string } | null>(null);
   useEffect(() => {
     const current = ++generation.current;
     setSnapshot(null);
@@ -47,13 +48,18 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
     if (!text || pending || !snapshot) return;
     const current = generation.current;
     const submittedRevision = draftRevision.current;
+    if (!submission.current || submission.current.generation !== current || submission.current.revision !== submittedRevision || submission.current.text !== text) {
+      submission.current = { generation: current, revision: submittedRevision, text, id: `req_${crypto.randomUUID().replaceAll("-", "")}` };
+    }
+    const attempt = submission.current;
     setPending(true);
     setError(null);
     try {
       if (!snapshot.threadId) await client.createSideChat(chatId);
-      const response = await client.askSideChat(chatId, { clientRequestId: `req_${crypto.randomUUID().replaceAll("-", "")}`, text });
+      const response = await client.askSideChat(chatId, { clientRequestId: attempt.id, text });
       if (generation.current !== current) return;
       setSnapshot(response);
+      if (submission.current === attempt) submission.current = null;
       if (draftRevision.current === submittedRevision) setDraft("");
     } catch (cause: unknown) {
       if (generation.current !== current) return;
