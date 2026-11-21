@@ -28,6 +28,22 @@ describe("ensureHome", () => {
     expect(existsSync(join(homePath, "system"))).toBe(true);
   });
 
+  it("seeds the full template, including owner defaults, into an existing empty home", () => {
+    // A home directory created ahead of first boot (volume mount, provisioning
+    // mkdir) holds no owner data yet, so it must get the same icons, wallpapers
+    // and desktop settings as a home that ensureHome creates itself.
+    const homePath = join(tmpDir, "home");
+    mkdirSync(homePath, { recursive: true });
+
+    ensureHome(homePath);
+
+    expect(existsSync(join(homePath, "system", "desktop.json"))).toBe(true);
+    expect(existsSync(join(homePath, "system", "theme.json"))).toBe(true);
+    expect(existsSync(join(homePath, "system", "icons", "chat.png"))).toBe(true);
+    expect(existsSync(join(homePath, "system", "wallpapers", "moraine-lake.jpg"))).toBe(true);
+    expect(existsSync(join(homePath, ".git"))).toBe(true);
+  });
+
   it("syncs new template files to existing home without overwriting", () => {
     const homePath = join(tmpDir, "home");
     // Simulate an older home directory with just system/
