@@ -21,6 +21,8 @@ export interface CronService {
 export const CRON_CATCH_UP_CHECK_MS = 30_000;
 /** An occurrence counts as missed only once it is this far overdue, so a timer that is merely firing late is not doubled. */
 export const CRON_CATCH_UP_GRACE_MS = 30_000;
+/** Wall-clock advance beyond the monotonic clock between two checks that counts as a resume from sleep. */
+export const CRON_CLOCK_JUMP_TOLERANCE_MS = 5_000;
 
 interface TimerEntry {
   handle: ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
@@ -58,6 +60,9 @@ export function createCronService(config: CronServiceConfig): CronService {
   const timers = new Map<string, TimerEntry>();
   const cronTasks = new Map<string, CronEntry>();
   let catchUpCheck: ReturnType<typeof setInterval> | null = null;
+  // Wall and monotonic readings at the previous check, used to detect a resume from a memory snapshot.
+  let lastCheckWall = 0;
+  let lastCheckMono = 0;
   let started = false;
 
   /** Starts one run: records lastRunAt (persisted asynchronously), then triggers. */
@@ -90,44 +95,67 @@ export function createCronService(config: CronServiceConfig): CronService {
     }
   }
 
-  /** Runs, once, every job whose expected occurrence passed without firing, then reschedules it from now. */
-  function catchUpOverdue(): void {
-    const overdueBefore = Date.now() - CRON_CATCH_UP_GRACE_MS;
-    const overdue: string[] = [];
-    for (const [id, timer] of timers) if (timer.nextAt < overdueBefore) overdue.push(id);
-    for (const [id, entry] of cronTasks) if (entry.nextAt !== null && entry.nextAt < overdueBefore) overdue.push(id);
-    if (overdue.length === 0) return;
-    const jobs = new Map(store.list().map((job) => [job.id, job]));
-    for (const id of overdue) {
-      const job = jobs.get(id);
-      if (job === undefined) {
-        clearJob(id);
+  /**
+   * Periodic check. Normally it runs, once, any job more than the grace period past its expected
+   * occurrence. When the wall clock advanced well beyond the monotonic clock since the last check
+   * (a memory-snapshot resume), every pending timer is late by the pause, so every job is
+   * rescheduled from now at once: upcoming occurrences fire on time and overdue ones run once.
+   */
+  function checkSchedules(): void {
+    const wall = Date.now();
+    const mono = performance.now();
+    const jumped = wall - lastCheckWall - (mono - lastCheckMono) > CRON_CLOCK_JUMP_TOLERANCE_MS;
+    lastCheckWall = wall;
+    lastCheckMono = mono;
+    const overdueBefore = jumped ? wall : wall - CRON_CATCH_UP_GRACE_MS;
+
+    for (const job of store.list()) {
+      const nextAt = timers.get(job.id)?.nextAt ?? cronTasks.get(job.id)?.nextAt ?? null;
+      const overdue = nextAt !== null && nextAt <= overdueBefore;
+      if (!overdue && !jumped) continue;
+      if (job.schedule.type === "once") {
+        if (!overdue) {
+          scheduleJob(job);
+          continue;
+        }
+        clearJob(job.id);
+        runJob(job);
+        store.remove(job.id);
         continue;
       }
-      if (job.schedule.type === "once") {
-        clearJob(id);
-        runJob(job);
-        store.remove(id);
+      if (!overdue) {
+        // Keep the expected time; only the late timer is replaced.
+        scheduleJob(job, nextAt ?? undefined);
         continue;
       }
       // Rescheduling first drops the late timer so the occurrence cannot fire a second time.
-      scheduleJob(job);
+      scheduleJob(job, job.schedule.type === "interval" ? wall + job.schedule.intervalMs : undefined);
       runJob(job);
     }
   }
 
-  function scheduleJob(job: CronJob): void {
+  /** `intervalFirstAt` (epoch ms) overrides an interval job's first fire; otherwise lastRunAt + interval, or now + interval. */
+  function scheduleJob(job: CronJob, intervalFirstAt?: number): void {
     clearJob(job.id);
 
     switch (job.schedule.type) {
       case "interval": {
         const intervalMs = job.schedule.intervalMs;
+        const now = Date.now();
+        const afterLastRun = (epochMs(job.lastRunAt) ?? Number.NaN) + intervalMs;
+        const firstAt = intervalFirstAt ?? (afterLastRun > now ? afterLastRun : now + intervalMs);
+        const tick = (): void => {
+          if (timers.get(job.id) !== entry) return;
+          entry.nextAt = Date.now() + intervalMs;
+          runJob(job);
+        };
         const entry: TimerEntry = {
-          nextAt: Date.now() + intervalMs,
-          handle: setInterval(() => {
-            entry.nextAt = Date.now() + intervalMs;
-            runJob(job);
-          }, intervalMs),
+          nextAt: firstAt,
+          handle: setTimeout(() => {
+            if (timers.get(job.id) !== entry) return;
+            entry.handle = setInterval(tick, intervalMs);
+            tick();
+          }, Math.max(0, firstAt - now)),
         };
         timers.set(job.id, entry);
         break;
@@ -151,6 +179,9 @@ export function createCronService(config: CronServiceConfig): CronService {
         if (!cron.validate(job.schedule.cron)) break;
         const entry: CronEntry = {
           task: cron.schedule(job.schedule.cron, () => {
+            // node-cron runs this from a queued inner timeout that task.stop() does not cancel,
+            // so a callback from a task replaced by a reschedule must not run the job again.
+            if (cronTasks.get(job.id) !== entry) return;
             entry.nextAt = epochMs(entry.task.getNextRun());
             runJob(job);
           }),
@@ -187,7 +218,9 @@ export function createCronService(config: CronServiceConfig): CronService {
         // At most one catch-up run per job, however many occurrences were missed.
         if (missedSinceLastRun(job, now)) runJob(job);
       }
-      catchUpCheck = setInterval(catchUpOverdue, CRON_CATCH_UP_CHECK_MS);
+      lastCheckWall = Date.now();
+      lastCheckMono = performance.now();
+      catchUpCheck = setInterval(checkSchedules, CRON_CATCH_UP_CHECK_MS);
       catchUpCheck.unref?.();
     },
 

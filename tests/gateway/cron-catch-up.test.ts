@@ -143,4 +143,51 @@ describe("cron catch-up of missed runs", () => {
       expect(createCronStore(storePath).load()[0]?.lastRunAt).toBe("2026-11-21T12:01:00.000Z");
     });
   });
+
+  it("an interval job restarted before its next run fires at lastRunAt + interval", () => {
+    vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
+    // Woken 60 s before the next run is due.
+    startWith([makeJob({
+      schedule: { type: "interval", intervalMs: 10 * 60_000 },
+      lastRunAt: "2026-11-21T12:21:00.000Z",
+    })]);
+    expect(onTrigger).not.toHaveBeenCalled();
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:31:00.000Z");
+    vi.advanceTimersByTime(60_000 - 1);
+    expect(onTrigger).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:41:00.000Z");
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(onTrigger).toHaveBeenCalledTimes(2);
+  });
+
+  it("a memory-restore wake shortly before an occurrence runs it on time, once", async () => {
+    const runTimes: string[] = [];
+    onTrigger.mockImplementation(() => runTimes.push(new Date().toISOString()));
+    vi.setSystemTime(new Date("2026-11-21T12:00:30.000Z"));
+    startWith([makeJob()]);
+
+    // Paused at 12:00:30, restored at 12:59:00 (60 s before the 13:00 run): timers resume late.
+    vi.setSystemTime(new Date("2026-11-21T12:59:00.000Z"));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(runTimes).toHaveLength(1);
+    const lateness = new Date(runTimes[0]!).getTime() - Date.parse("2026-11-21T13:00:00.000Z");
+    expect(lateness).toBeGreaterThanOrEqual(0);
+    expect(lateness).toBeLessThanOrEqual(1_000);
+  });
+
+  it("a superseded cron task's queued callback does not run the job again", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+    startWith([makeJob({ schedule: { type: "cron", cron: "* * * * *" } })]);
+    await vi.advanceTimersByTimeAsync(60_000 - 1);
+    expect(onTrigger).not.toHaveBeenCalled();
+
+    // Resume lands on a still-matching second: the late heartbeat queues a run and the
+    // catch-up check, due in the same timer batch, reschedules the overdue job.
+    vi.setSystemTime(new Date("2026-11-21T12:01:59.999Z"));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
 });
