@@ -16,6 +16,7 @@ WorkTab already exceeds the entrypoint size guideline. Extract responsive layout
 
 ## Behavior checks
 
+- Visiting Archives hides the retained conversation and inspector instead of unmounting them, so an unsent Side chat question survives returning to the same chat. Authority changes still reset the archive provider.
 - Main/side transcripts remain server-separated; Copy cannot submit a main-chat turn.
 - Archive actions retain revision checks, failed selections, server search/cursors and authority generation guards.
 - Terminal close remains confirmed and stops only its own session; closing other tabs leaves sessions intact.

@@ -108,9 +108,9 @@ describe("HostedWorkSidebar", () => {
     render(<WorkSurfaceRuntimeProvider active={false}><SidebarArchiveLink/><WorkArchiveOutlet client={client} projects={[]}><p>Main conversation</p></WorkArchiveOutlet></WorkSurfaceRuntimeProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
     expect(await screen.findByRole("heading", { name: "Archived chats" })).toBeTruthy();
-    expect(screen.queryByText("Main conversation")).toBeNull();
+    expect(screen.getByText("Main conversation").closest("[hidden]")).not.toBeNull();
     act(() => useConnection.setState({ authGeneration: 2 }));
-    expect(screen.getByText("Main conversation")).toBeTruthy();
+    expect(screen.getByText("Main conversation").closest("[hidden]")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Archived chats" })).toBeNull();
   });
   it("leaves the archive when an existing bot conversation is selected", async () => {

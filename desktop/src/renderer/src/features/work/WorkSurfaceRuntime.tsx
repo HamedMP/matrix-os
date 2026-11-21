@@ -130,7 +130,11 @@ export function WorkArchiveProvider({ children }: { children: ReactNode }) {
 
 export function WorkArchiveOutlet({ client, projects, children }: { client: CanonicalChatClient | null; projects: readonly Project[]; children: ReactNode }) {
   const archive = useWorkArchiveNavigation();
-  return archive?.open && client ? <ArchivedChatsPage client={client} projects={projects} onChanged={archive.changed}/> : children;
+  const showingArchive = Boolean(archive?.open && client);
+  return <>
+    <div hidden={showingArchive} className={showingArchive ? "hidden" : "contents"}>{children}</div>
+    {showingArchive && client && archive ? <ArchivedChatsPage client={client} projects={projects} onChanged={archive.changed}/> : null}
+  </>;
 }
 
 export type SideChatDraftRequest = { id: number; chatId: string; text: string };

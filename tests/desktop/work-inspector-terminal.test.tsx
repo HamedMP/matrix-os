@@ -9,7 +9,7 @@ import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-naviga
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
 import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
 import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
-import { SideChatDraftContext } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
+import { SideChatDraftContext, WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -121,6 +121,28 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("retains the real unsent Side chat question while visiting Archives", async () => {
+    const getSideChat = vi.fn(async () => ({ threadId: "side_fixture", messages: [] }));
+    const client = { getSideChat, list: vi.fn(async () => ({ items: [] })), askSideChat: vi.fn() } as unknown as CanonicalChatClient;
+    function ArchiveJourney() {
+      const archive = useWorkArchiveNavigation()!;
+      return <><button onClick={archive.show}>Visit archives</button><button onClick={archive.close}>Return to chat</button>
+        <WorkArchiveOutlet client={client} projects={[]}><SideChatPanel chatId="chat_archive_draft" client={client} onSendToMain={vi.fn()} /></WorkArchiveOutlet></>;
+    }
+    render(<WorkArchiveProvider><ArchiveJourney /></WorkArchiveProvider>);
+    await waitFor(() => expect(getSideChat).toHaveBeenCalledOnce());
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Keep this question while I visit Archives" } });
+    fireEvent.click(screen.getByRole("button", { name: "Visit archives" }));
+    expect(screen.getByRole("heading", { name: "Archived chats" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Ask side chat" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Return to chat" }));
+    expect(screen.getByRole("textbox", { name: "Ask side chat" })).toBe(input);
+    expect(input.value).toBe("Keep this question while I visit Archives");
+    expect(getSideChat).toHaveBeenCalledOnce();
+    expect(client.askSideChat).not.toHaveBeenCalled();
+  });
+
   it("keeps the real Side chat question and inspector instance when hidden and reopened", async () => {
     useConnection.setState({ userId: "user_test" });
     const chatDetail = detail("chat_hide_draft");
