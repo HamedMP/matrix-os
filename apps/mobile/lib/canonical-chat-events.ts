@@ -269,6 +269,7 @@ export function createCanonicalChatEventSource(options: {
           buildGatewayRequestUrl(options.gatewayUrl, "/api/chats/events", { fundingVersion: "1" }),
         ));
         assertSecureTokenTransport(streamUrl);
+        streamUrl += "&routineReceiptVersion=1";
       } catch (error: unknown) {
         console.warn(
           "[canonical-chat] event stream origin rejected",

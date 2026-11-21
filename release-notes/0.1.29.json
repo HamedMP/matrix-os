@@ -1,0 +1,135 @@
+{
+  "version": "0.1.29",
+  "channel": "stable",
+  "date": "2026-11-16T20:23:13Z",
+  "locale": "en",
+  "title": "Your agents, at a glance",
+  "shortTitle": "Agents everywhere",
+  "summary": "See which coding agents are running, done or waiting on you from anywhere in Matrix, and jump straight back into the right conversation.",
+  "highlights": [
+    {
+      "tag": "Highlight",
+      "title": "Agent status everywhere",
+      "body": "Agents now report when they are working, finished or blocked. The status follows you across Desktop, Canvas and the desktop app, and the Inbox lists every agent that needs an answer.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop"
+      ],
+      "art": "agents",
+      "tone": "lime",
+      "prs": [
+        3296,
+        3297,
+        3299
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Local terminals, same powers",
+      "body": "Terminals on your computer now get the same tabs, agent controls and status as your Matrix computer.",
+      "surfaces": [
+        "electron-desktop"
+      ],
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        3300
+      ]
+    },
+    {
+      "tag": "Mobile",
+      "title": "Notifications open the right chat",
+      "body": "Tap a notification on your phone and land in the exact conversation that sent it.",
+      "surfaces": [
+        "native-mobile"
+      ],
+      "art": "notification",
+      "tone": "sand",
+      "prs": [
+        3285,
+        3317
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "An Organization tab in Share, with chats you can hand off."
+    },
+    {
+      "kind": "improved",
+      "text": "The Share menu has clear private and public options."
+    },
+    {
+      "kind": "new",
+      "text": "The launcher shows organization badges, new-app dots and organization filters."
+    },
+    {
+      "kind": "new",
+      "text": "Organization links open in the desktop app."
+    },
+    {
+      "kind": "fixed",
+      "text": "People you share an app with can open it, read it and submit in it."
+    },
+    {
+      "kind": "new",
+      "text": "Set up GitHub from Settings on mobile with a device code, no copying tokens."
+    },
+    {
+      "kind": "new",
+      "text": "Mobile chat lists show whether each chat is running or waiting."
+    },
+    {
+      "kind": "improved",
+      "text": "The mobile composer moves with the keyboard, and sent messages animate."
+    },
+    {
+      "kind": "improved",
+      "text": "Agents can be grouped under a parent agent, with templates and labels."
+    },
+    {
+      "kind": "fixed",
+      "text": "Shared chats stay available when the connection is slow."
+    },
+    {
+      "kind": "fixed",
+      "text": "The chat composer only warns about the model you actually picked."
+    },
+    {
+      "kind": "fixed",
+      "text": "A project chat on mobile recovers when a send loses its response."
+    },
+    {
+      "kind": "fixed",
+      "text": "Quiet terminal commands are no longer cut off early."
+    },
+    {
+      "kind": "fixed",
+      "text": "Window controls on Windows line up with the title bar."
+    },
+    {
+      "kind": "improved",
+      "text": "Status labels in the desktop app are easier to read."
+    },
+    {
+      "kind": "improved",
+      "text": "Routines you approve no longer need a separate confirmation inbox."
+    },
+    {
+      "kind": "fixed",
+      "text": "A failed browser action no longer suggests that you took over."
+    }
+  ],
+  "hidden": [
+    3394,
+    3395,
+    3366,
+    3433,
+    3284,
+    3386,
+    3408,
+    3295
+  ]
+}

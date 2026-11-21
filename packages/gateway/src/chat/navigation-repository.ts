@@ -1,3 +1,5 @@
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
+import { incomingChatMessagePredicate } from "./records.js";
 import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatNavigationItemSchema, CanonicalChatNavigationQuerySchema,
   CanonicalChatNavigationResponseSchema, CanonicalOwnerScopeSchema,
@@ -33,6 +35,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         SELECT id,title,title_version,activity_at,lifecycle,attention,revision,message_count,user_state,project_id,
           bound_driver_kind,bound_instance_id,bound_at_turn_id,collaboration,created_at,updated_at
         FROM chats WHERE owner_type = ${owner.type} AND owner_id = ${owner.ownerId} ${lifecycle}
+          AND ${publicChatIdPredicate(sql.ref("chats.id"))}
         ORDER BY activity_at DESC,id ASC LIMIT ${input.limit + 1}
       ), page AS MATERIALIZED (
         SELECT * FROM selected ORDER BY activity_at DESC,id ASC LIMIT ${input.limit}
@@ -48,7 +51,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         ORDER BY r.chat_id,r.completed_at DESC,r.created_at DESC,r.id DESC
       ), incoming AS (
         SELECT m.chat_id,MAX(m.seq) AS seq FROM chat_messages m JOIN page p ON p.id=m.chat_id
-        WHERE m.role='assistant' AND m.state='committed' GROUP BY m.chat_id
+        WHERE ${incomingChatMessagePredicate("m")} GROUP BY m.chat_id
       ), bindings AS (
         SELECT DISTINCT ON (b.chat_id) b.chat_id,b.bot_id FROM bot_chat_bindings b JOIN page p ON p.id=b.chat_id
         WHERE b.owner_id=${owner.ownerId} AND b.kind='direct' AND b.removed_at IS NULL

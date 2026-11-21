@@ -2,7 +2,7 @@ import { useDesktopRoutineConfirmation } from "./use-desktop-routine-confirmatio
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import { useChatReadState, mergeChatReadState, type CanonicalChatClientAdmission } from "@matrix-os/ui";
-import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatDisplayedIncomingSeq, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -25,7 +25,7 @@ import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitDesktopChatTurn } from "./canonical-chat-turn-admission";
+import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -501,16 +501,7 @@ export function useCanonicalChatRouteController({
       });
       if (!admitted) return null;
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
-      const streamed = detailRef.current;
-      const next: CanonicalChatDetailResponse = admitted.recoveredDetail ?? {
-        ...(current ?? { activities: [] }),
-        record: admitted.record,
-        messages: [...(current?.messages ?? []), admitted.message],
-        turns: [...(current?.turns ?? []), admitted.turn],
-        runs: [...(current?.runs ?? []), admitted.run],
-      };
-      const resolved = streamed?.record.chat.id === next.record.chat.id
-        && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
+      const resolved = resolveDesktopAdmittedDetail(admitted, current, detailRef.current);
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
       detailRef.current = resolved;
@@ -954,7 +945,7 @@ export function useCanonicalChatRouteController({
   useChatReadState({
     chatId: activeChatId,
     state: detail?.record.chat.id === activeChatId ? detail.record.readState : undefined,
-    throughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    throughSeq: canonicalChatDisplayedIncomingSeq(detail?.messages ?? []),
     active, onRead: updateReadState,
   });
 

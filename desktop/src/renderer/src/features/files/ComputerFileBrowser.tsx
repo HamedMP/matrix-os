@@ -35,6 +35,7 @@ import {
   SortHeader,
   UploadStatusList,
 } from "./browser-views";
+import { canMoveFileToTrash, FileTrashDialogs, OpenTrashButton, useFileTrash } from "./FileTrashControls";
 import { useFileUploads } from "./use-file-uploads";
 
 type BrowserStatus = "loading" | "ready" | "error";
@@ -83,6 +84,7 @@ export default function ComputerFileBrowser({
   onRequestCreateFolder,
   onRequestCreateFile,
   refreshRevision = 0,
+  allowTrash = false,
 }: {
   compact?: boolean;
   fillAvailableHeight?: boolean;
@@ -108,6 +110,7 @@ export default function ComputerFileBrowser({
   onRequestCreateFolder?: (parentPath: string) => void;
   onRequestCreateFile?: (parentPath: string) => void;
   refreshRevision?: number;
+  allowTrash?: boolean;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -146,6 +149,7 @@ export default function ComputerFileBrowser({
   const dragDepth = useRef(0);
   const [dragActive, setDragActive] = useState(false);
   const [contextFile, setContextFile] = useState<{ path: string; size?: number; scope: string } | null>(null);
+  const [contextTrashEntry, setContextTrashEntry] = useState<{ path: string; type: BrowserEntry["type"]; scope: string; directory: string } | null>(null);
   const [contextDirectory, setContextDirectory] = useState<{ path: string; name: string } | null>(null);
   const refreshMounted = useRef(false);
 
@@ -204,6 +208,15 @@ export default function ComputerFileBrowser({
       setError(toUserMessage(err));
     }
   }, [api]);
+
+  const trashEnabled = allowTrash && mode === "browse";
+  const trash = useFileTrash(trashEnabled, (movedPath) => {
+    if (movedPath && viewSelectedPath === movedPath) {
+      setSelectedPath(null);
+      onSelectionChange?.(null);
+    }
+    void load(viewCurrentPath);
+  });
 
   const fileUploads = useFileUploads({
     api,
@@ -437,6 +450,7 @@ export default function ComputerFileBrowser({
             ? (files) => enqueueFiles(files, path)
             : undefined}
           contextPath={path}
+          attachmentPath={mode === "browse" && entry.type === "file" && !isManagedBrowserPath(path) ? path : undefined}
         />
       );
       return entryButton;
@@ -524,6 +538,7 @@ export default function ComputerFileBrowser({
         }}
         onSearchQueryChange={setSearchQuery}
         showViewSwitcher={!forceList}
+        actions={trashEnabled ? <OpenTrashButton trash={trash} /> : undefined}
       />
 
       {mode === "browse" ? (
@@ -547,6 +562,9 @@ export default function ComputerFileBrowser({
             ...(contextDirectory && onOpenFolderInNewTab
               ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]
               : []),
+            ...(trashEnabled && contextTrashEntry?.scope === browserScope && contextTrashEntry.directory === viewCurrentPath
+              ? [{ label: "Move to Trash", disabled: trash.pending, onSelect: () => trash.requestMove(contextTrashEntry.path, contextTrashEntry.type) }]
+              : []),
             ...(onRequestCreateFolder && !isProtectedFolderCreationParentPath(contextDirectory?.path ?? viewCurrentPath)
               ? [{ label: "New folder…", onSelect: () => onRequestCreateFolder(contextDirectory?.path ?? viewCurrentPath) }]
               : []),
@@ -563,6 +581,8 @@ export default function ComputerFileBrowser({
           const entry = scoped && path ? viewEntries.find((item) => joinPath(viewCurrentPath, item.name) === path) : undefined;
           setContextDirectory(path && entry?.type === "directory" ? { path, name: entry.name } : null);
           setContextFile(path && entry?.type === "file" ? { path, size: entry.sizeBytes, scope: browserScope } : null);
+          setContextTrashEntry(trashEnabled && path && entry && canMoveFileToTrash(path)
+            ? { path, type: entry.type, scope: browserScope, directory: viewCurrentPath } : null);
         }}
         className={`${compact && !fillAvailableHeight ? "h-52" : "min-h-0 flex-1"} relative overflow-y-auto ${
           compact && effectiveView === "list" ? "px-1.5 pb-1.5" : compact || effectiveView === "grid" ? "p-1.5" : "pb-4"
@@ -592,6 +612,7 @@ export default function ComputerFileBrowser({
       </div>
       </ContextMenu>
 
+      {trashEnabled ? <FileTrashDialogs trash={trash} /> : null}
       <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
 
       {onChooseFolder ? (

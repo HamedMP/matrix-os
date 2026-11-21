@@ -42,10 +42,12 @@ describe("green left over from the old design", () => {
     expect(source(path).match(GREEN) ?? []).toEqual([]);
   });
 
-  it("keeps green in App settings only for the switches", () => {
-    const matches = source("app/settings-detail/app-settings.tsx").match(GREEN) ?? [];
-    expect(matches).toEqual(["appColors.green", "appColors.green"]);
-    expect(source("app/settings-detail/app-settings.tsx").match(/trackColor=.*appColors\.green/g)).toHaveLength(2);
+  it("keeps green in settings only for the switches", () => {
+    // App settings draws its switches with the shared settings switch row.
+    expect(source("app/settings-detail/app-settings.tsx").match(GREEN) ?? []).toEqual([]);
+    const surface = source("components/settings/SettingsSurface.tsx");
+    expect(surface.match(GREEN) ?? []).toEqual(["appColors.green"]);
+    expect(surface.match(/trackColor=.*appColors\.green/g)).toHaveLength(1);
   });
 
   it("draws the terminal console in neutral greys", () => {

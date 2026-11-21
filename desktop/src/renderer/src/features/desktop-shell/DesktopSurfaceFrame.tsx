@@ -27,6 +27,7 @@ import {
 import { BotDetailsContext, SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
 import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
+import { MATRIX_FILE_DRAG_TYPE } from "../chat/attachments/matrix-file-attachment";
 
 export function shouldActivateDesktopPane(input: {
   active: boolean;
@@ -298,6 +299,11 @@ export default function DesktopSurfaceFrame({
       className={`pointer-events-auto absolute min-h-0 min-w-0 flex-col ${isNativeEmbed && isWindow ? "overflow-visible" : "overflow-hidden"} transition-[box-shadow,border-color] duration-150`}
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
+      onDragEnterCapture={event => {
+        if (!isWorkSurface || active || !visible || overlayOpen || isDesktopHidden || isDesktopTransition) return;
+        const types = event.dataTransfer?.types;
+        if (types?.includes(MATRIX_FILE_DRAG_TYPE) || types?.includes("Files")) onFocus();
+      }}
     >
       <BotDetailsContext.Provider value={isWorkSurface ? botDetailsHost : null}>
       <div

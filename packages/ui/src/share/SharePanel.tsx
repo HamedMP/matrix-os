@@ -92,9 +92,9 @@ export function SharePanel({ share, appSlug, appName, client, ownerInitial, onCl
 function ShareTabBar({ share, organization, showPrivate }: { share: ShareController; organization?: ShareOrganizationSlot | null; showPrivate: boolean }) {
   const dots = tabIndicators(share.pageMode, organization?.shared ?? false);
   return <ShareTabsList aria-label="Sharing options">
-    {showPrivate ? <ShareTabsTrigger value="private"><Lock aria-hidden="true" className="size-[15px]" /><span>Private</span>{dots.private ? <OnDot /> : null}</ShareTabsTrigger> : null}
-    {organization ? <ShareTabsTrigger value="organization"><Building2 aria-hidden="true" className="size-[15px]" /><span>Organization</span>{dots.organization ? <OnDot /> : null}</ShareTabsTrigger> : null}
-    <ShareTabsTrigger value="public"><Globe aria-hidden="true" className="size-[15px]" /><span>Public</span>{dots.public ? <OnDot /> : null}</ShareTabsTrigger>
+    {showPrivate ? <ShareTabsTrigger value="private"><Lock aria-hidden="true" className="size-[15px]" /><span className="min-w-0 truncate">Private</span>{dots.private ? <OnDot /> : null}</ShareTabsTrigger> : null}
+    {organization ? <ShareTabsTrigger value="organization"><Building2 aria-hidden="true" className="size-[15px]" /><span className="min-w-0 truncate">Organization</span>{dots.organization ? <OnDot /> : null}</ShareTabsTrigger> : null}
+    <ShareTabsTrigger value="public"><Globe aria-hidden="true" className="size-[15px]" /><span className="min-w-0 truncate">Public</span>{dots.public ? <OnDot /> : null}</ShareTabsTrigger>
   </ShareTabsList>;
 }
 

@@ -1,0 +1,69 @@
+{
+  "version": "0.1.10",
+  "channel": "stable",
+  "date": "2026-10-05T11:19:16Z",
+  "locale": "en",
+  "title": "Your accounts, your way",
+  "shortTitle": "Accounts in Settings",
+  "summary": "Connect your own AI accounts from Settings, see your credit history, and talk to Matrix on WhatsApp.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Connect AI accounts in Settings",
+      "body": "Sign in to your own AI provider accounts right from Settings and see each one's status. Account actions are back, and your credentials stay protected.",
+      "art": "shield",
+      "tone": "ink",
+      "prs": [
+        2094,
+        2095,
+        2157,
+        2158,
+        2127,
+        2163,
+        2156
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "WhatsApp, confirmed",
+      "body": "Link your WhatsApp account from a chat. Matrix reacts to your messages while it works and when it's done.",
+      "art": "notification",
+      "tone": "sand",
+      "prs": [
+        2151,
+        2152,
+        2138
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Matrix AI credits and usage history are back in Settings."
+    },
+    {
+      "kind": "new",
+      "text": "Matrix AI now powers Pi chats, bots, integrations and MCP tools."
+    },
+    {
+      "kind": "improved",
+      "text": "Bot conversations have their own place, and project navigation is updated."
+    },
+    {
+      "kind": "new",
+      "text": "Shared projects and their chats open in the Chats app."
+    },
+    {
+      "kind": "fixed",
+      "text": "Moving a chat between projects keeps its model context."
+    },
+    {
+      "kind": "fixed",
+      "text": "Matrix AI chats start reliably again."
+    }
+  ],
+  "hidden": [
+    2154,
+    2160
+  ]
+}

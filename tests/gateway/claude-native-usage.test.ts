@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createClaudeNativeUsageReader, normalizeClaudeNativeUsage } from "../../packages/gateway/src/ai-providers/claude-native-usage.js";
+import { createClaudeNativeCredentialReader } from "../../packages/gateway/src/ai-providers/claude-native-credential.js";
 const now = new Date("2026-10-07T15:00:00Z");
 const raw = { five_hour: { utilization: 3, resets_at: "2026-10-07T20:10:00.152986+00:00" }, seven_day: { utilization: 14, resets_at: "2026-10-12T13:00:00Z" } };
 const homes: string[] = [];
@@ -22,6 +23,16 @@ it("normalizes only real five-hour allowance and reset", () => {
  expect(normalizeClaudeNativeUsage({...raw,five_hour:null},now)).toBeUndefined();
  expect(normalizeClaudeNativeUsage({...raw,five_hour:{utilization:101,resets_at:raw.five_hour.resets_at}},now)).toBeUndefined();
  expect(normalizeClaudeNativeUsage({...raw,five_hour:{utilization:3,resets_at:now.toISOString()}},now)).toBeUndefined();
+});
+it("reads a fresh inference credential only with the native inference scope", async () => {
+ const f = await fixture();
+ const read = createClaudeNativeCredentialReader({homePath:f.home,scope:"user:inference",now:()=>now});
+ expect(await read()).toMatchObject({token:"fixture-secret"});
+ await writeFile(f.path,JSON.stringify({claudeAiOauth:{...f.credentials.claudeAiOauth,scopes:["user:profile"]}}));
+ expect(await read()).toBeNull();
+ await writeFile(f.path,JSON.stringify({claudeAiOauth:{...f.credentials.claudeAiOauth,expiresAt:+now}}));
+ expect(await read()).toBeNull();
+ expect(f.fetcher).not.toHaveBeenCalled();
 });
 it("reads quota server-side, coalesces reads, and retains only normalized data", async () => {
  const f=await fixture(); const [a,b]=await Promise.all([f.read(),f.read()]);

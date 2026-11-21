@@ -28,6 +28,10 @@ export type IntegrationsStatus = "idle" | "loading" | "ready" | "unavailable" | 
 interface IntegrationsState {
   available: AvailableIntegration[];
   connections: ConnectedIntegration[];
+  // Identity of the account/computer client whose load produced `connections`
+  // (null when empty or unknown). A reference token, not data: readers that
+  // render connections outside this section compare it to the active client.
+  connectionsSource: ApiClient | null;
   status: IntegrationsStatus;
   // Generic, display-safe copy (categoryMessage/toUserMessage output only).
   errorMessage: string | null;
@@ -72,6 +76,7 @@ let refreshSequence = 0;
 export const useIntegrations = create<IntegrationsState>()((set) => ({
   available: [],
   connections: [],
+  connectionsSource: null,
   status: "idle",
   errorMessage: null,
 
@@ -87,6 +92,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
         errorMessage: categoryMessage("misconfigured"),
         available: [],
         connections: [],
+        connectionsSource: null,
       });
       return;
     }
@@ -99,7 +105,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       const err = availableRes.status === "rejected" ? availableRes.reason : (connectionsRes as PromiseRejectedResult).reason;
       if (err instanceof AppError && err.category === "notFound") {
         if (superseded()) return;
-        set({ status: "unavailable", available: [], connections: [], errorMessage: null });
+        set({ status: "unavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
         return;
       }
       logWarn("refresh failed", err);
@@ -112,6 +118,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       status: "ready",
       available: parseAvailableIntegrations(availableRes.value),
       connections: parseConnectedIntegrations(connectionsRes.value),
+      connectionsSource: api,
       errorMessage: null,
     });
   },
@@ -132,7 +139,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       // Owns the terminal status when it supersedes an in-flight catalog load:
       // that load returns without writing one, so leaving status untouched
       // strands the panel on "loading" with no retry affordance.
-      set({ status: "ready", connections: parseConnectedIntegrations(raw), errorMessage: null });
+      set({ status: "ready", connections: parseConnectedIntegrations(raw), connectionsSource: api, errorMessage: null });
       return "ok";
     } catch (err: unknown) {
       logWarn("sync failed", err);
@@ -174,7 +181,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       logWarn("connect failed", err);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       if (err instanceof AppError && err.category === "notFound") {
-        set({ status: "unavailable", available: [], connections: [], errorMessage: null });
+        set({ status: "unavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
         return null;
       }
       set({ errorMessage: toUserMessage(err) });

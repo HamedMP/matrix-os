@@ -1,3 +1,4 @@
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import type { OwnerToolOutputProjection } from "./owner-tool-output.js";
 import {
   CanonicalChatEventCursorSchema,
@@ -167,7 +168,7 @@ export function createCanonicalChatEventStream(options: {
   }
 
   function deliver(subscriber: Subscriber, event: ChatOutboxEvent, live = true): boolean {
-    if (!rememberCursor(subscriber, event.cursor)) return true;
+    if (isRoutineDirectChatId(event.chatId) || !rememberCursor(subscriber, event.cursor)) return true;
     try {
       // Captured content contains the Chat's sharing state at commit time.
       // Replayed and attach-buffered events may now belong to a shared Chat;
@@ -209,7 +210,7 @@ export function createCanonicalChatEventStream(options: {
   }
 
   const sink = options.repository.registerOutboxSink((input) => {
-    publish(input.owner, input.event);
+    if (!isRoutineDirectChatId(input.event.chatId)) publish(input.owner, input.event);
     options.onCommittedEvent?.(input);
   });
 

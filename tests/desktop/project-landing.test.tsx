@@ -153,11 +153,11 @@ describe("ProjectLanding", () => {
     expect(screen.getAllByRole("button", { name: /^Open Plan / })).toHaveLength(12);
   });
 
-  it("shows ordinary Project chats including pinned chats as metadata-style cards and opens their stable identity", () => {
+  it("lists ordinary Project chats including pinned chats as conversation rows and opens their stable identity", () => {
     const record = {chat:{id:"chat_alpha",title:"Implementation plan",userState:{pinned:true},attention:"none"},projectId:project.id} as CanonicalChatRecord;
     const onSelectChat=vi.fn();
     render(<ProjectLanding project={project} records={[record]} onSelectChat={onSelectChat}><textarea aria-label="Draft" /></ProjectLanding>);
-    fireEvent.click(screen.getByRole("button",{name:"Open Implementation plan"}));
+    fireEvent.click(screen.getByRole("button",{name:"Open Implementation plan, Done"}));
     expect(onSelectChat).toHaveBeenCalledWith(record);
   });
 

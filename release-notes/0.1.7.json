@@ -1,0 +1,108 @@
+{
+  "version": "0.1.7",
+  "channel": "stable",
+  "date": "2026-10-02T13:34:22Z",
+  "locale": "en",
+  "title": "Your history and your drives, in Chat",
+  "shortTitle": "Chat imports and drives",
+  "summary": "Import your Codex and Claude history, and give chats context from your company drive.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Import Codex and Claude history",
+      "body": "Bring local Codex and Claude conversations into Matrix from Settings or the CLI. They arrive as private chats with their full history.",
+      "art": "sync",
+      "tone": "teal",
+      "prs": [
+        2073,
+        2080,
+        2081,
+        2064
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Company drive context in Chat",
+      "body": "Browse your company drive, then let a chat read the files you choose. Chats tied to a drive are grouped together, and you control what they can see.",
+      "art": "agents",
+      "tone": "lime",
+      "prs": [
+        2082,
+        2084,
+        2086,
+        2087,
+        2088,
+        2089,
+        2090
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Choose which organization you're working in."
+    },
+    {
+      "kind": "improved",
+      "text": "Sharing is easier to use in the browser and in the desktop app."
+    },
+    {
+      "kind": "new",
+      "text": "Chat replies fade in as they stream on mobile."
+    },
+    {
+      "kind": "improved",
+      "text": "Onboarding and the provider picker fit smaller windows."
+    },
+    {
+      "kind": "new",
+      "text": "Private chats show where files live on your Matrix computer."
+    },
+    {
+      "kind": "improved",
+      "text": "Apps your agent builds get a clear visual style, smoother motion and better charts."
+    },
+    {
+      "kind": "improved",
+      "text": "Your Matrix computer checks each update before installing it."
+    },
+    {
+      "kind": "fixed",
+      "text": "App windows in the desktop app fill their frame without gaps."
+    },
+    {
+      "kind": "fixed",
+      "text": "Installed apps open from the desktop app again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Chats in Supervised mode can ask your saved agents for help."
+    },
+    {
+      "kind": "fixed",
+      "text": "Sharing a folder from an archived project works."
+    },
+    {
+      "kind": "fixed",
+      "text": "Organization memberships stay up to date."
+    },
+    {
+      "kind": "fixed",
+      "text": "App builds that hang are stopped cleanly."
+    }
+  ],
+  "hidden": [
+    2062,
+    2066,
+    2068,
+    2063,
+    2071,
+    2074,
+    2092,
+    2098,
+    2105,
+    2120,
+    2121,
+    2123
+  ]
+}

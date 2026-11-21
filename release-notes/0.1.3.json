@@ -1,0 +1,50 @@
+{
+  "version": "0.1.3",
+  "channel": "stable",
+  "date": "2026-09-17T23:16:05Z",
+  "locale": "en",
+  "title": "Chat together",
+  "shortTitle": "Shared chats",
+  "summary": "Invite people into a chat and work with the same AI together, plus steadier terminals and chat history.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Shared chats",
+      "body": "Invite collaborators into a chat. Everyone sees the same conversation, messages show who wrote them, and the AI keeps working for the whole group.",
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        1744,
+        1741,
+        1740,
+        1739,
+        1742,
+        1737,
+        1732
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "fixed",
+      "text": "Terminals start, scroll and keep their session controls reliably."
+    },
+    {
+      "kind": "fixed",
+      "text": "Chat history keeps its titles while you scroll, and unread rows stay in place."
+    },
+    {
+      "kind": "fixed",
+      "text": "The Dock badge in the desktop app matches your unread chats."
+    },
+    {
+      "kind": "fixed",
+      "text": "Deleting a project also removes its chats and terminal sessions."
+    }
+  ],
+  "hidden": [
+    1731,
+    1675,
+    1733
+  ]
+}

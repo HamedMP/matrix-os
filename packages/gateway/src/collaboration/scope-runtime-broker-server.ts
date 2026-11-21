@@ -1,4 +1,5 @@
 /** Socket framing/lifetime only. Authority remains in the existing registered routeFrame consumer. */
+import { isRoutineCliMutation, ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES, INFERENCE_RESPONSE_FRAME_MAX_BYTES, BotBrokerRequestSchema } from "@matrix-os/contracts";
 import { ScopeRuntimeBotInferenceRequestSchema, ScopeRuntimeBrokerRequestSchema, ScopeRuntimeBrokerResponseSchema,
   type ScopeRuntimeBrokerRequest, type ScopeRuntimeBrokerResponse } from "@matrix-os/scope-runtime/broker-protocol";
@@ -37,7 +38,7 @@ export function createScopeRuntimeBrokerServer(options: {
    * (bot workloads). Returns undefined to use the shared broker path; a
    * routed handler resolving undefined drops the connection.
    */
-  routeFrame?(raw: unknown, signal: AbortSignal): Promise<Record<string, unknown> | undefined> | undefined;
+  routeFrame?(raw: unknown, signal: AbortSignal, allowRoutineOwnerWait?: () => void): Promise<Record<string, unknown> | undefined> | undefined;
   /** Explicitly registered Bot routes only; generic/shared frame caps remain unchanged. */
   botImageFrames?: boolean;
   maxConnections?: number;
@@ -146,11 +147,20 @@ export function createScopeRuntimeBrokerServer(options: {
           if (Buffer.byteLength(input, "utf8") > MAX_REQUEST_FRAME_BYTES
             && (!options.botImageFrames || !ScopeRuntimeBotInferenceRequestSchema.safeParse(raw).success)) { socket.destroy(); return; }
           input = '';
-          const routed = options.routeFrame?.(raw, transport.signal);
+          let extended = false;
+          // A schema-valid mutation can request the exception. Only the registered
+          // route's authenticated managed-run handler can grant it.
+          const mayWait = live.success && live.data.action === "bot.tool" && live.data.tool.capability === "routine.cli"
+            && isRoutineCliMutation(live.data.tool.args);
+          const routed = mayWait ? options.routeFrame?.(raw, transport.signal, () => {
+            if (extended || socket.destroyed) return;
+            extended = true;
+            socket.setTimeout(ROUTINE_CLI_MANAGED_REPLY_TIMEOUT_MS);
+          }) : options.routeFrame?.(raw, transport.signal);
           let frame: string;
           let maxResponseFrameBytes = MAX_RESPONSE_FRAME_BYTES;
           if (routed) {
-            socket.setTimeout(routedRequestTimeoutMs);
+            if (!extended) socket.setTimeout(routedRequestTimeoutMs);
             const response = await routed;
             if (!response) {
               socket.destroy();

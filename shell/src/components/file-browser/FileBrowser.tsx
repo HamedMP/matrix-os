@@ -23,6 +23,7 @@ import { OrganizationDrivesView } from "./OrganizationDrivesView";
 import { ShellFileAuthority } from "./ShellFileAuthority";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
+import { endMatrixFileDrag, startMatrixFileDrag } from "@/lib/matrix-file-drag";
 
 interface FileBrowserProps {
   windowId: string;
@@ -31,7 +32,7 @@ interface FileBrowserProps {
 }
 
 export function FileBrowser(props: FileBrowserProps) {
-  return <ShellFileAuthority>{(identity, gatewayUrl) => <FileBrowserForAuthority {...props} identity={identity} gatewayUrl={gatewayUrl} />}</ShellFileAuthority>;
+  return <ShellFileAuthority>{(identity, gatewayUrl) => <FileBrowserForAuthority key={identity} {...props} identity={identity} gatewayUrl={gatewayUrl} />}</ShellFileAuthority>;
 }
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The browser coordinates keyboard shortcuts, trash, search and organization drives.
@@ -69,6 +70,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   const refresh = useFileBrowser((s) => s.refresh);
   const selectedPaths = useFileBrowser((s) => s.selectedPaths);
   const entries = useFileBrowser((s) => s.entries);
+  const fileError = useFileBrowser((s) => s.error);
   const select = useFileBrowser((s) => s.select);
   const selectAll = useFileBrowser((s) => s.selectAll);
   const copy = useFileBrowser((s) => s.copy);
@@ -331,23 +333,37 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
       aria-label="File browser"
       // react-doctor-disable-next-line react-doctor/no-noninteractive-tabindex -- intentional focus target: this container hosts the file browser keyboard shortcut handler (arrows, copy/paste, F2, Enter)
       tabIndex={0}
-      onKeyDown={organizationDrivesVisible ? undefined : handleKeyDown}
+      onKeyDown={organizationDrivesVisible || showingTrash ? undefined : handleKeyDown}
+      onDragStartCapture={organizationDrivesVisible || showingTrash ? undefined : event => {
+        const entry = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-web-file-type=file]") : null;
+        const path = entry?.dataset.webFilePath;
+        if (path) startMatrixFileDrag(event.dataTransfer, path, identity, gatewayUrl);
+      }}
+      onDragEndCapture={endMatrixFileDrag}
     >
       <FileDownloadProvider>
       <div className="flex gap-2 border-b px-3 py-2 text-xs">
-        <button type="button" aria-current={!organizationDrivesVisible ? "page" : undefined}
-          onClick={() => setShowingOrganizationDrives(false)}
+        <button type="button" aria-current={!organizationDrivesVisible && (!mobile || !showingTrash) ? "page" : undefined}
+          onClick={() => {
+            setShowingOrganizationDrives(false);
+            if (mobile) setShowingTrash(false);
+          }}
           className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">My files</button>
+        {mobile && !isXpExplorer && !organizationDrivesVisible ? <button type="button" aria-pressed={showingTrash}
+          onClick={() => setShowingTrash(!showingTrash)}
+          className="rounded px-3 py-1.5 hover:bg-accent aria-pressed:bg-accent">Trash</button> : null}
         {organizationDrivesAvailable ? <button type="button" aria-current={organizationDrivesVisible ? "page" : undefined}
           onClick={() => setShowingOrganizationDrives(true)}
           className="rounded px-3 py-1.5 hover:bg-accent aria-[current=page]:bg-accent">Organization drives</button> : null}
       </div>
+      {fileError && !showingTrash && !organizationDrivesVisible ? <p role="alert" className="border-b px-3 py-2 text-xs text-destructive">{fileError}</p> : null}
       {selectedKind && selectedPath && !showingTrash && !searchResults && !organizationDrivesVisible
         ? <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath}
           containerClassName="flex justify-end border-b px-3 py-1.5" />
         : null}
       {organizationDrivesVisible ? <OrganizationDrivesView mobile={mobile} draftIdentity={identity} key={identity} requestedScopeId={activeDriveRequest?.scopeId} requestedIntentId={activeDriveRequest?.id} /> : isXpExplorer ? (
         <XpExplorer
+          gatewayUrl={gatewayUrl}
           renamingPath={renamingPath}
           onStartRename={setRenamingPath}
           onCancelRename={() => setRenamingPath(null)}
@@ -371,7 +387,7 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
                   PostHog session replay blocks this element natively. */}
               <div className="ph-no-capture flex-1 min-w-0 overflow-auto">
                 {showingTrash ? (
-                  <TrashView />
+                  <TrashView gatewayUrl={gatewayUrl} />
                 ) : searchResults ? (
                   <SearchResults onOpenFile={openFile} />
                 ) : (

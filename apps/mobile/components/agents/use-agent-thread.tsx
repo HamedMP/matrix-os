@@ -74,7 +74,7 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
   const { selection, turnModes } = agentTurnSetup({ agent, fromTemplate: Boolean(botChat.snapshot), detail, catalog });
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice, matrixAttachmentScope,
     sentAttachments, canSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
@@ -173,6 +173,9 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
         draft,
         onChangeDraft: handleDraftChange,
         enabled: signedIn,
+        matrix: gatewayUrl && !readOnly && !isSending && !chatReadFailed
+          && detail?.record.chat.ownerScope.type === "personal" && !detail.record.chat.collaboration
+          ? { gatewayUrl, scope: matrixAttachmentScope } : undefined,
       }),
     },
   };

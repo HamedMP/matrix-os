@@ -79,11 +79,11 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
+      .toBe("87a77417077059255deb56b73ee0c9881a2087f7c872e32c1c572d203fc4e52f");
     expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([
       {
         adapterId: "claude-code",
-        harnessVersion: "2.1.240",
+        harnessVersion: "2.1.301",
         workloads: ["chat_ai"],
       },
       {
@@ -139,7 +139,7 @@ describe("scope runtime supervisor", () => {
       profileId: SCOPE_RUNTIME_PROFILE.profileId,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     })).resolves.toMatchObject({ ok: true, runtimeHandle: RUNTIME_HANDLE, state: "running" });
     expect(native.start).toHaveBeenCalledWith({
       runtimeHandle: RUNTIME_HANDLE,
@@ -147,7 +147,7 @@ describe("scope runtime supervisor", () => {
       profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       executionGeneration: "10",
     });
 
@@ -212,7 +212,7 @@ describe("scope runtime supervisor", () => {
       profileId: SCOPE_RUNTIME_PROFILE.profileId,
       workload: "chat_ai" as const,
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     };
 
     await expect(controller.handle({ ...base, profileId: "scope-runtime-proof-v2" }))
@@ -245,7 +245,7 @@ describe("scope runtime supervisor", () => {
       profileId: SCOPE_RUNTIME_PROFILE.profileId,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     });
 
     const first = create(REQUEST_ID);

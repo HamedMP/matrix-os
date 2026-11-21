@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { isoTimestamp } from "./repositories/shared.js";
 import type { BotRoutine } from "./repositories/routines.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
+import { directRoutineOriginLiveSql } from "./routine-direct-chat-lifecycle.js";
 import { routineApprovalDigest } from "./routine-authorization.js";
 import { BotBrokerActionError } from "./broker-actions.js";
 
@@ -28,6 +29,8 @@ export async function assertCurrentRoutinePhase(db: BotExecutor, binding: BotRun
     .where("approval.account", "=", source.accountId).where("approval.policy_revision", "=", source.grantRevision).where("approval.audience", "=", "direct")
     .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", binding.ownerId).where("chat.lifecycle", "=", "active").where("chat.collaboration", "is", null)
     .where("direct.kind", "=", "direct").where("direct.removed_at", "is", null)
+    .where(directRoutineOriginLiveSql({ ownerId: sql.ref("routine.owner_id"), botId: sql.ref("routine.bot_id"), chatId: sql.ref("routine.chat_id"),
+      computerId: sql.ref("routine.origin_computer_id"), requestId: sql.ref("routine.origin_request_id") }))
     .executeTakeFirst();
   // Evaluate after DB/pool wait too. Later changes still meet existing inference/effect revalidation.
   if (!current?.lease_expires_at || isoTimestamp(current.lease_expires_at) <= now()) throw new BotBrokerActionError("not_granted");

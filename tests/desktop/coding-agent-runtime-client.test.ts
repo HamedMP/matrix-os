@@ -5,6 +5,7 @@ import {
   createCodingAgentTurn,
   createCodingAgentSourcePullRequest,
   fetchCodingAgentProjectWorkspace,
+  fetchCodingAgentRuntimeSummary,
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
@@ -210,6 +211,17 @@ function threadSnapshotBody() {
 }
 
 describe("coding agent desktop runtime client", () => {
+  it("asks the gateway for recent threads when fetching the runtime summary", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+
+    await expect(fetchCodingAgentRuntimeSummary(auth("review"), fetchFn)).rejects.toThrow("runtime summary unavailable");
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/summary?runtime=review&include=recentThreads",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("fetches and updates notification preferences with bearer auth", async () => {
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: false, completed: true } } }), { status: 200 }))

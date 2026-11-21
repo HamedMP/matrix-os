@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { boundedOperation } from "../bounded-operation.js";
 import { contextPrompt } from "./agent-context.js";
+import { createRoutineCreationLatch } from "./routine-creation-latch.js";
 import type { ClaudeNativeSessionPool } from "./claude-native-session.js";
 import type { NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
 import { resolveClaudeSessionSource } from "./claude-session-source.js";
@@ -540,6 +541,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const creationPolicy = createRoutineCreationLatch(input);
     const routineController = new AbortController();
     const routineSignal = AbortSignal.any([processSignal, routineController.signal]);
     const routineExecution = options.routineCli ? createClaudeRoutineExecution({ ...options.routineCli, input, signal: routineSignal,
@@ -700,7 +702,7 @@ export function createClaudeChatProviderAdapter(options: {
           homePath: options.homePath, command: protocol.command, cwd: launch.cwd, args: launch.args, env: runEnv, input,
         });
         return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
-          input, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed,
+          input, creationPolicy, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed,
           requireProtectedSession: resumeState?.canonicalHistoryRequired,
           onProtectedSession(sessionId) { protectedSessionId = sessionId; observeSessionState(sessionId); },
         });

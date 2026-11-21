@@ -11,6 +11,8 @@ import {
 
 let mockSheet: { isPresented: boolean } = { isPresented: false };
 
+// Preview frames use local data and never authenticate or read Matrix files.
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isLoaded: true, isSignedIn: false }) }));
 jest.mock("@expo/ui", () => {
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
   return {

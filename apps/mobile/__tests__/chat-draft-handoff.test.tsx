@@ -80,7 +80,7 @@ const prompt = "Help me create a Matrix agent inspired by “Account research”
 function openChat() {
   mockActiveChatId = "chat_habits";
   mockDetail = {
-    record: { projectId: null, chat: { id: "chat_habits", title: "Habit tracker app", revision: 4 } },
+    record: { projectId: null, chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app", revision: 4 } },
     runs: [], turns: [], activities: [], messages: [],
   };
 }

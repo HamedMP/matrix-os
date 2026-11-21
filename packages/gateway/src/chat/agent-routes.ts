@@ -1,3 +1,5 @@
+import { sql } from "kysely";
+import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { isChatAgentDriver, isManagedCustomBot, jevHermesRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
 import {
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
@@ -179,7 +181,8 @@ export function createChatAgentRoutes(options: {
       `${agent.name} ${agent.description}`.toLowerCase().includes(input.query.toLowerCase())).slice(0, 20);
     let query = repository.kysely.selectFrom("chats").select(["id", "title"])
       .where("owner_type", "=", scope.type).where("owner_id", "=", scope.ownerId)
-      .where("lifecycle", "=", "active").where("collaboration", "is", null);
+      .where("lifecycle", "=", "active").where("collaboration", "is", null)
+      .where(publicChatIdPredicate(sql.ref("chats.id")));
     if (input.chatId) query = query.where("id", "!=", input.chatId);
     if (input.query) query = query.where("title", "ilike", `%${input.query.replace(/[\\%_]/g, "\\$&")}%`);
     const chats = await query.orderBy("updated_at", "desc").orderBy("id").limit(20).execute();

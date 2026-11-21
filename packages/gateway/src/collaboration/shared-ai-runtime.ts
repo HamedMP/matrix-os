@@ -1,4 +1,5 @@
-import { createSharedProviderAuthorityResolver, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
+import { createSharedScopedClient } from "./shared-scoped-client.js";
+import { createSharedNativeModelResolver, createSharedProviderAuthorityResolver, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
 export { canonicalChatSelectionForOwnerAuthority, catalogChatSelectionForOwnerAuthority, executableChatSelectionForOwnerRoute } from "./shared-provider-authority.js";
 import {
   CanonicalChatModelSelectionSchema,
@@ -405,7 +406,7 @@ export async function createSharedAiRuntime(options: {
           });
           const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
           return factory({
-            client: scopedClient({
+            client: createSharedScopedClient({
               client,
               registry,
               scopeId,
@@ -413,6 +414,10 @@ export async function createSharedAiRuntime(options: {
               ownerId: context.ownerId,
               actorId: context.actorId,
               providerIdentity,
+              ...(execution.driverKind === "claude_code" && options.providerCatalog?.resolveExecutionModel ? {
+                resolveExecutionModel: createSharedNativeModelResolver({ providerCatalog: options.providerCatalog,
+                  ownerId: context.ownerId, decision: ownerDecision, selection: execution.selection }),
+              } : {}),
               ...(ownerDecision.authorityKind === "provider_settings_active"
                 ? { ownerRoute: ownerDecision }
                 : {}),
@@ -838,52 +843,6 @@ async function ownerIdFor(
   return scope.owner_id;
 }
 
-function scopedClient(input: {
-  client: ReturnType<typeof createScopeRuntimeClient>;
-  registry: SharedAiRuntimeRegistry;
-  scopeId: string;
-  chatId: string;
-  ownerId: string;
-  actorId: string;
-  providerIdentity:
-    | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
-    | { driverKind: "codex"; instanceId: "codex_default" };
-  ownerRoute?: SharedRunOwnerSourceDecision;
-}) {
-  return {
-    capability: () => input.client.capability(),
-    async createRuntime(request: Parameters<typeof input.client.createRuntime>[0]) {
-      const created = await input.client.createRuntime(request);
-      try {
-        input.registry.bind({
-          runtimeHandle: created.runtimeHandle,
-          scopeId: input.scopeId,
-          chatId: input.chatId,
-          ownerId: input.ownerId,
-          actorId: input.actorId,
-          executionGeneration: created.executionGeneration,
-          providerIdentity: input.providerIdentity,
-          ...(input.ownerRoute ? { ownerRoute: input.ownerRoute } : {}),
-        });
-      } catch (error: unknown) {
-        await input.client.stopRuntime({ runtimeHandle: created.runtimeHandle }).catch((stopError: unknown) => {
-          console.warn("[collaboration] unbound shared runtime cleanup failed",
-            stopError instanceof Error ? stopError.name : "UnknownError");
-        });
-        throw error;
-      }
-      return created;
-    },
-    async runChat(request: Parameters<typeof input.client.runChat>[0]) {
-      input.registry.selectModel(request.runtimeHandle, request.model);
-      return input.client.runChat(request);
-    },
-    async stopRuntime(request: Parameters<typeof input.client.stopRuntime>[0]) {
-      input.registry.release(request.runtimeHandle);
-      return input.client.stopRuntime(request);
-    },
-  };
-}
 
 /**
  * The provider identity a scoped runtime is bound to. Claude runs only on the

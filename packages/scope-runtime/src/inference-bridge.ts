@@ -154,6 +154,12 @@ export async function startInferenceBridge(options: ScopeInferenceBridgeOptions)
         || typeof brokerResponse.body !== "string"
         || Buffer.byteLength(brokerResponse.body, "utf8") > MAX_BRIDGE_RESPONSE_BYTES || !brokerResponse.headers
         || typeof brokerResponse.headers !== "object") {
+        const codes = ["action_denied", "route_denied", "invalid_request", "request_too_large",
+          "capacity_exceeded", "provider_unavailable", "response_too_large"];
+        console.warn("[scope-runtime] inference broker refused", {
+          code: brokerResponse.ok === false && typeof brokerResponse.error === "string"
+            && codes.includes(brokerResponse.error) ? brokerResponse.error : "invalid_response",
+        });
         response.writeHead(502).end();
         return;
       }

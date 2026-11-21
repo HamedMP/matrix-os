@@ -1,12 +1,17 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { connect, type Socket } from "node:net";
+import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { describe, expect, it, vi } from "vitest";
 import { buildWorkerBundle } from "./worker-bundles.js";
 import {
   createSingleUseCommandSocketSlot,
+  SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
+  startCommandServer,
   parseScopeRuntimeWorkerArguments,
   parseScopeRuntimeChatRequest,
   prepareScopeRuntimeWorkerEnvironment,
@@ -22,12 +27,56 @@ const argumentsFixture = [
   "scope_11111111111111111111111111111111",
   "chat_ai",
   "claude-code",
-  "2.1.240",
+  "2.1.301",
   "7",
 ];
 const execFileAsync = promisify(execFile);
 
 describe("scope runtime worker boundary", () => {
+  it("ships an Opus 5.5 compatible Claude binary matching the supervisor's exact harness pin", async () => {
+    // The upstream rejects 2.1.240 for the owner's current Opus alias (minimum 2.1.280).
+    const require = createRequire(import.meta.url);
+    const sdk = require.resolve("@anthropic-ai/claude-agent-sdk");
+    const native = createRequire(sdk).resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/package.json`);
+    const sdkVersion = JSON.parse(await readFile(join(dirname(sdk), "package.json"), "utf8")).version;
+    expect(SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION).toBe("2.1.301");
+    expect(sdkVersion).toBe("0.3.301");
+    const { stdout } = await execFileAsync(join(dirname(native), "claude"), ["--version"], { timeout: 10_000 });
+    expect(stdout.trim()).toBe(`${SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION} (Claude Code)`);
+  });
+
+  it("lets the capability-free supervisor reach the Chat worker without accepting a foreign generation", async () => {
+    const directory = await createUnixSocketTempDir();
+    const socketPath = join(directory, "worker.sock");
+    const slot = createSingleUseCommandSocketSlot<Socket>();
+    const previousUmask = process.umask(0o077);
+    let server: Awaited<ReturnType<typeof startCommandServer>> | undefined;
+    try {
+      server = await startCommandServer(parseScopeRuntimeWorkerArguments(argumentsFixture), slot, socketPath);
+      // The supervisor has no CAP_DAC_OVERRIDE and does not share DynamicUser's UID.
+      expect((await stat(socketPath)).mode & 0o777).toBe(0o666);
+      const reply = await new Promise<string>((resolve, reject) => {
+        const socket = connect(socketPath);
+        let output = "";
+        socket.setEncoding("utf8");
+        socket.setTimeout(2_000, () => socket.destroy(new Error("Worker did not reject stale generation")));
+        socket.once("error", reject);
+        socket.on("data", chunk => { output += chunk; });
+        socket.once("close", () => resolve(output));
+        socket.once("connect", () => socket.end(JSON.stringify({
+          version: 1, type: "runtime.chat", runtimeHandle: argumentsFixture[0],
+          executionGeneration: "999", model: "opus", prompt: "Must not execute",
+        }) + "\n"));
+      });
+      expect(reply).toBe("");
+    } finally {
+      process.umask(previousUmask);
+      slot.destroyActive();
+      if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("caps command sockets at one and drains the active socket on shutdown", () => {
     const slot = createSingleUseCommandSocketSlot<{ destroy(): void }>();
     let closeFirst = () => undefined;
@@ -62,13 +111,13 @@ describe("scope runtime worker boundary", () => {
       scopeHandle: argumentsFixture[1],
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       executionGeneration: "7",
     });
     expect(() => parseScopeRuntimeWorkerArguments([...argumentsFixture, "/bin/sh"]))
       .toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
     expect(() => parseScopeRuntimeWorkerArguments([
-      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240", "7",
+      argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.301", "7",
     ])).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
 
     expect(parseScopeRuntimeWorkerArguments([

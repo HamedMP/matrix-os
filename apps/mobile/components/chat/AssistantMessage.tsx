@@ -10,6 +10,7 @@ import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
 import { chatMarkdownTheme } from "./chat-markdown-theme";
 import { StepsBlock } from "./StepsBlock";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { ReplyActions } from "./ReplyActions";
 
 export interface AssistantMessageProps {
   message: TranscriptMessage;
@@ -19,7 +20,10 @@ export interface AssistantMessageProps {
   results?: ReactNode;
 }
 
-/** A reply: its text across the full width, then its steps, then its results. */
+/**
+ * A reply: its text across the full width, then its steps, then its results,
+ * and, once the turn it closes has finished, its actions.
+ */
 export function AssistantMessage({ message, chatId, results }: AssistantMessageProps) {
   const { theme } = useUnistyles();
   // While the reply streams, show it at a steady pace with each new chunk
@@ -50,6 +54,9 @@ export function AssistantMessage({ message, chatId, results }: AssistantMessageP
       ) : null}
       <StepsBlock message={message} />
       {results}
+      {message.endsTurn && !message.isRunning && message.text.trim() ? (
+        <ReplyActions text={message.text.trim()} createdAt={message.createdAt} />
+      ) : null}
     </View>
   );
 }

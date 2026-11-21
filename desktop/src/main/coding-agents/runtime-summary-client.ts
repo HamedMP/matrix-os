@@ -121,6 +121,7 @@ function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   if (runtimeSlot !== "primary") {
     url.searchParams.set("runtime", runtimeSlot);
   }
+  url.searchParams.set("include", "recentThreads");
   return url.toString();
 }
 

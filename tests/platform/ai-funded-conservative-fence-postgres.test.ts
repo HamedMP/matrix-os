@@ -7,6 +7,7 @@ import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-f
 import { runPlatformStartupMigrations } from "../../packages/platform/src/database/run-migrations.js";
 import { runPlatformMigration } from "../../packages/platform/src/migration-runner.js";
 import { migrateFundedConservativeFence, FUNDED_CONSERVATIVE_FENCE_BODY } from "../../packages/platform/src/database/funded-conservative-fence.js";
+import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/migration-revision.js";
 import { FUNDED_CONSERVATIVE_FENCE_REVISION } from "../../packages/platform/src/database/funded-conservative-fence-revision.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
 import { createSpeechOperationsRepository } from "../../packages/platform/src/speech/operations.js";
@@ -186,10 +187,11 @@ describe.skipIf(!databaseUrl)("conservative settlement fence on actual PostgreSQ
   it("installs its independent scope even when a newer core marker skips core DDL", async () => {
     await sql`DELETE FROM platform_schema_revisions WHERE scope='funded-conservative-fence'`.execute(a.executor);
     await sql`DROP TRIGGER ai_funded_conservative_settlement_fence ON ai_funded_usage_reservations`.execute(a.executor);
-    await sql`UPDATE platform_schema_revisions SET generation=26, fingerprint='newer-preview-core' WHERE scope='core'`.execute(a.executor);
+    const newer = PLATFORM_SCHEMA_REVISION.generation + 1;
+    await sql`UPDATE platform_schema_revisions SET generation=${newer}, fingerprint='newer-preview-core' WHERE scope='core'`.execute(a.executor);
     await runPlatformStartupMigrations(a.executor);
     expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope='core'`.execute(a.executor)).rows)
-      .toEqual([{ generation: 26, fingerprint: "newer-preview-core" }]);
+      .toEqual([{ generation: newer, fingerprint: "newer-preview-core" }]);
     const key = await legacyCapture("AI");
     await expect(legacySettle(key, "AI")).rejects.toMatchObject({ code: "23514", constraint });
   });

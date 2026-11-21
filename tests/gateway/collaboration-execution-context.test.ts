@@ -23,7 +23,7 @@ describe("collaboration execution context", () => {
       actorId: "user_editor",
       runId: "run_shared_1",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     })).toEqual({
       version: 1,
       kind: "collaboration_scope",
@@ -31,7 +31,7 @@ describe("collaboration execution context", () => {
       actorId: "user_editor",
       runId: "run_shared_1",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     });
   });
 
@@ -41,7 +41,7 @@ describe("collaboration execution context", () => {
       actorId: "user_editor",
       runId: "run_shared_2",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     });
     const state = {
       schemaVersion: 4,
@@ -79,7 +79,7 @@ describe("collaboration execution context", () => {
       actorId: "user_owner",
       runId: "run_shared_3",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     });
 
     for (const state of [
