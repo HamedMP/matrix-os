@@ -6,6 +6,10 @@ import { herdrSessionRefKey, shouldShowHerdrSessions, type HerdrSession, type He
 
 const muted = "var(--terminal-drawer-muted, var(--matrix-muted-fg, #8a8a8a))";
 const border = "var(--terminal-drawer-border, var(--matrix-border, rgba(127,127,127,0.25)))";
+// The colour each Terminal view uses for its selected row: the Web drawer's
+// selected card, then Electron Desktop's selected session.
+const selectedBackground = "var(--terminal-drawer-card-selected-bg, var(--bg-hover, rgba(127,127,127,0.18)))";
+const selectedAccent = "var(--terminal-drawer-fg, var(--text-primary, currentColor))";
 
 /**
  * "Herdr sessions" (spec 2701): the owner's existing Herdr terminals, shown
@@ -39,7 +43,12 @@ export function HerdrSessionsGroup({ list, selectedRefKey, closingIds = [], erro
           const closing = closingSet.has(session.id);
           const confirming = confirmingId === session.id;
           return (
-            <li key={session.id} data-herdr-session={session.id} style={{ borderBottom: `1px solid ${border}` }}>
+            <li key={session.id} data-herdr-session={session.id} data-selected={selected ? "true" : "false"}
+              style={{
+                background: selected ? selectedBackground : "transparent",
+                borderBottom: `1px solid ${border}`,
+                boxShadow: selected ? `inset 3px 0 0 ${selectedAccent}` : "none",
+              }}>
               <div style={{ alignItems: "center", display: "flex", gap: 8, minHeight: 40, padding: "0 8px 0 12px" }}>
                 <button
                   type="button"

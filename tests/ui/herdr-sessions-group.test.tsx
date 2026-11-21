@@ -42,6 +42,18 @@ describe("Herdr sessions group", () => {
     expect(screen.queryByRole("button", { name: /new|create/i })).toBeNull();
   });
 
+  it("highlights the open session's row like a selected Matrix row", () => {
+    // Feedback from a live VPS: bold text alone did not show which Herdr session was open.
+    render(<HerdrSessionsGroup list={list} selectedRefKey={herdrSessionRefKey(list.sessions[1]!)} onOpen={vi.fn()} onClose={vi.fn()} />);
+    const selectedRow = document.querySelector('[data-herdr-session="t2"]') as HTMLElement;
+    const otherRow = document.querySelector('[data-herdr-session="t1"]') as HTMLElement;
+    expect(selectedRow.dataset.selected).toBe("true");
+    expect(otherRow.dataset.selected).toBe("false");
+    expect(selectedRow.style.background).toContain("--terminal-drawer-card-selected-bg");
+    expect(selectedRow.style.background).toContain("--bg-hover");
+    expect(otherRow.style.background).toBe("transparent");
+  });
+
   it("closes a session only after confirmation", async () => {
     const onClose = vi.fn(async () => true);
     render(<HerdrSessionsGroup list={list} onOpen={vi.fn()} onClose={onClose} />);
