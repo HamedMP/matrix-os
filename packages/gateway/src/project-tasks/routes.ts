@@ -9,8 +9,9 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import {
   ArchiveTaskBodySchema, AttachSessionBodySchema, CreateCommentBodySchema, CreatePullRequestBodySchema, StartTaskBodySchema, TaskSessionRefSchema, CreateTaskBodySchema, TaskCommentIdSchema, UpdateCommentBodySchema, ListTasksQuerySchema, MoveTaskBodySchema, TASK_LIMITS, TaskIdSchema,
-  UpdateBoardSettingsBodySchema, UpdateTaskBodySchema, type ActorRef,
+  PROJECT_TASK_SESSION_PATH, UpdateBoardSettingsBodySchema, UpdateTaskBodySchema, type ActorRef,
 } from "@matrix-os/contracts/project-tasks";
+import { isProjectTaskAgentRoute, type ProjectTaskAgentBinding } from "./agent-access.js";
 import { PROJECT_SLUG_REGEX } from "../project-registry.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
@@ -42,6 +43,13 @@ export interface ProjectTaskRouteOptions {
   work?: ProjectTaskWork | null;
   /** The request principal, used to admit a chat's first turn on start. */
   getPrincipal?(c: Context): RequestPrincipal;
+  /**
+   * The session a terminal pane or chat run credential is bound to; null for an owner
+   * credential. A bound caller reaches only the agent routes of its own project.
+   */
+  getAgentBinding?(c: Context, ownerScope: OwnerScope): Promise<ProjectTaskAgentBinding | null>;
+  /** The task a bound session belongs to, from its task session link. */
+  sessionTask?(ownerScope: OwnerScope, binding: ProjectTaskAgentBinding): Promise<string | null>;
 }
 
 class InvalidInput extends Error {}
@@ -110,9 +118,16 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     return c.json(projectTaskErrorBody("board_unavailable"), 503);
   }
 
-  function caller(c: Context): TaskCaller {
+  async function caller(c: Context): Promise<TaskCaller> {
     const ownerScope = options.getOwnerScope(c);
-    return { ownerScope, actor: options.getActor?.(c, ownerScope) ?? ownerActor(ownerScope) };
+    const binding = await options.getAgentBinding?.(c, ownerScope) ?? null;
+    if (!binding) return { ownerScope, actor: options.getActor?.(c, ownerScope) ?? ownerActor(ownerScope) };
+    // The raw path, so a decoded alias cannot reach another project or an owner-only route.
+    const path = new URL(c.req.raw.url).pathname;
+    if (!isProjectTaskAgentRoute(c.req.method, path, { slug: binding.projectSlug, readOnly: binding.readOnly })) {
+      throw new ProjectTaskError("task_forbidden");
+    }
+    return { ownerScope, actor: `agent:${binding.ref}` };
   }
 
   function service(): ProjectTaskService {
@@ -134,17 +149,28 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
 
   const base = "/api/projects/:slug/tasks";
 
+  /** The project and task a session credential is bound to; null for an owner credential. */
+  app.get(PROJECT_TASK_SESSION_PATH, async (c) => {
+    try {
+      const ownerScope = options.getOwnerScope(c);
+      const binding = await options.getAgentBinding?.(c, ownerScope) ?? null;
+      if (!binding) return c.json({ session: null });
+      const taskId = await options.sessionTask?.(ownerScope, binding) ?? null;
+      return c.json({ session: { projectId: binding.projectId, projectSlug: binding.projectSlug, ...(taskId ? { taskId } : {}) } });
+    } catch (error: unknown) { return respond(c, error); }
+  });
+
   app.get(base, async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      return c.json(await service().listTasks(caller(c), slug, query(c, ListTasksQuerySchema)));
+      return c.json(await service().listTasks(await caller(c), slug, query(c, ListTasksQuerySchema)));
     } catch (error: unknown) { return respond(c, error); }
   });
 
   app.post(base, limited, async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      const who = caller(c);
+      const who = await caller(c);
       const body = await readBody(c, CreateTaskBodySchema);
       const { task, created } = await write(who, slug, () => service().createTask(who, slug, body));
       return c.json({ task }, created ? 201 : 200);
@@ -154,7 +180,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
   app.get(`${base}/:taskId`, async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      return c.json({ task: await service().getTask(caller(c), slug, param(TaskIdSchema, c.req.param("taskId"))) });
+      return c.json({ task: await service().getTask(await caller(c), slug, param(TaskIdSchema, c.req.param("taskId"))) });
     } catch (error: unknown) { return respond(c, error); }
   });
 
@@ -162,7 +188,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const body = await readBody(c, UpdateTaskBodySchema);
       return c.json({ task: await write(who, slug, () => service().updateTask(who, slug, taskId, body)) });
     } catch (error: unknown) { return respond(c, error); }
@@ -172,7 +198,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const body = await readBody(c, MoveTaskBodySchema);
       return c.json({ task: await write(who, slug, () => service().moveTask(who, slug, taskId, body)) });
     } catch (error: unknown) { return respond(c, error); }
@@ -183,7 +209,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       try {
         const slug = param(SlugSchema, c.req.param("slug"));
         const taskId = param(TaskIdSchema, c.req.param("taskId"));
-        const who = caller(c);
+        const who = await caller(c);
         await readBody(c, ArchiveTaskBodySchema);
         return c.json({ task: await write(who, slug, () => service().setArchived(who, slug, taskId, archived)) });
       } catch (error: unknown) { return respond(c, error); }
@@ -194,7 +220,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       if (c.req.header("content-length") !== "0" && c.req.header("content-type")?.includes("json")) await readBody(c, ArchiveTaskBodySchema);
       await write(who, slug, () => service().deleteTask(who, slug, taskId));
       return c.json({ ok: true });
@@ -206,7 +232,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const { after, limit } = query(c, ActivityQuerySchema);
-      return c.json(await service().listActivity(caller(c), slug, taskId, after, limit));
+      return c.json(await service().listActivity(await caller(c), slug, taskId, after, limit));
     } catch (error: unknown) { return respond(c, error); }
   });
 
@@ -215,7 +241,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const { cursor, limit } = query(c, CommentsQuerySchema);
-      return c.json(await service().listComments(caller(c), slug, taskId, cursor, limit));
+      return c.json(await service().listComments(await caller(c), slug, taskId, cursor, limit));
     } catch (error: unknown) { return respond(c, error); }
   });
 
@@ -223,7 +249,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const { body } = await readBody(c, CreateCommentBodySchema);
       return c.json({ comment: await write(who, slug, () => service().addComment(who, slug, taskId, body)) }, 201);
     } catch (error: unknown) { return respond(c, error); }
@@ -234,7 +260,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const commentId = param(TaskCommentIdSchema, c.req.param("commentId"));
-      const who = caller(c);
+      const who = await caller(c);
       const { body } = await readBody(c, UpdateCommentBodySchema);
       return c.json({ comment: await write(who, slug, () => service().editComment(who, slug, taskId, commentId, body)) });
     } catch (error: unknown) { return respond(c, error); }
@@ -245,7 +271,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const commentId = param(TaskCommentIdSchema, c.req.param("commentId"));
-      const who = caller(c);
+      const who = await caller(c);
       await write(who, slug, () => service().deleteComment(who, slug, taskId, commentId));
       return c.json({ ok: true });
     } catch (error: unknown) { return respond(c, error); }
@@ -255,7 +281,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const body = await readBody(c, StartTaskBodySchema);
       const principal = body.selection ? options.getPrincipal?.(c) : undefined;
       return c.json(await write(who, slug, () => work().start(who, slug, taskId, body, principal)), 201);
@@ -266,7 +292,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const { ref } = await readBody(c, AttachSessionBodySchema);
       return c.json({ task: await write(who, slug, () => work().attach(who, slug, taskId, ref)) });
     } catch (error: unknown) { return respond(c, error); }
@@ -277,7 +303,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
       const ref = param(TaskSessionRefSchema, c.req.param("ref"));
-      const who = caller(c);
+      const who = await caller(c);
       return c.json({ task: await write(who, slug, () => work().detach(who, slug, taskId, ref)) });
     } catch (error: unknown) { return respond(c, error); }
   });
@@ -286,7 +312,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       // The read is open to the caller; storing the refreshed summary goes behind the write fence.
       const { git } = await work().git(who, slug, taskId, (run) => write(who, slug, run));
       return c.json({ git });
@@ -297,7 +323,7 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
       const taskId = param(TaskIdSchema, c.req.param("taskId"));
-      const who = caller(c);
+      const who = await caller(c);
       const { draft } = await readBody(c, CreatePullRequestBodySchema);
       return c.json(await write(who, slug, () => work().openPullRequest(who, slug, taskId, draft === true)));
     } catch (error: unknown) { return respond(c, error); }
@@ -306,28 +332,28 @@ export function createProjectTaskRoutes(options: ProjectTaskRouteOptions): Hono 
   app.get("/api/projects/:slug/board/attachable-sessions", async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      return c.json({ sessions: await work().attachable(caller(c), slug) });
+      return c.json({ sessions: await work().attachable(await caller(c), slug) });
     } catch (error: unknown) { return respond(c, error); }
   });
 
   app.get("/api/projects/:slug/board/members", async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      return c.json({ members: await service().listMembers(caller(c), slug) });
+      return c.json({ members: await service().listMembers(await caller(c), slug) });
     } catch (error: unknown) { return respond(c, error); }
   });
 
   app.get("/api/projects/:slug/board/settings", async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      return c.json({ settings: await service().getSettings(caller(c), slug) });
+      return c.json({ settings: await service().getSettings(await caller(c), slug) });
     } catch (error: unknown) { return respond(c, error); }
   });
 
   app.put("/api/projects/:slug/board/settings", limited, async (c) => {
     try {
       const slug = param(SlugSchema, c.req.param("slug"));
-      const who = caller(c);
+      const who = await caller(c);
       const body = await readBody(c, UpdateBoardSettingsBodySchema);
       return c.json({ settings: await write(who, slug, () => service().updateSettings(who, slug, body)) });
     } catch (error: unknown) { return respond(c, error); }

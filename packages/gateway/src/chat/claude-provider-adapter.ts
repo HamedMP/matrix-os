@@ -22,6 +22,7 @@ import { createClaudeIntegrationApprovalControl } from "./claude-integration-app
 import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
+import { TaskSessionRefSchema } from "@matrix-os/contracts/project-tasks";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
 import {
   ClaudeChatStateSchema, buildClaudeChatLaunch, claudeChatLaunchEnvironment, claudeChatPermissionMode,
@@ -162,6 +163,8 @@ export function createClaudeChatProviderAdapter(options: {
       scope: mcpScope,
       fullAccess,
       ...(input.context?.drives?.length ? { driveContext: true } : {}),
+      // Spec 2699: the run's own project board, as agent:<chat id>; shared chats keep owner-only boards.
+      ...(input.projectSlug && !input.sharedScopeId && TaskSessionRefSchema.safeParse(input.chatId).success ? { board: { chatId: input.chatId, projectSlug: input.projectSlug } } : {}),
     }) ?? null;
     if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const previewDrive = capability?.surface === "preview_drive_call";

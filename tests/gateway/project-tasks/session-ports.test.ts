@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { TaskSessionCredentials } from "../../../packages/gateway/src/project-tasks/session-credentials.js";
 import {
   chatRunAgentStatus, checksRollup, createTaskSessionPorts, toTaskPullRequest, type TaskCommandRunner,
 } from "../../../packages/gateway/src/server/project-task-sessions.js";
@@ -6,6 +7,10 @@ import {
 const HOME = "/home/owner";
 const WS = `tws_${"b".repeat(32)}`;
 const TAB = `tt_${"c".repeat(32)}`;
+const credentials: TaskSessionCredentials = {
+  issue: async (material) => `mts1.${material.workspaceId}.${material.tabId}.${material.projectId}.${material.taskId}.sig`,
+  verify: async () => null,
+};
 
 function ports(runCommand: TaskCommandRunner, runtime: Partial<Parameters<typeof createTaskSessionPorts>[0]["terminalRuntime"]> = {}) {
   return createTaskSessionPorts({
@@ -13,6 +18,7 @@ function ports(runCommand: TaskCommandRunner, runtime: Partial<Parameters<typeof
     projectManager: { resolveProjectWorkingDirectory: async () => null, getCodeMetadata: async () => ({ ok: false, status: 404, error: { code: "x", message: "x" } }) } as never,
     worktreeManager: {} as never,
     chats: null,
+    sessionCredentials: credentials,
     terminalRuntime: {
       ensureWorkspace: async () => ({ id: WS }) as never,
       createTab: async (_workspace, input) => ({ id: input.tabId ?? TAB }),
@@ -103,12 +109,21 @@ describe("board session ports over the terminal runtime", () => {
       workspaceId: WS, tabId: TAB, name: "BD-1 Task", cwd: `${HOME}/worktrees/demo/wt_abc`,
       env: { MATRIX_TASK_ID: "task_1", MATRIX_PROJECT_ID: "proj_demo" }, harness: "claude",
     });
+    // The tab's credential signs exactly this tab, project and task.
+    const token = `MATRIX_TASK_SESSION_TOKEN=mts1.${WS}.${TAB}.proj_demo.task_1.sig`;
     expect(createTab).toHaveBeenCalledWith(WS, {
       tabId: TAB, name: "BD-1 Task", cwd: "worktrees/demo/wt_abc", accessScope: "owner",
-      command: ["env", "MATRIX_TASK_ID=task_1", "MATRIX_PROJECT_ID=proj_demo", "sh", "-lc", 'exec "$0"', "claude"],
+      command: ["env", "MATRIX_TASK_ID=task_1", "MATRIX_PROJECT_ID=proj_demo", token, "sh", "-lc", 'exec "$0"', "claude"],
     });
     await terminals.createTab({ workspaceId: WS, tabId: TAB, name: "Shell", cwd: `${HOME}/p`, env: { MATRIX_TASK_ID: "task_1", MATRIX_PROJECT_ID: "proj_demo" } });
-    expect(createTab.mock.calls[1]?.[1]).toMatchObject({ command: ["env", "MATRIX_TASK_ID=task_1", "MATRIX_PROJECT_ID=proj_demo", "sh", "-lc", 'exec "${SHELL:-/bin/sh}" -l'] });
+    expect(createTab.mock.calls[1]?.[1]).toMatchObject({ command: ["env", "MATRIX_TASK_ID=task_1", "MATRIX_PROJECT_ID=proj_demo", token, "sh", "-lc", 'exec "${SHELL:-/bin/sh}" -l'] });
+  });
+
+  it("refuses a runtime tab whose id differs from the one its credential signs", async () => {
+    const { terminals } = ports(vi.fn(), { createTab: async () => ({ id: "tt_other" }) });
+    await expect(terminals.createTab({
+      workspaceId: WS, tabId: TAB, name: "x", cwd: `${HOME}/p`, env: { MATRIX_TASK_ID: "task_1", MATRIX_PROJECT_ID: "proj_demo" },
+    })).rejects.toMatchObject({ name: "TaskPortUnavailableError" });
   });
 
   it("refuses a cwd outside the home, an unknown harness and ids that are not server ids", async () => {

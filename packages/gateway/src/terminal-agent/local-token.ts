@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { isProjectTaskAgentRoute } from "../project-tasks/agent-access.js";
 
 /**
  * The local terminal-agent token (spec 2692, "Calls from inside a terminal"): lets
@@ -24,8 +25,13 @@ const LOCAL_ROUTES: Array<{ methods: readonly string[]; path: RegExp }> = [
   { methods: ["GET"], path: /^\/api\/terminal\/templates$/ },
 ];
 
+/** Set by gateway auth on a request it admitted with the local token; the board then binds it to the caller's pane. */
+export const LOCAL_TERMINAL_AGENT_CONTEXT_KEY = "localTerminalAgentCaller";
+
 export function isLocalTerminalAgentRoute(method: string, path: string): boolean {
-  return LOCAL_ROUTES.some((route) => route.methods.includes(method) && route.path.test(path));
+  // The board's agent routes (spec 2699): the board itself bounds them to the pane's project.
+  return LOCAL_ROUTES.some((route) => route.methods.includes(method) && route.path.test(path))
+    || isProjectTaskAgentRoute(method, path);
 }
 
 const PROXY_HEADERS = ["x-real-ip", "x-forwarded-for", "forwarded", "cf-connecting-ip", "x-platform-user-id", "x-platform-verified"];

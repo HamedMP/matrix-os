@@ -15,6 +15,7 @@ import { ProjectTaskService } from "../../../packages/gateway/src/project-tasks/
 import { ProjectTaskSessionRepository } from "../../../packages/gateway/src/project-tasks/sessions.js";
 import { ProjectTaskWork } from "../../../packages/gateway/src/project-tasks/work.js";
 import { createProjectTaskRoutes } from "../../../packages/gateway/src/project-tasks/routes.js";
+import { createTaskSessionCredentials, type TaskSessionCredentials } from "../../../packages/gateway/src/project-tasks/session-credentials.js";
 import { createTaskSessionPorts } from "../../../packages/gateway/src/server/project-task-sessions.js";
 import { createProjectManager } from "../../../packages/gateway/src/project-manager.js";
 import { createProjectRegistry } from "../../../packages/gateway/src/project-registry.js";
@@ -38,6 +39,7 @@ describe("start work against a real git repository and the real worktree manager
   let repo: string;
   let db: Kysely<ProjectTaskDatabase>;
   let app: Hono;
+  let credentials: TaskSessionCredentials;
   const tabs: Array<{ cwd: string; command?: string[] }> = [];
 
   beforeEach(async () => {
@@ -56,8 +58,10 @@ describe("start work against a real git repository and the real worktree manager
     db = new Kysely<ProjectTaskDatabase>({ dialect: (await createTestPGlite()).dialect });
     await bootstrapProjectTaskDatabase(db);
     const projectManager = createProjectManager({ homePath: home });
+    credentials = createTaskSessionCredentials({ homePath: home });
     const ports = createTaskSessionPorts({
       homePath: home,
+      sessionCredentials: credentials,
       projectManager,
       worktreeManager: createWorktreeManager({ homePath: home }),
       chats: null,
@@ -109,6 +113,11 @@ describe("start work against a real git repository and the real worktree manager
     expect((await git(repo, "branch", "--list", "task/bd-1-add-login-page")).trim()).toContain("task/bd-1-add-login-page");
     expect(tabs[0]?.cwd).toBe(`worktrees/${SLUG}/${task.worktreeId}`);
     expect(tabs[0]?.command).toEqual(expect.arrayContaining([`MATRIX_TASK_ID=${task.id}`, "MATRIX_PROJECT_ID=proj_demo"]));
+    // The tab's credential proves this tab, project and task to the board.
+    const token = tabs[0]?.command?.find((part) => part.startsWith("MATRIX_TASK_SESSION_TOKEN="))?.slice("MATRIX_TASK_SESSION_TOKEN=".length);
+    expect(session.ref).toMatch(/^term\./);
+    const [, workspaceId, tabId] = session.ref.split(".");
+    await expect(credentials.verify(token ?? "")).resolves.toEqual({ workspaceId, tabId, projectId: "proj_demo", taskId: task.id });
     expect(session.role).toBe("main");
 
     const second = StartTaskResponseSchema.parse(await (await call("POST", `/tasks/${created.id}/start`, { kind: "terminal", clientRequestId: "req_more" })).json());
