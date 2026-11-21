@@ -90,4 +90,16 @@ describe("Herdr sessions client", () => {
     expect(result.current.list.sessions).toHaveLength(2);
     expect(request).toHaveBeenCalledWith("/api/terminal/herdr/t1", expect.objectContaining({ method: "DELETE" }));
   });
+
+  it("shows a slow reply instead of polling over it", async () => {
+    // Replies slower than the poll interval used to be invalidated by the next poll, forever.
+    const replies: Array<(response: Response) => void> = [];
+    const request = vi.fn(() => new Promise<Response>((resolve) => { replies.push(resolve); }));
+    const { result } = renderHook(() => useHerdrSessions({ request, intervalMs: 20 }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+    expect(request).toHaveBeenCalledTimes(1);
+    await act(async () => { replies[0]!(json(list)); });
+    await waitFor(() => expect(result.current.list.sessions).toHaveLength(2));
+    await waitFor(() => expect(request.mock.calls.length).toBeGreaterThan(1));
+  });
 });

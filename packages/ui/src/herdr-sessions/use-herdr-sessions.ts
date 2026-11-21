@@ -18,23 +18,29 @@ export function useHerdrSessions(options: { request: HerdrSessionsRequest | null
   const [closingIds, setClosingIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+  const pending = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!request) return;
     const started = ++generation.current;
+    pending.current += 1;
     try {
       const next = await loadHerdrSessions(request);
       if (started === generation.current) setList(next);
     } catch (loadError: unknown) {
       console.warn("[herdr-sessions] load failed", loadError instanceof Error ? loadError.name : "unknown_error");
       if (started === generation.current) setList(HIDDEN_HERDR_SESSIONS);
+    } finally {
+      pending.current -= 1;
     }
   }, [request]);
 
   useEffect(() => {
     if (!request) return undefined;
     void refresh();
-    const timer = setInterval(() => { void refresh(); }, intervalMs);
+    // A poll never starts over a pending load: a reply slower than the interval
+    // would otherwise be invalidated by the next poll every time and never shown.
+    const timer = setInterval(() => { if (pending.current === 0) void refresh(); }, intervalMs);
     return () => {
       clearInterval(timer);
       generation.current += 1;
