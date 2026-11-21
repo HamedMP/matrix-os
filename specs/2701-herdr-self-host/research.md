@@ -65,17 +65,57 @@ frame time under `yes`-style output, memory with 10 tabs.
 
 ## Layer 6 results
 
-Benchmark: `pnpm exec tsx scripts/bench/desktop-terminal-attach.ts --runs 7`.
-It drives the real `@matrix-os/herdr-core-client` connection and session code
-against a scripted core that streams under herdr-core's credit window (256 KiB,
-16 KiB chunks, 64 KiB socket reads), with a Node `MessageChannel` standing in
-for the main → Terminal window hop and the window acknowledging every event.
-It measures the main-process path only, not xterm drawing. Medians, Linux
-x64, Node 24.
+### Main-process benchmark
 
-| Measurement | Before |
-| --- | --- |
-| Attach to first delivered output (196 KB first paint) | 0.19-0.24 ms |
-| Attach to full first paint delivered | 0.23-0.29 ms |
-| Output throughput, 64 MiB | 1,180-1,390 MiB/s |
-| Events for 64 MiB | 4,096 |
+`pnpm exec tsx scripts/bench/desktop-terminal-attach.ts --runs 7` drives the
+real `@matrix-os/herdr-core-client` connection and session code against a
+scripted core that streams under herdr-core's credit window (256 KiB, 16 KiB
+chunks, 64 KiB socket reads). A Node `MessageChannel` stands in for the main →
+Terminal window hop, and the window acknowledges every event. It reports two
+paths: `text` (main decodes to strings and sends text slices, the Terminal
+window's path before layer 6) and `bytes` (the production streams module: the
+core's bytes over the attachment's port). It measures the main process only,
+not xterm parsing or drawing, and not Electron's own IPC.
+
+Medians of 7 runs, Linux x64, Node 24. "Before" is commit `4ecf7794a` (the
+benchmark's first version, on the old decoder), run interleaved with the
+current code on the same machine; that machine was saturated by other work
+(load average about 32 on 32 cores), so compare columns, not absolute values.
+On an idle machine the "before" throughput was 1,180-1,390 MiB/s.
+
+| Measurement | Before | After, text sink | After, port (Terminal window) |
+| --- | --- | --- | --- |
+| Attach to first delivered output (196 KB first paint) | 0.54-0.62 ms | 0.46-0.52 ms | 0.78-1.19 ms |
+| Attach to full first paint delivered | 0.63-0.71 ms | 0.54-0.59 ms | 0.94-1.35 ms |
+| Output throughput, 64 MiB | 538-681 MiB/s | 568-659 MiB/s | 258-319 MiB/s |
+| Events for 64 MiB | 4,096 | 4,096 | 4,096 |
+
+What this does and does not show:
+
+- The frame decoder change shows up as the text-sink column matching or
+  beating "before" despite equal work; its real gain is for frames split over
+  many reads (a 256 KiB frame in 1 KB reads went from 262 joins, about 15 s
+  under the test spy, to none).
+- Over a Node `MessageChannel`, a 16 KiB `Uint8Array` costs more to clone and
+  collect than a 16 KiB one-byte string, so the port path moves bytes through
+  main at about half the text rate. That is still over 250 MiB/s, far above
+  what xterm parses, so main is not the limit either way. Electron's
+  `MessagePortMain` serializer is not Node's; this needs measuring on a Mac.
+- Not captured here, and the reason for the port: before, every attached
+  Terminal-window terminal subscribed to the one `local-terminal:output` event,
+  so each output event was schema-checked and delivered once per attached
+  terminal. With six terminals kept attached that is six parses per event; a
+  port per attachment makes it one. The UTF-8 decode and 256K-character
+  slicing in main are gone, and xterm decodes the bytes itself.
+- Still to measure on the Mac (Electron Desktop): switch time across 10 tabs,
+  frame time under `yes`-style output, memory with 6 kept tabs, and
+  attach-to-first-paint in the real window.
+
+### What changed
+
+| # | Technique | Change |
+| --- | --- | --- |
+| 1 | Keep tabs attached | The Terminal window keeps the 6 most recently shown terminals (local and Matrix tabs) mounted and attached; hidden ones parse output and return credit but are not drawn, focused or resized, and refit, redraw and focus when shown, or attach again if their attachment was given up. Switching computers no longer resets every attachment. The main window keeps one live attachment (many surfaces share its manager and each live cloud tab holds a gateway lease). |
+| 2 | Attach repaint | Reproduced with the real xterm parser and herdr-core's paint format: reopening a terminal showed its history twice. Fixed by resetting xterm before the core's paint and keeping no snapshot for sessions the core repaints. |
+| 3 | Byte path | Output as bytes over a `MessagePort` per attachment, held by the preload, `xterm.write(Uint8Array)`, credit after xterm's write callback; acknowledgements and typing over the same port, validated in the preload and in main; typing in one turn is one message; the frame decoder no longer joins reads. Electron's `MessagePortMain` cannot transfer `ArrayBuffer`s, so bytes are cloned, sliced first so a frame does not drag its whole socket read along. |
+| 4 | FOCUS and FACTS | Sent on xterm focus changes and on attach, theme change and resize. herdr-core 0.1.19 does not list them in `hello.features`, and the core ignores frame kinds it does not know; checked against the installed 0.1.20, where an OSC 11 query is answered with the sent background and focus reports reach the program. Not checked against 0.1.19 itself. |
