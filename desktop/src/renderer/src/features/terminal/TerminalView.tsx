@@ -108,6 +108,12 @@ interface TerminalViewProps {
   // When false, the xterm stays mounted (buffer preserved) but the live socket
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
+  /**
+   * When false, the terminal stays mounted and attached but is not shown:
+   * output keeps arriving and is parsed, nothing is drawn, focused or
+   * resized until it is shown again (the Terminal window's recent tabs).
+   */
+  visible?: boolean;
   visualScale?: number;
   onRecreate?: () => void;
   controlsHost?: HTMLElement | null;
@@ -150,6 +156,7 @@ export default function TerminalView({
   sessionName,
   chatId,
   active = true,
+  visible = true,
   visualScale = 1,
   onRecreate,
   controlsHost,
@@ -184,6 +191,11 @@ export default function TerminalView({
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
   const endedRef = useRef(false);
+  const shown = active && visible;
+  // Read by the long-lived resize observer: a hidden pane measures as empty,
+  // and must not shrink the program's terminal to that.
+  const visibleRef = useRef(visible);
+  const hiddenSinceShownRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [liveOwnership, setLiveOwnership] = useState<"writer" | "observer">("writer");
@@ -232,7 +244,7 @@ export default function TerminalView({
   }
 
   const controls = useDesktopTerminalControls({
-    api, sessionName, chatId, active, socketState,
+    api, sessionName, chatId, active: shown, socketState,
     writable: liveOwnership === "writer",
     isMac: navigator.platform.startsWith("Mac"),
     attachmentRef, termRef,
@@ -486,6 +498,7 @@ export default function TerminalView({
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
+        if (!visibleRef.current) return;
         const proposed = proposedTerminalDimensions(fit, terminal, host);
         attachmentRef.current?.resize(proposed.cols, proposed.rows);
         presentation.schedule();
@@ -525,7 +538,7 @@ export default function TerminalView({
       } catch (err: unknown) {
         console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
       }
-      if (manager.activeSessionName === sessionName) manager.detachActive();
+      attachmentRef.current?.release();
       terminal.dispose();
       termRef.current = null;
     };
@@ -593,22 +606,53 @@ export default function TerminalView({
     const binaryDisposable = terminal.onBinary((data) => {
       attachment.writeBinary(data);
     });
-    const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
-    attachment.resize(proposed.cols, proposed.rows);
-    terminal.focus();
+    if (visibleRef.current) {
+      const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
+      attachment.resize(proposed.cols, proposed.rows);
+      terminal.focus();
+    }
 
     return () => {
       dataDisposable.dispose();
       binaryDisposable.dispose();
       nativeHistoryRef.current?.attach(false);
       attachmentRef.current = null;
-      if (manager.activeSessionName === sessionName) manager.detachActive();
+      attachment.release();
     };
   }, [sessionName, chatId, active, leaseAttempt]);
 
+  // Hidden and shown again while attached: catch up on what changed meanwhile.
+  useEffect(() => {
+    visibleRef.current = visible;
+    const terminal = termRef.current;
+    if (!terminal || !active) return;
+    if (!visible) {
+      hiddenSinceShownRef.current = true;
+      terminal.blur();
+      hoveredLinkRef.current = null;
+      setTerminalContextMenu(null);
+      return;
+    }
+    if (!hiddenSinceShownRef.current) return;
+    hiddenSinceShownRef.current = false;
+    // Its attachment was given up while it was hidden: attach again.
+    if (attachmentRef.current && !attachmentRef.current.live() && !endedRef.current) {
+      setLeaseAttempt((attempt) => attempt + 1);
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const proposed = proposedTerminalDimensions(fitRef.current, terminal, hostRef.current);
+      attachmentRef.current?.resize(proposed.cols, proposed.rows);
+      terminal.refresh(0, terminal.rows - 1);
+      gridPresentationRef.current?.schedule();
+      terminal.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, visible]);
+
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !active) return;
+    if (!host || !shown) return;
     let cancelled = false;
     copyOperationGenerationRef.current += 1;
     pasteOperationGenerationRef.current += 1;
@@ -789,7 +833,7 @@ export default function TerminalView({
       host.removeEventListener("dragover", onDrag, { capture: true });
       host.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [active, pasteApi, reportClipboardFailure, reportClipboardSuccess, sessionName]);
+  }, [shown, pasteApi, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
     if (liveOwnership === "observer") {
@@ -834,7 +878,7 @@ export default function TerminalView({
           </span>
         </div>
       ) : null}
-      {active && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
+      {shown && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" role="status" aria-live="polite">
           <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}

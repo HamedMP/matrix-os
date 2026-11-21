@@ -61,7 +61,7 @@ function recordingEvents(): { calls: RecordedEvents; events: ShellSocketEvents }
       calls.states.push(state);
     },
     onOutput: (data, seq) => {
-      calls.outputs.push({ data, seq });
+      calls.outputs.push({ data: typeof data === "string" ? data : new TextDecoder().decode(data), seq });
     },
     onGap: () => {
       calls.gaps += 1;
@@ -73,13 +73,14 @@ function recordingEvents(): { calls: RecordedEvents; events: ShellSocketEvents }
   return { calls, events };
 }
 
-function createManager(bufferCacheCap?: number): {
+function createManager(bufferCacheCap?: number, maxLive?: number): {
   manager: AttachManager;
   created: FakeSocketControl[];
 } {
   const created: FakeSocketControl[] = [];
   const manager = new AttachManager({
     bufferCacheCap,
+    maxLive,
     createSocket: (sessionName, events, chatId) => {
       const socket = new FakeSocketControl(sessionName, events, chatId);
       created.push(socket);
@@ -295,5 +296,67 @@ describe("AttachManager dispose", () => {
     const { manager } = createManager();
     manager.dispose();
     expect(() => manager.attach("alpha", recordingEvents().events)).toThrow(/disposed/);
+  });
+});
+
+// The Terminal window keeps its recent tabs attached (spec 2701 layer 6).
+describe("AttachManager with several live attachments", () => {
+  it("keeps up to maxLive sessions attached, each receiving its own output", () => {
+    const { manager, created } = createManager(undefined, 3);
+    const views = ["a", "b", "c"].map((name) => ({ name, ...recordingEvents() }));
+    const attachments = views.map((view) => manager.attach(view.name, view.events));
+    expect(created.map((socket) => socket.detached)).toEqual([0, 0, 0]);
+    expect(manager.liveSessionNames).toEqual(["a", "b", "c"]);
+    created[0]!.events.onOutput("to a", 1);
+    created[2]!.events.onOutput("to c", 1);
+    expect(views.map((view) => view.calls.outputs.map((output) => output.data))).toEqual([["to a"], [], ["to c"]]);
+    attachments[1]!.write("typed in b");
+    expect(created[1]!.inputs).toEqual(["typed in b"]);
+  });
+
+  it("evicts the least recently attached past the limit and tells its view", () => {
+    const { manager, created } = createManager(undefined, 2);
+    const a = recordingEvents();
+    const first = manager.attach("a", a.events);
+    manager.attach("b", recordingEvents().events);
+    manager.attach("a", recordingEvents().events); // a again: now the most recent
+    expect(created[0]!.detached).toBe(1); // the old socket of a was replaced
+    expect(first.live()).toBe(false);
+    const c = manager.attach("c", recordingEvents().events);
+    expect(created[1]!.detached).toBe(1); // b, the least recent, is out
+    expect(manager.liveSessionNames).toEqual(["a", "c"]);
+    expect(c.live()).toBe(true);
+  });
+
+  it("tells an evicted view it no longer follows its terminal", () => {
+    const { manager, created } = createManager(undefined, 2);
+    const a = recordingEvents();
+    manager.attach("a", a.events);
+    manager.attach("b", recordingEvents().events);
+    manager.attach("c", recordingEvents().events);
+    expect(a.calls.states).toEqual(["connection-lost"]);
+    // Late events of the evicted socket do not reach the view.
+    created[0]!.events.onOutput("late", 9);
+    expect(a.calls.outputs).toEqual([]);
+  });
+
+  it("releases only the attachment that asks, never a newer one of the same session", () => {
+    const { manager, created } = createManager(undefined, 3);
+    const stale = manager.attach("a", recordingEvents().events);
+    manager.attach("b", recordingEvents().events);
+    const fresh = manager.attach("a", recordingEvents().events);
+    stale.release();
+    expect(created[2]!.detached).toBe(0);
+    expect(manager.liveSessionNames).toEqual(["b", "a"]);
+    fresh.release();
+    expect(created[2]!.detached).toBe(1);
+    expect(manager.liveSessionNames).toEqual(["b"]);
+  });
+
+  it("caps maxLive at the attachment budget", () => {
+    const { manager, created } = createManager(undefined, 50);
+    for (let index = 0; index < 10; index += 1) manager.attach(`s${index}`, recordingEvents().events);
+    expect(manager.liveSessionNames).toHaveLength(8);
+    expect(created.filter((socket) => socket.detached > 0)).toHaveLength(2);
   });
 });

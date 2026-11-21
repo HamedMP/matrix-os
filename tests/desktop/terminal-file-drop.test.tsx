@@ -16,6 +16,7 @@ const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentWriteBinary = vi.fn();
 const attachmentResize = vi.fn();
+const attachmentRelease = vi.fn();
 
 const { createdFitAddons, createdTerminals, resizeObserverCallbacks } = vi.hoisted(() => ({
   createdFitAddons: [] as Array<{ fitCalls: number }>,
@@ -193,8 +194,11 @@ describe("Electron Terminal protected file drag", () => {
       resize: attachmentResize,
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
+      release: attachmentRelease,
+      live: () => true,
     }));
     attachmentResize.mockReset();
+    attachmentRelease.mockReset();
     attachmentWrite.mockReset();
     attachmentWriteBinary.mockReset();
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
@@ -374,7 +378,7 @@ describe("Electron Terminal protected file drag", () => {
   it("uploads selected files from the attachment action using the same terminal path flow", async () => {
     attachMock.mockImplementation((_name: string, events: ShellSocketEvents) => {
       events.onState("attached");
-      return { resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary };
+      return { resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, live: () => true };
     });
     const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/temporary/terminal-pastes/selected.pdf" }] }));
     useConnection.setState({ api: { post } as never });

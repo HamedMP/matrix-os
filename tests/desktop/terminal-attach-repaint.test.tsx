@@ -27,7 +27,7 @@ vi.mock("@xterm/xterm", async (importActual) => {
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class { dispose() {} } }));
 
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
-import { resetAttachManager, setAlternateTerminalSockets } from "@desktop/renderer/src/features/terminal/terminal-runtime";
+import { getAttachManager, resetAttachManager, setAlternateTerminalSockets } from "@desktop/renderer/src/features/terminal/terminal-runtime";
 import { LOCAL_TERMINAL_SOCKETS } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
@@ -135,5 +135,28 @@ describe("herdr-core attach repaint", () => {
     await act(async () => { reply(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await drawn(terminal);
     expect(bufferLines(terminal).filter((line) => line === "early history")).toHaveLength(1);
+  });
+
+  it("shows the core's paint once when a kept terminal attaches again in the same view", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    const operator = installOperator();
+    const paint = (rows: number) => corePaint({ history: ["kept history"], screen: ["$ "], rows });
+    const view = render(<TerminalView sessionName="local:t4" active />);
+    await flush();
+    const terminal = terminals.at(-1)!;
+    ports.output(operator.lastAttachId(), paint(terminal.rows));
+    await drawn(terminal);
+    // Hidden, then its attachment is given up (a newer tab took the slot).
+    view.rerender(<TerminalView sessionName="local:t4" active visible={false} />);
+    getAttachManager().releaseSession("local:t4");
+    const attaches = operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:attach").length;
+    view.rerender(<TerminalView sessionName="local:t4" active visible />);
+    await flush();
+    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:attach").length).toBe(attaches + 1);
+    expect(terminals.at(-1)).toBe(terminal);
+    ports.output(operator.lastAttachId(), paint(terminal.rows));
+    await drawn(terminal);
+    expect(bufferLines(terminal).filter((line) => line === "kept history")).toHaveLength(1);
   });
 });

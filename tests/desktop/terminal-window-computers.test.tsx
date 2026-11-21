@@ -5,12 +5,14 @@ import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } f
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName }: { sessionName: string }) => <div data-testid="terminal-view">{sessionName}</div>,
+  // Recently shown terminals stay mounted, hidden; only the one on screen is "terminal-view".
+  default: ({ sessionName, visible }: { sessionName: string; visible?: boolean }) => <div data-testid={visible === false ? "hidden-terminal-view" : "terminal-view"}>{sessionName}</div>,
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useComputerTerminals } from "@desktop/renderer/src/features/terminal-window/use-computer-terminals";
+import { getAttachManager } from "@desktop/renderer/src/features/terminal/terminal-runtime";
 
 // These tests render the whole window and wait on mocked network replies. The
 // default one-second wait is too tight for the first render on a loaded CI
@@ -148,6 +150,27 @@ describe("Terminal window computers", () => {
     expect(useConnection.getState()).toMatchObject({ platformHost: HOST, runtimeSlot: "extra" });
     expect(screen.getByRole("button", { name: /deploy/ }).getAttribute("aria-current")).toBe("true");
     expect(window.operator.invoke).not.toHaveBeenCalledWith("runtime:select", expect.anything());
+  });
+
+  // Fault detected: opening a tab on another computer reset every attachment in the window.
+  it("keeps a tab of one computer attached behind a tab of another", async () => {
+    fetchMock.mockImplementation(async (url: string) => json(workspace(String(url).includes("runtime=extra")
+      ? [{ id: TAB_2, name: "deploy" }] : [{ id: TAB_1, name: "build" }])));
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /build/ }));
+    await screen.findByTestId("terminal-view");
+    const attachments = getAttachManager();
+    fireEvent.click(await screen.findByRole("button", { name: /Additional Computer/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /deploy/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_2}`));
+    // The window's attachments were not reset: the first computer's tab is still attached.
+    expect(getAttachManager()).toBe(attachments);
+    expect(screen.getByTestId("hidden-terminal-view").textContent).toBe(`${WS}:${TAB_1}`);
+    expect(useConnection.getState().runtimeSlot).toBe("extra");
+    fireEvent.click(screen.getByRole("button", { name: /build/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_1}`));
+    expect(useConnection.getState().runtimeSlot).toBe("primary");
   });
 
   it("creates a terminal in the computer's main workspace and opens it", async () => {

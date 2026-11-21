@@ -6,16 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Records each mount of a terminal view, for tests that care about remounting.
 let mountLog: string[] | null = null;
+let unmountLog: string[] | null = null;
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: function TerminalViewStub({ sessionName }: { sessionName: string }) {
-    React.useEffect(() => { mountLog?.push(sessionName); }, [sessionName]);
-    return <div data-testid="terminal-view">{sessionName}</div>;
+  // Recently shown terminals stay mounted, hidden; only the one on screen is "terminal-view".
+  default: function TerminalViewStub({ sessionName, visible }: { sessionName: string; visible?: boolean }) {
+    React.useEffect(() => { mountLog?.push(sessionName); return () => { unmountLog?.push(sessionName); }; }, [sessionName]);
+    return <div data-testid={visible === false ? "hidden-terminal-view" : "terminal-view"}>{sessionName}</div>;
   },
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { createLocalTerminalSocket, inputChunkEnd } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
 import { localTerminalPorts } from "./fixtures/local-terminal-ports";
+import { getAttachManager } from "@desktop/renderer/src/features/terminal/terminal-runtime";
+import { TERMINAL_WINDOW_LIVE_TABS } from "@desktop/renderer/src/features/terminal-window/recent-terminal-panes";
 
 type Listener = (payload: unknown) => void;
 function installOperator(local: Record<string, (payload: never) => unknown>) {
@@ -320,6 +324,66 @@ describe("This Computer agents and names", () => {
       expect(within(list).getByText("review")).toBeTruthy();
       expect(within(list).queryByText("zsh")).toBeNull();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("Terminal window recent tabs", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); mountLog = null; unmountLog = null; });
+  const listed = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `t${index + 1}`, title: `shell ${index + 1}`, status: null }));
+
+  // Fault detected: every switch tore down xterm and its attachment and built them again.
+  it("keeps a terminal mounted and attached behind the next one, and shows it again without remounting", async () => {
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals: listed(2) }) });
+    const mounts: string[] = []; const unmounts: string[] = [];
+    mountLog = mounts; unmountLog = unmounts;
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "shell 1" }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
+    fireEvent.click(screen.getByRole("button", { name: "shell 2" }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2"));
+    expect(screen.getByTestId("hidden-terminal-view").textContent).toBe("local:t1");
+    expect(screen.getByTestId("hidden-terminal-view").parentElement!.hidden).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "shell 1" }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1"));
+    expect(mounts).toEqual(["local:t1", "local:t2"]);
+    expect(unmounts).toEqual([]);
+  });
+
+  it("keeps the six most recently shown and closes the least recent past that", async () => {
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals: listed(7) }) });
+    const unmounts: string[] = [];
+    unmountLog = unmounts;
+    render(<TerminalWindowApp />);
+    await screen.findByRole("button", { name: "shell 7" });
+    for (const index of [1, 2, 3, 4, 5, 6, 7]) {
+      fireEvent.click(screen.getByRole("button", { name: `shell ${index}` }));
+      await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`local:t${index}`));
+    }
+    expect(screen.getAllByTestId("hidden-terminal-view").map((view) => view.textContent).sort()).toEqual(["local:t2", "local:t3", "local:t4", "local:t5", "local:t6"]);
+    expect(unmounts).toEqual(["local:t1"]);
+  });
+
+  it("closes a kept terminal once it no longer exists", async () => {
+    let terminals = listed(2);
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals }), "local-terminal:kill": () => { terminals = [terminals[1]!]; return { ok: true }; } });
+    const unmounts: string[] = [];
+    unmountLog = unmounts;
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "shell 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "shell 2" }));
+    await waitFor(() => expect(screen.getByTestId("hidden-terminal-view").textContent).toBe("local:t1"));
+    fireEvent.click(screen.getByRole("button", { name: "End shell 1" }));
+    await waitFor(() => expect(unmounts).toEqual(["local:t1"]));
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2");
+  });
+
+  it("lets this window keep its recent tabs attached, and only while it is open", async () => {
+    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals: [] }) });
+    const view = render(<TerminalWindowApp />);
+    expect(getAttachManager().maxLive).toBe(TERMINAL_WINDOW_LIVE_TABS);
+    view.unmount();
+    expect(getAttachManager().maxLive).toBe(1);
   });
 });
 

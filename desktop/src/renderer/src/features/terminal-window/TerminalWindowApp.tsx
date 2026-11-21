@@ -1,13 +1,15 @@
 // The Electron Desktop Terminal window (specs/651-desktop-terminal-window).
 // Machines on the left, one attached terminal on the right. Every Matrix
 // computer is reached with its own credential, held by the trusted core.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Toaster } from "sonner";
 import { ChevronDown, ChevronRight, Cloud, Laptop, Pencil, Plus, SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
+import { setLiveAttachmentLimit } from "../terminal/terminal-runtime";
+import { recentTerminalPanes, samePanes, TERMINAL_WINDOW_LIVE_TABS, type TerminalPane } from "./recent-terminal-panes";
 import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-machines";
 import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
 import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
@@ -283,14 +285,6 @@ function EmptyPane({ signedIn, onFocusMain }: { signedIn: boolean; onFocusMain()
   );
 }
 
-function TerminalPane({ sessionName }: { sessionName: string }) {
-  return (
-    <main aria-label="Terminal" className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <TerminalView key={sessionName} sessionName={sessionName} active />
-    </main>
-  );
-}
-
 function focusMainWindow(): void {
   void invoke("terminal-window:focus-main", {}).catch((error: unknown) => {
     console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
@@ -423,19 +417,63 @@ function MatrixMachines({ view }: { view: TerminalWindow }) {
   })}</>;
 }
 
-function ActivePane({ view }: { view: TerminalWindow }) {
-  // A session change resets the shared attach manager; the epoch remounts the
-  // local pane so it attaches again instead of staying on a disposed attachment.
+interface WindowPane extends TerminalPane {
+  /** The attach manager generation it was opened in; a reset ends every pane. */
+  epoch: number;
+  local?: string;
+  cloud?: { slot: string; refKey: string };
+}
+
+function currentPane(view: TerminalWindow): WindowPane | null {
+  const epoch = view.cloud.attachEpoch;
   if (view.localTerminal) {
-    return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)} />;
+    const id = view.localTerminal.id;
+    return { key: `local|${id}|${epoch}`, sessionName: localSessionName(id), epoch, local: id };
   }
   const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} />;
-  return <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />;
+  return active ? { key: `${active.slot}|${active.refKey}|${epoch}`, sessionName: active.refKey, epoch, cloud: active } : null;
+}
+
+/** Whether a hidden pane's terminal still exists. While a listing is not ready, it is kept. */
+function stillThere(view: TerminalWindow, pane: WindowPane): boolean {
+  if (pane.epoch !== view.cloud.attachEpoch) return false;
+  if (pane.local) return view.local.state.status !== "ready" || view.local.state.terminals.some((terminal) => terminal.id === pane.local);
+  const listing = pane.cloud ? view.cloud.terminals[pane.cloud.slot] : undefined;
+  if (listing?.status !== "ready") return listing !== undefined;
+  return listing.tabs.some((tab) => tab.refKey === pane.cloud!.refKey && !tab.ended);
+}
+
+/** The terminal on screen, with the recently shown ones mounted and attached behind it. */
+function TerminalPanes({ view }: { view: TerminalWindow }) {
+  const current = currentPane(view);
+  const [recent, setRecent] = useState<WindowPane[]>([]);
+  const panes = recentTerminalPanes(recent, current, (pane) => stillThere(view, pane), TERMINAL_WINDOW_LIVE_TABS);
+  // Derived from what was shown before: kept in step during render.
+  if (!samePanes(panes, recent)) setRecent(panes);
+  return (
+    <>
+      {current ? null : <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />}
+      <main aria-label="Terminal" hidden={!current} className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
+        {panes.map((pane) => {
+          const shown = pane.key === current?.key;
+          return (
+            <div key={pane.key} hidden={!shown} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+              <TerminalView sessionName={pane.sessionName} active visible={shown} />
+            </div>
+          );
+        })}
+      </main>
+    </>
+  );
 }
 
 export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
+  // Before any terminal attaches: this window keeps its recent tabs live.
+  useLayoutEffect(() => {
+    setLiveAttachmentLimit(TERMINAL_WINDOW_LIVE_TABS);
+    return () => setLiveAttachmentLimit(1);
+  }, []);
   const view = useTerminalWindow();
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
@@ -462,7 +500,7 @@ export default function TerminalWindowApp() {
             <MatrixMachines view={view} />
           </ul>
         </nav>
-        <ActivePane view={view} />
+        <TerminalPanes view={view} />
       </div>
     </div>
   );
