@@ -145,10 +145,18 @@ With no TTY, defaults apply and nothing blocks.
 
 ### Layer 5 · Electron terminal performance
 
-Findings from studying herdr-app are recorded in
-[`research.md`](./research.md). The techniques that apply to Matrix land here
-as one focused PR, measured before and after (attach-to-first-paint and
-switch time across 10 tabs, frame time under heavy output).
+Findings from studying herdr-app are in [`research.md`](./research.md).
+Herdr is native (GPUI + libghostty-vt), so we keep xterm.js but adopt what
+transfers, as one focused PR measured before and after (attach-to-first-paint,
+switch time across 10 tabs, frame time under heavy output, memory):
+
+1. Keep the last 6 Terminal-window tabs mounted, hidden and attached (LRU);
+   today every switch rebuilds xterm and WebGL and re-attaches.
+2. Reset xterm before the core's attach repaint and stop also writing our own
+   snapshot; reading the code, this likely duplicates scrollback today.
+3. Bytes as `Uint8Array` over a `MessagePort`, batched input, no per-read
+   `Buffer.concat`.
+4. Send FOCUS and display FACTS frames.
 
 ## Later (designed for, not built here)
 
@@ -204,7 +212,9 @@ Needs reviewer approval.
 | `WS /ws/terminal/herdr` | Owner, query token | Same; observe lease by default |
 | `DELETE /api/terminal/herdr/:id` | Owner | `bodyLimit`, id schema, UI confirmation |
 
-- herdr-core access equals a shell as the run user. The adapter is enabled
+- herdr-core's socket has no authentication of its own; any process of the
+  same Unix user is trusted (research.md). Access therefore equals a shell as
+  the run user. The adapter is enabled
   only on self-host (or managed computers whose run user owns the core) and
   only for the owner principal.
 - Allowed-method list enforced in the shared client (`restrictHcConnection`).
