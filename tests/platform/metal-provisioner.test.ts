@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
-import { getUserMachine, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { sql } from 'kysely';
+import {
+  getUserMachine,
+  insertUserMachine,
+  promoteHostBundleChannel,
+  upsertHostBundleRelease,
+  type PlatformDB,
+} from '../../packages/platform/src/db.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/customer-vps-cloud-init.js';
 import { HostdError, type HostdClient } from '../../packages/platform/src/substrates/hostd-client.js';
@@ -27,6 +34,34 @@ const GiB = 1024 ** 3;
 const MACHINE_ID = '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f';
 const GOLDEN = 'golden-2026.11.20-1';
 const NOW = new Date('2026-11-21T12:00:00.000Z');
+const BUNDLE_VERSION = 'matrix-os-host-2026.11.20-1';
+const BUNDLE_SHA = 'c'.repeat(64);
+
+/** The stable channel points at a release with a known digest, as in production. */
+async function pinStableBundle(db: PlatformDB) {
+  await upsertHostBundleRelease(db, {
+    version: BUNDLE_VERSION, gitCommit: '1234567', buildTime: NOW.toISOString(),
+    bundleKey: `system-bundles/${BUNDLE_VERSION}/matrix-host-bundle.tar.gz`, checksumKey: null,
+    sha256: BUNDLE_SHA, size: 100, createdAt: NOW.toISOString(),
+  });
+  await promoteHostBundleChannel(db, 'stable', BUNDLE_VERSION, NOW.toISOString());
+}
+
+/** Makes the next `failures` updates that set user_machines.metal_vm_id fail inside Postgres. */
+async function failVmRecordUpdates(db: PlatformDB, failures: number) {
+  await sql.raw('CREATE SEQUENCE vm_record_failures').execute(db.executor);
+  await sql.raw(`
+    CREATE FUNCTION fail_vm_record() RETURNS trigger AS $$
+    BEGIN
+      IF nextval('vm_record_failures') <= ${failures} THEN RAISE EXCEPTION 'injected vm record failure'; END IF;
+      RETURN NEW;
+    END $$ LANGUAGE plpgsql
+  `).execute(db.executor);
+  await sql.raw(`
+    CREATE TRIGGER fail_vm_record BEFORE UPDATE OF metal_vm_id ON user_machines
+      FOR EACH ROW EXECUTE FUNCTION fail_vm_record()
+  `).execute(db.executor);
+}
 
 function hostInput(id: string, overrides: Partial<MetalHostInput> = {}): MetalHostInput {
   return {
@@ -85,6 +120,7 @@ describe('metal provisioner', () => {
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
+    await pinStableBundle(db);
     template = await loadCustomerVpsCloudInitTemplate();
     fakes.clear();
     logs = [];
@@ -101,7 +137,7 @@ describe('metal provisioner', () => {
     return fake;
   }
 
-  function provisioner(overrides: { machineIds?: string[] } = {}) {
+  function provisioner(overrides: { machineIds?: string[]; imageVersion?: string } = {}) {
     const machineIds = [...(overrides.machineIds ?? [MACHINE_ID])];
     return createMetalProvisioner({
       db,
@@ -112,9 +148,10 @@ describe('metal provisioner', () => {
         return fake.client;
       },
       goldenVersion: GOLDEN,
-      config: createTestConfig(),
+      config: createTestConfig(overrides.imageVersion ? { imageVersion: overrides.imageVersion } : {}),
       cloudInitTemplate: template,
       now: () => NOW,
+      sleep: async () => undefined,
       machineIdFactory: () => machineIds.shift() ?? MACHINE_ID,
       tokenFactory: () => ({
         token: 'registration-token',
@@ -288,6 +325,54 @@ describe('metal provisioner', () => {
     expect(host.createVm).not.toHaveBeenCalled();
   });
 
+  it('pins the host bundle on the metal row so registration verifies it', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({
+      imageVersion: BUNDLE_VERSION,
+      targetBundleVersion: BUNDLE_VERSION,
+      targetBundleSha256: BUNDLE_SHA,
+    });
+    const spec = host.createVm.mock.calls[0]![0] as HostdCreateVmRequest;
+    expect(spec.userData).toMatch(new RegExp(`^\\s*MATRIX_TARGET_BUNDLE_SHA256=${BUNDLE_SHA}$`, 'm'));
+  });
+
+  it('refuses to provision when the bundle channel has no pinned release', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    expect(await provisioner({ imageVersion: 'beta' }).provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ error: 'unavailable' });
+    expect(host.createVm).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, MACHINE_ID)).toBeUndefined();
+  });
+
+  it('retries recording the created VM and keeps the runtime when a retry succeeds', async () => {
+    await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await failVmRecordUpdates(db, 2);
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: MACHINE_ID });
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({
+      status: 'provisioning',
+      metalVmId: 'vm_0123456789abcdef01234567',
+      privateAddress: '10.77.0.9',
+    });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('id').execute()).toEqual([]);
+  });
+
+  it('gives up recording the created VM after bounded retries, fails the row and queues teardown with the VM id', async () => {
+    await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await failVmRecordUpdates(db, 3);
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ error: 'unavailable' });
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'failed', metalVmId: null });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
+      .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
+  });
+
   it('fails a metal row whose registration window expired and queues its destroy', async () => {
     await addHost('host-a', { memoryAvailableMiB: 60_000 });
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
@@ -313,6 +398,7 @@ describe('metal VM deletion drainer', () => {
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
+    await pinStableBundle(db);
     fakes.clear();
   });
 
@@ -350,7 +436,7 @@ describe('metal VM deletion drainer', () => {
   }
 
   it('destroys the VM hostd holds for the machine generation and completes the entry', async () => {
-    const fake = await queueFailedCreate(new HostdError('timeout'));
+    const fake = await queueFailedCreate(new HostdError('internal'));
     fake.listVms.mockResolvedValueOnce([
       { id: 'vm_aaaaaaaaaaaaaaaaaaaaaaaa', machineId: 'someone-else', generation: 1 },
       { id: 'vm_bbbbbbbbbbbbbbbbbbbbbbbb', machineId: MACHINE_ID, generation: 1 },
@@ -363,6 +449,32 @@ describe('metal VM deletion drainer', () => {
     const rows = await db.executor.selectFrom('metal_vm_deletions').select(['completed_at', 'attempts']).execute();
     expect(rows[0]?.completed_at).not.toBeNull();
     expect(await drainer().drainOnce()).toEqual({ completed: 0, retried: 0 });
+  });
+
+  it('after a create timeout, waits out the create window and destroys the VM once hostd lists it', async () => {
+    const fake = await queueFailedCreate(new HostdError('timeout'));
+    const at = (ms: number) => new Date(NOW.getTime() + ms);
+
+    // hostd may still be cloning: nothing is attempted inside twice the create timeout.
+    expect(await drainer(at(60_000)).drainOnce()).toEqual({ completed: 0, retried: 0 });
+    expect(fake.listVms).not.toHaveBeenCalled();
+
+    // Past the window but hostd does not list the VM yet: the id-less entry stays open.
+    expect(await drainer(at(5 * 60_000)).drainOnce()).toEqual({ completed: 0, retried: 1 });
+    expect(fake.destroy).not.toHaveBeenCalled();
+    expect((await db.executor.selectFrom('metal_vm_deletions').select('completed_at').executeTakeFirst())?.completed_at)
+      .toBeNull();
+
+    fake.listVms.mockResolvedValueOnce([{ id: 'vm_cccccccccccccccccccccccc', machineId: MACHINE_ID, generation: 1 }]);
+    expect(await drainer(at(7 * 60_000)).drainOnce()).toEqual({ completed: 1, retried: 0 });
+    expect(fake.destroy).toHaveBeenCalledWith('vm_cccccccccccccccccccccccc');
+  });
+
+  it('completes an id-less entry on an empty listing only after the grace period', async () => {
+    await queueFailedCreate(new HostdError('internal'));
+
+    expect(await drainer().drainOnce()).toEqual({ completed: 0, retried: 1 });
+    expect(await drainer(new Date(NOW.getTime() + 11 * 60_000)).drainOnce()).toEqual({ completed: 1, retried: 0 });
   });
 
   it('keeps the entry and backs off when hostd is unreachable', async () => {

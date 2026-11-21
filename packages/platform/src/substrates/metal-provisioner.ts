@@ -16,7 +16,7 @@ import {
   runInPlatformTransaction,
   type PlatformDB,
 } from '../db.js';
-import { HostdError, type HostdClient } from './hostd-client.js';
+import { HOSTD_CREATE_TIMEOUT_MS, HostdError, type HostdClient } from './hostd-client.js';
 import type { MetalHost, MetalHostsRepository } from './metal-hosts-repository.js';
 import { enqueueMetalVmDeletion } from './metal-vm-deletions.js';
 
@@ -36,6 +36,14 @@ export const METAL_POOL_FREE_MIN_BYTES = 200 * 1024 ** 3;
 export const METAL_CAPACITY_TIMEOUT_MS = 5_000;
 export const METAL_USER_DATA_LIMIT_BYTES = 64 * 1024;
 const CAPACITY_CONCURRENCY = 4;
+/** Attempts to record a created VM's id and address before giving up and tearing it down. */
+export const METAL_VM_RECORD_ATTEMPTS = 3;
+const VM_RECORD_BACKOFF_MS = 200;
+/**
+ * Create errors after which hostd may still be cloning or booting the VM. Its
+ * teardown waits out the create window so the drainer does not list too early.
+ */
+const AMBIGUOUS_CREATE_ERRORS = new Set(['timeout', 'unreachable', 'invalid_response']);
 const STALE_BATCH_SIZE = 50;
 
 /**
@@ -74,6 +82,7 @@ export interface MetalProvisionerDeps {
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
   log?: Log;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 function errorCode(error: unknown): string {
@@ -121,6 +130,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
 
   type Placement = { host: MetalHost } | { error: 'busy' | 'unavailable' };
 
@@ -167,9 +177,15 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     handle: string;
     runtimeSlot: string;
     registration: RegistrationToken;
-  }): Promise<{ userData: string; imageVersion: string } | null> {
+  }): Promise<{ userData: string; imageVersion: string; bundleSha256: string } | null> {
     try {
       const bundleRef = await resolveHostBundleRef(db, config);
+      // Registration verifies the guest against this pin; a metal runtime never boots unpinned.
+      const bundleSha256 = bundleRef.sha256;
+      if (!bundleSha256 || !/^[a-f0-9]{64}$/.test(bundleSha256) || bundleSha256 === '0'.repeat(64)) {
+        log('bundle_unpinned', { machineId: input.machineId });
+        return null;
+      }
       const hostConfig = buildHostConfig(
         config,
         { clerkUserId: input.clerkUserId, handle: input.handle, runtimeSlot: input.runtimeSlot, provisioningClass: 'customer' },
@@ -182,7 +198,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const userData = withMetalServerEnv(
         renderCloudInitTemplate(deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE, {
           ...hostConfig,
-          targetBundleSha256: bundleRef.sha256 ?? '',
+          targetBundleSha256: bundleSha256,
         }),
         input.machineId,
       );
@@ -194,7 +210,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         log('user_data_too_large', { machineId: input.machineId });
         return null;
       }
-      return { userData, imageVersion: bundleRef.imageVersion };
+      return { userData, imageVersion: bundleRef.imageVersion, bundleSha256 };
     } catch (error: unknown) {
       log('user_data_unavailable', { machineId: input.machineId, code: errorCode(error) });
       return null;
@@ -211,6 +227,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     runtimeSlot: string;
     host: MetalHost;
     imageVersion: string;
+    bundleSha256: string;
     registration: RegistrationToken;
     at: Date;
   }): Promise<Claim> {
@@ -248,6 +265,8 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
             provisioningClass: 'customer',
             status: 'provisioning',
             imageVersion: row.imageVersion,
+            targetBundleVersion: row.imageVersion,
+            targetBundleSha256: row.bundleSha256,
             registrationTokenHash: row.registration.hash,
             registrationTokenExpiresAt: row.registration.expiresAt,
             provisionedAt: row.at.toISOString(),
@@ -295,6 +314,9 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
           metalVmId: row.metal_vm_id,
           reason: 'create_failed',
           now: at,
+          ...(AMBIGUOUS_CREATE_ERRORS.has(code)
+            ? { notBefore: new Date(at.getTime() + 2 * HOSTD_CREATE_TIMEOUT_MS) }
+            : {}),
         });
         return true;
       });
@@ -308,30 +330,53 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     return { error: capacityFull ? 'busy' : 'unavailable' };
   }
 
+  /**
+   * Stores the created VM's id and address with a targeted update, retried a
+   * few times. If it still fails, the row is failed and the VM queued for
+   * teardown in one transaction, so no VM runs unrecorded; registration also
+   * refuses a metal row without a VM id.
+   */
   async function recordCreated(machineId: string, host: MetalHost, vm: { id: string; privateIPv4: string }): Promise<MetalProvisionResult> {
+    for (let attempt = 1; attempt <= METAL_VM_RECORD_ATTEMPTS; attempt += 1) {
+      try {
+        const recorded = await db.executor.updateTable('user_machines')
+          .set({ metal_vm_id: vm.id, private_address: vm.privateIPv4 })
+          .where('machine_id', '=', machineId)
+          .where('metal_host_id', '=', host.id)
+          .where('metal_vm_id', 'is', null)
+          .where('status', 'in', ['provisioning', 'running'])
+          .where('deleted_at', 'is', null)
+          .returning('machine_id')
+          .executeTakeFirst();
+        if (recorded) return { machineId };
+        // The row left provisioning while hostd was creating (deleted or failed): tear the VM down.
+        log('provision_superseded', { machineId, hostId: host.id });
+        await enqueueMetalVmDeletion(db, {
+          metalHostId: host.id, machineId, generation: 1, metalVmId: vm.id, reason: 'provision_superseded', now: now(),
+        });
+        return { error: 'unavailable' };
+      } catch (error: unknown) {
+        log('create_record_failed', { machineId, attempt, code: errorCode(error) });
+        if (attempt < METAL_VM_RECORD_ATTEMPTS) await sleep(VM_RECORD_BACKOFF_MS * attempt);
+      }
+    }
+    const at = now();
     try {
-      const recorded = await db.executor.updateTable('user_machines')
-        .set({ metal_vm_id: vm.id, private_address: vm.privateIPv4 })
-        .where('machine_id', '=', machineId)
-        .where('metal_host_id', '=', host.id)
-        .where('metal_vm_id', 'is', null)
-        .where('status', 'in', ['provisioning', 'running'])
-        .where('deleted_at', 'is', null)
-        .returning('machine_id')
-        .executeTakeFirst();
-      if (recorded) return { machineId };
-      // The row left provisioning while hostd was creating (deleted or failed): tear the VM down.
-      log('provision_superseded', { machineId, hostId: host.id });
-      await enqueueMetalVmDeletion(db, {
-        metalHostId: host.id,
-        machineId,
-        generation: 1,
-        metalVmId: vm.id,
-        reason: 'provision_superseded',
-        now: now(),
+      await runInPlatformTransaction(db, async (trx) => {
+        await trx.executor.updateTable('user_machines')
+          .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at.toISOString() })
+          .where('machine_id', '=', machineId)
+          .where('status', '=', 'provisioning')
+          .where('deleted_at', 'is', null)
+          .execute();
+        await enqueueMetalVmDeletion(trx, {
+          metalHostId: host.id, machineId, generation: 1, metalVmId: vm.id, reason: 'create_unrecorded', now: at,
+        });
       });
     } catch (error: unknown) {
-      log('create_record_failed', { machineId, code: errorCode(error) });
+      // The row stays provisioning without a VM id: registration refuses it, and
+      // reconcileStale fails it and queues teardown (found by listing) after the window.
+      log('create_unrecorded_teardown_failed', { machineId, code: errorCode(error) });
     }
     return { error: 'unavailable' };
   }
@@ -360,7 +405,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       if (!rendered) return { error: 'unavailable' };
 
       const claim = await claimSlot({
-        machineId, clerkUserId, handle, runtimeSlot, host, imageVersion: rendered.imageVersion, registration, at,
+        machineId, clerkUserId, handle, runtimeSlot, host, imageVersion: rendered.imageVersion, bundleSha256: rendered.bundleSha256, registration, at,
       });
       if ('error' in claim) return claim;
       if ('existing' in claim) return { machineId: claim.existing };

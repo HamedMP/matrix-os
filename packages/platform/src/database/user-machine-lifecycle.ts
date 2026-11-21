@@ -162,7 +162,7 @@ export async function completeUserMachineRegistration(
     .set(toUserMachineUpdate(values))
     .where('machine_id', '=', machineId);
   query = server === 'metal'
-    ? query.where('substrate', '=', 'metal').where('hetzner_server_id', 'is', null)
+    ? query.where('substrate', '=', 'metal').where('hetzner_server_id', 'is', null).where('metal_vm_id', 'is not', null)
     : query.where('hetzner_server_id', '=', server);
   const row = await query
     .where('registration_token_hash', '=', expectedRegistrationTokenHash)

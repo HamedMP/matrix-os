@@ -18,6 +18,11 @@ const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 100;
 const BASE_BACKOFF_MS = 30_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
+/**
+ * An entry without a VM id is completed on an empty hostd listing only after
+ * this long, because hostd may not list a VM it is still creating.
+ */
+export const METAL_UNLISTED_GRACE_MS = 10 * 60_000;
 
 type Log = (event: string, fields: Record<string, unknown>) => void;
 const defaultLog: Log = (event, fields) => console.error(`[metal-vm-deletions] ${event}`, JSON.stringify(fields));
@@ -29,6 +34,8 @@ export interface MetalVmDeletionInput {
   metalVmId: string | null;
   reason: string;
   now: Date;
+  /** First attempt time; defaults to now. */
+  notBefore?: Date;
 }
 
 /**
@@ -47,7 +54,8 @@ export async function enqueueMetalVmDeletion(db: PlatformDB, input: MetalVmDelet
       generation: input.generation,
       metal_vm_id: input.metalVmId,
       reason: input.reason,
-      next_attempt_at: input.now.toISOString(),
+      next_attempt_at: (input.notBefore ?? input.now).toISOString(),
+      created_at: input.now.toISOString(),
     })
     .onConflict((oc) => oc.columns(['machine_id', 'generation']).where('completed_at', 'is', null)
       .doUpdateSet({ metal_vm_id: sql`COALESCE(metal_vm_deletions.metal_vm_id, excluded.metal_vm_id)` }))
@@ -68,7 +76,12 @@ export interface MetalVmDeletionDrainResult {
   retried: number;
 }
 
+class MetalVmNotListedError extends Error {
+  constructor() { super('metal VM not listed yet'); this.name = 'MetalVmNotListedError'; }
+}
+
 function errorCode(error: unknown): string {
+  if (error instanceof MetalVmNotListedError) return 'not_listed';
   if (error instanceof HostdError) return error.code;
   return error instanceof Error ? error.name : 'unknown';
 }
@@ -78,8 +91,10 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
   const log = deps.log ?? defaultLog;
   const batchSize = Math.min(Math.max(1, deps.batchSize ?? DEFAULT_BATCH_SIZE), MAX_BATCH_SIZE);
 
-  /** Destroys the entry's VM; resolves once hostd holds no VM for it. */
-  async function destroy(entry: { metal_host_id: string; machine_id: string; generation: number; metal_vm_id: string | null }) {
+  /** Destroys the entry's VM. 'pending' means hostd listed nothing yet for an id-less entry inside the grace period. */
+  async function destroy(entry: {
+    metal_host_id: string; machine_id: string; generation: number; metal_vm_id: string | null; created_at: Date;
+  }): Promise<'done' | 'pending'> {
     const host = await deps.hosts.get(entry.metal_host_id);
     if (!host) throw new Error('metal host is not registered');
     const client = deps.clientFor(host);
@@ -87,6 +102,9 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
     if (entry.metal_vm_id) vmIds.add(entry.metal_vm_id);
     for (const vm of await client.listVms()) {
       if (vm.machineId === entry.machine_id && vm.generation === entry.generation) vmIds.add(vm.id);
+    }
+    if (vmIds.size === 0 && now().getTime() - new Date(entry.created_at).getTime() < METAL_UNLISTED_GRACE_MS) {
+      return 'pending';
     }
     for (const vmId of vmIds) {
       try {
@@ -96,13 +114,14 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
         throw error;
       }
     }
+    return 'done';
   }
 
   return {
     async drainOnce(): Promise<MetalVmDeletionDrainResult> {
       await deps.db.ready;
       const due = await deps.db.executor.selectFrom('metal_vm_deletions')
-        .select(['id', 'metal_host_id', 'machine_id', 'generation', 'metal_vm_id', 'attempts'])
+        .select(['id', 'metal_host_id', 'machine_id', 'generation', 'metal_vm_id', 'attempts', 'created_at'])
         .where('completed_at', 'is', null)
         .where('next_attempt_at', '<=', now())
         .orderBy('next_attempt_at')
@@ -112,7 +131,7 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
       let retried = 0;
       for (const entry of due) {
         try {
-          await destroy(entry);
+          if (await destroy(entry) === 'pending') throw new MetalVmNotListedError();
           await deps.db.executor.updateTable('metal_vm_deletions')
             .set({ completed_at: now().toISOString(), last_error: null })
             .where('id', '=', entry.id)

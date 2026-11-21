@@ -55,6 +55,11 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
     if (!expectedRegistrationTokenHash || !registrationTokenMatches(token, expectedRegistrationTokenHash)) {
       throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
     }
+    // A metal guest can boot before the platform records its VM id and address;
+    // refuse retryably so it never becomes running unroutable.
+    if (metal && row.metalVmId === null) {
+      throw new CustomerVpsError(503, 'provider_unavailable', 'Registration unavailable');
+    }
     const provisioningJob = row.status === 'provisioning'
       ? await getProvisioningJobByMachineId(deps.db, input.machineId)
       : undefined;
@@ -108,6 +113,10 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
         targetBundleVersion: provisioningJob.targetBundleVersion,
         targetBundleSha256: provisioningJob.targetBundleSha256,
       };
+    }
+    // Metal rows are always provisioned with a pinned bundle; never accept one without it.
+    if (metal && (!registrationTarget || registrationTarget.targetBundleSha256 === '0'.repeat(64))) {
+      throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
     }
     // Preserve the pre-feature clean-image contract while snapshots are disabled,
     // but never let its unknown-digest sentinel authorize snapshot-era routing.

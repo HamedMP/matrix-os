@@ -16,8 +16,10 @@ import { useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
 
 const METAL_MACHINE_ID = '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f';
 const IMAGE_VERSION = 'matrix-os-host-2026.11.20-1';
+const BUNDLE_SHA = 'c'.repeat(64);
+const PINNED = { imageVersion: IMAGE_VERSION, bundleSha256: BUNDLE_SHA, healthy: true };
 
-async function insertMetalRow(db: PlatformDB, overrides: { status?: string } = {}) {
+async function insertMetalRow(db: PlatformDB, overrides: { status?: string; metalVmId?: string | null; privateAddress?: string | null } = {}) {
   await createMetalHostsRepository(db.kysely).upsert({
     id: 'host-a',
     name: 'host-a',
@@ -34,10 +36,12 @@ async function insertMetalRow(db: PlatformDB, overrides: { status?: string } = {
     runtimeSlot: 'primary',
     substrate: 'metal',
     metalHostId: 'host-a',
-    metalVmId: 'vm_0123456789abcdef01234567',
-    privateAddress: '10.77.0.9',
+    metalVmId: overrides.metalVmId === undefined ? 'vm_0123456789abcdef01234567' : overrides.metalVmId,
+    privateAddress: overrides.privateAddress === undefined ? '10.77.0.9' : overrides.privateAddress,
     status: overrides.status ?? 'provisioning',
     imageVersion: IMAGE_VERSION,
+    targetBundleVersion: IMAGE_VERSION,
+    targetBundleSha256: BUNDLE_SHA,
     registrationTokenHash: hashRegistrationToken('registration-token'),
     registrationTokenExpiresAt: '2099-01-01T00:00:00.000Z',
     provisionedAt: '2026-04-26T11:59:00.000Z',
@@ -56,7 +60,7 @@ describe('customer VPS registration for metal runtimes', () => {
       provider: 'metal',
       machineId: METAL_MACHINE_ID,
       serverRef: 'f0e1d2c3-b4a5-4968-8776-655443322110',
-      imageVersion: IMAGE_VERSION,
+      ...PINNED,
     })).rejects.toMatchObject({ status: 401, code: 'registration_rejected' });
     expect((await getUserMachine(db, METAL_MACHINE_ID))?.status).toBe('provisioning');
 
@@ -64,14 +68,14 @@ describe('customer VPS registration for metal runtimes', () => {
       provider: 'metal',
       machineId: METAL_MACHINE_ID,
       serverRef: METAL_MACHINE_ID,
-      imageVersion: IMAGE_VERSION,
+      ...PINNED,
     })).rejects.toMatchObject({ status: 401 });
 
     await expect(service.register('registration-token', {
       provider: 'metal',
       machineId: METAL_MACHINE_ID,
       serverRef: METAL_MACHINE_ID,
-      imageVersion: IMAGE_VERSION,
+      ...PINNED,
     })).resolves.toEqual({ registered: true, status: 'running' });
 
     const row = await getUserMachine(db, METAL_MACHINE_ID);
@@ -92,8 +96,48 @@ describe('customer VPS registration for metal runtimes', () => {
       provider: 'metal',
       machineId: METAL_MACHINE_ID,
       serverRef: METAL_MACHINE_ID,
-      imageVersion: IMAGE_VERSION,
+      ...PINNED,
     })).rejects.toMatchObject({ status: 409, code: 'already_registered' });
+  });
+
+  it('verifies the pinned bundle for metal: a mismatched digest is rejected, a matching one is accepted', async () => {
+    const { service } = createService();
+    await insertMetalRow(db);
+    const body = { provider: 'metal' as const, machineId: METAL_MACHINE_ID, serverRef: METAL_MACHINE_ID };
+
+    await expect(service.register('registration-token', { ...body, ...PINNED, bundleSha256: 'd'.repeat(64) }))
+      .rejects.toMatchObject({ status: 409, code: 'registration_rejected' });
+    await expect(service.register('registration-token', { ...body, imageVersion: IMAGE_VERSION }))
+      .rejects.toMatchObject({ status: 409, code: 'registration_rejected' });
+    await expect(service.register('registration-token', { ...body, ...PINNED, healthy: false }))
+      .rejects.toMatchObject({ status: 409, code: 'registration_rejected' });
+    expect((await getUserMachine(db, METAL_MACHINE_ID))?.status).toBe('provisioning');
+
+    await expect(service.register('registration-token', { ...body, ...PINNED }))
+      .resolves.toEqual({ registered: true, status: 'running' });
+    expect(await getUserMachine(db, METAL_MACHINE_ID)).toMatchObject({ targetBundleSha256: BUNDLE_SHA });
+  });
+
+  it('refuses a metal registration with a retryable error until the VM id is recorded', async () => {
+    const { service } = createService();
+    await insertMetalRow(db, { metalVmId: null, privateAddress: null });
+
+    await expect(service.register('registration-token', {
+      provider: 'metal', machineId: METAL_MACHINE_ID, serverRef: METAL_MACHINE_ID, ...PINNED,
+    })).rejects.toMatchObject({ status: 503 });
+    expect((await getUserMachine(db, METAL_MACHINE_ID))?.status).toBe('provisioning');
+  });
+
+  it('refuses a metal row that carries no bundle pin', async () => {
+    const { service } = createService();
+    await insertMetalRow(db);
+    await db.executor.updateTable('user_machines')
+      .set({ target_bundle_version: null, target_bundle_sha256: null })
+      .where('machine_id', '=', METAL_MACHINE_ID).execute();
+
+    await expect(service.register('registration-token', {
+      provider: 'metal', machineId: METAL_MACHINE_ID, serverRef: METAL_MACHINE_ID, ...PINNED,
+    })).rejects.toMatchObject({ status: 409, code: 'registration_rejected' });
   });
 
   it('rejects a Hetzner registration for a metal machine and a metal registration for a Hetzner machine', async () => {
