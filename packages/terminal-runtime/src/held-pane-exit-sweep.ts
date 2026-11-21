@@ -15,6 +15,8 @@ interface SweepTab {
   nativeHost?: unknown;
   /** False for a shell pane, whose exit closes it; absent in older state. */
   heldOnExit?: boolean;
+  /** The command reports its exit through an exit file instead. */
+  exitRecorded?: boolean;
 }
 
 /**
@@ -43,7 +45,8 @@ export async function sweepHeldPaneExits(input: {
       && tab.zellijTabId !== null && tab.zellijPaneId !== null);
     // Each `list-panes` makes Zellij redraw every attached client, so a workspace
     // whose live tabs are all shells (their exit closes the pane) is not asked.
-    if (!live.some(([, tab]) => tab.heldOnExit !== false)) continue;
+    // Commands that write an exit file (spec 2706) report themselves.
+    if (!live.some(([, tab]) => tab.heldOnExit !== false && tab.exitRecorded !== true)) continue;
     result.sessions += 1;
     try {
       const exits = await input.listHeldPaneExits(workspace.zellijSessionName);
