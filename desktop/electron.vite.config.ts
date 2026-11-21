@@ -58,7 +58,7 @@ export default defineConfig((): UserConfig => ({
   preload: {
     // Sandboxed preloads cannot require external packages — bundle everything
     // needed for contract validation except the electron builtin.
-    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@matrix-os/herdr-core-client"] })],
     build: {
       rollupOptions: {
         external: ["electron"],
