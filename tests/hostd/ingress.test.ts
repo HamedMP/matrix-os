@@ -456,6 +456,36 @@ describe("host ingress", () => {
     expect(JSON.parse(first.body)).toEqual({ error: "runtime_unreachable" });
     expect((await send(authed())).status).toBe(200);
   });
+
+  it("records the last authorized request per known handle, including asleep VMs", async () => {
+    await store.put(record());
+    await store.put(record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "bob", state: "suspended" }));
+    let t = 5_000;
+    await startIngress({ now: () => t });
+    expect(ingress!.lastRequestAt("alice")).toBeUndefined();
+    await send(authed());
+    t = 9_000;
+    await send(authed("bob.matrix-os.com"));
+    await send({ host: "alice.matrix-os.com" });
+    await send(authed("nobody.matrix-os.com"));
+    expect(ingress!.lastRequestAt("alice")).toBe(5_000);
+    expect(ingress!.lastRequestAt("Bob")).toBe(9_000);
+    expect(ingress!.lastRequestAt("nobody")).toBeUndefined();
+  });
+
+  it("caps the last-request map and evicts the least recently seen handle", async () => {
+    await store.put(record());
+    await store.put(record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "bob", privateIPv4: "127.0.0.2" }));
+    await store.put(record({ id: "vm_cccccccccccccccccccccccc", handle: "carol", privateIPv4: "127.0.0.3" }));
+    await startIngress({ maxTrackedHandles: 2 });
+    await send(authed());
+    await send(authed("bob.matrix-os.com"));
+    await send(authed());
+    await send(authed("carol.matrix-os.com"));
+    expect(ingress!.lastRequestAt("alice")).toBeTypeOf("number");
+    expect(ingress!.lastRequestAt("bob")).toBeUndefined();
+    expect(ingress!.lastRequestAt("carol")).toBeTypeOf("number");
+  });
 });
 
 function rawTlsSocket(): Promise<TLSSocket> {

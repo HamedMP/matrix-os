@@ -61,6 +61,8 @@ export interface IngressDeps {
   connectTimeoutMs?: number;
   idleTimeoutMs?: number;
   maxUpstreamPerVm?: number;
+  // Cap on the per-handle last-request map; defaults to MAX_INDEXED_HANDLES.
+  maxTrackedHandles?: number;
   // Seam for tests; defaults to node:https request.
   upstreamRequest?: typeof httpsRequest;
   log?: (event: string, fields: Record<string, unknown>) => void;
@@ -70,6 +72,8 @@ export interface IngressDeps {
 export interface Ingress {
   server: Server;
   close(): Promise<void>;
+  // When an authorized request last named this VM's handle (ms since epoch).
+  lastRequestAt(handle: string): number | undefined;
 }
 
 interface IndexEntry {
@@ -267,6 +271,16 @@ export function createIngress(deps: IngressDeps): Ingress {
     };
   }
 
+  // Handle -> last authorized request time, in least-recently-seen order;
+  // only handles of known VMs are recorded, and the map is capped.
+  const maxTracked = deps.maxTrackedHandles ?? MAX_INDEXED_HANDLES;
+  const lastSeen = new Map<string, number>();
+  function touch(handle: string): void {
+    lastSeen.delete(handle);
+    lastSeen.set(handle, now());
+    while (lastSeen.size > maxTracked) lastSeen.delete(lastSeen.keys().next().value as string);
+  }
+
   async function route(req: IncomingMessage): Promise<Route> {
     if (!authorized(req.headers)) return { ok: false, code: "unauthorized" };
     const handle = parseHandle(req.headers.host);
@@ -274,6 +288,7 @@ export function createIngress(deps: IngressDeps): Ingress {
     const entry = await lookup(handle);
     if (entry === undefined) return { ok: false, code: "runtime_unavailable" };
     if (entry === null) return { ok: false, code: "runtime_unknown" };
+    touch(handle);
     if (ASLEEP.has(entry.state)) return { ok: false, code: "runtime_asleep" };
     if (entry.state !== "running" || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
     return { ok: true, entry };
@@ -452,6 +467,7 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   return {
     server,
+    lastRequestAt: (handle) => lastSeen.get(handle.toLowerCase()),
     async close() {
       unsubscribe();
       agent.destroy();

@@ -70,6 +70,9 @@ export interface MemoryControllerDeps {
   // Each returns a fresh client; the controller closes CH clients after use.
   ch: (id: string) => ChClient;
   guest: (id: string) => Pick<GuestClient, "stats">;
+  // The lifecycle's resize op: it runs in the VM's operation queue, so a
+  // resize can never race a suspend or a restore.
+  resize: (id: string, targetMiB: number) => Promise<void>;
   hostAvailableMiB?: (signal: AbortSignal) => Promise<number>;
   // Seconds since the owner last interacted with the VM (wired in H5/P6).
   idleSeconds?: (record: VmRecord) => number | Promise<number>;
@@ -131,10 +134,10 @@ export function createMemoryController(deps: MemoryControllerDeps): MemoryContro
       if (decision.action === "none") return;
       // Spend the headroom before awaiting, so concurrent samples see it.
       if (decision.action === "grow") budget.mib -= decision.targetMiB - actualMiB;
-      // The lifecycle may have started a suspend while we sampled.
+      // Cheap early exit; the lifecycle re-checks the state inside its queue.
       const current = await deps.store.get(record.id);
       if (current?.state !== "running") return;
-      await ch.resizeMemory(decision.targetMiB * MIB, opSignal());
+      await deps.resize(record.id, decision.targetMiB);
       log("memory.resized", { id: record.id, action: decision.action, fromMiB: actualMiB, toMiB: decision.targetMiB });
     } catch (error: unknown) {
       log("memory.sample_failed", { id: record.id, ...errorFields(error) });

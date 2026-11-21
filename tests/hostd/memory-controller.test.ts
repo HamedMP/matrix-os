@@ -153,9 +153,7 @@ function harness(fixtures: VmFixture[], overrides: Partial<MemoryControllerDeps>
         async info() {
           return { state: fixture.chState ?? "Running", memoryActualBytes: fixture.actualMiB * MiB };
         },
-        async resizeMemory(totalBytes) {
-          resizes.push({ id, bytes: totalBytes });
-        },
+        resizeMemory: unused,
         pause: unused,
         resume: unused,
         snapshot: unused,
@@ -179,6 +177,9 @@ function harness(fixtures: VmFixture[], overrides: Partial<MemoryControllerDeps>
           return stats;
         },
       };
+    },
+    async resize(id, targetMiB) {
+      resizes.push({ id, bytes: targetMiB * MiB });
     },
     hostAvailableMiB: async () => 65536,
     log: (event, fields) => logs.push({ event, fields }),
@@ -270,6 +271,16 @@ describe("memory controller loop", () => {
     };
     await createMemoryController(h.deps).tick();
     expect(h.resizes).toEqual([]);
+  });
+
+  it("resizes through the lifecycle op and logs its refusal", async () => {
+    const h = harness([{ record: record("vm_a"), actualMiB: 2048, stats: PRESSURED }], {
+      async resize() {
+        throw Object.assign(new Error("VM is suspending"), { code: "conflict" });
+      },
+    });
+    await expect(createMemoryController(h.deps).tick()).resolves.toBeUndefined();
+    expect(h.logs.some((l) => l.event === "memory.sample_failed" && l.fields.code === "conflict")).toBe(true);
   });
 
   it("bounds concurrent samples", async () => {
