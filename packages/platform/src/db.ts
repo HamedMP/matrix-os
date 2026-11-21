@@ -1044,6 +1044,10 @@ export interface UserMachineRecord {
   privateAddress: string | null;
   lastActivityAt: string | null;
   startedAt: string | null;
+  /** Metal substrate host (metal_hosts.id); null for every other substrate. */
+  metalHostId: string | null;
+  /** hostd VM id on that host; null until the VM is created. */
+  metalVmId: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1349,6 +1353,8 @@ export interface NewUserMachine {
   privateAddress?: string | null;
   lastActivityAt?: string | null;
   startedAt?: string | null;
+  metalHostId?: string | null;
+  metalVmId?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {

@@ -1213,7 +1213,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db),
+    substrateRegistry: createPlatformSubstrateRegistry(db, appEnv),
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({

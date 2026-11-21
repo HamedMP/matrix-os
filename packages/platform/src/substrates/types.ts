@@ -17,6 +17,10 @@ export interface RoutableMachine {
   publicIPv4: string | null;
   recoveryOldServerId?: number | null;
   recoveryOldPublicIPv4?: string | null;
+  /** Metal substrate: the host that runs this machine's VM. */
+  metalHostId?: string | null;
+  /** Metal substrate: the hostd VM id. */
+  metalVmId?: string | null;
 }
 
 export interface RuntimeUpstreamTarget {
@@ -29,6 +33,14 @@ export interface RuntimeUpstream {
   url: string;
   hostHeader: string;
   tlsServerName?: string;
+  /** Extra request headers the upstream requires, such as host ingress auth. Never forwarded from the client. */
+  headers?: Readonly<Record<string, string>>;
+  /**
+   * PEM of an extra CA to trust, in addition to the system roots, when
+   * verifying the upstream certificate (self-signed staging hosts).
+   * Verification itself is never turned off.
+   */
+  extraCaPem?: string;
 }
 
 export type EnsureRunningFailureCode = 'start_timeout' | 'provider_unavailable' | 'needs_recovery';
@@ -46,4 +58,15 @@ export interface RuntimeSubstrate {
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
   ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;
+}
+
+export type StopRuntimeResult =
+  | { state: 'stopping' }
+  | { state: 'failed'; code: EnsureRunningFailureCode };
+
+/** A substrate whose runtimes sleep when idle and start again on request. */
+export interface OnDemandRuntimeSubstrate extends RuntimeSubstrate {
+  readonly startsOnDemand: true;
+  /** Puts the runtime to sleep; the outcome is read back later from the substrate. */
+  stop(ref: RuntimeRef, signal: AbortSignal): Promise<StopRuntimeResult>;
 }
