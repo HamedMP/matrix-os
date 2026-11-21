@@ -1,8 +1,8 @@
 import { FileText, Link2, Wrench } from "@renderer/lib/hugeicons";
 import { useState } from "react";
-import { ChatAttachments, RoutineMessageMeta, ScheduledMessageMeta, type RoutineOccurrence, type ChatMessageAttachment } from "@matrix-os/ui";
+import { ChatHumanMessageBubble, ChatAttachments, RoutineMessageMeta, ScheduledMessageMeta, type RoutineOccurrence, type ChatMessageAttachment } from "@matrix-os/ui";
 import { ConversationItem } from "./conversation";
-import { Bubble, BubbleContent } from "./bubble";
+import { Bubble } from "./bubble";
 import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
 import type { ConversationMessagePresentation, ConversationPresentationCallbacks } from "./presentation";
 
@@ -52,8 +52,7 @@ export function UserMessage({
             : segment.kind === "reference" && segment.referenceKind === "file" ? [{ ...segment, kind: "file" as const }] : [])}
             open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset} loadImage={callbacks.loadImage} />
           {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
-            <BubbleContent className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
-              style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
+            <ChatHumanMessageBubble>
               {collapsible && !expanded ? <span className="sr-only">Message preview: {message.markdown.slice(0, 200)}</span> : null}
               <div data-message-preview-content inert={collapsible && !expanded ? true : undefined} className={collapsible && !expanded ? "max-h-[6rem] overflow-hidden" : undefined}>
                 <MessageResponse
@@ -104,7 +103,7 @@ export function UserMessage({
                   {expanded ? "Show less" : "Show more"}
                 </button>
               ) : null}
-            </BubbleContent>
+            </ChatHumanMessageBubble>
           </Bubble> : null}
           <MessageMetadata
             content={message.copyText}

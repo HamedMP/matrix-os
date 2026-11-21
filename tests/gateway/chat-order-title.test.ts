@@ -156,6 +156,15 @@ describe("Chat ordering and title versions", () => {
     if (admin && schema) { await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
 
+  it("opens an ordinary project Chat when collaboration is not configured", async () => {
+    // The gateway bootstraps collaboration only when collaborationConfig exists.
+    const created = await createChat(repository, "without_collaboration");
+    const detail = await repository.getDetailPage(owner, created.chat.id, { limit: 100 });
+    expect(detail?.record.chat.id).toBe(created.chat.id);
+    expect(detail?.record.chat.collaboration).toBeUndefined();
+    expect((await repository.list(owner, { limit: 25 })).items[0]?.chat.id).toBe(created.chat.id);
+  });
+
   it("keeps concurrent runs, navigation and renames stable across precision-safe pages", async () => {
     const a = await admitChat(repository, "a");
     const b = await admitChat(repository, "b");

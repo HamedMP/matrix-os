@@ -967,7 +967,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const projectedSharedChat = sharedChatMembershipFromProjection(selectedDetail?.record.chat.collaboration);
   const collaborationView = (sameAuthority ? selectedCollaborationView : null)
     ?? (projectedSharedChat && activeRecord
-      ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
+      ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id,
+        ...(activeRecord.projectId ? { projectId: activeRecord.projectId } : {}) }
       : undefined);
   return {
     collaborationView,
