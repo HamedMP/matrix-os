@@ -1,7 +1,7 @@
-import type { InputHTMLAttributes, ReactNode } from "react";
+import type { ComponentPropsWithRef, ReactNode } from "react";
 import { cn } from "./cn.js";
 
-export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends ComponentPropsWithRef<"input"> {
   label?: ReactNode;
   error?: string;
 }

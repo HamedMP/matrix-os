@@ -1,10 +1,11 @@
+import type { Project } from "../../stores/board";
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { CanonicalChatClientProvider } from "../chat/CanonicalChatClientContext";
 import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
 import { NativeAppChatNavigationHost } from "../chat/native-app-chat-navigation";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
-import { ChatAgentsWorkspace, type ChatAgentDraftRequest } from "@matrix-os/ui";
+import { ArchivedChatsPage, ChatAgentsWorkspace, type ChatAgentDraftRequest } from "@matrix-os/ui";
 import {
   createCanonicalChatClient,
   createCanonicalChatEventSource,
@@ -39,6 +40,7 @@ const WorkSurfaceRuntimeContext = createContext<WorkSurfaceRuntime | null>(null)
 
 export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active: boolean; tabId?: string; children: ReactNode }) {
   const api = useConnection((state) => state.api);
+  const userId = useConnection(state => state.userId);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const [projection, setProjection] = useState<{
@@ -101,7 +103,7 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     () => ({ client, eventSource, projectedChatTitles, projectChat, agentDraftRequest, requestAgentDraft, consumeAgentDraft }),
     [client, eventSource, projectChat, projectedChatTitles, agentDraftRequest, requestAgentDraft, consumeAgentDraft],
   );
-  return <WorkSurfaceRuntimeContext.Provider value={value}>
+  return <WorkArchiveProvider key={`${userId}:${runtimeSlot}:${authGeneration}`}><WorkSurfaceRuntimeContext.Provider value={value}>
     <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
       <ChatAgentsWorkspace>
         <NativeAppChatNavigationHost active={active} tabId={tabId} client={client} onStartChat={requestAgentDraft}
@@ -109,9 +111,32 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
         {children}
       </ChatAgentsWorkspace>
     </CanonicalChatClientProvider>
-  </WorkSurfaceRuntimeContext.Provider>;
+  </WorkSurfaceRuntimeContext.Provider></WorkArchiveProvider>;
 }
 
 export function useWorkSurfaceRuntime(): WorkSurfaceRuntime | null {
   return useContext(WorkSurfaceRuntimeContext);
 }
+
+const ArchiveNavigation = createContext<{ open: boolean; version: number; show(): void; close(): void; changed(): void } | null>(null);
+export const useWorkArchiveNavigation = () => useContext(ArchiveNavigation);
+
+export function WorkArchiveProvider({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [version, setVersion] = useState(0);
+  const value = useMemo(() => ({ open, version, show: () => setOpen(true), close: () => setOpen(false), changed: () => setVersion(value => value + 1) }), [open, version]);
+  return <ArchiveNavigation.Provider value={value}>{children}</ArchiveNavigation.Provider>;
+}
+
+export function WorkArchiveOutlet({ client, projects, children }: { client: CanonicalChatClient | null; projects: readonly Project[]; children: ReactNode }) {
+  const archive = useWorkArchiveNavigation();
+  return archive?.open && client ? <ArchivedChatsPage client={client} projects={projects} onChanged={archive.changed}/> : children;
+}
+
+export type SideChatDraftRequest = { id: number; chatId: string; text: string };
+export const SideChatDraftContext = createContext<{
+  pending: SideChatDraftRequest | null;
+  request(chatId: string, text: string): void;
+  consume(id: number): void;
+} | null>(null);
+export function useSideChatDraft() { return useContext(SideChatDraftContext); }

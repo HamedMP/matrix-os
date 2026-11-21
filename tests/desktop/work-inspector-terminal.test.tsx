@@ -2,14 +2,20 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CanonicalChatDetailResponse, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, CanonicalSideChatTurnRequest, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
+import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
+import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
+import { SideChatDraftContext } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { chatInspectorLayoutKey, useChatInspectorLayout } from "@desktop/renderer/src/stores/files-navigation";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -115,6 +121,173 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("keeps the real Side chat question and inspector instance when hidden and reopened", async () => {
+    useConnection.setState({ userId: "user_test" });
+    const chatDetail = detail("chat_hide_draft");
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_hide_draft");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: "side-chat", openTabIds: ["files", "side-chat"] });
+    const getSideChat = vi.fn(async () => ({ threadId: "side_fixture", messages: [] }));
+    const client = { getSideChat, createSideChat: vi.fn(), askSideChat: vi.fn() } as unknown as CanonicalChatClient;
+    const { api, runtimeSlot, authGeneration } = useConnection.getState();
+    const draftContext = { pending: null, request: vi.fn(), consume: vi.fn() };
+    const renderInspector = (visible: boolean) => <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
+      <SideChatDraftContext.Provider value={draftContext}>
+        <ResponsiveWorkInspector detail={chatDetail} projects={[]} visible={visible} active layout="wide" width={400} maxWidth={820}
+          onClose={vi.fn()} onOpen={vi.fn()} onResizeStart={vi.fn()} onResizeKeyboard={vi.fn()} onResetWidth={vi.fn()}
+          closeButtonRef={null} openButtonRef={null} regionRef={null} showInlineControls />
+      </SideChatDraftContext.Provider>
+    </CanonicalChatClientProvider>;
+    const view = render(renderInspector(true));
+    await waitFor(() => expect(getSideChat).toHaveBeenCalledOnce());
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Keep this unsent side question" } });
+    view.rerender(renderInspector(false));
+    expect(screen.queryByRole("textbox", { name: "Ask side chat" })).toBeNull();
+    view.rerender(renderInspector(true));
+    expect(screen.getByRole("textbox", { name: "Ask side chat" })).toBe(input);
+    expect(input.value).toBe("Keep this unsent side question");
+    expect(getSideChat).toHaveBeenCalledOnce();
+    expect(client.askSideChat).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "Revised question"])("uses the saved Side chat request identity on retry unless the draft changes to %s", async revisedDraft => {
+    const client = {
+      getSideChat: vi.fn(async () => ({ threadId: "side_fixture", messages: [] })),
+      createSideChat: vi.fn(),
+      askSideChat: vi.fn<(chatId: string, input: CanonicalSideChatTurnRequest) => Promise<CanonicalSideChatSnapshot>>().mockRejectedValueOnce(new Error("Synthetic lost response")).mockResolvedValue({ threadId: "side_fixture", messages: [] }),
+    };
+    render(<SideChatPanel chatId="chat_retry_identity" client={client} onSendToMain={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    const send = screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement;
+    fireEvent.change(input, { target: { value: "Original question" } });
+    await waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    await screen.findByRole("alert");
+    expect(input.value).toBe("Original question");
+    const originalId = client.askSideChat.mock.calls[0]![1].clientRequestId;
+    if (revisedDraft) fireEvent.change(input, { target: { value: revisedDraft } });
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledTimes(2));
+    const retryId = client.askSideChat.mock.calls[1]![1].clientRequestId;
+    if (revisedDraft) expect(retryId).not.toBe(originalId);
+    else expect(retryId).toBe(originalId);
+    await waitFor(() => expect(input.value).toBe(""));
+    fireEvent.change(input, { target: { value: revisedDraft ?? "Original question" } });
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledTimes(3));
+    expect(client.askSideChat.mock.calls[2]![1].clientRequestId).not.toBe(retryId);
+  });
+
+  it.each(["Next question", "First question"])("preserves the edited Side chat draft %s when an earlier answer completes", async nextDraft => {
+    let answer!: (value: CanonicalSideChatSnapshot) => void;
+    const client = {
+      getSideChat: vi.fn(async () => ({ threadId: "side_fixture", messages: [] })),
+      createSideChat: vi.fn(),
+      askSideChat: vi.fn(() => new Promise<CanonicalSideChatSnapshot>(resolve => { answer = resolve; })),
+    };
+    render(<SideChatPanel chatId="chat_draft" client={client} onSendToMain={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "First question" } });
+    const send = screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement;
+    await waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledOnce());
+    fireEvent.change(input, { target: { value: "Editing the next draft" } });
+    fireEvent.change(input, { target: { value: nextDraft } });
+    await act(async () => answer({ threadId: "side_fixture", messages: [{ seq: 1, role: "assistant", content: "First answer", createdAt: NOW }] }));
+    expect(await screen.findByText("First answer")).toBeTruthy();
+    expect(input.value).toBe(nextDraft);
+  });
+
+  it("retries a failed Side chat read without losing the question already typed", async () => {
+    const client = {
+      getSideChat: vi.fn().mockRejectedValueOnce(new Error("Synthetic offline read")).mockResolvedValueOnce({
+        threadId: "side_fixture", messages: [{ seq: 1, role: "assistant", content: "Saved answer", createdAt: NOW }],
+      }),
+      createSideChat: vi.fn(), askSideChat: vi.fn(),
+    };
+    render(<SideChatPanel chatId="chat_retry" client={client} onSendToMain={vi.fn()} />);
+    await screen.findByRole("alert");
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Keep this question" } });
+    const retry = screen.getByRole("button", { name: "Retry loading side chat" });
+    expect((screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    expect(await screen.findByText("Saved answer")).toBeTruthy();
+    expect(client.getSideChat).toHaveBeenCalledTimes(2);
+    expect(input.value).toBe("Keep this question");
+    expect((screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(client.askSideChat).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Side chat in the New tab picker before its main chat exists", async () => {
+    render(<WorkFilesInspector projects={[]} active />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add inspector tab" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New tab" }));
+    expect(screen.getByRole("tabpanel", { name: "New tab" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Side chat/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Browser/ })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Side chat" })).toBeNull();
+  });
+
+  it("turns a New tab picker into a side chat and hides the extra add button while choosing", async () => {
+    render(<WorkFilesInspector detail={detail("chat_picker")} projects={[]} active/>);
+    fireEvent.click(screen.getByRole("button", { name: "Add inspector tab" }));
+    expect(screen.getByRole("tabpanel", { name: "New tab" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add inspector tab" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Side chat/ }));
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+  it("keeps a saved terminal tab while a cached summary is being refreshed", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1 });
+    const sessionId = refKey("terminal_live");
+    const id = `terminal:${sessionId}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_cached");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+    let finishRefresh: (() => void) | undefined;
+    const refresh = vi.fn(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
+    useCodingAgentWorkspace.setState({ refresh });
+
+    render(<WorkFilesInspector detail={detail("chat_cached", "terminal_live")} projects={[]} active />);
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+
+    act(() => {
+      useCodingAgentWorkspace.setState({ summary: summary([terminal("terminal_live")]), summaryRevision: 2 });
+      finishRefresh?.();
+    });
+    expect(screen.getByRole("tab", { name: sessionId })).toBeTruthy();
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toContain(id);
+  });
+  it("removes saved terminal tabs that are absent after session discovery", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: "terminal:missing", openTabIds: ["files", "terminal:missing"] });
+    render(<WorkFilesInspector detail={detail("chat_stale")} projects={[]} active />);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+  });
+  it("removes a saved chat-bound terminal when discovery finds no live session", async () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "ready", summary: summary([]), summaryRevision: 1, refresh: vi.fn(async () => {
+      useCodingAgentWorkspace.setState({ summaryRevision: 2 });
+    }) });
+    const id = `terminal:${refKey("terminal_missing")}`;
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_bound_stale");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: id, openTabIds: ["files", id] });
+
+    render(<WorkFilesInspector detail={detail("chat_bound_stale", "terminal_missing")} projects={[]} active />);
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: refKey("terminal_missing") })).toBeNull());
+    expect(useChatInspectorLayout.getState().get(key)?.openTabIds).toEqual(["files"]);
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+  });
   it("opens a message file in the matching Chat inspector and reveals the panel", async () => {
     const reveal = vi.fn();
     const { chatDetail, project } = projectDetail("chat_message");
@@ -227,7 +400,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
-  it("restores the selected file, folder expansion, filter, scroll and tree width after closing the inspector", async () => {
+  it("restores the selected file, folder expansion, filter, scroll and tree height after closing the inspector", async () => {
     const scope = { kind: "home" as const, chatId: "remember-files" };
     const api = useConnection.getState().api!;
     vi.mocked(api.get).mockImplementation(async (url: string) => url.startsWith("/api/files/list")
@@ -240,7 +413,7 @@ describe("Work Files and Terminal inspector", () => {
     const scroller = view.container.querySelector("[data-file-tree-scroll]") as HTMLElement;
     scroller.scrollTop = 165;
     fireEvent.scroll(scroller);
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowDown" });
     view.unmount();
     const persisted = localStorage.getItem("matrix-inspector-file-views-v1")!;
     useInspectorFileViews.setState({ views: [] });
@@ -252,10 +425,12 @@ describe("Work Files and Terminal inspector", () => {
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
     expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
-    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
     view.unmount();
     const restored = render(<WorkFilesInspector scope={scope} projects={[]} active />);
-    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show file tree" }));
     expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("guide");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
     fireEvent.click(await screen.findByRole("button", { name: "Collapse folder notes" }));
@@ -268,9 +443,11 @@ describe("Work Files and Terminal inspector", () => {
   it("hides and restores the file tree while preserving its search", () => {
     render(<WorkFilesInspector scope={{ kind: "home", chatId: "chat" }} projects={[]} active />);
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter files" }), { target: { value: "notes" } });
-    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
     expect(screen.queryByRole("searchbox", { name: "Filter files" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show file tree" }));
     expect((screen.getByRole("searchbox", { name: "Filter files" }) as HTMLInputElement).value).toBe("notes");
   });
 
@@ -292,8 +469,8 @@ describe("Work Files and Terminal inspector", () => {
   it("creates and immediately opens a new Chat-bound terminal", async () => {
     render(<WorkFilesInspector detail={detail("chat_fresh")} projects={[]} active />);
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole("menuitem", { name: "New terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add inspector tab" }));
+    fireEvent.click(screen.getByRole("button", { name: /Terminal/ }));
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
@@ -362,10 +539,88 @@ describe("Work Files and Terminal inspector", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
 
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+
     await waitFor(() => expect(useConnection.getState().api?.delete).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${refKey("terminal_first").split(":")[1]}`,
     ));
     await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+  });
+
+  it("keeps tabs opened while a confirmed terminal stop is pending", async () => {
+    let finishDelete!: () => void;
+    const deletion = new Promise<void>((resolve) => { finishDelete = resolve; });
+    vi.mocked(useConnection.getState().api!.delete).mockImplementation(async () => { await deletion; return {} as never; });
+    render(<WorkFilesInspector detail={detail("chat_pending_stop", "terminal_first")} projects={[]} active />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal terminal_first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Side chat" }));
+    expect(screen.getByRole("tab", { name: "Side chat" })).toBeTruthy();
+
+    await act(async () => finishDelete());
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("retains a failed terminal stop confirmation and retries without reopening it", async () => {
+    const stop = vi.mocked(useConnection.getState().api!.delete);
+    stop.mockRejectedValueOnce(new Error("Stop unavailable")).mockResolvedValueOnce({} as never);
+    render(<WorkFilesInspector detail={detail("chat_retry_stop", "terminal_first")} projects={[]} active />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal terminal_first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close terminal_first tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop terminal" }));
+    await screen.findByText("The terminal could not be closed. Try again.");
+    expect(screen.getByRole("tab", { name: "terminal_first", hidden: true })).toBeTruthy();
+    const retry = screen.getByRole("button", { name: "Stop terminal" });
+    await waitFor(() => expect(retry.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "terminal_first" })).toBeNull());
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Stop this terminal?")).toBeNull();
+  });
+
+  it("asks before stopping a restored terminal while session discovery is pending", () => {
+    useConnection.setState({ userId: "user_test" });
+    useCodingAgentWorkspace.setState({ status: "loading", summary: null });
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_restored");
+    useChatInspectorLayout.getState().update(key, {
+      selectedTabId: `terminal:${refKey("terminal_first")}`,
+      openTabIds: ["files", `terminal:${refKey("terminal_first")}`],
+    });
+    render(<WorkFilesInspector detail={detail("chat_restored", "terminal_first")} projects={[]} active />);
+
+    fireEvent.click(screen.getByRole("button", { name: `Close ${refKey("terminal_first")} tab` }));
+
+    expect(screen.getByText("Stop this terminal?")).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("tab", { name: refKey("terminal_first") })).toBeTruthy();
+    expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
+  });
+
+  it("opens side chat from the inspector shortcut without creating a main turn", () => {
+    render(<WorkFilesInspector detail={detail("chat_shortcut")} projects={[]} active />);
+    fireEvent.keyDown(window, { key: "s", metaKey: true, altKey: true });
+    expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
+    expect(useConnection.getState().api!.post).not.toHaveBeenCalled();
+  });
+
+  it("provides a terminal header and creates another session without closing the existing one", async () => {
+    render(<WorkFilesInspector detail={detail("chat_header", "live")} projects={[]} initialTerminal={{ chatId: "chat_header", session: { ...terminal("live"), id: refKey("live") } }} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "live" }));
+    expect(screen.getByLabelText("Terminal working directory").textContent).toBe("~");
+    expect(terminalViewMock.props.at(-1)).toMatchObject({ controlsHost: null });
+    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+    await waitFor(() => expect(useConnection.getState().api!.post).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "Stop this terminal?" })).toBeNull();
   });
 
   it("shows the file list alone until a preview opens and hides it for Terminal", async () => {
@@ -386,7 +641,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(screen.queryByRole("separator", { name: "Resize file list" })).toBeNull();
   });
 
-  it("resizes the file list beside an open preview with an accessible divider", async () => {
+  it("resizes the file tree above a full-width preview with an accessible divider", async () => {
     const { chatDetail, project } = projectDetail("chat_first");
     const { container } = render(<WorkFilesInspector detail={chatDetail} projects={[project]} active />);
 
@@ -394,11 +649,13 @@ describe("Work Files and Terminal inspector", () => {
     await screen.findByText("README");
 
     const panes = container.querySelector('[data-layout="split"]');
+    expect(panes?.classList.contains("flex-col")).toBe(true);
     expect(panes?.children[0]?.getAttribute("aria-label")).toBe("Files");
     expect(panes?.children[2]?.querySelector('[aria-label="File preview"]')).not.toBeNull();
     const divider = screen.getByRole("separator", { name: "Resize file list" });
+    expect(divider.getAttribute("aria-orientation")).toBe("horizontal");
     expect(divider.getAttribute("aria-valuenow")).toBe("300");
-    fireEvent.keyDown(divider, { key: "ArrowRight" });
+    fireEvent.keyDown(divider, { key: "ArrowDown" });
     expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
   });
 
@@ -412,10 +669,10 @@ describe("Work Files and Terminal inspector", () => {
     const callback = resizeObserverCallbacks.at(-1);
     expect(callback).toBeTypeOf("function");
     act(() => callback?.([{
-      contentRect: { width: 480 },
+      contentRect: { height: 360 },
     } as unknown as ResizeObserverEntry], {} as ResizeObserver));
 
-    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("232");
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("192");
   });
 
   it("keeps one permanent Files tab and reselects it from the add menu", () => {
@@ -541,6 +798,7 @@ describe("Work Files and Terminal inspector", () => {
       useCodingAgentWorkspace.setState({
         status: "ready",
         summary: summary([terminal("terminal_new")]),
+        summaryRevision: useCodingAgentWorkspace.getState().summaryRevision + 1,
       });
     });
     useCodingAgentWorkspace.setState({ status: "ready", summary: summary([terminal("terminal_first")]), refresh });

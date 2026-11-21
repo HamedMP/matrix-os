@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkRailSearchDialog } from "@desktop/renderer/src/features/work/WorkRailSearchDialog";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 const api = vi.hoisted(() => ({ get: vi.fn(), release: vi.fn() }));
@@ -36,6 +37,172 @@ const acceptedProject = (withOverview: boolean) => ({
   },
 });
 describe("Work search discovery", () => {
+  it("keeps Search inside a smaller window even when the main-pane center is offset", () => {
+    render(<WorkRailSearchDialog open centerX={490} bounds={{left:0,right:740}} records={[]} projects={[]} status="ready" client={null} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    expect(screen.getByRole("dialog",{name:"Search chats"}).style.left).toBe("424px");
+  });
+  it("centers Search in its supplied main pane while keeping delete confirmation viewport-centered", async () => {
+    const archived = { chat: { id: "chat_position", title: "Positioned chat", lifecycle: "archived", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
+    const client = { list: vi.fn(async () => ({ items: [archived] })) } as unknown as CanonicalChatClient;
+    render(<WorkRailSearchDialog open centerX={876} records={[]} projects={[]} status="ready" client={client} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    expect(screen.getByRole("dialog", { name: "Search chats" }).style.left).toBe("876px");
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Positioned chat" }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Delete archived chats?" });
+    expect(confirmation.style.left).toBe("");
+    expect(confirmation.classList.contains("left-1/2")).toBe(true);
+  });
+  it("drops an old client's pending archive error and allows the replacement client to restore", async () => {
+    const record = (id: string) => ({ chat: { id, title: id, lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } });
+    let failOriginal!: (error: Error) => void;
+    const original = {
+      list: vi.fn(async () => ({ items: [record("chat_old_actor")] })),
+      updateLifecycle: vi.fn(() => new Promise((_, reject) => { failOriginal = reject; })),
+    } as unknown as CanonicalChatClient;
+    const replacement = {
+      list: vi.fn(async () => ({ items: [record("chat_replacement")] })),
+      updateLifecycle: vi.fn(async () => ({ ...record("chat_replacement"), chat: { ...record("chat_replacement").chat, lifecycle: "active", revision: 4 } })),
+    } as unknown as CanonicalChatClient;
+    const changed = vi.fn();
+    const props = { open: true, records: [], projects: [], status: "ready" as const, onClose: vi.fn(), onSelect: vi.fn(), onArchiveChanged: changed };
+    const view = render(<WorkRailSearchDialog {...props} client={original}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restore chat_old_actor" }));
+    view.rerender(<WorkRailSearchDialog {...props} client={replacement}/>);
+    await screen.findByRole("button", { name: "Restore chat_replacement" });
+    await act(async () => { failOriginal(new Error("old private failure")); });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "Restore chat_replacement" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Restore chat_replacement" }));
+    await waitFor(() => expect(screen.queryByRole("option", { name: "chat_replacement, Global" })).toBeNull());
+    expect(changed).toHaveBeenCalledOnce();
+  });
+
+  it("clears a delete confirmation when the verified actor changes without replacing the client", async () => {
+    const old = { chat: { id: "chat_old", title: "Old actor chat", lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
+    const remove = vi.fn(async () => ({}));
+    const list = vi.fn(async () => ({ items: [old] }));
+    const client = { list, delete: remove } as unknown as CanonicalChatClient;
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={client} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Old actor chat" }));
+    expect(screen.getByRole("alertdialog", { name: "Delete archived chats?" })).toBeTruthy();
+    list.mockImplementation(() => new Promise(() => {}));
+    act(() => useConnection.setState({ userId: "replacement_actor" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete Old actor chat" })).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("does not send the previous actor's search phrase to a replacement runtime authority", async () => {
+    const search = vi.fn(async () => ({ items: [] }));
+    const client = { search } as unknown as CanonicalChatClient;
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={client} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "private previous actor phrase" } });
+    await waitFor(() => expect(search).toHaveBeenCalledOnce());
+    act(() => useConnection.setState({ userId: "replacement_actor", authGeneration: 2 }));
+    expect((screen.getByRole("searchbox", { name: "Search chats" }) as HTMLInputElement).value).toBe("");
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });
+    expect(search).toHaveBeenCalledOnce();
+  });
+
+  it("does not reinsert a restored archive when an older page request finishes later", async () => {
+    const row = (id: string) => ({ chat: { id, title: id, lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } });
+    let finishPage!: (page: unknown) => void;
+    const list = vi.fn((input: { cursor?: string }) => input.cursor
+      ? new Promise(resolve => { finishPage = resolve; })
+      : Promise.resolve({ items: [row("chat_restoring")], nextCursor: "next" }));
+    const updateLifecycle = vi.fn(async () => ({ ...row("chat_restoring"), chat: { ...row("chat_restoring").chat, lifecycle: "active", revision: 4 } }));
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={{ list, updateLifecycle } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    await screen.findByRole("option", { name: "chat_restoring, Global" });
+    fireEvent.click(screen.getByRole("button", { name: "Show more results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore chat_restoring" }));
+    await waitFor(() => expect(screen.queryByRole("option", { name: "chat_restoring, Global" })).toBeNull());
+    await act(async () => { finishPage({ items: [row("chat_restoring"), row("chat_older")], nextCursor: null }); });
+    expect(screen.queryByRole("option", { name: "chat_restoring, Global" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Show more results" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("opens the full archive page from Search without opening an archived conversation", async () => {
+    const openArchive = vi.fn();
+    const select = vi.fn();
+    const list = vi.fn(async () => ({ items: [] }));
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={{ list } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={select} {...{ onOpenArchivedList: openArchive }}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the archived list" }));
+    expect(openArchive).toHaveBeenCalledOnce();
+    expect(select).not.toHaveBeenCalled();
+  });
+  it("loads older archived chats beyond the first result page", async () => {
+    const record = (id: string) => ({ chat: { id, title: id, lifecycle: "archived", revision: 1, archivedAt: id === "chat_recent" ? new Date().toISOString() : "2026-11-12T00:00:00.000Z", updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } });
+    const list = vi.fn(async (input: { cursor?: string }) => input.cursor
+      ? { items: [record("chat_older")], nextCursor: null }
+      : { items: [record("chat_recent")], nextCursor: "cursor_next" });
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={{ list } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    expect(await screen.findByRole("option", { name: "chat_recent, Global" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "chat_recent, Global" }).textContent).toContain("Archived today");
+    fireEvent.click(screen.getByRole("button", { name: "Show more results" }));
+    expect(await screen.findByRole("option", { name: "chat_older, Global" })).toBeTruthy();
+    expect(list).toHaveBeenCalledWith({ lifecycle: "archived", limit: 50, cursor: "cursor_next" });
+  });
+  it("keeps project-name chat matches alongside full-history server search", async () => {
+    const record = { chat: { id: "chat_project_match", title: "Untitled", lifecycle: "active", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" }, projectId: project.id };
+    const search = vi.fn(async () => ({ items: [], nextCursor: null }));
+    render(<WorkRailSearchDialog open records={[record] as never} projects={[project]} status="ready" client={{ search } as unknown as CanonicalChatClient} onClose={vi.fn()} onSelect={vi.fn()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "Alpha" } });
+    await waitFor(() => expect(search).toHaveBeenCalled());
+    expect(screen.getByRole("option", { name: "Untitled, Alpha" })).toBeTruthy();
+  });
+  it("restores an archived search result and confirms permanent deletion", async () => {
+    const archived = { chat: { id: "chat_old", title: "Old chat", lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
+    const list = vi.fn(async () => ({ items: [archived] }));
+    const updateLifecycle = vi.fn(async () => ({ ...archived, chat: { ...archived.chat, lifecycle: "active", revision: 4 } }));
+    const remove = vi.fn(async () => ({ chatId: "chat_old", deletedAt: "2026-11-12T01:00:00.000Z" }));
+    const client = { list, updateLifecycle, delete: remove } as unknown as CanonicalChatClient;
+    const changed = vi.fn();
+    const restored = vi.fn();
+    const props = { records: [], projects: [], status: "ready" as const, client, onClose: vi.fn(), onSelect: vi.fn(), onArchiveChanged: changed, onArchiveRestored: restored };
+    const view = render(<WorkRailSearchDialog open {...props}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    await screen.findByRole("button", { name: "Restore Old chat" });
+    fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search chats" }), { key: "r", metaKey: true });
+    await waitFor(() => expect(updateLifecycle).toHaveBeenCalledWith("chat_old", { baseRevision: 3, lifecycle: "active" }));
+    expect(changed).toHaveBeenCalled();
+    expect(restored).toHaveBeenCalledWith({ ...archived, chat: { ...archived.chat, lifecycle: "active", revision: 4 } });
+    view.rerender(<WorkRailSearchDialog open={false} {...props}/>);
+    view.rerender(<WorkRailSearchDialog open {...props}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Old chat" }));
+    expect(screen.getByText(/Its messages are deleted too/)).toBeTruthy();
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("option", { name: "Old chat, Global" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Old chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete forever" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("chat_old", expect.stringMatching(/^req_/)));
+    expect(restored).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a failed permanent deletion in its confirmation for retry or safe cancellation", async () => {
+    const archived = { chat: { id: "chat_retry", title: "Retry deletion", lifecycle: "archived", revision: 3, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" } };
+    const remove = vi.fn(async () => { throw new Error("private backend failure"); });
+    const client = { list: vi.fn(async () => ({ items: [archived] })), delete: remove } as unknown as CanonicalChatClient;
+    render(<WorkRailSearchDialog open records={[]} projects={[]} status="ready" client={client} onClose={vi.fn()} onSelect={vi.fn()}/>);
+    fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Retry deletion" }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Delete archived chats?" });
+    expect(confirmation.getAttribute("data-state")).toBe("open");
+    fireEvent.click(screen.getByRole("button", { name: "Delete forever" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("The chat could not be deleted. Try again.");
+    expect(screen.queryByText("private backend failure")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("option", { name: "Retry deletion, Global" })).toBeTruthy();
+    expect(remove).toHaveBeenCalledOnce();
+  });
   it("hides shared discovery after a complete listing confirms no organizations", () => {
     useConnection.setState({ organizationId: null, organizationStatus: "none" });
 
@@ -120,6 +287,8 @@ describe("Work search discovery", () => {
     api.get.mockImplementation(() => new Promise(() => {}));
     act(() => useConnection.setState({ userId: "another_actor" }));
     expect(screen.queryByRole("option", { name: "Shared chat invitation, Invitation · Shared chat" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: "Shared" }));
     expect(screen.getByRole("status").textContent).toBe("Loading shared items…");
     expect(api.release).toHaveBeenCalled();
   });
