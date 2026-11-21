@@ -227,6 +227,88 @@ describe("PrivateNetworkPanel", () => {
     expect(await screen.findByText("No other machines yet")).toBeTruthy();
   });
 
+  it("offers a new join code once the previous one expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-11-21T10:00:00Z"));
+    const createJoinCode = vi
+      .fn<PrivateNetworkClient["createJoinCode"]>()
+      .mockResolvedValueOnce({ code: "ABCD-1234", command: "first-command", expiresAt: "2026-11-21T10:01:00Z" })
+      .mockResolvedValueOnce({ code: "EFGH-5678", command: "second-command", expiresAt: "2026-11-21T10:20:00Z" });
+    const client = fakeClient({ status: vi.fn(async () => connected), createJoinCode });
+    render(<PrivateNetworkPanel client={client} />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
+    await flush();
+    expect(screen.getByText("first-command")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add a machine" })).toBeNull();
+    await flush(65_000);
+    expect(screen.getByText("Expired")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
+    await flush();
+    expect(createJoinCode).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("second-command")).toBeTruthy();
+  });
+
+  it("reloads the list after a removal conflict so a retry sends the current revision", async () => {
+    const machines = vi
+      .fn<PrivateNetworkClient["machines"]>()
+      .mockResolvedValueOnce(machineList)
+      .mockResolvedValue({ ...machineList, revision: 6 });
+    const removeMachine = vi
+      .fn<PrivateNetworkClient["removeMachine"]>()
+      .mockRejectedValueOnce(Object.assign(new Error(LEAK), { status: 409 }))
+      .mockResolvedValueOnce({ revision: 7, machines: [] });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = fakeClient({ status: vi.fn(async () => connected), machines, removeMachine });
+    render(<PrivateNetworkPanel client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove studio" }));
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Remove", hidden: true }));
+    expect(await screen.findByText("The machine list changed. Check it and try again.")).toBeTruthy();
+    await act(async () => {});
+    expect(machines).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("The machine list changed. Check it and try again.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove studio" }));
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Remove", hidden: true }));
+    expect(removeMachine).toHaveBeenLastCalledWith("0123456789abcdef0123456789abcdef", 6, expect.any(AbortSignal));
+    expect(await screen.findByText("No other machines yet")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("secret-path");
+  });
+
+  it("ignores a slow list read that finishes after a removal returned a newer revision", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-11-21T10:00:00Z"));
+    let resolveSlow: (value: PairedMachinesResponse) => void = () => undefined;
+    const machines = vi
+      .fn<PrivateNetworkClient["machines"]>()
+      .mockResolvedValueOnce(machineList)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSlow = resolve;
+      }))
+      .mockResolvedValue({ revision: 5, machines: [] });
+    const client = fakeClient({
+      status: vi.fn(async () => connected),
+      machines,
+      createJoinCode: vi.fn(async () => ({ code: "ABCD-1234", command: "join", expiresAt: "2026-11-21T10:15:00Z" })),
+      removeMachine: vi.fn(async () => ({ revision: 5, machines: [] })),
+    });
+    render(<PrivateNetworkPanel client={client} />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
+    await flush();
+    await flush(5_000);
+    expect(machines).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Remove studio" }));
+    fireEvent.click(within(screen.getByRole("dialog", { hidden: true })).getByRole("button", { name: "Remove", hidden: true }));
+    await flush();
+    expect(screen.getByText("No other machines yet")).toBeTruthy();
+    await act(async () => {
+      resolveSlow(machineList);
+    });
+    await flush();
+    expect(screen.queryByText("studio")).toBeNull();
+    expect(screen.getByText("No other machines yet")).toBeTruthy();
+  });
+
   it("never renders server error text", async () => {
     const client = fakeClient({
       status: vi.fn(async () => connected),

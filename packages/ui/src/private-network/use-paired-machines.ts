@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JoinCodeResponse, PairedMachinesResponse, PrivateNetworkClient } from "./client.js";
-import { MACHINES_POLL_MS, PRIVATE_NETWORK_ERRORS, logRequestFailure, minutesLeft } from "./presentation.js";
+import { MACHINES_POLL_MS, PRIVATE_NETWORK_ERRORS, logRequestFailure, minutesLeft, requestErrorStatus } from "./presentation.js";
 
 export interface PairedMachinesModel {
   list: PairedMachinesResponse | null;
@@ -34,7 +34,11 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
     return () => controller.abort();
   }, []);
 
+  // The pairing revision only grows: a read that started before a removal (or
+  // another tab's change) and finished after it must not bring old rows back.
   const applyList = useCallback((next: PairedMachinesResponse) => {
+    const current = listRef.current;
+    if (current && next.revision < current.revision) return;
     listRef.current = next;
     setList(next);
   }, []);
@@ -46,7 +50,8 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
       .then((next) => {
         if (controller.signal.aborted) return;
         applyList(next);
-        setError(null);
+        // A successful read clears only its own load error; a removal conflict stays visible.
+        setError((previous) => (previous === PRIVATE_NETWORK_ERRORS.machines ? null : previous));
       })
       .catch((failure: unknown) => {
         if (controller.signal.aborted) return;
@@ -108,7 +113,13 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
       } catch (failure: unknown) {
         if (signal.aborted) return false;
         logRequestFailure("remove machine", failure);
-        setError(PRIVATE_NETWORK_ERRORS.remove);
+        if (requestErrorStatus(failure) === 409) {
+          // The list changed elsewhere: reload it so a retry sends the current revision.
+          setError(PRIVATE_NETWORK_ERRORS.removeConflict);
+          setLoadRevision((revision) => revision + 1);
+        } else {
+          setError(PRIVATE_NETWORK_ERRORS.remove);
+        }
         return false;
       } finally {
         if (!signal.aborted) setRemovingId(null);

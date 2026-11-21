@@ -17,6 +17,7 @@ export const PRIVATE_NETWORK_ERRORS = {
   machines: "Could not load your machines. Try again.",
   joinCode: "Could not create a join code. Try again.",
   remove: "Could not remove the machine. Try again.",
+  removeConflict: "The machine list changed. Check it and try again.",
   copy: "Could not copy. Select the text and copy it manually.",
   loginTimedOut: "Sign-in took too long. Connect again to get a new login link.",
 } as const;

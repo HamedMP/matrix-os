@@ -96,6 +96,7 @@ export function PairedMachinesSection({ client }: { client: PrivateNetworkClient
   const machines = usePairedMachines(client);
   const [pendingRemoval, setPendingRemoval] = useState<PairedMachine | null>(null);
   const rows = machines.list?.machines ?? [];
+  const joinCodeExpired = machines.joinCode !== null && minutesLeft(machines.joinCode.expiresAt, machines.now) === 0;
 
   const addButton = (
     <Button variant="secondary" size="sm" onClick={() => void machines.createJoinCode()} disabled={machines.creatingJoinCode}>
@@ -118,7 +119,7 @@ export function PairedMachinesSection({ client }: { client: PrivateNetworkClient
           <HugeiconsIcon icon={ComputerAddIcon} size={28} strokeWidth={1.4} aria-hidden />
           <p style={{ margin: 0, fontWeight: 600, fontSize: "0.875rem" }}>No other machines yet</p>
           <p style={mutedText}>Add another server to your private network to open Matrix on it from here.</p>
-          {!machines.joinCode && addButton}
+          {(!machines.joinCode || joinCodeExpired) && addButton}
         </div>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
