@@ -39,7 +39,8 @@
         "provider": "brave",
         "braveApiKey": "${BRAVE_API_KEY}",
         "perplexityApiKey": "${PERPLEXITY_API_KEY}",
-        "grokApiKey": "${XAI_API_KEY}"
+        "grokApiKey": "${XAI_API_KEY}",
+        "keenableApiKey": "${KEENABLE_API_KEY}"
       },
       "fetch": {
         "maxChars": 50000,

@@ -6,7 +6,7 @@ The kernel has no built-in ability to fetch web pages or search the internet. Th
 
 ## Solution
 
-Two IPC tools (`web_fetch` and `web_search`) registered on the kernel's MCP server. Web fetch uses a three-tier extraction waterfall: Cloudflare Markdown for Agents (free, best quality) > Mozilla Readability (local, no API key) > Firecrawl (paid, JavaScript-heavy sites). Web search supports three providers: Brave (free tier), Perplexity (conversational), Grok/xAI (real-time). All results go through the external content wrapping from 025-security and the SSRF guard.
+Two IPC tools (`web_fetch` and `web_search`) registered on the kernel's MCP server. Web fetch uses a three-tier extraction waterfall: Cloudflare Markdown for Agents (free, best quality) > Mozilla Readability (local, no API key) > Firecrawl (paid, JavaScript-heavy sites). Web search supports three providers: Brave (free tier), Perplexity (conversational), Grok/xAI (real-time). Keenable is also available as an opt-in provider: pass `provider: "keenable"` to use its keyless public endpoint, or set `KEENABLE_API_KEY` to use the keyed endpoint. It is last in auto-detection, so it never replaces a configured provider. All results go through the external content wrapping from 025-security and the SSRF guard.
 
 ## Design
 
@@ -38,7 +38,7 @@ Extraction waterfall:
 ### Web Search
 
 ```typescript
-type SearchProvider = "brave" | "perplexity" | "grok";
+type SearchProvider = "brave" | "perplexity" | "grok" | "keenable";
 
 interface WebSearchInput {
   query: string;
@@ -71,7 +71,8 @@ Provider config via `~/system/config.json`:
         "provider": "brave",
         "braveApiKey": "${BRAVE_API_KEY}",
         "perplexityApiKey": "${PERPLEXITY_API_KEY}",
-        "grokApiKey": "${XAI_API_KEY}"
+        "grokApiKey": "${XAI_API_KEY}",
+        "keenableApiKey": "${KEENABLE_API_KEY}"
       },
       "fetch": {
         "maxChars": 50000,
