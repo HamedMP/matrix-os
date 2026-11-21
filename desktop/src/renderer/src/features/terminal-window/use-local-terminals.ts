@@ -4,7 +4,7 @@ import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
   LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalAgent, type LocalTerminalUnavailable,
 } from "../../../../shared/local-terminals";
-import { createLocalTerminalSocket } from "./local-terminal-socket";
+import { LOCAL_TERMINAL_SOCKETS } from "./local-terminal-socket";
 
 export type LocalTerminalsState =
   | { status: "loading" }
@@ -40,7 +40,7 @@ export function useLocalTerminals() {
   }, []);
 
   useEffect(() => {
-    setAlternateTerminalSockets({ prefix: LOCAL_TERMINAL_SESSION_PREFIX, create: createLocalTerminalSocket });
+    setAlternateTerminalSockets(LOCAL_TERMINAL_SOCKETS);
     void refresh();
     // Keep observing while hidden too: a completion must be noticed while
     // the person is away, not after refocusing the terminal.

@@ -458,6 +458,22 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     host.detach(attachId);
   }, 30_000);
 
+  it("passes focus to a program that asked for focus reports, and answers its colour query from the display facts", async () => {
+    const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
+    host.facts(attachId, { fg: "#eeeeee", bg: "#123456", cursor: "#ff0000", cell: [9, 18] });
+    host.input(attachId, "stty -echo raw; printf '\\033[?1004h\\033]11;?\\007'; dd bs=1 count=30 2>/dev/null | od -c; stty sane\r", false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    host.focus(attachId, true);
+    host.focus(attachId, false);
+    // The core's answer to OSC 11, then the focus reports, as the program read them.
+    await until(() => /0000036/.test(outputs.get(attachId) ?? ""));
+    // od prints each byte, with its own offset columns between them.
+    const read = (outputs.get(attachId) ?? "").split(/\s+/).filter((token) => !/^[0-7]{7}$/.test(token)).join("");
+    expect(read).toContain("]11;rgb:1212/3434/5656");
+    expect(read).toContain("033[I033[O");
+    host.detach(attachId);
+  }, 30_000);
+
   it("keeps terminals running across an app restart and reattaches them", async () => {
     host.dispose();
     host = createLocalTerminalHost({ ...base, startCore: vi.fn(async () => { throw new Error("must reuse the running core"); }) }, sink);

@@ -3,7 +3,7 @@
 // `herdr-core connect` on a Matrix computer (spec 651 J6). The first exchange
 // is the handshake; nothing else is spoken to a core that is not accepted.
 import { z } from "zod/v4";
-import { encodeCredit, encodeFrame, encodeResize, HC_FRAME, HcFrameDecoder } from "#protocol";
+import { encodeCredit, encodeFacts, encodeFocus, encodeFrame, encodeResize, HC_FRAME, HcFrameDecoder, type HcDisplayFacts } from "#protocol";
 
 const CALL_TIMEOUT_MS = 5_000;
 const MAX_PENDING_CALLS = 64;
@@ -54,6 +54,10 @@ export interface HcSocket {
 export interface HcStream {
   write(data: Buffer): void;
   resize(cols: number, rows: number): void;
+  /** The viewer gained or lost focus; programs that asked for focus reports get them. */
+  focus(focused: boolean): void;
+  /** The viewer's colours and cell size, for the program's queries. */
+  facts(display: HcDisplayFacts): void;
   close(): void;
 }
 
@@ -165,6 +169,8 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
         return {
           write: (data) => { if (!closed && streams.has(channel)) socket.write(encodeFrame(channel, HC_FRAME.DATA, data)); },
           resize: (cols, rows) => { if (!closed && streams.has(channel)) socket.write(encodeResize(channel, cols, rows)); },
+          focus: (focused) => { if (!closed && streams.has(channel)) socket.write(encodeFocus(channel, focused)); },
+          facts: (display) => { if (!closed && streams.has(channel)) socket.write(encodeFacts(channel, display)); },
           close: () => {
             if (!streams.delete(channel) || closed) return;
             socket.write(encodeFrame(channel, HC_FRAME.CLOSE, Buffer.alloc(0)));

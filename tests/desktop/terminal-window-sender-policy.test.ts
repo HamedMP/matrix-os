@@ -40,8 +40,8 @@ describe("IPC sender policy", () => {
     const expected = [
       "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers",
       "terminal:read-clipboard-files", "terminal-window:focus-main",
-      "local-terminal:ack", "local-terminal:attach", "local-terminal:create", "local-terminal:detach",
-      "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:put",
+      "local-terminal:attach", "local-terminal:create", "local-terminal:detach",
+      "local-terminal:kill", "local-terminal:list", "local-terminal:put",
       "local-terminal:rename", "local-terminal:resize",
     ].sort();
     const { terminal, authorize, from } = setup();
@@ -67,7 +67,7 @@ describe("IPC sender policy", () => {
 
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
-      ["auth:changed", "local-terminal:closed", "local-terminal:output", "window:focus-changed"],
+      ["auth:changed", "window:focus-changed"],
     );
     for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });

@@ -37,6 +37,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { terminalDisplayFacts } from "./terminal-display-facts";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
@@ -108,6 +109,12 @@ interface TerminalViewProps {
   // When false, the xterm stays mounted (buffer preserved) but the live socket
   // is released so only the focused terminal holds a VPS attachment.
   active?: boolean;
+  /**
+   * When false, the terminal stays mounted and attached but is not shown:
+   * output keeps arriving and is parsed, nothing is drawn, focused or
+   * resized until it is shown again (the Terminal window's recent tabs).
+   */
+  visible?: boolean;
   visualScale?: number;
   onRecreate?: () => void;
   controlsHost?: HTMLElement | null;
@@ -150,6 +157,7 @@ export default function TerminalView({
   sessionName,
   chatId,
   active = true,
+  visible = true,
   visualScale = 1,
   onRecreate,
   controlsHost,
@@ -171,6 +179,18 @@ export default function TerminalView({
   const gridWriterRef = useRef(false);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  // The display facts the attachment was last told, so only changes are sent.
+  const sentFactsRef = useRef("");
+  const sendDisplayFacts = useCallback(() => {
+    const terminal = termRef.current;
+    const attachment = attachmentRef.current;
+    if (!terminal || !attachment) return;
+    const facts = terminalDisplayFacts(terminal, getDesktopTerminalXtermTheme(latestTerminalThemeIdRef.current));
+    const key = JSON.stringify(facts);
+    if (key === sentFactsRef.current) return;
+    sentFactsRef.current = key;
+    attachment.facts(facts);
+  }, []);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const fileSelectionRef = useRef<(files: File[]) => void>(() => undefined);
   const selectFiles = useCallback((files: File[]) => fileSelectionRef.current(files), []);
@@ -184,6 +204,11 @@ export default function TerminalView({
   // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- the long-lived xterm pointer listener must read Canvas zoom changes without recreating the terminal instance.
   visualScaleRef.current = visualScale;
   const endedRef = useRef(false);
+  const shown = active && visible;
+  // Read by the long-lived resize observer: a hidden pane measures as empty,
+  // and must not shrink the program's terminal to that.
+  const visibleRef = useRef(visible);
+  const hiddenSinceShownRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [liveOwnership, setLiveOwnership] = useState<"writer" | "observer">("writer");
@@ -232,7 +257,7 @@ export default function TerminalView({
   }
 
   const controls = useDesktopTerminalControls({
-    api, sessionName, chatId, active, socketState,
+    api, sessionName, chatId, active: shown, socketState,
     writable: liveOwnership === "writer",
     isMac: navigator.platform.startsWith("Mac"),
     attachmentRef, termRef,
@@ -452,6 +477,11 @@ export default function TerminalView({
     host.addEventListener("mouseup", onTerminalPointer, true);
     host.addEventListener("mouseup", onLinkMouseUp, true);
     host.addEventListener("contextmenu", onTerminalContextMenu, true);
+    // Programs that asked for focus reports learn when this terminal gains or loses focus.
+    const onTextareaFocus = () => attachmentRef.current?.focus(true);
+    const onTextareaBlur = () => attachmentRef.current?.focus(false);
+    terminal.textarea?.addEventListener("focus", onTextareaFocus);
+    terminal.textarea?.addEventListener("blur", onTextareaBlur);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -467,6 +497,7 @@ export default function TerminalView({
       send: (frame) => attachmentRef.current?.scroll?.(frame),
       canWrite: () => nativeHistoryWriterRef.current,
       onState: () => gridPresentationRef.current?.schedule(),
+      shouldPoll: () => visibleRef.current,
     });
     nativeHistoryRef.current = nativeHistory;
     gridWriterRef.current = false;
@@ -486,9 +517,11 @@ export default function TerminalView({
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
+        if (!visibleRef.current) return;
         const proposed = proposedTerminalDimensions(fit, terminal, host);
         attachmentRef.current?.resize(proposed.cols, proposed.rows);
         presentation.schedule();
+        sendDisplayFacts();
       });
     });
     observer.observe(host);
@@ -507,6 +540,8 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
+      terminal.textarea?.removeEventListener("focus", onTextareaFocus);
+      terminal.textarea?.removeEventListener("blur", onTextareaBlur);
       host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
       selectionDisposable.dispose();
@@ -525,11 +560,11 @@ export default function TerminalView({
       } catch (err: unknown) {
         console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
       }
-      if (manager.activeSessionName === sessionName) manager.detachActive();
+      attachmentRef.current?.release();
       terminal.dispose();
       termRef.current = null;
     };
-  }, [copyTerminalTextWithFeedback, sessionName]);
+  }, [copyTerminalTextWithFeedback, sendDisplayFacts, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -538,7 +573,8 @@ export default function TerminalView({
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
     gridPresentationRef.current?.schedule();
-  }, [terminalThemeId]);
+    sendDisplayFacts();
+  }, [sendDisplayFacts, terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -557,12 +593,17 @@ export default function TerminalView({
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
-        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+        if (state !== "attached") { nativeHistoryRef.current?.attach(false); return; }
+        // Attached: the program's colour and size queries are answered from this view.
+        sentFactsRef.current = "";
+        sendDisplayFacts();
+        if (terminal.textarea && terminal.textarea.ownerDocument.activeElement === terminal.textarea) attachmentRef.current?.focus(true);
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
       // xterm calls back once the chunk is parsed, which paces sources that wait for it.
       onOutput: (data, _seq, written) => terminal.write(data, written),
+      onRepaint: () => terminal.reset(),
       onCanonicalSize: (size) => {
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
           terminal.resize(size.cols, size.rows);
@@ -592,22 +633,53 @@ export default function TerminalView({
     const binaryDisposable = terminal.onBinary((data) => {
       attachment.writeBinary(data);
     });
-    const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
-    attachment.resize(proposed.cols, proposed.rows);
-    terminal.focus();
+    if (visibleRef.current) {
+      const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
+      attachment.resize(proposed.cols, proposed.rows);
+      terminal.focus();
+    }
 
     return () => {
       dataDisposable.dispose();
       binaryDisposable.dispose();
       nativeHistoryRef.current?.attach(false);
       attachmentRef.current = null;
-      if (manager.activeSessionName === sessionName) manager.detachActive();
+      attachment.release();
     };
-  }, [sessionName, chatId, active, leaseAttempt]);
+  }, [sessionName, chatId, active, leaseAttempt, sendDisplayFacts]);
+
+  // Hidden and shown again while attached: catch up on what changed meanwhile.
+  useEffect(() => {
+    visibleRef.current = visible;
+    const terminal = termRef.current;
+    if (!terminal || !active) return;
+    if (!visible) {
+      hiddenSinceShownRef.current = true;
+      terminal.blur();
+      hoveredLinkRef.current = null;
+      setTerminalContextMenu(null);
+      return;
+    }
+    if (!hiddenSinceShownRef.current) return;
+    hiddenSinceShownRef.current = false;
+    // Its attachment was given up while it was hidden: attach again.
+    if (attachmentRef.current && !attachmentRef.current.live() && !endedRef.current) {
+      setLeaseAttempt((attempt) => attempt + 1);
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const proposed = proposedTerminalDimensions(fitRef.current, terminal, hostRef.current);
+      attachmentRef.current?.resize(proposed.cols, proposed.rows);
+      terminal.refresh(0, terminal.rows - 1);
+      gridPresentationRef.current?.schedule();
+      terminal.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, visible]);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !active) return;
+    if (!host || !shown) return;
     let cancelled = false;
     copyOperationGenerationRef.current += 1;
     pasteOperationGenerationRef.current += 1;
@@ -788,7 +860,7 @@ export default function TerminalView({
       host.removeEventListener("dragover", onDrag, { capture: true });
       host.removeEventListener("drop", onDrop, { capture: true });
     };
-  }, [active, pasteApi, reportClipboardFailure, reportClipboardSuccess, sessionName]);
+  }, [shown, pasteApi, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
     if (liveOwnership === "observer") {
@@ -833,7 +905,7 @@ export default function TerminalView({
           </span>
         </div>
       ) : null}
-      {active && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
+      {shown && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" role="status" aria-live="polite">
           <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}

@@ -7,10 +7,13 @@ import type {
   InvokeRequest,
   InvokeResponse,
 } from "../../../shared/ipc-contract";
+import type { LocalTerminalStream, LocalTerminalStreamHandlers } from "../../../shared/local-terminal-stream-bridge";
 
 interface OperatorBridgeRaw {
   invoke(channel: string, payload: unknown): Promise<unknown>;
   on(channel: string, callback: (payload: unknown) => void): () => void;
+  /** Terminal window only: the port of one local terminal attachment. */
+  localTerminalStream?: (attachId: number, handlers: LocalTerminalStreamHandlers) => LocalTerminalStream | null;
 }
 
 declare global {

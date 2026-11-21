@@ -216,6 +216,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     attach: sessions.attach,
     acknowledge: sessions.acknowledge,
     input: sessions.input,
+    focus: sessions.focus,
+    facts: sessions.facts,
     resize: sessions.resize,
     detach: sessions.detach,
     detachAll: sessions.detachAll,

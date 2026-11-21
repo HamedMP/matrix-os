@@ -1,17 +1,15 @@
 // Adapts a local terminal (held by the trusted core) to the socket contract
 // the shared terminal view already speaks, so local and cloud tabs render and
-// behave identically. Keystrokes and output cross IPC only; nothing here can
-// reach the network.
-import { invoke, onEvent } from "../../lib/operator";
+// behave identically. Output, typing and acknowledgements travel over the
+// attachment's own port, held by the preload (spec 2701 layer 6); output stays
+// bytes all the way to xterm. Nothing here can reach the network.
+import { invoke } from "../../lib/operator";
 import type { ShellSocketEvents } from "../../lib/shell-socket";
 import type { SocketControl } from "../terminal/attach-manager";
 import { LOCAL_TERMINAL_MAX_ACK_COUNT, LOCAL_TERMINAL_SESSION_PREFIX } from "../../../../shared/local-terminals";
+import type { LocalTerminalStream } from "../../../../shared/local-terminal-stream-bridge";
 
 const INPUT_CHUNK_CHARS = 32_768;
-// Output can reach the window before the attach call returns its id (the
-// history replay does). It is held, bounded, until the id is known.
-const MAX_EARLY_EVENTS = 256;
-const MAX_EARLY_ATTACHMENTS = 16;
 const DEFAULT_SIZE = { cols: 100, rows: 30 };
 
 /** The end of the next input chunk, never between the halves of one character. */
@@ -28,25 +26,27 @@ function warn(action: string, error: unknown): void {
   console.warn(`[local-terminal] ${action} failed:`, error instanceof Error ? error.name : "UnknownError");
 }
 
+/** How the shared terminal view reaches local terminals: by session prefix, repainted by the core on attach. */
+export const LOCAL_TERMINAL_SOCKETS = {
+  prefix: LOCAL_TERMINAL_SESSION_PREFIX,
+  create: (sessionName: string, events: ShellSocketEvents) => createLocalTerminalSocket(sessionName, events),
+  repaintsOnAttach: true,
+} as const;
+
 export function createLocalTerminalSocket(sessionName: string, events: ShellSocketEvents): SocketControl {
   const id = sessionName.slice(LOCAL_TERMINAL_SESSION_PREFIX.length);
   let size = DEFAULT_SIZE;
   let attachId: number | null = null;
+  let stream: LocalTerminalStream | null = null;
   let seq = 0;
   let released = false;
-  let unsubscribe: Array<() => void> = [];
-  let early: Array<{ attachId: number; data: string }> = [];
-  // Early output that did not fit the buffer, per attachment. It is not shown,
-  // but its credit must still go back or the terminal would stall. At most a
-  // few attachments can be starting at once.
-  const earlyDropped = new Map<number, number>();
-  // Attachments reported closed before this socket knew its own id: a shell
-  // can end in the moment between the core attaching and the reply arriving.
-  const earlyClosed = new Set<number>();
   let unacknowledged = 0;
   let ackScheduled = false;
+  // Typing waiting to be sent, in order; each entry is one kind of input.
+  let pending: Array<{ data: string; binary: boolean }> = [];
+  let flushScheduled = false;
 
-  // Tells the trusted core how much output was taken, in one call per burst.
+  // Tells the trusted core how much output was taken, in one message per burst.
   // The core holds back the program's output until it hears this.
   const acknowledge = (events_ = 1) => {
     unacknowledged += events_;
@@ -56,13 +56,13 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
       ackScheduled = false;
       let remaining = unacknowledged;
       unacknowledged = 0;
-      if (attachId === null || released) return;
+      if (!stream || released) return;
       // A hidden window draws in large slices, so one burst can cover more
       // events than a single acknowledgement may carry.
       while (remaining > 0) {
         const count = Math.min(remaining, LOCAL_TERMINAL_MAX_ACK_COUNT);
         remaining -= count;
-        void invoke("local-terminal:ack", { attachId, count }).catch((error: unknown) => warn("ack", error));
+        stream.ack(count);
       }
     });
   };
@@ -72,7 +72,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   // draw is slowed down instead of filling the window's memory.
   // A window nobody is looking at must not slow the program down: browsers
   // throttle hidden pages, so there the output is acknowledged on arrival.
-  const deliver = (data: string) => {
+  const deliver = (data: Uint8Array) => {
     let done = false;
     const drawn = () => {
       if (done) return;
@@ -86,11 +86,9 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   const release = () => {
     if (released) return;
     released = true;
-    for (const stop of unsubscribe) stop();
-    unsubscribe = [];
-    early = [];
-    earlyDropped.clear();
-    earlyClosed.clear();
+    pending = [];
+    stream?.close();
+    stream = null;
     if (attachId !== null) {
       const current = attachId;
       attachId = null;
@@ -100,51 +98,43 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
 
   // The trusted core no longer holds this attachment: stop accepting typing
   // that would go nowhere, and let the view offer to reconnect.
-  const lost = (id: number) => {
-    if (attachId !== id || released) return;
+  const ended = () => {
+    if (released) return;
     attachId = null;
     events.onState("ended");
     release();
   };
+  const lost = (id: number) => { if (attachId === id) ended(); };
 
-  const send = (data: string, binary: boolean) => {
-    if (attachId === null || released) return;
-    const current = attachId;
-    for (let offset = 0; offset < data.length;) {
-      // Binary input is one byte per character and can be cut anywhere.
-      const end = binary ? Math.min(offset + INPUT_CHUNK_CHARS, data.length) : inputChunkEnd(data, offset);
-      void invoke("local-terminal:input", { attachId: current, data: data.slice(offset, end), ...(binary ? { binary: true } : {}) })
-        .then((result) => { if (!result.ok) lost(current); })
-        .catch((error: unknown) => warn("input", error));
-      offset = end;
+  // Everything typed in one turn (a paste, a burst of key events) leaves as
+  // one message per kind of input instead of one call per chunk.
+  const flush = () => {
+    flushScheduled = false;
+    const batch = pending;
+    pending = [];
+    if (!stream || released) return;
+    for (const { data, binary } of batch) {
+      for (let offset = 0; offset < data.length;) {
+        // Binary input is one byte per character and can be cut anywhere.
+        const end = binary ? Math.min(offset + INPUT_CHUNK_CHARS, data.length) : inputChunkEnd(data, offset);
+        stream.input(data.slice(offset, end), binary);
+        offset = end;
+      }
     }
+  };
+  const send = (data: string, binary: boolean) => {
+    if (attachId === null || released || data.length === 0) return;
+    const last = pending.at(-1);
+    if (last && last.binary === binary) last.data += data;
+    else pending.push({ data, binary });
+    if (flushScheduled) return;
+    flushScheduled = true;
+    queueMicrotask(flush);
   };
 
   return {
     connect() {
       events.onState("connecting");
-      // Subscribe before attaching so the first paint cannot be missed.
-      unsubscribe = [
-        onEvent("local-terminal:output", (event) => {
-          if (event.attachId === attachId) deliver(event.data);
-          else if (attachId === null && !released) {
-            if (early.length < MAX_EARLY_EVENTS) early.push(event);
-            else if (earlyDropped.size < MAX_EARLY_ATTACHMENTS || earlyDropped.has(event.attachId)) {
-              earlyDropped.set(event.attachId, (earlyDropped.get(event.attachId) ?? 0) + 1);
-            }
-          }
-        }),
-        onEvent("local-terminal:closed", (event) => {
-          if (attachId === null && !released) {
-            if (earlyClosed.size < MAX_EARLY_ATTACHMENTS) earlyClosed.add(event.attachId);
-            return;
-          }
-          if (event.attachId !== attachId) return;
-          attachId = null;
-          events.onState("ended");
-          release();
-        }),
-      ];
       // The size the core was asked for; the pane may be resized before it answers.
       const requested = size;
       void invoke("local-terminal:attach", { id, ...requested })
@@ -153,38 +143,31 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
             if (result.ok) void invoke("local-terminal:detach", { attachId: result.attachId }).catch((error: unknown) => warn("detach", error));
             return;
           }
-          if (!result.ok) { events.onState("ended"); release(); return; }
-          attachId = result.attachId;
+          if (!result.ok) { ended(); return; }
+          const attached = result.attachId;
+          attachId = attached;
+          // Output that arrived before this reply waits in the port, in order,
+          // and so does the end of a shell that exited meanwhile.
+          stream = window.operator.localTerminalStream?.(attached, { output: deliver, closed: () => lost(attached) }) ?? null;
+          if (!stream) { warn("attach", new Error("no terminal stream")); release(); events.onState("ended"); return; }
           events.onOwnershipChange?.("writer");
           events.onState("attached");
-          const held = early;
-          early = [];
-          for (const event of held) if (event.attachId === result.attachId) deliver(event.data);
-          const dropped = earlyDropped.get(result.attachId) ?? 0;
-          earlyDropped.clear();
-          if (dropped > 0) acknowledge(dropped);
-          // It already ended: its last output is shown, then it reads as ended
-          // instead of as a live terminal that takes no input.
-          const alreadyClosed = earlyClosed.has(result.attachId);
-          earlyClosed.clear();
-          if (alreadyClosed) {
-            attachId = null;
-            events.onState("ended");
-            release();
-            return;
-          }
+          // The core's first paint is the whole terminal: start from nothing,
+          // so nothing the view still shows ends up above or below it.
+          events.onRepaint?.();
           // Resized while attaching: the shell must learn the size now, not at the next resize.
           if (size.cols !== requested.cols || size.rows !== requested.rows) {
-            const attached = result.attachId;
             void invoke("local-terminal:resize", { attachId: attached, ...size })
               .then((resized) => { if (!resized.ok) lost(attached); })
               .catch((error: unknown) => warn("resize", error));
           }
         })
-        .catch((error: unknown) => { warn("attach", error); if (!released) { events.onState("ended"); release(); } });
+        .catch((error: unknown) => { warn("attach", error); ended(); });
     },
     sendInput: (data) => send(data, false),
     sendBinary: (data) => send(data, true),
+    focus: (focused) => { if (!released) stream?.focus(focused); },
+    facts: (display) => { if (!released) stream?.facts(display); },
     resize(cols, rows) {
       size = { cols: Math.min(500, Math.max(20, Math.floor(cols))), rows: Math.min(200, Math.max(5, Math.floor(rows))) };
       if (attachId !== null && !released) {

@@ -9,6 +9,7 @@ import {
   type HcTerminal as LocalTerminal,
 } from "#terminal";
 import type { HcConnection, HcStream } from "#client";
+import type { HcDisplayFacts } from "#protocol";
 
 const DEFAULT_MAX_ATTACHMENTS = 8;
 // Terminal creation is rate-limited, never count-capped.
@@ -81,7 +82,14 @@ export function createAttachmentSlots(max = DEFAULT_MAX_ATTACHMENTS): Attachment
 }
 
 export interface HcSessionSink {
-  output(attachId: number, data: string): void;
+  /** Output as text, decoded and cut into slices of at most HC_TERMINAL_MAX_OUTPUT_CHARS. */
+  output?(attachId: number, data: string): void;
+  /**
+   * Output as the core sent it, one call per chunk, never decoded. The bytes
+   * are a view of the socket read and valid only during the call: copy or
+   * post them before returning. When present, `output` is not used.
+   */
+  outputBytes?(attachId: number, data: Uint8Array): void;
   closed(attachId: number): void;
 }
 
@@ -205,6 +213,12 @@ export function createHcSessions(options: {
       try {
         attachment.stream = await core.attach({ terminal: id, ...size }, {
           onData: (chunk, consumed) => {
+            if (sink.outputBytes) {
+              attachment.unacknowledged.push(consumed);
+              sink.outputBytes(attachId, chunk);
+              return;
+            }
+            if (!sink.output) { consumed(); return; }
             const text = decoder.decode(chunk, { stream: true });
             if (text.length === 0) { consumed(); return; }
             for (let offset = 0; offset < text.length; offset += LOCAL_TERMINAL_MAX_OUTPUT_CHARS) {
@@ -239,6 +253,18 @@ export function createHcSessions(options: {
     input(attachId: number, data: string, binary: boolean): boolean {
       const stream = attachments.get(attachId)?.stream;
       stream?.write(Buffer.from(data, binary ? "latin1" : "utf8"));
+      return stream != null;
+    },
+
+    focus(attachId: number, focused: boolean): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.focus(focused);
+      return stream != null;
+    },
+
+    facts(attachId: number, display: HcDisplayFacts): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.facts(display);
       return stream != null;
     },
 

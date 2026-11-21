@@ -97,8 +97,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     if (boundSlot.current !== slot) {
       // The shared terminal view reads its computer from the connection store.
       // This window never selects a computer app-wide; it only points its own
-      // renderer's store at the computer whose tab is on screen.
-      resetAttachManager();
+      // renderer's store at the computer whose tab is on screen. Terminals
+      // already attached keep their own computer: each socket is bound to
+      // its computer when it opens, so the tabs kept live stay attached.
       useConnection.setState({ status: "signed-in", platformHost, runtimeSlot: slot, api: client.forRuntime(slot) });
       boundSlot.current = slot;
     }

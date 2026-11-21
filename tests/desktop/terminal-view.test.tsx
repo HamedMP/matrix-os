@@ -21,6 +21,7 @@ const attachMock = vi.fn();
 const attachmentWrite = vi.fn();
 const attachmentWriteBinary = vi.fn();
 const attachmentResize = vi.fn();
+const attachmentRelease = vi.fn();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -122,7 +123,8 @@ vi.mock("@xterm/xterm", () => ({
       host.append(root);
       this.element = root;
     }
-    write(): void {}
+    write = vi.fn((_data: string | Uint8Array, done?: () => void) => { done?.(); });
+    refresh = vi.fn();
     clear = vi.fn();
     focus = vi.fn();
     blur = vi.fn();
@@ -205,8 +207,13 @@ describe("TerminalView session switching", () => {
       resize: attachmentResize,
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
+      release: attachmentRelease,
+      focus: vi.fn(),
+      facts: vi.fn(),
+      live: () => true,
     }));
     attachmentResize.mockReset();
+    attachmentRelease.mockReset();
     attachmentWrite.mockReset();
     attachmentWriteBinary.mockReset();
     useAppearance.setState({ mode: "light", themeId: "operator", hydrated: true });
@@ -331,6 +338,47 @@ describe("TerminalView session switching", () => {
     expect(terminal.focus).toHaveBeenCalledTimes(2);
     expect(attachMock).toHaveBeenCalledTimes(2);
     expect(attachmentResize).toHaveBeenCalledTimes(2);
+  });
+
+  // The Terminal window keeps recent tabs mounted and attached but hidden (spec 2701 layer 6).
+  it("keeps a hidden terminal attached and parsing, but neither resizes nor focuses it until it is shown", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    const terminal = createdTerminals.at(-1)! as unknown as { write: ReturnType<typeof vi.fn>; refresh: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn> };
+    const events = attachMock.mock.calls[0]![1] as ShellSocketEvents;
+    rerender(<TerminalView sessionName="alpha" active visible={false} />);
+    attachmentResize.mockClear();
+    terminal.focus.mockClear();
+    const written = vi.fn();
+    act(() => events.onOutput("printed while hidden", 1, written));
+    expect(terminal.write).toHaveBeenCalledWith("printed while hidden", written);
+    expect(written).toHaveBeenCalledTimes(1);
+    // Hidden, the host measures as nothing: that must not shrink the program's terminal.
+    act(() => resizeObserverCallbacks.at(-1)!([], {} as ResizeObserver));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+    expect(attachmentResize).not.toHaveBeenCalled();
+    expect(attachmentRelease).not.toHaveBeenCalled();
+    expect(attachMock).toHaveBeenCalledTimes(1);
+
+    rerender(<TerminalView sessionName="alpha" active visible />);
+    await waitFor(() => expect(attachmentResize).toHaveBeenCalledTimes(1));
+    expect(terminal.refresh).toHaveBeenCalled();
+    expect(terminal.focus).toHaveBeenCalled();
+    expect(attachMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches again when shown after its attachment was given up while hidden", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    let live = true;
+    attachMock.mockImplementation(() => ({ resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, focus: vi.fn(), facts: vi.fn(), live: () => live }));
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    rerender(<TerminalView sessionName="alpha" active visible={false} />);
+    live = false; // evicted by a newer attachment
+    rerender(<TerminalView sessionName="alpha" active visible />);
+    await waitFor(() => expect(attachMock).toHaveBeenCalledTimes(2));
+    expect(createdTerminals).toHaveLength(1);
   });
 
   it("clears the ended banner before the next session emits state", () => {

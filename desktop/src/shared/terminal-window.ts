@@ -4,7 +4,7 @@
 // the main-process sender policy.
 import { z } from "zod/v4";
 import type { EventChannel, InvokeChannel } from "./ipc-contract";
-import { LOCAL_TERMINAL_EVENT_CHANNELS, LOCAL_TERMINAL_INVOKE_CHANNELS } from "./local-terminals";
+import { LOCAL_TERMINAL_INVOKE_CHANNELS } from "./local-terminals";
 
 export const TERMINAL_WINDOW_ARG = "--matrix-terminal-window";
 export const TERMINAL_WINDOW_QUERY_KEY = "window";
@@ -46,7 +46,7 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
 
 /** Events the Terminal window may subscribe to. */
 export const TERMINAL_WINDOW_EVENT_CHANNELS = [
-  "auth:changed", "window:focus-changed", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+  "auth:changed", "window:focus-changed",
 ] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";

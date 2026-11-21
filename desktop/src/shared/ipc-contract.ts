@@ -70,7 +70,7 @@ import {
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
-import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
+import { LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 
 const Empty = z.object({}).strict();
 
@@ -543,7 +543,6 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
-  ...LOCAL_TERMINAL_EVENTS,
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
