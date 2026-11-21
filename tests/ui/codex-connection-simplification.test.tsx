@@ -141,3 +141,31 @@ it.each(["pending", "failed"])("does not reconnect while the known operation sta
   expect(reconnect).toBeDisabled(); fireEvent.click(reconnect);
   expect(client.startConnection).not.toHaveBeenCalled();
 });
+
+// ENG-523: a saved Codex login that Matrix may not use yet reads as one state:
+// the row badge, the account card and its single primary action agree.
+it("shows a saved Codex login that needs sign-in consistently with one primary Reconnect", async () => {
+  await mount(codexFixture("consent"));
+  expect(screen.getByRole("button", { name: /^Codex.*Needs sign-in/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Codex.*Not connected/ })).toBeNull();
+  const card = screen.getByRole("region", { name: "Codex saved account" });
+  expect(within(card).getByText(/Sign in again so Chat can use this account/)).toBeVisible();
+  expect(within(card).queryByRole("button")).toBeNull();
+  const row = screen.getByRole("group", { name: "Codex connection actions" });
+  const buttons = within(row).getAllByRole("button");
+  expect(buttons.map(button => button.textContent)).toEqual(["Reconnect", "Check again", "Change account", "Log out"]);
+  expect(buttons.filter(button => button.classList.contains("matrix-ap-button-primary"))).toEqual([buttons[0]]);
+  for (const button of buttons) expect(button).toHaveClass("matrix-ap-button");
+  expect(screen.queryByRole("button", { name: "Check account again" })).toBeNull();
+});
+it("shows connected Codex secondary actions in one row without a primary action", async () => {
+  const { refresh } = await mount(codexFixture("connected"));
+  expect(screen.getByRole("button", { name: /^Codex.*Connected/ })).toBeVisible();
+  const row = screen.getByRole("group", { name: "Codex connection actions" });
+  const buttons = within(row).getAllByRole("button");
+  expect(buttons.map(button => button.textContent)).toEqual(["Check again", "Change account", "Log out"]);
+  expect(row.querySelector(".matrix-ap-button-primary")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check account again" })).toBeNull();
+  fireEvent.click(within(row).getByRole("button", { name: "Check again" }));
+  expect(refresh).toHaveBeenCalled();
+});

@@ -294,11 +294,13 @@ export function AgentsProvidersView({
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
-            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
+            // Codex account actions own "Check again" in their single action row.
+            const codexActionsOwnRefresh = harness.harness === "codex" && nativeSource && selectedAccount?.authState === "authenticated";
+            const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={String(capabilityRefreshKey)} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
-                {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
+                {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}

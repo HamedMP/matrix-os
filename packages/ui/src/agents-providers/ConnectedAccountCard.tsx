@@ -4,12 +4,14 @@ import { AllowanceMeter } from "./AllowanceMeter.js";
 import { connectedAccountLabel, providerName, shortDate, usageLines } from "./utils.js";
 
 /** Connected presentation consumes observed identity and usage, never inferred plan limits. */
-export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false }: {
+export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false, showRefresh = true }: {
   harness: ProviderHarnessInstance;
   account?: ProviderAccount;
   source?: ProviderAccessSource;
   action?: ReactNode;
   saved?: boolean;
+  /** Off when the owning panel already offers its own "Check again" action. */
+  showRefresh?: boolean;
   disabled: boolean;
   onRefresh: () => void;
 }) {
@@ -34,6 +36,7 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
       </div>}
       <div className="matrix-ap-account-actions">{action}</div>
     </div>
-    {!action || !usage || source?.usage.kind === "unavailable" ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
+    {saved ? <p className="matrix-ap-help">Sign in again so Chat can use this account.</p> : null}
+    {showRefresh && (!action || !usage || source?.usage.kind === "unavailable") ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
   </section>;
 }
