@@ -499,6 +499,30 @@ render_zellij_home_dropin() {
   printf '[Unit]\nConditionPathExists=\nConditionPathExists=%s/system/terminal-runtimes/%%i.json\n\n[Service]\nEnvironment=MATRIX_HOME=%s\n' "$1" "$1"
 }
 
+# The scope runtime supervisor runs root:matrix on every host (as on managed
+# VPSes). Self-host only moves its Matrix home and the read-only workload roots
+# it can see behind ProtectHome=tmpfs.
+SCOPE_RUNTIME_ROOTS=(bots agent-workspaces projects worktrees)
+
+render_scope_runtime_home_dropin() {
+  local root
+  printf '# Written by install-server.sh: self-host Matrix home (spec 2701 S1).\n'
+  printf '[Service]\nEnvironment=MATRIX_HOME=%s\n' "$1"
+  for root in "${SCOPE_RUNTIME_ROOTS[@]}"; do
+    printf 'BindReadOnlyPaths=-%s/%s\n' "$1" "$root"
+  done
+}
+
+# prepare_scope_runtime_roots <matrix home> <owner>: creates missing workload roots
+# before the supervisor's read-only namespace exists. Group matrix lets the
+# capability-free supervisor read them; existing roots keep owner, mode and data.
+prepare_scope_runtime_roots() {
+  local root
+  for root in "${SCOPE_RUNTIME_ROOTS[@]}"; do
+    [ -d "$1/${root}" ] || install -d -o "$2" -g matrix -m 0750 "$1/${root}"
+  done
+}
+
 render_browser_sudoers() {
   printf '# Written by install-server.sh: browser use lifecycle for %s only.\n' "$1"
   printf '%s ALL=(root) NOPASSWD: /usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py --status\n' "$1"
@@ -1321,6 +1345,18 @@ write_run_user_dropins() {
   fi
 }
 
+write_scope_runtime_dropin() {
+  local dir=/etc/systemd/system/matrix-scope-runtime.service.d
+  prepare_scope_runtime_roots "$MATRIX_HOME_DIR" "$MATRIX_RUN_USER"
+  if [ "$MATRIX_HOME_DIR" = "/home/matrix/home" ]; then
+    rm -f "${dir}/10-self-host-home.conf"
+    return 0
+  fi
+  install -d -o root -g root -m 0755 "$dir"
+  render_scope_runtime_home_dropin "$MATRIX_HOME_DIR" >"${dir}/10-self-host-home.conf"
+  chmod 0644 "${dir}/10-self-host-home.conf"
+}
+
 install_terminal_user_units() {
   local run_uid
   run_uid="$(id -u "$MATRIX_RUN_USER")"
@@ -1341,6 +1377,8 @@ install_systemd_units() {
   section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
   install -m 0644 /opt/matrix/systemd/matrix-terminal-runtime.service /etc/systemd/system/matrix-terminal-runtime.service
+  install -m 0644 /opt/matrix/systemd/matrix-scope-runtime.service /etc/systemd/system/matrix-scope-runtime.service
+  write_scope_runtime_dropin
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
   install -m 0644 /opt/matrix/systemd/matrix-code-server.service /etc/systemd/system/matrix-code-server.service
@@ -1350,7 +1388,7 @@ install_systemd_units() {
   install_terminal_user_units
   write_self_host_restore_service
   run_required "reloading systemd" systemctl daemon-reload
-  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-scope-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
     run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
@@ -1417,6 +1455,7 @@ start_services() {
   run_required "starting docker" systemctl enable --now docker
   restart_required_service matrix-restore
   restart_required_service matrix-terminal-runtime
+  restart_optional_service matrix-scope-runtime "collaboration scope runtime"
   restart_required_service matrix-gateway
   restart_required_service matrix-shell
   restart_optional_service matrix-code-server "code-server proxy"

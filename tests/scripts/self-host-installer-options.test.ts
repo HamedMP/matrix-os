@@ -151,6 +151,47 @@ resolve_run_user`,
     expect(zellij.stdout).toContain("Environment=MATRIX_HOME=/home/alice/matrix");
   });
 
+  it("installs and enables the collaboration scope runtime the gateway wants", () => {
+    // Found on a self-hosted laptop: matrix-gateway.service Wants= the scope
+    // runtime, but the installer never installed its unit.
+    const units = readFileSync(script, "utf8").split("\ninstall_systemd_units() {")[1]!.split("\n}\n")[0]!;
+    expect(units).toContain("install -m 0644 /opt/matrix/systemd/matrix-scope-runtime.service /etc/systemd/system/matrix-scope-runtime.service");
+    expect(units).toMatch(/systemctl enable [^\n]*matrix-scope-runtime/);
+    const start = readFileSync(script, "utf8").split("\nstart_services() {")[1]!.split("\n}\n")[0]!;
+    expect(start.indexOf("matrix-scope-runtime")).toBeGreaterThan(-1);
+    expect(start.indexOf("matrix-scope-runtime")).toBeLessThan(start.indexOf("restart_required_service matrix-gateway"));
+  });
+
+  it("points the scope runtime at a self-host Matrix home outside /home/matrix", () => {
+    // The supervisor stays root:matrix like managed VPSes; only its home and the
+    // read-only workload roots behind ProtectHome=tmpfs move.
+    const result = run(`render_scope_runtime_home_dropin /home/alice/matrix`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("[Service]\nEnvironment=MATRIX_HOME=/home/alice/matrix\n");
+    for (const root of ["bots", "agent-workspaces", "projects", "worktrees"]) {
+      expect(result.stdout).toContain(`BindReadOnlyPaths=-/home/alice/matrix/${root}\n`);
+    }
+    expect(result.stdout).not.toContain("User=");
+  });
+
+  it("creates missing workload roots readable by the scope runtime's matrix group", () => {
+    const home = join(dir, "home");
+    spawnSync("mkdir", ["-p", join(home, "projects")]);
+    writeFileSync(join(dir, "keep"), "");
+    const result = run(
+      `install() { printf '%s\\n' "$*" >>"${join(dir, "calls")}"; }
+prepare_scope_runtime_roots "${home}" alice`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+    // Existing roots and owner data keep their owner, mode and contents.
+    expect(calls).toEqual([
+      `-d -o alice -g matrix -m 0750 ${home}/bots`,
+      `-d -o alice -g matrix -m 0750 ${home}/agent-workspaces`,
+      `-d -o alice -g matrix -m 0750 ${home}/worktrees`,
+    ]);
+  });
+
   it("grants the run user Matrix's group-only paths by ACL, so an already-running login works", () => {
     // The person is usually logged in while installing. Their systemd --user
     // manager (which also runs their Herdr core) keeps the groups it started

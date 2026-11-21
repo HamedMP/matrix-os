@@ -187,7 +187,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code-server.service");
     expect(script).toContain("write_self_host_restore_service");
-    expect(script).toContain("systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server");
+    expect(script).toContain("systemctl enable docker matrix-restore matrix-terminal-runtime matrix-scope-runtime matrix-gateway matrix-shell matrix-code matrix-code-server");
     expect(script).toContain("systemctl enable --now docker");
     expect(script.indexOf("restart_required_service matrix-restore")).toBeLessThan(
       script.indexOf("restart_required_service matrix-terminal-runtime"),
