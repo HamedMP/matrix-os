@@ -1,7 +1,7 @@
 import type { CanonicalQueueChatTurnRequest } from "@matrix-os/contracts";
 import type { createChatMentionRequestTracker } from "@matrix-os/ui";
 import {
-  CanonicalShellChatRequestError, isDefinitiveCanonicalChatRejection,
+  isDefinitiveCanonicalChatRejection,
   type CanonicalShellChatClient,
 } from "@/lib/canonical-chat-client";
 
@@ -15,8 +15,7 @@ export async function queueShellChatTurn(
   try {
     return await client.queueTurn(chatId, input);
   } catch (error: unknown) {
-    if (isDefinitiveCanonicalChatRejection(error)
-      && !(error instanceof CanonicalShellChatRequestError && error.status === 408)) {
+    if (isDefinitiveCanonicalChatRejection(error)) {
       requests.accepted(chatId, input.clientRequestId);
     }
     throw error;

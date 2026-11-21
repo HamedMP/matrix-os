@@ -43,6 +43,27 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); state.store.dispose(); vi.restoreAllMocks(); });
 const mount = () => renderHook(() => useCanonicalChatState({ navigationScope: "owner/runtime/main", navigationGeneration: "same_session" }));
 const options = { instanceId: "pi_default", model: "model", interactionMode: "default" as const, permissionMode: "supervised" as const };
+it.each([408, 503, 409])("cleans uploaded queue attachments only after definite rejection (HTTP %s)", async status => {
+  const running = detail();
+  running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };
+  vi.mocked(state.client.detail).mockResolvedValue(running);
+  const attachment = { type: "attachment_reference" as const, attachmentId: "shell_upload_correction", kind: "file" as const,
+    label: "correction.txt", mimeType: "text/plain", sizeBytes: 4, ownerReference: "temporary/desktop-chat/correction.txt" };
+  state.client.uploadAttachment = vi.fn(async () => attachment);
+  state.client.deleteAttachment = vi.fn(async () => {});
+  state.client.queueTurn = vi.fn().mockRejectedValue(new CanonicalShellChatRequestError(status, "run_unavailable"));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.activeRunId).toBe("run_same"));
+  await act(async () => {
+    expect(await hook.result.current.submitMessage("Keep this file", [{ name: "correction.txt", type: "text/plain", data: "data:text/plain;base64,dGVzdA==" }],
+      { ...options, clientRequestId: "req_attachment_correction" })).toBe(false);
+  });
+  expect(state.client.queueTurn).toHaveBeenCalledWith("chat_same", expect.objectContaining({
+    parts: [{ type: "text", text: "Keep this file" }, attachment],
+  }));
+  if (status === 409) expect(state.client.deleteAttachment).toHaveBeenCalledWith(attachment.ownerReference);
+  else expect(state.client.deleteAttachment).not.toHaveBeenCalled();
+});
 it.each([409, 408, 503])("retries queue status %s with the correct operation after the run finishes", async status => {
   const running = detail();
   running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };

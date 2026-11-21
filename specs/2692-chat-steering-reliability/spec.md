@@ -39,6 +39,7 @@ Keep the provider buffer in its own module for the same reason.
 | Admission/loading busy, no active Run | Type and Enter | Draft remains; Send stays disabled; no second admission | Web cancellation/admission tests |
 | Web queue rejected | Submit correction | Draft remains retryable | Web composer test |
 | Active run finishes before Queue reaches the server | Retry unchanged draft after definite rejection | Retry can use Send; uncertain delivery retains original Queue ID | Canonical authority tests for 409, 408, 503 |
+| Queued draft has an uploaded attachment | Queue returns HTTP 408/503 | Keep the uploaded file for potentially committed Queue entries; definite 409 rejection still cleans it | Canonical authority attachment cleanup regression |
 | Desktop steering pending, newer snapshot | Accept correction | Message appears once; newer metadata retained; queue row removed | Desktop steering recovery tests |
 | Desktop steering pending, another Chat selected | Late failure | No old-Chat reload or error in the new Chat | Desktop steering recovery tests |
 | Claude child closing | Two corrections | Both committed instructions reach resumed process once | Real orchestrator/repository + controlled CLI test |
