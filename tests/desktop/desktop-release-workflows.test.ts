@@ -251,14 +251,16 @@ describe("desktop release workflows", () => {
   it("bundles runtime source dependencies into the Electron main process", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
     const bundledMainDependencies = config.match(/main: \{[\s\S]*?externalizeDepsPlugin\(\{ exclude: \[([^\]]+)\]/)?.[1];
-    const bundledPreloadDependencies = config.match(
-      /externalizeDepsPlugin\(\{ exclude: \["zod", "@matrix-os\/contracts"\] \}\)/g,
-    );
+    const bundledPreloadDependencies = config.match(/preload: \{[\s\S]*?externalizeDepsPlugin\(\{ exclude: \[([^\]]+)\]/)?.[1];
 
-    for (const dependency of ["zod", "@matrix-os/contracts", "@matrix-os/ui", "@finnaai/matrix"]) {
+    for (const dependency of ["zod", "@matrix-os/contracts", "@matrix-os/herdr-core-client", "@matrix-os/ui", "@finnaai/matrix"]) {
       expect(bundledMainDependencies).toContain(`"${dependency}"`);
     }
-    expect(bundledPreloadDependencies).toHaveLength(1);
+    // The sandboxed preload reaches herdr-core-client's runtime schemas through
+    // operator-bridge -> ipc-contract -> local-terminals, and cannot require it.
+    for (const dependency of ["zod", "@matrix-os/contracts", "@matrix-os/herdr-core-client"]) {
+      expect(bundledPreloadDependencies).toContain(`"${dependency}"`);
+    }
   });
 
   it("keeps native macOS window controls in the reserved titlebar region", () => {
