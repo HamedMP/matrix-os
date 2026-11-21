@@ -91,4 +91,25 @@ describe("VM store", () => {
     await expect(store.list()).resolves.toEqual([record()]);
     expect(await readdir(join(dir, record().id))).toEqual(["record.json"]);
   });
+
+  it("onChange notifies after put and remove, isolates a throwing listener, and unsubscribes", async () => {
+    const store = createVmStore(dir);
+    const seen: string[] = [];
+    const errors: string[] = [];
+    const logStore = createVmStore(dir, { log: (event) => errors.push(event) });
+    logStore.onChange(() => {
+      throw new Error("listener boom");
+    });
+    const off = logStore.onChange((id) => seen.push(id));
+    await logStore.put(record());
+    await logStore.remove(record().id);
+    expect(seen).toEqual([record().id, record().id]);
+    expect(errors).toEqual(["vm_store.listener_failed", "vm_store.listener_failed"]);
+    off();
+    await logStore.put(record());
+    expect(seen).toHaveLength(2);
+    // Listeners are per store instance and capped.
+    for (let i = 0; i < 64; i++) store.onChange(() => undefined);
+    expect(() => store.onChange(() => undefined)).toThrow(VmStoreError);
+  });
 });

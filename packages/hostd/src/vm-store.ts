@@ -38,7 +38,16 @@ export interface VmStore {
   put(record: VmRecord): Promise<void>;
   remove(id: string): Promise<void>;
   vmDir(id: string): string;
+  // Notifies after a successful put or remove through this store instance.
+  // Returns an unsubscribe function. Listeners are capped per store.
+  onChange(listener: (id: string) => void): () => void;
 }
+
+export interface VmStoreOptions {
+  log?: (event: string, fields: Record<string, unknown>) => void;
+}
+
+export const MAX_CHANGE_LISTENERS = 64;
 
 export class VmStoreError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -157,7 +166,24 @@ async function sweepStaleTemps(dir: string, now: number): Promise<void> {
   }
 }
 
-export function createVmStore(dir: string): VmStore {
+export function createVmStore(dir: string, options: VmStoreOptions = {}): VmStore {
+  const log = options.log ?? ((event, fields) => console.error(JSON.stringify({ event, ...fields })));
+  const listeners = new Set<(id: string) => void>();
+
+  function notify(id: string): void {
+    for (const listener of [...listeners]) {
+      try {
+        listener(id);
+      } catch (error: unknown) {
+        log("vm_store.listener_failed", {
+          id,
+          error: error instanceof Error ? error.name : String(error),
+          message: error instanceof Error ? error.message : undefined,
+        });
+      }
+    }
+  }
+
   const vmDir = (id: string) => {
     assertId(id);
     return join(dir, id);
@@ -210,9 +236,18 @@ export function createVmStore(dir: string): VmStore {
       const target = vmDir(valid.id);
       await mkdir(target, { recursive: true, mode: 0o700 });
       await writeFileAtomic(join(target, RECORD_FILE), `${JSON.stringify(valid, null, 2)}\n`);
+      notify(valid.id);
     },
     async remove(id) {
       await rm(vmDir(id), { recursive: true, force: true });
+      notify(id);
+    },
+    onChange(listener) {
+      if (listeners.size >= MAX_CHANGE_LISTENERS) throw new VmStoreError("too many change listeners");
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
   };
 }
