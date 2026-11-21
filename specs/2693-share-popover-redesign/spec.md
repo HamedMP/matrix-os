@@ -1,18 +1,18 @@
 # 2693: Share popover redesign
 
-Status: implementation (phases 1–4 complete; pending review and live evidence)
+Status: implementation (phases 1–5 complete; pending review and live evidence)
 Design: https://claude.ai/artifact/ER7AzhxZ6n46gVazELsZ3B (Prototype, SharePopover component, per-state artboards)
-Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (unmerged stack #3233–#3340)
-Linear: blocked. The Linear connector was unreachable from the implementing session; a requester-assigned ENG ticket must be linked before any PR opens.
+Builds on: [551 Public app sites](../551-public-app-sites/spec.md), [2690 One-time links](../2690-private-site-links/spec.md), [2689 Collaborative app sharing](../2689-collaborative-app-sharing/spec.md), 2691 email invitations (#3332, #3335)
+Linear: ENG-490 (Share popover redesign).
 
 ## Goal
 
 Replace the "Publish app" panel with one **Share** popover. It covers two independent systems that can both be on at once:
 
 - **Organization sharing** (2689): the live app, hosted by its creator, which members of one org open from their launcher.
-- **Matrix.page publication** (551/2690/2691): exactly one access mode at a time: `private_email`, `private_link` or `public`.
+- **Matrix.page publication** (551/2690/2691): exactly one access mode at a time: `private_email` or `public`. `private_link` (one-time links) is retired from the UI (phase 5) but stays readable so an existing site can be turned off.
 
-The tabs (Private · Organization · Public) are navigation only. A green dot marks each tab whose sharing is on. Switching between Matrix.page modes revokes the previous access, so the popover confirms the switch inline first.
+The tabs (Private · Organization · Public) are navigation only. Private shows only when the server reports the email-invitation capability, or for a `private_email` or legacy `private_link` site; Organization only when the owner is in an org. A green dot marks each tab whose sharing is on. Switching between Matrix.page modes revokes the previous access, so the popover confirms the switch inline first.
 
 ## Surfaces
 
@@ -25,27 +25,27 @@ The tabs (Private · Organization · Public) are navigation only. A green dot ma
 
 There is one implementation: `packages/ui/src/share/`. Shell and Electron supply only the trigger chrome and the site client.
 
-## Behavior (phase 1)
+## Behavior (phase 1, as revised by phase 5)
 
 - **Trigger:** the label reads `Share`, `Shared` (org-shared, phase 2) or `Live` (public). The header host owns the controller, so the trigger and the popover read the same server state.
-- **Private tab:**
-  - **Invite by email.** Invite stays disabled until the address is valid, and Enter submits. The list shows "You · Owner" first, then each invitee with Pending/Accepted and a remove button. In email mode an App link row offers Copy.
-  - **One-time links.** This section is collapsible and starts closed, with a count badge when links exist. Each row shows Unclaimed, Claimed or Expired, plus revoke unless expired. Copy is offered only right after creation, because the secret is held in memory only. The footnote matches the design.
-- **Email invitations are stubbed.**
-  - `EmailInvitationAdapter` mirrors 2691's `invitations` list/create/resend/revoke contract.
-  - An in-memory fake exists only behind `NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW=1` (Web) or `VITE_MATRIX_SHARE_EMAIL_INVITES_PREVIEW=1` (Electron).
-  - With the flag off, the email field is disabled and says invitations are not available yet.
-  - Until 2691 lands, entering invite-only unpublishes the site. This keeps the confirm copy true ("public link stops working"). It is marked TODO(2691).
+- **Private tab** (hidden unless email invites are available or the site is `private_email` or legacy `private_link`):
+  - **Invite by email.** Invite stays disabled until the address is valid (≤254 chars, masked from replay), and Enter submits. The list shows "You" with a muted Owner badge first, then each invitee with a status line (`Pending · Email sent`, `Accepted`, …), a RotateCw icon button `Resend invitation to {email}` when the server would allow a resend, and an X `Revoke invitation for {email}` for pending/accepted invites. "Load more invitations" / "Show newest invitations" page the list. In email mode a Link2 "Copy link" button copies the app link, and a published invite-only site offers "Stop sharing privately" (unpublishes). With the capability off, an invite-only site's controls stay visible but disabled.
+  - **Legacy one-time-link site.** One line, "Uses retired one-time links", plus "Stop sharing privately" (unpublishes). No create, list, copy or revoke controls.
+- **Email invitations are live (2691).**
+  - Web and Electron use `createSiteEmailInvitationAdapter(siteClient)`; availability comes from the server capability, and entering invite-only is one revision-checked `update`/`deploy` with `accessMode: "private_email"`.
+  - The in-memory fake remains for previews and tests only; it still unpublishes before activating so its confirm copy stays true.
 - **Public tab:**
-  - **Friendly path.** The field has a fixed `matrix.page/` prefix and uses the permanent ID as its placeholder. Empty, invalid, reserved and current paths are resolved locally from `classifySiteSlug` and the platform's `SITE_RESERVED_SLUGS`. Any other path gets a debounced platform check that answers Available, or Taken with up to two free suggestions.
-  - **Publish to web** is disabled only when the path is invalid, reserved or taken. A lost alias race at publish time (409) shows as Taken.
-  - **Title & description** is collapsible and starts closed, showing a summary. Limits are 200/1000 characters, with a counter.
-  - **Live state** shows a green dot, the host and Copy link, the text "Live · visitors can use, not edit", and Unpublish.
+  - **Path.** The field has a fixed `matrix.page/` prefix and uses the permanent ID as its placeholder. Empty, invalid, reserved and current paths are resolved locally from `classifySiteSlug` and the platform's `SITE_RESERVED_SLUGS`. Any other path gets a debounced platform check (spinner, accessible name "Checking") that answers Available, or "Taken." with up to two free suggestion chips. Short messages: "2–63 lowercase letters, numbers, hyphens.", "Reserved", "Couldn’t check".
+  - **Publish** is disabled only when the path is invalid, reserved or taken. A lost alias race at publish time (409) shows as Taken.
+  - **Title & description** is collapsible and starts closed, showing a summary. Limits are 200/1000 characters; the counter appears only past 900. Description placeholder "What it does".
+  - **Live state** shows a green dot, the host and Copy link, "Live", Unpublish, an **Update** button (RefreshCw, redeploys the latest app version) and a Pencil icon button ("Edit details") that opens Path/Title/Description with **Save**.
+  - **Visitor submissions** appear only when the site declares public forms (`site.config.forms.length > 0`), including after unpublish. Data is never deleted.
 - **Mode switch confirm:**
-  - An inline non-modal `<dialog open>` has the title "Switch to {public | invite-only | one-time links}?" and loss copy for the current mode.
+  - An inline non-modal `<dialog open>` has the title "Switch to {public | invite-only}?" and loss copy for the current mode (including "Existing one-time links stop working." for a legacy site).
   - Nothing changes until the owner confirms.
-  - Transitions use revision-checked `update`/`deploy`/`unpublish`/`createAccessLink`.
-- **Removed from the share UI:** the deployment review checkbox, the public data/forms preview, and version history/rollback.
+  - Transitions use revision-checked `update`/`deploy`/`unpublish`.
+- **Removed from the share UI:** the deployment review checkbox, the public data/forms preview, version history/rollback, one-time links (phase 5), and the helper sentence under the tabs (phase 5).
+- **Loading and load failure:** a spinner (accessible name "Loading"); on failure "Couldn’t load." with Retry.
 
 ## API added
 
@@ -59,18 +59,19 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 
 ## Publish API note
 
-`POST …/site` requires `reviewedConfig`. The gateway compares it to the current manifest's `publishing` config and returns 409 if it differs, so it is a freshness check, not a stored human acknowledgement. The existing one-time-link flow already sends `getConfig()` unchanged, and the new popover does the same. Because the review step is removed from the UI, the owner no longer sees declared public data and forms before publishing. Product should confirm this is acceptable for apps that declare public forms.
+`POST …/site` requires `reviewedConfig`. The gateway compares it to the current manifest's `publishing` config and returns 409 if it differs, so it is a freshness check, not a stored human acknowledgement. The popover sends `getConfig()` unchanged. Because the review step is removed from the UI, the owner no longer sees declared public data and forms before publishing. Product should confirm this is acceptable for apps that declare public forms.
 
 ## Organization tab and completion event (phase 2)
 
-- Org picker: Select with initial avatar, name, member count (`OrganizationManagementSummary.memberCount`); static with one org; the tab is hidden with none.
-- **Share with {Org}** rechecks 2689 readiness for that org (`POST …/readiness/check`). `ready` → preflight + share at once. `blocked`/`stale` → the two-step card. Readiness is the single gate; the server preflight re-enforces it.
+- Org card: initial avatar, name (shown once), member count (`OrganizationManagementSummary.memberCount`) and a trailing slot. With several orgs and nothing pinned, the summary is a Radix Select trigger and the trailing controls are its flex siblings, never nested. Static with one org, or once shared/setting up; the tab is hidden with none.
+- **Share** (small primary button, accessible name "Share with {Org}") rechecks 2689 readiness for that org (`POST …/readiness/check`). `ready` → preflight + share at once. `blocked`/`stale` → the two-step card. Readiness is the single gate; the server preflight re-enforces it.
 - **Start in Chats** writes the handoff record (below) as `running`, opens Matrix Chats on a new chat with this first message ready in the composer (the owner sends it with their usual provider and model; Web uses the Create-app draft path, Electron the visible Chat draft):
   `/matrix-collaborative-app-builder @{App}` + "{Org} members will use this app together…" + `Share handoff: app <slug>, organization <orgId>, request <uuid>.`
 - **Completion event** — `~/system/share/collaborative/<appSlug>.json`, schema `CollaborativeHandoffRecordSchema` (`packages/contracts/src/collaborative-app-handoff.ts`):
   `{ version: 1, event: "collaborative_app.preparation", requestId, appSlug, organizationId, state, updatedAt }`, `state ∈ running | completed | failed | cancelled | applied`, ≤2 KiB, no secrets.
   The builder skill (`skills/matrix/collaborative-app-builder/SKILL.md`, "Share popover handoff") rewrites it as `completed` after Build passed + owner preflight, or `failed`. The window-header host (mounted while the app window is open, so the popover may be closed) re-reads the record every 5 s while `running` for 30 min, then once a minute while the app window stays open, ignores a different `requestId`, rechecks readiness, and creates the share only on `ready`; it then writes `applied` so a later Stop sharing is never undone. A completion with readiness still failing shows "Claude finished, but the app isn’t ready to share yet."
-- Shared: "{Org} link · Opens it in the Matrix app" + Copy (phase 2 copies `/shared/app/<scopeId>?…` on the current origin; phase 4 swaps in the hand-off page), "Stop sharing with {Org}" (`DELETE …/share` with share/binding revisions).
+- Shared: the card's trailing slot shows a green "Shared" badge (`ShareBadge`, `--share-success-*` tokens), a Link2 icon button "Copy {Org} link" (swaps to Check when copied; phase 4 link is the hand-off page), and an X icon button whose `aria-label` and `title` are "Stop sharing with {Org}" (danger hover, one click, reversible; `DELETE …/share` with share/binding revisions).
+- Two-step card: "Make it collaborative" ("Claude sets it up in a new chat." / busy "Setting up…"), step 2 "Share", and Cancel. The completion info card shows "Collaborative and shared" with Got it.
 - The previous Electron "Share with your org" section is removed; Web keeps the existing in-app readiness bar in `AppViewer` (it also refreshes the owner participant context) until a follow-up routes that refresh through the popover.
 
 ## Launcher (phase 3)
@@ -92,7 +93,7 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 ## Failure modes
 
 - **Load failure:** an alert with Try again.
-- **Operation failures:** shown inline per operation (invite, link create/revoke, publish, unpublish, switch) with allowlisted copy.
+- **Operation failures:** shown inline per operation (invite, publish, update, save, unpublish, stop, switch) with allowlisted copy.
 - **Concurrency:** one owner operation runs at a time, and in-flight work aborts when the panel unmounts or the app changes.
 - **Partial transitions:** if a switch fails after the previous mode was removed, the error is shown and server state is re-read the next time the popover opens. Platform invariant: revocation is permanent.
 
@@ -102,21 +103,25 @@ There is one implementation: `packages/ui/src/share/`. Shell and Electron supply
 2. Organization tab: org picker, the 2689 readiness check as the single gate, the two-step "Make it collaborative" card, the Chats handoff, and an automatic completion event that rechecks readiness before applying the share. **Done.**
 3. Launcher: org-initial badge, new-app dot, and All/Mine/per-org filter chips. **Done.**
 4. Web page for the org link that hands off to the desktop app (`sharedAppDeepLink`). **Done.**
+5. Cleanup (ENG-490): retire one-time links from the UI and site clients (server routes unchanged; server-side creation is blocked separately), hide Private unless email invites or a legacy site need it, icons over sentences, visitor submissions only for apps with forms, and delete the orphaned `AppSitePanel`/`AppSiteSharePanel`/`SiteAccessLinks`. **Done.**
 
 ## Public documentation
 
 Separate docs PR in `FinnaAI/matrix-os-site` under `content/docs/`: the Share popover (Private, Organization, Public), one access mode at a time and the switch confirm, making an app collaborative from Chats, the launcher filters, the org link hand-off, and the current limitation that email invitations are a preview until 2691 ships. Owner: ENG-490 assignee; tracked on the ticket.
 
-## Acceptance (phase 1)
+## Acceptance
 
-- Every phase 1 artboard state is reachable: S1, S1b, S2, S8, S8b, S9, S10.
-- Tablist semantics. Esc and outside click close the popover. `aria-expanded` is set on the collapsibles.
-- Existing public publishing and one-time link journeys keep working (2690 SC-008-style regression tests stay green).
+- Tablist semantics. Esc and outside click close the popover. `aria-expanded` is set on the collapsibles and the Edit details button.
+- Without the email-invite flag and without a legacy site, the tabs are Organization (with an org) and Public only, and no one-time link control exists.
+- A legacy `private_link` site opens on Private with "Uses retired one-time links" and can be turned off.
+- Org sharing: Share, Copy {Org} link and Stop sharing with {Org} are reachable by accessible name.
+- Visitor submissions show only for apps with public forms.
+- Existing public publishing journeys keep working.
 
 ## Stakeholder review
 
 Suggested before merge:
 
-- Product/design: copy and the dropped review step.
+- Product/design: copy, the dropped review step, retiring one-time links from the UI, and removing "Stop sharing privately" for email mode (owners remove invitees individually while the preview lasts).
 - Security: slug-availability route and preview flag.
 - Electron owner: the interim Organization tab.

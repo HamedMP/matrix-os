@@ -4,11 +4,42 @@ import type { SiteClient } from "../../lib/site-client";
 import { SiteSubmissions } from "./SiteSubmissions";
 import { useAppSite } from "./use-app-site";
 
+const SAVED_RESPONSES_PROBE_TIMEOUT_MS = 10_000;
+
 /**
- * Visitor submissions for a published app with public forms, shown inside the
- * Share popover's Public tab (Web and Electron). Loads only when opened.
+ * Visitor submissions for a published app, shown inside the Share popover's
+ * Public tab (Web and Electron). Apps that declare forms always show it; an app
+ * whose forms were removed keeps it while responses from earlier versions remain,
+ * so the owner can still read, export, or delete them. Rows load only when opened.
  */
-export function SiteSubmissionsSection({ appSlug, client }: { appSlug: string; client: SiteClient }) {
+export function SiteSubmissionsSection({ appSlug, client, formsDeclared }: { appSlug: string; client: SiteClient; formsDeclared: boolean }) {
+  const hasSaved = useHasSavedResponses(appSlug, client, !formsDeclared);
+  if (!formsDeclared && !hasSaved) return null;
+  return <SubmissionsDisclosure appSlug={appSlug} client={client} />;
+}
+
+/** True once a first page shows saved responses; also true if the check fails, so a broken check never hides them. */
+function useHasSavedResponses(appSlug: string, client: SiteClient, enabled: boolean): boolean {
+  const [result, setResult] = useState<{ appSlug: string; hasSaved: boolean } | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    let disposed = false;
+    const timer = setTimeout(() => controller.abort(), SAVED_RESPONSES_PROBE_TIMEOUT_MS);
+    client.submissions(appSlug, null, controller.signal).then(
+      (page) => { if (!disposed) setResult({ appSlug, hasSaved: page.submissions.length > 0 }); },
+      (error: unknown) => {
+        if (disposed) return;
+        console.warn("[site-submissions] saved-response check failed", error instanceof Error ? error.name : "unknown");
+        setResult({ appSlug, hasSaved: true });
+      },
+    ).finally(() => clearTimeout(timer));
+    return () => { disposed = true; clearTimeout(timer); controller.abort(); };
+  }, [appSlug, client, enabled]);
+  return enabled && result?.appSlug === appSlug && result.hasSaved;
+}
+
+function SubmissionsDisclosure({ appSlug, client }: { appSlug: string; client: SiteClient }) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
   return <div className="flex flex-col gap-2 border-t border-[var(--share-border)] pt-3">
