@@ -23,6 +23,12 @@
 name: Preview Host Bundle
 
 on:
+  # GitHub dispatches workflow_dispatch only from the default branch's copy, so
+  # pushes to same-repo e2e/** branches run the same build+publish with
+  # defaults (ref = pushed SHA, default version, channel none).
+  push:
+    branches:
+      - "e2e/**"
   workflow_dispatch:
     inputs:
       ref:
@@ -47,7 +53,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: preview-host-bundle-${{ inputs.ref }}
+  group: preview-host-bundle-${{ inputs.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -68,9 +74,9 @@ jobs:
       NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
       # Source-map upload credentials are deliberately absent: the release
       # build treats them as optional, and branch code must not receive them.
-      INPUT_REF: ${{ inputs.ref }}
-      INPUT_VERSION: ${{ inputs.version }}
-      INPUT_CHANNEL: ${{ inputs.channel }}
+      INPUT_REF: ${{ inputs.ref || github.sha }}
+      INPUT_VERSION: ${{ inputs.version || '' }}
+      INPUT_CHANNEL: ${{ inputs.channel || 'none' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
@@ -80,6 +86,16 @@ jobs:
       - name: Validate inputs
         run: |
           set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) ;;
+            push)
+              if [[ "$GITHUB_REF" != refs/heads/e2e/* ]]; then
+                echo "Push runs are limited to e2e/** branches." >&2
+                exit 1
+              fi
+              ;;
+            *) echo "Unsupported trigger." >&2; exit 1 ;;
+          esac
           if ! [[ "$INPUT_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$ ]] || [[ "$INPUT_REF" == *..* ]]; then
             echo "ref must be a branch, tag, or commit SHA." >&2
             exit 1
@@ -99,7 +115,7 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -142,7 +158,7 @@ jobs:
           HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
           HOST_BUNDLE_CHANNEL: ${{ steps.version.outputs.channel }}
           MATRIX_BUILD_SHA: ${{ steps.version.outputs.build_sha }}
-          MATRIX_BUILD_REF: ${{ inputs.ref }}
+          MATRIX_BUILD_REF: ${{ inputs.ref || github.ref_name }}
         run: |
           set -euo pipefail
           ./scripts/build-host-bundle.sh
@@ -186,7 +202,7 @@ jobs:
       CHANNEL: ${{ needs.build.outputs.channel }}
       BUILD_SHA: ${{ needs.build.outputs.build_sha }}
       BUILD_SHA256: ${{ needs.build.outputs.sha256 }}
-      BUILD_REF: ${{ inputs.ref }}
+      BUILD_REF: ${{ inputs.ref || github.ref_name }}
       # Preview bundles never seed golden snapshots.
       GOLDEN_SNAPSHOT_ELIGIBLE: "false"
       HOST_BUNDLE_DIST_DIR: dist/host-bundle

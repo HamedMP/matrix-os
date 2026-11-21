@@ -82,8 +82,13 @@ describe('preview host bundle workflow', () => {
   const build = doc.jobs.build;
   const publish = doc.jobs.publish;
 
-  it('is manual only, with a required ref and register-only default channel', () => {
-    expect(Object.keys(doc.on)).toEqual(['workflow_dispatch']);
+  it('runs on manual dispatch or e2e/** pushes only, with a required ref and register-only default channel', () => {
+    expect(Object.keys(doc.on).sort()).toEqual(['push', 'workflow_dispatch']);
+    expect(doc.on).not.toHaveProperty('pull_request');
+    expect(doc.on).not.toHaveProperty('pull_request_target');
+    const push = doc.on.push as { branches?: string[]; tags?: unknown; 'branches-ignore'?: unknown };
+    expect(push).toEqual({ branches: ['e2e/**'] });
+    expect(build.steps[0].run).toMatch(/push\)[\s\S]*refs\/heads\/e2e\/\*[\s\S]*exit 1/);
     const inputs = doc.on.workflow_dispatch.inputs ?? {};
     expect(inputs.ref).toMatchObject({ required: true });
     expect(inputs.version).toMatchObject({ required: false });
@@ -103,14 +108,16 @@ describe('preview host bundle workflow', () => {
   });
 
   it('serializes runs per ref and bounds every job', () => {
-    expect(doc.concurrency.group).toContain('inputs.ref');
+    expect(doc.concurrency.group).toBe('preview-host-bundle-${{ inputs.ref || github.ref }}');
     expect(doc.concurrency['cancel-in-progress']).toBe(false);
     for (const job of Object.values(doc.jobs)) expect(job['timeout-minutes']).toBeGreaterThan(0);
   });
 
   it('builds the requested ref with the release build environment and no publish credentials', () => {
     const checkout = build.steps.find((step) => step.uses?.startsWith('actions/checkout@'));
-    expect(checkout?.with?.ref).toBe('${{ inputs.ref }}');
+    expect(checkout?.with?.ref).toBe('${{ inputs.ref || github.sha }}');
+    expect(build.env?.INPUT_REF).toBe('${{ inputs.ref || github.sha }}');
+    expect(build.env?.INPUT_CHANNEL).toBe("${{ inputs.channel || 'none' }}");
     expect(checkout?.with?.['persist-credentials']).toBe(false);
     expect(build.steps.some((step) => step.run?.includes('./scripts/build-host-bundle.sh'))).toBe(true);
     const releaseEnv = release.jobs.build.env ?? {};
@@ -143,6 +150,11 @@ describe('preview host bundle workflow', () => {
     expect(text).toContain('vars.PREVIEW_PUBLIC_URL');
     const publishText = publish.steps.map((step) => step.run ?? '').join('\n');
     expect(publishText).toContain('scripts/ci/resolve-preview-platform-url.sh');
+    // One publish job serves both triggers: the refusal guard must be unconditional.
+    expect(Object.values(doc.jobs).every((job) => !(job as { if?: string }).if)).toBe(true);
+    const guardSteps = publish.steps.filter((step) => step.run?.includes('resolve-preview-platform-url.sh'));
+    expect(guardSteps.length).toBe(2);
+    for (const step of guardSteps) expect((step as { if?: string }).if).toBeUndefined();
     expect(publishText).toMatch(/gcloud secrets versions access latest[\s\S]*--secret platform-preview-secret/);
     expect(publishText).toMatch(/::add-mask::\$\{?PLATFORM_SECRET/);
     expect(publishText).toMatch(/\.\/scripts\/publish-release\.sh "\$VERSION" --channel "\$CHANNEL"/);

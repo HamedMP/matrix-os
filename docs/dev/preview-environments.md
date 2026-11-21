@@ -563,9 +563,12 @@ gh workflow run preview-host-bundle.yml -f ref=<branch> -f channel=dev
   immutable production release key in the shared store. Preview bundles are
   never golden-snapshot eligible. The job summary lists the version and sha256
   for the test to pin.
-- To run it before the workflow is on `main`, dispatch it from the branch that
-  adds it (`--ref <branch>`). The publish step then uses that branch's
-  publish tooling.
+- GitHub dispatches `workflow_dispatch` only from the workflow file on `main`.
+  Before that, or for a test branch, push to a same-repo `e2e/**` branch: the
+  push runs the same build and publish with the defaults (the pushed SHA, the
+  default version, channel `none`). The publish job then uses that branch's
+  copy of the workflow and publish tooling, and the same production-host
+  refusal applies.
 
 ### One-time infrastructure setup
 

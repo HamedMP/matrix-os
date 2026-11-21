@@ -145,7 +145,7 @@ curl --fail --silent --show-error \
 
 When the VPS talks to the preview platform, let CI build and register the
 bundle instead. Run `gh workflow run preview-host-bundle.yml -f ref=<branch>`
-and take the version and sha256 from the job summary. See
+(or push the commit to an `e2e/**` branch) and take the version and sha256 from the job summary. See
 [Host bundles for the preview platform](preview-environments.md#host-bundles-for-the-preview-platform).
 To build by hand, build and pin an immutable host bundle from the feature
 worktree, then deploy that exact version to only the feature handle:
