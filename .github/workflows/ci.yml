@@ -258,15 +258,28 @@ jobs:
         with:
           node-version: 24
 
+      - name: Resolve the PR's base branch
+        id: pr-base
+        if: github.event_name == 'pull_request' && needs.changes.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK_BASE_REF: ${{ github.base_ref }}
+        # Native stack layers report the stack trunk as base_ref; diff against the layer's real parent.
+        run: |
+          ref="$(node scripts/ci/resolve-pr-base.mjs)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Run CLAUDE.md pattern scanner on changed files
         if: needs.changes.outputs.should_run == 'true'
         env:
+          PR_BASE_REF: ${{ steps.pr-base.outputs.ref }}
           COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
           COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # PR size runs in its own lane so docs-only PRs are checked too.
-            ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
+            ./scripts/review/check-patterns.sh --diff "origin/$PR_BASE_REF"
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
             BEFORE="$COVERAGE_BASE_SHA"
             if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then
@@ -301,6 +314,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -313,9 +327,21 @@ jobs:
         with:
           node-version: 24
 
+      - name: Resolve the PR's base branch
+        id: pr-base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK_BASE_REF: ${{ github.base_ref }}
+        # Native stack layers report the stack trunk as base_ref; diff against the layer's real parent.
+        run: |
+          ref="$(node scripts/ci/resolve-pr-base.mjs)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Enforce the 50-file / 3000-addition PR limit
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ steps.pr-base.outputs.ref }}
         run: node scripts/review/check-added-patterns.mjs --base "origin/$BASE_REF" --only pr-size
 
   react-doctor:
