@@ -24,8 +24,6 @@ multi-machine pairing come later.
 - Pushing updates or running commands on the machine from the platform.
 - Owners reaching the machine without the platform (2701's private network
   path stays separate and optional).
-- Collaboration, share links and published sites served from an owned machine
-  (see Security, D7).
 
 ## Today
 
@@ -116,7 +114,11 @@ Cost is the one real drawback. Mitigations, all in v1:
   credential stays valid; on reconnect `matrix-connect` asks for a new tunnel
   and the platform recreates it (seconds, per Cloudflare). Keeps the count
   near active machines.
-- Cap free owned machines per account (D5).
+- Cap free owned machines at 3 per account (D5) plus a configurable global
+  ceiling on owned machines; past it, new enrollments wait.
+- Worst case is 3 tunnels per free owner ($13.50 per month beyond the
+  included 1,000). The 1,000 included tunnels cover about 333 owners at the
+  cap, more in practice because reclaim keeps only active machines counted.
 - Alert at 80% of included tunnels.
 - If paid tunnel volume becomes material, the substrate interface allows a
   platform-run reverse relay (machine dials a WebSocket, platform
@@ -149,9 +151,19 @@ is orthogonal to platform connectivity.
 - `RuntimeUpstream` gains optional `headers` so the substrate can attach the
   Cloudflare Access service-token headers. The proxy sets them after
   stripping any client-supplied copies.
-- `RuntimeCapabilitiesV1` for owned: same as `vps`, except capabilities
-  gated by owner decisions (Matrix AI, integrations, backups, sites) declared
-  `disabled-by-policy` until decided. Clients render from the declaration.
+- `RuntimeCapabilitiesV1` for owned: same as `vps`. `chat.matrix_ai` is
+  available; once the free allowance is spent the funded policy refuses with
+  the existing `ai_allowance` limit reason while own accounts keep working;
+  sync and backups are `setup-required` until the owner
+  opts in. Clients render from the declaration.
+- Every platform caller that reaches a runtime goes through the substrate
+  registry. Today the chat share proxy, sites form submission, collaboration
+  relay and cutover home resolver, compatible-build probe and app launch
+  build `https://<publicIPv4>` directly; they move to
+  `substrates.resolveUpstream` plus a shared `fetchRuntime()` helper that
+  applies the substrate's headers, timeout and dispatcher. Eligibility checks
+  that require `publicIPv4` or `provisioningClass === 'customer'` accept
+  `substrate='owned'`.
 
 ### Tunnel hostnames and routing
 
@@ -233,7 +245,8 @@ credential and the reverse.
   against the platform channel feed with the machine credential. Default
   channel `stable`.
 - Settings → System → Updates shows the available version; the owner clicks
-  install. Security releases auto-apply unless the owner opts out (D9).
+  install. Security releases auto-apply by default; the owner can opt out in
+  Settings → System → Updates (D9).
 - Owned bundles MUST carry a signature checked against a public key shipped
   in the installed bundle (not only a `.sha256` from the same origin).
   Rollback keeps the previous `/opt/matrix/app`.
@@ -242,14 +255,55 @@ credential and the reverse.
 
 ### Platform features on owned machines
 
-| Feature | v1 proposal | Owner decision |
+| Feature | v1 behavior | Decision |
 | --- | --- | --- |
 | Chat with own provider accounts and coding harnesses | Available | — |
 | Terminal, Files, apps, browser use | Available (local) | — |
-| Matrix AI funded gateway | Reuse runtime policy and holds; free allowance once per owner shared with the container free tier | D2 |
+| Matrix AI funded gateway | Reuse runtime policy and holds; one-time free allowance per owner, shared with the container free tier; own provider accounts always allowed | D2 |
 | Integrations (Pipedream proxy) | Available, platform-owned secrets, per-owner rate limit | D3 |
-| R2 sync and backups | Off by default; opt-in with a small per-owner byte quota through the broker | D4 |
-| Published sites, share links, collaboration | `disabled-by-policy` | D7 |
+| R2 sync and backups | Off by default; opt-in, 1 GB per owner, enforced by the broker | D4 |
+| Chat share links, published sites, collaboration | Available, routed as below | D7 |
+
+### Sharing, sites and collaboration (D7)
+
+All three already go through the platform; none needs a public address on
+the machine. They change only in how the platform reaches the machine.
+
+| Feature | Viewer reaches | Platform reaches machine | When the machine is offline |
+| --- | --- | --- | --- |
+| Chat share link `/shared/chat/<handle>/<slot>/<token>` | Platform | Through the tunnel for the snapshot JSON; the platform validates it against `ShareSnapshotSchema` (2 MiB cap) and renders HTML itself | "This chat is unavailable right now" (503, `no-store`) |
+| Published site | Platform edge, from the dedicated sites bucket | Only for form submissions, signed with the runtime token epoch as today | Pages keep serving from the bucket; form submissions fail with "unavailable, try later" |
+| Site publish | — | Machine uploads the package with its machine credential through the existing publish admission | Not applicable |
+| Collaboration (app sharing, direct sessions) | Platform relay | Relay forwards opaque bytes to the home origin resolved by the substrate; the home still verifies tickets | Session reports offline; collaborators see the owner's computer as unavailable, never a hang |
+
+Security implications:
+
+- **Untrusted host serving shared content.** The machine controls what it
+  returns. Chat shares stay safe because the platform renders validated data,
+  not machine HTML. Sites are static packages validated and served by the
+  platform, never proxied live. Collaboration content renders in the existing
+  sandboxed app iframes, so a hostile home can only show bad data inside its
+  own app frame. This is the same trust collaborators already place in a VPS
+  owner's home, whose owner can also run arbitrary code.
+- **No raw owner HTML on a platform origin for third parties.** `/vm/<handle>`
+  routes only the owner and their verified collaborators through session
+  routing; anonymous viewers reach only platform-rendered shares and
+  bucket-served sites.
+- **Rate limits.** Existing share proxy limits (16 in flight, 30 per source)
+  and site read/publish admission apply per machine. Added: per-owner caps on
+  active share links, published sites and collaborator sessions, and a
+  per-machine relay byte and connection cap so a shared owned machine cannot
+  saturate the relay.
+- **Abuse and takedown.** Sites and shares from owned machines use the
+  existing report and takedown path. Takedown disables the site or share
+  record on the platform, which is effective immediately because viewers never
+  reach the machine directly. Repeat abuse suspends the owner's sharing
+  entitlement without touching their local data.
+- **Revocation on unpair.** Unpair, in the same transaction that revokes the
+  credential, disables the machine's share links, unpublishes its sites (the
+  bucket objects are deleted by the existing site lifecycle) and ends its
+  collaboration sessions with an "owner computer removed" reason. Account
+  deletion follows the existing deletion guarantees.
 | Channels, cron, bots | Available; they run locally | — |
 
 ## Requirements
@@ -284,7 +338,8 @@ lid close or accept going offline (installer warns).
 **Trust model.** The owner has root, so the machine is untrusted. It holds
 only credentials scoped to itself. Every limit is enforced by the platform.
 Content served from `/vm/<handle>` is owner-controlled, so it is routed only
-to that owner in v1.
+to the owner and verified collaborators; third parties see only
+platform-rendered shares and bucket-served sites (see Sharing).
 
 | Route | Principal | Checks |
 | --- | --- | --- |
@@ -302,12 +357,12 @@ to that owner in v1.
 - **Header hygiene.** The proxy strips client-sent Access and verification
   headers. Responses from owned machines cannot set platform cookies; the
   proxy drops `Set-Cookie` for platform cookie names, as for VPSes.
-- **No phishing surface for others.** Share links, collaborator routing and
-  published sites do not reach owned machines in v1.
 - **Phishing of the owner.** `/connect` states the code came from a machine
   and shows the reported details. Codes expire in 15 min and are single use.
-- **Abuse.** Caps on machines per account, enrollments per account per day
-  (5), and pending codes. Cloudflare API calls only after approval, through a
+- **Abuse.** Up to 3 free owned machines per account, 5 enrollments per
+  account per day, a cap on pending codes, a configurable global owned-machine
+  ceiling (waitlist past it), and the free-tier invite gate and verified email
+  during beta to limit multi-account farming of tunnels. Cloudflare API calls only after approval, through a
   bounded queue. Owned machines get no public hostname, so they cannot host
   public content on our domains.
 - **Errors.** Clients never see Cloudflare, Headscale or tunnel ids,
@@ -372,7 +427,7 @@ heartbeat 10 s; enrollment poll interval 5 s.
 | --- | --- | --- |
 | 1 | `feat(contracts): add owned substrate and offline runtime state` | Contracts, migration, `owned_machine_links`, capability declaration |
 | 2 | `feat(platform): enroll owned machines with tunnel provisioning` | Enrollment grant, `/connect`, credentials, `OwnedTunnelProvisioner`, reconciler, unpair |
-| 3 | `feat(platform): route owned machines and show offline state` | `owned` substrate, Access headers, heartbeat, offline page and API/WS responses, `/runtime` |
+| 3 | `feat(platform): route owned machines and show offline state` | `owned` substrate, Access headers, `fetchRuntime()`, heartbeat, offline page and API/WS responses, `/runtime`; share proxy, sites submission and collaboration callers moved to the registry; unpair revocation of shares, sites and sessions |
 | 4 | `feat(self-host): connect installer to a Matrix account` | `--connect`, `matrix-connect`, `cloudflared` unit, signed updates, `matrix status/disconnect` |
 | 5 | `feat(shell): list and manage owned computers` | Settings → Computers in Web Desktop, Web Canvas, Electron Desktop |
 | 6 | `docs: owned machines in AGENTS.md and deployment docs` | FR-9 amendment |
@@ -399,23 +454,28 @@ WebSocket and long-poll behavior through the tunnel.
 5. An owner who already runs Tailscale keeps their own tailnet working.
 6. No platform-wide secret appears on the machine (scan of `/etc`,
    `/opt/matrix`, the env and the home).
-7. A paid VPS owner sees no change.
+7. A chat share link and a published site from an owned machine open for a
+   signed-out viewer; a collaborator joins a shared app; after unpair all
+   three are unavailable within 10 s.
+8. A paid VPS owner sees no change.
 
 ## Owner decisions
 
-| ID | Question | Proposal |
-| --- | --- | --- |
-| D1 | Confirm Cloudflare Tunnel as the transport | Yes |
-| D2 | Matrix AI on free owned machines | Shared one-time free allowance with the container free tier; own accounts always allowed |
-| D3 | Integrations on free owned machines | Yes, with per-owner rate limits |
-| D4 | Backups and sync to R2 for free owned | Off by default; opt-in small quota (e.g. 1 GB) |
-| D5 | Free owned machines per account | 1 in beta, 3 later |
-| D6 | macOS host support | Follow-on spec after v1 |
-| D7 | Sharing, collaboration, sites from owned machines | Off in v1 |
-| D8 | Can an owner hold a free container and an owned machine at once? | Yes; separate runtime slots |
-| D9 | Auto-apply security updates by default | Yes, opt-out in Settings |
-| D10 | Budget beyond 1,000 included tunnels ($4.50 each per month) | Accept for beta; revisit with a reverse relay if volume grows |
-| D11 | Invite gate for owned-machine signup | Same invite gate as the free tier during beta |
+Decided by Hamed on 2026-11-21 unless marked proposed.
+
+| ID | Question | Status | Answer |
+| --- | --- | --- | --- |
+| D1 | Transport | Decided | Cloudflare Tunnel |
+| D2 | Matrix AI on free owned machines | Decided | One-time free allowance per owner, shared with the container free tier; own provider accounts always allowed |
+| D3 | Integrations on free owned machines | Decided | Available with per-owner rate limits |
+| D4 | R2 backups and sync | Decided | Opt-in, off by default, 1 GB per owner |
+| D5 | Free owned machines per account | Decided | 3 from the start |
+| D6 | macOS host support | Proposed, not yet confirmed | Follow-on spec after v1 |
+| D7 | Sharing, published sites, collaboration | Decided | On in v1, routed through the platform (see Sharing) |
+| D8 | Free container and owned machine at once | Proposed, not yet confirmed | Yes; separate runtime slots |
+| D9 | Auto-apply security updates | Decided | On by default, opt-out in Settings |
+| D10 | Budget beyond 1,000 included tunnels ($4.50 each per month) | Proposed, not yet confirmed | Accept for beta; revisit with a reverse relay if volume grows |
+| D11 | Invite gate for owned-machine signup | Proposed, not yet confirmed | Same invite gate as the free tier during beta |
 
 ## Risks and open questions
 
