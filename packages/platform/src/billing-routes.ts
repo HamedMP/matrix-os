@@ -146,6 +146,8 @@ export function createBillingRoutes(options: {
     'grantCreditInTransaction' | 'getCheckoutFundingSummary'>;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
   redditConversions?: RedditConversionsClient;
+  /** Free plan on metal (spec 2691): an eligible owner's status reports access. Absent when the free tier is off. */
+  resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
   /**
    * Optional product telemetry sink. Fire-and-forget: implementations must
    * never throw into the request path. Properties are PII-free product facts
@@ -685,6 +687,7 @@ export function createBillingRoutes(options: {
     resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'status'),
     resolvePublicRecurringPrice,
     resolveRuntimePlacement,
+    ...(options.resolveFreePlanEligibility ? { resolveFreePlanEligibility: options.resolveFreePlanEligibility } : {}),
   }));
 
   app.post('/webhooks/stripe', bodyLimit({ maxSize: STRIPE_WEBHOOK_BODY_LIMIT }), createStripeWebhookHandler(options, emitTelemetry));

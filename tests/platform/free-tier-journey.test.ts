@@ -157,7 +157,8 @@ describe('onboarding journey on the free plan', () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     const { app, provision } = journeyApp();
 
-    expect(await journey(app)).toMatchObject({ phase: 'install_choices_required', nextAction: { kind: 'choose_default_installs' } });
+    // Free owners need no install choices; clients that cannot show them (Native Mobile) start the build directly.
+    expect(await journey(app)).toMatchObject({ phase: 'install_choices_required', nextAction: { kind: 'start_provision' } });
 
     const started = await retry(app);
     expect(started.status).toBe(200);
@@ -191,7 +192,7 @@ describe('onboarding journey on the free plan', () => {
     await upsertBillingEntitlement(db, paidEntitlement());
     const { app, provision } = journeyApp({ resolveEntitlement: async () => paidEntitlement() });
 
-    expect((await journey(app)).phase).toBe('install_choices_required');
+    expect(await journey(app)).toMatchObject({ phase: 'install_choices_required', nextAction: { kind: 'choose_default_installs' } });
     const started = await retry(app);
     expect(started.status).toBe(200);
     expect(provision).toHaveBeenCalledTimes(1);

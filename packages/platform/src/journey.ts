@@ -166,6 +166,15 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   }
 
   // Entitled branch.
+  if (!liveMachine && freePlan && !access.runtimeProxyAllowed) {
+    // Free VMs take no install choices, so clients that cannot show them
+    // (Native Mobile) start the build directly; the web shows its usual step.
+    return {
+      phase: 'install_choices_required',
+      detail: 'Set up your free Matrix computer.',
+      nextAction: { kind: 'start_provision' },
+    };
+  }
   if (!liveMachine) {
     if (prebillingIntent) {
       if (prebillingIntent.state === 'preparation_failed') {

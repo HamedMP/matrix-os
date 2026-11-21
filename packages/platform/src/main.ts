@@ -583,6 +583,7 @@ export function createApp(deps: {
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
     redditConversions: createRedditConversionsClient({ env: appEnv }),
+    resolveFreePlanEligibility: deps.freeTier?.provisioner?.isEligible,
     prebilling,
     fundedAiRepository: deps.fundedAiRepository,
     fundedModelProbes: deps.fundedModelProbes,
