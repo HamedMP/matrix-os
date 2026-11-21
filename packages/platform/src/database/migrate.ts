@@ -15,6 +15,7 @@ import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
 import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js';
 import { migratePreviewDrive } from './migrations/preview-drive.js';
+import { migrateFreeTier } from './migrations/free-tier.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -44,6 +45,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
   { name: 'preview-drive', run: migratePreviewDrive },
   { name: 'account-deletion', run: migrateAccountDeletion },
+  { name: 'free-tier', run: migrateFreeTier },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

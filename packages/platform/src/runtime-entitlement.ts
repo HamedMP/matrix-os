@@ -1,8 +1,9 @@
-import type { PlatformDB } from './db.js';
+import { getActiveUserMachineByClerkId, type PlatformDB } from './db.js';
 import { getAccountDeletionAdmission } from './account-deletion/admission.js';
 import { deriveEntitlementAccess, EntitlementStatusSchema, type EntitlementAccessDecision } from './profile-routing.js';
 import { getRuntimeAccessDecision, type BillingEntitlement, type RuntimeAccessDecision } from './billing.js';
 import { resolveEffectiveBillingEntitlementForSlot } from './billing-entitlement-resolver.js';
+import { FREE_RUNTIME_SLOT } from './free-tier/free-entitlement.js';
 
 export function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): EntitlementAccessDecision {
   const rawStatus = env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS?.trim();
@@ -72,9 +73,12 @@ export async function getRuntimeEntitlementDecisionForUser(
   if (!stripeBillingEntitlementsEnabled(env)) {
     return getRuntimeEntitlementDecision(env);
   }
-  return billingAccessToProfileDecision(
-    getRuntimeAccessDecision(await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env), now),
-  );
+  const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, now, runtimeSlot, env);
+  // A free entitlement allows only a metal runtime (spec 2691), so it is decided against the slot's runtime.
+  const substrate = entitlement?.source === 'free'
+    ? (await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot ?? FREE_RUNTIME_SLOT))?.substrate
+    : undefined;
+  return billingAccessToProfileDecision(getRuntimeAccessDecision(entitlement, now, substrate));
 }
 
 function billingAccessToProfileDecision(decision: RuntimeAccessDecision): EntitlementAccessDecision {

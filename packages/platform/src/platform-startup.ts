@@ -53,6 +53,9 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { createConfiguredMetalRuntime } from './substrates/metal-runtime.js';
+import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
   PlatformStartupConfigError,
@@ -290,6 +293,7 @@ type CreatePlatformApp = (deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -1177,6 +1181,15 @@ async function startPlatformServerWithCleanup(
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const substrateRegistry = createPlatformSubstrateRegistry(db, appEnv);
+  // Metal provisioning (spec 2691): free signup's provisioner plus the stale-row and teardown maintenance pass.
+  const metalRuntime = createConfiguredMetalRuntime({
+    db, env: appEnv, backgroundWorkersEnabled,
+    customerVps: customerVpsDependencies
+      ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
+      : undefined,
+  });
+  registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
+  const freeTier = createFreeTierRuntime({ db, config: loadConfiguredFreeTier(appEnv), metal: metalRuntime?.provisioner });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1216,6 +1229,7 @@ async function startPlatformServerWithCleanup(
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
     substrateRegistry,
+    freeTier,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
