@@ -1,0 +1,143 @@
+import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
+import type { PlatformDB } from '../db.js';
+import { HostdError, type HostdClient } from './hostd-client.js';
+import type { MetalHost, MetalHostsRepository } from './metal-hosts-repository.js';
+
+/**
+ * Durable metal VM teardown (spec 2691, ENG-520). This is a metal-specific
+ * queue, not a generalization of `provider_deletion_queue`: that queue is keyed
+ * by integer Hetzner server ids and its consumers (drain, account deletion,
+ * trial retention, preview pairs) all call Hetzner. An entry names the host,
+ * the platform machine and its generation, and the hostd VM id when known.
+ * When the id is unknown (create failed or timed out), the drainer finds the
+ * VM through hostd's list by machine id and generation.
+ */
+
+const DEFAULT_BATCH_SIZE = 20;
+const MAX_BATCH_SIZE = 100;
+const BASE_BACKOFF_MS = 30_000;
+const MAX_BACKOFF_MS = 60 * 60_000;
+
+type Log = (event: string, fields: Record<string, unknown>) => void;
+const defaultLog: Log = (event, fields) => console.error(`[metal-vm-deletions] ${event}`, JSON.stringify(fields));
+
+export interface MetalVmDeletionInput {
+  metalHostId: string;
+  machineId: string;
+  generation: number;
+  metalVmId: string | null;
+  reason: string;
+  now: Date;
+}
+
+/**
+ * Enqueues a teardown on the given transaction-or-db handle. Insert failures
+ * propagate so the caller's status change rolls back with it. A second entry
+ * for the same open machine generation is a no-op (`ON CONFLICT DO NOTHING`),
+ * except that a newly learned VM id is recorded on the open entry.
+ */
+export async function enqueueMetalVmDeletion(db: PlatformDB, input: MetalVmDeletionInput): Promise<void> {
+  await db.ready;
+  await db.executor.insertInto('metal_vm_deletions')
+    .values({
+      id: randomUUID(),
+      metal_host_id: input.metalHostId,
+      machine_id: input.machineId,
+      generation: input.generation,
+      metal_vm_id: input.metalVmId,
+      reason: input.reason,
+      next_attempt_at: input.now.toISOString(),
+    })
+    .onConflict((oc) => oc.columns(['machine_id', 'generation']).where('completed_at', 'is', null)
+      .doUpdateSet({ metal_vm_id: sql`COALESCE(metal_vm_deletions.metal_vm_id, excluded.metal_vm_id)` }))
+    .execute();
+}
+
+export interface MetalVmDeletionDrainerDeps {
+  db: PlatformDB;
+  hosts: Pick<MetalHostsRepository, 'get'>;
+  clientFor: (host: MetalHost) => HostdClient;
+  now?: () => Date;
+  batchSize?: number;
+  log?: Log;
+}
+
+export interface MetalVmDeletionDrainResult {
+  completed: number;
+  retried: number;
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof HostdError) return error.code;
+  return error instanceof Error ? error.name : 'unknown';
+}
+
+export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
+  const now = deps.now ?? (() => new Date());
+  const log = deps.log ?? defaultLog;
+  const batchSize = Math.min(Math.max(1, deps.batchSize ?? DEFAULT_BATCH_SIZE), MAX_BATCH_SIZE);
+
+  /** Destroys the entry's VM; resolves once hostd holds no VM for it. */
+  async function destroy(entry: { metal_host_id: string; machine_id: string; generation: number; metal_vm_id: string | null }) {
+    const host = await deps.hosts.get(entry.metal_host_id);
+    if (!host) throw new Error('metal host is not registered');
+    const client = deps.clientFor(host);
+    const vmIds = new Set<string>();
+    if (entry.metal_vm_id) vmIds.add(entry.metal_vm_id);
+    for (const vm of await client.listVms()) {
+      if (vm.machineId === entry.machine_id && vm.generation === entry.generation) vmIds.add(vm.id);
+    }
+    for (const vmId of vmIds) {
+      try {
+        await client.destroy(vmId);
+      } catch (error: unknown) {
+        if (error instanceof HostdError && error.code === 'not_found') continue;
+        throw error;
+      }
+    }
+  }
+
+  return {
+    async drainOnce(): Promise<MetalVmDeletionDrainResult> {
+      await deps.db.ready;
+      const due = await deps.db.executor.selectFrom('metal_vm_deletions')
+        .select(['id', 'metal_host_id', 'machine_id', 'generation', 'metal_vm_id', 'attempts'])
+        .where('completed_at', 'is', null)
+        .where('next_attempt_at', '<=', now())
+        .orderBy('next_attempt_at')
+        .limit(batchSize)
+        .execute();
+      let completed = 0;
+      let retried = 0;
+      for (const entry of due) {
+        try {
+          await destroy(entry);
+          await deps.db.executor.updateTable('metal_vm_deletions')
+            .set({ completed_at: now().toISOString(), last_error: null })
+            .where('id', '=', entry.id)
+            .where('completed_at', 'is', null)
+            .execute();
+          completed += 1;
+        } catch (error: unknown) {
+          const code = errorCode(error);
+          const backoff = Math.min(BASE_BACKOFF_MS * 2 ** Math.min(entry.attempts, 20), MAX_BACKOFF_MS);
+          log('metal_vm_destroy_failed', { machineId: entry.machine_id, hostId: entry.metal_host_id, code });
+          await deps.db.executor.updateTable('metal_vm_deletions')
+            .set({
+              attempts: sql`attempts + 1`,
+              last_error: code,
+              next_attempt_at: new Date(now().getTime() + backoff).toISOString(),
+            })
+            .where('id', '=', entry.id)
+            .where('completed_at', 'is', null)
+            .execute();
+          retried += 1;
+        }
+      }
+      return { completed, retried };
+    },
+  };
+}
+
+export type MetalVmDeletionDrainer = ReturnType<typeof createMetalVmDeletionDrainer>;

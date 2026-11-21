@@ -862,6 +862,7 @@ export interface PlatformDatabase {
   containers: ContainersTable;
   user_machines: UserMachinesTable;
   metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
+  metal_vm_deletions: import('./database/migrations/metal-hosts.js').MetalVmDeletionsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;

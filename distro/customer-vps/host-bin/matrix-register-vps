@@ -66,6 +66,19 @@ case "$MATRIX_PLATFORM_REGISTER_URL" in
   */vps/register) ;;
   *) echo "matrix-register-vps: registration URL must end with /vps/register" >&2; exit 64 ;;
 esac
+# Metal guests (spec 2691) have no Hetzner metadata service; host.env names the
+# provider and the platform machine reference instead.
+SERVER_PROVIDER="${MATRIX_SERVER_PROVIDER:-hetzner}"
+case "$SERVER_PROVIDER" in
+  hetzner) ;;
+  metal)
+    if ! [[ "${MATRIX_SERVER_REF:-}" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+      echo "matrix-register-vps: MATRIX_SERVER_REF is missing or invalid; stopping retries" >&2
+      exit 64
+    fi
+    ;;
+  *) echo "matrix-register-vps: unsupported MATRIX_SERVER_PROVIDER; stopping retries" >&2; exit 64 ;;
+esac
 
 if ! registration_deadline="$(registration_deadline_epoch)"; then
   echo "matrix-register-vps: invalid registration deadline; stopping retries" >&2
@@ -110,14 +123,24 @@ if ! runtime_ready; then
   exit 75
 fi
 
-instance_id="$(curl --fail --silent --show-error --max-time 10 "$INSTANCE_ID_URL")"
-public_ipv4="$(curl --fail --silent --show-error --max-time 10 "$PUBLIC_IPV4_URL")"
-if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
-  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
-    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+if [ "$SERVER_PROVIDER" = metal ]; then
+  if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+    payload="$(printf '{"provider":"metal","machineId":"%s","serverRef":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
+      "$MATRIX_MACHINE_ID" "$MATRIX_SERVER_REF" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+  else
+    payload="$(printf '{"provider":"metal","machineId":"%s","serverRef":"%s","imageVersion":"%s"}' \
+      "$MATRIX_MACHINE_ID" "$MATRIX_SERVER_REF" "$MATRIX_IMAGE_VERSION")"
+  fi
 else
-  payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
-    "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+  instance_id="$(curl --fail --silent --show-error --max-time 10 "$INSTANCE_ID_URL")"
+  public_ipv4="$(curl --fail --silent --show-error --max-time 10 "$PUBLIC_IPV4_URL")"
+  if [ -n "${MATRIX_TARGET_BUNDLE_SHA256:-}" ]; then
+    payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s","bundleSha256":"%s","healthy":true}' \
+      "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION" "$MATRIX_TARGET_BUNDLE_SHA256")"
+  else
+    payload="$(printf '{"machineId":"%s","hetznerServerId":%s,"publicIPv4":"%s","imageVersion":"%s"}' \
+      "$MATRIX_MACHINE_ID" "$instance_id" "$public_ipv4" "$MATRIX_IMAGE_VERSION")"
+  fi
 fi
 
 for attempt in $(seq 1 "$MAX_ATTEMPTS"); do

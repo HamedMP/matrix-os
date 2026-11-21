@@ -11,6 +11,7 @@ const COMPLETE = {
   METAL_HOSTS_ENABLED: '1',
   METAL_HOSTD_API_TOKEN: API_TOKEN,
   METAL_HOSTD_INGRESS_TOKEN: INGRESS_TOKEN,
+  METAL_GOLDEN_VERSION: 'golden-2026.11.20-1',
 };
 
 describe('metal substrate config', () => {
@@ -30,9 +31,9 @@ describe('metal substrate config', () => {
     expect(errorLog).not.toHaveBeenCalled();
   });
 
-  it('is enabled with both tokens', () => {
+  it('is enabled with both tokens and a golden version', () => {
     expect(loadMetalSubstrateConfig(COMPLETE)).toEqual({
-      enabled: true, apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN,
+      enabled: true, apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN, goldenVersion: 'golden-2026.11.20-1',
     });
   });
 
@@ -41,6 +42,9 @@ describe('metal substrate config', () => {
     ['the ingress token is missing', { METAL_HOSTD_INGRESS_TOKEN: undefined }],
     ['the API token is shorter than 32 characters', { METAL_HOSTD_API_TOKEN: 'short' }],
     ['the CA PEM is not a certificate', { METAL_HOSTD_CA_PEM: 'not a pem' }],
+    ['the golden version is missing', { METAL_GOLDEN_VERSION: undefined }],
+    ['the golden version has unsafe characters', { METAL_GOLDEN_VERSION: 'golden/../x' }],
+    ['the golden version is longer than 64 characters', { METAL_GOLDEN_VERSION: 'g'.repeat(65) }],
   ])('fails closed when %s, without logging token values', (_name, overrides) => {
     expect(loadMetalSubstrateConfig({ ...COMPLETE, ...overrides })).toEqual({ enabled: false, reason: 'incomplete' });
     const logged = JSON.stringify(errorLog.mock.calls);

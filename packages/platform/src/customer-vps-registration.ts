@@ -25,8 +25,8 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
   const { deps, now, enqueueProviderDeletionTx } = context;
 
   async function register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse> {
-    const publicIPv4 = PublicIPv4Schema.safeParse(input.publicIPv4);
-    if (!publicIPv4.success) {
+    const metal = input.provider === 'metal';
+    if (input.provider !== 'metal' && !PublicIPv4Schema.safeParse(input.publicIPv4).success) {
       throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
     }
     const row = await getUserMachine(deps.db, input.machineId);
@@ -39,7 +39,13 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
     if (row.status !== 'provisioning' && row.status !== 'recovering') {
       throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
     }
-    if (row.hetznerServerId !== input.hetznerServerId) {
+    // A metal guest names its platform machine as serverRef (spec 2691, ENG-520);
+    // a Hetzner guest must match the server the platform created. Neither may
+    // register a machine of the other substrate.
+    const serverMatches = input.provider === 'metal'
+      ? row.substrate === 'metal' && row.hetznerServerId === null && input.serverRef === row.machineId
+      : row.substrate !== 'metal' && row.hetznerServerId === input.hetznerServerId;
+    if (!serverMatches) {
       throw new CustomerVpsError(401, 'registration_rejected', 'Registration rejected');
     }
     if (!row.registrationTokenExpiresAt || new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()) {
@@ -151,13 +157,12 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
       const registered = await completeUserMachineRegistration(
         trx,
         input.machineId,
-        input.hetznerServerId,
+        input.provider === 'metal' ? 'metal' : input.hetznerServerId,
         expectedRegistrationTokenHash,
         lastSeenAt,
         {
           status: 'running',
-          publicIPv4: input.publicIPv4,
-          publicIPv6: input.publicIPv6,
+          ...(input.provider === 'metal' ? {} : { publicIPv4: input.publicIPv4, publicIPv6: input.publicIPv6 }),
           imageVersion: input.imageVersion,
           sourceSnapshotId,
           sourceBaseGeneration,
@@ -228,11 +233,14 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
     });
 
     const warnings: string[] = [];
-    try {
-      await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
-    } catch (err: unknown) {
-      logCustomerVpsError('write vps-meta failed', err);
-      warnings.push('vps_meta_persistence_failed');
+    // vps-meta is the Hetzner server recovery record; metal runtimes have none.
+    if (!metal) {
+      try {
+        await deps.systemStore.writeVpsMeta(buildVpsMeta(updated, lastSeenAt));
+      } catch (err: unknown) {
+        logCustomerVpsError('write vps-meta failed', err);
+        warnings.push('vps_meta_persistence_failed');
+      }
     }
     if (updated.provisioningClass === 'private-preview') {
       if (!deps.activatePreviewRuntimeAccess) {

@@ -104,6 +104,7 @@ async function downgradeToPreMetal(db: PlatformDB): Promise<void> {
   await sql`DROP INDEX IF EXISTS idx_user_machines_metal_host`.execute(db.kysely);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_metal_host_check`.execute(db.kysely);
   await sql`ALTER TABLE user_machines DROP COLUMN IF EXISTS metal_host_id, DROP COLUMN IF EXISTS metal_vm_id`.execute(db.kysely);
+  await sql`DROP TABLE IF EXISTS metal_vm_deletions`.execute(db.kysely);
   await sql`DROP TABLE IF EXISTS metal_hosts`.execute(db.kysely);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_substrate_check`.execute(db.kysely);
   await sql`

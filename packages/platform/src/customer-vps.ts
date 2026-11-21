@@ -618,7 +618,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         ['provisioning', 'recovering'],
         staleBefore,
         deps.config.reconciliationBatchSize,
-        { ordinaryOnly: true },
+        // Metal rows have no Hetzner server; the metal provisioner reconciles them.
+        { ordinaryOnly: true, substrate: 'vps' },
       );
       const resizingRows = await listStaleResizingUserMachines(
         deps.db,

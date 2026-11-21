@@ -10,10 +10,12 @@ import { z } from 'zod/v4';
 
 export type MetalSubstrateConfig =
   | { enabled: false; reason: 'disabled' | 'incomplete' }
-  | { enabled: true; apiToken: string; ingressToken: string; caPem?: string };
+  | { enabled: true; apiToken: string; ingressToken: string; goldenVersion: string; caPem?: string };
 
 const MAX_PEM_BYTES = 64 * 1024;
 const TokenSchema = z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/);
+/** The golden disk version hostd clones new VMs from; matches hostd's create contract. */
+const GoldenVersionSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
 
 function isCertificatePem(pem: string): boolean {
   if (!pem.includes('-----BEGIN CERTIFICATE-----')) return false;
@@ -34,6 +36,7 @@ const MetalEnvSchema = z.object({
   METAL_HOSTD_API_TOKEN: TokenSchema,
   METAL_HOSTD_INGRESS_TOKEN: TokenSchema,
   METAL_HOSTD_CA_PEM: CaPemSchema.optional(),
+  METAL_GOLDEN_VERSION: GoldenVersionSchema,
 });
 
 export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrateConfig {
@@ -45,6 +48,7 @@ export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrate
     METAL_HOSTD_API_TOKEN: env.METAL_HOSTD_API_TOKEN,
     METAL_HOSTD_INGRESS_TOKEN: env.METAL_HOSTD_INGRESS_TOKEN,
     METAL_HOSTD_CA_PEM: caPem ? caPem : undefined,
+    METAL_GOLDEN_VERSION: env.METAL_GOLDEN_VERSION?.trim(),
   });
   if (!parsed.success) {
     // Names only: issue messages could echo values.
@@ -52,6 +56,13 @@ export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrate
     console.error('[metal-substrate] metal hosts enabled but config is invalid; metal stays unavailable:', invalid.join(','));
     return { enabled: false, reason: 'incomplete' };
   }
-  const { METAL_HOSTD_API_TOKEN: apiToken, METAL_HOSTD_INGRESS_TOKEN: ingressToken, METAL_HOSTD_CA_PEM: pem } = parsed.data;
-  return pem ? { enabled: true, apiToken, ingressToken, caPem: pem } : { enabled: true, apiToken, ingressToken };
+  const {
+    METAL_HOSTD_API_TOKEN: apiToken,
+    METAL_HOSTD_INGRESS_TOKEN: ingressToken,
+    METAL_HOSTD_CA_PEM: pem,
+    METAL_GOLDEN_VERSION: goldenVersion,
+  } = parsed.data;
+  return pem
+    ? { enabled: true, apiToken, ingressToken, goldenVersion, caPem: pem }
+    : { enabled: true, apiToken, ingressToken, goldenVersion };
 }
