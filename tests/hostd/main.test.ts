@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpsServer, request as httpsRequest, type Server } from "node:https";
-import type { AddressInfo } from "node:net";
+import { connect as netConnect, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChClient } from "../../packages/hostd/src/ch-client.js";
 import type { HostdConfig } from "../../packages/hostd/src/config.js";
 import type { Exec } from "../../packages/hostd/src/exec.js";
@@ -173,6 +173,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await hostd?.close();
   hostd = undefined;
   await rm(root, { recursive: true, force: true });
@@ -337,6 +338,67 @@ describe("hostd main (production defaults)", () => {
     expect(JSON.parse(capacity.body).memoryAvailableMiB).toBeGreaterThan(0);
     await hostd.close();
     await expect(hostd.close()).resolves.toBeUndefined();
+  });
+
+  it("uses the real CH and guest clients and the default logger", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const store = createVmStore(join(config.stateDir, "vms"));
+    const vm: VmRecord = {
+      id: "vm_0123456789abcdef01234567",
+      machineId: "m1",
+      generation: 1,
+      handle: "alice",
+      tier: "free",
+      state: "running",
+      privateIPv4: "10.78.0.10",
+      mac: "52:54:00:78:00:0a",
+      bootMiB: 2048,
+      maxMiB: 8192,
+      diskGiB: 20,
+      chVersion: "v54.1",
+      snapshot: null,
+      updatedAt: "2026-11-21T00:00:00.000Z",
+    };
+    await store.put(vm);
+    // Only the exec is faked: no host command may run in a test.
+    hostd = await startHostd(config, { exec, lifecycleConfig: { trimSettleMs: 0 } });
+    await hostd.memory.tick();
+    await expect(hostd.lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
+    const events = error.mock.calls.map((c) => JSON.parse(String(c[0])).event as string);
+    expect(events).toEqual(expect.arrayContaining(["memory.sample_failed", "vm_trim_failed", "vm_snapshot_failed"]));
+    const raw = netConnect(port(hostd.api), "127.0.0.1");
+    await new Promise((r) => raw.once("connect", r));
+    raw.end("not tls\r\n\r\n");
+    await expect.poll(() => error.mock.calls.some((c) => String(c[0]).includes("api.tls_client_error"))).toBe(true);
+  });
+
+  it("logs a non-Error drain failure", async () => {
+    const handlers = new Map<string, () => void>();
+    const exits: number[] = [];
+    const logs: Array<Record<string, unknown>> = [];
+    hostd = await main(
+      {
+        HOSTD_API_TOKEN: API_TOKEN,
+        HOSTD_INGRESS_TOKEN: INGRESS_TOKEN,
+        HOSTD_TLS_CERT_PATH: config.tlsCertPath,
+        HOSTD_TLS_KEY_PATH: config.tlsKeyPath,
+        HOSTD_STATE_DIR: config.stateDir,
+        HOSTD_RUN_DIR: config.runDir,
+        HOSTD_API_HOST: "127.0.0.1",
+        HOSTD_API_PORT: await free(),
+        HOSTD_INGRESS_HOST: "127.0.0.1",
+        HOSTD_INGRESS_PORT: await free(),
+      },
+      { once: (s: string, fn: () => void) => handlers.set(s, fn), exit: (code: number) => exits.push(code) },
+      overrides({ log: (_event, fields) => logs.push(fields) }),
+    );
+    const realClose = hostd.close;
+    hostd.close = () => Promise.reject("plain");
+    handlers.get("SIGTERM")!();
+    await new Promise((r) => setImmediate(r));
+    expect(exits).toEqual([1]);
+    expect(logs).toContainEqual({ error: "plain" });
+    hostd.close = realClose;
   });
 
   it("exits 1 when the drain fails", async () => {

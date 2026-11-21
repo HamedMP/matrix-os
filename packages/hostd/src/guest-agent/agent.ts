@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { chmod, lstat, readFile, unlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
@@ -197,19 +197,21 @@ export function serveConnection(
 
 function runSync(): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile("sync", [], { timeout: TRIM_TIMEOUT_MS }, (error) => (error ? reject(error) : resolve()));
+    execFile("/usr/bin/sync", [], { timeout: TRIM_TIMEOUT_MS }, (error) => (error ? reject(error) : resolve()));
   });
 }
 
+export const TRIM_PATHS = { dropCaches: "/proc/sys/vm/drop_caches", compactMemory: "/proc/sys/vm/compact_memory" };
+
 // From the S7 spike: sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory
-export async function trimGuestMemory(): Promise<void> {
+export async function trimGuestMemory(paths: typeof TRIM_PATHS = TRIM_PATHS): Promise<void> {
   await runSync();
-  await writeFile("/proc/sys/vm/drop_caches", "3");
-  await writeFile("/proc/sys/vm/compact_memory", "1");
+  await writeFile(paths.dropCaches, "3");
+  await writeFile(paths.compactMemory, "1");
 }
 
 export function createSystemGuestAgent(): GuestAgent {
-  return createGuestAgent({ readProc: (path) => readFile(path, "utf8"), trim: trimGuestMemory });
+  return createGuestAgent({ readProc: (path) => readFile(path, "utf8"), trim: () => trimGuestMemory() });
 }
 
 async function removeStaleSocket(path: string): Promise<void> {
@@ -223,10 +225,20 @@ async function removeStaleSocket(path: string): Promise<void> {
   }
 }
 
-async function listen(path: string): Promise<void> {
-  const agent = createSystemGuestAgent();
+export interface SignalSource {
+  once(signal: "SIGTERM" | "SIGINT", listener: () => void): unknown;
+}
+
+// Serves the agent on a unix socket (0600) that socat bridges from vsock.
+// Half-open connections are allowed so a client that sends its request and
+// then shuts down its write side still gets the answer.
+export async function listenGuestAgent(
+  path: string,
+  agent: GuestAgent = createSystemGuestAgent(),
+  signals: SignalSource = process,
+): Promise<Server> {
   await removeStaleSocket(path);
-  const server = createServer((socket) => {
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
     socket.on("error", (error: unknown) => defaultLog("guest_agent_socket_failed", errorFields(error)));
     void serveConnection(agent, socket, socket).then(() => socket.destroy());
   });
@@ -237,26 +249,36 @@ async function listen(path: string): Promise<void> {
   });
   await chmod(path, 0o600);
   const shutdown = () => server.close();
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  signals.once("SIGTERM", shutdown);
+  signals.once("SIGINT", shutdown);
+  return server;
 }
 
-async function main(argv: readonly string[]): Promise<void> {
+export interface AgentProcess extends SignalSource {
+  stdin: Readable;
+  stdout: Writable;
+  exitCode?: number | string | null;
+}
+
+export async function main(argv: readonly string[], proc: AgentProcess = process): Promise<void> {
   if (argv[0] === "--stdio") {
-    await serveConnection(createSystemGuestAgent(), process.stdin, process.stdout);
+    await serveConnection(createSystemGuestAgent(), proc.stdin, proc.stdout);
     return;
   }
   if (argv[0] === "--listen" && typeof argv[1] === "string" && argv[1].startsWith("/")) {
-    await listen(argv[1]);
+    await listenGuestAgent(argv[1], createSystemGuestAgent(), proc);
     return;
   }
-  console.error("usage: agent.js --listen <absolute socket path> | --stdio");
-  process.exitCode = 2;
+  defaultLog("guest_agent_usage", { usage: "agent.js --listen <absolute socket path> | --stdio" });
+  proc.exitCode = 2;
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
+// Runs main and turns a startup failure into exit code 1.
+export function runMain(argv: readonly string[], proc: AgentProcess = process): Promise<void> {
+  return main(argv, proc).catch((error: unknown) => {
     defaultLog("guest_agent_failed", errorFields(error));
-    process.exitCode = 1;
+    proc.exitCode = 1;
   });
 }
+
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) void runMain(process.argv.slice(2));

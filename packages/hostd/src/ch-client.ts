@@ -48,11 +48,8 @@ const UNREACHABLE_CODES: ReadonlySet<string> = new Set([
 ]);
 
 function errorCode(error: unknown): string | undefined {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { code: unknown }).code;
-    return typeof code === "string" ? code : undefined;
-  }
-  return undefined;
+  const code = error instanceof Error ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" ? code : undefined;
 }
 
 function toChError(error: unknown, signal: AbortSignal): ChError {
