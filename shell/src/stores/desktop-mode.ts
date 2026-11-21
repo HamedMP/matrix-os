@@ -64,7 +64,9 @@ export const useDesktopMode = create<DesktopModeStore>()(
           state.mode = normalizeDesktopMode(state.mode);
           state.previousMode = null;
         }
-        useDesktopMode.setState({ _hydrated: true });
+        // Synchronous storage rehydrates inside create(), before `useDesktopMode` is
+        // assigned; defer so the store exists and persist finishes hydration.
+        queueMicrotask(() => useDesktopMode.setState({ _hydrated: true }));
       },
     },
   ),
