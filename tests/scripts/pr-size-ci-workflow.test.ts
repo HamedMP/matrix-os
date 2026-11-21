@@ -32,7 +32,7 @@ describe("PR size CI lane", () => {
     expect(job.if).toContain("needs.changes.outputs.fresh_head == 'true'");
     expect(job.if).not.toContain("should_run");
     expect(job.steps.map((step: { run?: string }) => step.run ?? "").join("\n")).toContain(
-      "check-added-patterns.mjs --base \"origin/$BASE_REF\" --only pr-size",
+      "check-added-patterns.mjs --base \"$BASE_SHA\" --only pr-size",
     );
     expect(jobs.changes.outputs.fresh_head).toContain("steps.superseded.outputs.stale");
     expect(jobs["ci-results"].needs).toContain("pr-size");
