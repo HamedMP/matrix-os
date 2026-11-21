@@ -80,14 +80,13 @@ import { createCodexControlClient } from "./coding-agents/codex-control-client.j
 import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
-import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
+import { createNotificationPreferenceRuntime } from "./notifications/runtime.js";
 import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
 import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
 import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
 import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
 import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
 import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
-import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodexHarnessAdmission } from "./coding-agents/codex-harness-admission.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
@@ -497,16 +496,8 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentSessionStopReconciler = createCodingAgentSessionStopReconciler();
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
-  const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
-    homePath,
-    ownerId: process.env.MATRIX_USER_ID,
-    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
-      (id): id is string => Boolean(id),
-    ),
-  });
-  const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
-    (id): id is string => Boolean(id),
-  );
+  const notificationPreferenceRuntime = createNotificationPreferenceRuntime({ homePath, env: process.env, reviewStore });
+  const { reviews: codingAgentReviewSummaryStore, ownerIds: codingAgentOwnerIds, legacy: codingAgentNotificationPreferenceStore } = notificationPreferenceRuntime;
   // A terminal runtime belongs to exactly one VPS owner. MATRIX_USER_ID is
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
@@ -544,7 +535,6 @@ export async function createGateway(config: GatewayConfig) {
     principalOwnerIds: codingAgentOwnerIds,
     worktrees: codingAgentWorktreeManager,
   });
-  const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
     eventStore: workspaceEventStore,
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
