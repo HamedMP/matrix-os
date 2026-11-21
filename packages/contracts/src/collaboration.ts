@@ -584,6 +584,8 @@ export const CollaborationAiRequestSchema = z.object({
   selection: CanonicalChatModelSelectionSchema,
   retryOfRequestId: CollaborationResourceIdSchema.optional(),
   runId: CollaborationResourceIdSchema.optional(),
+  /** Canonical prompt identity for inline status; absent until the request is claimed. */
+  messageId: CollaborationResourceIdSchema.optional(),
   /** S09: why the home lost an `interrupted` run; only the requesting member may resubmit it. */
   interruptedReason: z.enum(["gateway_restart", "scope_runtime_crash", "run_unit_exit", "control_partition"]).optional(),
   /** S09: who cancelled a `cancelled` request (the requesting member or the scope owner). */

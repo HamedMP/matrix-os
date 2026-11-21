@@ -12,7 +12,7 @@ import {
   type CanonicalChatMessagePart,
   type CollaborativeAppDirectoryItem,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CanonicalPartView, keyedCanonicalParts } from "./CanonicalPartView.js";
 import { ChatHumanMessageBubble } from "../chat/ChatHumanMessageBubble.js";
@@ -746,6 +746,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
 }) {
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const discussionTrigger = useRef<HTMLButtonElement>(null);
+  const timeline = projectSharedChatTimeline(state.messages);
   const discussion = useSessionDiscussion({ api, scope: state.scope, actorId, runtimeId, open: discussionOpen, storage });
   const closeDiscussion = useCallback(() => {
     setDiscussionOpen(false);
@@ -768,11 +769,13 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       : <div data-slot="collaboration-session-subheader" className="flex min-h-11 items-center justify-end border-b px-3">
         {collaborationChrome}
       </div>}
-    <SharedChatHistory state={state} actorId={actorId} loadMoreMessages={loadMoreMessages} />
     <SharedChatControls key={state.scope.id} api={api} scope={state.scope} actorId={actorId}
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
       changeDraftMode={changeDraftMode} discussionSending={state.sending} discussionError={state.error === "send"}
-      sendDiscussion={send} refreshVersion={state.refreshVersion} />
+      sendDiscussion={send} refreshVersion={state.refreshVersion}
+      renderedMessageIds={timeline.map(message => message.id)}
+      renderHistory={renderStatus => <SharedChatHistory state={state} actorId={actorId}
+        timeline={timeline} loadMoreMessages={loadMoreMessages} renderRequestStatus={renderStatus} />} />
     <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} zIndex={layers?.dialog} />
   </main>;
 }
@@ -814,18 +817,20 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, proj
 }
 
 
-function SharedChatHistory({ state, actorId, loadMoreMessages }: {
+function SharedChatHistory({ state, actorId, loadMoreMessages, renderRequestStatus, timeline }: {
+  timeline: ReturnType<typeof projectSharedChatTimeline>;
+  renderRequestStatus: (messageId: string) => ReactNode;
   state: SharedChatState;
   actorId: string;
   loadMoreMessages: () => Promise<void>;
 }) {
-  const timeline = projectSharedChatTimeline(state.messages);
   return <Conversation><ConversationContent className="justify-start gap-6 pt-8 sm:pt-12">
     {timeline.length === 0 ? <div className="py-12 text-center">
       <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start a conversation</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Everyone here collaborates with the same Matrix AI session.</p>
     </div> : timeline.map((message) => <ConversationItem key={message.id} messageId={message.id} scrollAnchor={message.side === "human"}>
       <NativeSharedMessageView message={message} actorId={actorId} ownerId={state.scope?.ownerId} />
+      {message.side === "human" ? renderRequestStatus(message.id) : null}
     </ConversationItem>)}
     {state.historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
     {state.hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}

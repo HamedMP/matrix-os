@@ -387,6 +387,7 @@ export function createScopeRuntimeBroker(options: {
       }
       const response = upstream.response;
       if (!response.ok) {
+        console.warn("[collaboration] shared Codex upstream unavailable", { status: response.status });
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }

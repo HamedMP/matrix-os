@@ -34,7 +34,7 @@ import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ChatTab from "../chat/ChatTab";
-import { ChatTitleEditor } from "../chat/ChatTitleEditor";
+import { WorkChatTitle } from "./WorkChatTitle";
 import { ProjectLanding } from "../project/ProjectLanding";
 import ProjectChatsView from "../project/ProjectChatsView";
 import ProjectsIndex from "../project/ProjectsIndex";
@@ -714,7 +714,8 @@ function WorkTabContent({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const selectedProject = projects.find(project => project.slug === projectSlug);
-  const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} /> : null;
+  const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false}
+    sharedHeaderContainer={sharedHeaderContainer} onSharedChatMetadata={updateSharedChatMetadata} /> : null;
   const projectCenter = selectedProject
     ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding>
     : projectChats;
@@ -765,26 +766,9 @@ function WorkTabContent({
     />
   ), [active, visible, navigationVisible, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openBotChat, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectProject, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
-    ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
-      : editingChatTitle ? (
-        <ChatTitleEditor
-          title={activeChatTitle}
-          disabled={renamingChatTitle}
-          className="w-[min(360px,40vw)] max-w-full"
-          onCommit={(title) => { void renameActiveChat(title); }}
-          onCancel={() => setEditingChatTitle(false)}
-        />
-      ) : (
-        <button
-          type="button"
-          aria-label={`Rename ${activeChatTitle}`}
-          title={activeChatTitle}
-          className="no-drag pointer-events-auto min-w-0 max-w-full truncate rounded px-1.5 py-0.5 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          onClick={() => { setRenameChatError(null); setEditingChatTitle(true); }}
-        >
-          {activeChatTitle}
-        </button>
-      )
+    ? <WorkChatTitle title={activeChatTitle} shared={Boolean(sharedScopeId)} editing={editingChatTitle}
+        renaming={renamingChatTitle} onCommit={(title) => { void renameActiveChat(title); }}
+        onCancel={() => setEditingChatTitle(false)} onEdit={() => { setRenameChatError(null); setEditingChatTitle(true); }} />
     : route === "projects" ? "Chat" : undefined, [
       activeChatTitle,
       draftTerminalLaunch?.chatId,
@@ -798,10 +782,12 @@ function WorkTabContent({
   const sharingControl = useMemo(() => api && initialChatId ? (
     <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
   ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
-  const sharedChromeSlot = useMemo(() => sharedScopeId ? (
+  const sharedChromeSlot = useMemo(() => (
     <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
-      className="no-drag pointer-events-auto flex items-center gap-1" />
-  ) : sharingControl, [sharedScopeId, sharingControl]);
+      className="no-drag pointer-events-auto flex items-center gap-1">
+      {sharedScopeId ? null : sharingControl}
+    </div>
+  ), [sharedScopeId, sharingControl]);
   const chromeSpec = useMemo(() => ({ showTitle: agentsOpen,
     titleLayout: !agentsOpen && headerAgentId ? "identity" as const : undefined,
     title: agentsOpen ? agentsNavigation?.opened?.title ?? "Your AI team" : headerAgentId

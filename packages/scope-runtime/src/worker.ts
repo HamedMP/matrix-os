@@ -107,6 +107,15 @@ export interface ScopeCodexExecLaunch {
   env: Record<string, string>;
 }
 
+/** Internal diagnostics only: no CLI output, prompt or provider detail is retained. */
+class ScopeCodexExecutionError extends Error {
+  constructor(readonly code: "output_capacity" | "invalid_event" | "turn_failed" | "incomplete_turn"
+    | "process_exit" | "process_signal" | "stderr_capacity" | "spawn_failed", readonly exitCode?: number) {
+    super("Codex result unavailable");
+    this.name = "ScopeCodexExecutionError";
+  }
+}
+
 export function buildScopeCodexExecLaunch(input: {
   bridgePort: number;
   model: string;
@@ -157,20 +166,20 @@ export function buildScopeCodexExecLaunch(input: {
 }
 
 export function parseScopeCodexJsonEvents(lines: readonly string[]): string {
-  if (lines.length > MAX_CODEX_EVENTS) throw new Error("Codex result unavailable");
+  if (lines.length > MAX_CODEX_EVENTS) throw new ScopeCodexExecutionError("output_capacity");
   let completed = false;
   let failed = false;
   let text: string | undefined;
   for (const line of lines) {
     if (Buffer.byteLength(line, "utf8") > MAX_CODEX_EVENT_LINE_BYTES) {
-      throw new Error("Codex result unavailable");
+      throw new ScopeCodexExecutionError("output_capacity");
     }
     let value: unknown;
     try {
       value = JSON.parse(line);
     } catch (error: unknown) {
-      if (!(error instanceof Error)) throw new Error("Codex result unavailable");
-      throw new Error("Codex result unavailable");
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new ScopeCodexExecutionError("invalid_event");
     }
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const event = value as Record<string, unknown>;
@@ -181,9 +190,9 @@ export function parseScopeCodexJsonEvents(lines: readonly string[]): string {
       if (item.type === "agent_message" && typeof item.text === "string") text = item.text;
     }
   }
-  if (failed || !completed || text === undefined || Buffer.byteLength(text, "utf8") > 96 * 1024) {
-    throw new Error("Codex result unavailable");
-  }
+  if (failed) throw new ScopeCodexExecutionError("turn_failed");
+  if (!completed || text === undefined) throw new ScopeCodexExecutionError("incomplete_turn");
+  if (Buffer.byteLength(text, "utf8") > 96 * 1024) throw new ScopeCodexExecutionError("output_capacity");
   return text;
 }
 
@@ -202,11 +211,13 @@ async function runScopeCodexExec(input: {
   });
   const lines: string[] = [];
   let stderrBytes = 0;
+  let outputLimited = false;
   const abort = () => child.kill("SIGTERM");
   input.signal.addEventListener("abort", abort, { once: true });
   const stdout = createInterface({ input: child.stdout, crlfDelay: Infinity });
   stdout.on("line", (line) => {
     if (lines.length >= MAX_CODEX_EVENTS || Buffer.byteLength(line, "utf8") > MAX_CODEX_EVENT_LINE_BYTES) {
+      outputLimited = true;
       child.kill("SIGTERM");
       return;
     }
@@ -218,13 +229,14 @@ async function runScopeCodexExec(input: {
   });
   try {
     const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      child.once("error", reject);
+      child.once("error", () => reject(new ScopeCodexExecutionError("spawn_failed")));
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
     input.signal.throwIfAborted();
-    if (exit.code !== 0 || exit.signal !== null || stderrBytes > MAX_CODEX_EVENT_LINE_BYTES) {
-      throw new Error("Codex result unavailable");
-    }
+    if (outputLimited) throw new ScopeCodexExecutionError("output_capacity");
+    if (stderrBytes > MAX_CODEX_EVENT_LINE_BYTES) throw new ScopeCodexExecutionError("stderr_capacity");
+    if (exit.signal !== null) throw new ScopeCodexExecutionError("process_signal");
+    if (exit.code !== 0) throw new ScopeCodexExecutionError("process_exit", exit.code ?? undefined);
     return parseScopeCodexJsonEvents(lines);
   } finally {
     input.signal.removeEventListener("abort", abort);
@@ -374,7 +386,8 @@ export async function startCommandServer(
           })}\n`);
         } catch (error: unknown) {
           console.warn("[scope-runtime] Chat execution failed:",
-            error instanceof Error ? error.name : "UnknownError");
+            error instanceof ScopeCodexExecutionError ? { code: error.code, exitCode: error.exitCode }
+              : error instanceof Error ? error.name : "UnknownError");
           socket.destroy();
         }
       })();

@@ -18,6 +18,51 @@ const createdAt = "2026-09-17T12:00:00.000Z";
 describe("shared Chat two-account lifecycle", () => {
   afterEach(cleanup);
 
+  it("keeps failure controls through pagination and distinguishes identical prompts", async () => {
+    const actor = { actorId: "user_editor", displayName: "Ada" };
+    const api = { baseUrl: "https://app.matrix-os.com", post: vi.fn(), delete: vi.fn(),
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith(`/scopes/${scopeId}`)) return {
+          id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "inherited",
+          parentScopeId: "10000000-0000-4000-8000-000000000002",
+          lifecycle: "shared", revision: "4", authEpoch: "1", authorityGeneration: "1", role: "editor",
+          capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true },
+        };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Existing Chat", lifecycle: "active", revision: "4", messageCount: "101" };
+        if (path.includes("/chat/messages?")) return { messages: path.includes("after=100&") ? [{
+          id: "msg_later", chatId, sequence: "101", role: "user", state: "committed", purpose: "ai_request", actor,
+          parts: [{ type: "text", text: "Later prompt" }], createdAt,
+        }] : Array.from({ length: 100 }, (_, index) => ({
+          id: index === 0 ? "msg_first" : index === 1 ? "msg_second" : `msg_history_${index}`,
+          chatId, sequence: String(index + 1), role: index < 2 ? "user" : "assistant", state: "committed",
+          purpose: index < 2 ? "ai_request" : "assistant", actor,
+          parts: [{ type: "text", text: index < 2 ? "Same prompt" : `Earlier reply ${index}` }], createdAt,
+        })) };
+        if (path.split("?")[0]!.endsWith("/chat/requests")) return { requests: [{
+          id: "qturn_first", chatId, messageId: "msg_first", acceptedSequence: "1", actor, state: "interrupted",
+          text: "Same prompt", selection: defaultSelection, acceptedAt: createdAt, updatedAt: createdAt,
+        }, {
+          id: "qturn_later", chatId, messageId: "msg_later", acceptedSequence: "2", actor, state: "interrupted",
+          text: "Later prompt", selection: defaultSelection, acceptedAt: createdAt, updatedAt: createdAt,
+        }], approvals: [], capability: { status: "available", effectiveSelection: defaultSelection }, resourceRevision: "4" };
+        throw new Error(`Unexpected GET ${path}`);
+      }),
+    };
+    const { container } = render(<SharedChatPanel api={api} actorId="user_editor" runtimeId="runtime_peer" scopeId={scopeId} />);
+    const retry = await screen.findByRole("button", { name: "Retry request 1" });
+    const first = container.querySelector('[data-message-id="msg_first"]');
+    const second = container.querySelector('[data-message-id="msg_second"]');
+    expect(first).toContainElement(retry);
+    expect(second).not.toContainElement(retry);
+    expect(container.querySelector("footer")).not.toContainElement(retry);
+    expect(screen.getAllByText("Same prompt")).toHaveLength(2);
+    expect(container.querySelector("footer")).toContainElement(screen.getByRole("button", { name: "Retry request 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load more messages" }));
+    await waitFor(() => expect(container.querySelector('[data-message-id="msg_later"]'))
+      .toContainElement(screen.getByRole("button", { name: "Retry request 2" })));
+    expect(container.querySelector("footer")).not.toContainElement(screen.getByRole("button", { name: "Retry request 2" }));
+  });
+
   it("accepts, discusses live, requests AI, and reconnects through the shared Chat panel", async () => {
     let accepted = false;
     let revision = 1;
@@ -84,7 +129,7 @@ describe("shared Chat two-account lifecycle", () => {
             latestSequence: String(discussionMessages.length),
           };
         }
-        if (path.endsWith("/chat/requests")) return {
+        if (path.split("?")[0]!.endsWith("/chat/requests")) return {
           requests,
           approvals: [],
           capability: { status: "available", effectiveSelection: defaultSelection },
@@ -113,7 +158,7 @@ describe("shared Chat two-account lifecycle", () => {
           notify();
           return message;
         }
-        if (path.endsWith("/chat/requests")) {
+        if (path.split("?")[0]!.endsWith("/chat/requests")) {
           const text = (body as { text: string }).text;
           revision += 1;
           const request = {

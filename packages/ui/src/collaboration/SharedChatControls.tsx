@@ -1,4 +1,5 @@
 import {
+  COLLABORATION_PAGE_LIMIT,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestsResponseSchema,
   type CollaborationApproval,
@@ -7,9 +8,10 @@ import {
   type CanonicalChatModelSelection,
 } from "@matrix-os/contracts";
 import { Users } from "lucide-react";
+import { Button } from "../Button.js";
 import { ChatPromptInput } from "../chat/composer/ChatPromptInput.js";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../chat/ChatConversation.js";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, type ReactNode } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
 
@@ -48,6 +50,8 @@ export function SharedChatControls({
   draft,
   updateDraft,
   refreshVersion,
+  renderHistory,
+  renderedMessageIds,
 }: {
   api: CollaborationApi;
   scope: CollaborationScope;
@@ -60,14 +64,36 @@ export function SharedChatControls({
   discussionError: boolean;
   sendDiscussion(): Promise<void>;
   refreshVersion: number;
+  renderHistory?: (renderStatus: (messageId: string) => ReactNode) => ReactNode;
+  renderedMessageIds?: readonly string[];
 }) {
   const controller = useSharedAiController({ api, scope, actorId, resourceRevision, draft, updateDraft, refreshVersion });
   const { state, submitAi, control, decide } = controller;
   const presentation = sharedComposerPresentation(scope, state);
-  const relevantRequests = state.requests.filter((request) => request.state !== "completed");
-  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6 lg:px-8">
+  // Response pages contain at most 100 requests; these render-local indexes are
+  // rebuilt on refresh and retain only the latest page after optimistic submits.
+  const inlineRequests = state.requests.slice(-COLLABORATION_PAGE_LIMIT).filter(request => request.messageId);
+  const requestsByMessage = new Map(inlineRequests.map(request => [request.messageId, request]));
+  // Only candidate request keys can enter this render-local Set (at most one
+  // response page), even when the paginated transcript is much larger.
+  const renderedRequests = new Set<string>();
+  for (const messageId of renderedMessageIds ?? []) {
+    if (requestsByMessage.has(messageId)) renderedRequests.add(messageId);
+  }
+  const inlineApprovals = new Set(inlineRequests.filter(request => request.messageId !== undefined
+    && renderedRequests.has(request.messageId)).map(request => request.id));
+  const relevantRequests = state.requests.filter((request) => request.state !== "completed"
+    && (!renderHistory || !request.messageId || !renderedRequests.has(request.messageId)));
+  return <>
+    {renderHistory?.((messageId) => {
+      const request = requestsByMessage.get(messageId);
+      return request && request.state !== "completed" ? <SharedAiQueue inline requests={[request]}
+        approvals={state.approvals.filter(approval => approval.requestId === request.id)}
+        actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} /> : null;
+    })}
+    <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6 lg:px-8">
     <div className={`mx-auto ${CHAT_CONTENT_WIDTH_CLASS}`}>
-      <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
+      <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals.filter(approval => !renderHistory || !inlineApprovals.has(approval.requestId))}
         actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
       <SharedAiErrors discussionError={false} error={state.error} />
       {!presentation.canCompose ? <p role="status" className="mb-2 text-xs text-muted-foreground">
@@ -82,7 +108,7 @@ export function SharedChatControls({
           : "People with access see this Chat · AI uses this Chat’s shared context"}
       </p>
     </div>
-  </footer>;
+  </footer></>;
 }
 
 type SharedComposerPresentation = {
@@ -166,7 +192,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 
   const load = useCallback(async () => {
     try {
-      const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests`));
+      const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests?includeMessageIds=1`));
       latestResourceRevision.current = response.resourceRevision;
       hadAvailable.current = response.capability.status === "available";
       dispatch({ type: "loaded", response });
@@ -303,7 +329,8 @@ function SharedAiErrors({ discussionError, error }: { discussionError: boolean; 
   </>;
 }
 
-function SharedAiQueue({ requests, approvals, actorId, role, pendingAction, control, decide }: {
+function SharedAiQueue({ requests, approvals, actorId, role, pendingAction, control, decide, inline = false }: {
+  inline?: boolean;
   requests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
   actorId: string;
@@ -316,23 +343,24 @@ function SharedAiQueue({ requests, approvals, actorId, role, pendingAction, cont
     if (approval.state === "pending") pending.push(approval);
     return pending;
   }, []) : [];
-  return <section aria-label="Chat activity" className="mb-3 max-h-40 space-y-2 overflow-y-auto">
+  return <section aria-label={inline ? "Reply status" : "Chat activity"}
+    className={inline ? "ml-auto mt-2 min-w-0 max-w-[min(85%,48rem)] space-y-2" : "mb-3 min-w-0 max-h-40 space-y-2 overflow-y-auto overflow-x-hidden"}>
     {requests.length === 0 ? null
       : requests.map((request) => {
         const controllable = canControl(role, actorId, request);
         const cancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(request.state);
         const retry = ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state);
-        return <article key={request.id} className="flex items-center rounded-lg px-1 py-1.5">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-medium">{request.actor.displayName}</span>
+        return <article key={request.id} className="flex min-w-0 w-full items-center rounded-lg px-1 py-1.5">
+          <div className={`flex min-w-0 w-full flex-wrap items-center gap-2 text-xs ${inline ? "justify-end" : ""}`}>
+            {inline ? null : <span className="font-medium">{request.actor.displayName}</span>}
             <span className="text-muted-foreground">{requestStateLabel(request.state)}</span>
-            <span className="min-w-0 flex-1 truncate" title={request.text}>{request.text}</span>
-            {controllable && cancel ? <button type="button" className={smallButtonClass}
+            {inline ? null : <span className="min-w-0 flex-1 truncate" title={request.text}>{request.text}</span>}
+            {controllable && cancel ? <Button variant="secondary" size="sm"
               aria-label={`Cancel request ${request.acceptedSequence}`}
-              disabled={pendingAction !== null} onClick={() => void control(request, "cancel")}>Cancel</button> : null}
-            {controllable && retry ? <button type="button" className={smallButtonClass}
+              disabled={pendingAction !== null} onClick={() => void control(request, "cancel")}>Cancel</Button> : null}
+            {controllable && retry ? <Button variant="secondary" size="sm"
               aria-label={`Retry request ${request.acceptedSequence}`}
-              disabled={pendingAction !== null} onClick={() => void control(request, "retry")}>Retry</button> : null}
+              disabled={pendingAction !== null} onClick={() => void control(request, "retry")}>Retry</Button> : null}
           </div>
         </article>;
       })}
@@ -341,9 +369,9 @@ function SharedAiQueue({ requests, approvals, actorId, role, pendingAction, cont
         <p className="text-sm font-medium">Approval needed: {approval.title}</p>
         <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>Risk: {approval.risk}</p>
         <div className="mt-2 flex flex-wrap gap-2">{approval.allowedDecisions.map((decision) =>
-          <button key={decision} type="button" className={smallButtonClass}
+          <Button key={decision} variant="secondary" size="sm"
             aria-label={`${decisionLabel(decision)} ${approval.title}`} disabled={pendingAction !== null}
-            onClick={() => void decide(approval, decision)}>{decisionLabel(decision)}</button>)}</div>
+            onClick={() => void decide(approval, decision)}>{decisionLabel(decision)}</Button>)}</div>
       </article>)}
   </section>;
 }
@@ -359,7 +387,12 @@ function compareAcceptedSequence(left: CollaborationAiRequest, right: Collaborat
 
 function requestStateLabel(state: CollaborationAiRequest["state"]): string {
   return state === "queued" ? "Preparing reply…" : state === "claimed" || state === "running"
-    ? "Working…" : state === "waiting_for_approval" ? "Tool approval needed" : state.replaceAll("_", " ");
+    ? "Working…" : state === "waiting_for_approval" ? "Tool approval needed"
+      : state === "interrupted" ? "Reply interrupted"
+        : state === "unavailable" ? "AI unavailable for this request"
+          : state === "failed" ? "Reply failed"
+            : state === "cancelled" ? "Request cancelled"
+              : state === "unauthorized" ? "Access changed" : state.replaceAll("_", " ");
 }
 
 function decisionLabel(decision: "approve" | "approve_for_session" | "decline" | "cancel"): string {
@@ -368,4 +401,3 @@ function decisionLabel(decision: "approve" | "approve_for_session" | "decline" |
 }
 
 const buttonClass = "rounded-xl border px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
-const smallButtonClass = "rounded-lg border px-2 py-1 text-xs transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
