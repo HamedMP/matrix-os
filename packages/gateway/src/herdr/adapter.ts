@@ -22,8 +22,10 @@ const DEFAULT_REFRESH_MS = 30_000;
 /** Attachments across every viewer and verb; each WS viewer holds one. */
 export const HERDR_MAX_ATTACHMENTS = 32;
 // A read attaches as an observer and renders the core's paint on a grid large
-// enough that the core's own screen is not wrapped or clipped.
+// enough that the core's own screen is not wrapped or clipped: at least this,
+// and at least the last writer's size, up to the largest size a writer may set.
 const CAPTURE_SIZE = { cols: 300, rows: 100 };
+const CAPTURE_MAX_SIZE = { cols: 500, rows: 200 };
 const CAPTURE_MAX_SCROLLBACK = 10_000;
 const CAPTURE_MAX_CHARS = 8 * 1024 * 1024;
 const DEFAULT_CAPTURE_QUIET_MS = 120;
@@ -34,10 +36,17 @@ const MAX_REMEMBERED_SIZES = 1_024;
 const MAX_EARLY_OUTPUT = 64;
 const WORKSPACE_CREATED_AT = new Date(0).toISOString();
 
+/**
+ * Why an attachment ended: the terminal itself ended (`exited`), or the
+ * connection to herdr-core went away and the terminal may still be running
+ * (`disconnected`), so a viewer can attach again.
+ */
+export type HerdrAttachmentEnd = "exited" | "disconnected";
+
 export interface HerdrAttachmentHandlers {
   /** Call `consumed` once the output has really been taken; until then the core slows down. */
   output(data: string, consumed: () => void): void;
-  closed(): void;
+  closed(reason: HerdrAttachmentEnd): void;
 }
 
 export interface HerdrAttachment {
@@ -65,6 +74,11 @@ function displayName(title: string): string {
   return SafeDisplayStringSchema.safeParse(name).success ? name : "Herdr terminal";
 }
 
+/** The last `lines` rows of history; none for 0. */
+function trimHistory(rows: string[], lines: number): string[] {
+  return lines > 0 ? rows.slice(-lines) : [];
+}
+
 export function createHerdrAdapter(options: {
   /** A byte stream to `herdr-core connect`. Rejects with HerdrTransportError when it can say why. */
   open(): Promise<HcSocket>;
@@ -86,19 +100,40 @@ export function createHerdrAdapter(options: {
   const viewers = new Map<number, HerdrAttachmentHandlers>();
   // Output can arrive in the same read as the attach answer, before the
   // attachment id is known here. Bounded; ids are never reused.
-  const early = new Map<number, Array<{ data: string } | { closed: true }>>();
+  const early = new Map<number, Array<{ data: string } | { closed: HerdrAttachmentEnd }>>();
   // Last size a Matrix writer used per terminal, so a verb's short attachment does not fight it. LRU-bounded.
   const sizes = new Map<string, { cols: number; rows: number }>();
   // Status words with the time each was first seen; pruned to listed terminals.
   const reported = new Map<string, { status: string; message?: string; at: number }>();
-  const captures = new Map<string, { at: number; screen: Promise<HerdrScreen> }>();
+  // One entry per terminal: the deepest recent read, trimmed for shallower ones.
+  const captures = new Map<string, { at: number; lines: number; screen: Promise<HerdrScreen> }>();
   let cache: { at: number; value: HerdrSessionList } | null = null;
   let listing: Promise<HerdrSessionList> | null = null;
   let closed = false;
   let timer: ReturnType<typeof setInterval> | null = null;
+  // Set when the current core connection's stream ends or fails. The client
+  // closes every attachment as part of that teardown, after the stream's own
+  // close/error listeners (registered here first) have run; a terminal that
+  // ends while the connection is up arrives with this still false.
+  let connectionDown = false;
+  let currentSocket: HcSocket | null = null;
+
+  async function open(): Promise<HcSocket> {
+    const socket = await options.open();
+    currentSocket = socket;
+    connectionDown = false;
+    // A late event from a connection already replaced says nothing about the new one.
+    const down = () => { if (currentSocket === socket) connectionDown = true; };
+    socket.on("close", down);
+    socket.on("error", down);
+    // The client tears down on a protocol error by destroying the stream first.
+    const destroy = socket.destroy.bind(socket);
+    socket.destroy = () => { down(); destroy(); };
+    return socket;
+  }
 
   const host = createHerdrSessionHost({
-    open: options.open,
+    open,
     slots: createAttachmentSlots(HERDR_MAX_ATTACHMENTS),
     now,
     ...(options.random ? { random: options.random } : {}),
@@ -109,13 +144,14 @@ export function createHerdrAdapter(options: {
       queueEarly(attachId, { data });
     },
     closed(attachId) {
+      const reason: HerdrAttachmentEnd = connectionDown ? "disconnected" : "exited";
       const viewer = viewers.get(attachId);
-      if (viewer) { viewers.delete(attachId); viewer.closed(); return; }
-      queueEarly(attachId, { closed: true });
+      if (viewer) { viewers.delete(attachId); viewer.closed(reason); return; }
+      queueEarly(attachId, { closed: reason });
     },
   });
 
-  function queueEarly(attachId: number, entry: { data: string } | { closed: true }): void {
+  function queueEarly(attachId: number, entry: { data: string } | { closed: HerdrAttachmentEnd }): void {
     const queue = early.get(attachId) ?? [];
     if (!early.has(attachId)) {
       early.set(attachId, queue);
@@ -197,20 +233,22 @@ export function createHerdrAdapter(options: {
     }
   }
 
-  async function attach(id: string, size: { cols: number; rows: number }, handlers: HerdrAttachmentHandlers): Promise<HerdrAttachment> {
+  async function attach(
+    id: string, size: { cols: number; rows: number }, handlers: HerdrAttachmentHandlers, replay: { history?: number } = {},
+  ): Promise<HerdrAttachment> {
     if (closed) throw new HerdrAdapterError("unavailable");
     let attachId: number;
     try {
-      attachId = await host.attach(id, size);
+      attachId = await host.attach(id, size, replay);
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "too many terminal attachments") throw new HerdrAdapterError("capacity");
       throw error;
     }
     let ended = false;
-    viewers.set(attachId, { output: handlers.output, closed: () => { ended = true; handlers.closed(); } });
+    viewers.set(attachId, { output: handlers.output, closed: (reason) => { ended = true; handlers.closed(reason); } });
     for (const entry of early.get(attachId) ?? []) {
       if ("data" in entry) handlers.output(entry.data, () => { host.acknowledge(attachId, 1); });
-      else if (viewers.delete(attachId)) { ended = true; handlers.closed(); }
+      else if (viewers.delete(attachId)) { ended = true; handlers.closed(entry.closed); }
     }
     early.delete(attachId);
     return {
@@ -229,19 +267,29 @@ export function createHerdrAdapter(options: {
     };
   }
 
+  /** The capture grid: CAPTURE_SIZE, widened to the last writer's size, never past CAPTURE_MAX_SIZE. */
+  function captureSize(id: string): { cols: number; rows: number } {
+    const writer = sizes.get(id);
+    return {
+      cols: Math.min(CAPTURE_MAX_SIZE.cols, Math.max(CAPTURE_SIZE.cols, writer?.cols ?? 0)),
+      rows: Math.min(CAPTURE_MAX_SIZE.rows, Math.max(CAPTURE_SIZE.rows, writer?.rows ?? 0)),
+    };
+  }
+
   async function render(id: string, lines: number): Promise<HerdrScreen> {
     const chunks: string[] = [];
     let total = 0;
     let lastOutputAt = 0;
     let ended = false;
-    const attachment = await attach(id, CAPTURE_SIZE, {
+    const size = captureSize(id);
+    const attachment = await attach(id, size, {
       output: (data, consumed) => {
         if (total < CAPTURE_MAX_CHARS) { chunks.push(data); total += data.length; }
         lastOutputAt = Date.now();
         consumed();
       },
       closed: () => { ended = true; },
-    });
+    }, { history: lines });
     const started = Date.now();
     try {
       // The paint arrives in a burst; it is complete once the stream goes quiet.
@@ -253,7 +301,7 @@ export function createHerdrAdapter(options: {
     } finally {
       attachment.detach();
     }
-    const terminal = new HeadlessTerminal({ ...CAPTURE_SIZE, scrollback: Math.min(CAPTURE_MAX_SCROLLBACK, Math.max(lines, 0)), allowProposedApi: true });
+    const terminal = new HeadlessTerminal({ ...size, scrollback: lines, allowProposedApi: true });
     try {
       await new Promise<void>((resolve) => { terminal.write(chunks.join(""), resolve); });
       const buffer = terminal.buffer.active;
@@ -261,7 +309,7 @@ export function createHerdrAdapter(options: {
       for (let index = 0; index < buffer.length; index += 1) rows.push(buffer.getLine(index)?.translateToString(true) ?? "");
       const viewport = rows.slice(buffer.baseY);
       while (viewport.length > 0 && viewport[viewport.length - 1] === "") viewport.pop();
-      return { viewport, scrollback: rows.slice(0, buffer.baseY).slice(-Math.max(lines, 0) || rows.length) };
+      return { viewport, scrollback: trimHistory(rows.slice(0, buffer.baseY), lines) };
     } finally {
       terminal.dispose();
     }
@@ -339,10 +387,14 @@ export function createHerdrAdapter(options: {
     /** The screen and up to `lines` of history, rendered from the core's paint. */
     async captureScreen(id: string, lines: number): Promise<HerdrScreen> {
       await requireListed(id);
+      const depth = Math.min(CAPTURE_MAX_SCROLLBACK, Math.max(0, Math.trunc(lines)));
       const cached = captures.get(id);
-      if (cached && now() - cached.at < CAPTURE_CACHE_MS) return cached.screen;
-      const screen = render(id, lines);
-      captures.set(id, { at: now(), screen });
+      // A recent read at least this deep answers it; a deeper request reads again.
+      if (cached && now() - cached.at < CAPTURE_CACHE_MS && cached.lines >= depth) {
+        return cached.screen.then((screen) => ({ viewport: screen.viewport, scrollback: trimHistory(screen.scrollback, depth) }));
+      }
+      const screen = render(id, depth);
+      captures.set(id, { at: now(), lines: depth, screen });
       // At most one entry per listed terminal.
       for (const key of [...captures.keys()]) if (key !== id && now() - captures.get(key)!.at >= CAPTURE_CACHE_MS) captures.delete(key);
       screen.then(undefined, () => { if (captures.get(id)?.screen === screen) captures.delete(id); });
@@ -375,7 +427,7 @@ export function createHerdrAdapter(options: {
       early.clear();
       captures.clear();
       host.dispose();
-      for (const viewer of open) viewer.closed();
+      for (const viewer of open) viewer.closed("disconnected");
       options.closeTransport?.();
     },
   };

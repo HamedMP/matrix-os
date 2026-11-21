@@ -194,7 +194,8 @@ export function createHcSessions(options: {
       await core.call("terminal.kill", { terminal: id });
     },
 
-    async attach(id: string, size: { cols: number; rows: number }): Promise<number> {
+    /** `replay.history`: scrollback lines the core replays first (2,000 when omitted). */
+    async attach(id: string, size: { cols: number; rows: number }, replay: { history?: number } = {}): Promise<number> {
       const startedIn = releaseEpoch;
       const core = await options.ensure();
       if (releaseEpoch !== startedIn) throw new Error("terminal attachment ended");
@@ -206,7 +207,7 @@ export function createHcSessions(options: {
       const attachment: Attachment = { stream: null, unacknowledged: [] };
       attachments.set(attachId, attachment);
       try {
-        attachment.stream = await core.attach({ terminal: id, ...size }, {
+        attachment.stream = await core.attach({ terminal: id, ...size, ...(replay.history === undefined ? {} : { history: replay.history }) }, {
           onData: (chunk, consumed) => {
             const text = decoder.decode(chunk, { stream: true });
             if (text.length === 0) { consumed(); return; }

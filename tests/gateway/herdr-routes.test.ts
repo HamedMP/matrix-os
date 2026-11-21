@@ -51,12 +51,14 @@ async function gateway(options: { adapter?: HerdrAdapter | null; maxViewersPerSe
       const socket = new WebSocket(`ws://${base}/ws/terminal/herdr?${query}`);
       const frames: Array<Record<string, unknown>> = [];
       let closed = false;
+      let closeCode: number | null = null;
       socket.on("message", (data) => { frames.push(JSON.parse(String(data))); });
-      socket.on("close", () => { closed = true; });
+      socket.on("close", (code) => { closed = true; closeCode = code; });
       cleanup.push(() => { if (!closed) socket.terminate(); });
       return {
         socket, frames,
         isClosed: () => closed,
+        closeCode: () => closeCode,
         send: (frame: unknown) => socket.send(JSON.stringify(frame)),
         async until(check: () => boolean, ms = 2_000) {
           const start = Date.now();
@@ -195,6 +197,40 @@ describe("WS /ws/terminal/herdr", () => {
     await adapter!.kill("t1");
     await client.until(() => client.isClosed());
     expect(client.frames.at(-1)).toEqual({ type: "exit", terminalRef: ref("t1"), revision: 0, exitCode: null });
+  });
+
+  it("closes retryably, without exit, when the core connection drops but the terminal may live on", async () => {
+    const { core, connect } = await gateway();
+    core.add("t1");
+    const client = connect(`id=t1&user=${OWNER}`);
+    await client.until(() => client.frames.some((frame) => frame.type === "attached"));
+    core.crash();
+    await client.until(() => client.isClosed());
+    expect(client.frames.some((frame) => frame.type === "exit")).toBe(false);
+    // ShellSocket reconnects on any close without exit or a fatal error code.
+    expect(client.frames.filter((frame) => frame.type === "error")).toEqual([]);
+    expect(client.closeCode()).toBe(1012);
+  });
+
+  it("resumes a reconnecting viewer past its last sequence with a screen reset before the repaint", async () => {
+    const { core, connect } = await gateway();
+    core.add("t1", { screen: "hello" });
+    const client = connect(`id=t1&user=${OWNER}&fromSeq=42`);
+    await client.until(() => client.frames.some((frame) => frame.type === "replay-end"));
+    expect(client.frames[0]).toMatchObject({ type: "attached", nextSeq: 42 });
+    expect(client.frames[1]).toMatchObject({ type: "replay-start", fromSeq: 42 });
+    const outputs = client.frames.filter((frame) => frame.type === "output");
+    expect(outputs[0]).toMatchObject({ seq: 42, data: "\x1bchello" });
+    expect(client.frames.find((frame) => frame.type === "replay-end")).toMatchObject({ nextSeq: 43, toSeq: 42 });
+    for (const frame of client.frames) expect(TerminalTabServerFrameSchema.safeParse(frame).success).toBe(true);
+
+    // A fresh viewer (no cursor, or Electron's live-tail sentinel) starts at 0 with no reset.
+    for (const fresh of ["", "&fromSeq=0", `&fromSeq=${Number.MAX_SAFE_INTEGER}`]) {
+      const viewer = connect(`id=t1&user=${OWNER}${fresh}`);
+      await viewer.until(() => viewer.frames.some((frame) => frame.type === "output"));
+      expect(viewer.frames.find((frame) => frame.type === "output")).toMatchObject({ seq: 0, data: "hello" });
+      viewer.socket.close();
+    }
   });
 
   it("refuses non-owners, unknown terminals, bad requests and frames for another terminal", async () => {

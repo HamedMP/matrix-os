@@ -217,6 +217,56 @@ describe("herdr adapter attachments", () => {
     expect(core.sockets[0]!.destroyed).toBe(false);
   });
 
+  it("tells a viewer whether its terminal exited or the core connection dropped", async () => {
+    const { core, adapter } = setup();
+    core.add("t1");
+    core.add("t2");
+    await adapter.list();
+    const reasons: string[] = [];
+    await adapter.attach("t1", { cols: 80, rows: 24 }, { output: (_data, consumed) => consumed(), closed: (reason) => { reasons.push(`t1:${reason}`); } });
+    await adapter.attach("t2", { cols: 80, rows: 24 }, { output: (_data, consumed) => consumed(), closed: (reason) => { reasons.push(`t2:${reason}`); } });
+    await adapter.kill("t1");
+    await tick();
+    expect(reasons).toEqual(["t1:exited"]);
+    core.crash();
+    await tick();
+    expect(reasons).toEqual(["t1:exited", "t2:disconnected"]);
+  });
+
+  it("asks the core for as much history as a read wants", async () => {
+    const { core, adapter } = setup();
+    core.add("t1", { screen: "x" });
+    await adapter.list();
+    await adapter.captureScreen("t1", 8_000);
+    const attaches = core.calls.filter((call) => call.method === "terminal.attach");
+    expect(attaches.at(-1)!.params).toMatchObject({ history: 8_000 });
+  });
+
+  it("does not answer a deeper read from a shallower cached read", async () => {
+    const { core, adapter } = setup();
+    const history = Array.from({ length: 60 }, (_, index) => `h${index}`).join("\r\n");
+    core.add("t1", { screen: `${history}\r\n${"\r\n".repeat(120)}end` });
+    await adapter.list();
+    const shallow = await adapter.captureScreen("t1", 5);
+    const deep = await adapter.captureScreen("t1", 50);
+    const again = await adapter.captureScreen("t1", 5);
+    expect(shallow.scrollback).toHaveLength(5);
+    expect(deep.scrollback.length).toBeGreaterThan(5);
+    expect(deep.scrollback.length).toBeLessThanOrEqual(50);
+    expect(again.scrollback).toEqual(deep.scrollback.slice(-5));
+    expect(core.calls.filter((call) => call.method === "terminal.attach")).toHaveLength(2);
+  });
+
+  it("renders a read at least as wide as the last writer, so wide lines do not wrap", async () => {
+    const { core, adapter } = setup();
+    const wide = "w".repeat(420);
+    core.add("t1", { screen: wide });
+    await adapter.list();
+    adapter.rememberSize("t1", { cols: 450, rows: 40 });
+    const screen = await adapter.captureScreen("t1", 0);
+    expect(screen.viewport[0]).toBe(wide);
+  });
+
   it("closes attachments and the connection on close", async () => {
     const { core, adapter } = setup();
     core.add("t1");

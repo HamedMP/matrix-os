@@ -31,6 +31,13 @@ const DRAIN_POLL_MS = 25;
 // How long a fresh attach waits for herdr-core's repaint before revealing the pane.
 const FIRST_PAINT_WAIT_MS = 250;
 const MAX_CLIENT_FRAME_CHARS = 128 * 1024;
+// A reconnecting viewer's cursor below this resumes numbering there; larger
+// values (Electron's live-tail sentinel is Number.MAX_SAFE_INTEGER) attach fresh.
+const MAX_RESUME_SEQ = 2 ** 48;
+// Full reset (RIS): a resumed viewer's old screen and scrollback give way to the core's repaint.
+const SCREEN_RESET = "\x1bc";
+// Retryable close for a lost herdr-core connection: the terminal may still be running.
+const CONNECTION_LOST_CLOSE = 1012;
 
 // A viewer names the terminal by herdr id, or by its Matrix terminal ref as the
 // shell's terminal pane does for every tab.
@@ -42,6 +49,7 @@ const QuerySchema = z.object({
   cols: z.string().regex(/^\d{1,3}$/).transform(Number).pipe(z.number().int().min(20).max(500)).default(120),
   rows: z.string().regex(/^\d{1,3}$/).transform(Number).pipe(z.number().int().min(5).max(200)).default(36),
   lease: z.enum(["exclusive", "observe"]).default("observe"),
+  fromSeq: z.string().regex(/^\d{1,16}$/).transform(Number).optional(),
 }).refine((query) => query.id !== undefined || (query.workspaceId !== undefined && query.tabId !== undefined));
 
 interface Viewer {
@@ -92,6 +100,7 @@ export function registerHerdrTerminalWebSocket(options: {
       cols: c.req.query("cols"),
       rows: c.req.query("rows"),
       lease: c.req.query("lease"),
+      fromSeq: c.req.query("fromSeq"),
     });
     const viewerId = randomUUID();
     let ref: TerminalRef | null = null;
@@ -106,7 +115,14 @@ export function registerHerdrTerminalWebSocket(options: {
     let replaying = false;
     let replayTimer: ReturnType<typeof setTimeout> | null = null;
     let flushingPaint = false;
-    let seq = 0;
+    // Each socket gets the core's full repaint. A viewer reconnecting with a
+    // cursor keeps counting from it (clients drop output at or below the last
+    // sequence they saw), and that repaint replaces what it already shows.
+    const resumeFrom = query.success && query.data.fromSeq !== undefined && query.data.fromSeq > 0 && query.data.fromSeq <= MAX_RESUME_SEQ
+      ? query.data.fromSeq
+      : null;
+    let seq = resumeFrom ?? 0;
+    let resetPending = resumeFrom !== null;
     // Output that arrived while the attach was answered; sent after `attached`.
     const early: Array<{ data: string; consumed: () => void }> = [];
     const credits: Array<() => void> = [];
@@ -138,8 +154,10 @@ export function registerHerdrTerminalWebSocket(options: {
       replaying = false;
       send({ type: "replay-end", terminalRef: ref, revision: 0, nextSeq: seq, toSeq: seq > 0 ? seq - 1 : null });
     };
-    const output = (data: string, consumed: () => void) => {
+    const output = (rawData: string, consumed: () => void) => {
       if (closed || !ref) return;
+      const data = resetPending ? `${SCREEN_RESET}${rawData}` : rawData;
+      resetPending = false;
       for (let offset = 0; offset < data.length; offset += MAX_OUTPUT_CHARS) {
         send({ type: "output", terminalRef: ref, revision: 0, seq: seq++, data: data.slice(offset, offset + MAX_OUTPUT_CHARS) });
       }
@@ -204,12 +222,14 @@ export function registerHerdrTerminalWebSocket(options: {
               if (attached) output(data, consumed);
               else early.push({ data, consumed });
             },
-            closed: () => {
+            closed: (reason) => {
               if (closed) return;
-              send({ type: "exit", terminalRef, revision: 0, exitCode: null });
+              // Only a terminal that really ended gets `exit`, which clients treat as final.
+              if (reason === "exited") send({ type: "exit", terminalRef, revision: 0, exitCode: null });
               closed = true;
               release();
-              ws.close(1000, "Terminal ended");
+              if (reason === "exited") ws.close(1000, "Terminal ended");
+              else ws.close(CONNECTION_LOST_CLOSE, "Terminal connection lost");
             },
           });
           if (closed) { opened.detach(); return; }
