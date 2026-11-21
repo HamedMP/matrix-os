@@ -148,7 +148,7 @@ export function ExternalMcpApprovalsPanel({ transport }: { transport: ExternalMc
         </h4>
         <p className="text-sm" style={{ color: t.secondary }}>Writes from MCP clients outside Matrix wait here for you. Matrix never shows their arguments; approve only tools you expect a client to use.</p>
       </div>
-      {error ? <div role="alert" className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger, var(--destructive))" }}>{error}</div> : null}
+      {error ? <div role="alert" className="rounded-xl border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger-text, var(--destructive-text, var(--danger)))" }}>{error}</div> : null}
       {state.status === "loading" ? <p role="status" className="text-sm" style={muted}>Loading approvals…</p> : null}
       {state.status === "failed" ? <McpInlineNotice role="alert" icon={<CloudOff size={15} />} title={EXTERNAL_MCP_APPROVALS_LOAD_ERROR}
         action={transport ? <McpRowAction onClick={() => { void reload(); }}>Try again</McpRowAction> : undefined} /> : null}
