@@ -1,20 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import {
-  useBoard,
-  type Card,
-} from "@desktop/renderer/src/stores/board";
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
+import { useBoard } from "@desktop/renderer/src/stores/board";
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -26,42 +13,6 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     putText: vi.fn().mockResolvedValue({}),
     ...overrides,
   } as ApiClient;
-}
-
-// Mirrors the gateway TaskRecord wire shape (packages/gateway/src/task-manager.ts).
-function wireTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: "task_a",
-    projectSlug: "proj",
-    title: "Task A",
-    status: "todo",
-    priority: "normal",
-    order: 0,
-    previewIds: [],
-    createdAt: "2026-06-13T00:00:00.000Z",
-    updatedAt: "2026-06-13T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function card(overrides: Partial<Card> = {}): Card {
-  return {
-    id: "task_a",
-    projectSlug: "proj",
-    title: "Task A",
-    description: "",
-    status: "todo",
-    priority: "normal",
-    order: 0,
-    parentTaskId: null,
-    linkedSessionId: null,
-    linkedWorktreeId: null,
-    previewIds: [],
-    tags: [],
-    updatedAt: "2026-06-13T00:00:00.000Z",
-    revision: null,
-    ...overrides,
-  };
 }
 
 beforeEach(() => {
@@ -222,53 +173,6 @@ describe("createProject", () => {
   });
 });
 
-describe("linkSession", () => {
-  it("optimistically links a session and persists the patch", async () => {
-    const patched = wireTask({ linkedSessionId: "sess_1", status: "running" });
-    const patch = vi.fn().mockResolvedValue({ task: patched });
-    const api = makeApi({ patch });
-    useBoard.setState({ cardsByProject: { proj: [card({ id: "task_a" })] } });
-
-    await useBoard.getState().linkSession(api, "proj", "task_a", {
-      linkedSessionId: "sess_1",
-      status: "running",
-    });
-
-    expect(patch).toHaveBeenCalledWith(
-      "/api/projects/proj/tasks/task_a",
-      { linkedSessionId: "sess_1", status: "running" },
-    );
-    const updated = useBoard.getState().cardsByProject["proj"]![0]!;
-    expect(updated.linkedSessionId).toBe("sess_1");
-    expect(updated.status).toBe("running");
-    expect(useBoard.getState().error).toBeNull();
-  });
-
-  it("rolls back and surfaces an error category on failure", async () => {
-    const api = makeApi({
-      patch: vi.fn().mockRejectedValue(new AppError("server")),
-      get: vi.fn().mockResolvedValue({ tasks: [], nextCursor: null }),
-    });
-    useBoard.setState({ cardsByProject: { proj: [card({ id: "task_a", linkedSessionId: null })] } });
-
-    await expect(
-      useBoard.getState().linkSession(api, "proj", "task_a", { linkedSessionId: "sess_1" }),
-    ).rejects.toBeInstanceOf(AppError);
-    expect(useBoard.getState().error).toBe("server");
-  });
-
-  it("rejects instead of reporting success when the task is missing locally", async () => {
-    const patch = vi.fn().mockResolvedValue({ task: wireTask({ linkedSessionId: "sess_1" }) });
-    const api = makeApi({ patch });
-
-    await expect(
-      useBoard.getState().linkSession(api, "proj", "task_a", { linkedSessionId: "sess_1" }),
-    ).rejects.toBeInstanceOf(AppError);
-    expect(patch).not.toHaveBeenCalled();
-    expect(useBoard.getState().error).toBe("server");
-  });
-});
-
 describe("loadProjects", () => {
   it("loads the project list from /api/workspace/projects", async () => {
     const api = makeApi({
@@ -302,99 +206,10 @@ describe("loadProjects", () => {
   });
 });
 
-describe("selectProject (stale-while-revalidate)", () => {
-  it("shows skeleton only on first load of a project", async () => {
-    const d = deferred<unknown>();
-    const api = makeApi({ get: vi.fn().mockReturnValue(d.promise) });
-    const pending = useBoard.getState().selectProject(api, "proj");
-
+describe("selectProject", () => {
+  it("records the active project without reading its tasks", () => {
+    useBoard.getState().selectProject("proj");
     expect(useBoard.getState().activeProjectSlug).toBe("proj");
-    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(true);
-    expect(useBoard.getState().refreshing).toBe(true);
-
-    d.resolve({ tasks: [wireTask()], nextCursor: null });
-    await pending;
-
-    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
-    expect(useBoard.getState().refreshing).toBe(false);
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-  });
-
-  it("keeps cached cards visible while refreshing an already-loaded project", async () => {
-    const first = makeApi({
-      get: vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null }),
-    });
-    await useBoard.getState().selectProject(first, "proj");
-
-    const d = deferred<unknown>();
-    const second = makeApi({ get: vi.fn().mockReturnValue(d.promise) });
-    const pending = useBoard.getState().selectProject(second, "proj");
-
-    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
-    expect(useBoard.getState().refreshing).toBe(true);
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-
-    d.resolve({ tasks: [wireTask({ title: "Renamed" })], nextCursor: null });
-    await pending;
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card({ title: "Renamed" })]);
-  });
-
-  it("clears the skeleton and sets an error category when the first load fails", async () => {
-    const api = makeApi({ get: vi.fn().mockRejectedValue(new AppError("timeout")) });
-    await useBoard.getState().selectProject(api, "proj");
-    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
-    expect(useBoard.getState().refreshing).toBe(false);
-    expect(useBoard.getState().error).toBe("timeout");
-  });
-});
-
-describe("task catalog refresh", () => {
-  it("follows nextCursor pagination", async () => {
-    const get = vi
-      .fn()
-      .mockResolvedValueOnce({ tasks: [wireTask({ id: "task_a" })], nextCursor: "task_a" })
-      .mockResolvedValueOnce({ tasks: [wireTask({ id: "task_b" })], nextCursor: null });
-    const api = makeApi({ get });
-    await useBoard.getState().selectProject(api, "proj");
-    expect(get).toHaveBeenCalledTimes(2);
-    expect(String(get.mock.calls[1]![0])).toContain("cursor=task_a");
-    expect(useBoard.getState().cardsByProject["proj"]!.map((c) => c.id)).toEqual([
-      "task_a",
-      "task_b",
-    ]);
-  });
-
-  it("keeps cached cards and sets an error category on failure", async () => {
-    const ok = makeApi({
-      get: vi.fn().mockResolvedValue({ tasks: [wireTask()], nextCursor: null }),
-    });
-    await useBoard.getState().selectProject(ok, "proj");
-
-    const bad = makeApi({ get: vi.fn().mockRejectedValue(new AppError("server")) });
-    await useBoard.getState().selectProject(bad, "proj");
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-    expect(useBoard.getState().error).toBe("server");
-  });
-});
-
-describe("applyTaskEvent", () => {
-  it("adds a card on task:created and dedupes by id", () => {
-    useBoard.getState().applyTaskEvent({ type: "task:created", task: wireTask() });
-    useBoard.getState().applyTaskEvent({ type: "task:created", task: wireTask() });
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
-  });
-
-  it("updates status on task:updated", () => {
-    useBoard.getState().applyTaskEvent({ type: "task:created", task: wireTask() });
-    useBoard.getState().applyTaskEvent({ type: "task:updated", taskId: "task_a", status: "running" });
-    expect(useBoard.getState().cardsByProject["proj"]![0]!.status).toBe("running");
-  });
-
-  it("ignores unknown task ids, invalid statuses, and malformed payloads", () => {
-    useBoard.getState().applyTaskEvent({ type: "task:created", task: wireTask() });
-    useBoard.getState().applyTaskEvent({ type: "task:updated", taskId: "task_zzz", status: "running" });
-    useBoard.getState().applyTaskEvent({ type: "task:updated", taskId: "task_a", status: "exploded" });
-    useBoard.getState().applyTaskEvent({ type: "task:created", task: { nonsense: true } });
-    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
+    expect(Object.keys(useBoard.getState())).not.toContain("cardsByProject");
   });
 });

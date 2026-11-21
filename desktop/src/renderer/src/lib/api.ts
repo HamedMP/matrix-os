@@ -73,6 +73,13 @@ export interface ApiClient {
   putBytes<T>(path: string, body: Blob, headers: Record<string, string>, options?: RequestTimeoutOptions): Promise<T>;
   delete<T>(path: string, body?: unknown, options?: JsonRequestOptions): Promise<T>;
   putText<T>(path: string, body: string, options?: JsonRequestOptions): Promise<T>;
+  /**
+   * Sends a request to a full gateway URL (one under `baseUrl`) for clients
+   * that read error bodies themselves, such as the shared project board. The
+   * runtime slot and expired-session handling still apply; the response is
+   * returned as is. The caller supplies its own timeout signal.
+   */
+  fetchGateway(url: string, init?: RequestInit): Promise<Response>;
   /** Returns a client whose requests remain bound to one runtime slot. */
   forRuntime(runtimeSlot: string): ApiClient;
   baseUrl: string;
@@ -219,8 +226,18 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
   }
 
+  async function fetchGateway(url: string, init?: RequestInit): Promise<Response> {
+    const base = options.baseUrl.replace(/\/+$/, "");
+    const path = url.startsWith(`${base}/`) ? url.slice(base.length) : null;
+    if (path === null) throw new TypeError("not a gateway URL");
+    const response = await fetchFn(buildGatewayUrl(base, path, options.getRuntimeSlot()), init);
+    if (response.status === 401) options.onUnauthorized?.();
+    return response;
+  }
+
   return {
     baseUrl: options.baseUrl,
+    fetchGateway,
     forRuntime: (runtimeSlot) => createApiClient({
       ...options,
       getRuntimeSlot: () => runtimeSlot,

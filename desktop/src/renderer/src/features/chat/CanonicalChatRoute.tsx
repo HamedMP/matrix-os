@@ -9,7 +9,6 @@ import {
 import { diagnosticErrorKind } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useProjectView } from "../../stores/project-view";
 import { useTabs } from "../../stores/tabs";
 import { CanonicalChatWorkspace } from "./CanonicalChatWorkspace";
 import { useScopedCanonicalChatClient } from "./CanonicalChatClientContext";
@@ -220,7 +219,6 @@ export function CanonicalChatRoute({
           candidate.id === targetProjectId || candidate.slug === targetProjectId
         ));
         const projectSlug = project?.slug ?? targetProjectId;
-        useProjectView.getState().setView(projectSlug, "chats");
         useTabs.getState().openTab({
           kind: "project",
           projectSlug,

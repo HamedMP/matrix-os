@@ -93,18 +93,7 @@ export default function MissionControl() {
         );
       }
       const target = projects.find((p) => p.slug === saved) ?? projects[0];
-      if (target && !cancelled) {
-        try {
-          await selectProject(api, target.slug);
-        } catch (err: unknown) {
-          if (!cancelled) {
-            console.warn(
-              "[mission-control] restore last project failed:",
-              err instanceof Error ? err.message : String(err),
-            );
-          }
-        }
-      }
+      if (target && !cancelled) selectProject(target.slug);
     })().catch((err: unknown) => {
       console.warn(
         "[mission-control] initial project load failed:",

@@ -1,4 +1,4 @@
-// Tab workspace: terminals, tasks, projects, and agent threads open as tabs that
+// Tab workspace: terminals, projects, and agent threads open as tabs that
 // stay mounted (cached) while inactive, so switching never tears down a running
 // terminal or loses editor state. Identity-keyed openTab() focuses an existing
 // tab; openTabInstance() is the explicit user gesture for a separate top-level
@@ -13,7 +13,6 @@ export type TabKind =
   | "chat"
   | "projects"
   | "project"
-  | "task"
   | "terminal"
   | "terminals"
   | "files"
@@ -39,7 +38,6 @@ export interface Tab {
   sharedScopeId?: string;
   chatView?: "index" | "draft" | "conversation";
   workRoute?: WorkRoute;
-  taskId?: string;
   sessionName?: string;
   slug?: string;
   appIdentity?: string;
@@ -68,13 +66,12 @@ export const FILES_WORKSPACE_TAB_SPEC = {
 const MAX_TABS = 24;
 
 function identityKey(
-  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug" | "appIdentity" | "sharedAppTarget">,
+  spec: Pick<Tab, "kind" | "projectSlug" | "sessionName" | "slug" | "appIdentity" | "sharedAppTarget">,
 ): string {
   if (spec.kind === "work") return "work";
   return [
     spec.kind,
     spec.projectSlug ?? "",
-    spec.taskId ?? "",
     spec.sessionName ?? "",
     spec.slug ?? "",
     spec.kind === "app" ? spec.sharedAppTarget?.scopeId ?? spec.appIdentity ?? spec.slug ?? "" : "",

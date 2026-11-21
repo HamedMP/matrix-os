@@ -1,16 +1,11 @@
 import { RUNTIME_RECONNECTED_EVENT } from "./runtime-compatibility";
-// Wires the singleton kernel socket into the stores: thread routing, board
-// task events and native notifications.
+// Wires the singleton kernel socket into the stores: thread routing and
+// native notifications.
 import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
 import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
 import { useDesktopIcons } from "../stores/desktop-icons";
 import type { ChatEvent } from "./chat";
-import {
-  useBoard,
-  type TaskEventCreated,
-  type TaskEventUpdated,
-} from "../stores/board";
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
 import { isWorkRoute, useTabs } from "../stores/tabs";
@@ -30,17 +25,6 @@ const KERNEL_CHAT_EVENT_TYPES = new Set([
 
 let socket: KernelSocket | null = null;
 let cleanupKernel: (() => void) | null = null;
-
-type BoardTaskEvent = KernelServerMessage & (TaskEventCreated | TaskEventUpdated);
-
-function isTaskEvent(msg: KernelServerMessage): msg is BoardTaskEvent {
-  if (msg.type === "task:created") return "task" in msg;
-  return (
-    msg.type === "task:updated" &&
-    typeof msg.taskId === "string" &&
-    typeof msg.status === "string"
-  );
-}
 
 export function getKernelSocket(): KernelSocket | null {
   return socket;
@@ -135,9 +119,6 @@ export function wireKernel(): () => void {
           err instanceof Error ? err.message : String(err),
         );
       });
-    }
-    if (isTaskEvent(msg)) {
-      useBoard.getState().applyTaskEvent(msg);
     }
     // Feed the OS-agent conversation (it filters to its own request id).
     if (KERNEL_CHAT_EVENT_TYPES.has(msg.type)) {

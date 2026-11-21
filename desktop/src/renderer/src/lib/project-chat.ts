@@ -120,7 +120,6 @@ export async function openProjectChat(
   options: OpenProjectChatOptions = {},
 ): Promise<boolean> {
   const projectView = useProjectView.getState();
-  projectView.setView(projectId, "chats");
   // Only an explicit thread updates the selection; a bare open keeps the
   // persisted conversation the user last had selected.
   if (options.threadId !== undefined) {
@@ -141,6 +140,13 @@ export async function openProjectChat(
     return true;
   }
   return loadCodingAgentConversation(projectId, options.threadId);
+}
+
+/** Ends a project's pending new-chat request, whichever project key it was made with. */
+export function endComposerRequest(project: { slug: string; id?: string }): void {
+  const launcher = useProjectChatLauncher.getState();
+  launcher.consumeComposer(project.slug);
+  if (project.id) launcher.consumeComposer(project.id);
 }
 
 /**

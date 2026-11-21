@@ -75,7 +75,7 @@ describe("openProjectChat", () => {
     resetStores();
   });
 
-  it("opens the project tab with the chats view active", () => {
+  it("opens the project tab", () => {
     useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
 
     openProjectChat("matrix-os");
@@ -89,7 +89,6 @@ describe("openProjectChat", () => {
       title: "Chat",
     });
     expect(tabs.activeTabId).toBe(tabs.tabs[0]!.id);
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
   });
 
   it("focuses the already-open project tab instead of duplicating it", () => {

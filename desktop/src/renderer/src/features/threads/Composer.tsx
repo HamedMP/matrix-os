@@ -1,9 +1,8 @@
 import { CornerDownLeft } from "@renderer/lib/hugeicons";
 import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Dialog } from "../../design/primitives";
 import { sendKernelMessage } from "../../lib/kernel-wiring";
-import { useBoard } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
@@ -11,21 +10,10 @@ import { useUi } from "../../stores/ui";
 // Mounted only while open, so input state is fresh per open and autoFocus
 // replaces a focus setTimeout (react-doctor: no leaked timer, no prop-sync).
 function ComposerForm({ onClose }: { onClose: () => void }) {
-  const activeTab = useTabs((s) => s.tabs.find((t) => t.id === s.activeTabId));
   const openTab = useTabs((s) => s.openTab);
   const startThread = useThreads((s) => s.startThread);
   const setActiveThread = useThreads((s) => s.setActiveThread);
-  const cardsByProject = useBoard((s) => s.cardsByProject);
   const [text, setText] = useState("");
-
-  const boundTask = useMemo(() => {
-    if (activeTab?.kind !== "task" || !activeTab.taskId) return null;
-    for (const cards of Object.values(cardsByProject)) {
-      const card = cards.find((c) => c.id === activeTab.taskId);
-      if (card) return card;
-    }
-    return null;
-  }, [activeTab, cardsByProject]);
 
   const submit = () => {
     const trimmed = text.trim();
@@ -34,7 +22,7 @@ function ComposerForm({ onClose }: { onClose: () => void }) {
     const thread = startThread({
       text: trimmed,
       title: trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed,
-      taskId: boundTask?.id ?? null,
+      taskId: null,
       sessionId: null,
       requestId,
     });
@@ -48,14 +36,6 @@ function ComposerForm({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      {boundTask ? (
-        <span
-          className="self-start rounded-full border px-2 py-0.5 text-xs"
-          style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
-        >
-          Task: {boundTask.title}
-        </span>
-      ) : null}
       <textarea
         autoFocus
         value={text}

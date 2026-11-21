@@ -16,7 +16,7 @@ export interface AddProjectSubmitContext {
     api: ApiClient,
     input: { name: string; description?: string; mode: "scratch" | "github" | "folder"; url?: string; path?: string },
   ) => Promise<Project | null>;
-  selectProject: (api: ApiClient, slug: string) => Promise<void>;
+  selectProject: (slug: string) => void;
   loadProjects: (api: ApiClient) => Promise<boolean>;
   openTab: (tab: { kind: "project"; projectSlug: string; title: string }) => void;
   // False once the dialog closed or a newer submit superseded this one.
@@ -67,7 +67,7 @@ async function finish(
   project: Project,
   options: { created?: boolean } = {},
 ): Promise<void> {
-  await ctx.selectProject(ctx.api, project.slug);
+  ctx.selectProject(project.slug);
   if (!ctx.isCurrent()) return;
   const afterOpened = await ctx.onProjectReady?.(project);
   if (!ctx.isCurrent()) return;

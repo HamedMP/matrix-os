@@ -1,6 +1,5 @@
 import {
   Blocks,
-  FileCode2,
   FilePenLine,
   Code2,
   FolderKanban,
@@ -26,7 +25,6 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   chat: MessageCircle,
   projects: FolderKanban,
   project: FolderKanban,
-  task: FileCode2,
   terminal: SquareTerminal,
   terminals: SquareTerminal,
   files: FolderTree,

@@ -246,7 +246,7 @@ describe("tabs store", () => {
   it("closes every tab for one project and focuses Home when a project lifecycle action succeeds", () => {
     const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     useTabs.getState().openTab({ kind: "project", projectSlug: "repo", title: "Repo" });
-    useTabs.getState().openTab({ kind: "task", projectSlug: "repo", taskId: "task_1", title: "Task" });
+    useTabs.getState().openTab({ kind: "terminal", projectSlug: "repo", sessionName: "repo-shell", title: "Shell" });
     useTabs.getState().openTab({ kind: "project", projectSlug: "other", title: "Other" });
 
     useTabs.getState().closeProjectTabs("repo");
@@ -267,7 +267,7 @@ describe("tabs store", () => {
       chatView: "conversation",
       closable: false,
     });
-    useTabs.getState().openTab({ kind: "task", projectSlug: "repo", taskId: "task_1", title: "Task" });
+    useTabs.getState().openTab({ kind: "terminal", projectSlug: "repo", sessionName: "repo-shell", title: "Shell" });
     useTabs.getState().focusTab(work);
 
     useTabs.getState().closeProjectTabs("repo");
@@ -282,7 +282,7 @@ describe("tabs store", () => {
       chatTitle: undefined,
       closable: false,
     });
-    expect(useTabs.getState().tabs.some((tab) => tab.taskId === "task_1")).toBe(false);
+    expect(useTabs.getState().tabs.some((tab) => tab.sessionName === "repo-shell")).toBe(false);
   });
 
   it("focusTab ignores unknown ids", () => {
@@ -309,14 +309,14 @@ describe("tabs store", () => {
   });
 
   it("does not evict the previously active tab when opening beyond the cap", () => {
-    const active = useTabs.getState().openTab({ kind: "task", taskId: "task-0", title: "P0" });
-    const oldestInactive = useTabs.getState().openTab({ kind: "task", taskId: "task-1", title: "P1" });
+    const active = useTabs.getState().openTab({ kind: "terminal", sessionName: "s-0", title: "P0" });
+    const oldestInactive = useTabs.getState().openTab({ kind: "terminal", sessionName: "s-1", title: "P1" });
     for (let i = 2; i < 24; i++) {
-      useTabs.getState().openTab({ kind: "task", taskId: `task-${i}`, title: `P${i}` });
+      useTabs.getState().openTab({ kind: "terminal", sessionName: `s-${i}`, title: `P${i}` });
     }
     useTabs.getState().focusTab(active);
 
-    useTabs.getState().openTab({ kind: "task", taskId: "task-24", title: "P24" });
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "s-24", title: "P24" });
 
     const state = useTabs.getState();
     expect(state.tabs).toHaveLength(24);
