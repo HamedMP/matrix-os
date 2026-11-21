@@ -16,8 +16,10 @@ export function groupWebChats(items: readonly RenameableConversation[]): Record<
   return result;
 }
 
-export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, renderRow }: {
+export function WebChatLifecycleGroups({ conversations, projects, pinnedProjects, pinnedProjectCount = 0, attention, attentionCount = 0, scopeKey, renderRow }: {
   attentionCount?: number; scopeKey?: string;
+  /** Pinned project rows, listed in Pinned as on Electron Desktop. */
+  pinnedProjects?: ReactNode; pinnedProjectCount?: number;
   conversations: readonly RenameableConversation[]; projects?: ReactNode; attention?: ReactNode; renderRow(item: RenameableConversation): ReactNode;
 }) {
   const groups = groupWebChats(conversations);
@@ -25,9 +27,9 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
   let current = state;
   if (current.scopeKey !== scopeKey) { current = {scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}; setState(current); }
   const section = (key: GroupKey, label: string, extra?: ReactNode) => groups[key].length || extra || key !== "pinned" ? <ChatRailSection key={key} label={label}
-    count={groups[key].length + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
+    count={groups[key].length + (key === "needsYou" ? attentionCount : 0) + (key === "pinned" ? pinnedProjectCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
     onExpandedChange={expanded => setState(value => value.scopeKey === scopeKey ? {...value, expanded: {...value.expanded, [key]: expanded}} : value)}>
     {groups[key].map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
   </ChatRailSection> : null;
-  return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
+  return <>{section('pinned','Pinned',pinnedProjectCount > 0 ? pinnedProjects : undefined)}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
 }

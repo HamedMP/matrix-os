@@ -23,8 +23,8 @@ const itemClass = "flex cursor-default items-center gap-2 rounded-md px-3 py-2 t
 const itemColor = (danger?: boolean) => danger ? "var(--danger-text, var(--destructive))" : "var(--text-primary, var(--foreground))";
 const DEFAULT_BUTTON_CLASS = "flex size-7 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]";
 
-export function ProjectActionsMenu({ items, zIndex, children }: { items: ProjectMenuAction[]; zIndex: number; children: ReactNode }) {
-  return <ContextMenu.Root>
+export function ProjectActionsMenu({ items, zIndex, children, onOpenChange }: { items: ProjectMenuAction[]; zIndex: number; children: ReactNode; onOpenChange?(open: boolean): void }) {
+  return <ContextMenu.Root onOpenChange={onOpenChange}>
     <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
     <ContextMenu.Portal><ContextMenu.Content className={contentClass} style={contentStyle(zIndex)}>
       {items.map(item => <Fragment key={item.label}>

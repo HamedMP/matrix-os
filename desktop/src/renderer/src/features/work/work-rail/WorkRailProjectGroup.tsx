@@ -3,8 +3,8 @@ import { WorkRailOrderItem } from "./WorkRailOrderItem";
 import { useRef, useState } from "react";
 import { OverflowingChatTitle, useMinuteClock } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
-import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
-import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "@matrix-os/ui";
+import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, UsersIcon } from "lucide-react";
+import { ProjectActionsMenu, ProjectActionsButton, projectManagementMenuItems, type ProjectMenuAction } from "@matrix-os/ui";
 import { DESKTOP_Z_INDEX } from "../../../design/layering";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -76,13 +76,14 @@ export function WorkRailProjectGroup({
   const shownCount = Math.max(limit, group.chats.findIndex((record) => record.chat.id === activeChatId) + 1);
   const hiddenCount = group.chats.length - shownCount;
   const actions = useProjectActions(group.project);
-  const items: ProjectMenuAction[] = [
-    { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
-    { label: "Edit", icon: <Settings size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => actions.setDialog("edit") },
-    { label: "Show in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.showInFiles(); } },
-    ...projectShareMenuItems(group, sharing, onShareProject),
-    { label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true, disabled: actions.pending, onSelect: () => onDeleteProject(group.project) },
-  ];
+  const items: ProjectMenuAction[] = projectManagementMenuItems({
+    pinned: Boolean(group.project.pinned), available: actions.available, pending: actions.pending,
+    onTogglePin: () => { void actions.update({ pinned: !group.project.pinned }); },
+    onEdit: () => actions.setDialog("edit"),
+    onShowInFiles: () => { void actions.showInFiles(); },
+    share: projectShareMenuItems(group, sharing, onShareProject),
+    onDelete: () => onDeleteProject(group.project),
+  });
   return (
     <div>
       <ProjectActionsMenu items={items} zIndex={DESKTOP_Z_INDEX.popover}>

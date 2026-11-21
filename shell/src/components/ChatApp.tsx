@@ -504,6 +504,9 @@ function ChatAppContent({
   />;
 
   // Reorderable within its lifecycle group, in the main list and in a focused project alike.
+  const projectsNavProps = { state: webProjects, gatewayUrl: projectGatewayUrl, chats: visibleConversations, listedChatIds, activeChatId: sessionId,
+    activeChatTitle: activeConversationTitle, activeChatProjectId: chatProjectId, onSelectChat: onSwitchConversation, onFocusProject: openProjectHome,
+    onLeaveDeletedProject: () => startNewChat(), renderChat: renderConversationRow, mobile, unreadOnly, sourceFilter, searchQuery };
   const renderRailRow = (conv: ConversationMeta) => <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}>{renderConversationRow(conv)}</ChatRailOrderItem>;
 
   const suggestions = getMessageSuggestions(messages);
@@ -639,10 +642,8 @@ function ChatAppContent({
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
-              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
-                chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
-                onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
-                sourceFilter={sourceFilter} searchQuery={searchQuery}/>
+              pinnedProjects={<WebProjectsNav key={authorityKey ?? projectGatewayUrl} {...projectsNavProps} placement="pinned" />} pinnedProjectCount={mobile ? 0 : webProjects.projects.filter(project => project.pinned).length}
+              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} {...projectsNavProps} />
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={renderRailRow}/>

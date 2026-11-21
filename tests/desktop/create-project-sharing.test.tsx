@@ -16,8 +16,9 @@ const sharingState = vi.hoisted(() => ({
   lastEnabled: null as boolean | null,
 }));
 
-vi.mock("@matrix-os/ui", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@matrix-os/ui")>();
+// The shared ProjectSharingHost imports the hook from its module, so mock it there.
+vi.mock("../../packages/ui/src/collaboration/useProjectSharing", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/ui/src/collaboration/useProjectSharing")>();
   return {
     ...actual,
     useProjectSharing: (options: Record<string, unknown>) => {

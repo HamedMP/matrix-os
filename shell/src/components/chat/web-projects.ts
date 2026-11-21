@@ -12,6 +12,8 @@ export const WebProjectSchema = z.object({
   github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).optional().catch(undefined),
   // Lets the folder picker recognize a folder that is already connected.
   localPath: z.string().max(4096).optional().catch(undefined),
+  description: z.string().max(1_000).optional().catch(undefined),
+  pinned: z.boolean().optional().catch(undefined),
 });
 export const ProjectsResponseSchema = z.object({ projects: z.array(WebProjectSchema) });
 export type WebProject = z.infer<typeof WebProjectSchema>;

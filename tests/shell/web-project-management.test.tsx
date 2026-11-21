@@ -4,6 +4,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { WebProjectsNav } from "../../shell/src/components/chat/WebProjectsNav";
 import { useWebProjects, type WebProject } from "../../shell/src/components/chat/web-projects";
+import { WebProjectAgentContextNavigation } from "../../shell/src/components/chat/WebProjectAgentContext";
+import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
+import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
 
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "user_owner", sessionId: "session_owner" }) }));
 
@@ -27,10 +30,19 @@ function bodyOf(request: ReturnType<typeof gateway>, key: string): unknown {
   return call?.[1]?.body ? JSON.parse(String(call[1].body)) : undefined;
 }
 
-function Nav({ onFocusProject = vi.fn() }: { onFocusProject?: (project: WebProject) => void }) {
-  const state = useWebProjects(GATEWAY, "owner/main");
-  return <WebProjectsNav state={state} gatewayUrl={GATEWAY} chats={[]} listedChatIds={new Set()} onSelectChat={vi.fn()}
-    onFocusProject={onFocusProject} renderChat={() => null} />;
+function Nav({ onFocusProject = vi.fn(), gatewayUrl = GATEWAY, placement }: { onFocusProject?: (project: WebProject) => void; gatewayUrl?: string; placement?: "pinned" }) {
+  const state = useWebProjects(gatewayUrl, "owner/main");
+  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={[]} listedChatIds={new Set()} onSelectChat={vi.fn()}
+    onFocusProject={onFocusProject} renderChat={() => null} placement={placement} />;
+}
+
+async function openMenuItem(project: string, item: string) {
+  fireEvent.keyDown(await screen.findByRole("button", { name: `Actions for ${project}` }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+function listCalls(request: ReturnType<typeof gateway>) {
+  return request.mock.calls.filter(([url]) => url.includes("/api/workspace/projects")).length;
 }
 
 function listOf(...lists: unknown[][]): Route {
@@ -174,4 +186,81 @@ it("opens the existing project instead of connecting an already connected folder
   fireEvent.click(screen.getByRole("button", { name: "Open Website" }));
   await waitFor(() => expect(focus).toHaveBeenCalledWith(expect.objectContaining({ id: "proj_website" })));
   expect(request.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+});
+
+it("pins a project only after the gateway saves it, and lists it under Pinned", async () => {
+  let patch: Response = Response.json({ error: { code: "write_failed", message: "EACCES /home/matrix" } }, { status: 500 });
+  const request = gateway({
+    "GET /api/workspace/projects": listOf([france], [{ ...france, pinned: true }]),
+    "PATCH /api/projects/france": () => patch,
+  });
+  const view = render(<Nav />);
+  await openMenuItem("France", "Pin");
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "The project could not be updated. Try again.");
+  expect(screen.queryByText(/EACCES/)).toBeNull();
+  expect(listCalls(request)).toBe(1);
+
+  patch = Response.json({ project: { ...france, pinned: true } });
+  await openMenuItem("France", "Pin");
+  await waitFor(() => expect(listCalls(request)).toBe(2));
+  expect(bodyOf(request, "PATCH /api/projects/france")).toEqual({ pinned: true });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Expand France chats" })).toBeNull());
+  view.rerender(<Nav placement="pinned" />);
+  await openMenuItem("France", "Unpin");
+});
+
+it("edits the project name and description, keeping the dialog open on failure", async () => {
+  let patch: Response = Response.json({ error: { code: "write_failed" } }, { status: 500 });
+  const request = gateway({
+    "GET /api/workspace/projects": listOf([{ ...france, description: "Old" }], [{ ...france, name: "Paris" }]),
+    "PATCH /api/projects/france": () => patch,
+  });
+  render(<Nav />);
+  await openMenuItem("France", "Edit");
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Project name"), { target: { value: "Paris" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "The project could not be updated. Try again.");
+  expect(listCalls(request)).toBe(1);
+
+  patch = Response.json({ project: { ...france, name: "Paris" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(bodyOf(request, "PATCH /api/projects/france")).toEqual({ name: "Paris", description: "Old" });
+  expect(await screen.findByRole("button", { name: "Expand Paris chats" })).toBeTruthy();
+});
+
+it("shows the project folder in the built-in Files app", async () => {
+  const origin = window.location.origin;
+  gateway({
+    "GET /api/workspace/projects": listOf([france]),
+    "GET /api/projects/france/files-location": () => Response.json({ path: "projects/france" }),
+  });
+  const openFiles = vi.fn();
+  useFileBrowser.setState({ pendingView: null, pendingFolder: null });
+  render(<WebProjectAgentContextNavigation.Provider value={{ openFiles, openMcpSettings: vi.fn() }}>
+    <Nav gatewayUrl={origin} />
+  </WebProjectAgentContextNavigation.Provider>);
+  await openMenuItem("France", "Show in Files");
+  await waitFor(() => expect(openFiles).toHaveBeenCalledOnce());
+  expect(useFileBrowser.getState().pendingFolder).toMatchObject({ path: "projects/france" });
+  expect(useFileBrowser.getState().pendingView).toBe("files");
+});
+
+it("offers whole-project sharing to organization members", async () => {
+  gateway({
+    "GET /api/workspace/projects": listOf([france]),
+    "GET /api/system/info": () => Response.json({
+      runtime: { handle: "owner", runtimeSlot: "primary", machineId: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b" },
+      capabilities: { collaboration: true },
+    }),
+  });
+  const view = render(<OrganizationStateProvider value={{ status: "member", organizationId: "org_team" }}><Nav /></OrganizationStateProvider>);
+  fireEvent.keyDown(await screen.findByRole("button", { name: "Actions for France" }), { key: "Enter" });
+  expect(await screen.findByRole("menuitem", { name: "Share project" })).toBeTruthy();
+  view.unmount();
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><Nav /></OrganizationStateProvider>);
+  fireEvent.keyDown(await screen.findByRole("button", { name: "Actions for France" }), { key: "Enter" });
+  await screen.findByRole("menuitem", { name: "Edit" });
+  expect(screen.queryByRole("menuitem", { name: /Share/ })).toBeNull();
 });

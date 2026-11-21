@@ -392,3 +392,8 @@ export {
 } from "./projects/project-lifecycle-copy.js";
 export { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./projects/ProjectActionsMenu.js";
 export { ProjectDeleteConfirmation, type ProjectDeleteButtonProps } from "./projects/ProjectDeleteConfirmation.js";
+export {
+  PROJECT_UPDATE_FAILED, PROJECT_FOLDER_OPEN_FAILED, parseProjectFilesLocation, projectShareMenuItem, projectManagementMenuItems,
+} from "./projects/project-menu-items.js";
+export { ProjectEditForm, type ProjectEditButtonProps } from "./projects/ProjectEditForm.js";
+export { ProjectSharingHost, type ProjectSharingContext, type ProjectSharingHandle } from "./projects/ProjectSharingHost.js";

@@ -538,3 +538,33 @@ it("stops keeping older project chats at 1,000 rows", async () => {
   expect(result.current.hasMore).toBe(false);
   expect(request).toHaveBeenCalledTimes(10);
 });
+
+it("lists pinned projects under Pinned and leaves a deleted project's open chat", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const france = { id: "proj_france", slug: "france", name: "France", kind: "scratch", pinned: true };
+  let projects: unknown[] = [france];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/workspace/projects")) return Response.json({ projects, nextCursor: null });
+    if (url.includes("/api/projects/france/actions") && init?.method === "POST") { projects = []; return Response.json({ ok: true }); }
+    return Response.json({});
+  }));
+  const newChat = vi.fn();
+  const conversations = [{ id: "chat_france", title: "France: data lab", preview: "", messageCount: 1, updatedAt: 1,
+    canonicalRecord: { projectId: "proj_france", chat: { id: "chat_france", title: "France: data lab", revision: 1,
+      messageCount: 1, lifecycle: "active" as const, attention: "none" as const,
+      createdAt: "2026-10-27T00:00:00Z", updatedAt: "2026-10-27T00:00:00Z" } },
+  }];
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected conversations={conversations}
+    sessionId="chat_france" chatProjectId="proj_france" onNewChat={newChat} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" /></OrganizationStateProvider>);
+  const pinned = await screen.findByRole("region", { name: "Pinned" });
+  expect(await within(pinned).findByRole("button", { name: "Expand France chats" })).toBeTruthy();
+  expect(within(screen.getByRole("navigation", { name: "Projects" })).queryByRole("button", { name: "Expand France chats" })).toBeNull();
+
+  fireEvent.keyDown(within(pinned).getByRole("button", { name: "Actions for France" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete project" }));
+  const dialog = await screen.findByRole("alertdialog");
+  fireEvent.change(within(dialog).getByLabelText("Type France to confirm"), { target: { value: "France" } });
+  newChat.mockClear();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete project" }));
+  await waitFor(() => expect(newChat).toHaveBeenCalled());
+});

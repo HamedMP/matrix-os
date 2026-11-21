@@ -1,9 +1,10 @@
 import {
   ProjectSharingButton,
-  useProjectSharing,
+  ProjectSharingHost,
   type CollaborationDirectApi,
+  type ProjectSharingHandle,
 } from "@matrix-os/ui";
-import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
+import { useMemo, type Ref } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { DesktopCollaborationOrganization, useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
@@ -48,15 +49,13 @@ export function useDesktopProjectSharingContext(enabled = true): DesktopProjectS
   );
 }
 
-export interface DesktopProjectSharingHandle {
-  start(): void;
-}
+export type DesktopProjectSharingHandle = ProjectSharingHandle;
 
 /**
  * Keeps the project sharing dialogs mounted outside transient project menus
  * and outside the creation dialog that closes after a successful create.
  */
-export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName, startOnMount = false, onClose }: {
+export function DesktopProjectSharingHost(props: {
   ref?: Ref<DesktopProjectSharingHandle>;
   sharing: DesktopProjectSharingContext;
   projectId: string;
@@ -64,24 +63,5 @@ export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName
   startOnMount?: boolean;
   onClose?: () => void;
 }) {
-  const flow = useProjectSharing({
-    api: sharing.api,
-    runtimeId: sharing.runtimeId,
-    organizationId: sharing.organizationId,
-    projectId,
-    projectName,
-    layers: PROJECT_SHARING_LAYERS,
-    onClose,
-  });
-  useImperativeHandle(ref, () => ({ start: flow.start }));
-  const startedOnMount = useRef(false);
-  useEffect(() => {
-    if (!startOnMount || startedOnMount.current) return;
-    startedOnMount.current = true;
-    flow.start();
-  }, [flow, startOnMount]);
-  return <>
-    {flow.error ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger-text)" }}>{flow.errorMessage}</p> : null}
-    {flow.dialogs}
-  </>;
+  return <ProjectSharingHost {...props} layers={PROJECT_SHARING_LAYERS} />;
 }

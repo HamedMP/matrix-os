@@ -3,7 +3,7 @@
 // reaches the UI; raw gateway messages and transport errors stay in logs.
 import {
   CLONE_FAILED_COPY, COMPUTER_UNREACHABLE_COPY, FOLDER_CONFLICT_COPY, PROJECT_ACTIONS_UNAVAILABLE, SESSION_EXPIRED_COPY,
-  cloneErrorMessage, projectLifecycleErrorMessage, projectLifecyclePath, type AddProjectOutcome,
+  cloneErrorMessage, parseProjectFilesLocation, projectLifecycleErrorMessage, projectLifecyclePath, type AddProjectOutcome,
 } from "@matrix-os/ui";
 import { z } from "zod/v4";
 import { ProjectsResponseSchema, WebProjectSchema, type WebProject } from "./web-projects";
@@ -16,6 +16,7 @@ const LIST_TIMEOUT_MS = 10_000;
 const SAFE_CODE = /^[a-z][a-z0-9_]{2,48}$/;
 const ProjectBody = z.object({ project: WebProjectSchema });
 const FolderBody = z.object({ path: z.string().min(1).max(4096) });
+const FilesLocationBody = z.object({ path: z.unknown() });
 
 type Failure = { kind: "http"; status: number; code: string | null } | { kind: "timeout" } | { kind: "offline" };
 type Result = { ok: true; body: unknown } | { ok: false; failure: Failure };
@@ -39,13 +40,12 @@ async function errorCode(response: Response): Promise<string | null> {
   }
 }
 
-async function send(gatewayUrl: string, path: string, body: unknown, timeoutMs: number): Promise<Result> {
+async function send(gatewayUrl: string, path: string, body: unknown, timeoutMs: number, method: "POST" | "PATCH" | "GET" = "POST"): Promise<Result> {
   let response: Response;
   try {
     response = await fetch(`${gatewayUrl}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      method,
+      ...(method === "GET" ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
       redirect: "error",
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -86,6 +86,10 @@ export interface WebProjectClient {
   cloneProject(input: { url: string; name: string; displayName: string; description?: string; branch?: string; clientRequestId: string }): Promise<AddProjectOutcome<WebProject>>;
   createFolder(input: { name: string; parent: string; clientRequestId: string }): Promise<AddProjectOutcome<string>>;
   deleteProject(slug: string, confirmation: string): Promise<{ ok: true } | { ok: false; message: string }>;
+  /** Resolves the saved project, or null; the caller shows fixed copy. */
+  updateProject(slug: string, patch: { name?: string; description?: string; pinned?: boolean }): Promise<WebProject | null>;
+  /** The project folder relative to Matrix home, or null. */
+  filesLocation(slug: string): Promise<string | null>;
 }
 
 export function createWebProjectClient(gatewayUrl: string): WebProjectClient {
@@ -148,6 +152,14 @@ export function createWebProjectClient(gatewayUrl: string): WebProjectClient {
       if (failure.status === 401 || failure.status === 403) return { ok: false, message: CATEGORY_COPY.unauthorized };
       if (failure.status === 404 && !failure.code) return { ok: false, message: PROJECT_ACTIONS_UNAVAILABLE };
       return { ok: false, message: CATEGORY_COPY.server };
+    },
+    async updateProject(slug, patch) {
+      const project = parsed(await send(gatewayUrl, `/api/projects/${encodeURIComponent(slug)}`, patch, REQUEST_TIMEOUT_MS, "PATCH"), ProjectBody)?.project;
+      return project && project.slug === slug ? project : null;
+    },
+    async filesLocation(slug) {
+      const body = parsed(await send(gatewayUrl, `/api/projects/${encodeURIComponent(slug)}/files-location`, undefined, LIST_TIMEOUT_MS, "GET"), FilesLocationBody);
+      return parseProjectFilesLocation(body?.path);
     },
   };
 }

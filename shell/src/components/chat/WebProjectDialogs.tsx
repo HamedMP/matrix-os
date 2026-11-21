@@ -3,8 +3,8 @@
 // Web Desktop and Web Canvas chrome for the shared add-project and
 // delete-project flows. Behavior, copy, and validation come from @matrix-os/ui.
 import {
-  AddProjectForm, ProjectDeleteConfirmation,
-  type AddProjectButtonProps, type AddProjectSubmitContext, type ProjectDeleteButtonProps,
+  AddProjectForm, ProjectDeleteConfirmation, ProjectEditForm,
+  type AddProjectButtonProps, type AddProjectSubmitContext, type ProjectDeleteButtonProps, type ProjectEditButtonProps, type ProjectShareAvailability,
 } from "@matrix-os/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -22,17 +22,24 @@ function AddProjectButton({ variant, disabled, onClick, children }: AddProjectBu
   return <Button type="button" size="sm" variant={variant === "primary" ? "default" : "secondary"} disabled={disabled} onClick={onClick}>{children}</Button>;
 }
 
+function EditProjectButton({ variant, type, disabled, onClick, children }: ProjectEditButtonProps) {
+  return <Button type={type} size="sm" variant={variant === "primary" ? "default" : "secondary"} disabled={disabled} onClick={onClick}>{children}</Button>;
+}
+
 function DeleteProjectButton({ variant, disabled, onClick, children }: ProjectDeleteButtonProps) {
   return <Button type="button" size="sm" variant={variant === "danger" ? "destructive" : "ghost"} disabled={disabled} onClick={onClick}>{children}</Button>;
 }
 
 // Mounted once per open, so the refreshed project list never outlives it.
-function WebAddProjectForm({ gatewayUrl, scope, projects, onClose, onProjectAdded }: {
-  gatewayUrl: string; scope: string; projects: readonly WebProject[]; onClose(): void; onProjectAdded(project: WebProject): void;
-}) {
+type AddProjectDialogProps = {
+  gatewayUrl: string; scope: string; projects: readonly WebProject[]; shareAvailability: ProjectShareAvailability;
+  onClose(): void; onProjectAdded(project: WebProject): void; onShareCreated(project: WebProject): void;
+};
+
+function WebAddProjectForm({ gatewayUrl, scope, projects, shareAvailability, onClose, onProjectAdded, onShareCreated }: AddProjectDialogProps) {
   const client = useMemo(() => createWebProjectClient(gatewayUrl), [gatewayUrl]);
   const refreshed = useRef<WebProject[] | null>(null);
-  const createContext = (base: Pick<AddProjectSubmitContext<WebProject>, "isCurrent" | "setError" | "close">): AddProjectSubmitContext<WebProject> => ({
+  const createContext = ({ shareRequested, ...base }: Pick<AddProjectSubmitContext<WebProject>, "isCurrent" | "setError" | "close"> & { shareRequested: boolean }): AddProjectSubmitContext<WebProject> => ({
     getProjects: () => refreshed.current ?? projects,
     createProject: client.createProject,
     cloneProject: client.cloneProject,
@@ -48,16 +55,17 @@ function WebAddProjectForm({ gatewayUrl, scope, projects, onClose, onProjectAdde
     isCurrent: base.isCurrent,
     setError: base.setError,
     close: base.close,
+    // The sharing flow mounts outside this dialog, which closes after a successful create.
+    ...(shareRequested ? { onCreatedProject: onShareCreated } : {}),
   });
   return <WebFolderPickerGateway.Provider value={gatewayUrl}>
     <AddProjectForm scope={scope} projects={projects} Button={AddProjectButton} FolderPicker={WebProjectFolderPicker}
-      createContext={createContext} toErrorMessage={() => UNEXPECTED_FAILURE} onClose={onClose} folderRequestPrefix="req_web_folder_" />
+      createContext={createContext} toErrorMessage={() => UNEXPECTED_FAILURE} onClose={onClose} shareAvailability={shareAvailability}
+      folderRequestPrefix="req_web_folder_" />
   </WebFolderPickerGateway.Provider>;
 }
 
-export function WebAddProjectDialog({ open, ...props }: {
-  open: boolean; gatewayUrl: string; scope: string; projects: readonly WebProject[]; onClose(): void; onProjectAdded(project: WebProject): void;
-}) {
+export function WebAddProjectDialog({ open, ...props }: AddProjectDialogProps & { open: boolean }) {
   return <Dialog open={open} onOpenChange={next => { if (!next) props.onClose(); }}>
     <DialogContent showCloseButton={false} aria-describedby={undefined} className="gap-0 overflow-hidden p-0 sm:max-w-[480px]" {...dialogLayer}>
       <DialogTitle className="sr-only">Create a project</DialogTitle>
@@ -119,6 +127,18 @@ export function WebProjectDeleteDialog({ project, gatewayUrl, onClose, onDeleted
       <DialogTitle className="sr-only">Delete project permanently?</DialogTitle>
       {project ? <WebProjectDeleteBody key={`${gatewayUrl}\n${project.id}`} project={project} gatewayUrl={gatewayUrl}
         onClose={onClose} onDeleted={onDeleted} onPendingChange={value => { pending.current = value; }} /> : null}
+    </DialogContent>
+  </Dialog>;
+}
+
+/** Saves only after the gateway confirms; a failure keeps the dialog and the typed values. */
+export function WebProjectEditDialog({ project, pending, error, onClose, onSave }: {
+  project: WebProject; pending: boolean; error: string | null; onClose(): void; onSave(patch: { name: string; description: string }): Promise<boolean>;
+}) {
+  return <Dialog open onOpenChange={next => { if (!next && !pending) onClose(); }}>
+    <DialogContent aria-describedby={undefined} showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-[440px]" {...dialogLayer}>
+      <DialogTitle className="sr-only">Edit project</DialogTitle>
+      <ProjectEditForm project={project} pending={pending} error={error} Button={EditProjectButton} onClose={onClose} onSave={onSave} />
     </DialogContent>
   </Dialog>;
 }
