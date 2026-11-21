@@ -157,6 +157,31 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it.each(["missing", "unavailable"])("keeps all older-Gateway fallback chats reachable with independent paging when navigation pages are %s", async availability => {
+    const done = Array.from({ length: 37 }, (_, index) => record(`chat_legacy_done_${index}`, `Legacy done ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z" }));
+    const working = Array.from({ length: 13 }, (_, index) => record(`chat_legacy_working_${index}`, `Legacy working ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z", activeRunStatus: "running" }));
+    const client = {
+      list: vi.fn(async () => ({ items: [...done, ...working] })),
+      ...(availability === "unavailable" ? { navigationPage: vi.fn(async () => { throw new Error("Synthetic older Gateway endpoint unavailable"); }) } : {}),
+    } as unknown as CanonicalChatClient;
+    renderRail(client);
+    await screen.findByRole("button", { name: "Legacy done 0", exact: true });
+    const doneSection = screen.getByRole("button", { name: "Done", exact: true }).closest("section")!;
+    const workingSection = screen.getByRole("button", { name: "Working", exact: true }).closest("section")!;
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(10);
+    const more = within(doneSection).getByRole("button", { name: "Show more Done chats" }) as HTMLButtonElement;
+    await waitFor(() => expect(more.disabled).toBe(false));
+    fireEvent.click(more);
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(30);
+    expect(within(workingSection).getAllByRole("button", { name: /^Legacy working / })).toHaveLength(10);
+    fireEvent.click(within(doneSection).getByRole("button", { name: "Show more Done chats" }));
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(37);
+    expect(within(doneSection).queryByRole("button", { name: "Show more Done chats" })).toBeNull();
+    fireEvent.click(within(workingSection).getByRole("button", { name: "Show more Working chats" }));
+    expect(within(workingSection).getAllByRole("button", { name: /^Legacy working / })).toHaveLength(13);
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(37);
+  });
+
   it("displays ordinary Chats as one identity cohort despite out-of-order results and rerenders", async () => {
     const slow=record("chat_slow", "Slow fixture", {updatedAt:"2026-08-28T09:00:00.000Z"});
     let finish!: (value:string|null)=>void;

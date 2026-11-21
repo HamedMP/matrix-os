@@ -2,7 +2,7 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, CanonicalSideChatTurnRequest, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
 import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
@@ -117,6 +117,34 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it.each([null, "Revised question"])("uses the saved Side chat request identity on retry unless the draft changes to %s", async revisedDraft => {
+    const client = {
+      getSideChat: vi.fn(async () => ({ threadId: "side_fixture", messages: [] })),
+      createSideChat: vi.fn(),
+      askSideChat: vi.fn<(chatId: string, input: CanonicalSideChatTurnRequest) => Promise<CanonicalSideChatSnapshot>>().mockRejectedValueOnce(new Error("Synthetic lost response")).mockResolvedValue({ threadId: "side_fixture", messages: [] }),
+    };
+    render(<SideChatPanel chatId="chat_retry_identity" client={client} onSendToMain={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    const send = screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement;
+    fireEvent.change(input, { target: { value: "Original question" } });
+    await waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    await screen.findByRole("alert");
+    expect(input.value).toBe("Original question");
+    const originalId = client.askSideChat.mock.calls[0]![1].clientRequestId;
+    if (revisedDraft) fireEvent.change(input, { target: { value: revisedDraft } });
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledTimes(2));
+    const retryId = client.askSideChat.mock.calls[1]![1].clientRequestId;
+    if (revisedDraft) expect(retryId).not.toBe(originalId);
+    else expect(retryId).toBe(originalId);
+    await waitFor(() => expect(input.value).toBe(""));
+    fireEvent.change(input, { target: { value: revisedDraft ?? "Original question" } });
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledTimes(3));
+    expect(client.askSideChat.mock.calls[2]![1].clientRequestId).not.toBe(retryId);
+  });
+
   it.each(["Next question", "First question"])("preserves the edited Side chat draft %s when an earlier answer completes", async nextDraft => {
     let answer!: (value: CanonicalSideChatSnapshot) => void;
     const client = {
