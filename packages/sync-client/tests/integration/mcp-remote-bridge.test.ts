@@ -18,7 +18,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod/v4";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loginRemoteMcp, loadRemoteMcpTokens, remoteMcpTokenPath, saveRemoteMcpTokens } from "../../src/mcp/remote-oauth.js";
-import { runRemoteMcpBridge } from "../../src/mcp/remote-bridge.js";
+import { MAX_PENDING_MESSAGES, runRemoteMcpBridge } from "../../src/mcp/remote-bridge.js";
 
 interface FakePlatform {
   base: string;
@@ -275,6 +275,38 @@ describe("matrix mcp bridge over Matrix OAuth", () => {
     await expect(bridge).rejects.toThrow("restart the bridge");
     expect(platform.mcpBearers.slice(startedBearers)).not.toContain("other-bearer");
     expect(platform.tokenRequests.filter(form => form.get("grant_type") === "refresh_token")).toHaveLength(0);
+  });
+
+  it("stops reading stdin while too many requests are waiting, then delivers every reply", async () => {
+    // Fault: a fast client started one upstream request per message with no cap on pending work.
+    await loginRemoteMcp({ resource: platform.resource, profileName: "cloud", configDir, openBrowser: browser });
+    let waiting = 0;
+    let peak = 0;
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const gated: typeof fetch = async (input, init) => {
+      if (init?.method !== "POST" || !String(input).endsWith("/mcp")) return fetch(input, init);
+      peak = Math.max(peak, ++waiting);
+      await released;
+      waiting -= 1;
+      return fetch(input, init);
+    };
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const next = lines(stdout);
+    const bridge = runRemoteMcpBridge({ profileName: "cloud", configDir, stdin, stdout, fetch: gated });
+    const total = MAX_PENDING_MESSAGES * 4;
+    for (let id = 1; id <= total; id += 1) stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" })}\n`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(peak).toBeGreaterThan(0);
+    expect(peak).toBeLessThanOrEqual(MAX_PENDING_MESSAGES);
+    release();
+    const ids = new Set<unknown>();
+    for (let count = 0; count < total; count += 1) ids.add((await next()).id);
+    expect(ids.size).toBe(total);
+    expect(peak).toBeLessThanOrEqual(MAX_PENDING_MESSAGES);
+    stdin.end();
+    await bridge;
   });
 
   it("tells the person to log in when the profile has no /mcp token", async () => {

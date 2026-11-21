@@ -17,6 +17,13 @@ const REQUEST_TIMEOUT_MS = 60_000;
 /** Hosted Core results are capped at 1 MiB plus a JSON-RPC envelope. */
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Cap on work held in memory: upstream requests in flight plus replies stdout
+ * has not accepted yet. At the cap the bridge stops reading stdin, so a fast
+ * client or a slow reader waits instead of growing the process.
+ */
+export const MAX_PENDING_MESSAGES = 32;
+
 export class BridgeFrameError extends Error {
   constructor() {
     super("Matrix MCP bridge frame exceeds the size limit");
@@ -95,19 +102,28 @@ export async function runRemoteMcpBridge(options: {
       settled = true;
       void Promise.allSettled([remote.close(), stdio.close()]).then(() => error ? reject(error) : resolve());
     };
+    let pending = 0;
+    /** Counts one unit of pending work and pauses stdin while the bridge is at its cap. */
+    const held = <T>(work: Promise<T>): Promise<T> => {
+      pending += 1;
+      if (pending >= MAX_PENDING_MESSAGES) input.pause();
+      const done = () => { pending -= 1; if (pending < MAX_PENDING_MESSAGES && !settled) input.resume(); };
+      work.then(done, done);
+      return work;
+    };
     input.once("error", error => finish(error));
     input.once("end", () => finish());
-    remote.onmessage = message => { void stdio.send(message).catch(finish); };
+    remote.onmessage = message => { void held(stdio.send(message)).catch(finish); };
     remote.onerror = error => console.error("Matrix MCP bridge request failed.", error instanceof Error ? error.name : "UnknownError");
     stdio.onerror = error => finish(error);
     stdio.onmessage = message => {
-      void remote.send(message).catch((error: unknown) => {
+      void held(remote.send(message)).catch((error: unknown) => {
         // Never echo upstream or OAuth detail into the protocol stream.
         console.error("Matrix MCP bridge request failed.", error instanceof Error ? error.name : "UnknownError");
         const id = requestId(message);
         const changed = error instanceof RemoteMcpAuthError && error.code === "profile_changed";
-        const reply = id === undefined ? Promise.resolve() : stdio.send({ jsonrpc: "2.0", id, error: { code: -32603,
-          message: changed ? "Matrix MCP profile login changed; restart the bridge." : "Matrix MCP is unavailable. Run `matrix mcp login` if this persists." } });
+        const reply = id === undefined ? Promise.resolve() : held(stdio.send({ jsonrpc: "2.0", id, error: { code: -32603,
+          message: changed ? "Matrix MCP profile login changed; restart the bridge." : "Matrix MCP is unavailable. Run `matrix mcp login` if this persists." } }));
         // This process is bound to its starting login; a different saved login ends the bridge.
         void reply.then(() => { if (changed) finish(error); }, finish);
       });
