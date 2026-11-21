@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -194,6 +194,53 @@ describe("held-pane exits across workspaces", () => {
     });
     expect(recorded).toEqual([{ tabId: "plain", exitCode: 0 }]);
     expect(result).toEqual({ sessions: 1, exited: 1 });
+  });
+});
+
+// Fault detected (spec 2706): every `zellij action list-panes` makes Zellij redraw
+// the whole screen for every attached client. The sweep asked every 2 s even for
+// workspaces holding only shells, whose exit closes the pane and needs no sweep,
+// so idle Matrix tabs received a full repaint every 2 s.
+describe("held-pane sweep only where a program can be held", () => {
+  it("does not ask zellij about a workspace that holds only shell tabs", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-held-pane-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new HeldPaneZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "app" });
+    await runtime.createTab(workspace.id, { name: "shell", cwd: "" });
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(0);
+
+    const command = await runtime.createTab(workspace.id, { name: "tests", cwd: "", command: ["bun", "test"] });
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(1);
+
+    const session = (await store.getRuntimeWorkspace(workspace.id))!.zellijSessionName;
+    const held = (await store.getRuntimeWorkspace(workspace.id))!.tabs[command.id]!;
+    zellij.exits.set(session, [{ tabId: held.zellijTabId!, paneId: held.zellijPaneId!, exitCode: 0 }]);
+    await runtime.sweepHeldPaneExits();
+    // The command finished: only the shell is live again, so the workspace is left alone.
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(2);
+  });
+
+  it("keeps asking for tabs from older state, which may run a command", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-held-pane-"));
+    homes.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new HeldPaneZellij();
+    const runtime = new TerminalRuntime({ store, zellij });
+    const workspace = await runtime.ensureWorkspace({ projectId: "app" });
+    const tab = await runtime.createTab(workspace.id, { name: "older", cwd: "" });
+    // State written before tabs recorded whether they run a command.
+    const statePath = join(homePath, "system", "terminal-workspaces.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    delete state.workspaces[workspace.id].tabs[tab.id].heldOnExit;
+    await writeFile(statePath, JSON.stringify(state));
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(1);
   });
 });
 

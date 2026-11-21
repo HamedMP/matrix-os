@@ -13,6 +13,8 @@ interface SweepTab {
   zellijPaneId: string | null;
   /** Set when the pane runs the native-host attach helper rather than the program. */
   nativeHost?: unknown;
+  /** False for a shell pane, whose exit closes it; absent in older state. */
+  heldOnExit?: boolean;
 }
 
 /**
@@ -39,7 +41,9 @@ export async function sweepHeldPaneExits(input: {
     const live = Object.entries(workspace.tabs).filter(([, tab]) =>
       !tab.nativeHost && tab.status !== "exited" && tab.status !== "failed"
       && tab.zellijTabId !== null && tab.zellijPaneId !== null);
-    if (live.length === 0) continue;
+    // Each `list-panes` makes Zellij redraw every attached client, so a workspace
+    // whose live tabs are all shells (their exit closes the pane) is not asked.
+    if (!live.some(([, tab]) => tab.heldOnExit !== false)) continue;
     result.sessions += 1;
     try {
       const exits = await input.listHeldPaneExits(workspace.zellijSessionName);
