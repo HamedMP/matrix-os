@@ -189,7 +189,9 @@ it("continues search history past 500 results while retaining a bounded visible 
  const api={list:vi.fn(async()=>{const start=page++*50;return{items:Array.from({length:50},(_,i)=>({chat:{id:`chat_${start+i}`,title:`Archive ${start+i}`,revision:1,lifecycle:"archived",updatedAt:"2026-11-17T00:00:00Z",createdAt:"2026-11-17T00:00:00Z"}})),nextCursor:`cursor_${page}`};}),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
  render(<WebChatSearchDialog client={api as never} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
  fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));await screen.findByText("Archive 49");
- for(let i=1;i<=10;i++){fireEvent.click(screen.getByRole("button",{name:"Show more"}));await screen.findByText(`Archive ${i*50+49}`);}
+ // Reuse the live control instead of rescanning the growing result tree on every page.
+ const showMore=screen.getByRole("button",{name:"Show more"});
+ for(let i=1;i<=10;i++){fireEvent.click(showMore);await screen.findByText(`Archive ${i*50+49}`);}
  expect(api.list).toHaveBeenCalledTimes(11);expect(screen.queryByText("Archive 0")).toBeNull();
  expect(screen.getAllByRole("option")).toHaveLength(500);
 },60000);
