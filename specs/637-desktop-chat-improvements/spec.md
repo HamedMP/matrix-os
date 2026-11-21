@@ -52,3 +52,7 @@ The chat routes mount inside the authenticated Gateway app; navigation paging us
 - Publish the separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/`, covering archive, search, and Side chat instructions: [site PR #354](https://github.com/FinnaAI/matrix-os-site/pull/354).
 - Validate the approved local runtime in Electron and Web Desktop at normal and narrow widths in light and dark themes. Attach distinct captures for both surfaces to every existing PR, with exact commit/build and fixture limitations. Per requester instruction, prepare the review message here for the requester to copy; send nothing to Slack.
 - CI and Greptile must pass before merge. Product/design/engineering owners should review the substantial behavior and visual changes.
+
+### Native stack CI reconciliation
+
+CI consumes main’s shared immutable review-base output. Before the PR Size scanner runs, the stack guard independently verifies the live PR head and parent, the checked-out head, and exact equality with that shared review base. Missing, stale or inconsistent metadata fails closed. Real-Git process tests retain individual-layer sizing, standalone sizing, oversized-layer rejection and API failures, plus a regression for disagreement between the shared output and live parent. This preserves main’s CI producer/consumer contract and the stricter stack-layer guard together.

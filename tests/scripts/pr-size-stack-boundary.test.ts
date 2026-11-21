@@ -7,7 +7,7 @@ import { parse } from "yaml";
 
 const job = parse(readFileSync(".github/workflows/ci.yml", "utf8")).jobs["pr-size"];
 
-function runLayerGate(parentFiles: number, childFiles: number, corrupt?: "head" | "base" | "api") {
+function runLayerGate(parentFiles: number, childFiles: number, corrupt?: "head" | "base" | "api" | "review-base") {
   const root = mkdtempSync(join(tmpdir(), "matrix-pr-layer-size-"));
   try {
     const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: "pipe", timeout: 10_000 }).trim();
@@ -49,6 +49,7 @@ function runLayerGate(parentFiles: number, childFiles: number, corrupt?: "head" 
       const text = String(value);
       if (text.includes("github.event.pull_request.head.sha")) return head;
       if (text.includes("needs.changes.outputs.source_sha")) return integration;
+      if (text.includes("needs.changes.outputs.review_base_sha")) return corrupt === "review-base" ? trunk : parent;
       if (text.includes("github.event.pull_request.number")) return "7";
       if (text.includes("github.base_ref")) return "main";
       if (text.includes("github.token")) return "fixture-no-authority";
@@ -88,4 +89,8 @@ it("still rejects a layer that independently exceeds 50 files", () => {
 
 it.each(["head", "base", "api"] as const)("fails closed when the live PR %s cannot be verified", corrupt => {
   expect(runLayerGate(0, 2, corrupt).status).not.toBe(0);
+});
+
+it("rejects a shared review base that differs from the independently verified live parent", () => {
+  expect(runLayerGate(2, 1, "review-base").status).not.toBe(0);
 });

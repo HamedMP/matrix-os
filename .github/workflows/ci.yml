@@ -340,12 +340,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_BASE_SHA: ${{ needs.changes.outputs.review_base_sha }}
         run: node scripts/ci/pr-size-base.mjs
 
       - name: Enforce the 50-file / 3000-addition PR limit
         env:
-          BASE_SHA: ${{ steps.layer-base.outputs.base_sha }}
-        run: node scripts/review/check-added-patterns.mjs --base "$BASE_SHA" --only pr-size
+          REVIEW_BASE_SHA: ${{ needs.changes.outputs.review_base_sha }}
+        run: node scripts/review/check-added-patterns.mjs --base "$REVIEW_BASE_SHA" --only pr-size
 
   react-doctor:
     name: React Doctor
