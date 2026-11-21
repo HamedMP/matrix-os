@@ -5,16 +5,18 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
-import { createCodexCredentialFileProofReader } from "../../packages/gateway/src/ai-providers/codex-credential-file-proof.js";
+import { codexNativeGenerationSource, createCodexCredentialFileEvidenceReader } from "../../packages/gateway/src/ai-providers/codex-credential-file-proof.js";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
-async function fixture(account: unknown, modelProvider: string, resume = false, options: { unexpectedOutputClose?: boolean; file?: boolean; replaceAfterThread?: boolean; nextAccount?: unknown; configuredProvider?: string; revokeAt?: "before-spawn" | "after-thread"; revokeKind?: "off" | "reconnected" | "uncertain" | "route" | "model" | "presentation"; threadDeleteFails?: boolean } = {}) {
+async function fixture(account: unknown, modelProvider: string, resume = false, options: { unexpectedOutputClose?: boolean; file?: boolean; replaceAfterThread?: boolean; credentialAccountId?: string; refreshAfterThread?: string; nextAccount?: unknown; configuredProvider?: string; revokeAt?: "before-spawn" | "after-thread"; revokeKind?: "off" | "reconnected" | "uncertain" | "route" | "model" | "presentation"; threadDeleteFails?: boolean } = {}) {
   const dir = await mkdtemp("/tmp/codex-native-runner-"); dirs.push(dir);
   const trace = join(dir, "trace.jsonl");
-  if (options.file) { await mkdir(join(dir, ".codex"), { mode: 0o700 }); await writeFile(join(dir, ".codex/auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "fixture-access", refresh_token: "fixture-refresh" } }), { mode: 0o600 }); }
-  const credentialProof = options.file ? await createCodexCredentialFileProofReader({ homePath: dir })() : null;
-  const expectedPrincipalFingerprint = createHash("sha256").update(JSON.stringify({principal:{type:"chatgpt",email:"owner@example.test",id:"account-a"},...(credentialProof ? {credentialProof} : {})})).digest("hex");
+  const accountTokens = (access: string, accountId?: string) => ({ access_token: access, refresh_token: `${access}-refresh`, ...(accountId ? { account_id: accountId } : {}) });
+  if (options.file) { await mkdir(join(dir, ".codex"), { mode: 0o700 }); await writeFile(join(dir, ".codex/auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: accountTokens("fixture-access", options.credentialAccountId) }), { mode: 0o600 }); }
+  const evidence = options.file ? await createCodexCredentialFileEvidenceReader({ homePath: dir })() : null;
+  const expectedPrincipalFingerprint = createHash("sha256").update(codexNativeGenerationSource({ principal: { type: "chatgpt", email: "owner@example.test", id: "account-a" },
+    credentialProof: evidence?.proof ?? null, credentialIdentity: evidence?.identity ?? null })).digest("hex");
   const settingsPath = join(dir, "system/ai-providers/settings.json");
   const markerPath = join(dir, "system/ai-providers/codex-execution-revocation.json");
   const row = { id: "codex_owner_openai_profile", harness: "codex", enabled: true,
@@ -52,7 +54,7 @@ for await (const line of createInterface({input:process.stdin})) {
  if(m.method==='initialize') send({});
  else if(m.method==='config/read') send({config:{model_provider:${JSON.stringify(options.configuredProvider ?? "openai")},openai_base_url:"",chatgpt_base_url:"https://chatgpt.com/backend-api/",cli_auth_credentials_store:${JSON.stringify(options.file ? "file" : "keyring")}}});
  else if(m.method==='account/read') send({account:++accountReads > 1 ? ${JSON.stringify(options.nextAccount ?? account)} : ${JSON.stringify(account)}});
- else if(m.method==='thread/start'||m.method==='thread/resume') { ${options.revokeAt === 'after-thread' ? revokeScript : ''} if (${!!options.replaceAfterThread}) writeFileSync(${JSON.stringify(join(dir, '.codex/auth.json'))}, JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'replacement',refresh_token:'replacement'}})); send({thread:{id:m.params.threadId ?? 'native-thread'},modelProvider:${JSON.stringify(modelProvider)}}); }
+ else if(m.method==='thread/start'||m.method==='thread/resume') { ${options.revokeAt === 'after-thread' ? revokeScript : ''} if (${JSON.stringify(options.refreshAfterThread ?? "")}) writeFileSync(${JSON.stringify(join(dir, '.codex/auth.json'))}, JSON.stringify({auth_mode:'chatgpt',last_refresh:'later',tokens:${JSON.stringify(accountTokens("refreshed-access", options.refreshAfterThread))}})); if (${!!options.replaceAfterThread}) writeFileSync(${JSON.stringify(join(dir, '.codex/auth.json'))}, JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'replacement',refresh_token:'replacement'}})); send({thread:{id:m.params.threadId ?? 'native-thread'},modelProvider:${JSON.stringify(modelProvider)}}); }
  else if(m.method==='thread/delete') { if (${!!options.threadDeleteFails}) console.log(JSON.stringify({id:m.id,error:{code:-32603,message:'synthetic delete failure'}})); else send({}); }
  else if(m.method==='turn/start') { send({turn:{id:'turn-1'}}); console.log(JSON.stringify({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed',items:[]}}})); if (${!!options.unexpectedOutputClose}) process.stdout.end(); }
 }
@@ -176,6 +178,12 @@ it("rejects a principal switch between thread creation and the first turn", asyn
 it.each([false, true])("rechecks protected file generation before the first turn (replaced=%s)", async replaceAfterThread => {
   const { code, messages, diagnostics } = await fixture({ type: "chatgpt", email: "owner@example.test", id: "account-a" }, "openai", false, { file: true, replaceAfterThread });
   expect(code === 0, diagnostics).toBe(!replaceAfterThread); expect(messages.some(m => m.method === "turn/start")).toBe(!replaceAfterThread);
+});
+// ENG-523: Codex rewrites auth.json when it refreshes tokens; the account is unchanged.
+it.each([["account-file-a", true], ["account-file-b", false]] as const)("admits a token refresh of the same credential account before the first turn (%s)", async (refreshedAccount, admitted) => {
+  const { code, messages, diagnostics } = await fixture({ type: "chatgpt", email: "owner@example.test", id: "account-a" }, "openai", false,
+    { file: true, credentialAccountId: "account-file-a", refreshAfterThread: refreshedAccount });
+  expect(code === 0, diagnostics).toBe(admitted); expect(messages.some(m => m.method === "turn/start")).toBe(admitted);
 });
 it("rejects effective managed provider override before inference", async () => {
   const result = await fixture(ACCOUNT_A, "openai", false, { configuredProvider: "paid-proxy" });

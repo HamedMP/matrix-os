@@ -81,6 +81,13 @@ off. `authStatus: unknown` in the compatibility catalog must not be rendered
 as a remote authentication verdict; successful execution on the exact
 selected source remains a separate release validation step.
 
+Saved native Codex consent (`nativeAccountGeneration`) names the signed-in
+account (type, email, account id, and the stable account identity in
+`auth.json`), never the exact token bytes: Codex rewrites `auth.json` on every
+token refresh. The exact bytes still prove that one observation is consistent.
+A different account still needs an explicit Reconnect. A saved login that needs
+sign-in shows "Needs sign-in" with one primary Reconnect on every surface.
+
 Canvas, Web Desktop, and Electron must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;

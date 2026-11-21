@@ -1,20 +1,29 @@
 import { randomUUID } from "node:crypto";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
-import { nativeAccountPrincipalFingerprint, sameBoundNativeAccountPrincipal, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
+import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, sameBoundNativeAccountPrincipal, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import type { ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 
-/** Saved native selection is existing approval; missing bookkeeping is repairable.
- * Never turn a changed, previously bound principal into an automatic account switch.
+/** Saved native selection is existing approval; missing bookkeeping is repairable,
+ * and so is consent saved under the legacy token-bound generation of this same,
+ * still-current credential (ENG-523). Never turn a changed, previously bound
+ * principal into an automatic account switch.
  */
-export function codexNativeConnectionNeedsRecovery(config: ProviderSettingsConfiguration): boolean {
+export function codexNativeConnectionNeedsRecovery(config: ProviderSettingsConfiguration, metadata?: CodexNativeAccountMetadata | null): boolean {
   const rows = config.harnesses.filter(row => row.harness === "codex");
   const row = rows.length === 1 ? rows[0] : undefined;
-  return Boolean(row?.enabled && row.driverId === "codex"
+  if (!(row?.enabled && row.driverId === "codex"
     && row.accessSourceId === "owner_openai_profile" && row.selectedAccountId === "owner_codex"
-    && row.route.kind === "fixed" && row.route.providerId === "openai"
-    && (!row.nativeAccountGeneration || row.nativeAccountConsentRevision === undefined));
+    && row.route.kind === "fixed" && row.route.providerId === "openai")) return false;
+  if (!row.nativeAccountGeneration || row.nativeAccountConsentRevision === undefined) return true;
+  return codexLegacyConsentMatches(row.nativeAccountGeneration, metadata);
+}
+
+function codexLegacyConsentMatches(saved: string, metadata?: CodexNativeAccountMetadata | null): boolean {
+  if (metadata?.authMethod !== "terminal") return false;
+  const legacy = nativeAccountLegacyPrincipalFingerprint(metadata);
+  return legacy !== null && saved === legacy && saved !== nativeAccountPrincipalFingerprint(metadata);
 }
 
 /** One bounded in-flight repair per store, using the existing guarded completion saga. */
@@ -24,10 +33,11 @@ export function createCodexNativeConnectionRecovery(complete: (input: {
 }) => Promise<{ snapshot: ProviderSettingsSnapshot }>) {
   let pending: { revision: number; result: Promise<ProviderSettingsSnapshot> } | undefined;
   return async (config: ProviderSettingsConfiguration, metadata: CodexNativeAccountMetadata | null): Promise<ProviderSettingsSnapshot | null> => {
-    if (!codexNativeConnectionNeedsRecovery(config) || metadata?.authMethod !== "terminal") return null;
+    if (!codexNativeConnectionNeedsRecovery(config, metadata) || metadata?.authMethod !== "terminal") return null;
     const row = config.harnesses.find(row => row.harness === "codex")!;
     const fingerprint = nativeAccountPrincipalFingerprint(metadata);
-    if (!fingerprint || row.nativeAccountGeneration && row.nativeAccountGeneration !== fingerprint) return null;
+    if (!fingerprint || row.nativeAccountGeneration && row.nativeAccountGeneration !== fingerprint
+      && !codexLegacyConsentMatches(row.nativeAccountGeneration, metadata)) return null;
     if (pending) {
       // A different revision must be reobserved by the caller's existing fence.
       if (pending.revision !== config.revision) throw new ProviderSettingsStoreError("revision_conflict", 409);

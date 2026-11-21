@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -17,16 +18,21 @@ import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-provide
 
 const roots: string[] = [], services: AiProviderService[] = [];
 afterEach(async () => { services.splice(0).forEach(service => service.close()); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function fixture(unboundProof = false, withClaude = false) {
+async function fixture(unboundProof = false, withClaude = false, tokenBound = false) {
   const root = await mkdtemp(join(tmpdir(), "codex-completion-admission-")); roots.push(root);
   const home = join(root, "home"); await mkdir(home, { mode: 0o700 });
-  let loggedIn = true, principal = "fixture@example.invalid", installed = true, metadataMode = "native";
+  let loggedIn = true, principal = "fixture@example.invalid", installed = true, metadataMode = "native", tokenGeneration = 1;
   const runCommand = vi.fn(async () => ({ principal, loggedIn }));
   const readMetadata = async (options?: { purpose: "native_completion" }) => {
     const observation = await runCommand();
     if (!observation.loggedIn) return null;
     const metadata = normalizeCodexNativeAccountMetadata({ account: metadataMode === "key" ? { type: "apiKey" } : { type: "chatgpt", email: observation.principal } }, options ? {} : { rateLimits: { primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 } } }, new Date(metadataMode === "expired" ? 0 : Date.now()))!;
-    return unboundProof ? metadata : bindNativeAccountMetadata(metadata, async () => loggedIn && principal === observation.principal, observation.principal);
+    // tokenBound models a file credential: exact bytes rotate on token refresh while
+    // the durable generation names the signed-in account.
+    const exact = tokenBound ? `${observation.principal}:token-${tokenGeneration}` : observation.principal;
+    const observedToken = tokenGeneration;
+    return unboundProof ? metadata : bindNativeAccountMetadata(metadata, async () => loggedIn && principal === observation.principal && (!tokenBound || observedToken === tokenGeneration),
+      exact, tokenBound ? { generation: observation.principal } : {});
   };
   const systemUpdate = vi.fn(async () => { throw new Error("fixed native completion cannot change system routing"); });
   const systemRead = vi.fn(async () => { throw new Error("fixed native completion cannot inspect system routing"); });
@@ -50,6 +56,7 @@ async function fixture(unboundProof = false, withClaude = false) {
   const input = { harnessInstanceId: harness.id, expectedRevision: before.revision, idempotencyKey: "fixture-complete" };
   return { home, store, before, input, runtime, prepareRevocation, releaseRevocation, systemRead, systemUpdate, readMetadata, runCommand,
     setLoggedIn: (value: boolean) => { loggedIn = value; }, setPrincipal: (value: string) => { principal = value; },
+    refreshTokens: () => { tokenGeneration += 1; },
     removeDriver: () => { installed = false;  }, setMetadataMode: (mode: string) => { metadataMode = mode; } };
 }
 
@@ -361,4 +368,53 @@ it('does not publish a connected response when native proof is revoked after rep
     const result = await complete(input); f.setLoggedIn(false); return result;
   });
   await expect(f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true })).rejects.toMatchObject({ code: 'projection_unavailable' });
+});
+
+// ENG-523: a valid login must not read as "Saved account" in Settings while Chat
+// demands sign-in just because Codex refreshed its tokens.
+async function savedNativeRoute(f: Awaited<ReturnType<typeof fixture>>) {
+  const config = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  const native = config.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId);
+  native.enabled = true; native.accessSourceId = 'owner_openai_profile'; native.selectedAccountId = 'owner_codex';
+  await writeFile(f.store.configurationPath, JSON.stringify(config));
+  return native.id as string;
+}
+const codexState = (snapshot: Awaited<ReturnType<ProviderSettingsStore["getSnapshot"]>>, id: string) => ({
+  account: snapshot.accounts.find(row => row.id === 'owner_codex')?.authState,
+  readiness: snapshot.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state,
+  harness: snapshot.harnesses.find(row => row.id === id)?.enabled,
+});
+it('keeps a verified native Codex connection ready after Codex refreshes its tokens', async () => {
+  const f = await fixture(false, false, true);
+  const id = await savedNativeRoute(f);
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
+  const consented = JSON.parse(await readFile(f.store.configurationPath, 'utf8')).revision;
+  f.refreshTokens();
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
+  expect(JSON.parse(await readFile(f.store.configurationPath, 'utf8')).revision).toBe(consented);
+});
+it('upgrades consent saved under the legacy token-bound generation of the same login', async () => {
+  const f = await fixture(false, false, true);
+  const id = await savedNativeRoute(f);
+  const config = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  const row = config.harnesses.find((item: {id: string}) => item.id === id);
+  row.nativeAccountGeneration = createHash('sha256').update('fixture@example.invalid:token-1').digest('hex');
+  row.nativeAccountConsentRevision = config.revision;
+  await writeFile(f.store.configurationPath, JSON.stringify(config));
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'auth_required', harness: false });
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
+  const saved = JSON.parse(await readFile(f.store.configurationPath, 'utf8')).harnesses.find((item: {id: string}) => item.id === id);
+  expect(saved.nativeAccountGeneration).toBe(createHash('sha256').update('fixture@example.invalid').digest('hex'));
+});
+it('still requires explicit consent when a different account signs in to Codex', async () => {
+  const f = await fixture(false, false, true);
+  const id = await savedNativeRoute(f);
+  await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  f.setPrincipal('other@example.invalid'); f.refreshTokens();
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'auth_required', harness: false });
 });
