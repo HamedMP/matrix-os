@@ -62,3 +62,20 @@ frame time under `yes`-style output, memory with 10 tabs.
   PTY size and display facts; observers' query replies never reach the program
   (`viewers.rs:70-112,385-411,476-480`). Matrix attaching as an observer by
   default therefore never fights the Herdr app over size.
+
+## Layer 6 results
+
+Benchmark: `pnpm exec tsx scripts/bench/desktop-terminal-attach.ts --runs 7`.
+It drives the real `@matrix-os/herdr-core-client` connection and session code
+against a scripted core that streams under herdr-core's credit window (256 KiB,
+16 KiB chunks, 64 KiB socket reads), with a Node `MessageChannel` standing in
+for the main → Terminal window hop and the window acknowledging every event.
+It measures the main-process path only, not xterm drawing. Medians, Linux
+x64, Node 24.
+
+| Measurement | Before |
+| --- | --- |
+| Attach to first delivered output (196 KB first paint) | 0.19-0.24 ms |
+| Attach to full first paint delivered | 0.23-0.29 ms |
+| Output throughput, 64 MiB | 1,180-1,390 MiB/s |
+| Events for 64 MiB | 4,096 |
