@@ -7,6 +7,10 @@ import SystemSection from "../../desktop/src/renderer/src/features/settings/sect
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { advanceRuntimeGeneration } from "../../desktop/src/renderer/src/stores/runtime-generation";
 
+// The private network panel has its own suite (tests/ui/private-network-*.test.ts*);
+// keep these update-focused fakes free of its extra requests.
+vi.mock("../../desktop/src/renderer/src/features/settings/sections/PrivateNetworkSection", () => ({ default: () => null }));
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => { resolve = next; });

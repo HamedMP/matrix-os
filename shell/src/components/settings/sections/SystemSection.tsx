@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
+import { PrivateNetworkSection } from "./PrivateNetworkSection";
 import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon, AlertTriangleIcon } from "@/lib/hugeicons";
 
 const GATEWAY = getGatewayUrl();
@@ -704,6 +705,8 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           </div></>}
         </CardContent>
       </Card>
+
+      <PrivateNetworkSection />
 
       <Card>
         <CardHeader>
