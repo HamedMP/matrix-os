@@ -28,6 +28,8 @@ const MAX_OUTPUT_CHARS = 64 * 1024;
 const HIGH_WATER_BYTES = 1024 * 1024;
 const LOW_WATER_BYTES = 256 * 1024;
 const DRAIN_POLL_MS = 25;
+// How long a fresh attach waits for herdr-core's repaint before revealing the pane.
+const FIRST_PAINT_WAIT_MS = 250;
 const MAX_CLIENT_FRAME_CHARS = 128 * 1024;
 
 // A viewer names the terminal by herdr id, or by its Matrix terminal ref as the
@@ -98,6 +100,12 @@ export function registerHerdrTerminalWebSocket(options: {
     let attachment: HerdrAttachment | null = null;
     let attached = false;
     let closed = false;
+    // The shell's terminal pane stays hidden until replay-end. herdr-core
+    // repaints the screen right after an attach, so that first paint is the
+    // replay; a short timer ends it when the paint comes late or not at all.
+    let replaying = false;
+    let replayTimer: ReturnType<typeof setTimeout> | null = null;
+    let flushingPaint = false;
     let seq = 0;
     // Output that arrived while the attach was answered; sent after `attached`.
     const early: Array<{ data: string; consumed: () => void }> = [];
@@ -123,16 +131,26 @@ export function registerHerdrTerminalWebSocket(options: {
       while (credits.length > 0 && backlog() <= LOW_WATER_BYTES) credits.shift()!();
       if (credits.length === 0 && drainTimer) { clearInterval(drainTimer); drainTimer = null; }
     };
+    const endReplay = () => {
+      if (replayTimer) clearTimeout(replayTimer);
+      replayTimer = null;
+      if (!replaying || closed || !ref) return;
+      replaying = false;
+      send({ type: "replay-end", terminalRef: ref, revision: 0, nextSeq: seq, toSeq: seq > 0 ? seq - 1 : null });
+    };
     const output = (data: string, consumed: () => void) => {
       if (closed || !ref) return;
       for (let offset = 0; offset < data.length; offset += MAX_OUTPUT_CHARS) {
         send({ type: "output", terminalRef: ref, revision: 0, seq: seq++, data: data.slice(offset, offset + MAX_OUTPUT_CHARS) });
       }
+      if (replaying && !flushingPaint) endReplay();
       if (credits.length === 0 && backlog() <= HIGH_WATER_BYTES) { consumed(); return; }
       credits.push(consumed);
       drainTimer ??= setInterval(drainCredits, DRAIN_POLL_MS);
     };
     const release = () => {
+      if (replayTimer) clearTimeout(replayTimer);
+      replayTimer = null;
       viewers.delete(viewerId);
       if (drainTimer) clearInterval(drainTimer);
       drainTimer = null;
@@ -201,10 +219,22 @@ export function registerHerdrTerminalWebSocket(options: {
           if (role === "writer") adapter.rememberSize(id, { cols, rows });
           send({
             type: "attached", terminalRef, revision: 0, canonicalSize: { cols, rows }, nextSeq: seq, ownership: role,
+            capabilities: ["binary-input-v1"],
             ...(leaseEpoch === null ? {} : { leaseEpoch }),
           });
+          send({ type: "replay-start", terminalRef, revision: 0, fromSeq: seq });
+          replaying = true;
           attached = true;
-          for (const entry of early.splice(0)) output(entry.data, entry.consumed);
+          const paint = early.splice(0);
+          if (paint.length > 0) {
+            // Everything that arrived during the attach is the core's repaint.
+            flushingPaint = true;
+            for (const entry of paint) output(entry.data, entry.consumed);
+            flushingPaint = false;
+            endReplay();
+          } else {
+            replayTimer = setTimeout(endReplay, FIRST_PAINT_WAIT_MS);
+          }
         })().catch((error: unknown) => {
           if (closed) return;
           if (error instanceof HerdrAdapterError) {

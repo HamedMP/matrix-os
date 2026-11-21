@@ -128,7 +128,8 @@ describe("WS /ws/terminal/herdr", () => {
 
     for (const frame of client.frames) expect(TerminalTabServerFrameSchema.safeParse(frame).success).toBe(true);
     expect(client.frames[0]).toMatchObject({ type: "attached", terminalRef: ref("t1"), ownership: "observer", canonicalSize: { cols: 100, rows: 30 } });
-    expect(client.frames[1]).toMatchObject({ type: "output", terminalRef: ref("t1"), data: "hello" });
+    expect(client.frames[1]).toMatchObject({ type: "replay-start", terminalRef: ref("t1"), fromSeq: 0 });
+    expect(client.frames[2]).toMatchObject({ type: "output", terminalRef: ref("t1"), data: "hello" });
     await client.until(() => core.viewers[0]?.credits === 5);
 
     client.send({ type: "input", terminalRef: ref("t1"), data: "ls\r" });
@@ -136,6 +137,23 @@ describe("WS /ws/terminal/herdr", () => {
     await client.until(() => client.frames.some((frame) => frame.type === "pong"));
     expect(client.frames).toContainEqual({ type: "error", code: "read_only", message: "Terminal is read-only" });
     expect(core.terminals.get("t1")!.input).toEqual([]);
+  });
+
+  it("brackets the core's first paint in a replay, so a browser pane reveals the terminal", async () => {
+    // Found on a live VPS: the shell's terminal pane stays hidden until
+    // replay-end, so a Herdr session opened blank although output arrived.
+    const { core, connect } = await gateway();
+    core.add("t1", { screen: "hello" });
+    const client = connect(`id=t1&user=${OWNER}&cols=100&rows=30&lease=exclusive`);
+    await client.until(() => client.frames.some((frame) => frame.type === "replay-end"));
+    const types = client.frames.map((frame) => frame.type);
+    expect(types.slice(0, 2)).toEqual(["attached", "replay-start"]);
+    expect(types.indexOf("replay-end")).toBeGreaterThan(types.indexOf("replay-start"));
+    expect(client.frames[0]).toMatchObject({ capabilities: ["binary-input-v1"] });
+    const end = client.frames.find((frame) => frame.type === "replay-end")!;
+    const replayed = client.frames.filter((frame, index) => frame.type === "output" && index < types.indexOf("replay-end"));
+    expect(end).toMatchObject({ nextSeq: replayed.length });
+    for (const frame of client.frames) expect(TerminalTabServerFrameSchema.safeParse(frame).success).toBe(true);
   });
 
   it("attaches by Matrix terminal ref, as the shell's terminal pane connects", async () => {
