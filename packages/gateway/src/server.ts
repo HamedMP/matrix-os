@@ -58,7 +58,7 @@ import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
+import { createGatewayMatrixMcpCapabilities } from "./startup/matrix-mcp-capabilities.js";
 import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
 import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
@@ -323,19 +323,7 @@ export async function createGateway(config: GatewayConfig) {
   const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
-  const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
-    // The VPS runner projects its single owner into both variables. If they
-    // disagree, this runtime cannot safely bind a Chat owner to its broker.
-    configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
-      ? process.env.MATRIX_CLERK_USER_ID
-      : undefined,
-    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
-  });
-  /** Spec 2691: Codex/OpenCode receive the same run-scoped Core MCP bearer Claude Code does. */
-  const issueCoreMcpRunCapability = (ownerId: string, runId: string, scope: "call" | "discovery") => {
-    const grant = matrixMcpCapabilities.issue({ owner: { type: "personal", ownerId }, runId, scope });
-    return grant ? { token: grant.token, scope, revoke: grant.revoke, renew: () => grant.renew?.() ?? false } : null;
-  };
+  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env);
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
