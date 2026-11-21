@@ -21,6 +21,10 @@ const CodexAppServerContractSchema = z.object({
   latestVerifiedVersion: CodexVersionSchema,
   experimental: z.literal(true),
   verifiedVersions: z.record(CodexVersionSchema, SchemaVerificationSchema),
+  routineProtocolsByVersion: z.record(CodexVersionSchema, z.object({
+    client: z.record(z.string().min(1).max(100), SchemaDigestSchema),
+    definitions: z.record(z.string().min(1).max(100), SchemaDigestSchema),
+  }).strict()),
   requiredServerMethods: z.array(z.string().min(1).max(100)).min(1).max(16),
   requiredServerNotifications: z.array(z.string().min(1).max(100)).min(1).max(16),
   requiredServerProtocolSchemaDigests: z.record(
@@ -28,7 +32,7 @@ const CodexAppServerContractSchema = z.object({
     z.union([SchemaDigestSchema, SchemaVerificationSchema]),
   ),
 }).strict().refine(
-  (value) => Object.hasOwn(value.verifiedVersions, value.latestVerifiedVersion),
+  (value) => Object.hasOwn(value.verifiedVersions, value.latestVerifiedVersion) && Object.hasOwn(value.routineProtocolsByVersion, value.latestVerifiedVersion),
   { message: "Latest Codex app-server version must have a verified schema" },
 ).refine(
   (value) => {

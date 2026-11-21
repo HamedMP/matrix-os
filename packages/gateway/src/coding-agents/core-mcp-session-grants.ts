@@ -10,6 +10,9 @@
  */
 const MAX_CORE_MCP_SESSIONS = 128;
 
+/** Renew well inside the 35-minute capability lifetime. */
+export const CORE_MCP_RENEW_INTERVAL_MS = 5 * 60_000;
+
 export interface CoreMcpSessionGrant { revoke(): void; renew(): boolean }
 
 export function createCoreMcpSessionGrants(max = MAX_CORE_MCP_SESSIONS) {

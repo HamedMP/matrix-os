@@ -2,6 +2,7 @@ import "../../../packages/ui/src/chat-agents/chat-agents.css";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BotComposerControls } from "../../../packages/ui/src/chat-agents/bots/BotComposerControls";
+import { ChatSpeechQuotaStatus } from "../../../packages/ui/src/speech/ChatSpeechInputButton";
 import { PromptInput } from "../../../desktop/src/renderer/src/features/chat/elements/prompt-input";
 import { ConversationTranscript } from "../../../desktop/src/renderer/src/components/conversation/transcript";
 import type { ConversationTurnPresentation } from "../../../desktop/src/renderer/src/components/conversation/presentation";
@@ -15,7 +16,15 @@ const agent = { id: "bot_fixture01", name, revision: 1, recipeRef: { recipeId: "
 const client = { list: async () => ({ enabled: true, agents: [agent] }) } as never;
 const catalog = { instances: [{ id: "matrix_chatgpt_plan", driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "ChatGPT subscription",
   models: [{ id: "gpt-6.1-sol", displayName: model }] }] } as never;
-const speechClient = { capabilities: async () => ({ fileTranscription: { status: "ready", dictation: {
+const previewQuota = {
+  mode: "preview" as const,
+  requestLimit: 25,
+  requestsUsed: 0,
+  requestsRemaining: 25,
+  maxConcurrency: 1 as const,
+  expiresAt: "2026-11-11T02:46:00.000Z",
+};
+const speechClient = { capabilities: async () => ({ previewQuota, fileTranscription: { status: "ready", dictation: {
   enabled: true, supportedMediaTypes: ["audio/wav"], maxBytes: 1024, maxDurationMs: 60000,
 } } }), transcribe: async () => ({ outcome: "no_speech" }), cancel: async () => undefined } as never;
 const capture = { isSupported: () => true, start: async () => ({ stop: async () => new Blob([], { type: "audio/wav" }), cancel: async () => undefined }) };
@@ -46,6 +55,7 @@ function Fixture() {
         botControls={webBot ? <BotComposerControls agentId={agent.id} client={client} catalog={catalog}/> : undefined}/></div>
       : <div className="@container/chat-composer" id="composer">
         <PromptInput value={value} onChange={setValue} onSubmit={() => setAction("send")} onAbort={() => setAction("stop")} busy={active}
+          status={<ChatSpeechQuotaStatus speech={{ previewQuota, capabilitiesStale: false }} />}
           controls={<><button className="size-8 shrink-0" aria-label="Attach files" onClick={() => setAction("attach")}>+</button><button className="size-8 shrink-0" aria-label="Choose folder" onClick={() => setAction("folder")}>▣</button></>}
           trailingControls={<><button className="size-8 shrink-0" aria-label="Microphone" onClick={() => setAction("microphone")}>♩</button><BotComposerControls agentId={agent.id} client={client} catalog={catalog}/></>}/>
       </div>}

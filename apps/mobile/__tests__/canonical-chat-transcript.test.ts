@@ -260,3 +260,106 @@ describe("turns that did not finish", () => {
     });
   });
 });
+
+describe("where a reply ends", () => {
+  const at = "2026-09-09T00:00:00.000Z";
+
+  function assistantMessage(id: string, seq: number, text: string, runId?: string, turnId?: string) {
+    return {
+      id, chatId: "chat_1", role: "assistant", state: "committed", seq,
+      ...(runId ? { runId } : {}),
+      ...(turnId ? { turnId } : {}),
+      parts: [{ type: "text", text }], createdAt: at,
+    };
+  }
+
+  function chatWith(messages: unknown[], runStatus = "completed") {
+    return {
+      record: { chat: { id: "chat_1" } },
+      turns: [],
+      runs: [{
+        id: "run_1", chatId: "chat_1", turnId: "cturn_1", attempt: 1, status: runStatus,
+        createdAt: at, updatedAt: at, startedAt: at, completedAt: at,
+      }],
+      activities: [],
+      messages,
+    } as unknown as CanonicalChatDetailResponse;
+  }
+
+  it("marks only the last of a run's replies as the end of its turn", () => {
+    const transcript = buildTranscript(chatWith([
+      userMessage("msg_q", 1, "Build it"),
+      { ...assistantMessage("msg_first", 2, "Looking at the files first.", "run_1"),
+        parts: [{ type: "text", text: "Looking at the files first." }, { type: "tool_request", toolCallId: "call_1", label: "Read files" }] },
+      assistantMessage("msg_last", 4, "Done. It has a daily checklist.", "run_1"),
+    ]));
+
+    const byId = Object.fromEntries(transcript.map((message) => [message.id, message]));
+    expect(byId.msg_last).toMatchObject({ endsTurn: true });
+    expect(byId.msg_first!.endsTurn).toBeUndefined();
+    expect(byId.msg_q!.endsTurn).toBeUndefined();
+  });
+
+  it("marks only the latest attempt of a turn, so a retried turn ends once", () => {
+    const run = (id: string, attempt: number, status: string) => ({
+      id, chatId: "chat_1", turnId: "cturn_1", attempt, status,
+      createdAt: at, updatedAt: at, startedAt: at, completedAt: at,
+    });
+    const detail = (retryStatus: string) => ({
+      record: { chat: { id: "chat_1" } },
+      turns: [],
+      runs: [run("run_failed", 1, "failed"), run("run_retry", 2, retryStatus)],
+      activities: [],
+      messages: [
+        userMessage("msg_q", 1, "Build it"),
+        assistantMessage("msg_partial", 2, "Starting on the app.", "run_failed"),
+        assistantMessage("msg_retry", 3, "Done. It has a daily checklist.", "run_retry"),
+      ],
+    } as unknown as CanonicalChatDetailResponse);
+
+    for (const status of ["running", "completed"]) {
+      const byId = Object.fromEntries(buildTranscript(detail(status)).map((message) => [message.id, message]));
+      expect(byId.msg_partial!.endsTurn).toBeUndefined();
+      expect(byId.msg_retry).toMatchObject({ endsTurn: true });
+    }
+  });
+
+  it.each(["failed omitted", "both omitted"])("ends an older retried turn once with %s", (missing) => {
+    const retry = {
+      id: "run_retry", chatId: "chat_1", turnId: "cturn_1", attempt: 2, status: "completed",
+      createdAt: at, updatedAt: at, startedAt: at, completedAt: at,
+    };
+    const detail = {
+      ...chatWith([]),
+      runs: missing === "both omitted" ? [] : [retry],
+      messages: [
+        assistantMessage("msg_partial", 2, "Starting on the app.", "run_failed", "cturn_1"),
+        assistantMessage("msg_retry", 3, "Done. It has a daily checklist.", "run_retry", "cturn_1"),
+        assistantMessage("msg_next", 5, "Added a weekly view.", "run_next", "cturn_2"),
+      ],
+    } as unknown as CanonicalChatDetailResponse;
+    const byId = Object.fromEntries(buildTranscript(detail).map((message) => [message.id, message]));
+    expect(byId.msg_partial!.endsTurn).toBeUndefined();
+    expect(byId.msg_retry).toMatchObject({ endsTurn: true });
+    expect(byId.msg_next).toMatchObject({ endsTurn: true });
+  });
+
+  it("keeps an older reply's actions hidden when a known retry has not replied yet", () => {
+    const detail = chatWith([
+      assistantMessage("msg_partial", 2, "Starting on the app.", "run_failed", "cturn_1"),
+    ], "running");
+    const reply = buildTranscript(detail).find((message) => message.id === "msg_partial");
+    expect(reply).toBeDefined();
+    expect(reply!.endsTurn).toBeUndefined();
+  });
+
+  it("does not guess a turn end for a missing run without turn identity", () => {
+    const [reply] = buildTranscript(chatWith([assistantMessage("msg_unknown", 2, "Partial", "run_missing")]));
+    expect(reply!.endsTurn).toBeUndefined();
+  });
+
+  it("treats a reply that belongs to no run as a turn of its own", () => {
+    const [reply] = buildTranscript(chatWith([assistantMessage("msg_alone", 1, "Hello")]));
+    expect(reply).toMatchObject({ id: "msg_alone", endsTurn: true });
+  });
+});

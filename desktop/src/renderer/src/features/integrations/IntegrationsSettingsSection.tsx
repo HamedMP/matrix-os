@@ -258,7 +258,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
           <p
             data-testid="integrations-error"
             className="mb-4 rounded-lg border px-3 py-2 text-sm"
-            style={{ color: "var(--danger)", borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+            style={{ color: "var(--danger-text)", borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
           >
             {errorMessage}
           </p>

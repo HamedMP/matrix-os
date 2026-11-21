@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
-import { Linking, Text, View, type TextStyle, type ViewStyle } from "react-native";
+import { Linking, Text, View, type TextStyle } from "react-native";
 
+import { ChatCodeBlock, CODE_COPY_FAILED } from "@/lib/chat-code-block";
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { FadeInText } from "@/lib/chat-fade-in-text";
 import type { TextFade } from "@/lib/chat-text-fade";
 
@@ -105,9 +107,13 @@ function inlineNodes(
         </Text>,
       );
     } else if (match[5] !== undefined) {
+      const code = match[5];
       elements.push(
         <Text
           key={`${keyPrefix}-tok${match.index}`}
+          // A tap copies the span, as a tap opens a link. A long press stays
+          // the reply's own menu, which iOS opens over any press inside it.
+          onPress={() => void copyToClipboard(code, { copied: "Code copied", failed: CODE_COPY_FAILED })}
           style={[
             theme.textStyle,
             {
@@ -157,25 +163,17 @@ const HEADING_SIZE: Record<number, number> = { 1: 22, 2: 19, 3: 17, 4: 15, 5: 14
 
 function codeBlock(
   lines: string[],
+  language: string,
   key: string,
   theme: ChatMarkdownTheme,
   offset: number,
   fades: TextFade[],
 ): ReactNode {
-  const codeStyle: ViewStyle = {
-    backgroundColor: theme.codeBackground,
-    borderWidth: 1,
-    borderColor: theme.codeBorderColor,
-    borderRadius: 8,
-    padding: 10,
-    marginVertical: 4,
-  };
+  const code = lines.join("\n");
   return (
-    <View key={key} style={codeStyle}>
-      <Text style={{ fontFamily: theme.monoFontFamily, fontSize: 12.5, color: theme.textStyle.color }}>
-        {fadeInSpans(lines.join("\n"), offset, fades)}
-      </Text>
-    </View>
+    <ChatCodeBlock key={key} code={code} language={language} theme={theme}>
+      {fadeInSpans(code, offset, fades)}
+    </ChatCodeBlock>
   );
 }
 
@@ -224,7 +222,7 @@ export function renderChatMarkdown(text: string, theme: ChatMarkdownTheme, fades
       if (closed && fence[2]?.toLowerCase() === "mermaid" && renderDiagram && diagramCount < 10) {
         diagramCount += 1;
         blocks.push(renderDiagram(codeLines.join("\n"), key));
-      } else blocks.push(codeBlock(codeLines, key, theme, codeOffset, fades));
+      } else blocks.push(codeBlock(codeLines, fence[2] ?? "", key, theme, codeOffset, fades));
       continue;
     }
 

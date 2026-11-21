@@ -3,9 +3,9 @@ import { ChatAgentContextError, transcript } from "./agent-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { MATRIX_BOT_INSTANCE_ID } from "../bots/selection.js";
+import { SESSION_HISTORY_BYTE_LIMIT, SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
 
-export const SESSION_HISTORY_MESSAGE_LIMIT = 40;
-const SESSION_HISTORY_BYTE_LIMIT = 12_000;
+export { SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
 
 /** History is reference text only: old tools, attachments and grants are never remounted. */
 export function withChatSessionHistory(input: {

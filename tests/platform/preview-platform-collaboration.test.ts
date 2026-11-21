@@ -62,6 +62,7 @@ function deployedArguments(overrides: Record<string, string> = {}, apiOrigin = "
     expect(result.status, result.stderr).toBe(0);
     const args = readFileSync(capture, "utf8").split("\0");
     return {
+      args,
       env: args[args.indexOf("--set-env-vars") + 1]!,
       secrets: args[args.indexOf("--set-secrets") + 1]!,
     };
@@ -120,6 +121,12 @@ esac
 }
 
 describe("preview platform collaboration authority", () => {
+  it("passes each replace-style Cloud Run deployment flag exactly once", () => {
+    const { args } = deployedArguments();
+    expect(args.filter((argument) => argument === "--set-env-vars")).toEqual(["--set-env-vars"]);
+    expect(args.filter((argument) => argument === "--set-secrets")).toEqual(["--set-secrets"]);
+  });
+
   it("preserves only explicitly supplied preview Slack bindings through deployment", () => {
     const isolated = deployedArguments({
       SLACK_PREVIEW_ENV_BINDINGS: "|SLACK_APP_ID=AEXAMPLE|SLACK_PREVIEW_RUNTIME_HANDLE=pr-1990",

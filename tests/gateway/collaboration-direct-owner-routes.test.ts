@@ -180,8 +180,8 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
   });
 
   it.each([
-    ["GET", `/api/collaboration/scopes/${scopeId}/execution-policy`, undefined, 404],
-    ["PUT", `/api/collaboration/scopes/${scopeId}/execution-policy`, {}, 400],
+    ["GET", `/api/collaboration/scopes/${scopeId}/execution-policy`, undefined, 409],
+    ["PUT", `/api/collaboration/scopes/${scopeId}/execution-policy`, {}, 409],
     ["GET", `/api/collaboration/scopes/${scopeId}/project/inventory`, undefined, 503],
     ["POST", `/api/collaboration/scopes/${scopeId}/project/confirm`, {}, 400],
     ["POST", `/api/collaboration/scopes/${scopeId}/lifecycle`, {}, 400],

@@ -119,3 +119,19 @@ describe('WhatsApp Cloud Run deployment contract', () => {
     expect(renderer).toContain('annotations["run.googleapis.com/cpu-throttling"] = "false"');
   });
 });
+it('projects only an explicitly configured public business number',()=>{
+ expect(run('env-bindings',{WHATSAPP_ENABLED:'true',WHATSAPP_BUSINESS_PHONE_NUMBER:'13073174314'}).stdout.trim()).toBe('|WHATSAPP_ADMISSION_MODE=allowlist|WHATSAPP_BUSINESS_PHONE_NUMBER=13073174314');
+ expect(run('env-bindings',{WHATSAPP_ENABLED:'false',WHATSAPP_BUSINESS_PHONE_NUMBER:'13073174314'}).stdout.trim()).toBe('');
+ expect(run('validate',{WHATSAPP_BUSINESS_PHONE_NUMBER:'bad|ENV=injected'}).status).not.toBe(0);
+});
+it('verifies the exact optional public number without enabling disabled revisions', () => {
+  const env = bindings.map(([name, secret, key]) => ({ name, valueFrom: { secretKeyRef: { name: secret, key } } }));
+  const fixture = { spec: { containers: [{ env: [...env,
+    { name: 'WHATSAPP_ADMISSION_MODE', value: 'allowlist' },
+    { name: 'WHATSAPP_BUSINESS_PHONE_NUMBER', value: '13073174314' },
+  ] }] } };
+  expect(run('verify-revision', { WHATSAPP_ENABLED: 'true', WHATSAPP_BUSINESS_PHONE_NUMBER: '13073174314' }, fixture).status).toBe(0);
+  expect(run('verify-revision', { WHATSAPP_ENABLED: 'true', WHATSAPP_BUSINESS_PHONE_NUMBER: '13073174315' }, fixture).status).not.toBe(0);
+  expect(run('verify-revision', { WHATSAPP_ENABLED: 'true' }, fixture).status).not.toBe(0);
+  expect(run('verify-revision', { WHATSAPP_BUSINESS_PHONE_NUMBER: '13073174314' }, fixture).status).not.toBe(0);
+});

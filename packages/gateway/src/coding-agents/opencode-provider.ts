@@ -1,3 +1,4 @@
+import { CORE_MCP_RENEW_INTERVAL_MS } from "./core-mcp-session-grants.js";
 import { createCodingOutputBuffer } from "./coding-output-buffer.js";
 import { codingPreviewOmissionNotice, createCodingPreviewPublisher, fitCodingPreviewEvents } from "./coding-preview-publisher.js";
 import { CODING_PREPARATION_TIMEOUT_MS, explicitCodingRunTimeout, remainingCodingRunTimeout } from "./coding-run-lifetime.js";
@@ -52,8 +53,9 @@ const OpenCodeResumeStateSchema = z.object({
   c: z.string().min(1).max(400).startsWith("/"),
 }).strict();
 
-interface SpawnOptions { cwd: string; env: Record<string, string> }
+interface SpawnOptions { cwd: string; env: Record<string, string>; stdio?: readonly ["ignore", "pipe", "pipe", "pipe"] }
 export interface OpenCodeProcess {
+  stdio?: ReadonlyArray<unknown>;
   stdout: {
     on(event: "data", listener: (chunk: Buffer) => void): void;
     once(event: "end" | "close", listener: () => void): void;
@@ -89,7 +91,7 @@ export interface OpenCodeCodingAgentProviderOptions {
    * Spec 2691: issues a run-scoped Matrix Core MCP capability for one OpenCode
    * process. Null means the run starts without Core tools (never a machine bearer).
    */
-  issueMatrixCoreMcp?: (input: { runId: string }) => { token: string; scope: "call" | "discovery"; revoke(): void } | null;
+  issueMatrixCoreMcp?: (input: { runId: string }) => { token: string; scope: "call" | "discovery"; revoke(): void; renew?(): boolean } | null;
 }
 
 const execFileAsync = promisify(execFile);
@@ -458,6 +460,13 @@ export function createOpenCodeCodingAgentProvider(
       return { events: [], outcome: "failed" };
     }
     const timeoutMs = remainingCodingRunTimeout(runDeadline, launch.maxRunMs);
+    // Owner runs have no time limit, so the bearer is renewed for as long as the process lives.
+    const coreMcpRenewal = coreMcp?.renew ? setInterval(() => {
+      if (coreMcp?.renew?.()) return;
+      clearInterval(coreMcpRenewal);
+      logCodingAgentWarning("OpenCode Matrix Core MCP renewal failed", new Error("capability is no longer live"));
+    }, CORE_MCP_RENEW_INTERVAL_MS) : undefined;
+    coreMcpRenewal?.unref();
     try {
     return await new Promise((resolve) => {
       let child: OpenCodeProcess;
@@ -671,6 +680,7 @@ export function createOpenCodeCodingAgentProvider(
     });
     } finally {
       // The capability lives exactly as long as this OpenCode process.
+      if (coreMcpRenewal) clearInterval(coreMcpRenewal);
       coreMcp?.revoke();
     }
   }

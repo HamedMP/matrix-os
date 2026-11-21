@@ -1,0 +1,19 @@
+{
+  "version": "0.1.8",
+  "channel": "stable",
+  "date": "2026-10-02T18:12:59Z",
+  "locale": "en",
+  "title": "See credentials when you need them",
+  "shortTitle": "Credential reveal",
+  "summary": "A small update for private chats in the desktop app.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "new",
+      "text": "In private chats in the desktop app, you can reveal a hidden credential an agent created, then hide it again."
+    }
+  ],
+  "hidden": [
+    2126
+  ]
+}

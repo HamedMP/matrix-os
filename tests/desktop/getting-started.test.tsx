@@ -396,20 +396,23 @@ describe("GettingStartedPopover", () => {
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
   });
 
-  it("replaces Help with the checklist and lets Help reopen without overlapping", async () => {
-    render(<GettingStartedPopover helpMenu={{ onSupport: vi.fn(), discordIcon: <span /> }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
-    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
+  it("opens the checklist from a compact Setup pill that leaves once setup is done", async () => {
+    render(<GettingStartedPopover />);
+    const pill = await screen.findByRole("button", { name: "Getting started — 3 of 5" });
+    expect(pill.textContent).toBe("Setup 3/5");
+    fireEvent.click(pill);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Support chat" })).toBeNull();
-    expect(useUi.getState().rendererOverlayCount).toBe(0);
-    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
+    fireEvent.click(pill);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "Help" })).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Getting started —/ }));
-    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+  });
+
+  it("shows no Setup pill when every step is complete", async () => {
+    const api = makeApi();
+    useConnection.setState({ api: api as never });
+    render(<GettingStartedPopover />);
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
   });
 
   it("stays open until the title-bar button is clicked again", async () => {

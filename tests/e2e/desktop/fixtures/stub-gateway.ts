@@ -48,6 +48,15 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
+  appSharing?: {
+    appId: string;
+    organizationId: string;
+    registrationIncarnation: string;
+    readiness: Record<string, unknown>;
+    activeShare: Record<string, unknown>;
+    stoppedShare: Record<string, unknown>;
+    preflight: Record<string, unknown>;
+  };
   identity?: { userId: string; handle: string; displayName: string };
   organizationManagement?: {
     organizations: Array<Record<string, unknown>>;
@@ -659,6 +668,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   };
   let currentToken = TOKEN;
   const organizationManagement = options.organizationManagement ? structuredClone(options.organizationManagement) : null;
+  let appReadinessChecked = false;
+  let appShareActive = false;
   const activeTerminalOutputs: Partial<Record<string, (data: string) => void>> = {};
   const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
@@ -742,6 +753,46 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     if (req.headers.authorization !== `Bearer ${currentToken}` && !syntheticOrganizationRoute) {
       json(res, 401, { error: "unauthorized" });
       return;
+    }
+
+    if (options.appSharing && path.startsWith(`/api/collaboration/apps/${options.appSharing.appId}/`)) {
+      const appPath = `/api/collaboration/apps/${options.appSharing.appId}`;
+      if (req.method === "GET" && path === `${appPath}/readiness`) {
+        json(res, 200, appReadinessChecked ? options.appSharing.readiness : null);
+        return;
+      }
+      if (req.method === "GET" && path === `${appPath}/readiness/registration`) {
+        json(res, 200, { registrationIncarnation: options.appSharing.registrationIncarnation });
+        return;
+      }
+      if (req.method === "POST" && path === `${appPath}/readiness/check`) {
+        appReadinessChecked = true;
+        json(res, 200, options.appSharing.readiness);
+        return;
+      }
+      if (req.method === "GET" && path === `${appPath}/share`) {
+        json(res, 200, appShareActive ? options.appSharing.activeShare : null);
+        return;
+      }
+      if (req.method === "POST" && path === `${appPath}/share/preflight`) {
+        json(res, 200, options.appSharing.preflight);
+        return;
+      }
+      if (req.method === "POST" && path === `${appPath}/share`) {
+        const body = await readBody(req);
+        if (!appReadinessChecked || body.organizationId !== options.appSharing.organizationId) {
+          json(res, 400, { error: "invalid_share" });
+          return;
+        }
+        appShareActive = true;
+        json(res, 200, options.appSharing.activeShare);
+        return;
+      }
+      if (req.method === "DELETE" && path === `${appPath}/share`) {
+        appShareActive = false;
+        json(res, 200, options.appSharing.stoppedShare);
+        return;
+      }
     }
 
     if (req.method === "GET" && path === "/api/speech/capabilities" && options.speechCapabilities) {

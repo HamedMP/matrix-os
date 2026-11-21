@@ -480,6 +480,38 @@ export function buildCodeDomainProxyHeaders(
   return headers;
 }
 
+// RFC 9110 section 7.6.1 hop-by-hop headers. Forwarding a client's
+// `Connection: close` would make the customer VPS close the pooled upstream
+// socket. WebSocket upgrades use the dedicated ws-upgrade path, not fetch.
+const HOP_BY_HOP_PROXY_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-connection',
+  'transfer-encoding',
+  'upgrade',
+  'te',
+  'trailer',
+]);
+
+/** Copies forwardable request headers, dropping hop-by-hop and `Connection`-nominated headers. */
+export function buildForwardedProxyHeaders(requestHeaders: Record<string, string | undefined>): Headers {
+  const nominated = new Set<string>();
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    if (key.toLowerCase() !== 'connection' || !value) continue;
+    for (const token of value.split(',')) {
+      const name = token.trim().toLowerCase();
+      if (name) nominated.add(name);
+    }
+  }
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    const lowerKey = key.toLowerCase();
+    if (HOP_BY_HOP_PROXY_HEADERS.has(lowerKey) || nominated.has(lowerKey)) continue;
+    if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
+  }
+  return headers;
+}
+
 export function shouldForwardProxyHeader(key: string, value: string | undefined): value is string {
   const lowerKey = key.toLowerCase();
   return lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && Boolean(value);

@@ -12,7 +12,6 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { mcpCommand } from "./commands/mcp.js";
-import { coreCommand } from "./commands/core.js";
 import { updateCommand } from "./commands/update.js";
 import { previewCommand } from "./commands/preview.js";
 import { runCommand } from "./commands/run.js";
@@ -28,6 +27,7 @@ import { getCliTelemetry } from "./telemetry.js";
 import { resolveCliVersion } from "./version.js";
 
 const subCommands = {
+  routines: () => import("./commands/routines.js").then(module => module.routinesCommand),
   login: loginCommand,
   setup: setupCommand,
   logout: logoutCommand,
@@ -50,7 +50,6 @@ const subCommands = {
   instance: instanceCommand,
   completion: completionCommand,
   mcp: mcpCommand,
-  core: coreCommand,
   preview: previewCommand,
   update: updateCommand,
 };

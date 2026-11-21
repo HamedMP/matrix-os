@@ -19,8 +19,8 @@ function reviewDiffLineMarker(line: ReviewSnapshotLine): string {
 }
 
 function reviewDiffLineColor(line: ReviewSnapshotLine): string {
-  if (line.kind === "add") return "var(--success)";
-  if (line.kind === "remove") return "var(--danger)";
+  if (line.kind === "add") return "var(--success-text)";
+  if (line.kind === "remove") return "var(--danger-text)";
   return "var(--text-secondary)";
 }
 

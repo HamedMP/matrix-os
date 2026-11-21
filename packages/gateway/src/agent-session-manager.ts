@@ -1,3 +1,5 @@
+import { launchPreparedWorkspaceTerminal, retainWorkspaceTerminalPrincipal, workspaceTerminalPrincipal, type WorkspaceTerminalLaunch } from "./terminal/workspace-launch.js";
+import { nativeCodexRoutineAdmission } from "./chat/codex-routine-source.js";
 import { nativeBrowserExecution } from "./chat/native-browser-execution-context.js";
 import { createSessionStartGuard, SessionStartBusyError, type CleanSessionStartFailure, type SessionStartScope } from "./session-start-guard.js";
 import { markSessionStartClean, markSessionStopConfirmed } from "./coding-agents/session-start-cleanup-proof.js";
@@ -38,7 +40,7 @@ import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environ
 import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 import { confirmStoppedCodexSession } from "./coding-agents/confirm-stopped-codex-session.js";
-import { createCoreMcpSessionGrants } from "./coding-agents/core-mcp-session-grants.js";
+import { createCoreMcpSessionGrants, CORE_MCP_RENEW_INTERVAL_MS } from "./coding-agents/core-mcp-session-grants.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
@@ -231,6 +233,7 @@ function sanitizeStartupInput(input: unknown):
   | { ok: true; value: z.infer<typeof StartSessionSchema> }
   | Failure {
   const parsed = StartSessionSchema.safeParse(input);
+  if (parsed.success) retainWorkspaceTerminalPrincipal(parsed.data, workspaceTerminalPrincipal(input));
   if (!parsed.success) {
     return failure(400, "invalid_session_request", "Session request is invalid");
   }
@@ -334,13 +337,13 @@ async function releaseSessionLease(worktreeManager: WorktreeManager, session: Pi
   return true;
 }
 
-const CORE_MCP_RENEW_INTERVAL_MS = 5 * 60_000;
 
 export function createAgentSessionManager(options: {
   homePath: string;
   worktreeManager: WorktreeManager;
   agentLauncher: AgentLauncher;
   terminalRuntime: TerminalRuntimeClient;
+  terminalLaunch?: WorkspaceTerminalLaunch;
   backgroundRuntime?: BackgroundAgentRuntime;
   beforeProjectSessionRemove?: (input: { ownerId: string; sessionId: string; proof: object }) => Promise<void>;
   resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
@@ -462,6 +465,7 @@ export function createAgentSessionManager(options: {
       let coreMcp: ReturnType<NonNullable<typeof options.issueMatrixCoreMcp>> = null;
       try {
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
+        const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
         coreMcp = request.kind === "agent" && request.agent === "codex" && request.ownerId
           ? options.issueMatrixCoreMcp?.({ ownerId: request.ownerId, sessionId,
             readOnly: request.mode === "plan" || request.mode === "review" || request.sandbox?.mode === "read-only" }) ?? null
@@ -480,7 +484,8 @@ export function createAgentSessionManager(options: {
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
             ...(request.agent === "codex"
               ? { providerEventPath: codexProviderEventPath(homePath, sessionId),
-                ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}) }
+                ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}),
+                ...(routineSource ? { codexRoutinePrivate: true } : {}) }
               : {}),
             ...(coreMcp ? { matrixCoreMcp: { scope: coreMcp.scope, token: coreMcp.token } } : {}),
           })
@@ -518,6 +523,7 @@ export function createAgentSessionManager(options: {
       if (request.runtimePreference === "background") {
         const started = await startBackgroundSession({
           runtime: lockedRuntime ?? options.backgroundRuntime!, session, launch,
+          ...(request.agent === "codex" && nativeCodexRoutineAdmission(request.ownerId ?? "") ? { privateControl: nativeCodexRoutineAdmission(request.ownerId ?? "")!.launch(sessionId) } : {}),
           persist: (value) => writeSession(homePath, value),
         });
         if (started.ok) {
@@ -537,7 +543,8 @@ export function createAgentSessionManager(options: {
         const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
         const command = agentLaunchTerminalCommand(launch);
         childAcquisitionAttempted = true;
-        const tab = await options.terminalRuntime.createTab(workspace.id, {
+        const tab = await launchPreparedWorkspaceTerminal({ request, principal: workspaceTerminalPrincipal(request), launch, workspaceId: workspace.id, cwd: terminalCwd, launchTerminal: options.terminalLaunch })
+          ?? await options.terminalRuntime.createTab(workspace.id, {
           name: request.agent ?? "shell",
           cwd: terminalCwd,
           command,

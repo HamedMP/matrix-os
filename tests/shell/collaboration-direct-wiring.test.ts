@@ -15,7 +15,7 @@ import {
 const scopeId = "10000000-0000-4000-8000-000000000201";
 
 describe("shell direct collaboration wiring", () => {
-  afterEach(() => { vi.restoreAllMocks(); closeShellCollaborationSessions(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); closeShellCollaborationSessions(); });
 
   it("builds a direct API whose scope requests go to the home, not the platform", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: "Collaboration unavailable" }), {
@@ -43,6 +43,50 @@ describe("shell direct collaboration wiring", () => {
     expect(closeSecond).toHaveBeenCalledTimes(1);
     closeShellCollaborationSessions();
     expect(closeFirst).toHaveBeenCalledTimes(1);
+  });
+
+
+  it("refreshes Clerk proof before clearing app and collaboration sessions", async () => {
+    let finish!: (value: string) => void;
+    const getToken = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const api = createShellCollaborationApi("https://app.matrix-os.com");
+    const close = vi.spyOn(api.direct, "close");
+    const clearing = clearMatrixAppSession(getToken);
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    finish("fresh-clerk-proof");
+    await clearing;
+    expect(new Headers(fetchSpy.mock.calls[0]![1]?.headers).get("authorization")).toBe("Bearer fresh-clerk-proof");
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each(["empty", "unavailable"])("preserves local sessions when fresh proof is %s", async failure => {
+    const getToken = vi.fn(async () => {
+      if (failure === "unavailable") throw new Error("Offline");
+      return null;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const api = createShellCollaborationApi("https://app.matrix-os.com");
+    const close = vi.spyOn(api.direct, "close");
+    await expect(clearMatrixAppSession(getToken)).rejects.toThrow("Sign-out is temporarily unavailable");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled proof refresh and never sends delayed cleanup", async () => {
+    vi.useFakeTimers();
+    let finish!: (value: string) => void;
+    const getToken = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const clearing = clearMatrixAppSession(getToken);
+    const rejected = expect(clearing).rejects.toThrow("Sign-out is temporarily unavailable");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    finish("late-token");
+    await Promise.resolve();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("shares one live client across more than 32 mounted viewers without evicting open windows", () => {

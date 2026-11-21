@@ -1,4 +1,5 @@
 /** Register shell, system activity and terminal workspace routes after auth. */
+import type { CanonicalTerminalLaunch } from "../terminal/canonical-launch.js";
 import type { Context, Hono } from "hono";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { readPreviewTerminalOwner } from "../auth.js";
@@ -18,10 +19,14 @@ import { CleanupCandidateRegistry, executeCleanupAction } from "../system-activi
 import { collectSystemActivity } from "../system-activity/collector.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "../system-activity/history.js";
 import { createSystemActivityRoutes } from "../system-activity/routes.js";
+import { createTerminalAgentRoutes } from "../terminal-agent/routes.js";
+import type { TerminalAgentServices } from "../terminal-agent/services.js";
+import { createTerminalAgentOrchestrationRoutes } from "../terminal-agent/agent-routes.js";
 
 export interface ShellTerminalRouteOptions {
   app: Hono;
   homePath: string;
+  managedLaunch?: CanonicalTerminalLaunch;
   terminalWorkspaceRuntime: TerminalRuntimeSocketClient;
   terminalRuntimeOwnerIds: string[];
   terminalWindowLayoutStore: TerminalWindowLayoutStore;
@@ -29,12 +34,13 @@ export interface ShellTerminalRouteOptions {
   chatRepository: ChatRepository | null;
   canonicalChatExecutionRoots: ChatExecutionRootResolver | null;
   gatewayCollaboration: GatewayCollaborationRuntime | null;
+  terminalAgentServices: TerminalAgentServices;
 }
 
 export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) {
   const { app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
-    canonicalChatExecutionRoots, gatewayCollaboration } = options;
+    canonicalChatExecutionRoots, gatewayCollaboration, terminalAgentServices } = options;
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellCommandRunner = createShellCommandRunner({ homePath });
   const retiredShellRegistry = {
@@ -163,6 +169,7 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
   });
   app.route("/api/terminal", createTerminalWorkspaceRoutes({
     runtime: terminalWorkspaceRuntime,
+    managedLaunch: options.managedLaunch,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
     getPreviewTerminalOwner: readPreviewTerminalOwner,
@@ -171,6 +178,24 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
     ...(gatewayCollaboration ? {
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
     } : {}),
+  }));
+  const { inputActivity: terminalInputActivity, agents: terminalAgents, templates: terminalTemplates,
+    verbs: terminalAgentVerbs, waiter: terminalWaiter } = terminalAgentServices;
+  app.route("/api/terminal", createTerminalAgentOrchestrationRoutes({
+    agents: terminalAgents,
+    templates: terminalTemplates,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: terminalWorkspaceProjectAdmission,
+  }));
+  app.route("/api/terminal", createTerminalAgentRoutes({
+    verbs: terminalAgentVerbs,
+    waiter: terminalWaiter,
+    getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
+    terminalOwnerIds: terminalRuntimeOwnerIds,
+    projectAdmission: terminalWorkspaceProjectAdmission,
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route(

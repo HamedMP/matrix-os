@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -8,6 +8,7 @@ import { selectHaptic } from "@/lib/haptics";
 
 import { MATRIX_ENGINE_ID, openingEngineId, type ModelEngine } from "./model-choices";
 import type { ModelOptionGroup } from "./model-options";
+import type { PermissionModeChoice } from "./permission-modes";
 import { ModelSheetChipRow } from "./ModelSheetChipRow";
 import { ModelSheetRow } from "./ModelSheetRow";
 import { Spinner } from "./Spinner";
@@ -22,6 +23,8 @@ export interface ModelSheetProps {
   engines: ModelEngine[];
   /** The choices that go with the selected model, such as reasoning effort. */
   options: ModelOptionGroup[];
+  /** The permission modes the selected model's engine runs a turn in. None when there is no choice. */
+  permissionModes?: PermissionModeChoice[];
   /** The Matrix AI credit left, as "$18.40". Null when there is none to show. */
   credit: string | null;
   /** The credit is still being read: its box holds its place until it arrives. */
@@ -30,20 +33,24 @@ export interface ModelSheetProps {
   loading?: boolean;
   onSelectModel: (key: string) => void;
   onSelectOption: (optionId: string, value: string) => void;
+  onSelectPermissionMode?: (mode: string) => void;
 }
 
 /**
  * The content of the model sheet: the engines, the models of the engine being
- * looked at, the selected model's options and the Matrix AI credit.
+ * looked at, the selected model's options and permission mode, and the Matrix
+ * AI credit.
  */
 export function ModelSheet({
   engines,
   options,
+  permissionModes = [],
   credit,
   creditLoading = false,
   loading = false,
   onSelectModel,
   onSelectOption,
+  onSelectPermissionMode,
 }: ModelSheetProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -115,30 +122,26 @@ export function ModelSheet({
         ))}
         {engine && engine.models.length === 0 && engine.note ? <Text style={styles.note}>{engine.note}</Text> : null}
       </ScrollView>
-      {/* The options belong to the selected model, so they show with its engine only. */}
+      {/* The options and the permission mode belong to the selected model, so they show with its engine only. */}
       {showsSelection ? options.map((group) => (
-        <Fragment key={group.id}>
-          <SectionLabel>{group.label}</SectionLabel>
-          <ModelSheetChipRow
-            testID={`model-sheet-option-${group.id}`}
-            shownId={group.values.find((candidate) => candidate.selected)?.value ?? null}
-            chips={group.values.map(({ value, label, selected }) => ({
-              id: value,
-              chip: (
-                <Chip
-                  label={label}
-                  selected={selected}
-                  disabled={loading}
-                  onPress={() => {
-                    selectHaptic();
-                    onSelectOption(group.id, value);
-                  }}
-                />
-              ),
-            }))}
-          />
-        </Fragment>
+        <ChoiceSection
+          key={group.id}
+          testID={`model-sheet-option-${group.id}`}
+          label={group.label}
+          values={group.values}
+          disabled={loading}
+          onSelect={(value) => onSelectOption(group.id, value)}
+        />
       )) : null}
+      {showsSelection && permissionModes.length > 0 && onSelectPermissionMode ? (
+        <ChoiceSection
+          testID="model-sheet-permission-mode"
+          label="Permission mode"
+          values={permissionModes}
+          disabled={loading}
+          onSelect={onSelectPermissionMode}
+        />
+      ) : null}
       {engine?.id === MATRIX_ENGINE_ID && (credit !== null || creditLoading) ? (
         <View testID="model-sheet-credit" style={styles.credit}>
           {credit !== null ? (
@@ -149,6 +152,45 @@ export function ModelSheet({
         </View>
       ) : null}
     </View>
+  );
+}
+
+/** A named row of chips with one of them marked: one of a model's options, or the permission mode. */
+function ChoiceSection({
+  testID,
+  label,
+  values,
+  disabled,
+  onSelect,
+}: {
+  testID: string;
+  label: string;
+  values: { value: string; label: string; selected: boolean }[];
+  disabled: boolean;
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <>
+      <SectionLabel>{label}</SectionLabel>
+      <ModelSheetChipRow
+        testID={testID}
+        shownId={values.find((candidate) => candidate.selected)?.value ?? null}
+        chips={values.map((candidate) => ({
+          id: candidate.value,
+          chip: (
+            <Chip
+              label={candidate.label}
+              selected={candidate.selected}
+              disabled={disabled}
+              onPress={() => {
+                selectHaptic();
+                onSelect(candidate.value);
+              }}
+            />
+          ),
+        }))}
+      />
+    </>
   );
 }
 

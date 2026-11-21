@@ -49,3 +49,24 @@ export function terminalCommandStateFromPanes(value: unknown, tabId: number, pan
   if (pane.is_held === false && pane.exit_status === null) return "running";
   return "unknown";
 }
+
+export interface HeldPaneExit {
+  tabId: number;
+  paneId: string;
+  exitCode: number;
+}
+
+/**
+ * Terminal panes zellij keeps open after their program exited. Zellij sends no
+ * pane_closed for these, so this is how a finished program is noticed.
+ */
+export function heldPaneExitsFromPanes(value: unknown): HeldPaneExit[] {
+  const parsed = PaneStatesSchema.safeParse(value);
+  if (!parsed.success) return [];
+  return parsed.data.flatMap((pane) => {
+    if (pane.is_plugin || pane.is_held !== true) return [];
+    const exitCode = TerminalCommandResultSchema.safeParse({ state: "exited", exitCode: pane.exit_status });
+    if (!exitCode.success || exitCode.data.state !== "exited") return [];
+    return [{ tabId: pane.tab_id, paneId: `terminal_${pane.id}`, exitCode: exitCode.data.exitCode }];
+  });
+}

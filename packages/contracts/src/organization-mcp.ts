@@ -52,6 +52,21 @@ export const OrgMcpServerDefinitionSchema = z.object({
 }).strict();
 export type OrgMcpServerDefinition = z.infer<typeof OrgMcpServerDefinitionSchema>;
 
+/**
+ * Serialized size budget for one organization's saved server definitions,
+ * which every connections page carries. 500 definitions x 200 maximal
+ * overrides would be ~14 MiB, far past the shared client's 2 MiB response
+ * cap, so a write that would grow the saved policies past this budget is
+ * refused. With the routes' member page budget (1 MiB) a page stays < 2 MiB.
+ */
+export const ORG_MCP_MAX_POLICY_CHARS = 768 * 1024;
+const SERIALIZED_TIMESTAMP = "2000-01-01T00:00:00.000Z";
+
+/** JSON characters one definition adds to a connections response (plus its array separator). */
+export function orgMcpServerDefinitionChars(definition: Omit<OrgMcpServerDefinition, "updatedAt">): number {
+  return JSON.stringify({ ...definition, updatedAt: SERIALIZED_TIMESTAMP }).length + 1;
+}
+
 const ActorIdSchema = z.string().regex(/^user_[A-Za-z0-9_-]{1,123}$/);
 export const OrgMcpMemberIdSchema = ActorIdSchema;
 

@@ -4,6 +4,7 @@ import { MATRIX_TELEMETRY_EVENTS } from '../../packages/observability/src/events
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { markSiteLegacyPrivate, seedLegacyAccessLink } from './site-legacy-access-links.js';
 
 let db: PlatformDB;
 const owner = { ownerId: 'user_site_telemetry', machineId: 'site-telemetry-machine', appSlug: 'launch' };
@@ -33,14 +34,15 @@ describe('Matrix.page product telemetry', () => {
     } });
 
     const first = await service.deploy(owner, deployment);
+    await markSiteLegacyPrivate(db, first.id);
     captureEvent.mockClear();
-    await service.deploy(owner, { ...deployment, accessMode: 'private_link', baseRevision: first.revision });
+    await service.deploy(owner, { ...deployment, accessMode: 'public', baseRevision: first.revision });
 
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ACCESS_MODE_CHANGED,
-      { previous_access_mode: 'public', access_mode: 'private_link' }, { distinctId: owner.ownerId });
+      { previous_access_mode: 'private_link', access_mode: 'public' }, { distinctId: owner.ownerId });
   });
 
-  it('records successful owner and link lifecycle outcomes without content or credentials', async () => {
+  it('records successful owner and legacy link lifecycle outcomes without content or credentials', async () => {
     const captureEvent = vi.fn();
     const service = createSitesService({ db, captureEvent, storage: {
       async putObject() { return {}; }, async getObject() { return { body: null }; },
@@ -48,10 +50,11 @@ describe('Matrix.page product telemetry', () => {
 
     const first = await service.deploy(owner, deployment);
     const updated = await service.deploy(owner, { ...deployment, baseRevision: first.revision });
-    const privateSite = await service.patch(owner, { accessMode: 'private_link', baseRevision: updated.revision });
-    const created = await service.createAccessLink(owner, { baseRevision: privateSite.revision });
-    const claimed = await service.claimAccessLink(privateSite.id, { linkId: created.link.id, token: created.url.split('.').at(-1)! });
-    await service.revokeAccessLink(owner, created.link.id);
+    await markSiteLegacyPrivate(db, updated.id);
+    const privateSite = await service.patch(owner, { title: deployment.title, accessMode: 'private_link', baseRevision: updated.revision });
+    const seeded = await seedLegacyAccessLink(db, privateSite.id);
+    const claimed = await service.claimAccessLink(privateSite.id, { linkId: seeded.linkId, token: seeded.secret });
+    await service.revokeAccessLink(owner, seeded.linkId);
     const rolledBack = await service.rollback(owner, first.activeVersion!, privateSite.revision);
     await service.unpublish(owner, rolledBack.revision);
 
@@ -60,11 +63,9 @@ describe('Matrix.page product telemetry', () => {
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_PUBLISHED,
       { access_mode: 'public', operation: 'update' }, { distinctId: owner.ownerId });
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_SETTINGS_UPDATED,
-      { access_mode: 'private_link', access_mode_changed: true }, { distinctId: owner.ownerId });
-    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ACCESS_MODE_CHANGED,
-      { previous_access_mode: 'public', access_mode: 'private_link' }, { distinctId: owner.ownerId });
+      { access_mode: 'private_link', access_mode_changed: false }, { distinctId: owner.ownerId });
+    expect(captureEvent).not.toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CREATED, expect.anything(), expect.anything());
     for (const event of [
-      MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CREATED,
       MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CLAIMED,
       MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_REVOKED,
       MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_ROLLED_BACK,
@@ -72,7 +73,7 @@ describe('Matrix.page product telemetry', () => {
     ]) expect(captureEvent).toHaveBeenCalledWith(event, { access_mode: 'private_link' }, { distinctId: owner.ownerId });
 
     const serialized = JSON.stringify(captureEvent.mock.calls);
-    for (const privateValue of [deployment.title, deployment.description, deployment.slug, privateSite.id, created.link.id, created.url, claimed.cookie]) {
+    for (const privateValue of [deployment.title, deployment.description, deployment.slug, privateSite.id, seeded.linkId, seeded.url, claimed.cookie]) {
       expect(serialized).not.toContain(privateValue);
     }
   });

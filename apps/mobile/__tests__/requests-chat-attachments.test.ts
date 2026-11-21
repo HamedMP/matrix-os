@@ -1,5 +1,6 @@
 import type { ComposerAttachment } from "@/lib/chat-attachments";
 import { removeChatAttachment, uploadChatAttachment } from "@/lib/requests/chat-attachments";
+import { isMatrixAttachmentRetained } from "@/lib/matrix-attachment-retention";
 
 const mockPutDeviceFile = jest.fn();
 
@@ -42,6 +43,18 @@ describe("chat attachment requests", () => {
   });
 
   describe("upload", () => {
+    it.each([true, false])("keeps Matrix bytes protected while an upload settles (success=%s), then releases them", async (success) => {
+      let finish!: (value: unknown) => void;
+      mockPutDeviceFile.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+      const matrix = { ...attachment, matrixSource: { gatewayUrl, userId: "user_a", path: "Receipt.jpg" } };
+      const upload = uploadChatAttachment(token, gatewayUrl, matrix);
+      expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
+      finish(success ? stored({ ok: true, path, size: 2_048 }) : stored({ error: "unavailable" }, 503));
+      if (success) await expect(upload).resolves.toEqual({ path, created: true });
+      else await expect(upload).rejects.toThrow("Could not upload the attachment. Try again.");
+      expect(isMatrixAttachmentRetained(matrix.uri)).toBe(false);
+    });
+
     it("puts the file in the chat upload folder, never asking to write over what is there", async () => {
       mockPutDeviceFile.mockResolvedValue(stored({ ok: true, path, size: 2_048 }));
 

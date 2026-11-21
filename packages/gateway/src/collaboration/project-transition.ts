@@ -9,8 +9,7 @@ import {
   ProjectMembershipTransitionError,
   reconcileProjectMembershipAtPublication,
 } from "./project-membership-transition.js";
-import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from "./repository-shared.js";
-import { MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
+import { jsonb, OPERATION_RETENTION_MS, parseJson } from "./repository-shared.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 import { publishProjectChatRoutes } from "./project-chat-routes.js";
 import type {
@@ -19,8 +18,6 @@ import type {
 } from "./chat-scope.js";
 
 const MAX_RECOVERY_BATCH = 100;
-/** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
-const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
 const DEFAULT_RECOVERY_TIMEOUT_MS = 30_000;
 const MAX_RECOVERY_TIMEOUT_MS = 60_000;
 const TransitionIdSchema = z.uuid();
@@ -74,83 +71,6 @@ export class ProjectTransitionError extends Error {
 
 type TransitionRow = Selectable<CollaborationTransitionsTable>;
 type CollaborationTransaction = Transaction<OwnerCollaborationDatabase>;
-
-/**
- * The share default: everyone in the project's organization may contribute. Runs inside the
- * activation transaction, which already moves the scope revision and auth epoch, so it adds no
- * revision of its own. An audience the owner chose before sharing wins: an organization grant
- * they made is kept as it is, an explicitly revoked organization grant records Restricted,
- * and if they chose specific members only, the project is shared with exactly those members.
- */
-async function ensureDefaultOrganizationGrant(trx: CollaborationTransaction, input: {
-  scopeId: string;
-  organizationId: string | null;
-  ownerId: string;
-  revision: number;
-  grantId: string;
-  now: Date;
-}): Promise<void> {
-  if (!input.organizationId) return;
-  const now = input.now.toISOString();
-  // Expiry is applied lazily and the directory outbox ignores expired grants, so a lapsed one
-  // still marked live would leave the project shared with no organization audience.
-  await trx.updateTable("collaboration_grants").set({ state: "expired", updated_at: now })
-    .where("scope_id", "=", input.scopeId)
-    .where("audience_kind", "=", "organization")
-    .where("state", "in", ["pending", "active"])
-    .where("expires_at", "is not", null)
-    .where("expires_at", "<=", now)
-    .execute();
-  // Revoking General access is the persisted Restricted choice. Publication must not replace
-  // that explicit owner decision with the first-share organization default.
-  const explicitlyRestricted = await trx.selectFrom("collaboration_grants").select("id")
-    .where("scope_id", "=", input.scopeId)
-    .where("audience_kind", "=", "organization")
-    .where("state", "=", "revoked")
-    .limit(1).executeTakeFirst();
-  if (explicitlyRestricted) return;
-  const chosenMember = await trx.selectFrom("collaboration_grants").select("id")
-    .where("scope_id", "=", input.scopeId)
-    .where("audience_kind", "=", "member")
-    .where("state", "in", ["pending", "active"])
-    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
-    .limit(1).executeTakeFirst();
-  if (chosenMember) return;
-  // One live organization grant per scope (idx_collaboration_grants_one_organization): an
-  // owner's existing grant wins, and the default is only inserted when there is none.
-  const inserted = await trx.insertInto("collaboration_grants").values({
-    id: input.grantId,
-    scope_id: input.scopeId,
-    organization_id: input.organizationId,
-    audience_kind: "organization",
-    audience_actor_id: null,
-    preset: "contributor",
-    state: "active",
-    policy_version: PRESET_POLICY_VERSION,
-    source_id: null,
-    legacy_ceiling: null,
-    expires_at: null,
-    revision: 1,
-    created_by: input.ownerId,
-    created_at: now,
-    updated_at: now,
-    revoked_at: null,
-  }).onConflict((conflict) => conflict.column("scope_id")
-    .where("audience_kind", "=", "organization")
-    .where("state", "in", ["pending", "active"])
-    .doNothing())
-    .returning("id").executeTakeFirst();
-  if (!inserted) return;
-  await trx.insertInto("collaboration_audit").values({
-    scope_id: input.scopeId,
-    actor_id: input.ownerId,
-    action: "grant.created",
-    outcome: "completed",
-    revision: input.revision,
-    reason_code: "organization:contributor:default",
-    created_at: input.now,
-  }).execute();
-}
 
 function timestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
@@ -391,6 +311,14 @@ export function createProjectTransitionJournal(options: {
           if (!existing) throw new ProjectTransitionError("unavailable");
           return rowToTransition(existing);
         }
+        const pendingAccessCleanup = await trx.selectFrom("collaboration_operations")
+          .select("client_request_id")
+          .where("scope_id", "=", scope.id)
+          .where("operation_kind", "in", ["project.unshare", "membership.departure_cleanup"])
+          .where("status", "=", "accepted")
+          .limit(1)
+          .executeTakeFirst();
+        if (pendingAccessCleanup) throw new ProjectTransitionError("conflict");
         const sameRuntime = scope.authority_runtime_id === parsed.destinationAuthorityRuntimeId;
         if (scope.membership_mode !== "direct"
           || scope.lifecycle !== "private" || Number(scope.revision) !== parsed.expectedScopeRevision
@@ -398,6 +326,16 @@ export function createProjectTransitionJournal(options: {
             && parsed.destinationAuthorityGeneration !== Number(scope.authority_generation) + 1)) {
           throw new ProjectTransitionError("conflict");
         }
+        // A completed unshare or owner-departure cleanup leaves generation-bound
+        // bindings stale. Keep inherited scope IDs stable: queued work refers to
+        // them and the next staging pass safely rebinds their authority. A
+        // first-share binding already names the destination authority, so only
+        // retire bindings owned by the project's current source generation.
+        await trx.deleteFrom("collaboration_resource_bindings")
+          .where("project_scope_id", "=", scope.id)
+          .where("authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("authority_generation", "=", Number(scope.authority_generation))
+          .execute();
         const updatedScope = await trx.updateTable("collaboration_scopes").set({
           lifecycle: "preparing",
           updated_at: createdAt,
@@ -603,17 +541,6 @@ export function createProjectTransitionJournal(options: {
           .where("authority_generation", "=", Number(row.source_authority_generation))
           .returningAll().executeTakeFirst();
         if (!updatedScope) throw new ProjectTransitionError("conflict");
-        // Sharing a whole project shares it with its organization by default: in this same
-        // transaction, so the project is never shared with nobody, and the directory outbox
-        // claim publishes it with `audience: "organization"` and this grant id.
-        await ensureDefaultOrganizationGrant(trx, {
-          scopeId: scope.id,
-          organizationId: updatedScope.organization_id,
-          ownerId: scope.owner_id,
-          revision: nextRevision,
-          grantId: z.uuid().parse(createEventId()),
-          now: now(),
-        });
         const updated = await trx.updateTable("collaboration_transitions").set({
           status: "active",
           error_code: null,
@@ -712,52 +639,6 @@ export function createProjectTransitionJournal(options: {
         }
         // Members open the project's Chats through routes published beside the project.
         await publishProjectChatRoutes(trx, { projectScopeId: scope.id, now: now() });
-        // Member grants the owner chose before sharing were recorded unpublished. Each member now
-        // sees theirs pending, with the grant pointer they open it by.
-        const memberGrants = await trx.selectFrom("collaboration_grants")
-          .select(["id", "audience_actor_id"])
-          .where("scope_id", "=", scope.id)
-          .where("audience_kind", "=", "member")
-          .where("state", "=", "pending")
-          .where((expression) => expression.or([
-            expression("expires_at", "is", null),
-            expression("expires_at", ">", now()),
-          ]))
-          .orderBy("created_at", "asc").orderBy("id", "asc")
-          .limit(MAX_GRANTS_PER_SCOPE)
-          .execute();
-        let grantSequence = scopeSequence + (pendingMembers.length > 0 ? 2 : 1);
-        for (let offset = 0; offset < memberGrants.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
-          const batch = memberGrants.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT);
-          const grantEventId = z.uuid().parse(createEventId());
-          publishedRevision += 1;
-          await trx.insertInto("collaboration_events").values({
-            scope_id: scope.id,
-            scope_seq: grantSequence,
-            event_id: grantEventId,
-            resource_kind: "project",
-            resource_id: scope.resource_id,
-            revision: publishedRevision,
-            authority_generation: Number(updatedScope.authority_generation),
-            event_type: "project.transition.granted",
-            payload: {},
-            created_at: now(),
-          }).execute();
-          grantSequence += 1;
-          await trx.insertInto("collaboration_directory_outbox").values({
-            event_id: grantEventId,
-            scope_id: scope.id,
-            recipient_actor_ids: jsonb(batch.map((grant) => ({ actorId: grant.audience_actor_id!, grantId: grant.id }))),
-            authority_runtime_id: row.destination_authority_runtime_id,
-            authority_generation: Number(row.destination_authority_generation),
-            resource_kind: "project",
-            discovery_state: "invited",
-            retry_after: now(),
-            attempts: 0,
-            delivered_at: null,
-            created_at: now(),
-          }).execute();
-        }
         if (publishedRevision !== nextRevision) {
           const advanced = await trx.updateTable("collaboration_scopes").set({ revision: publishedRevision })
             .where("id", "=", scope.id).where("revision", "=", nextRevision)
@@ -819,7 +700,13 @@ export function createProjectTransitionJournal(options: {
       }
       await trx.deleteFrom("collaboration_resource_bindings")
         .where("project_scope_id", "=", scope.id).execute();
-      await trx.deleteFrom("collaboration_scopes")
+      await trx.updateTable("collaboration_scopes").set({
+        lifecycle: "private",
+        auth_epoch: sql<number>`auth_epoch + 1`,
+        execution_generation: null,
+        execution_eligibility: null,
+        updated_at: now(),
+      })
         .where("parent_scope_id", "=", scope.id)
         .where("membership_mode", "=", "inherited")
         .where("lifecycle", "in", ["preparing", "recovering"])
@@ -867,6 +754,8 @@ export function createProjectTransitionJournal(options: {
     let attempt: Promise<"activated" | "failed" | null>;
     attempt = (async () => {
       const current = await enterRecovery(value);
+      if (current.status === "active") return "activated" as const;
+      if (current.status === "failed") return "failed" as const;
       if (current.publicationMarker) {
         if (!current.stagedManifestRef) throw new ProjectTransitionError("conflict");
         await input.completePublication({

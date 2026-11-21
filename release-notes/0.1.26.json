@@ -1,0 +1,47 @@
+{
+  "version": "0.1.26",
+  "channel": "stable",
+  "date": "2026-11-12T22:45:21Z",
+  "locale": "en",
+  "title": "Skills for every project",
+  "shortTitle": "Project skills",
+  "summary": "Give each project its own skills and agent settings, and pick skills right from the composer.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Project skills",
+      "body": "Each project shows its agent settings and skills. Add installed, new or imported skills, then pick them from the chat composer.",
+      "art": "agents",
+      "tone": "lime",
+      "prs": [
+        3278,
+        3279,
+        3280,
+        3281,
+        3282,
+        3244
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "Browser approvals in a Dev chat apply only to that chat."
+    },
+    {
+      "kind": "fixed",
+      "text": "Browser setup and surfaces work again in Dev."
+    },
+    {
+      "kind": "fixed",
+      "text": "Apps build reliably on your Matrix computer."
+    },
+    {
+      "kind": "fixed",
+      "text": "Project editors and skill drafts keep your unsaved changes."
+    }
+  ],
+  "hidden": [
+    3307
+  ]
+}

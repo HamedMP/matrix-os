@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { SiteClient } from "../../lib/site-client";
 import { AppSitePanel } from "./AppSitePanel";
 
@@ -8,11 +9,13 @@ export function AppSiteSharePanel({
   client,
   ownerIdentity,
   onClose,
+  organizationSharing,
 }: {
   appSlug: string;
   client: SiteClient;
   ownerIdentity: string;
   onClose: () => void;
+  organizationSharing?: ReactNode;
 }) {
   return (
     <section
@@ -30,7 +33,7 @@ export function AppSiteSharePanel({
         <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-[-0.01em]">Share app</h2>
           <p className="mt-1 text-xs leading-5" style={{ color: "var(--muted-foreground, var(--text-secondary, GrayText))" }}>
-            Create a one-time invite link, or publish at a stable URL.
+            {organizationSharing ? "Invite by link, publish at a URL, or share with your organization." : "Create a one-time invite link, or publish at a stable URL."}
           </p>
         </div>
         <button
@@ -44,6 +47,7 @@ export function AppSiteSharePanel({
         </button>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+        {organizationSharing ? <div className="mb-3">{organizationSharing}</div> : null}
         <AppSitePanel appSlug={appSlug} client={client} variant="share" ownerIdentity={ownerIdentity} />
       </div>
     </section>

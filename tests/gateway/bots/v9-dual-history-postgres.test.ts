@@ -5,6 +5,7 @@ import { BOT_MIGRATIONS } from "../../../packages/gateway/src/bots/database-migr
 import { bootstrapBotDatabase, BotSchemaError } from "../../../packages/gateway/src/bots/database.js";
 import { historicalV9Migrations, createDeployedV9Fixture, v9PgEnabled, type DeployedV9Fixture } from "./deployed-v9-postgres-support.js";
 // Frozen Main #2948 SQL, independent of the production bridge and registry function.
+const upgradesFromV9 = BOT_MIGRATIONS.slice(9).map(({ version }) => version);
 const questionV9 = { version:9, name:"question_source_run", up:async (db: Parameters<typeof BOT_MIGRATIONS[0]["up"]>[0]) => {
   await sql`ALTER TABLE bot_interactions ADD COLUMN source_run_id TEXT
     CHECK (source_run_id IS NULL OR source_run_id ~ '^run_[A-Za-z0-9_-]{1,128}$')`.execute(db);
@@ -19,7 +20,7 @@ describe.skipIf(!v9PgEnabled)("pooled dual-v9 bridge",()=>{
   await bootstrapBotDatabase(fixture.db,[...historicalV9Migrations().slice(0,8),questionV9]);
   const before=await fixture.snapshot();
   const results=await Promise.all(Array.from({length:8},()=>bootstrapBotDatabase(fixture!.db)));
-  expect(results.flatMap(r=>r.applied).sort()).toEqual([10,11]);
+  expect(results.flatMap(r=>r.applied).sort((a, b) => a - b)).toEqual(upgradesFromV9);
   const after=await fixture.snapshot();
   expect(after.history).toEqual(before.history);
   expect(after.rows).toEqual({...before.rows,bot_chat_bindings:before.rows.bot_chat_bindings!.map(r=>Object.assign({},r,{project_id:null}))});
@@ -44,6 +45,6 @@ describe.skipIf(!v9PgEnabled)("pooled dual-v9 bridge",()=>{
   const broken=BOT_MIGRATIONS.map(m=>m.version===10?{...m,up:async(db:Parameters<typeof m.up>[0])=>{await m.up(db);throw Error("synthetic bridge fault");}}:m);
   await expect(bootstrapBotDatabase(fixture.db,broken)).rejects.toThrow("synthetic bridge fault");
   expect(await columns()).toHaveLength(0);expect(await fixture.snapshot()).toEqual(before);
-  expect(await bootstrapBotDatabase(fixture.db)).toEqual({applied:[10,11]});
+  expect(await bootstrapBotDatabase(fixture.db)).toEqual({applied: upgradesFromV9});
  });
 });

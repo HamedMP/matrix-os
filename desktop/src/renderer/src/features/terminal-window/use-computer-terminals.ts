@@ -83,7 +83,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   // listings already on screen are refreshed when this window regains focus;
   // `load` keeps a listing visible while it refreshes.
   const listed = useRef<string[]>([]);
-  useEffect(() => {
+  // A focus event may arrive immediately after this commit, before passive
+  // effects run. Keep its refresh targets in sync with the visible listings.
+  useLayoutEffect(() => {
     listed.current = Object.keys(terminals).filter((slot) => terminals[slot]?.status === "ready");
   }, [terminals]);
   useEffect(() => onEvent("window:focus-changed", ({ focused }) => {

@@ -1,5 +1,12 @@
+/** Persisted Chat authority, read by the server rather than supplied by a peer. */
+export interface CollaborationChatProviderRoute {
+  driverKind: "claude_code" | "codex";
+  modelId: string;
+}
+
 /** Trusted server read options, never persisted or accepted from renderer inputs. */
 export interface ProviderSnapshotReadOptions {
+  collaborationChatRoute?: CollaborationChatProviderRoute;
   refresh?: boolean;
   /** Exact managed Matrix admission skips unrelated native inventory; never cache its authority. */
   admissionScope?: "managed_matrix" | "canonical_matrix";

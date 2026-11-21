@@ -92,6 +92,7 @@ export type {
 
 const THREAD_STORE_RELATIVE_PATH = ["system", "coding-agents", "threads.json"] as const;
 const THREAD_LIST_LIMIT = 50;
+const RECENT_THREAD_LIST_LIMIT = 10;
 const EVENT_REPLAY_LIMIT = 200;
 const MAX_STORED_THREADS = 200;
 const MAX_EVENTS_PER_THREAD = 500;
@@ -204,6 +205,8 @@ export interface CodingAgentThreadStore {
   ): Promise<AdoptAgentThreadResponse>;
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listAttentionThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  /** Completed or aborted runs, newest first, for inbox "Done" views. */
+  listRecentThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listProjectCounts(principal: RequestPrincipal): Promise<Array<{
     projectId: string;
     threadCount: number;
@@ -1511,6 +1514,17 @@ export function createCodingAgentThreadStore(
         items: ownerThreads.slice(0, THREAD_LIST_LIMIT).map(stripOwner),
         hasMore: ownerThreads.length > THREAD_LIST_LIMIT,
         limit: THREAD_LIST_LIMIT,
+      };
+    },
+    async listRecentThreads(principal) {
+      const state = await readState(options.homePath);
+      const ownerThreads = state.threads
+        .filter((thread) => thread.ownerId === principal.userId && (thread.status === "completed" || thread.status === "aborted"))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      return {
+        items: ownerThreads.slice(0, RECENT_THREAD_LIST_LIMIT).map(stripOwner),
+        hasMore: ownerThreads.length > RECENT_THREAD_LIST_LIMIT,
+        limit: RECENT_THREAD_LIST_LIMIT,
       };
     },
     async listProjectCounts(principal) {

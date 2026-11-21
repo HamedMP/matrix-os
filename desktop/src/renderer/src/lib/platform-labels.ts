@@ -1,17 +1,12 @@
-function currentPlatform(): string {
-  return typeof navigator === "undefined" ? "" : navigator.platform;
+import { currentNavigatorPlatform, desktopPlatform } from "./desktop-platform";
+
+export function desktopShortcutLabel(keys: string, platform = currentNavigatorPlatform()): string {
+  return `${desktopPlatform(platform) === "mac" ? "⌘" : "Ctrl+"}${keys}`;
 }
 
-function isMacPlatform(platform: string): boolean {
-  return /^(Mac|iPhone|iPad|iPod)/i.test(platform);
-}
-
-export function desktopShortcutLabel(keys: string, platform = currentPlatform()): string {
-  return `${isMacPlatform(platform) ? "⌘" : "Ctrl+"}${keys}`;
-}
-
-export function systemTerminalLabel(platform = currentPlatform()): string {
-  if (isMacPlatform(platform)) return "Mac Terminal";
-  if (/^Win/i.test(platform)) return "Windows Terminal";
+export function systemTerminalLabel(platform = currentNavigatorPlatform()): string {
+  const kind = desktopPlatform(platform);
+  if (kind === "mac") return "Mac Terminal";
+  if (kind === "windows") return "Windows Terminal";
   return "system terminal";
 }

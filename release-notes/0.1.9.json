@@ -1,0 +1,28 @@
+{
+  "version": "0.1.9",
+  "channel": "stable",
+  "date": "2026-10-03T13:00:34Z",
+  "locale": "en",
+  "title": "Sharing defaults and WhatsApp preview",
+  "shortTitle": "WhatsApp preview",
+  "summary": "Confirmed projects are shared with your organization by default, and WhatsApp support begins.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Early support for messaging your private Matrix agent on WhatsApp."
+    },
+    {
+      "kind": "improved",
+      "text": "A confirmed project is shared with its organization by default."
+    },
+    {
+      "kind": "fixed",
+      "text": "The sharing inbox stays available when one entry can't be shown."
+    },
+    {
+      "kind": "fixed",
+      "text": "Setting up a private project works on every runtime."
+    }
+  ]
+}

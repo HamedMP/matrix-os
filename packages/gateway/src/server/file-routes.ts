@@ -1,9 +1,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import {
+  lstat,
   mkdir as mkdirAsync,
+  realpath,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema, ProjectIdSchema } from "@matrix-os/contracts";
+import { z } from "zod/v4";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -30,6 +34,22 @@ import {
 } from "../collaboration/project-fence.js";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file-mutations.js";
+import { ChatExecutionRootError, type ChatExecutionRootResolver } from "../chat/execution-root.js";
+import { withProjectLock } from "../state-ops.js";
+import { isFsError, pinDirectory } from "../app-gallery/pinned-directory.js";
+import { createProjectAgentConfigFile } from "../project-agent-context.js";
+
+const ProjectConfigTouchSchema = z.strictObject({
+  path: z.string().min(1).max(4096),
+  content: z.string().max(PROJECT_SKILL_FILE_MAX_BYTES).optional(),
+  projectId: ProjectIdSchema,
+  projectFile: ProjectAgentConfigFileSchema,
+}).refine(({ content = "", projectFile }) => projectFile.endsWith("/SKILL.md")
+  ? Buffer.byteLength(content, "utf8") <= PROJECT_SKILL_FILE_MAX_BYTES
+  : content.length <= 8192, { path: ["content"] });
+
+const TrashMoveSchema = z.object({ path: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
+const TrashRestoreSchema = z.object({ trashPath: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
 
 export interface FileRouteDeps {
   homePath: string;
@@ -37,6 +57,7 @@ export interface FileRouteDeps {
   getPrincipal?: (c: Context) => RequestPrincipal;
   filePreviewService?: FilePreviewService;
   projectPathAdmission?: LegacyProjectPathAdmission;
+  projectExecutionRoots?: ChatExecutionRootResolver | null;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
@@ -97,6 +118,42 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     }
   }
 
+  async function touchProjectConfig(c: Context, body: z.infer<typeof ProjectConfigTouchSchema>): Promise<Response> {
+    const roots = deps.projectExecutionRoots;
+    if (!roots || !deps.getPrincipal) return c.json({ error: "File service unavailable" }, 503);
+    const notFound = () => c.json({ error: "Project file not found" }, 404);
+    try {
+      const owner = { type: "personal" as const, ownerId: deps.getPrincipal(c).userId };
+      const root = await roots.resolve(owner, { kind: "project", projectId: body.projectId });
+      const projectSlug = root.projectSlug;
+      if (!projectSlug) return notFound();
+      const workspacePath = relative(await realpath(homePath), root.primaryWorkspaceRoot);
+      if (!workspacePath || isAbsolute(workspacePath) || workspacePath === ".." || workspacePath.startsWith("../")
+        || body.path !== `${workspacePath}/${body.projectFile}`) return notFound();
+      return await withProjectLock(projectSlug, async () => {
+        if (!resolveWritableFileApiPath(homePath, body.path)) return notFound();
+        const directory = await pinDirectory(root.primaryWorkspaceRoot);
+        try {
+          const identity = await directory.identity();
+          const current = await roots.revalidate(owner, root);
+          if (current.primaryWorkspaceRoot !== root.primaryWorkspaceRoot) return notFound();
+          const checked = await lstat(current.primaryWorkspaceRoot);
+          if (!checked.isDirectory() || checked.dev !== identity.dev || checked.ino !== identity.ino) return notFound();
+          await createProjectAgentConfigFile(directory, body.projectFile, body.content ?? "");
+          return c.json({ ok: true, path: body.path });
+        } finally {
+          await directory.close();
+        }
+      });
+    } catch (error: unknown) {
+      if (error instanceof ChatExecutionRootError && error.code !== "validation_unavailable") return notFound();
+      if (["ENOENT", "ENOTDIR", "ELOOP"].some(code => isFsError(error, code))) return notFound();
+      if (isFsError(error, "EEXIST")) return c.json({ error: "File already exists" }, 409);
+      console.warn("[project-config] File creation unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ error: "File service unavailable" }, 503);
+    }
+  }
+
   app.get("/api/files/tree", async (c) => {
     const pathParam = c.req.query("path") ?? "";
     const result = await listDirectory(homePath, pathParam);
@@ -153,8 +210,13 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   });
 
   app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string; content?: string }>(c);
+    const body = await parseJson<{ path: string; content?: string; projectId?: unknown; projectFile?: unknown }>(c);
     if (!body?.path) return c.json({ error: "path required" }, 400);
+    if ("projectId" in body || "projectFile" in body) {
+      const scoped = ProjectConfigTouchSchema.safeParse(body);
+      if (!scoped.success) return c.json({ error: "Invalid project file" }, 400);
+      return withProjectFileAdmission(c, [scoped.data.path], () => touchProjectConfig(c, scoped.data));
+    }
     return withProjectFileAdmission(c, [body.path], async () => {
       const result = await fileTouch(homePath, body.path, body.content);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
@@ -188,37 +250,46 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     });
   });
 
+  const readTrash = async (c: Context, fn: (result: Awaited<ReturnType<typeof trashList>>) => Promise<Response> | Response) => {
+    try {
+      return await fn(await trashList(homePath));
+    } catch (error) {
+      console.warn("[file-routes] Trash is unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ error: "Trash is unavailable" }, 503);
+    }
+  };
+
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    return withProjectFileAdmission(c, [body.path], async () => {
-      const result = await fileDelete(homePath, body.path);
+    const body = TrashMoveSchema.safeParse(await parseJson(c));
+    if (!body.success) return c.json({ error: "Invalid path" }, 400);
+    const { path } = body.data;
+    return withProjectFileAdmission(c, [path], async () => {
+      const result = await fileDelete(homePath, path);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     });
   });
 
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
+  app.get("/api/files/trash", (c) => readTrash(c, (result) => c.json(result)));
 
   app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const entry = (await trashList(homePath)).entries.find((candidate) => candidate.trashPath === body.trashPath);
-    return withProjectFileAdmission(c, entry ? [entry.originalPath] : [], async () => {
-      const result = await trashRestore(homePath, body.trashPath);
-      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    const body = TrashRestoreSchema.safeParse(await parseJson(c));
+    if (!body.success) return c.json({ error: "Invalid trash path" }, 400);
+    const trashPath = body.data.trashPath.replace(/^\/+/, "");
+    return readTrash(c, (result) => {
+      const entry = result.entries.find((candidate) => candidate.trashPath === trashPath);
+      if (!entry) return c.json({ error: "Not found in trash" }, 404);
+      return withProjectFileAdmission(c, [entry.originalPath], async () => {
+        const restored = await trashRestore(homePath, trashPath);
+        return c.json(restored, { status: toStatusCode(restored.ok ? 200 : (restored.status ?? 400)) });
+      }, true);
     });
   });
 
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const entries = await trashList(homePath);
-    return withProjectFileAdmission(c, entries.entries.map((entry) => entry.originalPath), async () => {
-      const result = await trashEmpty(homePath);
-      return c.json(result);
-    }, true);
-  });
+  app.post("/api/files/trash/empty", fileBodyLimit, (c) => readTrash(c, (result) =>
+    withProjectFileAdmission(c, result.entries.map((entry) => entry.originalPath), async () => {
+      const emptied = await trashEmpty(homePath);
+      return c.json(emptied, { status: emptied.ok ? 200 : 503 });
+    }, true)));
 
   app.get("/api/projects", async (c) => {
     const rootParam = (c.req.query("root") ?? "projects").trim();

@@ -42,10 +42,33 @@ export const CoreRepoSyncResultSchema = z.object({
 }).strict();
 export type CoreRepoSyncResult = z.infer<typeof CoreRepoSyncResultSchema>;
 
-/** Lowercase, hyphenated, at most 32 characters; falls back to the org id. */
+const CORE_REPO_SLUG_MAX_LENGTH = 32;
+const CORE_REPO_SLUG_SUFFIX_LENGTH = 8;
+
+/** FNV-1a 32-bit as 8 hex characters: dependency-free, so the contract stays usable outside Node. */
+function shortOrgHash(orgId: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < orgId.length; index += 1) {
+    hash ^= orgId.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(CORE_REPO_SLUG_SUFFIX_LENGTH, "0");
+}
+
+/**
+ * The org's skill namespace slug: lowercase, hyphenated, at most 32 characters.
+ * An org slug that is already clean and short enough is used verbatim, so
+ * existing installs keep their namespace. Any lossy form (truncated, case- or
+ * punctuation-folded, or empty and falling back to the org id) gets a suffix
+ * derived from the org id, so two orgs never share an `org-<slug>-` namespace.
+ */
 export function coreRepoSlug(organizationSlug: string, orgId: string): string {
-  const cleaned = organizationSlug.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32).replace(/-+$/, "");
-  return cleaned || orgId.slice(4, 36).toLowerCase();
+  const cleaned = organizationSlug.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (cleaned && cleaned === organizationSlug && cleaned.length <= CORE_REPO_SLUG_MAX_LENGTH) return cleaned;
+  const base = (cleaned || orgId.slice(4).toLowerCase().replace(/[^a-z0-9]+/g, ""))
+    .slice(0, CORE_REPO_SLUG_MAX_LENGTH - CORE_REPO_SLUG_SUFFIX_LENGTH - 1).replace(/-+$/, "");
+  const suffix = shortOrgHash(orgId);
+  return base ? `${base}-${suffix}` : suffix;
 }
 
 export function coreRepoSkillNamespace(slug: string): string {

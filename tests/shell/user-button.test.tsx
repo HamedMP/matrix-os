@@ -14,6 +14,7 @@ const clerkState = vi.hoisted(() => ({
     primaryEmailAddress: { emailAddress: "kongfupanda13@example.com" },
   },
   signOut: vi.fn(async () => undefined),
+  getToken: vi.fn(async () => "fresh-clerk-proof"),
   openUserProfile: vi.fn(),
   organization: null as { id: string } | null,
   organizationsLoaded: true,
@@ -32,6 +33,7 @@ vi.mock("@clerk/nextjs", () => ({
     isLoaded: clerkState.isLoaded,
     isSignedIn: clerkState.isSignedIn,
     signOut: clerkState.signOut,
+    getToken: clerkState.getToken,
   }),
   useUser: () => ({
     user: clerkState.user,
@@ -63,6 +65,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 describe("UserButton", () => {
   beforeEach(() => {
     vi.resetModules();
+    clerkState.getToken.mockReset().mockResolvedValue("fresh-clerk-proof");
     vi.restoreAllMocks();
     vi.useRealTimers();
     clerkState.isLoaded = true;
@@ -366,6 +369,41 @@ describe("UserButton", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "View plans" }));
     expect(onOpenSettings).toHaveBeenCalledWith("billing");
   });
+  it("shows Getting started progress in the top-bar menu and opens the checklist from it", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const ui = await import("@matrix-os/ui");
+    const open = vi.fn();
+    function Publisher() {
+      ui.usePublishGettingStartedProgress(React.useMemo(() => ({ completed: 2, total: 5, next: "Add billing", open }), []));
+      return null;
+    }
+    render(<ui.GettingStartedVisibilityProvider scope="web"><Publisher /><UserButton variant="menubar" onOpenSettings={vi.fn()} /></ui.GettingStartedVisibilityProvider>);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    const row = await screen.findByRole("menuitem", { name: /Getting started/ });
+    expect(row.textContent).toContain("2 of 5");
+    expect(row.textContent).toContain("Next: Add billing");
+    expect(screen.queryByRole("menuitem", { name: /What's New/ })).toBeNull();
+    const discord = screen.getByRole("menuitem", { name: /Join Discord/ });
+    expect(discord.getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
+    expect(discord.getAttribute("target")).toBe("_blank");
+    fireEvent.click(row);
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("hides the Getting started row once setup is complete", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const ui = await import("@matrix-os/ui");
+    function Publisher() {
+      ui.usePublishGettingStartedProgress(React.useMemo(() => ({ completed: 5, total: 5, next: null, open: vi.fn() }), []));
+      return null;
+    }
+    render(<ui.GettingStartedVisibilityProvider scope="web"><Publisher /><UserButton variant="menubar" onOpenSettings={vi.fn()} /></ui.GettingStartedVisibilityProvider>);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.queryByRole("menuitem", { name: /Getting started/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /Join Discord/ })).toBeTruthy();
+  });
+
   it("excludes hosted computer actions in self-hosted mode", async () => {
     document.documentElement.dataset.matrixSelfHosted = "1";
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
@@ -400,7 +438,25 @@ describe("UserButton", () => {
     });
   });
 
-  it("logs non-OK Matrix app-session cleanup responses before Clerk sign-out", async () => {
+  it.each(["settings", "win11"])("uses fresh Clerk proof for %s account sign-out", async surface => {
+    if (surface === "settings") {
+      const { UserButton } = await import("../../shell/src/components/UserButton.js");
+      render(<UserButton variant="settings" />);
+      fireEvent.click(await openAccountMenu());
+    } else {
+      const { Win11ManagedAccountActions } = await import("../../shell/src/components/taskbar/Win11ManagedAccountActions.js");
+      render(<Win11ManagedAccountActions onClose={vi.fn()} />);
+      fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    }
+    await waitFor(() => expect(clerkState.signOut).toHaveBeenCalled());
+    expect(clerkState.getToken).toHaveBeenCalledWith({ skipCache: true });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/app-session", expect.objectContaining({
+      method: "DELETE", headers: { Authorization: "Bearer fresh-clerk-proof" },
+    }));
+  });
+
+  it("keeps the Clerk session active when shared viewer revocation cannot complete", async () => {
+    clerkState.signOut.mockClear();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: "Session unavailable" }), {
@@ -415,12 +471,11 @@ describe("UserButton", () => {
     fireEvent.click(await openAccountMenu());
 
     await waitFor(() => {
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[auth] Matrix app session clear returned non-OK status",
-        503,
-      );
-      expect(clerkState.signOut).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalled();
+      expect(screen.getByRole("alert").textContent).toContain("Sign-out is temporarily unavailable");
     });
+    expect(clerkState.signOut).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 
   it("redirects after platform cleanup when Clerk sign-out does not settle", async () => {

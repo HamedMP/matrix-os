@@ -12,6 +12,7 @@ import {
   ORG_MCP_USAGE_WINDOW_DAYS,
   ORG_MCP_VISIBILITY_NOTICE,
   callsByConnectionHost,
+  usageKeyForHost,
   loadOrganizationMcpSnapshot,
   serverModeFor,
   type OrganizationMcpAdminClient,
@@ -136,7 +137,7 @@ function MemberCard({ member, snapshot, busy, mutate }: { member: OrgMcpMember; 
               <div className="min-w-0">
                 <p className="truncate text-sm">{connection.name} <span style={muted}>· {connection.host}</span></p>
                 <p className="text-xs" style={muted}>
-                  {STATUS_LABELS[connection.status] ?? "Unknown"} · {lastUsedLabel(connection.lastUsedAt)} · {calls.get(connection.host) ?? 0} calls in {ORG_MCP_USAGE_WINDOW_DAYS} days
+                  {STATUS_LABELS[connection.status] ?? "Unknown"} · {lastUsedLabel(connection.lastUsedAt)} · {calls.get(usageKeyForHost(connection.host)) ?? 0} calls in {ORG_MCP_USAGE_WINDOW_DAYS} days
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -245,7 +246,7 @@ export function OrganizationConnectionsPanel({ organizationName, withClient }: {
         <h4 className="text-sm font-medium">Connections</h4>
         <p className="mt-1 text-xs" style={muted}>MCP servers that members of {organizationName} connected, with Matrix call counts for the last {ORG_MCP_USAGE_WINDOW_DAYS} days. Credentials and call contents are never shown.</p>
       </div>
-      {saveError ? <div role="alert" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger, var(--destructive))" }}>{saveError}</div> : null}
+      {saveError ? <div role="alert" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger, var(--destructive))", color: "var(--danger-text, var(--destructive-text, var(--danger)))" }}>{saveError}</div> : null}
       <ServerPolicyCard servers={snapshot.servers} busy={busy} mutate={mutate} />
       {connected.length === 0
         ? <div role="status" className="rounded-lg border border-dashed border-border/60 p-6 text-center">

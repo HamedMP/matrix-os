@@ -28,6 +28,7 @@ import {
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { createPrebillingProvisioningCoordinator } from '../../packages/platform/src/prebilling-provisioning.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { listProvisioningJobs } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
@@ -309,6 +310,7 @@ describe('platform prebilling provisioning foundation', () => {
       db,
       config: loadCustomerVpsConfig({
         PLATFORM_SECRET: 'platform-secret',
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         HETZNER_API_TOKEN: 'provider-token',
         S3_ACCESS_KEY_ID: 'r2-access-key',
         S3_SECRET_ACCESS_KEY: 'r2-secret-key',
@@ -447,6 +449,7 @@ describe('platform prebilling provisioning foundation', () => {
       db,
       config: loadCustomerVpsConfig({
         PLATFORM_SECRET: 'platform-secret',
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         HETZNER_API_TOKEN: 'provider-token',
         S3_ACCESS_KEY_ID: 'r2-access-key',
         S3_SECRET_ACCESS_KEY: 'r2-secret-key',
@@ -537,6 +540,7 @@ describe('platform prebilling provisioning foundation', () => {
       db,
       config: loadCustomerVpsConfig({
         PLATFORM_SECRET: 'platform-secret',
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         HETZNER_API_TOKEN: 'provider-token',
         S3_ACCESS_KEY_ID: 'r2-access-key',
         S3_SECRET_ACCESS_KEY: 'r2-secret-key',

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
 import type { OsViewAgentTools } from "./ipc-server.js";
+import { TERMINAL_AGENT_IPC_TOOL_NAMES, type TerminalAgentKernelTools } from "./tools/terminal-agents.js";
 import type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
 import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
@@ -242,6 +243,8 @@ export interface KernelConfig {
   requestApproval?: RequestApprovalFn;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  /** Persistent terminal and coding-agent tools, provided by the gateway. */
+  terminalTools?: TerminalAgentKernelTools;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -263,6 +266,7 @@ export async function kernelOptions(config: KernelConfig) {
     homePath,
     config.osViewTools,
     config.ownerAudioTranscriber,
+    config.terminalTools,
   );
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
@@ -310,6 +314,7 @@ export async function kernelOptions(config: KernelConfig) {
       "WebFetch",
       ...IPC_TOOL_NAMES,
       ...(config.osViewTools ? OS_VIEW_IPC_TOOL_NAMES : []),
+      ...(config.terminalTools ? TERMINAL_AGENT_IPC_TOOL_NAMES : []),
       ...browserToolNames,
     ],
     skills: "all" as const,

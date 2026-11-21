@@ -4,6 +4,7 @@ import { canonicalReferenceId, canonicalSafeErrorText, canonicalSafeLabel } from
 import {
   CollaborationActorIdSchema,
   CollaborationIdSchema,
+  CollaborationLifecycleSchema,
   CollaborationOrganizationIdSchema,
   CollaborationParticipantSchema,
   CollaborationRevisionSchema,
@@ -132,25 +133,17 @@ export const CollaborationGrantActivationSchema = z.object({
   membershipEvidenceEpoch: CollaborationRevisionSchema,
 }).strict();
 
-const CollaborationProjectAccessGrantSchema = z.object({
-  grantId: CollaborationIdSchema,
-  preset: CollaborationPresetSchema,
-  revision: CollaborationRevisionSchema,
-}).strict();
-
 /** Owner-only presentation for the unified project Share/access dialog. */
 export const CollaborationProjectAccessPresentationSchema = z.object({
   scopeId: CollaborationIdSchema,
-  revision: CollaborationRevisionSchema,
+  organization: z.object({
+    id: CollaborationOrganizationIdSchema,
+    name: canonicalSafeLabel(200, 800).optional(),
+  }).strict(),
   owner: CollaborationParticipantSchema,
-  generalAccess: CollaborationProjectAccessGrantSchema.nullable(),
-  people: z.array(z.object({
-    actor: CollaborationParticipantSchema,
-    status: z.enum(["pending", "active"]),
-    effectivePreset: CollaborationPresetSchema,
-    inherited: z.boolean(),
-    directGrant: CollaborationProjectAccessGrantSchema.optional(),
-  }).strict()).max(1_000),
+  lifecycle: CollaborationLifecycleSchema.exclude(["deleting", "deleted"]),
+  accessMode: z.literal("organization_full_access"),
+  canAdministerShare: z.boolean(),
 }).strict();
 
 export const CollaborationCreateGrantRequestSchema = z.object({

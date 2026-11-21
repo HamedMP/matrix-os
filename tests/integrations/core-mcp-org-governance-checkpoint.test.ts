@@ -17,7 +17,8 @@ import { PlatformOrganizationRepository } from "../../packages/platform/src/orga
 import { bootstrapOrgMcpDatabase, createOrgMcpRepository, type OrgMcpDatabase } from "../../packages/platform/src/org-mcp/database.js";
 import { createOrgMcpPolicy } from "../../packages/platform/src/org-mcp/policy.js";
 import { createOrgMcpAdminRoutes } from "../../packages/platform/src/org-mcp/routes.js";
-import { ORG_MCP_MAX_MEMBER_BLOCKS } from "../../packages/contracts/src/organization-mcp.js";
+import { ORG_MCP_MAX_MEMBER_BLOCKS, ORG_MCP_MAX_TOOL_OVERRIDES } from "../../packages/contracts/src/organization-mcp.js";
+import { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, loadOrganizationMcpSnapshot } from "../../packages/ui/src/organization-mcp/client.js";
 import { createCoreFixture, type CoreFixture, type FakeUpstream } from "./core-mcp-fixture.js";
 
 const ORG = "org_acme1";
@@ -156,6 +157,88 @@ describe("Matrix Core MCP org governance checkpoint", () => {
     expect((await admin("PUT", `/api/orgs/${ORG}/mcp/members/${fixture.actorId}/blocks/host-7.example`)).status).toBe(200);
     expect((await admin("GET", `/api/orgs/${ORG}/mcp/connections?limit=10`)).status).toBe(200);
   });
+
+  async function addBulkMembers(count: number, blockId: (member: number, block: number) => string) {
+    const organizations = new PlatformOrganizationRepository(db);
+    for (let member = 0; member < count; member++) {
+      // "user_bulk_*" sorts before the fixture member, so these fill the front of the page.
+      const actorId = `user_bulk_${String(member).padStart(2, "0")}`;
+      await organizations.applyMembership({ organizationId: ORG, membershipId: `mem_${actorId}`, actorId, role: "org:member", state: "active", sourceUpdatedAt: SOURCE_TIME });
+      await db.insertInto("org_mcp_member_blocks").values(Array.from({ length: ORG_MCP_MAX_MEMBER_BLOCKS }, (_, block) => ({
+        organization_id: ORG, actor_id: actorId, server_def_id: blockId(member, block), created_by: ADMIN }))).execute();
+    }
+  }
+  async function walkConnectionPages() {
+    const blocks = new Map<string, string[]>();
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 20; pages++) {
+      const response = await admin("GET", `/api/orgs/${ORG}/mcp/connections?limit=50${cursor ? `&cursor=${cursor}` : ""}`);
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      // The shared client refuses bodies over 2 MiB.
+      expect(text.length).toBeLessThanOrEqual(2 * 1024 * 1024);
+      const page = JSON.parse(text) as { members: Array<{ actorId: string; blockedServerDefIds: string[] }>; nextCursor?: string };
+      for (const member of page.members) blocks.set(member.actorId, member.blockedServerDefIds);
+      cursor = page.nextCursor;
+      if (!cursor) return blocks;
+    }
+    throw new Error("connections pages did not end");
+  }
+
+  // Fault: a page-wide row cap drops later members' saved blocks, so the panel offers "Block" for a server that is still blocked.
+  it("returns every saved block for every member on a page whose earlier members are at the block cap", async () => {
+    await addBulkMembers(10, (member, block) => `h${block}.m${member}.example`);
+    expect((await admin("PUT", blockPath)).status).toBe(200);
+    const blocks = await walkConnectionPages();
+    expect(blocks.get(fixture.actorId)).toEqual(["mcp.linear.test"]);
+    for (let member = 0; member < 10; member++) expect(blocks.get(`user_bulk_0${member}`)).toHaveLength(ORG_MCP_MAX_MEMBER_BLOCKS);
+  });
+
+  // Fault: returning every block on a 50-member page overflows the client's response cap, so the panel fails to load.
+  it("splits a page of maximum-length blocks across cursors so every response fits the client cap", async () => {
+    const label = (char: string) => char.repeat(59);
+    await addBulkMembers(20, (member, block) => `${label("a")}.${label("b")}.${label("c")}.${label("d")}.m${member}b${block}.ex`);
+    expect((await admin("PUT", blockPath)).status).toBe(200);
+    const blocks = await walkConnectionPages();
+    expect(blocks.get(fixture.actorId)).toEqual(["mcp.linear.test"]);
+    expect(blocks.get(ADMIN)).toEqual([]);
+    for (let member = 0; member < 20; member++) {
+      expect(blocks.get(`user_bulk_${String(member).padStart(2, "0")}`)).toHaveLength(ORG_MCP_MAX_MEMBER_BLOCKS);
+    }
+  });
+
+  // Fault: saved server policies are returned on every page without a size bound, so valid policies push the
+  // response past the client's 2 MiB cap and the whole Connections panel fails to load.
+  it("refuses a server policy that would make the saved policies unloadable, so the client always loads every definition", async () => {
+    const maximalOverrides = (server: number) => Object.fromEntries(Array.from({ length: ORG_MCP_MAX_TOOL_OVERRIDES }, (_, tool) =>
+      [`t${server}_${tool}_`.padEnd(128, "x"), "blocked"]));
+    const serverPath = (server: number) => `/api/orgs/${ORG}/mcp/servers/s${server}.example`;
+    let saved = 0;
+    let refused: Response | undefined;
+    for (; saved < 500; saved++) {
+      const response = await admin("PUT", serverPath(saved), { mode: "allow", toolOverrides: maximalOverrides(saved) });
+      if (response.status !== 200) { refused = response; break; }
+    }
+    expect(refused?.status).toBe(409);
+    expect(await refused!.json()).toEqual({ error: "Organization server policies are too large", code: "policy_too_large" });
+    // Maximal member blocks on top of maximal policies: the two budgets together still fit every page.
+    await addBulkMembers(20, (member, block) => `${"a".repeat(59)}.${"b".repeat(59)}.${"c".repeat(59)}.${"d".repeat(59)}.m${member}b${block}.ex`);
+    await walkConnectionPages();
+
+    const api = createOrganizationMcpHttpApi({ baseUrl: "http://platform.test", fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      return app.request(`${url.pathname}${url.search}`, { ...init, headers: { ...(init?.headers as Record<string, string>), "x-test-actor": ADMIN } });
+    } });
+    const snapshot = await loadOrganizationMcpSnapshot(createOrganizationMcpAdminClient(api, ORG));
+    expect(snapshot.servers).toHaveLength(saved);
+    expect(snapshot.servers.every(server => Object.keys(server.toolOverrides).length === ORG_MCP_MAX_TOOL_OVERRIDES)).toBe(true);
+    expect(snapshot.members.find(member => member.actorId === "user_bulk_19")?.blockedServerDefIds).toHaveLength(ORG_MCP_MAX_MEMBER_BLOCKS);
+
+    // Edits that do not grow the saved policies always succeed; freed room is usable at once.
+    expect((await admin("PUT", serverPath(0), { mode: "recommend" })).status).toBe(200);
+    expect((await admin("PUT", serverPath(0), { toolOverrides: {} })).status).toBe(200);
+    expect((await admin("PUT", serverPath(saved), { mode: "allow", toolOverrides: maximalOverrides(saved) })).status).toBe(200);
+  }, 120_000);
 
   // Fault: usage reads only rolled-up aggregates, so calls since the last hourly rollup are missing (or counted twice).
   it("counts a call recorded before the rollup exactly once, before and after the rollup", async () => {

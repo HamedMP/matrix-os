@@ -26,6 +26,9 @@ export const RoutineCliOperationSchema = z.discriminatedUnion("operation", [
   controlOperation("pause"), controlOperation("resume"), controlOperation("archive"),
 ]);
 export type RoutineCliOperation = z.infer<typeof RoutineCliOperationSchema>;
+export function isRoutineCliMutation(input: RoutineCliOperation): boolean {
+  return input.operation === "propose" || input.operation === "pause" || input.operation === "resume" || input.operation === "archive";
+}
 
 /** Owner UI only: these destination selectors never supply action authority. */
 export const RoutineCliRememberTargetSchema = z.object({ botId: BotIdSchema, chatId: CanonicalChatIdSchema, baseRevision: revision }).strict();

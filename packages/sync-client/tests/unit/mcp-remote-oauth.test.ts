@@ -2,16 +2,20 @@
  * Hosted Matrix MCP OAuth hardening (spec 2691, Greptile findings on #3311).
  * Faults: an unbounded metadata body is buffered before the cap; a non-JSON
  * 404 aborts discovery before the OpenID fallback; two bridge processes on
- * one profile spend each other's rotated refresh token.
+ * one profile spend each other's rotated refresh token; a refresh that was in
+ * flight during `matrix mcp login`/`logout` overwrites the new login or
+ * recreates the deleted credentials.
  */
-import { mkdtemp, rm, writeFile, readdir, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, readdir, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  clearRemoteMcpTokens,
   createRemoteMcpTokenSource,
   discoverRemoteMcpAuthorizationServer,
   loadRemoteMcpTokens,
+  loginRemoteMcp,
   remoteMcpTokenPath,
   saveRemoteMcpTokens,
   type RemoteMcpTokens,
@@ -152,6 +156,44 @@ describe("remote MCP refresh lock", () => {
     });
     expect((await readdir(dir))).toEqual([]);
   });
+
+  const deadLock = () => JSON.stringify({ pid: 2_147_483_646, createdAt: Date.now(), nonce: "dead" });
+
+  it("leaves a dead process's lock alone while another bridge is recovering it", async () => {
+    // Fault: two bridges both judged the lock stale; the slower one's unlink
+    // then deleted the faster one's fresh replacement and both refreshed.
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    await writeFile(`${path}.recover`, "");
+    let ran = false;
+    await expect(withProfileRefreshLock(path, async () => { ran = true; }, { waitMs: 300 })).rejects.toThrow("busy");
+    expect(ran).toBe(false);
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ nonce: "dead" });
+  });
+
+  it("clears a recovery marker abandoned past its grace period", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    await writeFile(`${path}.recover`, "");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(`${path}.recover`, old, old);
+    await expect(withProfileRefreshLock(path, async () => "ran", { waitMs: 1_000 })).resolves.toBe("ran");
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("lets only one of many bridges recovering the same dead lock run at a time", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    let active = 0;
+    let peak = 0;
+    await Promise.all(Array.from({ length: 12 }, () => withProfileRefreshLock(path, async () => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+    })));
+    expect(peak).toBe(1);
+    expect(await readdir(dir)).toEqual([]);
+  });
 });
 
 describe("remote MCP token source binding", () => {
@@ -184,5 +226,97 @@ describe("remote MCP token source binding", () => {
     };
     const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: fetchStub });
     await expect(source.accessToken()).rejects.toThrow("profile login changed; restart the bridge");
+  });
+});
+
+describe("remote MCP login, logout and refresh serialization", () => {
+  let configDir: string;
+  beforeEach(async () => { configDir = await mkdtemp(join(tmpdir(), "matrix-mcp-serial-")); });
+  afterEach(async () => { await rm(configDir, { recursive: true, force: true }); });
+
+  const issuer = "https://login.matrix-os.test/oauth";
+  const expiring = (): RemoteMcpTokens => ({ version: 1, resource, issuer, tokenEndpoint: `${issuer}/token`,
+    clientId: "bridge-client", accessToken: "access-0", refreshToken: "refresh-0", expiresAt: Date.now() + 1_000 });
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>(done => { resolve = done; });
+    return { promise, resolve };
+  }
+
+  /** A refresh endpoint that reports when it is entered and answers only once released. */
+  function gatedRefresh() {
+    const entered = deferred();
+    const release = deferred();
+    const grants: string[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      grants.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
+      entered.resolve();
+      await release.promise;
+      return json({ access_token: "refreshed-access", token_type: "Bearer", expires_in: 3600, refresh_token: "refreshed-refresh" });
+    };
+    return { entered, release, grants, fetchStub };
+  }
+
+  it("keeps credentials deleted when logout runs while a refresh is in flight", async () => {
+    await saveRemoteMcpTokens("cloud", expiring(), configDir);
+    const refresh = gatedRefresh();
+    const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: refresh.fetchStub });
+    const refreshing = source.accessToken();
+    await refresh.entered.promise;
+    const logout = clearRemoteMcpTokens("cloud", configDir);
+    setTimeout(() => refresh.release.resolve(), 30);
+    await Promise.allSettled([refreshing, logout]);
+    await expect(logout).resolves.toBeUndefined();
+    expect(await loadRemoteMcpTokens("cloud", configDir)).toBeNull();
+  });
+
+  it("never recreates credentials that logout removed before the refresh took the lock", async () => {
+    await saveRemoteMcpTokens("cloud", expiring(), configDir);
+    const refresh = gatedRefresh();
+    refresh.release.resolve();
+    const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: refresh.fetchStub });
+    await source.load();
+    await clearRemoteMcpTokens("cloud", configDir);
+    await expect(source.accessToken()).rejects.toMatchObject({ code: "login_required" });
+    expect(refresh.grants).toEqual([]);
+    expect(await loadRemoteMcpTokens("cloud", configDir)).toBeNull();
+  });
+
+  it("keeps a new login that finishes while a refresh is in flight", async () => {
+    await saveRemoteMcpTokens("cloud", expiring(), configDir);
+    const refresh = gatedRefresh();
+    const source = createRemoteMcpTokenSource({ profileName: "cloud", configDir, fetch: refresh.fetchStub });
+    const refreshing = source.accessToken();
+    await refresh.entered.promise;
+
+    const loginFetch: typeof fetch = async input => {
+      const url = String(input);
+      if (url === "https://app.matrix-os.test/.well-known/oauth-protected-resource/mcp") {
+        return json({ resource, authorization_servers: [issuer] });
+      }
+      if (url === "https://login.matrix-os.test/.well-known/oauth-authorization-server/oauth") {
+        return json({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`, code_challenge_methods_supported: ["S256"] });
+      }
+      if (url === `${issuer}/register`) return json({ client_id: "bridge-client" }, 201);
+      if (url === `${issuer}/token`) {
+        // The refresh answers only after this login has its tokens and tries to save them.
+        setTimeout(() => refresh.release.resolve(), 30);
+        return json({ access_token: "login-access", token_type: "Bearer", expires_in: 3600, refresh_token: "login-refresh" });
+      }
+      return new Response("nope", { status: 500 });
+    };
+    const openBrowser = async (href: string) => {
+      const authorize = new URL(href);
+      const callback = new URL(authorize.searchParams.get("redirect_uri")!);
+      callback.searchParams.set("code", "auth-code");
+      callback.searchParams.set("state", authorize.searchParams.get("state")!);
+      await (await fetch(callback, { signal: AbortSignal.timeout(5_000) })).body?.cancel();
+    };
+    const login = loginRemoteMcp({ resource, profileName: "cloud", configDir, openBrowser, fetch: loginFetch, timeoutMs: 5_000 });
+    await Promise.allSettled([refreshing, login]);
+    await expect(login).resolves.toMatchObject({ refreshToken: "login-refresh" });
+    expect(await loadRemoteMcpTokens("cloud", configDir)).toMatchObject({ accessToken: "login-access", refreshToken: "login-refresh" });
   });
 });

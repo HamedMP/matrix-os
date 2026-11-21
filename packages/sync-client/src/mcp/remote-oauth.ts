@@ -59,6 +59,17 @@ export function remoteMcpTokenPath(profileName: string, configDir?: string): str
   return join(profilePath(profileName, configDir), "mcp-oauth.json");
 }
 
+/**
+ * One per-profile lock serializes `matrix mcp login`'s final save, logout's
+ * delete, and every bridge refresh, so none of them overwrites another's result.
+ */
+const tokenLockPath = (profileName: string, configDir?: string) => `${remoteMcpTokenPath(profileName, configDir)}.lock`;
+
+async function withProfileTokenLock<T>(profileName: string, configDir: string | undefined, operation: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(remoteMcpTokenPath(profileName, configDir)), { recursive: true, mode: 0o700 });
+  return withProfileRefreshLock(tokenLockPath(profileName, configDir), operation);
+}
+
 export async function loadRemoteMcpTokens(profileName: string, configDir?: string): Promise<RemoteMcpTokens | null> {
   try {
     return RemoteMcpTokensSchema.parse(JSON.parse(await readFile(remoteMcpTokenPath(profileName, configDir), "utf8")));
@@ -74,12 +85,15 @@ export async function saveRemoteMcpTokens(profileName: string, tokens: RemoteMcp
   await writeUtf8FileAtomic(path, JSON.stringify(RemoteMcpTokensSchema.parse(tokens), null, 2), 0o600);
 }
 
+/** Logout: deletes under the profile token lock so an in-flight refresh cannot recreate the file afterwards. */
 export async function clearRemoteMcpTokens(profileName: string, configDir?: string): Promise<void> {
-  try { await unlink(remoteMcpTokenPath(profileName, configDir)); }
-  catch (error: unknown) {
-    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
+  await withProfileTokenLock(profileName, configDir, async () => {
+    try { await unlink(remoteMcpTokenPath(profileName, configDir)); }
+    catch (error: unknown) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+  });
 }
 
 /** Streams at most MAX_METADATA_BYTES; cancels the body the moment it would exceed the cap. */
@@ -218,7 +232,9 @@ export async function loginRemoteMcp(options: {
     if (exchanged.status !== 200) throw oauthFailed();
     const tokens = tokensFrom(exchanged.body, { resource: resource.href, issuer: server.issuer,
       tokenEndpoint: server.token_endpoint, clientId: clientId.data.client_id });
-    await saveRemoteMcpTokens(options.profileName, tokens, options.configDir);
+    // Only the final save takes the lock; the browser wait above never holds it.
+    await withProfileTokenLock(options.profileName, options.configDir,
+      () => saveRemoteMcpTokens(options.profileName, tokens, options.configDir));
     return tokens;
   } finally { callback.close(); }
 }
@@ -235,12 +251,18 @@ export async function refreshRemoteMcpTokens(tokens: RemoteMcpTokens, fetchImpl:
     tokenEndpoint: tokens.tokenEndpoint, clientId: tokens.clientId }, tokens.refreshToken);
 }
 
+const sameTokenSet = (left: RemoteMcpTokens, right: RemoteMcpTokens) => left.resource === right.resource
+  && left.issuer === right.issuer && left.clientId === right.clientId
+  && left.accessToken === right.accessToken && left.refreshToken === right.refreshToken;
+
 /**
  * The bridge's token source: refreshes before expiry and once after a 401.
  * Refreshes are single-flight in-process and serialized across processes by
  * a profile lock; the saved tokens are reread under the lock and again after
  * a failed refresh, so a token another bridge already rotated is adopted
- * rather than spending this process's stale refresh token.
+ * rather than spending this process's stale refresh token. Login and logout
+ * take the same lock, and a refresh never saves over tokens that were removed
+ * or replaced after it started.
  */
 export function createRemoteMcpTokenSource(options: { profileName: string; configDir?: string; fetch?: typeof fetch; now?: () => number }) {
   const now = options.now ?? Date.now;
@@ -259,17 +281,24 @@ export function createRemoteMcpTokenSource(options: { profileName: string; confi
   const reread = async () => bound(await loadRemoteMcpTokens(options.profileName, options.configDir));
   const refresh = (stale: RemoteMcpTokens) => refreshing ??= (async () => {
     try {
-      current = await withProfileRefreshLock(`${remoteMcpTokenPath(options.profileName, options.configDir)}.lock`, async () => {
+      current = await withProfileTokenLock(options.profileName, options.configDir, async () => {
         const saved = await reread();
+        // Logged out: refreshing the in-memory copy would recreate deleted credentials.
+        if (!saved) throw loginRequired();
         if (usable(saved, stale)) return saved;
-        const base = saved ?? stale;
         let next: RemoteMcpTokens;
-        try { next = await refreshRemoteMcpTokens(base, options.fetch); }
+        try { next = await refreshRemoteMcpTokens(saved, options.fetch); }
         catch (error: unknown) {
           // A spent refresh token (invalid_grant) may mean another process already rotated it.
           const after = await reread();
           if (usable(after, stale)) return after;
           throw error;
+        }
+        // The lock can be broken as stale during a slow exchange: never overwrite a newer login or a logout.
+        const latest = await reread();
+        if (!latest || !sameTokenSet(latest, saved)) {
+          if (usable(latest, stale)) return latest;
+          throw loginRequired();
         }
         await saveRemoteMcpTokens(options.profileName, next, options.configDir);
         return next;

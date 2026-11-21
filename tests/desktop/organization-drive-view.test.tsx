@@ -21,14 +21,15 @@ afterEach(() => { cleanup(); createApi.mockReset(); useTabs.setState(useTabs.get
 
 describe("Electron organization drive view", () => {
   it("creates a fresh direct client after StrictMode cleanup", async () => {
-    const clients: Array<{ close: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> }> = [];
+    const clients: Array<{ close: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; getDiscovery: ReturnType<typeof vi.fn> }> = [];
     createApi.mockImplementation(() => {
       const api = {
         get: vi.fn(async (path: string) => path === "/api/organizations"
           ? { organizations: [] } : { items: [] }),
+        getDiscovery: vi.fn(async () => ({ items: [] })),
         direct: { close: vi.fn(), request: vi.fn() },
       };
-      clients.push({ close: api.direct.close, get: api.get });
+      clients.push({ close: api.direct.close, get: api.get, getDiscovery: api.getDiscovery });
       return api;
     });
     useConnection.setState({ platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 3 });
@@ -38,6 +39,7 @@ describe("Electron organization drive view", () => {
     expect(clients[0]!.close).toHaveBeenCalled();
     expect(clients.at(-1)!.close).not.toHaveBeenCalled();
     expect(clients.at(-1)!.get).toHaveBeenCalledWith("/api/organizations");
+    expect(clients.at(-1)!.getDiscovery).toHaveBeenCalledWith("/api/collaboration/shared?limit=100");
   });
 
   it("hands Files to a new unsent Chat without a Work provider and stops hidden subscriptions", async () => {
@@ -54,11 +56,10 @@ describe("Electron organization drive view", () => {
         quotaBytes: 1_000_000_000_000, files: [] };
     }) };
     createApi.mockReturnValue({
-      get: vi.fn(async (path: string) => path === "/api/organizations"
-        ? { organizations: [{ organizationId, name: "Authority" }] }
-        : { items: path.startsWith("/api/collaboration/shared") ? [{ scopeId,
+      get: vi.fn(async () => ({ organizations: [{ organizationId, name: "Authority" }] })),
+      getDiscovery: vi.fn(async (path: string) => ({ items: path.startsWith("/api/collaboration/shared") ? [{ scopeId,
           runtimeId: "runtime_owner", ownerId: "user_owner", kind: "folder",
-          authorityGeneration: 1, organizationId, status: "accepted" }] : [] }),
+          authorityGeneration: 1, organizationId, status: "accepted" }] : [] })),
       direct,
       subscribe,
     });
@@ -83,7 +84,7 @@ describe("Electron organization drive view", () => {
     expect(direct.close).not.toHaveBeenCalledWith(scopeId);
   });
   it("does not open an unrelated drive when the requested shortcut is unavailable", async () => {
-    createApi.mockImplementation(() => ({get: vi.fn(async path => path === "/api/organizations" ? {organizations: []} : {items: []}), direct: {close: vi.fn(), request: vi.fn()}}));
+    createApi.mockImplementation(() => ({get: vi.fn(async () => ({organizations: []})), getDiscovery: vi.fn(async () => ({items: []})), direct: {close: vi.fn(), request: vi.fn()}}));
     useConnection.setState({platformHost:"https://app.matrix-os.com",runtimeSlot:"primary",authGeneration:3});
     render(<DesktopOrganizationDrivesView requestedScopeId="00000000-0000-4000-8000-0000000000ff" requestedIntentId="new-request"/>);
     expect(await screen.findByText("This drive is unavailable. Choose another drive or refresh.")).toBeTruthy();

@@ -15,6 +15,7 @@ const clerkState = vi.hoisted(() => ({
     primaryEmailAddress: { emailAddress: "neo@example.com" },
   },
   signOut: vi.fn(async () => undefined),
+  getToken: vi.fn(async () => "fresh-clerk-proof"),
   openUserProfile: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ vi.mock("@clerk/nextjs", () => ({
     userId: clerkState.isSignedIn ? "user_123" : null,
     has: () => false,
     signOut: clerkState.signOut,
+    getToken: clerkState.getToken,
   }),
   useUser: () => ({ user: clerkState.user }),
   useClerk: () => ({ openUserProfile: clerkState.openUserProfile }),
@@ -121,6 +123,7 @@ function installFetchRouter(options: {
   journey?: Record<string, unknown>;
   journeyRetry?: Response;
   checkout?: Response | (() => Response);
+  appSessionClear?: Response;
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -145,7 +148,7 @@ function installFetchRouter(options: {
         ? options.checkout()
         : options.checkout ?? json({ url: "https://checkout.stripe.test/session" });
     }
-    if (url === "/api/auth/app-session" && init?.method === "DELETE") return json({ cleared: true });
+    if (url === "/api/auth/app-session" && init?.method === "DELETE") return options.appSessionClear ?? json({ cleared: true });
     throw new Error(`Unhandled test request: ${url}`);
   });
 }
@@ -173,6 +176,7 @@ async function beginNamedComputer(name: string) {
 describe("RuntimeManager", () => {
   beforeEach(() => {
     vi.resetModules();
+    clerkState.getToken.mockReset().mockResolvedValue("fresh-clerk-proof");
     vi.restoreAllMocks();
     mockBrowserTimeZone("Europe/Berlin");
     vi.useRealTimers();
@@ -273,6 +277,18 @@ describe("RuntimeManager", () => {
     expect(screen.getByLabelText("Account").className).toMatch(/w-fit/);
     expect(screen.getByRole("main").className).toMatch(/overflow-y-auto/);
     expect(screen.getByRole("main").className).toContain("font-sans");
+  });
+
+  it("keeps the account signed in when shared viewer revocation fails", async () => {
+    installFetchRouter({ appSessionClear: json({ error: "Unavailable" }, 503) });
+    await renderManager();
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Sign-out is temporarily unavailable"));
+    expect(clerkState.getToken).toHaveBeenCalledWith({ skipCache: true });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/auth/app-session", expect.objectContaining({
+      method: "DELETE", headers: { Authorization: "Bearer fresh-clerk-proof" },
+    }));
+    expect(clerkState.signOut).not.toHaveBeenCalled();
   });
 
   it("leaves runtime management for the dedicated computer onboarding route", async () => {

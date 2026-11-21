@@ -1,6 +1,9 @@
 import { createCodingOutputBuffer } from "./coding-output-buffer.js";
 import { EventEmitter } from "node:events";
 import { randomBytes } from "node:crypto";
+import { Duplex } from "node:stream";
+import { nativeOpenCodeRoutineSource } from "../chat/opencode-routine-source.js";
+import { prepareOpenCodeRoutineBootstrap, type OpenCodeRoutineBootstrap } from "./opencode-routine-bootstrap.js";
 import type { UserInputAnswerRequest } from "@matrix-os/contracts";
 import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 import { createOpenCodeInputController } from "./opencode-input.js";
@@ -36,6 +39,13 @@ export function createOpenCodeServerProcess(
   const events = new EventEmitter(); const stdout = new EventEmitter(); const stderr = new EventEmitter();
   const controller = new AbortController(); const requestFetch = dependencies.fetch ?? fetch;
   const password = randomBytes(32).toString("hex");
+  const routine = nativeOpenCodeRoutineSource();
+  let bootstrap: OpenCodeRoutineBootstrap | undefined;
+  let cleanup: Promise<void> | undefined;
+  const endRoutine = () => routine?.end();
+  const cleanupBootstrap = () => {
+    if (bootstrap && !cleanup) cleanup = bootstrap.close().catch(error => logCodingAgentWarning("OpenCode routine bootstrap cleanup unavailable", error));
+  };
   const headers = { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`, "x-opencode-directory": encodeURIComponent(options.cwd), "content-type": "application/json" };
   const prompt = args.at(-1) ?? "";
   const sessionArg = args.indexOf("--session"); let sessionId = sessionArg < 0 ? undefined : args[sessionArg + 1];
@@ -79,11 +89,13 @@ export function createOpenCodeServerProcess(
   const submissions = new Set<Promise<void>>(); // At most 16 active questions; cleared as requests settle.
   const inputs = createOpenCodeInputController(emit, async (path, body) => boundedJson(await request(path, body)));
   function end(code: number | null) {
+    endRoutine();
     if (ended) return; ended = true; stopped = true; controller.abort(); inputs.clear();
     if (killTimer) clearTimeout(killTimer); if (readyTimer) clearTimeout(readyTimer);
     stdout.emit("end"); events.emit("exit", code);
   }
   function stop(code: number | null, signal: NodeJS.Signals = "SIGTERM") {
+    endRoutine();
     if (stopped) { if (signal === "SIGKILL") child?.kill(signal); return; }
     stopped = true; desiredExit = code; controller.abort(); inputs.clear();
     if (readyTimer) clearTimeout(readyTimer);
@@ -124,6 +136,8 @@ export function createOpenCodeServerProcess(
     const part = object(properties.part);
     const eventSession = properties.sessionID ?? part?.sessionID ?? object(properties.info)?.sessionID;
     if (!sessionId || eventSession !== sessionId) return;
+    if (event?.type === "message.updated") { const info = object(properties.info); if (info) routine?.observeMessage(info); }
+    if (event?.type === "message.part.updated" && part) routine?.observePart(part);
     if (event?.type === "question.asked") inputs.asked(properties);
     if ((event?.type === "question.replied" || event?.type === "question.rejected") && typeof properties.requestID === "string") inputs.resolved(properties.requestID, event.type === "question.replied" ? "answered" : "cancelled");
     if (event?.type === "session.error") throw new Error("OpenCode session failed");
@@ -135,9 +149,20 @@ export function createOpenCodeServerProcess(
     if (part.type === "tool" && (status === "completed" || status === "error")) emit({ type: "tool_use", sessionID: sessionId, part });
   }
   async function run() {
-    const spawn = dependencies.spawn ?? ((cmd, argv, opts) => spawnIsolatedProviderProcess(cmd, argv, { ...opts, stdio: ["ignore", "pipe", "pipe"] }));
+    if (routine?.current()) {
+      try { bootstrap = await prepareOpenCodeRoutineBootstrap({ command, cwd: options.cwd, env: options.env }); }
+      catch (error) { endRoutine(); logCodingAgentWarning("OpenCode routines unavailable", error); }
+    }
+    if (stopped) { endRoutine(); cleanupBootstrap(); return; }
+    const permissions = bootstrap ? [...OPENCODE_READ_ONLY_PERMISSIONS, { permission: "matrix_routines", pattern: "*", action: "allow" }] : OPENCODE_READ_ONLY_PERMISSIONS;
+    const spawn = dependencies.spawn ?? ((cmd, argv, opts) => spawnIsolatedProviderProcess(cmd, argv, { ...opts, stdio: opts.stdio ?? ["ignore", "pipe", "pipe"] }));
     const ready = new Promise<void>((resolve, reject) => {
-      child = spawn(command, ["serve", "--hostname", "127.0.0.1", "--port", "0"], { ...options, env: { ...options.env, OPENCODE_SERVER_USERNAME: "opencode", OPENCODE_SERVER_PASSWORD: password, OPENCODE_PURE: "1", OPENCODE_ENABLE_QUESTION_TOOL: "1" } });
+      child = spawn(command, ["serve", "--hostname", "127.0.0.1", "--port", "0"], { ...options, ...(bootstrap ? { stdio: ["ignore", "pipe", "pipe", "pipe"] as const } : {}), env: { ...options.env, ...bootstrap?.environment, OPENCODE_SERVER_USERNAME: "opencode", OPENCODE_SERVER_PASSWORD: password, OPENCODE_PURE: "1", OPENCODE_ENABLE_QUESTION_TOOL: "1" } });
+      if (bootstrap) {
+        const pipe = child.stdio?.[3];
+        if (pipe instanceof Duplex) routine!.attach(pipe);
+        else { endRoutine(); reject(new Error("OpenCode routine transport unavailable")); return; }
+      }
       let output = "";
       child.stdout.on("data", chunk => {
         if (origin || stopped) return;
@@ -149,14 +174,15 @@ export function createOpenCodeServerProcess(
         origin = `http://127.0.0.1:${port}`; if (readyTimer) clearTimeout(readyTimer); resolve();
       });
       child.stderr.on("data", chunk => { if (!stopped) stderr.emit("data", chunk); });
-      child.once("error", error => { reject(error); fail(error); });
-      child.once("exit", code => { reject(new Error("OpenCode server exited")); end(stopped ? desiredExit : code === 0 ? 1 : code); });
+      child.stdout.once("end", endRoutine); child.stdout.once("close", endRoutine);
+      child.once("error", error => { endRoutine(); reject(error); fail(error); });
+      child.once("exit", code => { endRoutine(); cleanupBootstrap(); reject(new Error("OpenCode server exited")); end(stopped ? desiredExit : code === 0 ? 1 : code); });
       readyTimer = setTimeout(() => reject(new Error("OpenCode server startup timed out")), 10_000); readyTimer.unref?.();
     });
     await ready; if (stopped) return;
     if (sessionId && !SESSION_ID.test(sessionId)) throw new Error("OpenCode session unavailable");
     if (!sessionId) {
-      const created = object(await boundedJson(await request("/session", { title: "Matrix Chat", permission: OPENCODE_READ_ONLY_PERMISSIONS })));
+      const created = object(await boundedJson(await request("/session", { title: "Matrix Chat", permission: permissions })));
       if (typeof created?.id !== "string" || !SESSION_ID.test(created.id)) throw new Error("OpenCode session unavailable");
       sessionId = created.id;
     }
@@ -164,17 +190,24 @@ export function createOpenCodeServerProcess(
     // OpenCode PATCH appends permission rules; creation already sets the policy.
     // Resumed sessions must retain that exact policy before any prompt is sent.
     const verified = object(await boundedJson(await request(path)));
-    if (verified?.id !== sessionId || verified.directory !== options.cwd || (!Array.isArray(verified.permission) || verified.permission.length !== OPENCODE_READ_ONLY_PERMISSIONS.length
-      || verified.permission.some((value, index) => { const rule = object(value); const expected = OPENCODE_READ_ONLY_PERMISSIONS[index]!;
+    if (verified?.id !== sessionId || verified.directory !== options.cwd || (!Array.isArray(verified.permission) || verified.permission.length !== permissions.length
+      || verified.permission.some((value, index) => { const rule = object(value); const expected = permissions[index]!;
         return rule?.permission !== expected.permission || rule.pattern !== expected.pattern || rule.action !== expected.action; }))) throw new Error("OpenCode read-only session verification failed");
     emit({ type: "step_start", sessionID: sessionId });
     const subscribed = await executionRequest("/event", undefined, true);
     const eventStream = stream(subscribed).catch(fail);
     const separator = model?.indexOf("/") ?? -1;
+    const messageID = `msg_${randomBytes(16).toString("hex")}`;
+    if (bootstrap) {
+      const project = object(await boundedJson(await request("/project/current")));
+      if (typeof project?.worktree !== "string" || !routine!.beforePrompt(sessionId, messageID, options.cwd, project.worktree)) throw new Error("OpenCode routine source unavailable");
+    }
     const result = object(await boundedJson(await executionRequest(`${path}/message`, {
+      ...(bootstrap ? { messageID, agent: "build" } : {}),
       parts: [{ type: "text", text: prompt }],
       ...(model && separator > 0 ? { model: { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) } } : {}),
     })));
+    endRoutine(); // Native result fences authority before output publication/submission/child drainage.
     if (object(result?.info)?.error || !Array.isArray(result?.parts)) throw new Error("OpenCode message failed");
     for (const part of result.parts) { const parsed = object(part); if (parsed) publishPart(parsed); }
     await Promise.allSettled([...submissions]);

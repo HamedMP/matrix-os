@@ -2,6 +2,8 @@
 
 This guide documents the Matrix OS coding-agent architecture across Electron Desktop, Web Desktop, Web Canvas, Native Mobile, and Web Mobile. The gateway/runtime remains the source of truth; clients are resumable OS views that render validated summaries and snapshots.
 
+See [Project instruction discovery in Chat](project-agent-context.md) for the files each runtime loads and the project tool inventory.
+
 ## Ownership Boundaries
 
 Older native Codex Chats may have a retained native conversation but no saved
@@ -180,6 +182,17 @@ version or schema drift. Runtime capabilities must remain disabled for any
 installed version outside the verified range; do not silently fall back to raw
 terminal parsing for approvals or structured input.
 
+The native Codex execution watchdog does not treat silent shell commands as
+stalled: builds and CI watchers may redirect output to files or legitimately
+wait without writing to the terminal. Commands retain their explicit duration
+limit (`MATRIX_CODEX_COMMAND_DEADLINE_MS`, eight hours by default), regardless
+of output. Other tool items retain independent execution and inactivity limits;
+activity from another command cannot keep a stalled connector alive. Human
+approval/input waiting remains excluded from execution accounting. Stop and
+deadline interruption retain existing cleanup and uncertain-outcome semantics;
+neither authorizes automatic replay. See
+[quiet-command acceptance](../../specs/633-agent-waiting-policy/quiet-command-timeouts.md).
+
 App-server requests must pass through the gateway's bounded request normalizer.
 Command, file-change, and permission requests use Matrix-authored generic copy;
 raw commands, paths, hosts, and permission payloads never enter thread events.
@@ -268,7 +281,7 @@ subscriptions.
 
 Coding-agent attention notifications are gateway-owned. Thread events for approval requests, user-input requests, failed runs, and successful completion may emit safe push-channel payloads with generic copy plus a bounded thread id. The bridge deduplicates owner/thread/kind notifications in a capped TTL registry and checks owner notification preferences before sending. Missing preferences, including legacy preference files without the completion key, default to enabled; corrupt or unavailable preferences must fail closed for push delivery and log details server-side only.
 
-Push delivery is owner-scoped and cross-device by policy: a valid attention push fans out to the authenticated owner's active registered push tokens, not to other owners. The push adapter caps owner buckets and per-owner registered tokens, evicts only the oldest registrations for the same owner when that owner reaches the per-owner cap, drops stale token registrations before delivery, deduplicates token values, and caps per-notification fanout to the newest active devices so device growth cannot create an unbounded send batch.
+Push delivery is owner-scoped and cross-device by policy: a valid attention push fans out to the authenticated owner's active registered push tokens, not to other owners. Tokens live in the owner Postgres table `notification_push_tokens` (spec 652, A2), so they survive gateway restarts and updates; without an owner database, registration fails closed with a 503. A token is one device: registering it again refreshes it and moves it to the registering owner. Each owner keeps at most 16 tokens, and registration evicts the least recently seen ones in the same transaction. Tokens unseen for 30 days are skipped at delivery and deleted by an hourly sweep, and a token Expo reports as `DeviceNotRegistered` is deleted. Fanout is capped to the newest active devices so device growth cannot create an unbounded send batch. Every push's `data` carries the sending computer's `handle` (`MATRIX_HANDLE`, left out when unset) so the phone can switch to that computer before opening the target.
 
 Desktop and mobile may expose controls for approval, input, failed-run, and completion attention push preferences. Desktop must route reads and writes through trusted main-process IPC so bearer credentials stay out of the renderer. Mobile must use the authenticated gateway client and keep preference state transient; do not persist notification preference payloads in AsyncStorage. Preference updates are full replacements validated with `CodingAgentNotificationPreferencesUpdateSchema`.
 

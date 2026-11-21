@@ -37,6 +37,8 @@ jobs:
       trigger_requested: ${{ steps.superseded.outputs.stale == 'true' && 'true' || steps.changed.outputs.trigger_requested }}
       should_run: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}
+      # Lanes that run for every PR head, docs-only included, still skip superseded heads.
+      fresh_head: ${{ steps.superseded.outputs.stale == 'true' && 'false' || 'true' }}
       os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}
       # Prepared pool image avoids apt mirrors for unit, pattern and browser jobs.
       source_runner: ${{ steps.runner.outputs.source_runner || 'ubuntu-latest' }}
@@ -250,14 +252,34 @@ jobs:
           fi
           rg --version
 
+      # scripts/review/check-added-patterns.mjs is dependency-free; it needs Node only.
+      - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
+        with:
+          node-version: 24
+
+      - name: Resolve the PR's base branch
+        id: pr-base
+        if: github.event_name == 'pull_request' && needs.changes.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK_BASE_REF: ${{ github.base_ref }}
+        # Native stack layers report the stack trunk as base_ref; diff against the layer's real parent.
+        run: |
+          ref="$(node scripts/ci/resolve-pr-base.mjs)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Run CLAUDE.md pattern scanner on changed files
         if: needs.changes.outputs.should_run == 'true'
         env:
+          PR_BASE_REF: ${{ steps.pr-base.outputs.ref }}
           COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
           COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ./scripts/review/check-patterns.sh --diff origin/${{ github.base_ref }}
+            # PR size runs in its own lane so docs-only PRs are checked too.
+            ./scripts/review/check-patterns.sh --diff "origin/$PR_BASE_REF"
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
             BEFORE="$COVERAGE_BASE_SHA"
             if [ "$COVERAGE_BOOTSTRAP" = "true" ]; then
@@ -282,6 +304,45 @@ jobs:
             fi
             ./scripts/review/check-patterns.sh --diff "$BEFORE"
           fi
+
+  pr-size:
+    name: PR Size
+    needs: changes
+    # Unlike the source lanes this ignores should_run: a docs-only PR can still be too large to review.
+    if: always() && !cancelled() && needs.changes.result == 'success' && github.event_name == 'pull_request' && needs.changes.outputs.trigger_requested == 'true' && needs.changes.outputs.fresh_head == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # scripts/review/check-added-patterns.mjs is dependency-free; it needs Node only.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Resolve the PR's base branch
+        id: pr-base
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FALLBACK_BASE_REF: ${{ github.base_ref }}
+        # Native stack layers report the stack trunk as base_ref; diff against the layer's real parent.
+        run: |
+          ref="$(node scripts/ci/resolve-pr-base.mjs)"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce the 50-file / 3000-addition PR limit
+        env:
+          BASE_REF: ${{ steps.pr-base.outputs.ref }}
+        run: node scripts/review/check-added-patterns.mjs --base "origin/$BASE_REF" --only pr-size
 
   react-doctor:
     name: React Doctor
@@ -512,9 +573,9 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    # The remaining PostgreSQL runner has a 240s aggregate cap plus setup and cleanup.
-    # Keep job-level headroom for the earlier funded and routine PostgreSQL suites.
-    timeout-minutes: 20
+    # Leave room for the remaining PostgreSQL runner's 240s cap and cleanup
+    # after the funded, routine CLI, and built process tests.
+    timeout-minutes: 30
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -590,6 +651,13 @@ jobs:
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Routine CLI PostgreSQL qualification
+        env:
+          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: ${{ env.MATRIX_TEST_POSTGRES_URL }}
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Routine acceptance capture and preflight contracts
         run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
@@ -835,6 +903,21 @@ jobs:
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
         run: bun run test:e2e:run
 
+      - name: Qualify shared Browser profile persistence
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
+        env:
+          NODE_OPTIONS: --no-experimental-webstorage
+        run: |
+          set -euo pipefail
+          node node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/shared-browser-profile.integration.ts --maxWorkers=1 --no-file-parallelism --reporter=default --reporter=json --outputFile=output/ci/shared-browser-profile.json
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const result = JSON.parse(readFileSync('output/ci/shared-browser-profile.json', 'utf8'));
+          if (result.success !== true || result.numTotalTests < 1 || result.numPassedTests !== result.numTotalTests || result.numPendingTests !== 0 || result.numFailedTests !== 0) {
+            throw new Error('Shared Browser profile qualification requires executed passing tests with zero skips');
+          }
+          JS
+
       - name: Run native Electron terminal presentation regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
@@ -860,6 +943,12 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/account-organization-picker.e2e.test.ts
+
+      - name: Run required Desktop owner organization sharing
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/app-org-sharing.e2e.test.ts
 
       - name: Run required collaboration preview pair
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
@@ -1045,10 +1134,30 @@ jobs:
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
             "$image" node /work/tests/deploy/customer-vps/funded-config-linux.mjs
 
+  native-stdout-linux:
+    name: Native Stdout Linux
+    needs: changes
+    if: always() && !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Build real addons and exercise Linux native stdout
+        run: timeout --kill-after=5s 120s bash scripts/ci/run-native-stdout-linux.sh
+
   ci-results:
     # The only required check. Drafts rename it so GitHub never treats a draft suite as passing.
     name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.draft == true) && 'CI Draft (ignored)' || 'CI Results' }}
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, pr-size, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, collaboration-postgres, funded-host-root, native-stdout-linux, docs-contract, os-view-parity, e2e]
     if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.draft == true)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1061,6 +1170,9 @@ jobs:
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
           PATTERNS_RESULT: ${{ needs.patterns.result }}
+          PR_SIZE_RESULT: ${{ needs.pr-size.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          FRESH_HEAD: ${{ needs.changes.outputs.fresh_head }}
           REACT_DOCTOR_RESULT: ${{ needs.react-doctor.result }}
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
@@ -1068,6 +1180,7 @@ jobs:
           FUNDED_POSTGRES_RESULT: ${{ needs.funded-postgres.result }}
           COLLABORATION_POSTGRES_RESULT: ${{ needs.collaboration-postgres.result }}
           FUNDED_HOST_ROOT_RESULT: ${{ needs.funded-host-root.result }}
+          NATIVE_STDOUT_LINUX_RESULT: ${{ needs.native-stdout-linux.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -1088,6 +1201,7 @@ jobs:
             echo "| Type Check | $TYPECHECK_RESULT |"
             echo "| Shell Production Build | $SHELL_PRODUCTION_BUILD_RESULT |"
             echo "| Pattern Scan | $PATTERNS_RESULT |"
+            echo "| PR Size | $PR_SIZE_RESULT |"
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
@@ -1095,6 +1209,7 @@ jobs:
             echo "| Funded Settlement PostgreSQL | $FUNDED_POSTGRES_RESULT |"
             echo "| Collaboration PostgreSQL | $COLLABORATION_POSTGRES_RESULT |"
             echo "| Protected Funded Host Root Contracts | $FUNDED_HOST_ROOT_RESULT |"
+            echo "| Native Stdout Linux | $NATIVE_STDOUT_LINUX_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
@@ -1106,7 +1221,7 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$PR_SIZE_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) failed=true ;;
@@ -1115,9 +1230,14 @@ jobs:
 
           # These lanes never skip for a source change, so a skip means it did not run.
           if [ "${SHOULD_RUN:-false}" = "true" ]; then
-            for result in "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$UNIT_RESULT"; do
+            for result in "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$UNIT_RESULT"; do
               [ "$result" = "success" ] || failed=true
             done
+          fi
+
+          # Every fresh PR head runs the size lane, so a skip there means it did not run.
+          if [ "${EVENT_NAME:-}" = "pull_request" ] && [ "${FRESH_HEAD:-false}" = "true" ] && [ "$PR_SIZE_RESULT" != "success" ]; then
+            failed=true
           fi
 
           if [ "$failed" = "true" ]; then

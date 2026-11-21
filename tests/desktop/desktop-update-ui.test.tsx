@@ -430,12 +430,10 @@ describe("desktop update experience", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "What's New" });
-    expect(dialog.style.top).toBe("8vh");
+    expect(dialog.style.top).toBe("6vh");
     expect(dialog.style.maxWidth).toBe("calc(100vw - 32px)");
     expect(dialog.className).toContain("-translate-x-1/2");
-    expect(screen.getByRole("heading", { name: "What's New", level: 1 })).toBeTruthy();
-    expect(screen.getByText("v1.2.3")).toBeTruthy();
-    expect(screen.getByText("Latest")).toBeTruthy();
+    expect(screen.getByText("Updated to 1.2.3 · August 11, 2026")).toBeTruthy();
     expect(screen.getByText("Faster project loading")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close What's New" }));
 

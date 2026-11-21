@@ -3,7 +3,7 @@
 // this module never sees the credential. Every call has a timeout.
 import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
 import { chatFundingVersionUrl } from "@matrix-os/contracts";
-import { botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
+import { isRoutineOriginPath, botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
 
 const API_TIMEOUT_MS = 10_000;
 
@@ -34,14 +34,12 @@ export interface ApiClientOptions {
   onUnauthorized?: () => void;
 }
 
-export interface BoundedReadOptions {
+export interface BoundedReadOptions extends RequestTimeoutOptions {
   headers?: Record<string, string>;
   // Hard cap on the bytes read from the response body. The stat that sized a
   // file can be stale by the time the body is fetched, so the cap must apply
   // to the transfer itself; exceeding it rejects with "file_too_large".
   maxBytes?: number;
-  signal?: AbortSignal;
-  timeoutMs?: number;
 }
 
 export interface RequestTimeoutOptions {
@@ -96,7 +94,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     init: RequestInit,
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
-    const url = buildGatewayUrl(options.baseUrl, /^\/api\/chats(?:[/?]|$)/.test(path) ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
+    const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path) && !isRoutineOriginPath(path);
+    const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
       (signal): signal is AbortSignal => signal !== null && signal !== undefined,
     );

@@ -1,27 +1,38 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER,
+    SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema,
+    SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord,
+    SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationListQuerySchema, SiteEmailInvitationMutationRequestSchema,
+    SiteInvitationAuditCursorSchema } from '@matrix-os/contracts';
 import { RuntimeSlotSchema, SafeHandleSchema } from '../customer-vps-schema.js';
 import { getRunningUserMachineByHandle, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken, timingSafeTokenEquals } from '../platform-token.js';
 import type { SitesService } from './service.js';
 import { SiteError } from './types.js';
+import { createSiteEmailInvitations, listSiteEmailInvitations, resendSiteEmailInvitation,
+    revokeSiteEmailInvitation } from './email-invitations.js';
+import { listSiteInvitationAuditEvents } from './invitation-audit.js';
+/** Generic, provider-free copy for the retired one-time link capability (ENG-490). */
+export const SITE_ONE_TIME_LINKS_RETIRED_ERROR = 'One-time links are no longer available';
 export function createSiteManagementRoutes(options: {
     db: PlatformDB;
     platformSecret: string;
     service: SitesService;
+    emailEnabled?: () => Promise<boolean>;
 }): Hono {
     const app = new Hono();
     app.use('*', bodyLimit({ maxSize: 15 * 1024 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) }));
-    async function owner(c: Context, allowAccessLinkPaging = false) {
+    async function owner(c: Context, extraQuery: 'paging' | 'slug' | null = null) {
         if (options.platformSecret.length < 32)
             return null;
         const handle = SafeHandleSchema.safeParse(c.req.param('handle'));
         const appSlug = SiteAppSlugSchema.safeParse(c.req.param('appSlug'));
         const query = z.object({
             runtimeSlot: RuntimeSlotSchema.default('primary'),
-            ...(allowAccessLinkPaging ? { limit: z.string().optional(), cursor: z.string().optional() } : {}),
+            ...(extraQuery === 'paging' ? { limit: z.string().regex(/^\d{1,3}$/).optional(), cursor: z.string().max(256).optional() } : {}),
+            ...(extraQuery === 'slug' ? { slug: z.string().max(63).optional() } : {}),
         }).strict().safeParse(c.req.query());
         if (!handle.success || !appSlug.success || !query.success)
             throw new SiteError('invalid_request');
@@ -35,8 +46,11 @@ export function createSiteManagementRoutes(options: {
             authenticatedRuntime: { handle: machine.handle, runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: machine.runtimeTokenEpoch } };
     }
     app.onError((error, c) => {
-        if (error instanceof SiteError)
+        if (error instanceof SiteError) {
+            if (error.code === 'gone')
+                return c.json({ error: SITE_ONE_TIME_LINKS_RETIRED_ERROR }, 410);
             return c.json({ error: error.code === 'conflict' ? 'Site changed; reload and try again' : 'Site unavailable' }, error.code === 'conflict' ? 409 : error.code === 'not_found' ? 404 : error.code === 'invalid_request' ? 400 : 503);
+        }
         console.warn('[sites] management failed', error instanceof Error ? error.name : 'UnknownError');
         return c.json({ error: 'Site unavailable' }, 503);
     });
@@ -44,17 +58,21 @@ export function createSiteManagementRoutes(options: {
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
     const usesCurrentContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION;
+    const usesAccessModeContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '2' || usesCurrentContract(c);
     const rejectUnnegotiatedAccessMode = (c: Context, input: unknown) => {
-        if (!usesCurrentContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
+        if (!usesAccessModeContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
             throw new SiteError('invalid_request');
     };
     const siteResponse = (c: Context, site: SiteRecord) => {
         if (usesCurrentContract(c))
             return c.json(site);
-        const { accessMode: _, ...legacySite } = site;
+        const { capabilities: _, ...withoutEmail } = site;
+        if (usesAccessModeContract(c))
+            return c.json(withoutEmail);
+        const { accessMode: __, ...legacySite } = withoutEmail;
         return c.json(legacySite);
     };
-    const accessLinksResponse = (c: Context, result: SiteAccessLinksResponse) => c.json(usesCurrentContract(c) ? result : { links: result.links });
+    const accessLinksResponse = (c: Context, result: SiteAccessLinksResponse) => c.json(usesAccessModeContract(c) ? result : { links: result.links });
     app.get('/:appSlug', async (c) => { const identity = await owner(c); if (!identity)
         return denied(c); const site = await options.service.get(identity); if (!site)
         throw new SiteError('not_found'); return siteResponse(c, site); });
@@ -92,13 +110,18 @@ export function createSiteManagementRoutes(options: {
         return null; throw error; })); if (!input.success)
         throw new SiteError('invalid_request'); return siteResponse(c, await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
     app.get('/:appSlug/access-links', async c => {
-        const identity = await owner(c, true); if (!identity) return denied(c);
+        const identity = await owner(c, 'paging'); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({
             limit: c.req.query('limit'), cursor: c.req.query('cursor'),
         });
         if (!query.success) throw new SiteError('invalid_request');
         return accessLinksResponse(c, await options.service.listAccessLinks(identity, query.data));
     });
+    app.get('/:appSlug/slug-availability', async c => {
+        const identity = await owner(c, 'slug'); if (!identity) return denied(c);
+        return c.json(await options.service.slugAvailability(identity, { slug: c.req.query('slug') }));
+    });
+    // Retired (ENG-490): kept so older gateways get a clean 410 from the service, not a 404.
     app.post('/:appSlug/access-links', smallBody, async c => {
         const identity = await owner(c); if (!identity) return denied(c);
         const input = SiteAccessLinkCreateRequestSchema.safeParse(await c.req.json().catch((error: unknown) => {
@@ -113,6 +136,65 @@ export function createSiteManagementRoutes(options: {
         if (!linkId.success) throw new SiteError('invalid_request');
         await options.service.revokeAccessLink(identity, linkId.data);
         return c.json({ ok: true });
+    });
+    const emailCreateBody = bodyLimit({ maxSize: 32 * 1024, onError: c => c.json({ error: 'Site unavailable' }, 413) });
+    async function emailOwner(c: Context, paging = false) {
+        const identity = await owner(c, paging ? 'paging' : null);
+        if (!identity) return null;
+        if (!options.emailEnabled || !await options.emailEnabled()) throw new SiteError('unavailable');
+        return identity;
+    }
+    const jsonBody = async (c: Context) => c.req.json().catch((error: unknown) => {
+        if (error instanceof SyntaxError) return null; throw error;
+    });
+    // Readiness is available before the first publication; it never creates a
+    // site or relaxes the gate on invitation mutations.
+    app.get('/:appSlug/email-invitation-capabilities', async c => {
+        const identity = await owner(c); if (!identity) return denied(c);
+        return c.json({ privateEmailInvitations: options.emailEnabled ? await options.emailEnabled() : false });
+    });
+    app.get('/:appSlug/invitations', async c => {
+        const identity = await emailOwner(c, true); if (!identity) return denied(c);
+        const input = SiteEmailInvitationListQuerySchema.safeParse({
+            ...(c.req.query('limit') ? { limit: c.req.query('limit') } : {}),
+            ...(c.req.query('cursor') ? { cursor: c.req.query('cursor') } : {}),
+        });
+        if (!input.success) throw new SiteError('invalid_request');
+        return c.json(await listSiteEmailInvitations(options.db, identity, input.data));
+    });
+    app.post('/:appSlug/invitations', emailCreateBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const input = SiteEmailInvitationCreateRequestSchema.safeParse(await jsonBody(c));
+        if (!input.success) throw new SiteError('invalid_request');
+        return c.json(await createSiteEmailInvitations(options.db, identity, input.data));
+    });
+    app.get('/:appSlug/invitations/audit', async c => {
+        const identity = await emailOwner(c, true); if (!identity) return denied(c);
+        const input = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50),
+            cursor: SiteInvitationAuditCursorSchema.optional() }).strict().safeParse({
+            ...(c.req.query('limit') ? { limit: c.req.query('limit') } : {}),
+            ...(c.req.query('cursor') ? { cursor: c.req.query('cursor') } : {}),
+        });
+        if (!input.success) throw new SiteError('invalid_request');
+        const site = await options.db.executor.selectFrom('public_sites').select('id')
+            .where('owner_id', '=', identity.ownerId).where('machine_id', '=', identity.machineId)
+            .where('app_slug', '=', identity.appSlug).executeTakeFirst();
+        if (!site) throw new SiteError('not_found');
+        return c.json(await listSiteInvitationAuditEvents(options.db, identity.ownerId, site.id, input.data));
+    });
+    app.post('/:appSlug/invitations/:invitationId/resend', smallBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const id = SiteIdSchema.safeParse(c.req.param('invitationId'));
+        const input = SiteEmailInvitationMutationRequestSchema.safeParse(await jsonBody(c));
+        if (!id.success || !input.success) throw new SiteError('invalid_request');
+        return c.json(await resendSiteEmailInvitation(options.db, identity, id.data, input.data));
+    });
+    app.delete('/:appSlug/invitations/:invitationId', smallBody, async c => {
+        const identity = await emailOwner(c); if (!identity) return denied(c);
+        const id = SiteIdSchema.safeParse(c.req.param('invitationId'));
+        const input = SiteEmailInvitationMutationRequestSchema.safeParse(await jsonBody(c));
+        if (!id.success || !input.success) throw new SiteError('invalid_request');
+        return c.json(await revokeSiteEmailInvitation(options.db, identity, id.data, input.data));
     });
     return app;
 }

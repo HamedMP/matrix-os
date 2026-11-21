@@ -34,6 +34,10 @@ OS PR loop:
 - Use a semantic branch and PR title. Do not prefix the PR title with agent/tool tags.
 - Never stage unrelated changes. Inspect `git status --short --branch` before staging.
 - Do not merge unless explicitly asked.
+- Approval is risk-tiered (`docs/dev/review-pipeline.md#risk-tiered-merge-approval`):
+  a `5/5` with Greptile's own approval (Low/Medium risk) can merge; a `5/5`
+  without it (High/Critical) needs a human approval. Report which applies;
+  never self-approve or use admin bypass, even when asked to merge.
 - For dependent PRs, always use GitHub native stacks and the official `gh stack`
   extension under `docs/dev/stacked-prs.md`. Publish with `gh stack submit` rather
   than the standalone push recipe below; link the shared ENG ticket and native
@@ -97,5 +101,6 @@ OS PR loop:
      - latest commit SHA
      - checks run and result
      - latest Greptile status, explicitly `5/5`
+     - approval: Greptile-approved, or needs human approval
      - any residual risk or skipped check
    - If blocked, ping with the exact blocker and next action needed.

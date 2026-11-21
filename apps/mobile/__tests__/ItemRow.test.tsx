@@ -85,6 +85,30 @@ describe("ItemRow", () => {
     });
   });
 
+  it("puts the meta accessory 6pt after the time, on the time's line at the top right", () => {
+    render(<ItemRow testID="row" title="Q4 planning" meta="Mon" metaAccessory={<View testID="dot" />} />);
+
+    const metaLine = screen.getByTestId("row-meta");
+    expect(flat(metaLine)).toMatchObject({
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 6,
+      marginLeft: 8,
+    });
+    const [time, dot] = metaLine.props.children.filter(Boolean);
+    expect(time.props.children).toBe("Mon");
+    expect(dot.props.testID).toBe("dot");
+    expect(screen.getByTestId("row-title-line").props.children.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("shows the meta accessory on its own when there is no time", () => {
+    render(<ItemRow testID="row" title="Q4 planning" metaAccessory={<View testID="dot" />} />);
+
+    expect(screen.getByTestId("row-meta").props.children.filter(Boolean)).toHaveLength(1);
+    expect(screen.getByTestId("dot")).toBeTruthy();
+  });
+
   it("lets the text shrink to the row, so a long title ends in an ellipsis and the time stays in view", () => {
     // Hosted in the iOS chat menu, a text column that could only grow kept
     // its full title's width and pushed the time off the side panel.
@@ -110,6 +134,19 @@ describe("ItemRow", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
     fireEvent(row, "longPress");
     expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("prevents pressing or long-pressing a disabled row while keeping its label available", () => {
+    const onPress = jest.fn();
+    const onLongPress = jest.fn();
+    render(<ItemRow title="Report.pdf" disabled onPress={onPress} onLongPress={onLongPress} />);
+    const row = screen.getByRole("button");
+    expect(row.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(row);
+    fireEvent(row, "longPress");
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onLongPress).not.toHaveBeenCalled();
+    expect(screen.getByText("Report.pdf")).toBeTruthy();
   });
 
   it("gives a little under the finger, as much as a row as wide as the screen should", () => {

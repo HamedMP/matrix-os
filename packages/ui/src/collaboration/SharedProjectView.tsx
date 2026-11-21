@@ -6,18 +6,16 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
-type Role = "owner" | "editor" | "viewer";
-
 /**
- * A shared project inside the Chats app: its name, the member's role, and its Chats. Each Chat
- * opens in place through its own scope; access to it comes from the project.
+ * A shared project inside the Chats app: its name, organization-wide work access, and its Chats.
+ * Each Chat opens in place through its own scope; access to it comes from the project.
  */
 export function SharedProjectView({ api, scopeId, openChat }: {
   api: CollaborationApi;
   scopeId: string;
   openChat: (scopeId: string, chatId?: string, title?: string) => void;
 }) {
-  const [value, setValue] = useState<{ role: Role; overview: CollaborationProjectOverview } | null>(null);
+  const [value, setValue] = useState<CollaborationProjectOverview | null>(null);
   const [failed, setFailed] = useState(false);
   const loadGeneration = useRef(0);
   const load = useCallback(async () => {
@@ -31,7 +29,7 @@ export function SharedProjectView({ api, scopeId, openChat }: {
         throw new Error("Project scope mismatch");
       }
       if (generation === loadGeneration.current) {
-        setValue({ role: scope.role, overview });
+        setValue(overview);
         setFailed(false);
       }
     } catch (error: unknown) {
@@ -64,7 +62,7 @@ export function SharedProjectView({ api, scopeId, openChat }: {
     </div>;
   }
   if (!value) return <p role="status" className="p-8">Loading shared project…</p>;
-  const { role, overview } = value;
+  const overview = value;
   return <main data-slot="shared-project" className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-5 p-5 sm:p-8">
     <header className="min-w-0">
       <div className="flex min-w-0 items-center gap-2">
@@ -72,7 +70,7 @@ export function SharedProjectView({ api, scopeId, openChat }: {
         <SharedMark />
       </div>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-        {roleLabel(role)} · {role === "viewer" ? "read only" : "can edit"}
+        Organization-wide project access
       </p>
     </header>
     {overview.status === "archived" ? <p role="status" className="rounded-xl border p-4 text-sm">This project is archived.</p> : null}
@@ -112,10 +110,6 @@ function SharedMark() {
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   </span>;
-}
-
-function roleLabel(role: Role): string {
-  return role[0]!.toUpperCase() + role.slice(1);
 }
 
 const updatedAtFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });

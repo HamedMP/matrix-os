@@ -1,4 +1,5 @@
 import { PreviewPairBanner } from "./features/preview/PreviewPairBanner";
+import { DevRunBanner } from "./features/preview/DevRunBanner";
 import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider-catalog-coordinator";
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
@@ -17,6 +18,7 @@ import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefa
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 import { wireNativeAppOpening } from "./lib/native-app-opening";
+import { SharedAppDeepLinkOpener, wireSharedAppDeepLinks } from "./features/collaboration/shared-app-deep-links";
 
 export default function App() {
   const scope = useConnection((s) => JSON.stringify([s.platformHost, s.handle, s.runtimeSlot, s.authGeneration, s.status === "signed-out"]));
@@ -25,6 +27,7 @@ export default function App() {
   const loadAppearance = useAppearance((s) => s.load);
 
   useEffect(() => wireNativeAppOpening(), []);
+  useEffect(() => wireSharedAppDeepLinks(), []);
   useEffect(() => startDesktopProviderCatalogCoordinator(), []);
 
   useEffect(() => {
@@ -40,6 +43,7 @@ export default function App() {
     <GetStartedAnswersProvider scope={scope}>
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
       <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
+        <DevRunBanner />
         <PreviewPairBanner />
         {status === "loading" ? (
           <MatrixBootScreen label="Connecting to your Matrix computer" />
@@ -49,6 +53,7 @@ export default function App() {
           <>
             {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
             <DesktopDefaultOrganization />
+            <SharedAppDeepLinkOpener />
             <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
           </>
         )}

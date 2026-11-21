@@ -8,6 +8,7 @@ import { canonicalJson } from "./repositories/serialization.js";
  * details are logged, never returned to the worker.
  */
 import { createHash } from "node:crypto";
+import { isRoutineCliMutation, ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import {
   BotBrokerRequestSchema,
   BotImageChunkSchema,
@@ -33,6 +34,7 @@ import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_TIMEOUT_MS = 60_000;
+const DELEGATED_ROUTINE_MUTATION_TIMEOUT_MS = 120_000;
 const AUTHORIZATION_TIMEOUT_MS = 10_000;
 /** Per-run event order entries kept after release; runs still bound are never evicted. */
 const MAX_TRACKED_RUNS = 256;
@@ -42,6 +44,14 @@ export class BotBrokerActionError extends Error {
   constructor(readonly code: BotToolErrorCode) {
     super(`Bot broker action refused: ${code}`);
     this.name = "BotBrokerActionError";
+  }
+}
+
+/** Safe tool guidance to deliver only after recording the dispatch as effect_unknown. */
+export class BotBrokerToolEffectUnknownError extends Error {
+  constructor(readonly result: BotToolResult) {
+    super("Bot tool effect is unknown");
+    this.name = "BotBrokerToolEffectUnknownError";
   }
 }
 
@@ -196,7 +206,8 @@ export function createBotBrokerActions(deps: {
     if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
   }
 
-  async function runTool(binding: PiRuntimeBinding, request: BotToolRequest, childSignal?: AbortSignal): Promise<BotToolResult> {
+  async function runTool(binding: PiRuntimeBinding, request: BotToolRequest, childSignal?: AbortSignal,
+    allowRoutineOwnerWait?: () => void): Promise<BotToolResult> {
     // Shared runs cannot reach personal artifacts, memory, or owner-private interactions.
     if (binding.group && !["integration.inventory", "integration.call"].includes(request.capability)) throw new BotBrokerActionError("denied");
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
@@ -238,11 +249,21 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
+    // Only the gateway's native child bridge supplies childSignal. Canonical tool frames and reads retain the normal deadline.
+    const delegatedRoutineMutation = childSignal !== undefined
+      && (request.capability === "routine.propose" || request.capability === "routine.control" && request.args.operation === "control")
+      && request.routineRequestId !== undefined;
+    const managedOwnerWait = allowRoutineOwnerWait && childSignal && isManagedPiBinding(binding)
+      && binding.requestClass === "interactive" && request.capability === "routine.cli" && isRoutineCliMutation(request.args)
+      ? allowRoutineOwnerWait : undefined;
     const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
-      ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : request.capability === "github.developer" ? 90_000 : toolTimeoutMs;
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
+      ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" || request.capability === "routine.cli" ? 120_000 : request.capability === "github.developer" ? 90_000 : toolTimeoutMs;
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime,
+      AbortSignal.timeout(managedOwnerWait ? ROUTINE_CLI_MANAGED_BROKER_TIMEOUT_MS
+        : delegatedRoutineMutation ? DELEGATED_ROUTINE_MUTATION_TIMEOUT_MS : deadline)]);
     try {
       await reauthorize(binding, runSignal);
+      if (!signal.aborted) managedOwnerWait?.();
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
@@ -254,6 +275,7 @@ export function createBotBrokerActions(deps: {
       }
       await checkpoints.markEffectUnknown({ ...id, now: now().toISOString() });
       if (signal.aborted) throw new BotBrokerActionError("timeout");
+      if (error instanceof BotBrokerToolEffectUnknownError) return error.result;
       console.warn("[bots] tool dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       throw new BotBrokerActionError("unavailable");
     }
@@ -271,7 +293,7 @@ export function createBotBrokerActions(deps: {
      * Handles one frame from a bot workload. Returns undefined for a frame
      * that is not a valid bot frame, so the server drops the connection.
      */
-    async handleFrame(raw: unknown, transportSignal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    async handleFrame(raw: unknown, transportSignal?: AbortSignal, allowRoutineOwnerWait?: () => void): Promise<Record<string, unknown> | undefined> {
       const action = raw && typeof raw === "object" ? (raw as { action?: unknown }).action : undefined;
       if (typeof action === "string" && action.startsWith("inference.")) {
         const request = ScopeRuntimeBotInferenceRequestSchema.safeParse(raw);
@@ -335,7 +357,7 @@ export function createBotBrokerActions(deps: {
             if (!await publishEvent(binding, request.event)) return refusal(request.requestId, "invalid_arguments");
             return success(request.requestId, { accepted: true });
           case "bot.tool":
-            return success(request.requestId, await runTool(binding, request.tool));
+            return success(request.requestId, await runTool(binding, request.tool, transportSignal, allowRoutineOwnerWait));
         }
       } catch (error: unknown) {
         if (error instanceof BotBrokerActionError) return refusal(request.requestId, error.code);

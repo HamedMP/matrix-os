@@ -4,6 +4,7 @@ import { chatAttachmentUploadPath, type ComposerAttachment } from "@/lib/chat-at
 import { putDeviceFile } from "@/lib/device-file-upload";
 import { gatewayRequestUrl } from "@/lib/requests/answers";
 import { createRequestTimeout, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { retainMatrixAttachmentUris } from "@/lib/matrix-attachment-retention";
 
 const ATTACHMENT_UPLOAD_ERROR = "Could not upload the attachment. Try again.";
 const ATTACHMENT_REMOVE_ERROR = "Could not remove the attachment.";
@@ -59,7 +60,9 @@ export async function uploadChatAttachment(
   const timeout = createRequestTimeout(UPLOAD_TIMEOUT_MS);
   // Set once the computer has stored something at the place in this request.
   let stored = false;
+  let releaseCache: (() => void) | undefined;
   try {
+    if (attachment.matrixSource) releaseCache = retainMatrixAttachmentUris([attachment.uri]);
     const result = await putDeviceFile({
       uri: attachment.uri,
       url,
@@ -92,6 +95,7 @@ export async function uploadChatAttachment(
     }
     throw new Error(ATTACHMENT_UPLOAD_ERROR);
   } finally {
+    releaseCache?.();
     timeout.cancel();
   }
 }

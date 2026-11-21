@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import type { CanonicalChatDetailResponse, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, configure, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { MAX_MESSAGE_ATTACHMENTS, type ComposerAttachment } from "../lib/chat-attachments";
 import { useChatComposer } from "../lib/use-chat-composer";
+import { isMatrixAttachmentRetained } from "../lib/matrix-attachment-retention";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
 import { catalogOf, engineInstance } from "./model-test-catalog";
@@ -14,6 +15,7 @@ import { catalogOf, engineInstance } from "./model-test-catalog";
 const mockFetchActiveComputer = jest.fn();
 const mockCreateChat = jest.fn();
 const mockAdmitChatTurn = jest.fn();
+const mockFetchChatDetail = jest.fn();
 const mockUploadChatAttachment = jest.fn();
 const mockRemoveChatAttachment = jest.fn();
 const mockBindDraftChatId = jest.fn();
@@ -38,6 +40,7 @@ jest.mock("@/lib/requests", () => ({
   fetchActiveComputer: (...args: unknown[]) => mockFetchActiveComputer(...args),
   createChat: (...args: unknown[]) => mockCreateChat(...args),
   admitChatTurn: (...args: unknown[]) => mockAdmitChatTurn(...args),
+  fetchChatDetail: (...args: unknown[]) => mockFetchChatDetail(...args),
   uploadChatAttachment: (...args: unknown[]) => mockUploadChatAttachment(...args),
   removeChatAttachment: (...args: unknown[]) => mockRemoveChatAttachment(...args),
   canonicalChatTitle: (text: string) => text,
@@ -137,12 +140,15 @@ describe("chat composer attachments", () => {
   const FIRST_SEND = "optimistic-req_2";
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    configure({ asyncUtilTimeout: 8_000 });
     mockRequestIdCount = 0;
     queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false, gcTime: Infinity } } });
     warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     mockGetToken.mockResolvedValue("clerk-token");
     mockFetchActiveComputer.mockResolvedValue({ handle: "amin", runtimeSlot: "primary", gatewayPath: "/vm/amin" });
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
+    mockFetchChatDetail.mockResolvedValue(detailFor("chat_new"));
     mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_new", "msg_new"));
     mockUploadChatAttachment.mockImplementation(async (_token: string, _gateway: string, attachment: ComposerAttachment) => (
       { path: `temporary/desktop-chat/${attachment.id}-${attachment.name}`, created: true }
@@ -155,6 +161,8 @@ describe("chat composer attachments", () => {
     await disposeTestQueryClient(queryClient);
     warn.mockRestore();
     jest.clearAllMocks();
+    jest.useRealTimers();
+    configure({ asyncUtilTimeout: 1_000 });
   });
 
   it("holds what is added, each once, and lets go of what is removed", () => {
@@ -196,6 +204,108 @@ describe("chat composer attachments", () => {
 
     expect(waiting(composer)).toEqual([]);
     expect(composer.result.current.sentAttachments).toEqual({});
+  });
+
+  it.each([null, "chat_a"])("discards Matrix files when leaving draft %s, preserving device attachments", (activeChatId) => {
+    const original = { ...newChat, activeChatId, detail: activeChatId ? detailFor(activeChatId) : null };
+    const composer = renderComposer(original);
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Keep my text");
+      composer.result.current.addAttachments([photo("device"), matrix]);
+    });
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
+
+    composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
+    expect(waiting(composer)).toEqual([]);
+    composer.rerender(original);
+
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(false);
+    expect(composer.result.current.draft).toBe("Keep my text");
+  });
+
+  it.each([
+    ["temporarily unavailable ownership", { scope: null }],
+    ["a different project", { projectId: "project_b" }],
+  ] as const)("discards stored Matrix files after %s and rejects a late read", (_label, transition) => {
+    const composer = renderComposer();
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    const finishOldRead = composer.result.current.addAttachments;
+    act(() => { finishOldRead([matrix, photo("device")]); });
+    const originalBinding = composer.result.current.matrixAttachmentScope;
+
+    composer.rerender({ ...newChat, ...transition });
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    composer.rerender({ ...newChat });
+    act(() => { finishOldRead([matrix]); });
+
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(composer.result.current.matrixAttachmentScope).not.toBe(originalBinding);
+    // A fresh read in the current context is still usable.
+    act(() => { composer.result.current.addAttachments([matrix]); });
+    expect(waiting(composer)).toEqual(["device.jpg", "matrix.jpg"]);
+  });
+
+  it("rejects a Matrix read completed after navigating away and back", () => {
+    const composer = renderComposer();
+    const finishOldRead = composer.result.current.addAttachments;
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+
+    composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
+    composer.rerender({ ...newChat });
+    act(() => { finishOldRead([matrix]); });
+
+    expect(waiting(composer)).toEqual([]);
+  });
+
+  it.each([
+    { activeChatId: "chat_b", detail: detailFor("chat_b") },
+    { projectId: "project_b" },
+  ])("restores failed-send text and device files without expired Matrix files after %j", async (transition) => {
+    mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
+    const composer = renderComposer();
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Keep this failed message");
+      composer.result.current.addAttachments([matrix, photo("device")]);
+    });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["matrix.jpg", "device.jpg"]]));
+    expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
+
+    composer.rerender({ ...newChat, ...transition });
+    if (!transition.activeChatId) expect(waiting(composer)).toEqual(["device.jpg"]);
+    composer.rerender({ ...newChat });
+
+    expect(composer.result.current.draft).toBe("Keep this failed message");
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(mockCreateChat).toHaveBeenCalledTimes(2));
+    // Removing expired files changes the payload, so this is a new request.
+    expect(mockCreateChat.mock.calls[1][2].clientRequestId).not.toBe(mockCreateChat.mock.calls[0][2].clientRequestId);
+  });
+
+  it.each([{ activeChatId: null, detail: null }, { scope: null }])("blocks an expired Matrix retry after %j and lets Edit recover text and device files", async (transition) => {
+    mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
+    const original = { ...newChat, activeChatId: "chat_a", detail: detailFor("chat_a") };
+    const composer = renderComposer(original);
+    const matrix = { ...photo("matrix"), matrixSource: { userId: "user_1", gatewayUrl, path: "notes.md" } };
+    act(() => {
+      composer.result.current.setDraft("Recover this");
+      composer.result.current.addAttachments([matrix, photo("device")]);
+    });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(unsent(composer)).toEqual([["matrix.jpg", "device.jpg"]]));
+
+    composer.rerender({ ...original, ...transition });
+    composer.rerender(original);
+    expect(composer.result.current.optimisticMessages[0].retryBlocked).toBe(true);
+    act(() => { composer.result.current.retrySend(FIRST_SEND); });
+    expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1);
+    act(() => { composer.result.current.editUnsent(FIRST_SEND); });
+    expect(waiting(composer)).toEqual(["device.jpg"]);
+    expect(composer.result.current.draft).toBe("Recover this");
   });
 
   it("uploads the attachments, then sends a message that names them after its text", async () => {

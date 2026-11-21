@@ -81,10 +81,13 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 - **Android does not shrink the window for the keyboard.** The app is edge to
   edge, so the keyboard is drawn over the screen on both platforms. A screen
   with a text field near the bottom makes room for it itself: the chat, project
-  and agent chat screens use `KeyboardAvoidingView` with `behavior="padding"`
-  on iOS and Android alike. On Android React Native reports the keyboard on
-  its next layout pass, a moment after it appears, so the composer moves up
-  just after the keyboard rather than with it.
+  and agent chat screens use `react-native-keyboard-controller`'s
+  `KeyboardAvoidingView` with `behavior="padding"` on iOS and Android alike,
+  so the composer moves with the keyboard frame by frame. Its `KeyboardProvider`
+  is mounted in `app/_layout.tsx` on both platforms. React Native's own
+  Android keyboard events arrive on the next layout pass, a moment after the
+  keyboard appears; read the controller's events (as `useKeyboardVisible`
+  does) when something has to change as the keyboard starts to move.
 - **Moving between tabs from code** goes through the hrefs and hooks in
   `lib/shell-routes.ts` and `lib/use-shell-navigation.ts`. Since Expo SDK 58 a
   navigation call takes a complete href: `screen` and `params` no longer build
@@ -453,7 +456,7 @@ There are two release channels. `development` exists only for dev clients.
 
 | Channel | Builds on it | How updates arrive |
 | --- | --- | --- |
-| `preview` | Internal builds from `eas build --profile preview` | Automatically, on every push to `main` that touches the mobile app |
+| `preview` | Internal builds from `eas build --profile preview` | Only when someone publishes by hand (`action: publish-preview`); merging to `main` publishes nothing |
 | `production` | Store builds from `eas build --profile production` | Only by promoting a preview update by hand |
 
 Both profiles set `"environment": "production"`. A preview update is promoted to
@@ -486,8 +489,11 @@ update, then fully close and reopen the app and wait for the download.
 `.github/workflows/mobile-ota-update.yml` owns all three. Do not publish from a
 laptop except for break-glass recovery.
 
-1. **Preview**: merge to `main`. The workflow runs the mobile tests, publishes to
-   `preview`, and writes the update group id to the run summary.
+1. **Preview**: run the workflow manually on `main` with `action: publish-preview`
+   (Actions, "Mobile OTA Update", "Run workflow"). It runs the mobile tests and
+   the native guard, publishes the current `main` to `preview`, and writes the
+   update group id to the run summary. Merging to `main` publishes nothing, so
+   several merges can go out together in one update.
 2. **Promote**: once the preview build looks right, run the workflow manually
    with `action: promote-production`. It republishes that exact update group to
    `production`. Leave `group_id` empty to take the latest preview group for the
@@ -511,9 +517,10 @@ app version, or was not published from a commit on `main`.
 `version` in `app.json`, so a release that changes native code (new native
 module, plugin, or SDK bump) **must** bump `version`. Otherwise the update is
 delivered to builds whose native code no longer matches the JS, which crashes at
-runtime. Because pushes to `main` publish automatically, bump `version` in the
-same PR as the native change, then ship new `preview` and store builds; installs
-on the old version stop receiving updates until they take the new build.
+runtime. Because the next preview publish ships whatever is on `main`, bump
+`version` in the same PR as the native change, then ship new `preview` and
+store builds; installs on the old version stop receiving updates until they take
+the new build.
 
 CI enforces this. `scripts/ci/mobile-ota-native-guard.mjs` runs on mobile and
 lockfile pull requests and again before every publish. It finds the commit that

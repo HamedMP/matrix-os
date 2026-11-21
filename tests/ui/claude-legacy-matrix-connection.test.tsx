@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from "react";
+import React, {Profiler} from "react";
 import "@testing-library/jest-dom/vitest";
 import {act, cleanup, fireEvent, render, screen, waitFor} from "@testing-library/react";
 import {afterEach, expect, it, vi} from "vitest";
@@ -19,7 +19,7 @@ function fixture(): ProviderSettingsSnapshot {
   delete snapshot.harnesses[0]!.enablementOrigin;
   return snapshot;
 }
-function mount(snapshot = fixture(), fail = false, resuming = false) {
+function mount(snapshot = fixture(), fail = false, resuming = false, onCommit?: () => void) {
   const harness = snapshot.harnesses[0]!;
   const onMutate = vi.fn(), onRefresh = vi.fn(), onRefreshForConnection = vi.fn(async () => snapshot);
   const operation = {id: "adopt-native", harnessInstanceId: harness.id, kind: "login", state: "succeeded", expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -29,9 +29,10 @@ function mount(snapshot = fixture(), fail = false, resuming = false) {
     loginMethods: ["browser"], apiKeyProviders: [], connectionOptions: [option], install: false, uninstall: false, logs: false,
     ...(resuming ? {activeOperationId: "resuming-native"} : {})}]),
     startConnection, start: vi.fn(), get: resuming ? vi.fn(() => new Promise(() => {})) : vi.fn(), cancel: vi.fn(), submitKey: vi.fn(), logs: vi.fn()};
-  render(<AgentsProvidersView snapshot={snapshot} selectedHarnessId={harness.id} onSelectHarness={vi.fn()}
+  const view = <AgentsProvidersView snapshot={snapshot} selectedHarnessId={harness.id} onSelectHarness={vi.fn()}
     onRefresh={onRefresh} onRefreshForConnection={onRefreshForConnection} onMutate={onMutate} workflowClient={client}
-    onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()}/>);
+    onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()}/>;
+  render(onCommit ? <Profiler id="legacy-adoption" onRender={onCommit}>{view}</Profiler> : view);
   fireEvent.click(screen.getByRole("button", {name: /^Claude Code/}));
   return {client, startConnection, onMutate, onRefreshForConnection};
 }
@@ -55,6 +56,26 @@ it("uses the qualified existing native workflow only after an explicit adoption 
   expect(controls.client.start).not.toHaveBeenCalled();
   expect(controls.onMutate).not.toHaveBeenCalled();
   expect(snapshot).toEqual(before);
+});
+it.each(["success", "failure"] as const)("handles adoption %s from the first committed render where the action is enabled", async outcome => {
+  const clicked = vi.fn();
+  const controls = mount(fixture(), outcome === "failure", false, () => {
+    const button = screen.queryByRole<HTMLButtonElement>("button", {name: "Use connected Claude account"});
+    if (!button || button.disabled || clicked.mock.calls.length) return;
+    clicked();
+    button.click();
+  });
+  await waitFor(() => expect(clicked).toHaveBeenCalledOnce());
+  expect(controls.startConnection).toHaveBeenCalledExactlyOnceWith(
+    {harnessInstanceId: "harness_kernel", optionId: option.id, idempotencyKey: expect.any(String)}, expect.any(AbortSignal));
+  if (outcome === "success") {
+    await waitFor(() => expect(controls.onRefreshForConnection).toHaveBeenCalled());
+  } else {
+    expect(await screen.findByRole("alert")).toHaveTextContent("The connection could not be updated. Try again.");
+    expect(screen.getByRole("button", {name: "Use connected Claude account"})).toBeEnabled();
+    expect(controls.onRefreshForConnection).not.toHaveBeenCalled();
+  }
+  expect(controls.onMutate).not.toHaveBeenCalled();
 });
 it("retains the legacy route and allows retry after adoption fails", async () => {
   const snapshot = fixture(), before = structuredClone(snapshot);

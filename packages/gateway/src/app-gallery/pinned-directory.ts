@@ -48,11 +48,13 @@ export class PinnedDirectory {
   async openFile(name: string, flags: number): Promise<FileHandle> {
     return open(`${this.path}/${leaf(name)}`, flags | constants.O_NOFOLLOW, 0o600);
   }
-  async readFile(name: string, maxBytes: number): Promise<Buffer> {
+  async readFile(name: string, maxBytes: number, options: { singleLink?: boolean } = {}): Promise<Buffer> {
     const handle = await this.openFile(name, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
       const info = await handle.stat();
-      if (!info.isFile() || info.size > maxBytes) throw new GalleryFileError("Invalid file");
+      if (!info.isFile() || info.size > maxBytes || (options.singleLink && info.nlink !== 1)) {
+        throw new GalleryFileError("Invalid file");
+      }
       const bytes = Buffer.alloc(maxBytes + 1);
       let count = 0;
       while (count < bytes.length) {

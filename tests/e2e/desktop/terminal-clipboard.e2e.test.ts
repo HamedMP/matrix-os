@@ -389,8 +389,10 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
+    // The floating header can compress the session title to zero width.
+    // Normalize the pixel-test surface before requiring a visible title.
     await prepareVisibleTerminal();
+    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
     await prepareVisibleTerminal(); // Repeated preparation must not restore a floating window.
   }, 60_000);
 
@@ -586,8 +588,8 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
-    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
     await prepareVisibleTerminal();
+    await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
     await expect.poll(
       () => gateway.state.terminalResizeEvents.filter(
         (event) => event.session === "matrix-task-1",

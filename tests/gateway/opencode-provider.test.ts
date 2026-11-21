@@ -1091,4 +1091,35 @@ describe("OpenCode coding-agent provider", () => {
     expect(registry.resolve(env.MATRIX_AGENT_INTEGRATIONS_TOKEN!, "POST", "/api/mcp-servers/core/call")).toBeNull();
     registry.close();
   });
+
+  it("keeps a long OpenCode run's Core MCP capability renewed until the process ends", async () => {
+    // Fault: owner runs have no time limit, so the 35-minute bearer expired mid-run and connected tools failed.
+    vi.useFakeTimers();
+    const exit: Array<(code: number | null) => void> = [];
+    const stdout = new EventEmitter();
+    const spawnFn: OpenCodeSpawnFn = () => ({
+      stdout, stderr: new EventEmitter(),
+      once(event: "exit" | "error", listener: never) { if (event === "exit") exit.push(listener); },
+      kill() {},
+    });
+    const renew = vi.fn(() => true);
+    const revoke = vi.fn();
+    const adapter = provider(spawnFn, { issueMatrixCoreMcp: () => ({ token: "a".repeat(64), scope: "call" as const, revoke, renew }) });
+    try {
+      const pending = adapter.startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      expect(renew.mock.calls.length).toBeGreaterThanOrEqual(6);
+      expect(revoke).not.toHaveBeenCalled();
+      stdout.emit("end");
+      exit.forEach(listener => listener(0));
+      await vi.advanceTimersByTimeAsync(0);
+      await pending;
+      const renewedWhileLive = renew.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      expect(renew).toHaveBeenCalledTimes(renewedWhileLive);
+      expect(revoke).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { FolderOpenIcon, Loader2Icon } from "@/lib/hugeicons";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { FileContextMenu } from "./FileContextMenu";
@@ -16,12 +16,14 @@ import { XpStatusBar } from "./XpStatusBar";
 import "./xp-explorer.css";
 
 interface XpExplorerProps {
+  gatewayUrl: string;
   renamingPath: string | null;
   onStartRename: (name: string) => void;
   onCancelRename: () => void;
   onOpenFile: (path: string) => void;
   showingTrash: boolean;
   onTrashClick: () => void;
+  creationMenu?: ReactNode;
 }
 
 /**
@@ -31,12 +33,14 @@ interface XpExplorerProps {
  * clipboard behavior stay identical to the classic UI.
  */
 export function XpExplorer({
+  gatewayUrl,
   renamingPath,
   onStartRename,
   onCancelRename,
   onOpenFile,
   showingTrash,
   onTrashClick,
+  creationMenu,
 }: XpExplorerProps) {
   const viewMode = useFileBrowser((s) => s.viewMode);
   const loading = useFileBrowser((s) => s.loading);
@@ -46,7 +50,7 @@ export function XpExplorer({
 
   let main: React.ReactNode;
   if (showingTrash) {
-    main = <TrashView />;
+    main = <TrashView gatewayUrl={gatewayUrl} />;
   } else if (searchResults) {
     main = <SearchResults onOpenFile={onOpenFile} />;
   } else if (loading) {
@@ -89,6 +93,7 @@ export function XpExplorer({
       <XpToolbar
         taskPaneOpen={taskPaneOpen}
         onToggleTaskPane={() => setTaskPaneOpen((v) => !v)}
+        creationMenu={creationMenu}
       />
       <XpAddressBar />
       <div className="xp-explorer-body">

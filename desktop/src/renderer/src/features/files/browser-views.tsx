@@ -18,13 +18,15 @@ import {
   X,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useRef } from "react";
-import type { DragEvent, KeyboardEvent } from "react";
+import type { DragEvent, KeyboardEvent, ReactNode } from "react";
 import { Button, IconButton } from "../../design/primitives";
+import { CreateItemMenu } from "./CreateItemMenu";
 import type { BrowserEntry, BrowserSortDirection } from "./browser-entries";
 import type { BrowserViewMode } from "./browser-view-preference";
 import type { FileUploadRow } from "./file-upload-controller";
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
+import { beginMatrixFileDrag, captureAttachmentConnection, endMatrixFileDrag } from "../chat/attachments/matrix-file-attachment";
 
 const VIEW_OPTIONS: Array<{ mode: BrowserViewMode; label: string; icon: typeof LayoutGrid }> = [
   { mode: "grid", label: "Grid view", icon: LayoutGrid },
@@ -164,6 +166,7 @@ export function EntryButton({
   onKeyDown,
   onDropFiles,
   contextPath,
+  attachmentPath,
 }: {
   entry: BrowserEntry;
   grid: boolean;
@@ -178,9 +181,16 @@ export function EntryButton({
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
   onDropFiles?: (files: File[]) => void;
   contextPath?: string;
+  attachmentPath?: string;
 }) {
   const kind = kindForEntry(entry);
   const glyphColor = entry.type === "directory" ? "var(--accent)" : "var(--text-tertiary)";
+  const connection = captureAttachmentConnection();
+  const dragProps = attachmentPath ? {
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLButtonElement>) => beginMatrixFileDrag(event.dataTransfer, { kind: "home", path: attachmentPath }, connection),
+    onDragEnd: endMatrixFileDrag,
+  } : {};
 
   if (grid) {
     return (
@@ -191,6 +201,7 @@ export function EntryButton({
         aria-pressed={pressed}
         data-grid-tile
         data-files-entry-path={contextPath}
+        {...dragProps}
         className="flex w-24 flex-col items-center gap-1.5 rounded-lg px-1.5 py-2.5 outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
         style={{ background: selected ? "var(--bg-selected)" : "transparent" }}
         onClick={onSelect}
@@ -234,6 +245,7 @@ export function EntryButton({
       aria-pressed={pressed}
       data-files-list-row
       data-files-entry-path={contextPath}
+      {...dragProps}
       className={`grid w-full items-center outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-1 focus-visible:ring-[var(--accent)] ${compact
         ? "h-9 gap-1 rounded-md px-2 text-left text-sm"
         : "h-[54px] gap-4 rounded-none border-b px-4 text-left text-base font-medium last:border-b-0"}`}
@@ -288,12 +300,15 @@ export function BrowserToolbar({
   onNavigate,
   onRefresh,
   onUpload,
+  onCreateFolder,
+  onCreateFile,
   searchOpen,
   searchQuery,
   onSearchOpen,
   onSearchClose,
   onSearchQueryChange,
   showViewSwitcher = true,
+  actions,
 }: {
   compact: boolean;
   currentPath: string;
@@ -309,12 +324,15 @@ export function BrowserToolbar({
   onNavigate: (path: string) => void;
   onRefresh: () => void;
   onUpload?: () => void;
+  onCreateFolder?: () => void;
+  onCreateFile?: () => void;
   searchOpen: boolean;
   searchQuery: string;
   onSearchOpen: () => void;
   onSearchClose: () => void;
   onSearchQueryChange: (query: string) => void;
   showViewSwitcher?: boolean;
+  actions?: ReactNode;
 }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const previousSearchOpenRef = useRef(searchOpen);
@@ -402,6 +420,8 @@ export function BrowserToolbar({
           <Search size={16} />
         </IconButton>
       )}
+      <CreateItemMenu onCreateFolder={onCreateFolder} onCreateFile={onCreateFile} />
+      {actions}
       {onUpload ? (
         <IconButton label="Upload files" className="h-8 w-8 shrink-0 border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }} onClick={onUpload}>
           <Upload size={16} />

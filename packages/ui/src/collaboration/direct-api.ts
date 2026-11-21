@@ -26,6 +26,8 @@ const OWNER_RUNTIME_SETUP_PATH = /^\/api\/collaboration\/runtimes\/([^/?]+)\/(?:
 
 export interface CollaborationDirectApi extends CollaborationApi {
   direct: CollaborationDirectClient;
+  /** Platform metadata only, for background readers that do not need Chat or project content. */
+  getDiscovery(path: string): Promise<unknown>;
   /** Associates an invitation with the scope whose home serves it (discovery does this automatically). */
   rememberInvitation(invitationId: string, scopeId: string): void;
 }
@@ -76,6 +78,9 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     if (item.resource !== undefined) return item;
     const scopeId = typeof item.scopeId === "string" ? item.scopeId : null;
     if (!scopeId) return item;
+    // Pre-organization pointers remain visible, but cannot obtain organization-bound
+    // tickets. Do not guess an organization or repeatedly probe a known denial.
+    if (item.organizationId === undefined) return { ...item, home: "denied" };
     try {
       if (item.status === "invited" && typeof item.invitationId === "string") {
         rememberInvitation(item.invitationId, scopeId);
@@ -105,8 +110,13 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     }
   };
 
+  const getDiscovery = async (path: string) => {
+    if (!DISCOVERY_PATH.test(path)) throw new CollaborationDirectError("invalid_request");
+    return CollaborationDiscoveryResponseSchema.parse(await platform.get(path));
+  };
+
   const discovery = async (path: string): Promise<unknown> => {
-    const page = CollaborationDiscoveryResponseSchema.parse(await platform.get(path));
+    const page = await getDiscovery(path);
     const items = await mapLimited(page.items as Array<Record<string, unknown>>, MAX_HYDRATION_CONCURRENCY, hydrate);
     return { ...page, items };
   };
@@ -177,6 +187,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
   return {
     baseUrl: platform.baseUrl,
     direct,
+    getDiscovery,
     rememberInvitation,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body),

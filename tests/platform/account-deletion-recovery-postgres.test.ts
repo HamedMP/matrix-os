@@ -6,6 +6,7 @@ import { AccountDeletionRepository } from '../../packages/platform/src/account-d
 import { createPlatformDb, getActiveUserMachineByClerkId, insertUserMachine, updateUserMachine } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
 
@@ -24,7 +25,7 @@ describe.skipIf(!connectionString)('account deletion recovery lock on PostgreSQL
         hetznerServerId:123,serverType:'cpx22',provisionedAt:'2026-10-04T12:00:00.000Z'});
       const hetzner=createMockHetznerClient();
       const service=createCustomerVpsService({db,hetzner,systemStore:createMockCustomerVpsSystemStore({hasDbLatest:vi.fn().mockResolvedValue(true)}),
-        config:loadCustomerVpsConfig({PLATFORM_SECRET:'platform-secret',HETZNER_API_TOKEN:'test',S3_ACCESS_KEY_ID:'test',S3_SECRET_ACCESS_KEY:'test',S3_ENDPOINT:'https://r2.example',R2_BUCKET:'test'})});
+        config:loadCustomerVpsConfig({PLATFORM_SECRET:'platform-secret',MATRIX_SUPPORT_SSH_PUBLIC_KEY:SUPPORT_PUBLIC_KEY_FIXTURE,HETZNER_API_TOKEN:'test',S3_ACCESS_KEY_ID:'test',S3_SECRET_ACCESS_KEY:'test',S3_ENDPOINT:'https://r2.example',R2_BUCKET:'test'})});
       const replacement=await service.recover({clerkUserId:'user_rollback'});
       await updateUserMachine(db,replacement.machineId,{registrationTokenExpiresAt:'2020-01-01T00:00:00.000Z',provisionedAt:'2020-01-01T00:00:00.000Z'});
       const raw=await db.executor.selectFrom('user_machines').select('hetzner_server_id').where('machine_id','=',replacement.machineId).executeTakeFirstOrThrow();
@@ -75,7 +76,7 @@ describe.skipIf(!connectionString)('account deletion recovery lock on PostgreSQL
       expect(await getActiveUserMachineByClerkId(db, owner, 'primary')).toMatchObject({ hetznerServerId: 123 });
       const hetzner = createMockHetznerClient({ createServer: vi.fn(async () => { started(); await gate; throw new DOMException('Provider timeout', 'TimeoutError'); }) });
       const service = createCustomerVpsService({ db, hetzner, systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
-        config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }) });
+        config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }) });
       const recovery = service.recover({ clerkUserId: owner }).then(() => false, () => true);
       await providerStarted;
       const repo = new AccountDeletionRepository(db.kysely, { secret });

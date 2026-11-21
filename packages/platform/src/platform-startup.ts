@@ -64,6 +64,8 @@ import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createOrgMcpPresetGate } from './org-mcp/preset-gate.js';
+import { BOKIO_PRESET } from './bokio-integration.js';
 import { createCoreRepoMachineAuthenticator, createPlatformCoreRepo } from './core-repo/startup.js';
 import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
@@ -92,6 +94,10 @@ import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-up
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
 import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
+import { createFundedPricingReviewStore } from './funded-pricing-review-store.js';
+import { fundedPricingReviewRuntimeConfig } from './funded-pricing-review-runtime.js';
+import { startFundedPricingReviewJob } from './funded-pricing-review-job.js';
+import { createFundedPricingReviewLinear } from './funded-pricing-review-linear.js';
 import {
   createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
@@ -394,7 +400,17 @@ async function startPlatformServerWithCleanup(
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
+  let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
+  const pricingJobConfig = fundedPricingReviewRuntimeConfig(process.env, fundedAiConfig.enabled, backgroundWorkersEnabled);
   if (fundedAiConfig.enabled) {
+    const pricingStore = createFundedPricingReviewStore(db);
+    const pricingRegistryEnabled = process.env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED === 'true';
+    if (pricingJobConfig) {
+      pricingJob = startFundedPricingReviewJob({
+        store: pricingStore, linear: createFundedPricingReviewLinear(pricingJobConfig.linear), mode: pricingJobConfig.mode,
+      });
+      registerCustomMcpStartupCleanup(async () => { await pricingJob?.shutdown(); });
+    }
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
@@ -409,6 +425,12 @@ async function startPlatformServerWithCleanup(
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
+      ...(pricingRegistryEnabled ? { readPricingReview: async (modelId: string, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        const review = await pricingStore.readCurrent(modelId);
+        signal.throwIfAborted();
+        return review;
+      } } : {}),
     });
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
@@ -423,6 +445,8 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
+      listPricingReviews: pricingStore.list,
+      ...(pricingRegistryEnabled ? { invalidatePricingRoute: fundedModelProbes.invalidateAfterUpstreamFailure } : {}),
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,
@@ -756,11 +780,15 @@ async function startPlatformServerWithCleanup(
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
     deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
-    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    // Spec 2691: org policy also governs preset calls made through Integrations, which bypass the Core tool service.
+    const orgPresetGate = createOrgMcpPresetGate({ policy: orgMcp.policy,
+      resolveActorId: async userId => (await customDb.getUserById(userId))?.clerk_id });
+    const governedBroker = orgPresetGate.governBroker(broker);
+    const granolaBroker = createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager });
     managedMcpPresetBroker = createManagedPresetRouter({
       granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
-      bokio: bokioBroker,
+      bokio: orgPresetGate.governPresetBroker(bokioBroker, BOKIO_PRESET.url),
     });
     const managedOAuthFlow = managedLifecycle.oauth;
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
@@ -1236,6 +1264,7 @@ async function startPlatformServerWithCleanup(
           slack.close(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
+          pricingJob?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),

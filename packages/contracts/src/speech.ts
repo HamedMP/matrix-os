@@ -4,6 +4,33 @@ import { PreviewRequestQuotaSchema } from "#funded-ai";
 
 export const SPEECH_CONTRACT_VERSION = 1 as const;
 export const SPEECH_MAX_TRANSCRIPT_CHARS = 32_000;
+/** Dictation ceiling: ten minutes of 16 kHz mono PCM16 (19.2 MB) fits in 20 MiB. */
+export const SPEECH_DICTATION_MAX_DURATION_MS = 10 * 60_000;
+export const SPEECH_DICTATION_MAX_BYTES = 20 * 1024 * 1024;
+/**
+ * The dictation policy every released client accepts. Clients that predate
+ * extended dictation reject a larger policy outright, so servers answer with
+ * these limits unless the caller opts in.
+ */
+export const SPEECH_LEGACY_DICTATION_MAX_DURATION_MS = 120_000;
+export const SPEECH_LEGACY_DICTATION_MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * One transcription crosses browser -> platform proxy -> machine nginx ->
+ * gateway -> platform -> provider, behind an edge that drops a response after
+ * 100 seconds. Each hop waits slightly longer than the one it calls so the
+ * innermost deadline produces the error the user sees.
+ */
+export const SPEECH_TRANSCRIPTION_PROVIDER_TIMEOUT_MS = 75_000;
+export const SPEECH_TRANSCRIPTION_GATEWAY_TIMEOUT_MS = 85_000;
+/** nginx `proxy_read_timeout` for the transcription location, in seconds. */
+export const SPEECH_TRANSCRIPTION_NGINX_TIMEOUT_SECONDS = 90;
+export const SPEECH_TRANSCRIPTION_PROXY_TIMEOUT_MS = 92_000;
+export const SPEECH_TRANSCRIPTION_CLIENT_TIMEOUT_MS = 95_000;
+/** Client -> gateway capability query: `?dictation=extended`. */
+export const SPEECH_DICTATION_LIMITS_QUERY = "dictation";
+/** Gateway -> platform capability header carrying the same opt-in. */
+export const SPEECH_DICTATION_LIMITS_HEADER = "x-matrix-speech-dictation";
+export const SPEECH_EXTENDED_DICTATION_LIMITS = "extended";
 export const SpeechRequestIdSchema = z.string()
   .min(33)
   .max(100)
@@ -40,8 +67,8 @@ const SpeechEnabledSourcePolicySchema = z.object({
 
 const SpeechDictationPolicySchema = z.object({
   enabled: z.boolean(),
-  maxBytes: z.number().int().positive().max(10 * 1024 * 1024),
-  maxDurationMs: z.number().int().positive().max(120_000),
+  maxBytes: z.number().int().positive().max(SPEECH_DICTATION_MAX_BYTES),
+  maxDurationMs: z.number().int().positive().max(SPEECH_DICTATION_MAX_DURATION_MS),
   maxTranscriptChars: z.number().int().positive().max(SPEECH_MAX_TRANSCRIPT_CHARS),
   supportedMediaTypes: z.array(SpeechMediaTypeSchema).min(1).max(8),
   languageHints: z.boolean(),
@@ -217,3 +244,27 @@ export type SpeechExecutionState = z.infer<typeof SpeechExecutionStateSchema>;
 export type SpeechOutcomeCode = z.infer<typeof SpeechOutcomeCodeSchema>;
 export type SpeechSourceKind = z.infer<typeof SpeechSourceKindSchema>;
 export type SpeechMediaType = z.infer<typeof SpeechMediaTypeSchema>;
+
+/**
+ * Narrows a capability answer to the dictation policy that clients without
+ * extended-dictation support can parse. Enforcement stays with the server's
+ * real policy; this only changes what is advertised.
+ */
+export function withLegacyDictationLimits(capabilities: SpeechCapabilitiesResponse): SpeechCapabilitiesResponse {
+  const { dictation } = capabilities.fileTranscription;
+  if (dictation.maxBytes <= SPEECH_LEGACY_DICTATION_MAX_BYTES
+    && dictation.maxDurationMs <= SPEECH_LEGACY_DICTATION_MAX_DURATION_MS) {
+    return capabilities;
+  }
+  return SpeechCapabilitiesResponseSchema.parse({
+    ...capabilities,
+    fileTranscription: {
+      ...capabilities.fileTranscription,
+      dictation: {
+        ...dictation,
+        maxBytes: Math.min(dictation.maxBytes, SPEECH_LEGACY_DICTATION_MAX_BYTES),
+        maxDurationMs: Math.min(dictation.maxDurationMs, SPEECH_LEGACY_DICTATION_MAX_DURATION_MS),
+      },
+    },
+  });
+}

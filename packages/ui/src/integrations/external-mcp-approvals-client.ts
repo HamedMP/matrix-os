@@ -26,7 +26,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 export const EXTERNAL_MCP_APPROVALS_MIN_POLL_MS = 15_000;
 export const EXTERNAL_MCP_APPROVALS_DEFAULT_POLL_MS = 30_000;
-export const EXTERNAL_MCP_APPROVALS_LOAD_ERROR = "Approvals are unavailable right now. Try again.";
+export const EXTERNAL_MCP_APPROVALS_LOAD_ERROR = "Approvals are unavailable right now.";
 export const EXTERNAL_MCP_APPROVALS_SAVE_ERROR = "That decision couldn’t be saved. Try again.";
 const CONFLICT_ERROR = "This request expired or was already decided. Refresh to see the current list.";
 

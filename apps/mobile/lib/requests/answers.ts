@@ -13,6 +13,7 @@ interface AnswerRequest<T> {
   errorMessage: string;
   /** Statuses with which the server refuses the request for a reason the caller tells apart. */
   refusalStatuses: readonly number[];
+  signal?: AbortSignal;
   method?: string;
   headers?: Record<string, string>;
   body?: string;

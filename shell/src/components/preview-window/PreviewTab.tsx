@@ -1,12 +1,10 @@
 "use client";
 
 import { useState, useEffect, lazy, Suspense } from "react";
-import { usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
+import { previewFileRequestSignal, usePreviewWindow, type PreviewTab as PreviewTabType } from "@/hooks/usePreviewWindow";
 import { fileBlobUrl, fileMediaUrl } from "@/lib/file-blob";
 import { FileIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
-
-const FILE_FETCH_TIMEOUT_MS = 10_000;
 
 const CodeEditor = lazy(() =>
   import("./CodeEditor").then((m) => ({ default: m.CodeEditor })),
@@ -23,77 +21,90 @@ const MediaPlayer = lazy(() =>
 
 interface PreviewTabContentProps {
   tab: PreviewTabType;
+  authority: string;
 }
 
-export function PreviewTabContent({ tab }: PreviewTabContentProps) {
-  const [content, setContent] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const markUnsaved = usePreviewWindow((s) => s.markUnsaved);
-  const markSaved = usePreviewWindow((s) => s.markSaved);
+type FileLoad =
+  | { kind: "loading" }
+  | { kind: "failed" }
+  | { kind: "ready"; url: string; content: string };
+
+export function isEditablePreviewTab(tab: PreviewTabType): boolean {
+  return tab.type === "markdown" || tab.type === "code" || tab.type === "text";
+}
+
+export function PreviewTabContent(props: PreviewTabContentProps) {
+  const { tab, authority } = props;
+  return <PreviewTabFile key={JSON.stringify([tab.id, tab.path, tab.type, authority])} {...props} />;
+}
+
+function PreviewTabFile({ tab, authority }: PreviewTabContentProps) {
+  const draft = usePreviewWindow((s) => s.draftAuthority === authority
+    ? s.drafts.find(item => item.tabId === tab.id) : undefined);
+  const saved = usePreviewWindow((s) => s.draftAuthority === authority && s.lastSavedTabId === tab.id);
+  const [load, setLoad] = useState<FileLoad>(() => draft
+    ? { kind: "ready", url: draft.url, content: draft.content } : { kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
   const setMode = usePreviewWindow((s) => s.setMode);
 
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-fetch-in-effect -- guarded async file-load keyed on the selected tab (tab.path/tab.type): the loading -> content transition is one fetch React batches, the fetch carries an AbortController whose signal gates every setState and is aborted in cleanup, and the file body is not derivable in render.
+  const showToolbar = isEditablePreviewTab(tab);
+
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- the file body is fetched for this mounted tab, and both request and state updates are scoped to that tab's lifetime.
   useEffect(() => {
-    if (tab.type === "image" || tab.type === "audio" || tab.type === "video" || tab.type === "pdf") {
-      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- media types render their own viewer and load no text here; clearing the loading gate is a one-shot reaction to the selected tab's type, not derivable in render.
-      setLoading(false);
-      return;
-    }
+    if (!showToolbar) return;
+    const current = usePreviewWindow.getState();
+    if (current.draftAuthority === authority && current.drafts.some(item => item.tabId === tab.id)) return;
+    const controller = new AbortController();
+    const url = fileBlobUrl(tab.path);
 
-    let active = true;
-
-    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- raises the loading gate before the awaited fetch for the newly-selected tab; not a render-time derivation because the resolved file body arrives asynchronously below.
-    setLoading(true);
-    fetch(fileBlobUrl(tab.path), {
-      signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
-    })
-      .then((r) => (r.ok ? r.text() : ""))
-      .then((text) => {
-        if (active) {
-          setContent(text);
-          setLoading(false);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!active) {
+    async function open() {
+      try {
+        const response = await fetch(url, {
+          cache: "no-store",
+          redirect: "error",
+          signal: previewFileRequestSignal(controller),
+        });
+        if (!response.ok) {
+          if (!controller.signal.aborted) setLoad({ kind: "failed" });
           return;
         }
-        console.warn("Failed to load preview tab content", error);
-        setLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [tab.path, tab.type]);
-
-  async function handleSave() {
-    try {
-      const res = await fetch(`${fileBlobUrl(tab.path)}&force=true`, {
-        method: "PUT",
-        signal: AbortSignal.timeout(FILE_FETCH_TIMEOUT_MS),
-        body: content,
-      });
-      if (res.ok) {
-        markSaved(tab.id);
+        const content = await response.text();
+        if (controller.signal.aborted) return;
+        setLoad({ kind: "ready", url, content });
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        console.warn("[preview] File could not be opened:", error instanceof Error ? error.name : "unknown");
+        setLoad({ kind: "failed" });
       }
-    } catch (error: unknown) {
-      console.warn("Failed to save preview tab content", error);
-      // save failed — unsaved indicator stays visible
     }
-  }
 
-  if (loading) {
+    void open();
+    return () => controller.abort();
+  }, [tab.id, tab.path, authority, showToolbar, attempt]);
+
+  if (showToolbar && load.kind === "loading") {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <div role="status" className="flex items-center justify-center h-full text-muted-foreground text-sm">
         Loading...
       </div>
     );
   }
 
-  // Toolbar for text-editable types
-  const showToolbar =
-    tab.type === "markdown" || tab.type === "code" || tab.type === "text";
+  if (showToolbar && load.kind === "failed") {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 p-3 text-sm">
+        <p role="alert">Could not open this file.</p>
+        <Button variant="outline" size="sm" onClick={() => {
+          setLoad({ kind: "loading" });
+          setAttempt(current => current + 1);
+        }}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  const content = draft?.content ?? (load.kind === "ready" ? load.content : "");
 
   return (
     <div className="flex flex-col h-full">
@@ -115,10 +126,18 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
           )}
           <div className="flex-1" />
           <span className="text-muted-foreground">{tab.name}</span>
-          <Button variant="ghost" size="sm" className="h-6" onClick={handleSave}>
-            Save
+          {saved && <span role="status" className="text-muted-foreground">Saved</span>}
+          <Button variant="ghost" size="sm" className="h-6"
+            onClick={() => { void usePreviewWindow.getState().saveDraft(tab.id, authority); }}
+            disabled={!draft || draft.status === "saving"}>
+            {draft?.status === "saving" ? "Saving..." : "Save"}
           </Button>
         </div>
+      )}
+      {draft?.status === "failed" && (
+        <p role="alert" className="border-b px-3 py-2 text-sm text-destructive">
+          Could not save this file. Your changes are still here.
+        </p>
       )}
 
       <div className="flex-1 min-h-0">
@@ -142,8 +161,10 @@ export function PreviewTabContent({ tab }: PreviewTabContentProps) {
               content={content}
               filename={tab.name}
               onChange={(val) => {
-                setContent(val);
-                markUnsaved(tab.id);
+                if (load.kind === "ready" && val !== content
+                  && usePreviewWindow.getState().changeDraft(tab.id, authority, load.url, val)) {
+                  setLoad({ ...load, content: val });
+                }
               }}
             />
           )}

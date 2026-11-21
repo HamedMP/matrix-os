@@ -20,6 +20,7 @@ import {
   RenameOrganizationDialog,
 } from "./OrganizationDialogs";
 import { OrganizationMark, initialsForOrganization } from "./OrganizationMark";
+import { OrganizationSwitcherMenu } from "./OrganizationSwitcher";
 import { useDesktopOrganizationDirectory } from "./useDesktopOrganizationDirectory";
 import { useDesktopOrganizationActions } from "./useDesktopOrganizationActions";
 
@@ -34,6 +35,26 @@ function invitationAgeLabel(createdAt: string): string {
   if (days === 0) return "today";
   if (days === 1) return "1 day ago";
   return `${days} days ago`;
+}
+
+function OrganizationHeader({ description, switcher }: { description: string; switcher?: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <SettingsSectionHeader title="Organization" description={description} className="min-w-0" />
+      {switcher ? <div className="shrink-0">{switcher}</div> : null}
+    </div>
+  );
+}
+
+function NoOrganizationState({ hasOrganizations, switcher }: { hasOrganizations: boolean; switcher: ReactNode }) {
+  return (
+    <>
+      <OrganizationHeader description="Select an organization to see its details and members." switcher={switcher} />
+      <div className="rounded-xl border p-6 text-center" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+        {hasOrganizations ? "Choose an organization with the switcher above to manage it here." : "You’re not in an organization yet."}
+      </div>
+    </>
+  );
 }
 
 function PersonMark({ name }: { name: string }) {
@@ -57,6 +78,7 @@ export function OrganizationSectionView({
   onDelete,
   busy = false,
   connections,
+  switcher,
 }: {
   organization: OrganizationManagementSummary;
   currentActorId: string | null;
@@ -75,6 +97,8 @@ export function OrganizationSectionView({
   busy?: boolean;
   /** Organization → Connections (spec 2691): the admin panel, or the member visibility notice. */
   connections?: ReactNode;
+  /** The active-organization switcher shown beside the page heading. */
+  switcher?: ReactNode;
 }) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -86,7 +110,7 @@ export function OrganizationSectionView({
 
   return (
     <>
-      <SettingsSectionHeader title="Organization" description={description} />
+      <OrganizationHeader description={description} switcher={switcher} />
       <section className="flex min-h-[90px] items-center justify-between gap-4 rounded-xl border p-5" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
         <div className="flex min-w-0 items-center gap-3">
           <OrganizationMark name={organization.name} size={48} />
@@ -182,8 +206,9 @@ export default function OrganizationSection() {
   const withMcpClient = useOrganizationMcpClient(useConnection((state) => state.platformHost), organization?.organizationId ?? null);
 
   if (listing.state === "loading" || (organization && directory.state === "loading")) return <p role="status" className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading organization…</p>;
-  if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>Organization settings are unavailable. Try again.</p>;
-  if (!organization) return <><SettingsSectionHeader title="Organization" description="Select an organization to see its details and members." /><div className="rounded-xl border p-6 text-center" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>Select an organization from the title bar to manage it here.</div></>;
+  if (listing.state === "failed" || directory.state === "failed") return <p role="alert" className="text-sm" style={{ color: "var(--danger-text)" }}>Organization settings are unavailable. Try again.</p>;
+  const switcher = <OrganizationSwitcherMenu organizations={listing.organizations} onChanged={refresh} showSettingsAction={false} />;
+  if (!organization) return <NoOrganizationState hasOrganizations={listing.organizations.length > 0} switcher={switcher} />;
   const selectedMember = directory.members.find((member) => member.actorId === memberActionActorId) ?? null;
   const leave = async () => {
     if (!currentActorId) return;
@@ -198,7 +223,7 @@ export default function OrganizationSection() {
   };
   return <>
     <div className="w-full">
-      {actions.error ? <div role="alert" className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>{actions.error}</div> : null}
+      {actions.error ? <div role="alert" className="mb-4 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger-text)" }}>{actions.error}</div> : null}
       <OrganizationSectionView
         organization={organization}
         currentActorId={currentActorId}
@@ -216,6 +241,7 @@ export default function OrganizationSection() {
         onDelete={deleteOrganization}
         busy={actions.busy}
         connections={<OrganizationMcpSettings admin={organization.role === "org:admin"} organizationName={organization.name} withClient={withMcpClient} />}
+        switcher={switcher}
       />
       <input
         ref={logoInput}

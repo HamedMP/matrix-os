@@ -31,7 +31,7 @@ beforeEach(async()=>{
  received=undefined;vi.spyOn(globalThis,'fetch').mockImplementation(async(_url,init)=>{received=new Headers(init?.headers);return Response.json({accepted:true});});
 });
 afterEach(async()=>{await app.shutdownBrowserApprovals?.();expect(lookupEnd).not.toHaveBeenCalled();await lookup.close();expect(lookupEnd).toHaveBeenCalledOnce();await app.shutdownPostHog();vi.restoreAllMocks();vi.unstubAllEnvs();await destroyTestPlatformDb(db);});
-async function proxy(path:string,body:object,explicit=true,token=clerkToken){received=undefined;const response=await app.request(`${explicit?`/vm/${handle}`:''}${path}`,{method:'POST',headers:{host:'app.matrix-os.com',authorization:`Bearer ${token}`,'content-type':'application/json',[ROUTINE_FULL_ACCESS_SCOPE_HEADER]:scopeId,[ROUTINE_FULL_ACCESS_PROOF_HEADER]:'spoof-full',[creationHeader]:'spoof-creation',[originHeader]:'spoof-origin'},body:JSON.stringify(body)});expect(response.status).toBe(200);return received!;}
+async function proxy(path:string,body:object,explicit=true,token=clerkToken,withScope=true){received=undefined;const response=await app.request(`${explicit?`/vm/${handle}`:''}${path}`,{method:'POST',headers:{host:'app.matrix-os.com',authorization:`Bearer ${token}`,'content-type':'application/json',...(withScope?{[ROUTINE_FULL_ACCESS_SCOPE_HEADER]:scopeId}:{}),[ROUTINE_FULL_ACCESS_PROOF_HEADER]:'spoof-full',[creationHeader]:'spoof-creation',[originHeader]:'spoof-origin'},body:JSON.stringify(body)});expect(response.status).toBe(200);return received!;}
 function verify(kind:'origin'|'full',proof:string,tuple:object){return app.request(`/internal/containers/${handle}/${kind==='origin'?'routine-origin':'routine-full-access'}/verify`,{method:'POST',headers:{authorization:`Bearer ${buildPlatformVerificationToken(handle,secret)}`,[kind==='origin'?(('purpose' in tuple && tuple.purpose==='routine_creation_route')?creationHeader:originHeader):ROUTINE_FULL_ACCESS_PROOF_HEADER]:proof},body:JSON.stringify(tuple)});}
 function creationTuple(path:string,body=turn){return{purpose:'routine_creation_route',handle,ownerId,machineId,runtimeSlot,sourceChatId,method:'POST',path,routineCreation:'matrix',clientRequestId:body.clientRequestId,baseRevision:body.baseRevision,bodyDigest:createHash('sha256').update(canonicalChatTurnRequestIdentity(body)).digest('hex')};}
 function fullTuple(body=turn){return{kind:'turn',handle,ownerId,machineId,runtimeSlot,chatId:sourceChatId,scopeId,clientRequestId:body.clientRequestId,requestDigest:createHash('sha256').update(routineFullAccessTurnRequestIdentity(body)).digest('hex')};}
@@ -42,6 +42,24 @@ it('mints and forwards both distinct proofs on the same exact browser turn throu
   expect((await verify('full',full!,fullTuple())).status).toBe(200);const decision=await verify('origin',creation!,creationTuple(path));expect(decision.status).toBe(200);expect(await decision.json()).toMatchObject({verified:{purpose:'routine_creation_route',sessionId:'sess_owner'}});
  }
 });
+it('attests an ordinary Full Access browser turn without separate scope consent while keeping route choice independent',async()=>{
+ const path=`/api/chats/${sourceChatId}/turns`,{routineCreation:_,...ordinary}=turn;
+ for(const explicit of [true,false])for(const request of [ordinary,turn]){
+  const headers=await proxy(path,request,explicit,clerkToken,false),proof=headers.get(ROUTINE_FULL_ACCESS_PROOF_HEADER);
+  expect(proof).toEqual(expect.any(String));expect(proof).not.toBe('spoof-full');
+  const legacy={...fullTuple(),requestDigest:createHash('sha256').update(routineFullAccessTurnRequestIdentity(request)).digest('hex')};
+  const {scopeId:__,...fields}=legacy;
+  const tuple={...fields,kind:'direct_turn'};
+  const result=await verify('full',proof!,tuple);
+  expect(result.status).toBe(200);expect(await result.json()).toMatchObject({verified:tuple});
+  expect((await verify('full',proof!,legacy)).status).toBe(403);
+  expect((await verify('full',proof!,{...tuple,requestDigest:'0'.repeat(64)})).status).toBe(403);
+  const creation=headers.get(creationHeader);
+  if(request===ordinary){expect(creation).toBeNull();continue;}
+  expect((await verify('origin',creation!,creationTuple(path))).status).toBe(200);
+  expect((await verify('origin',proof!,creationTuple(path))).status).toBe(403);
+ }
+});
 it('keeps a legacy omitted-field Full Access browser turn unchanged',async()=>{
  const{routineCreation:_,...legacy}=turn;const headers=await proxy(`/api/chats/${sourceChatId}/turns`,legacy);
  expect(headers.get(creationHeader)).toBeNull();expect(headers.get(originHeader)).toBeNull();const full=headers.get(ROUTINE_FULL_ACCESS_PROOF_HEADER)!;
@@ -50,7 +68,10 @@ it('keeps a legacy omitted-field Full Access browser turn unchanged',async()=>{
 });
 it('strips caller proofs on device, unrelated, and unknown-Computer paths',async()=>{
  const token=await issueSyncJwt({clerkUserId:ownerId,handle,runtimeSlot,gatewayUrl:`https://${handle}.matrix-os.com`,sessionProvenance:'clerk-device',secret:'synthetic-sync-session-key-at-least-32-chars'});
- for(const path of [`/api/chats/${sourceChatId}/turns`,'/api/unrelated']){const headers=await proxy(path,turn,true,token.token);expect(headers.get(creationHeader)).toBeNull();expect(headers.get(originHeader)).toBeNull();expect(headers.get(ROUTINE_FULL_ACCESS_PROOF_HEADER)).toBeNull();}
+ for(const withScope of [true,false])for(const path of [`/api/chats/${sourceChatId}/turns`,'/api/unrelated']){
+  const headers=await proxy(path,turn,true,token.token,withScope);
+  expect(headers.get(creationHeader)).toBeNull();expect(headers.get(originHeader)).toBeNull();expect(headers.get(ROUTINE_FULL_ACCESS_PROOF_HEADER)).toBeNull();
+ }
 });
 it('registers distinct source approval verification in the production app and binds exact tuple and current SQL machine',async()=>{
  const path=`/api/chats/${sourceChatId}/routine-origin/${interactionId}/resolve`,headers=await proxy(path,originBody),proof=headers.get(originHeader);
@@ -69,7 +90,7 @@ it('keeps queue creation separate and rejects copied purposes, scope selectors a
   expect((await verify('origin',creation,creationTuple(path,changed))).status).toBe(403);
   expect((await verify('full',full,fullTuple(changed))).status).toBe(403);
  }
- const queuedPath=`/api/chats/${sourceChatId}/queued-turns`,queued=await proxy(queuedPath,turn);
+ const queuedPath=`/api/chats/${sourceChatId}/queued-turns`,queued=await proxy(queuedPath,turn,true,clerkToken,false);
  expect(queued.get(ROUTINE_FULL_ACCESS_PROOF_HEADER)).toBeNull();expect(queued.get(originHeader)).toBeNull();
  expect((await verify('origin',queued.get(creationHeader)!,creationTuple(queuedPath))).status).toBe(200);
  expect((await verify('origin',creation,creationTuple(queuedPath))).status).toBe(403);

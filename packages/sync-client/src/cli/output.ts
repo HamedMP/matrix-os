@@ -3,6 +3,7 @@ export const CLI_OUTPUT_VERSION = 1;
 const GENERIC_MESSAGES: Record<string, string> = {
   platform_unreachable: "Platform unreachable. Matrix CLI could not contact the Matrix OS platform.",
   gateway_unreachable: "Gateway unreachable. Matrix CLI could not contact your Matrix OS instance.",
+  local_gateway_unavailable: "This computer's terminal token is unavailable. Restart Matrix OS, or pass --profile to use a signed-in profile.",
   request_timeout: "Request timed out. Try again or run `mos doctor`.",
   zellij_failed: "Shell backend unavailable. Your Matrix OS instance could not start a shell session.",
   unsupported_node: "Matrix CLI requires Node.js 20 or newer.",
@@ -19,6 +20,9 @@ const GENERIC_MESSAGES: Record<string, string> = {
   setup_failed: "Couldn't start setup. Please try again shortly.",
   setup_timeout: "Setup is taking longer than expected. Re-run `mos login` shortly to check.",
   payment_delayed: "Payment is taking longer than expected to confirm. Contact support@matrix-os.com if it persists.",
+  terminal_agent_blocked: "The agent is waiting for a person. Read its screen first, or pass --force.",
+  terminal_finished: "That terminal has finished.",
+  not_found: "Terminal not found.",
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {

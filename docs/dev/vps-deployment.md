@@ -60,6 +60,11 @@ The per-user Docker image path is legacy/local-development only. It is not used 
 
 New customer and recovery creation may optionally use a validated golden VPS snapshot as a fail-closed acceleration layer. It never replaces the immutable host-bundle source of truth, owner backup flow, or clean Ubuntu fallback. See [Golden VPS Snapshots](golden-vps-snapshots.md) for lifecycle, sanitation, rollout gates, and disablement.
 
+Support SSH for new customer and recovery hosts requires a separate operator
+Ed25519 public key in protected platform configuration. See
+[Customer VPS support SSH access](support-vps-access.md) for login, owner-runtime
+access, rotation, and failure recovery.
+
 ### Archived Legacy Shared-Container Mode
 
 This section is historical context for old deployments only. Do not use it for new production work.

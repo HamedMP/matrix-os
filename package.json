@@ -54,6 +54,7 @@
     "observability:posthog-alerts": "node scripts/observability/setup-posthog-alerts.mjs",
     "spike:agent-sdk": "node scripts/spikes/agent-sdk-gateway/run.mjs",
     "release:enqueue-golden-snapshot": "node scripts/enqueue-golden-snapshot.mjs",
+    "release-notes:validate": "node scripts/release-notes/validate.mjs",
     "test": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage\" node node_modules/vitest/vitest.mjs run \"$@\"' --",
     "test:isolated": "node scripts/dev/isolated-test-job.mjs -- bun run test -- --maxWorkers=1",
     "test:prepare": "node packages/gateway/native/build.mjs && pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build",
@@ -68,7 +69,7 @@
     "typecheck:run": "node scripts/typecheck.mjs",
     "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
-    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
+    "check:patterns:diff": "./scripts/review/check-patterns.sh --diff origin/main --pr",
     "lint": "bun run --filter './shell' lint",
     "mcp-catalog:verify": "bun scripts/mcp-catalog/verify-remote-mcp-catalog.ts",
     "preview:pair:create": "bun scripts/preview-pair/control.ts create",
@@ -103,7 +104,7 @@
       },
       "eslint-config-next@16.2.3": {
         "dependencies": {
-          "next": "16.4.1"
+          "next": "16.4.6"
         }
       },
       "electron-vite@*": {
@@ -220,8 +221,10 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^4.4.1",
     "@vitest/coverage-v8": "4.1.12",
+    "ajv": "6.14.0",
     "better-sqlite3": "^12.10.0",
     "chess.js": "1.4.0",
+    "codex-fixture-ajv": "npm:ajv@6.15.0",
     "drizzle-orm": "^0.45.2",
     "fflate": "0.8.3",
     "hono": "^4.12.25",

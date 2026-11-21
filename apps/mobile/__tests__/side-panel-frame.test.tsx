@@ -18,7 +18,7 @@ describe("side panel preview frames", () => {
     expect(screen.getAllByRole("button").map((button) => button.props.accessibilityLabel)).toEqual([
       "New chat",
       "Projects, 3 projects",
-      "Weekly report, needs you, Approve before sending, 1h",
+      "Weekly report, Approval required, Approve before sending, 1h",
       "Sales prep this week, Both briefs are ready, Yesterday",
       "Q4 planning, Draft shared with the team, Mon",
     ]);

@@ -76,6 +76,7 @@ it.each(cases)("$kind native observation across $waitLayer queue=$queueDelay bud
     driverInventory: async () => [{ id: kind, displayName: kind, kind: "cli", installState: "installed", health: "unknown", capabilities: ["tools", "resume"], setupActions: [] }],
     nativeHarnessCatalogReader: { ...nativeReader, getCatalog },
   });
+  const canonicalSnapshot = vi.spyOn(producer, "getSnapshot");
   const store = new ProviderSettingsStore({ homePath, now, providerSnapshotReader: producer,
     runtimeCoordinator: {
       supportedActions: [], isRecoveryReady: () => recovered,
@@ -94,9 +95,15 @@ it.each(cases)("$kind native observation across $waitLayer queue=$queueDelay bud
     recoveryGate.resolve();
     await observed.promise;
     if (queueDelay) await canonicalEntered.promise;
-    // Native evidence is fresh at discovery but expires while unrelated funding settles.
+    if (removeAuth) {
+      // Exercise a slow unlink deterministically: the independent canonical
+      // snapshot may finish while Settings is still waiting for funding.
+      if (waitLayer === "settings") await canonicalSnapshot.mock.results[0]!.value;
+      await rm(join(authDir, "auth.json"));
+    }
+    // Finish revocation before expiry can start a concurrent renewal against
+    // the still-present credential. Funding remains held throughout both steps.
     clock += delay;
-    if (removeAuth) await rm(join(authDir, "auth.json"));
     funded.resolve();
     const settings = await request;
     await priorRead;
@@ -126,5 +133,5 @@ it.each(cases)("$kind native observation across $waitLayer queue=$queueDelay bud
     const instance = (await catalog.getCatalog({ userId: "synthetic_owner", source: "jwt" })).instances.find(row => row.driverKind === kind)!;
     if (expectedEnabled) expect(instance).toMatchObject({ availability: "available", defaultSelection: { model: "native:working-model" } });
     else expect(instance.availability).not.toBe("available");
-  } finally { recoveryGate.resolve(); funded.resolve(); producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  } finally { recoveryGate.resolve(); funded.resolve(); canonicalSnapshot.mockRestore(); producer.close(); await rm(homePath, { recursive: true, force: true }); }
 });

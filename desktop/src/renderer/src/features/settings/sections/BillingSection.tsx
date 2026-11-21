@@ -268,7 +268,7 @@ export default function BillingSection() {
         </div>
 
         {error ? (
-          <p className="text-sm" style={{ color: "var(--warning)" }}>
+          <p className="text-sm" style={{ color: "var(--warning-text)" }}>
             Billing status unavailable. The desktop app could not verify your plan.
           </p>
         ) : null}
@@ -405,7 +405,7 @@ export default function BillingSection() {
         ) : null}
 
         {ui.actionError ? (
-          <p role="alert" className="text-sm" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="text-sm" style={{ color: "var(--danger-text)" }}>
             {ui.actionError}
           </p>
         ) : null}
