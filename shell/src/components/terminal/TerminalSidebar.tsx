@@ -43,7 +43,8 @@ import {
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
-import { ShellHerdrSessions } from "./ShellHerdrSessions";
+import { shouldShowHerdrSessions } from "@matrix-os/ui/herdr-sessions";
+import { ShellHerdrSessions, useShellHerdrSessions } from "./ShellHerdrSessions";
 import type { DesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
@@ -236,6 +237,7 @@ export function LocalTerminalSidebar({
   const [shellsStale, setShellsStale] = useState(false);
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
+  const herdr = useShellHerdrSessions();
   const shellRefreshStateRef = useRef<ShellRefreshState>({
     shells: [],
     authoritative: false,
@@ -573,7 +575,9 @@ export function LocalTerminalSidebar({
     ? activePaneSessionId
     : null;
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
-  const desktopSessionCount = shellsAuthoritative ? shells.length : 0;
+  // Herdr rows count too: a computer with only Herdr sessions must still show the sidebar.
+  const herdrSessionCount = shouldShowHerdrSessions(herdr.list) ? herdr.list.sessions.length : 0;
+  const desktopSessionCount = (shellsAuthoritative ? shells.length : 0) + herdrSessionCount;
   const desktopSessionsReady = shellsAuthoritative || Boolean(shellsError);
   const desktopSessionName = shells.find((shell) => shell.name === activeShellName)?.subtitle?.trim();
   useEffect(() => {
@@ -813,7 +817,9 @@ export function LocalTerminalSidebar({
     />
   ) : null;
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
-  const herdrSessions = <ShellHerdrSessions selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />;
+  const herdrSessions = (
+    <ShellHerdrSessions herdr={herdr} selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />
+  );
 
   if (desktopParity) {
     return (

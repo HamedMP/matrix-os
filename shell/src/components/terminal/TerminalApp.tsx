@@ -60,6 +60,7 @@ import {
 import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
+import { findEndedHerdrRefs, isHerdrRefKey } from "./herdr-shell-session";
 import { useDesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
 import { ShellSharedTerminal } from "./ShellSharedTerminal";
@@ -745,7 +746,10 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
           }
           if (!cancelled && Array.isArray(data.tabs) && data.tabs.length > 0) {
             if (layoutUsesOnlyCanonicalShellSessions(data)) {
-              const sessions = await sessionsPromise;
+              const savedIds = getCanonicalShellSessionIds(data);
+              // Herdr refs are judged by the Herdr list: workspace lists never include them.
+              const [sessions, endedHerdrList] = await Promise.all([sessionsPromise, findEndedHerdrRefs(savedIds)]);
+              const endedHerdrIds = new Set(endedHerdrList);
               if (cancelled) return;
               if (sessions) {
                 const activeNames = new Set(sessions.flatMap((session) => (
@@ -753,9 +757,11 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
                     ? [session.name]
                     : []
                 )));
-                setUnavailableSessionIds(
-                  getCanonicalShellSessionIds(data).filter((name) => !activeNames.has(name)),
-                );
+                setUnavailableSessionIds(savedIds.filter((name) => (
+                  isHerdrRefKey(name) ? endedHerdrIds.has(name) : !activeNames.has(name)
+                )));
+              } else if (endedHerdrList.length > 0) {
+                setUnavailableSessionIds(endedHerdrList);
               }
               const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
               const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
@@ -1087,7 +1093,8 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
 
   const recoverShellSession = async (sessionId: string, cwd: string): Promise<boolean> => {
     const ref = parseTerminalRefKey(sessionId);
-    if (!ref) return false;
+    // A Herdr terminal is owned by herdr-core; Matrix never creates a tab in its workspace.
+    if (!ref || isHerdrRefKey(sessionId)) return false;
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs`, {
         method: "POST",

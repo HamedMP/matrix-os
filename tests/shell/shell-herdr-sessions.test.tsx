@@ -3,7 +3,8 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
-import { ShellHerdrSessions } from "../../shell/src/components/terminal/ShellHerdrSessions";
+import { ShellHerdrSessions, useShellHerdrSessions } from "../../shell/src/components/terminal/ShellHerdrSessions";
+import type { ShellSessionSummary } from "../../shell/src/components/terminal/terminal-session-state";
 import { parseTerminalRefKey, terminalWebSocketPathForSession } from "../../shell/src/components/terminal/terminal-session-id";
 
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => "http://gateway.test" }));
@@ -12,6 +13,11 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const tabId = `tt_${"9".repeat(32)}`;
 
+function Harness({ onOpen }: { onOpen(shell: ShellSessionSummary): void }) {
+  const herdr = useShellHerdrSessions();
+  return <ShellHerdrSessions herdr={herdr} selectedSessionId={null} onOpen={onOpen} />;
+}
+
 describe("Herdr sessions in the Web Terminal sidebar", () => {
   it("opens a Herdr session as a terminal tab that attaches through the Herdr socket", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
@@ -19,7 +25,7 @@ describe("Herdr sessions in the Web Terminal sidebar", () => {
     })));
     vi.stubGlobal("fetch", fetchMock);
     const onOpen = vi.fn();
-    render(<ShellHerdrSessions selectedSessionId={null} onOpen={onOpen} />);
+    render(<Harness onOpen={onOpen} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open claude" }));
 
@@ -33,7 +39,7 @@ describe("Herdr sessions in the Web Terminal sidebar", () => {
   it("shows nothing when the computer has no Herdr", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ available: false, status: "not-installed", sessions: [] })));
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = render(<ShellHerdrSessions selectedSessionId={null} onOpen={vi.fn()} />);
+    const { container } = render(<Harness onOpen={vi.fn()} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(container.innerHTML).toBe("");
   });
