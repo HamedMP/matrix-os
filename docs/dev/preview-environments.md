@@ -564,7 +564,10 @@ turning the switch on. If a secret is missing, Cloud Run rejects that PR's
 deploy. The credentials are never passed as plain env vars and never printed.
 
 Every other PR deploys with exactly the command it would get with the switch
-off. The workflow rejects an invalid switch value or PR number before it
+off. The share-preview connector (`connect_share_preview`) redeploys a PR's
+tag with `--update-*` flags, which merge onto the settings of the revision that
+deployed last. So it re-applies the metal settings for the selected PR, and
+removes them (`--remove-env-vars`, `--remove-secrets`) for every other PR. The workflow rejects an invalid switch value or PR number before it
 deploys anything. It rejects invalid golden, ceiling or invite values only for
 the selected PR. Previews share the staging database, so keep the switch on
 one PR at a time. Turn it off (`PREVIEW_METAL_ENABLED=0`) after the end-to-end

@@ -879,6 +879,12 @@ jobs:
       CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
+      # Same metal switch as the preview job, so this redeploy converges to the same metal state.
+      PREVIEW_METAL_ENABLED: ${{ vars.PREVIEW_METAL_ENABLED || '0' }}
+      PREVIEW_METAL_PR_NUMBER: ${{ vars.PREVIEW_METAL_PR_NUMBER }}
+      PREVIEW_METAL_GOLDEN_VERSION: ${{ vars.PREVIEW_METAL_GOLDEN_VERSION }}
+      PREVIEW_FREE_TIER_MAX_RUNTIMES: ${{ vars.PREVIEW_FREE_TIER_MAX_RUNTIMES || '10' }}
+      PREVIEW_FREE_TIER_INVITE_REQUIRED: ${{ vars.PREVIEW_FREE_TIER_INVITE_REQUIRED || 'true' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
@@ -1034,14 +1040,47 @@ jobs:
           fi
           # Match the existing platform VPS-origin TLS policy (tracked in #410).
           # This applies only to the dedicated Preview service and registered VPS addresses.
-          custom_mcp_args=()
+          secret_updates=""
           if [ "$CUSTOM_MCP_ENABLED" = true ]; then
-            custom_mcp_args+=(--update-secrets "MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1")
+            secret_updates="MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1"
+          fi
+          # --update-* merges onto the service template, which carries whichever revision deployed
+          # last. Re-apply metal settings for the selected PR and strip them from every other PR.
+          metal_env_updates=""
+          metal_args=()
+          case "${PREVIEW_METAL_ENABLED:-0}" in
+            0|1) ;;
+            *)
+              echo "PREVIEW_METAL_ENABLED must be 0 or 1; refusing to deploy." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && ! [[ "${PREVIEW_METAL_PR_NUMBER:-}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "PREVIEW_METAL_PR_NUMBER is invalid; refusing to deploy." >&2
+            exit 1
+          fi
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && [ "$PREVIEW_METAL_PR_NUMBER" = "$PR_NUMBER" ]; then
+            if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]]; then
+              echo "Preview metal settings are invalid; refusing to deploy." >&2
+              exit 1
+            fi
+            metal_env_updates="@METAL_HOSTS_ENABLED=1@METAL_GOLDEN_VERSION=${PREVIEW_METAL_GOLDEN_VERSION}"
+            metal_env_updates="${metal_env_updates}@MATRIX_FREE_TIER_ENABLED=1@MATRIX_FREE_TIER_MAX_RUNTIMES=${PREVIEW_FREE_TIER_MAX_RUNTIMES}@MATRIX_FREE_TIER_INVITE_REQUIRED=${PREVIEW_FREE_TIER_INVITE_REQUIRED}"
+            secret_updates="${secret_updates:+${secret_updates},}METAL_HOSTD_API_TOKEN=metal-hostd-api-token-preview:latest,METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token-preview:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem-preview:latest"
+          else
+            metal_args+=(--remove-env-vars "METAL_HOSTS_ENABLED,METAL_GOLDEN_VERSION,MATRIX_FREE_TIER_ENABLED,MATRIX_FREE_TIER_MAX_RUNTIMES,MATRIX_FREE_TIER_INVITE_REQUIRED")
+            metal_args+=(--remove-secrets "METAL_HOSTD_API_TOKEN,METAL_HOSTD_INGRESS_TOKEN,METAL_HOSTD_CA_PEM")
+          fi
+          secret_args=()
+          if [ -n "$secret_updates" ]; then
+            secret_args+=(--update-secrets "$secret_updates")
           fi
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
-            --update-env-vars "^@^MATRIX_APP_ORIGIN=${public_origin}@MATRIX_APP_DOMAIN_HOSTS=${public_origin#https://},${url#https://},${service_base_url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback" \
-            "${custom_mcp_args[@]}" --quiet
+            --update-env-vars "^@^MATRIX_APP_ORIGIN=${public_origin}@MATRIX_APP_DOMAIN_HOSTS=${public_origin#https://},${url#https://},${service_base_url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback${metal_env_updates}" \
+            "${secret_args[@]}" "${metal_args[@]}" --quiet
           if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
             exit 1

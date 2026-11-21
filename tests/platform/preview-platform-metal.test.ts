@@ -146,6 +146,7 @@ describe("preview platform metal substrate and free tier switch", () => {
         CUSTOM_MCP_ENABLED: "false", GCP_PROJECT_ID: "p", GCP_REGION: "r", IMAGE: "i", PREVIEW_PUBLIC_URL: "https://preview.example.test",
       } });
       expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("refusing to deploy");
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
@@ -167,5 +168,104 @@ describe("preview platform metal substrate and free tier switch", () => {
   it("does not validate free tier inputs for PRs the switch does not target", () => {
     const result = validate({ ...METAL_ON, PREVIEW_METAL_PR_NUMBER: "1947", PREVIEW_METAL_GOLDEN_VERSION: "" });
     expect(result.status, result.stderr).toBe(0);
+  });
+});
+
+// The share-preview connector redeploys a PR's tag with --update-* flags, which merge onto the
+// service template (the most recently deployed revision). It must converge to the same metal state
+// as the main deploy: strip inherited metal settings from other PRs, re-apply them for the selected PR.
+const connectJob = YAML.parse(readFileSync(".github/workflows/preview-platform.yml", "utf8")).jobs["connect-share-preview"];
+const connectStep: string = connectJob.steps.find(
+  (step: { name?: string }) => step.name === "Enable the existing tagged host without moving traffic",
+).run;
+const connectScript = connectStep.split('if ! [[ "$PREVIEW_CLERK_USER_ID"')[0];
+const METAL_ENV_NAMES = "METAL_HOSTS_ENABLED,METAL_GOLDEN_VERSION,MATRIX_FREE_TIER_ENABLED,MATRIX_FREE_TIER_MAX_RUNTIMES,MATRIX_FREE_TIER_INVITE_REQUIRED";
+const METAL_SECRET_NAMES = "METAL_HOSTD_API_TOKEN,METAL_HOSTD_INGRESS_TOKEN,METAL_HOSTD_CA_PEM";
+
+function connectorArguments(overrides: Record<string, string | undefined>) {
+  const result = spawnSync("bash", ["-c", `
+    gcloud() {
+      case "$1 $2 $3" in
+        "help "*) return 0 ;;
+        "run services describe") printf '%s' '{"status":{"url":"https://service.run.app","traffic":[{"tag":"pr-${PR}","revisionName":"revision-${PR}","url":"https://pr-${PR}---service.run.app"}]}}' ;;
+        "run revisions describe") printf '%s' "$FIXTURE_REVISION" ;;
+        "artifacts docker images") printf '%s' 'sha256:fixture' ;;
+        "run deploy matrix-platform-preview") printf '%s\\0' "$@" ;;
+        *) return 1 ;;
+      esac
+    }
+    ${connectScript}
+  `], { encoding: "utf8", timeout: 5_000, env: {
+    PATH: process.env.PATH, PR_NUMBER: PR, GCP_PROJECT_ID: "fixture", GCP_REGION: "region",
+    ARTIFACT_REPOSITORY: "images", CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview",
+    EXPECTED_HEAD_SHA: "a".repeat(40), CUSTOM_MCP_ENABLED: "false",
+    FIXTURE_REVISION: JSON.stringify({ spec: { containers: [{
+      image: `region-docker.pkg.dev/fixture/images/matrix-platform:pr-${PR}-aaaaaaaaaaaa`,
+      env: [{ name: "MATRIX_APP_ORIGIN", value: "https://preview.example.com" }],
+    }] } }),
+    ...overrides,
+  } });
+  return { result, args: result.stdout.split("\0").filter(Boolean) };
+}
+
+describe("share-preview connector converges to the metal switch", () => {
+  it("reads the same Preview switch variables as the main deploy", () => {
+    expect(connectJob.environment).toBe("Preview");
+    for (const name of ["PREVIEW_METAL_ENABLED", "PREVIEW_METAL_PR_NUMBER", "PREVIEW_METAL_GOLDEN_VERSION",
+      "PREVIEW_FREE_TIER_MAX_RUNTIMES", "PREVIEW_FREE_TIER_INVITE_REQUIRED"]) {
+      expect(connectJob.env[name]).toBe(job.env[name]);
+    }
+  });
+
+  it.each([
+    ["switch off", { ...METAL_ON, PREVIEW_METAL_ENABLED: "0" }],
+    ["switch unset", {}],
+    ["another PR selected", { ...METAL_ON, PREVIEW_METAL_PR_NUMBER: "1947" }],
+  ])("removes inherited metal settings when %s", (_label, overrides) => {
+    const { result, args } = connectorArguments(overrides);
+    expect(result.status, result.stderr).toBe(0);
+    expect(flagValue(args, "--remove-env-vars")).toBe(METAL_ENV_NAMES);
+    expect(flagValue(args, "--remove-secrets")).toBe(METAL_SECRET_NAMES);
+    expect(flagValue(args, "--update-env-vars")).not.toMatch(/METAL_|FREE_TIER/);
+    expect(args).not.toContain("--update-secrets");
+  });
+
+  it("keeps the custom MCP secret update alongside the metal removal", () => {
+    const { result, args } = connectorArguments({ CUSTOM_MCP_ENABLED: "true" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(flagValue(args, "--update-secrets")).toBe("MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1");
+    expect(flagValue(args, "--remove-secrets")).toBe(METAL_SECRET_NAMES);
+  });
+
+  it.each(["false", "true"])("re-applies the validated metal settings for the selected PR (custom MCP %s)", (customMcp) => {
+    const { result, args } = connectorArguments({ ...METAL_ON, CUSTOM_MCP_ENABLED: customMcp });
+    expect(result.status, result.stderr).toBe(0);
+    const env = flagValue(args, "--update-env-vars").replace(/^\^@\^/, "").split("@");
+    expect(env).toEqual(expect.arrayContaining([
+      "METAL_HOSTS_ENABLED=1", "METAL_GOLDEN_VERSION=golden-2026.11.20_1", "MATRIX_FREE_TIER_ENABLED=1",
+      "MATRIX_FREE_TIER_MAX_RUNTIMES=10", "MATRIX_FREE_TIER_INVITE_REQUIRED=true",
+    ]));
+    expect(env.some((binding) => /^METAL_HOSTD_/.test(binding))).toBe(false);
+    const secrets = flagValue(args, "--update-secrets").split(",");
+    expect(secrets).toEqual(expect.arrayContaining(METAL_SECRETS));
+    if (customMcp === "true") expect(secrets).toContain("MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1");
+    expect(args.filter((arg) => arg === "--update-secrets")).toHaveLength(1);
+    expect(args.filter((arg) => arg === "--update-env-vars")).toHaveLength(1);
+    expect(args).not.toContain("--remove-env-vars");
+    expect(args).not.toContain("--remove-secrets");
+  });
+
+  it.each([
+    { PREVIEW_METAL_GOLDEN_VERSION: "v1@METAL_HOSTS_ENABLED=0" },
+    { PREVIEW_METAL_GOLDEN_VERSION: "" },
+    { PREVIEW_FREE_TIER_MAX_RUNTIMES: "0" },
+    { PREVIEW_FREE_TIER_INVITE_REQUIRED: "no" },
+    { PREVIEW_METAL_ENABLED: "yes" },
+    { PREVIEW_METAL_PR_NUMBER: "abc" },
+  ])("refuses to redeploy with invalid metal settings %j", (bad) => {
+    const { result, args } = connectorArguments({ ...METAL_ON, ...bad });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("refusing to deploy");
+    expect(args).not.toContain("--update-env-vars");
   });
 });
