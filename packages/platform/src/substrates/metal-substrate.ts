@@ -3,6 +3,7 @@ import {
   createHostdClient,
   createHostdDispatcher,
   HostdError,
+  HOSTD_RESUME_GRACE_MS,
   type HostdClient,
   type HostdClientOptions,
 } from './hostd-client.js';
@@ -152,6 +153,8 @@ export interface MetalSubstrateDeps {
   /** Shared TLS dispatcher for hostd calls; built from caPem when omitted. */
   dispatcher?: Dispatcher;
   clientOptions?: Pick<HostdClientOptions, 'timeoutMs' | 'resumeGraceMs'>;
+  /** How long a request waits for a resume before being answered "waking"; defaults to the resume budget plus grace. */
+  requestWaitMs?: number;
   log?: Log;
 }
 
@@ -222,6 +225,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
   return {
     kind: 'metal',
     startsOnDemand: true,
+    requestWaitMs: deps.requestWaitMs ?? METAL_RESUME_BUDGET_MS + HOSTD_RESUME_GRACE_MS,
 
     resolveUpstream(machine, target) {
       if (machine.status !== 'running' || machine.substrate !== 'metal' || !machine.metalHostId) return null;

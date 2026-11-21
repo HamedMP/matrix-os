@@ -20,7 +20,10 @@ import type { EnsureRunningResult, RuntimeSubstrate } from './types.js';
  * non-idempotent requests on `runtimeState` (G3 relies on this).
  */
 
-export const WAKE_TIMEOUT_MS = 15_000;
+/** Bounds the shared start itself (hostd getVm 10 s plus resume 8 s + 2 s grace, with margin). */
+export const WAKE_TIMEOUT_MS = 25_000;
+/** How long a request waits for a start when its substrate names no wait of its own. */
+export const DEFAULT_REQUEST_WAIT_MS = 10_000;
 export const OWNER_ACTIVITY_WRITE_INTERVAL_MS = 60_000;
 export const OWNER_ACTIVITY_CACHE_MAX = 10_000;
 const WAKE_IN_FLIGHT_MAX = 1_024;
@@ -117,15 +120,17 @@ async function markRunning(db: PlatformDB, machine: UserMachineRecord): Promise<
 
 async function runWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: UserMachineRecord, log: Log): Promise<WakeResult> {
   let result: EnsureRunningResult;
+  const signal = AbortSignal.timeout(WAKE_TIMEOUT_MS);
   try {
     result = await substrate.ensureRunning({
       machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
-    }, AbortSignal.timeout(WAKE_TIMEOUT_MS));
+    }, signal);
   } catch (error: unknown) {
     log('[substrate-wake] ensure running failed', {
       machineId: machine.machineId, cause: error instanceof Error ? error.name : 'unknown',
     });
-    result = { state: 'failed', code: 'provider_unavailable' };
+    // The platform stopped waiting, not the host agent failing: the start may still finish.
+    result = signal.aborted ? { state: 'starting' } : { state: 'failed', code: 'provider_unavailable' };
   }
   if (result.state !== 'running') return { result };
   try {
@@ -170,7 +175,11 @@ export async function decideOnDemandWake(input: SubstrateWakeDeps): Promise<Subs
   if (!isRuntimeOwner(machine, identity)) return { kind: 'unavailable', retryAfter: null };
 
   const log = input.logError ?? defaultLog;
-  const { result, machine: current } = await sharedWake(input.db, lookup.substrate, machine, log);
+  const waited = await waitAtMost(sharedWake(input.db, lookup.substrate, machine, log),
+    lookup.substrate.requestWaitMs ?? DEFAULT_REQUEST_WAIT_MS);
+  // The request stops waiting; the shared wake keeps going and a retry joins it or finds the runtime running.
+  if (!waited) return { kind: 'not_ready', state: 'waking' };
+  const { result, machine: current } = waited;
   switch (result.state) {
     case 'running':
       return current ? { kind: 'proceed', machine: current } : { kind: 'unavailable', retryAfter: null };
@@ -203,18 +212,33 @@ export function wakeRefusal(decision: Exclude<SubstrateWakeDecision, { kind: 'pr
   };
 }
 
+function waitAtMost<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const elapsed = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  return Promise.race([promise, elapsed]).finally(() => clearTimeout(timer));
+}
+
+/** The HTTP 503 for a request that did not proceed: JSON, or the boot page for a waking or busy navigation. */
+export function wakeRefusalResponse(
+  c: Context,
+  decision: Exclude<SubstrateWakeDecision, { kind: 'proceed' }>,
+  respondWithJson: boolean,
+  applyNoStoreHeaders: (c: Context) => void,
+): Response {
+  const refusal = wakeRefusal(decision);
+  applyNoStoreHeaders(c);
+  if (refusal.retryAfter) c.header('Retry-After', refusal.retryAfter);
+  if (decision.kind === 'not_ready' && !respondWithJson) {
+    return c.html(getVpsBootPage({ status: decision.state === 'waking' ? 'starting' : decision.state }), 503);
+  }
+  return c.json(refusal.body, 503);
+}
+
 /** Called after authorization and entitlement checks, before the upstream is resolved. */
 export async function prepareOnDemandUpstream(input: SubstrateWakeInput): Promise<SubstrateWakeOutcome> {
   const decision = await decideOnDemandWake(input);
   if (decision.kind === 'proceed') return decision;
-  const { c } = input;
-  const refusal = wakeRefusal(decision);
-  input.applyNoStoreHeaders(c);
-  if (refusal.retryAfter) c.header('Retry-After', refusal.retryAfter);
-  if (decision.kind === 'not_ready' && !input.respondWithJson) {
-    return { kind: 'respond', response: c.html(getVpsBootPage({ status: decision.state === 'waking' ? 'starting' : decision.state }), 503) };
-  }
-  return { kind: 'respond', response: c.json(refusal.body, 503) };
+  return { kind: 'respond', response: wakeRefusalResponse(input.c, decision, input.respondWithJson, input.applyNoStoreHeaders) };
 }
 
 // ---------------------------------------------------------------------------

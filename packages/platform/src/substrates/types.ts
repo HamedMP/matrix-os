@@ -55,6 +55,11 @@ export interface RuntimeSubstrate {
   readonly kind: SubstrateKind;
   /** True when a stopped runtime can be started on request. */
   readonly startsOnDemand: boolean;
+  /**
+   * How long a request waits for an on-demand start before it is answered
+   * "waking"; the start itself keeps going. Defaults to the platform's wait.
+   */
+  readonly requestWaitMs?: number;
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
   ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;

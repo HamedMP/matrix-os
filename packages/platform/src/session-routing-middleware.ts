@@ -36,7 +36,8 @@ import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleF
 import { issueSyncJwt } from './sync-jwt.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
-import { noteOwnerReachedRuntime, prefersJsonWakeResponse, prepareOnDemandUpstream, takesOnDemandPath } from './substrates/substrate-wake.js';
+import { noteOwnerReachedRuntime, prefersJsonWakeResponse, prepareOnDemandUpstream, takesOnDemandPath, wakeRefusalResponse } from './substrates/substrate-wake.js';
+import { sendWithAsleepRetry } from './substrates/runtime-asleep.js';
 import { applyUpstreamCredentials, dispatcherForUpstream, stripUpstreamCredentials } from './substrates/upstream-transport.js';
 import {
   buildPlatformVerificationToken,
@@ -765,8 +766,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const explicitWakeJson = prefersJsonWakeResponse(c.req.header('accept'), isAppDomainGatewayPath(explicitVmRoute.upstreamPath));
       const explicitWake = await prepareOnDemandUpstream({ c, db, substrates, machine, identity, applyNoStoreHeaders,
-        respondWithJson: prefersJsonWakeResponse(c.req.header('accept'), isAppDomainGatewayPath(explicitVmRoute.upstreamPath)) });
+        respondWithJson: explicitWakeJson });
       if (explicitWake.kind === 'respond') return explicitWake.response;
       machine = explicitWake.machine;
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
@@ -836,15 +838,18 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       applyUpstreamCredentials(headers, resolution.upstream);
 
       try {
-        const upstream = await fetchRuntimeProxy(targetUrl, {
+        const explicitBody = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
+        const sent = await sendWithAsleepRetry({ db, substrates, machine, identity, send: () => fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
-          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+          body: explicitBody,
           dispatcher: dispatcherForUpstream(resolution.upstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath)) });
+        if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, explicitWakeJson, applyNoStoreHeaders);
+        const upstream = sent.response;
         noteOwnerReachedRuntime(db, machine, identity);
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
@@ -959,8 +964,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const sessionWakeJson = prefersJsonWakeResponse(c.req.header('accept'), isGatewayPath || isCodeDomain);
       const sessionWake = await prepareOnDemandUpstream({ c, db, substrates, machine: runningMachine, identity, applyNoStoreHeaders,
-        respondWithJson: prefersJsonWakeResponse(c.req.header('accept'), isGatewayPath || isCodeDomain) });
+        respondWithJson: sessionWakeJson });
       if (sessionWake.kind === 'respond') return sessionWake.response;
       runningMachine = sessionWake.machine;
       const resolution = substrates.resolveUpstream(runningMachine, { path, queryString: qs });
@@ -1023,7 +1029,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       applyUpstreamCredentials(headers, resolution.upstream);
 
       try {
-        const upstream = await fetchRuntimeProxy(targetUrl, {
+        const sent = await sendWithAsleepRetry({ db, substrates, machine: runningMachine, identity, send: () => fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
           method: c.req.method,
           headers,
@@ -1031,7 +1037,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           body,
           dispatcher: dispatcherForUpstream(resolution.upstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path)) });
+        if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, sessionWakeJson, applyNoStoreHeaders);
+        const upstream = sent.response;
         noteOwnerReachedRuntime(db, runningMachine, identity);
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({

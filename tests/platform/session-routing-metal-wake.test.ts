@@ -25,8 +25,8 @@ describe('waking a metal runtime from every entry point', () => {
   let rig: MetalWakeRig;
   let platform: ReturnType<typeof createApp>;
 
-  async function setup(overrides: Parameters<typeof createMetalWakeRig>[1] = {}) {
-    rig = await createMetalWakeRig(db, overrides);
+  async function setup(overrides: Parameters<typeof createMetalWakeRig>[1] = {}, options: Parameters<typeof createMetalWakeRig>[2] = {}) {
+    rig = await createMetalWakeRig(db, overrides, options);
     platform = createApp({
       db, orchestrator: stubOrchestrator(), platformSecret: PLATFORM_SECRET,
       clerkAuth: createClerkAuth({ verifyToken: async (token) => ({ sub: token }) }),
@@ -142,6 +142,72 @@ describe('waking a metal runtime from every entry point', () => {
     if (retryAfter === null) {
       expect(errors.mock.calls.some(([message]) => String(message).includes('needs_recovery'))).toBe(true);
     }
+  });
+
+  it('a wake still in flight when the request wait elapses answers waking and keeps going', async () => {
+    await setup({}, { requestWaitMs: 150 });
+    // A slow hostd resume: the platform stops holding the request before hostd answers.
+    rig.resume = { kind: 'state', state: 'running', delayMs: 700 };
+
+    const first = await platform.request('/vm/alice/api/projects', { headers: OWNER_SESSION });
+    expect(first.status).toBe(503);
+    expect(first.headers.get('retry-after')).toBe('3');
+    expect(await first.json()).toEqual({ error: 'Matrix computer not ready', runtimeState: 'waking' });
+    const page = await platform.request('/vm/alice/', { headers: { ...OWNER_SESSION, accept: 'text/html' } });
+    expect(page.status).toBe(503);
+    expect(await page.text()).toContain('http-equiv="refresh"');
+    expect(rig.ingress.requests).toEqual([]);
+
+    // The in-flight wake completes on its own; the client's retry finds the VM running.
+    await vi.waitFor(async () => expect((await rig.machine())?.status).toBe('running'), { timeout: 3_000 });
+    const retry = await platform.request('/vm/alice/api/projects', { headers: OWNER_SESSION });
+    expect(retry.status).toBe(200);
+    expect(rig.resumeCalls()).toHaveLength(1);
+  });
+
+  it.each([
+    ['GET', undefined],
+    ['POST', '{"path":"notes.md"}'],
+  ] as const)('a %s to a VM the host put to sleep wakes it and is retried once, never passing runtime_asleep through', async (method, body) => {
+    await setup({ status: 'running' });
+    rig.ingress.asleepResponses = 1;
+
+    const response = await platform.request('/vm/alice/api/files', { method, headers: OWNER_SESSION, ...(body ? { body } : {}) });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('runtime');
+    expect(rig.resumeCalls()).toHaveLength(1);
+    expect(rig.ingress.requests.map((req) => req.method)).toEqual([method, method]);
+    // The ingress rejected the first attempt before forwarding, so the VM saw the body exactly once.
+    if (body) expect(rig.ingress.requests.at(-1)!.body).toBe(body);
+    expect((await rig.machine())?.status).toBe('running');
+  });
+
+  it('answers waking when the VM is still asleep after the one retry', async () => {
+    await setup({ status: 'running' });
+    rig.ingress.asleepResponses = 2;
+
+    const response = await platform.request('/api/projects', { headers: OWNER_SESSION });
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('3');
+    const text = await response.text();
+    expect(text).not.toContain('runtime_asleep');
+    expect(JSON.parse(text)).toEqual({ error: 'Matrix computer not ready', runtimeState: 'waking' });
+    expect(rig.ingress.requests).toHaveLength(2);
+  });
+
+  it('a non-owner reaching a VM the host put to sleep gets not available, without waking', async () => {
+    await setup({ status: 'running' });
+    rig.ingress.asleepResponses = 1;
+    const admin = { authorization: `Bearer ${PLATFORM_SECRET}` };
+
+    const response = await platform.request('/proxy/alice/api/health', { headers: admin });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' });
+    expect(rig.resumeCalls()).toHaveLength(0);
+    expect((await rig.machine())?.status).toBe('suspended');
   });
 
   it('owner requests update last_activity_at at most once per minute', async () => {

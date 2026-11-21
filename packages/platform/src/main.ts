@@ -947,7 +947,7 @@ export function createApp(deps: {
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
     // Platform-secret callers are not the owner, so they reach an on-demand runtime only while it is routable.
     if (runningMachine && runningMachine.substrate !== 'vps') {
-      return proxyLegacyRouteToSubstrate(c, { substrates, machine: runningMachine, path, queryString: qs,
+      return proxyLegacyRouteToSubstrate(c, { db, substrates, machine: runningMachine, path, queryString: qs,
         vpsDispatcher: customerVpsProxyDispatcher, logRouteError: logPlatformRouteError });
     }
     if (runningMachine) {

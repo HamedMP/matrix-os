@@ -7,6 +7,7 @@ import { isSafeWebSocketUpgradePath, stripWebSocketUpgradeToken } from '../ws-up
 import type { SubstrateRegistry } from './registry.js';
 import { decideOnDemandWake, noteOwnerReachedRuntime, wakeRefusal, type WakeIdentity } from './substrate-wake.js';
 import type { RuntimeUpstream } from './types.js';
+import { isRuntimeAsleepBody, wakeAfterAsleep } from './runtime-asleep.js';
 import { isCredentialHeaderLine, trustedCaList } from './upstream-transport.js';
 
 /**
@@ -21,6 +22,7 @@ import { isCredentialHeaderLine, trustedCaList } from './upstream-transport.js';
 const MAX_HANDSHAKE_BYTES = 16 * 1024;
 /** Bounds the TLS connect plus the wait for the upstream handshake head. */
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+const MAX_ASLEEP_BODY_BYTES = 4 * 1024;
 
 export interface OnDemandWebSocketUpgrade {
   db: PlatformDB;
@@ -86,10 +88,46 @@ export async function proxyOnDemandWebSocket(upgrade: OnDemandWebSocketUpgrade):
     upgrade.refuse(503);
     return;
   }
-  relay(upgrade, machine, resolution.upstream);
+  relay(upgrade, machine, resolution.upstream, () => {
+    retryAfterAsleep(upgrade, substrates, machine).catch((error: unknown) => {
+      console.warn('[on-demand-websocket] wake after asleep failed', error instanceof Error ? error.name : 'unknown');
+      upgrade.refuse(503);
+    });
+  });
 }
 
-function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, upstream: RuntimeUpstream): void {
+/**
+ * The ingress answered `runtime_asleep` before forwarding the upgrade: record
+ * the VM asleep, wake it once, and dial once more. Nothing has been written to
+ * the client yet, so it still gets a plain HTTP answer if the VM stays asleep.
+ */
+async function retryAfterAsleep(upgrade: OnDemandWebSocketUpgrade, substrates: SubstrateRegistry, machine: UserMachineRecord): Promise<void> {
+  const decision = await wakeAfterAsleep({ db: upgrade.db, substrates, machine, identity: upgrade.identity });
+  if (upgrade.socket.destroyed) return;
+  if (decision.kind !== 'proceed') {
+    refuseWithWakeBody(upgrade.socket, wakeRefusal(decision));
+    return;
+  }
+  const resolution = substrates.resolveUpstream(decision.machine, { path: '/' });
+  if (resolution.kind !== 'upstream') {
+    upgrade.refuse(503);
+    return;
+  }
+  relay(upgrade, decision.machine, resolution.upstream,
+    () => refuseWithWakeBody(upgrade.socket, wakeRefusal({ kind: 'not_ready', state: 'waking' })));
+}
+
+/** A small 503 whose JSON body says `runtime_asleep`; anything else is relayed as before. */
+function readAsleepAnswer(buffered: Buffer, end: number): 'asleep' | 'other' | 'incomplete' {
+  const head = buffered.subarray(0, end).toString('latin1');
+  if (!/^HTTP\/1\.[01] 503 /.test(head)) return 'other';
+  const length = Number(/\r\ncontent-length:\s*(\d+)/i.exec(head)?.[1] ?? Number.NaN);
+  if (!Number.isSafeInteger(length) || length > MAX_ASLEEP_BODY_BYTES) return 'other';
+  if (buffered.length < end + 4 + length) return 'incomplete';
+  return isRuntimeAsleepBody(buffered.subarray(end + 4, end + 4 + length).toString('utf8')) ? 'asleep' : 'other';
+}
+
+function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, upstream: RuntimeUpstream, onAsleep: () => void): void {
   const { req, socket } = upgrade;
   const target = new URL(upstream.url);
   const port = Number(target.port || 443);
@@ -99,6 +137,7 @@ function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, up
   const credentials = Object.entries(upstream.headers ?? {}).map(([name, value]) => `${name}: ${value}`);
   const connect = upgrade.connect ?? connectTls;
   let settled = false;
+  let handedOff = false;
   const fail = (status: 502, cause: string) => {
     if (settled) return;
     settled = true;
@@ -137,7 +176,17 @@ function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, up
         return;
       }
       if (end < 0) return;
+      const asleep = readAsleepAnswer(buffered, end);
+      if (asleep === 'incomplete') return;
       connection.off('data', onData);
+      if (asleep === 'asleep') {
+        settled = true;
+        handedOff = true;
+        clearTimeout(deadline);
+        connection.destroy();
+        onAsleep();
+        return;
+      }
       settled = true;
       clearTimeout(deadline);
       upgrade.onResponded();
@@ -151,6 +200,7 @@ function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, up
     };
     connection.on('data', onData);
     connection.on('close', () => {
+      if (handedOff) return;
       if (!settled) fail(502, 'closed');
       else upgrade.refuse(502);
     });

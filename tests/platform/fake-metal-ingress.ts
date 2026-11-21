@@ -16,25 +16,40 @@ export interface FakeIngressRequest {
   path: string;
   headers: IncomingMessage['headers'];
   upgrade: boolean;
+  body: string;
 }
 
 export interface FakeMetalIngress {
   /** `127.0.0.1:<port>`, the metal_hosts.ingress_host value. */
   ingressHost: string;
   requests: FakeIngressRequest[];
+  /** The next N requests or upgrades answer 503 runtime_asleep, as the real ingress does for a suspended VM. */
+  asleepResponses: number;
   close(): Promise<void>;
 }
 
+const ASLEEP_BODY = JSON.stringify({ error: 'runtime_asleep' });
+
 function record(req: IncomingMessage, upgrade: boolean): FakeIngressRequest {
-  return { method: req.method ?? '', path: req.url ?? '', headers: req.headers, upgrade };
+  return { method: req.method ?? '', path: req.url ?? '', headers: req.headers, upgrade, body: '' };
 }
 
 export async function startFakeMetalIngress(cert: { key: string; cert: string }): Promise<FakeMetalIngress> {
   const requests: FakeIngressRequest[] = [];
+  const state = { asleepResponses: 0 };
   const server: Server = createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
-    requests.push(record(req, false));
-    req.resume();
+    const recorded = record(req, false);
+    requests.push(recorded);
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
+      recorded.body = Buffer.concat(chunks).toString('utf8');
+      if (state.asleepResponses > 0) {
+        state.asleepResponses -= 1;
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(ASLEEP_BODY);
+        return;
+      }
       // A misbehaving upstream that echoes the credential back must not leak it to clients.
       res.writeHead(200, { 'content-type': 'text/plain', 'x-matrix-host-auth': 'echoed-by-upstream' });
       res.end('runtime');
@@ -43,6 +58,11 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     requests.push(record(req, true));
+    if (state.asleepResponses > 0) {
+      state.asleepResponses -= 1;
+      socket.end(`HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: ${ASLEEP_BODY.length}\r\nConnection: close\r\n\r\n${ASLEEP_BODY}`);
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.on('message', (data) => ws.send(`echo:${data.toString()}`));
     });
@@ -54,6 +74,8 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
   return {
     ingressHost: `127.0.0.1:${port}`,
     requests,
+    get asleepResponses() { return state.asleepResponses; },
+    set asleepResponses(value: number) { state.asleepResponses = value; },
     async close() {
       for (const client of wss.clients) client.terminate();
       wss.close();

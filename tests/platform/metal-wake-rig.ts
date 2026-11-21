@@ -39,6 +39,7 @@ export interface MetalWakeRig {
 export async function createMetalWakeRig(
   db: PlatformDB,
   overrides: Partial<NewUserMachine> = {},
+  options: { requestWaitMs?: number } = {},
 ): Promise<MetalWakeRig> {
   const cert = generateSelfSignedCert();
   const hostd = await startFakeHostd(cert);
@@ -81,10 +82,13 @@ export async function createMetalWakeRig(
   });
 
   const loadMachine = (id: string) => getUserMachine(db, id);
+  const hosts = createMetalHostDirectory(repo);
+  await hosts.prime();
   const substrates = createSubstrateRegistry([
     createVpsSubstrate({ loadMachine }),
     createMetalSubstrate({
-      loadMachine, hosts: createMetalHostDirectory(repo), apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN, caPem: cert.cert,
+      loadMachine, hosts, apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN, caPem: cert.cert,
+      ...(options.requestWaitMs === undefined ? {} : { requestWaitMs: options.requestWaitMs }),
     }),
   ]);
 
