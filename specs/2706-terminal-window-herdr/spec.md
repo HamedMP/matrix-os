@@ -116,6 +116,7 @@ component lives in `packages/ui` so Web can adopt it later.
 | 4 | Status data: local `events.subscribe` and seen; computers subscribe to `/ws/terminal/events`, seen per tab | after ENG-519 |
 | 5 | Terminal window: sidebar wired in, Herdr shortcuts | after ENG-519 |
 | 6 | Panes: split tree, one terminal per pane | after ENG-519 |
+| — | Public docs: Terminal window sidebar, shortcuts and panes (separate PR in `FinnaAI/matrix-os-site`, `content/docs/`) | site repo, after layer 6 |
 
 Binary frames, one connection per computer and Herdr-backed computer terminals
 are a following stack.
