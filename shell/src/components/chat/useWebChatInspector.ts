@@ -24,6 +24,7 @@ export interface WebChatInspectorProps {
   rootWidth: number;
   railWidth: number;
   project?: { id: string; slug: string };
+  worktreeId?: string;
   projectLoading?: boolean;
   projectError?: boolean;
   onRetryProject?(): void;

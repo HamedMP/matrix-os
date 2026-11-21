@@ -259,7 +259,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, sideChatClient, terminalSessionIds = [], composerIdentity, isCurrentAuthority, botEventRevision,routineOriginChat,navigationTruncated,chatChangeRevision,chatReadStateUpdates,chatRunStatusChange,navigationClassifications,navigationFresh,loadNavigationPage,searchConversations,navigationUpdatedAt, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, sideChatClient, terminalSessionIds = [], composerIdentity, isCurrentAuthority, botEventRevision,routineOriginChat,navigationTruncated,chatChangeRevision,chatReadStateUpdates,chatRunStatusChange,navigationClassifications,navigationFresh,loadNavigationPage,searchConversations,navigationUpdatedAt, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, chatFileScope, projectSkillRootAvailable, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -345,9 +345,14 @@ function ChatAppContent({
     if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
     else onComposerDraftConsumed?.(id);
   };
-  const activeFileProjectId = chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId;
+  const activeFileProjectId = chatFileScope ? (chatFileScope.kind === "project" ? chatFileScope.projectId : undefined)
+    : chatProjectId ?? conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.projectId;
+  const activeFileWorktreeId = chatFileScope?.kind === "project" ? chatFileScope.worktreeId : undefined;
+  const fileScopeUnavailable = chatFileScope?.kind === "unavailable";
+  const fileScopeKey = JSON.stringify([authorityKey, projectGatewayUrl, sessionId, chatFileScope ?? null, activeFileProjectId]);
   const activeFileProject = webProjects.projects.find(project => project.id === activeFileProjectId || project.slug === activeFileProjectId);
-  const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string; resource?: FileResourceRef } | null>(null);
+  const [filePreview, setPreviewFile] = useState<{ chatId: string; scopeKey: string; path: string; resource?: FileResourceRef } | null>(null);
+  const previewFile = filePreview?.scopeKey === fileScopeKey ? filePreview : null;
   const previewResource = toGatewayProjectFileResource(previewFile?.resource, activeFileProject);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [rootWidth, setRootWidth] = useState(0);
@@ -364,10 +369,11 @@ function ChatAppContent({
   const previewTrigger = useRef<HTMLElement | null>(null);
   const openMessageFile = (path: string, ownerRelative = false) => {
     if (isCurrentAuthority && !isCurrentAuthority()) return false;
-    const target = normalizeChatFileReference(path, activeFileProjectId && !ownerRelative ? { root: "project", projectId: activeFileProject?.id ?? activeFileProjectId, baseDirectory: "" } : { root: "home", baseDirectory: "" });
+    if (fileScopeUnavailable && !ownerRelative) { setInspectorOpen(true); return false; }
+    const target = normalizeChatFileReference(path, activeFileProjectId && !ownerRelative ? { root: "project", projectId: activeFileProject?.id ?? activeFileProjectId, worktreeId: activeFileWorktreeId, baseDirectory: "" } : { root: "home", baseDirectory: "" });
     if (!sessionId || !target || target.kind === "artifact") return false;
     previewTrigger.current = document.activeElement as HTMLElement | null;
-    setPreviewFile({ chatId: sessionId, path: target.path, resource: target });
+    setPreviewFile({ chatId: sessionId, scopeKey: fileScopeKey, path: target.path, resource: target });
     setInspectorOpen(true);
     return true;
   };
@@ -993,11 +999,11 @@ function ChatAppContent({
         </>}
       </main>
       {sessionId && sideChatClient && inspectorOpen && !archivesOpen && !collaborationView && !mobile ? <WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject}
-        projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
+        active={active && visible} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} worktreeId={activeFileWorktreeId}
+        projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={fileScopeUnavailable || Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} fileOpenRequest={previewFile ?? undefined} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         fileResource={previewFile?.chatId === sessionId ? previewResource : undefined}
-        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
+        onFilePathChange={path => setPreviewFile(path ? { chatId: sessionId, scopeKey: fileScopeKey, path, resource: activeFileProject ? { kind: "project", projectId: activeFileProject.id, worktreeId: activeFileWorktreeId, path } : { kind: "home", path } } : null)} terminalSessionIds={terminalSessionIds}
         sideChatClient={sideChatClient} onSendToMain={text => { composer.setText(appendSideChatAnswer(composer.text, text)); rootRef.current?.querySelector<HTMLTextAreaElement>("[data-slot=chat-composer] textarea")?.focus(); }}
         onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
