@@ -1215,30 +1215,39 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
   });
 
-  it("uses the hosted main-pane width without adding the window sidebar", async () => {
+  it("keeps the hosted chat beside its inspector while both minimum widths fit", async () => {
     initialWorkWidth = 900;
     function HostedWork() {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({ setChrome }), []);
       return (
         <SurfaceChromeContext.Provider value={host}>
+          <header>{chrome?.rightActions}</header>
           <output data-testid="stable-hosted-width">{chrome?.leftPaneWidth}</output>
-          <WorkTab route="projects" active />
+          <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />
         </SurfaceChromeContext.Provider>
       );
     }
 
     render(<HostedWork />);
-    await screen.findByText("Projects center");
+    await screen.findByText("Chat center");
     expect(screen.getByTestId("stable-hosted-width").textContent).toBe("240");
 
-    resizeWork(739);
+    // A 960px window already gives this hosted main pane 720px after its sidebar.
+    resizeWork(720);
+    await waitFor(() => expect(document.querySelector('[data-layout="medium"]')).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("360");
+    expect(screen.getByRole("main").getAttribute("aria-hidden")).toBeNull();
+
+    resizeWork(599);
 
     await waitFor(() => expect(document.querySelector('[data-layout="narrow"]')).toBeTruthy());
 
-    resizeWork(740);
+    resizeWork(600);
 
     await waitFor(() => expect(document.querySelector('[data-layout="medium"]')).toBeTruthy());
+    expect(screen.getByRole("separator", { name: "Resize Chat inspector" }).getAttribute("aria-valuenow")).toBe("240");
   });
 
   it("keeps a new Chat title empty while reserving the shared inspector header row", async () => {

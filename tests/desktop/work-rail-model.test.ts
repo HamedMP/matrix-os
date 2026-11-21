@@ -66,6 +66,17 @@ const projects: Project[] = [
   { id: "project_beta_id", slug: "beta", name: "Beta", kind: "scratch" },
 ];
 
+it("lists recently archived search results by archive time rather than transcript activity", () => {
+  const recent = chat("chat_recent_archive", "Recently archived", { updatedAt: "2026-08-01T00:00:00.000Z" });
+  recent.chat.lifecycle = "archived";
+  recent.chat.archivedAt = "2026-11-21T12:00:00.000Z";
+  const older = chat("chat_older_archive", "Older archive", { updatedAt: "2026-11-20T00:00:00.000Z" });
+  older.chat.lifecycle = "archived";
+  older.chat.archivedAt = "2026-11-20T12:00:00.000Z";
+  expect(buildWorkRailSearchResults([older, recent], [], "").map(result => result.record.chat.id))
+    .toEqual([recent.chat.id, older.chat.id]);
+});
+
 describe("buildWorkRailModel", () => {
   it("shows a project chat in both its project and current status group using one record", () => {
     const record = chat("chat_project_status", "Project work", {
