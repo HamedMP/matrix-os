@@ -101,6 +101,12 @@ matrix_reconcile_owner_home() {
   local group="${2:-$owner}"
 
   matrix_install_owner_dirs "$owner" "$group"
+  # Self-host runs as a person's own account (spec 2701 S1): never fold their real
+  # ~/.config, ~/.cache or ~/.local into the Matrix home or replace them with links.
+  if [ "${MATRIX_SKIP_LEGACY_HOME_MIGRATION:-0}" = "1" ]; then
+    matrix_install_dir "$MATRIX_HOME/.hermes" 0700 "$owner" "$group"
+    return 0
+  fi
   matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"
   matrix_migrate_legacy_dotdir ".cache" 0755 "$owner" "$group"
   matrix_migrate_legacy_dotdir ".config" 0755 "$owner" "$group"

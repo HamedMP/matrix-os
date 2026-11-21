@@ -32,7 +32,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("MATRIX_NODE_PREFIX=/opt/matrix/runtime/node");
     expect(script).toContain("validate_config");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL must be https");
-    expect(script).toContain("MATRIX_HOME must stay under /home/matrix");
+    expect(script).toContain("MATRIX_HOME must stay under ${MATRIX_RUN_USER_HOME}");
+    expect(script).toContain("MATRIX_BIND_HOST=127.0.0.1");
+    expect(script).toContain("MATRIX_RUNTIME_USER=${MATRIX_RUN_USER}");
+    expect(script).toContain("MATRIX_SKIP_LEGACY_HOME_MIGRATION=${skip_legacy_migration}");
     expect(script).toContain("[ \"${#MATRIX_DOMAIN}\" -le 253 ]");
     expect(script).toContain("[[ \"$MATRIX_DOMAIN\" =~ ^[A-Za-z0-9]");
     expect(script).toContain("openssl rand -hex 32");
@@ -55,7 +58,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node");
     expect(script).toContain('find /opt/matrix/runtime/node -type d -exec chmod g+s {} +');
     expect(script).toContain("Runtime permissions ready");
-    expect(script).toContain("sudo -iu matrix");
+    expect(script).toContain("sudo -iu ${MATRIX_RUN_USER}");
   });
 
   it("reports privacy-scoped manual install telemetry with an opt-out", () => {
@@ -85,7 +88,8 @@ describe("self-host server installer", () => {
   it("protects the public surface with nginx basic auth and keeps services loopback", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
-    expect(script).toContain("auth_basic \"Matrix OS\"");
+    // The rendered site is asserted in self-host-installer-options.test.ts.
+    expect(script).toContain('auth_basic \\"Matrix OS\\";');
     expect(script).toContain("htpasswd_file=\"/etc/nginx/matrix-self-host.htpasswd\"");
     expect(script).toContain("legacy_htpasswd_file=\"/opt/matrix/env/nginx.htpasswd\"");
     expect(script).toContain('install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"');
@@ -118,9 +122,9 @@ describe("self-host server installer", () => {
     expect(script).toContain("location /cli/");
     expect(script).toContain("auth_basic off");
     expect(script).toContain("rewrite ^/cli/?(.*)\\$ /\\$1 break");
-    expect(script).toContain("CLI gateway: ${ui_url%/}/cli");
+    expect(script).toContain("CLI gateway: ${cli_url}");
     expect(script).toContain("MATRIX_TOKEN=\\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)");
-    expect(script).toContain("matrix shell ls --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
+    expect(script).toContain("matrix shell ls --gateway ${cli_url} --token \"\\$MATRIX_TOKEN\"");
     expect(script).not.toContain("MATRIX_TOKEN=\\$(sudo awk -F=");
     expect(script).not.toContain("-p 5432:5432");
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
