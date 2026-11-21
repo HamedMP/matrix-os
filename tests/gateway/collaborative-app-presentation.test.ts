@@ -64,6 +64,18 @@ describe("collaborative app presentation resolver", () => {
     }
   });
 
+  it("sends no icon when the app has none of its own, so members keep the letter tile", async () => {
+    // The launcher's generic fallback artwork must never be uploaded as the owner's icon.
+    await writeFile(join(home, "system/icons/game-center.png"), png);
+    await writeFile(join(home, "system/icons/game.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+    await app({ slug: "iconless", name: "Iconless" });
+    await app({ slug: "missing-art", name: "Missing Art", icon: "missing-art" });
+
+    const resolve = createCollaborativeAppPresentationResolver({ homePath: home });
+    expect(await resolve("iconless")).toEqual({ name: "Iconless" });
+    expect(await resolve("missing-art")).toEqual({ name: "Missing Art" });
+  });
+
   it("bounds the display name and returns nothing for an unknown app", async () => {
     await app({ slug: "long-name", name: `  ${"N".repeat(200)}\u0007  ` });
     const resolve = createCollaborativeAppPresentationResolver({ homePath: home });

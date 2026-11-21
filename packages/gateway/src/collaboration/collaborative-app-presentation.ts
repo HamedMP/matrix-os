@@ -9,7 +9,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveAppBySlug } from "../app-runtime/app-index.js";
 import { appIconStem } from "../apps.js";
-import { resolveSystemIconPath } from "../default-icons.js";
+import { resolveBundledSystemIconPath } from "../default-icons.js";
 
 export interface CollaborativeAppPresentation {
   name?: string;
@@ -20,8 +20,9 @@ const NameSchema = CollaborativeAppDirectoryItemSchema.shape.name.unwrap();
 const MAX_NAME_CHARS = 120;
 
 /**
- * ENG-490: the owner's manifest display name and the raster icon file the owner launcher shows
- * (`/icons/<stem>.png` with its shipped fallbacks). SVG and oversized or unrecognized bytes are
+ * ENG-490: the owner's manifest display name and the app's own raster icon file
+ * (`system/icons/<stem>.png`). The launcher's generic fallback artwork is never sent, so an app
+ * without its own icon keeps the member's letter tile. SVG and oversized or unrecognized bytes are
  * omitted so only inert raster artwork ever leaves the home for the platform origin.
  */
 export function createCollaborativeAppPresentationResolver(options: { homePath: string }) {
@@ -45,7 +46,7 @@ function boundedName(value: unknown): string | undefined {
 
 async function readRasterIcon(homePath: string, stem: string | null): Promise<CollaborativeAppPresentation["icon"] | undefined> {
   if (!stem) return undefined;
-  const target = await resolveSystemIconPath(homePath, `${stem}.png`);
+  const target = await resolveBundledSystemIconPath(homePath, `${stem}.png`);
   if (!target || !target.endsWith(".png")) return undefined;
   try {
     const stats = await lstat(target);
