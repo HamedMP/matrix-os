@@ -1,0 +1,20 @@
+# Loads hostd's own nftables tables (matrix_hostd, matrix_hostd_nat) from
+# /etc/matrix-hostd/nft.env. It never flushes the ruleset. A host-wide
+# nftables reload that does flush (nftables.service) is followed by a reload
+# of this unit, which puts hostd's tables back.
+[Unit]
+Description=Matrix hostd firewall tables
+After=nftables.service network-pre.target
+Wants=network-pre.target
+PartOf=nftables.service
+ReloadPropagatedFrom=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/matrix-hostd-nft apply
+ExecReload=/usr/local/libexec/matrix-hostd-nft apply
+ExecStop=/usr/local/libexec/matrix-hostd-nft remove
+
+[Install]
+WantedBy=multi-user.target

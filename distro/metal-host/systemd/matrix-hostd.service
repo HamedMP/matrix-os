@@ -1,0 +1,36 @@
+# Matrix host agent: host API (8443) and owner ingress (443, or the port in
+# hostd.env) for the Matrix VMs on this metal host. Runs as root because it
+# drives LVM, systemd units and tap devices; the VMMs it starts run
+# unprivileged as matrix-vm in their own units (matrix-vm@, matrix-vm-restore@),
+# so stopping or restarting hostd never stops a VM.
+[Unit]
+Description=Matrix host agent (hostd)
+After=network-online.target matrix-hostd-nft.service lvm2-monitor.service
+Wants=network-online.target matrix-hostd-nft.service
+RequiresMountsFor=/var/lib/matrix-hostd/snapshots
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/matrix-hostd/hostd.env
+ExecStart=/opt/matrix-hostd/node/bin/node /opt/matrix-hostd/hostd.mjs
+Restart=on-failure
+RestartSec=2
+# hostd drains in-flight VM operations for up to 30 s on SIGTERM.
+TimeoutStopSec=45
+KillMode=mixed
+OOMScoreAdjust=-500
+LimitNOFILE=65536
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/matrix-hostd /var/log/matrix-vm /run /etc/lvm
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

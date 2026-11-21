@@ -11,6 +11,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build:hostd": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/hostd/main.mjs '--banner:js=import { createRequire as __hostdCreateRequire } from \"node:module\"; const require = __hostdCreateRequire(import.meta.url);'",
     "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
   },
   "dependencies": {

@@ -5,6 +5,7 @@
 [Unit]
 Description=Matrix VM %i (restore)
 After=network-online.target matrix-hostd-nft.service
+RequiresMountsFor=/var/lib/matrix-hostd/snapshots
 Conflicts=matrix-vm@%i.service
 
 [Service]
@@ -18,8 +19,13 @@ RuntimeDirectoryMode=0700
 LogsDirectory=matrix-vm
 ExecStartPre=+-/usr/sbin/ip link delete ${TAP}
 ExecStartPre=+/usr/sbin/ip tuntap add dev ${TAP} mode tap user ${VM_USER} group ${VM_USER}
+# The tap is up before the VMM opens it: Cloud Hypervisor then needs no
+# CAP_NET_ADMIN (on a down tap it fails enabling it with EPERM).
 ExecStartPre=+/usr/sbin/ip link set dev ${TAP} master ${BRIDGE} up
 ExecStartPre=+/usr/sbin/bridge link set dev ${TAP} isolated on
+# Free-tier egress limit: police everything the VM sends at 50 Mbit/s.
+ExecStartPre=+/usr/sbin/tc qdisc add dev ${TAP} handle ffff: ingress
+ExecStartPre=+/usr/sbin/tc filter add dev ${TAP} parent ffff: protocol all prio 1 matchall action police rate 50mbit burst 512k conform-exceed drop
 ExecStartPre=+/usr/bin/chown ${VM_USER}:${VM_USER} ${DISK}
 ExecStart=/usr/local/bin/cloud-hypervisor \
   --api-socket path=${API_SOCKET} \

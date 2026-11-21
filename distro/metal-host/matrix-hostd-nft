@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Loads hostd's own nftables tables (see nftables.conf) without touching any
+# other table, and, on a host whose existing ruleset already drops by default
+# (the S7 spike's `inet filter`), adds the few accept rules hostd traffic needs
+# to pass it. Those rules carry the comment "matrix-hostd-coexist", are
+# replaced on every apply and removed by `remove`; nothing else in a foreign
+# table is read or changed. hostd's own chains still drop SMTP and anything
+# a VM sends somewhere other than the internet.
+#
+#   matrix-hostd-nft render --template T --wan IF --ingress-port N --api-port N --mode exclusive|coexist
+#   matrix-hostd-nft apply      # uses /etc/matrix-hostd/nft.env
+#   matrix-hostd-nft remove
+set -euo pipefail
+
+readonly ENV_FILE=/etc/matrix-hostd/nft.env
+readonly TEMPLATE=/usr/local/share/matrix-hostd/nftables.conf
+readonly RENDERED=/etc/matrix-hostd/nftables.nft
+readonly GLUE_COMMENT=matrix-hostd-coexist
+readonly FOREIGN_TABLE="inet filter"
+
+die() { printf 'matrix-hostd-nft: %s\n' "$*" >&2; exit 1; }
+# Never `cmd | grep -q` under pipefail: grep exits at the first match, cmd can
+# die of SIGPIPE, and the pipeline then reads as "no match".
+has() { local pattern="$1" out; shift; out="$("$@" 2>/dev/null)" || true; grep -q -- "$pattern" <<<"$out"; }
+
+valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+valid_iface() { [[ "$1" =~ ^[A-Za-z0-9_.-]{1,15}$ ]]; }
+
+render() {
+  local template="$1" wan="$2" ingress="$3" api="$4" mode="$5" input_policy forward_policy ssh_rule
+  valid_iface "$wan" || die "invalid WAN interface"
+  valid_port "$ingress" || die "invalid ingress port"
+  valid_port "$api" || die "invalid API port"
+  case "$mode" in
+    exclusive) input_policy=drop forward_policy=drop ssh_rule='iifname "tailscale0" tcp dport 22 accept' ;;
+    coexist) input_policy=accept forward_policy=accept ssh_rule='' ;;
+    *) die "mode must be exclusive or coexist" ;;
+  esac
+  [ -f "$template" ] || die "template missing"
+  grep -v '^[[:space:]]*#' "$template" | sed \
+    -e "s/@WAN@/${wan}/g" \
+    -e "s/@INGRESS_PORT@/${ingress}/g" \
+    -e "s/@API_PORT@/${api}/g" \
+    -e "s/@INPUT_POLICY@/${input_policy}/g" \
+    -e "s/@FORWARD_POLICY@/${forward_policy}/g" \
+    -e "s/@SSH_RULE@/${ssh_rule}/g"
+}
+
+load_env() {
+  [ -f "$ENV_FILE" ] || die "missing $ENV_FILE"
+  WAN="$(sed -n 's/^WAN=//p' "$ENV_FILE")"
+  INGRESS_PORT="$(sed -n 's/^INGRESS_PORT=//p' "$ENV_FILE")"
+  API_PORT="$(sed -n 's/^API_PORT=//p' "$ENV_FILE")"
+  MODE="$(sed -n 's/^MODE=//p' "$ENV_FILE")"
+}
+
+foreign_chain_drops() {
+  # shellcheck disable=SC2086 # FOREIGN_TABLE is "family name" by design.
+  has 'policy drop;' nft list chain $FOREIGN_TABLE "$1"
+}
+
+remove_glue() {
+  local chain handle
+  local listing
+  for chain in input forward; do
+    # shellcheck disable=SC2086
+    listing="$(nft -a list chain $FOREIGN_TABLE "$chain" 2>/dev/null)" || continue
+    while read -r handle; do
+      [ -n "$handle" ] || continue
+      # shellcheck disable=SC2086
+      nft delete rule $FOREIGN_TABLE "$chain" handle "$handle"
+    done <<<"$(sed -n "s/.*comment \"${GLUE_COMMENT}\".*# handle \([0-9][0-9]*\)$/\1/p" <<<"$listing")"
+  done
+}
+
+apply_glue() {
+  remove_glue
+  if foreign_chain_drops input; then
+    # shellcheck disable=SC2086
+    nft insert rule $FOREIGN_TABLE input tcp dport "{ ${INGRESS_PORT}, ${API_PORT} }" accept comment "\"${GLUE_COMMENT}\""
+    # shellcheck disable=SC2086
+    nft insert rule $FOREIGN_TABLE input iifname brmx ip saddr 10.78.3.254 ip daddr 10.78.0.1 tcp dport 9480 accept comment "\"${GLUE_COMMENT}\""
+  fi
+  if foreign_chain_drops forward; then
+    # shellcheck disable=SC2086
+    nft insert rule $FOREIGN_TABLE forward iifname brmx oifname "$WAN" accept comment "\"${GLUE_COMMENT}\""
+  fi
+}
+
+cmd="${1:-}"
+[ "$#" -gt 0 ] && shift
+case "$cmd" in
+  render)
+    template="" wan="" ingress="" api="" mode=""
+    while [ "$#" -gt 0 ]; do
+      [ "$#" -ge 2 ] || die "missing value for $1"
+      case "$1" in
+        --template) template="$2" ;;
+        --wan) wan="$2" ;;
+        --ingress-port) ingress="$2" ;;
+        --api-port) api="$2" ;;
+        --mode) mode="$2" ;;
+        *) die "unknown option $1" ;;
+      esac
+      shift 2
+    done
+    render "$template" "$wan" "$ingress" "$api" "$mode"
+    ;;
+  apply)
+    load_env
+    umask 022
+    render "$TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT" "$MODE" >"$RENDERED.tmp"
+    nft -c -f "$RENDERED.tmp"
+    mv -f "$RENDERED.tmp" "$RENDERED"
+    nft -f "$RENDERED"
+    if [ "$MODE" = coexist ]; then apply_glue; fi
+    ;;
+  remove)
+    remove_glue
+    nft delete table inet matrix_hostd 2>/dev/null || true
+    nft delete table ip matrix_hostd_nat 2>/dev/null || true
+    ;;
+  *) die "usage: matrix-hostd-nft render|apply|remove" ;;
+esac

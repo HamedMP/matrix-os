@@ -3,6 +3,7 @@ import { chmod, lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
+import { MAX_LINE_BYTES, type GuestStats } from "./protocol.js";
 
 // Matrix guest agent: runs inside each VM and answers the host's memory
 // controller and suspend path. Newline-delimited JSON, one response per line:
@@ -12,20 +13,13 @@ import { pathToFileURL } from "node:url";
 // The transport is thin on purpose: `--listen <path>` serves a unix socket
 // that socat bridges from AF_VSOCK port 1024 (Node has no AF_VSOCK server),
 // and `--stdio` serves one connection on stdin/stdout. This file imports only
-// node: built-ins so it builds to a single file for the golden disk.
+// node: built-ins (and ./protocol.ts) so it builds to a single file for the golden disk.
 
-export const GUEST_AGENT_PORT = 1024;
-export const MAX_LINE_BYTES = 4096;
+export { GUEST_AGENT_PORT, MAX_LINE_BYTES, type GuestStats } from "./protocol.js";
 export const IDLE_TIMEOUT_MS = 10_000;
 const MAX_CONNECTIONS = 8;
 const TRIM_TIMEOUT_MS = 60_000;
 const KIB_PER_MIB = 1024;
-
-export interface GuestStats {
-  psiSome10: number;
-  availableMiB: number;
-  anonMiB: number;
-}
 
 export type GuestResponse = GuestStats | { ok: true } | { error: "bad_request" | "unavailable" };
 

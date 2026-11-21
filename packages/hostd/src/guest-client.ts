@@ -1,5 +1,5 @@
 import { createConnection } from "node:net";
-import { GUEST_AGENT_PORT, MAX_LINE_BYTES, type GuestStats } from "./guest-agent/agent.js";
+import { GUEST_AGENT_PORT, MAX_LINE_BYTES, type GuestStats } from "./guest-agent/protocol.js";
 
 // Host-side client for the guest agent. Cloud Hypervisor exposes the guest's
 // vsock as a unix socket (`--vsock ...,socket=<path>`); the host connects,
