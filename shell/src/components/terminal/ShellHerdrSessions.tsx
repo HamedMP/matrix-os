@@ -1,21 +1,22 @@
 "use client";
 
-import { HerdrSessionsGroup, useHerdrSessions, type HerdrSessionsRequest } from "@matrix-os/ui/herdr-sessions";
-import { getGatewayUrl } from "@/lib/gateway";
-import { herdrShellSession } from "./herdr-shell-session";
+import { HerdrSessionsGroup, useHerdrSessions } from "@matrix-os/ui/herdr-sessions";
+import { herdrShellSession, shellHerdrRequest } from "./herdr-shell-session";
 import type { ShellSessionSummary } from "./terminal-session-state";
 
-const request: HerdrSessionsRequest = (path, init) => fetch(`${getGatewayUrl()}${path}`, {
-  ...init,
-  signal: init.signal ?? AbortSignal.timeout(10_000),
-});
+/** The owner's Herdr sessions over the shell's gateway transport. */
+export function useShellHerdrSessions() {
+  return useHerdrSessions({ request: shellHerdrRequest });
+}
+
+export type ShellHerdrSessionsState = ReturnType<typeof useShellHerdrSessions>;
 
 /** "Herdr sessions" after the project workspaces, on Web Desktop and Web Canvas (spec 2701). */
-export function ShellHerdrSessions({ selectedSessionId, onOpen }: {
+export function ShellHerdrSessions({ herdr, selectedSessionId, onOpen }: {
+  herdr: ShellHerdrSessionsState;
   selectedSessionId: string | null;
   onOpen(shell: ShellSessionSummary): void;
 }) {
-  const herdr = useHerdrSessions({ request });
   return (
     <HerdrSessionsGroup
       list={herdr.list}

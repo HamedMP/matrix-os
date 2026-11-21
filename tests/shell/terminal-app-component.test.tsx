@@ -128,6 +128,17 @@ function json(body: unknown, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
+const HERDR_WORKSPACE_ID = "tws_00000000000000000000006865726472";
+const HERDR_TAB_ID = `tt_${"9".repeat(32)}`;
+
+function herdrList(tabIds: string[]): Response {
+  return new Response(JSON.stringify({
+    available: true,
+    status: "ready",
+    sessions: tabIds.map((tabId, index) => ({ id: `t${index + 1}`, tabId, title: "claude", status: "working" })),
+  }));
+}
+
 async function settle(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -456,6 +467,23 @@ describe("TerminalApp workspace contract", () => {
     await settle();
     expect((paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId: string } }).paneTree.sessionId).toBe(`${WORKSPACE_ID}:${TAB_ID}`);
     expect(screen.queryByText("No shell sessions yet")).toBeNull();
+  });
+
+  // Fault detected (Greptile on #3530): with no Matrix tabs, Web Desktop hid the whole
+  // sidebar behind its empty view, so existing Herdr sessions could not be opened.
+  it("shows Herdr sessions on Web Desktop when there are no Matrix tabs", async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [] });
+      if (url.endsWith("/api/terminal/herdr")) return herdrList([HERDR_TAB_ID]);
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    await settle();
+    await settle();
+    expect(screen.queryByText("No shell sessions yet")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open claude" })).toBeTruthy();
   });
 
   it("creates a tab under the ensured workspace", async () => {
@@ -930,5 +958,60 @@ describe("TerminalApp workspace contract", () => {
     expect(recoveredProps.paneTree.sessionId).toBe(replacementRef);
     expect(recoveredProps.unavailableSessionIds).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/api/terminal/sessions"))).toBe(false);
+  });
+
+  // Fault detected (Greptile on #3530): saved Herdr panes were checked only against the
+  // Matrix workspace list, which never includes them, so every reload showed recovery
+  // and recovery created a Matrix tab inside the Herdr workspace.
+  it("reconnects a saved Herdr pane that the Herdr list still has", async () => {
+    const layoutId = "term-layout_0123456789abcdef0123456789abcdef";
+    const liveHerdrRef = `${HERDR_WORKSPACE_ID}:${HERDR_TAB_ID}`;
+    const goneHerdrRef = `${HERDR_WORKSPACE_ID}:tt_${"8".repeat(32)}`;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [workspace()] });
+      if (url.endsWith("/api/terminal/herdr")) return herdrList([HERDR_TAB_ID]);
+      if (url.includes(`/api/terminal/window-layouts/${layoutId}`)) {
+        return json({
+          layoutId,
+          revision: 4,
+          layout: {
+            activeTabId: "saved-tab",
+            sidebarOpen: true,
+            tabs: [{
+              id: "saved-tab",
+              label: "Shell",
+              paneTree: {
+                type: "split", id: "split", direction: "horizontal", ratio: 0.5,
+                children: [
+                  { type: "pane", id: "live-pane", cwd: "~", sessionId: liveHerdrRef },
+                  { type: "pane", id: "gone-pane", cwd: "~", sessionId: goneHerdrRef },
+                ],
+              },
+            }],
+          },
+        });
+      }
+      if (url.endsWith("/api/terminal/preferences")) return json({ preferences: {} });
+      if (url.endsWith("/api/agents")) return json({ agents: [] });
+      if (url.endsWith("/api/files/tree")) return json([]);
+      return json({});
+    });
+
+    render(<TerminalApp layoutId={layoutId} />);
+    await settle();
+    await settle();
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      unavailableSessionIds?: string[];
+      onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
+    };
+    expect(props.unavailableSessionIds).toEqual([goneHerdrRef]);
+
+    await act(async () => {
+      await expect(props.onRecoverSession?.(goneHerdrRef, "~")).resolves.toBe(false);
+    });
+    expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
+      String(input).includes(`/api/terminal/workspaces/${HERDR_WORKSPACE_ID}/tabs`) && init?.method === "POST"
+    ))).toBe(false);
   });
 });
