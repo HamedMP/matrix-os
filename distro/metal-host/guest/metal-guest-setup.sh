@@ -26,11 +26,18 @@ kernel="$(uname -r)"
 apt_get update
 # ptp_kvm ships in linux-modules-extra for the kernel the host boots.
 apt_get install -y "linux-modules-extra-${kernel}" linuxptp socat
-# Captured, not piped into grep -q: under pipefail an early grep exit can
-# SIGPIPE socat and turn a match into a failure.
-socat_help="$(socat -h 2>&1 || true)"
-if ! grep -q 'max-children' <<<"$socat_help"; then
-  log "installed socat does not support max-children"
+# Functional check (H3): socat must accept max-children, which the vsock
+# bridge unit uses. `socat -h` does not list it (only -hh does), so start a
+# listener with the option: an unknown option exits at once with an error,
+# an accepted one keeps listening until timeout ends it (status 124).
+probe_dir="$(mktemp -d)"
+set +e
+timeout 1 socat "UNIX-LISTEN:${probe_dir}/probe.sock,fork,max-children=8" /dev/null 2>/dev/null
+probe_status=$?
+set -e
+rm -rf -- "$probe_dir"
+if [ "$probe_status" != 124 ]; then
+  log "installed socat does not accept max-children"
   exit 1
 fi
 
@@ -38,6 +45,12 @@ decode '@@GUEST_AGENT_B64@@' /opt/matrix/guest-agent/agent.mjs 0644
 decode '@@GUEST_AGENT_UNIT_B64@@' /etc/systemd/system/matrix-guest-agent.service 0644
 decode '@@GUEST_AGENT_VSOCK_UNIT_B64@@' /etc/systemd/system/matrix-guest-agent-vsock.service 0644
 decode '@@PHC2SYS_UNIT_B64@@' /etc/systemd/system/phc2sys-kvm.service 0644
+
+# Ubuntu 24.04 starts sshd by socket activation, so /run/sshd does not exist
+# until the first connection. The customer cloud-init validates the sshd
+# config (matrix-support-access install runs sshd -t) before anything has
+# connected, and sshd -t fails without that directory. Create it at boot.
+printf 'd /run/sshd 0755 root root -\n' >/etc/tmpfiles.d/matrix-sshd-privsep.conf
 
 printf 'ptp_kvm\n' >/etc/modules-load.d/ptp_kvm.conf
 modprobe ptp_kvm

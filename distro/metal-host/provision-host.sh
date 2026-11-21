@@ -282,7 +282,7 @@ fi
 if lvs "$VG/$SWAP_LV" >/dev/null 2>&1; then
   swap_line="/dev/vmvg/hostd-swap none swap sw,pri=10 0 0"
   grep -qF "$swap_line" /etc/fstab || printf '%s\n' "$swap_line" >>/etc/fstab
-  has "$(readlink -f "/dev/$VG/$SWAP_LV")" swapon --show=NAME --noheadings || swapon "/dev/$VG/$SWAP_LV"
+  has "$(readlink -f "/dev/$VG/$SWAP_LV")" swapon --show=NAME --noheadings || swapon --priority 10 "/dev/$VG/$SWAP_LV"
 fi
 write_file /etc/tmpfiles.d/matrix-hostd-zswap.conf 0644 >/dev/null <<'EOF'
 # Compressed swap cache in front of the swap LV (matrix-hostd provisioning).

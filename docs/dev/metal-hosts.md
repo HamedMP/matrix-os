@@ -85,8 +85,8 @@ sudo distro/metal-host/smoke-host.sh [--golden <version>] [--cycles 2]
 
 It uses only the hostd API and ingress: creates a free VM (boot 2048 MiB,
 max 8192 MiB, 20 GiB) from the golden disk, waits for gateway health, checks
-the ingress routes `<handle>.matrix-os.com` (and rejects requests without
-`x-matrix-host-auth`), runs suspend/resume cycles (sparse snapshot on the
+the ingress routes `host: <handle>.matrix-os.com` (no port, as the platform
+sends it; rejects requests without `x-matrix-host-auth`), runs suspend/resume cycles (sparse snapshot on the
 snapshot LV, `runtime_asleep` while asleep, resume to gateway health under
 2 s from an ondemand restore run as `matrix-vm`), and destroys the VM,
 checking no LV, record, snapshot, tap or active unit is left.

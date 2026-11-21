@@ -85,9 +85,11 @@ api_call() {
 }
 json_field() { python3 -I -c 'import json,sys; v=json.load(sys.stdin); print(v.get(sys.argv[1], "") if isinstance(v, dict) else "")' "$1"; }
 vm_state() { api_call GET "/v1/vms/$vm_id" | json_field state; }
+# Sends what the platform sends: `host: <handle>.matrix-os.com` with no port
+# (the ingress port is a transport detail of this host, not part of the name).
 ingress() {
   curl -ks --max-time 20 -o "$work/ingress-body" -w '%{http_code}' -H @"$work/ingress-auth" \
-    --resolve "$handle.matrix-os.com:$ingress_port:127.0.0.1" "https://$handle.matrix-os.com:$ingress_port$1"
+    -H "host: $handle.matrix-os.com" "https://127.0.0.1:$ingress_port$1"
 }
 wait_state() {
   local want="$1" limit="$2" begin=$SECONDS state=""
@@ -148,7 +150,7 @@ has 'rate 50Mbit' tc filter show dev "$tap" ingress || die "tap is not policed a
 pass "VMM pid $vmm_pid runs as matrix-vm; tap policed at 50 Mbit/s"
 [ "$(ingress /health)" = 200 ] || die "ingress did not route $handle.matrix-os.com (status $(cat "$work/ingress-body"))"
 pass "ingress :$ingress_port routes $handle.matrix-os.com to the VM"
-[ "$(curl -ks --max-time 10 -o /dev/null -w '%{http_code}' --resolve "$handle.matrix-os.com:$ingress_port:127.0.0.1" "https://$handle.matrix-os.com:$ingress_port/health")" = 401 ] \
+[ "$(curl -ks --max-time 10 -o /dev/null -w '%{http_code}' -H "host: $handle.matrix-os.com" "https://127.0.0.1:$ingress_port/health")" = 401 ] \
   || die "ingress accepted a request without x-matrix-host-auth"
 pass "ingress rejects requests without x-matrix-host-auth"
 

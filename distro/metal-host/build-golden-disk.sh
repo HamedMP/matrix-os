@@ -240,7 +240,8 @@ runcmd:
       for unit in phc2sys-kvm matrix-guest-agent matrix-guest-agent-vsock; do
         echo "MATRIX-METAL-CHECK unit_${unit}=$(systemctl is-active "$unit")"
       done
-      echo "MATRIX-METAL-CHECK socat_max_children=$(check sh -c 'socat -h 2>&1 | grep -c max-children')"
+      echo "MATRIX-METAL-CHECK socat_max_children=$(check sh -c 'timeout 1 socat UNIX-LISTEN:/run/mx-socat-probe.sock,fork,max-children=8 /dev/null; [ $? = 124 ]')"
+      echo "MATRIX-METAL-CHECK sshd_config=$(check sshd -t)"
       echo "MATRIX-METAL-CHECK guest_ready=$(check test -f /var/lib/matrix-metal-guest/ready)"
       echo "MATRIX-METAL-CHECK sanitized=$(check test -f /var/lib/matrix/golden-snapshot-sanitized)"
       echo "MATRIX-METAL-CHECK system_ready=$(check test -f /opt/matrix/golden-snapshot-system-ready)"
@@ -264,7 +265,7 @@ printf '%s\n' "$checks" | sed 's/^/  /'
 expect_check() {
   grep -qx -- "$1=$2" <<<"$checks" || die "validation failed: $1 is not $2"
 }
-for key in ptp_kvm ptp0 socat_max_children guest_ready sanitized system_ready; do expect_check "$key" ok; done
+for key in ptp_kvm ptp0 socat_max_children sshd_config guest_ready sanitized system_ready; do expect_check "$key" ok; done
 for unit in phc2sys-kvm matrix-guest-agent matrix-guest-agent-vsock; do expect_check "unit_$unit" active; done
 expect_check bundle_version "$version"
 expect_check bundle_sha256 "$bundle_sha256"

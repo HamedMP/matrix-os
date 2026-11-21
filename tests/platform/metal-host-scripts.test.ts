@@ -229,6 +229,8 @@ describe("metal host scripts", () => {
     expect(stdout).toContain('"linux-modules-extra-${kernel}"');
     expect(stdout).toContain("linuxptp");
     expect(stdout).toContain("ptp_kvm");
+    // The customer cloud-init runs `sshd -t` before sshd's socket ever fired.
+    expect(stdout).toContain("d /run/sshd 0755 root root -");
     // Files the guest part installs, decoded the way the guest decodes them.
     const installed = new Map(
       [...stdout.matchAll(/^decode '([A-Za-z0-9+/=]+)' (\S+) \d+$/gm)].map((m) => [m[2]!, Buffer.from(m[1]!, "base64").toString()]),
