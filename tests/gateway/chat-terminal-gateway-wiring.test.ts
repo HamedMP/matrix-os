@@ -108,8 +108,10 @@ describe("createGateway Chat terminal production wiring", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
     const routeSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/terminal-ws-routes.ts"), "utf8");
     const shellRouteSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/shell-terminal-routes.ts"), "utf8");
+    const socketSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/terminal-sockets.ts"), "utf8");
     expect(source).toContain("new TerminalRuntimeSocketClient({");
-    expect(source).toContain("registerTerminalWebSocketRoutes({");
+    expect(source).toContain("registerTerminalSockets({");
+    expect(socketSource).toContain("registerTerminalWebSocketRoutes({");
     expect(routeSource).toContain('"/ws/terminal/tab"');
     expect(source).toContain("registerShellTerminalRoutes({");
     expect(shellRouteSource).toContain("chatBoundShellRouteDeps");

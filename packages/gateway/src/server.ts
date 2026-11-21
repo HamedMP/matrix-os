@@ -266,10 +266,10 @@ import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.j
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
-import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
-import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { registerTerminalSockets } from "./server/terminal-sockets.js";
 import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
+import { createHerdrSessionsFromEnv } from "./herdr/register.js";
 import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -333,6 +333,8 @@ export async function createGateway(config: GatewayConfig) {
   // Assigned once collaboration is known (project fences); a startup failure before
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
+  const herdrSessions = createHerdrSessionsFromEnv(process.env); // Owner's herdr-core (spec 2701); null unless MATRIX_HERDR=on.
+  let herdrViewers: ReturnType<typeof registerTerminalSockets> | null = null;
   // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
   let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
@@ -887,8 +889,10 @@ export async function createGateway(config: GatewayConfig) {
       runtime: terminalWorkspaceRuntime,
       ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
     }),
+    ...(herdrSessions ? { herdr: herdrSessions } : {}),
   });
   terminalAgentServices = terminalAgents;
+  herdrSessions?.start();
   try {
     localTerminalAgentToken = await createLocalTerminalAgentToken({ homePath });
   } catch (error) {
@@ -1703,18 +1707,11 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  registerTerminalWebSocketRoutes({
-    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
-    workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent,
-    getPrincipal: requireRequestPrincipal,
+  herdrViewers = registerTerminalSockets({
+    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership, workspaceSessionRuntimeBridge,
+    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions,
+    captureTerminalEvent, getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
-  });
-
-  registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalAgents.events,
-    getPrincipal: requireRequestPrincipal,
-    terminalOwnerIds: terminalRuntimeOwnerIds,
   });
 
   slackRuntime = await startOwnerSlack({
@@ -1934,8 +1931,10 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
-      // Drain terminal event subscribers and waiters before the runtime client goes.
+      // Herdr viewers, terminal event subscribers and waiters, then herdr-core, before the runtime client goes.
+      herdrViewers?.drain();
       await terminalAgentServices?.close();
+      await herdrSessions?.close();
       await localTerminalAgentToken?.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();

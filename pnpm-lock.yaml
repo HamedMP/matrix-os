@@ -769,6 +769,9 @@ importers:
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@matrix-os/herdr-core-client':
+        specifier: workspace:*
+        version: link:../herdr-core-client
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -787,6 +790,9 @@ importers:
       '@types/node-cron':
         specifier: ^3.0.11
         version: 3.0.11
+      '@xterm/headless':
+        specifier: 6.0.0
+        version: 6.0.0
       acorn:
         specifier: 8.16.0
         version: 8.16.0
@@ -8627,6 +8633,9 @@ packages:
 
   '@xterm/addon-webgl@0.19.0':
     resolution: {integrity: sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==}
+
+  '@xterm/headless@6.0.0':
+    resolution: {integrity: sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==}
 
   '@xterm/xterm@6.0.0':
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
@@ -25058,6 +25067,8 @@ snapshots:
 
   '@xterm/addon-webgl@0.19.0': {}
 
+  '@xterm/headless@6.0.0': {}
+
   '@xterm/xterm@6.0.0': {}
 
   '@xtuc/ieee754@1.2.0': {}
@@ -25569,7 +25580,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
+      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
