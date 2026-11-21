@@ -23,7 +23,9 @@ describe("self-host server installer", () => {
     expect(script).toContain("Host bundle is reachable");
     expect(script).toContain("sha256sum \"$tmp_bundle\"");
     expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
-    expect(script).toContain("tar -xzf \"$tmp_bundle\" -C /opt/matrix");
+    // Root extraction keeps the build machine's numeric owner unless told not to, and the
+    // terminal runtime refuses files owned by anyone but root or its own account.
+    expect(script).toContain("tar --no-same-owner --no-same-permissions -xzf \"$tmp_bundle\" -C /opt/matrix");
     expect(script).toContain("MATRIX_SELF_HOSTED=1");
     expect(script).toContain("MATRIX_AUTH_TOKEN=${auth_token}");
     expect(script).toContain("MATRIX_CODE_PROXY_TOKEN=${code_token}");
@@ -138,7 +140,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("apt_get_update >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("timeout 300 apt-get install -y software-properties-common");
     expect(script).toContain("timeout 60 add-apt-repository -y universe");
-    expect(script).toContain("apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("apt-get install -y acl bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("configure_bwrap_apparmor");
     expect(script).toContain("dpkg --compare-versions \"$VERSION_ID\" ge 24.04");
     expect(script).toContain(
@@ -150,7 +152,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("profile bwrap /usr/bin/bwrap flags=(unconfined)");
     expect(script).toContain('run_required "reloading AppArmor for bubblewrap" systemctl reload apparmor');
     expect(script.indexOf("add-apt-repository -y universe")).toBeLessThan(
-      script.indexOf("apt-get install -y bubblewrap ca-certificates"),
+      script.indexOf("apt-get install -y acl bubblewrap ca-certificates"),
     );
     expect(script).toContain("Downloading Matrix OS");
     expect(script).toContain("--progress-bar");

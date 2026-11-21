@@ -129,6 +129,51 @@ resolve_run_user`,
     expect(zellij.stdout).toContain("Environment=MATRIX_HOME=/home/alice/matrix");
   });
 
+  it("grants the run user Matrix's group-only paths by ACL, so an already-running login works", () => {
+    // The person is usually logged in while installing. Their systemd --user
+    // manager (which also runs their Herdr core) keeps the groups it started
+    // with, so the new matrix group alone cannot open /opt/matrix until it
+    // restarts, and restarting it would end their Herdr terminals.
+    const fake = join(dir, "setfacl");
+    writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${join(dir, "calls")}"\n`);
+    chmodSync(fake, 0o755);
+    const result = run(`MATRIX_SETFACL="${fake}" grant_run_user_access alice "${dir}/opt"`);
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+    expect(calls).toContain(`-m u:alice:rx ${dir}/opt`);
+    expect(calls).toContain(`-R -m u:alice:rX ${dir}/opt/env ${dir}/opt/bin ${dir}/opt/tls`);
+    expect(calls).toContain(`-d -m u:alice:rX ${dir}/opt/env ${dir}/opt/tls`);
+  });
+
+  it("does nothing for the legacy matrix run user", () => {
+    const fake = join(dir, "setfacl");
+    writeFileSync(fake, `#!/bin/sh\necho called >> "${join(dir, "calls")}"\n`);
+    chmodSync(fake, 0o755);
+    const result = run(`MATRIX_SETFACL="${fake}" grant_run_user_access matrix "${dir}/opt"`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(join(dir, "calls"))).toBe(false);
+  });
+
+  it("records the installed bundle version where updates and browser use read it", () => {
+    // Managed computers write app/BUNDLE_VERSION at first boot; browser use and
+    // Settings > Updates fail without it.
+    const opt = join(dir, "opt");
+    spawnSync("mkdir", ["-p", join(opt, "app")]);
+    writeFileSync(join(opt, "release.json"), '{\n  "version": "v2026.11.21-pr3533-1-1-abc1234",\n  "channel": "none"\n}\n');
+    const result = run(`write_bundle_version "${opt}" "$(id -un)"`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(opt, "app", "BUNDLE_VERSION"), "utf8")).toBe("v2026.11.21-pr3533-1-1-abc1234\n");
+  });
+
+  it("refuses a release version that is not a plain version string", () => {
+    const opt = join(dir, "opt");
+    spawnSync("mkdir", ["-p", join(opt, "app")]);
+    writeFileSync(join(opt, "release.json"), '{"version": "../../etc/passwd"}\n');
+    const result = run(`write_bundle_version "${opt}" "$(id -un)"`);
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(opt, "app", "BUNDLE_VERSION"))).toBe(false);
+  });
+
   it("serves the UI only on loopback with an owner identity check in private modes", () => {
     const result = run(`render_nginx_site tailscale _ /etc/nginx/matrix-self-host.htpasswd on`);
     expect(result.status, result.stderr).toBe(0);
