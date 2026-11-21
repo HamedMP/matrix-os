@@ -66,6 +66,8 @@ it('does not offer an unavailable desktop inspector on phones',()=>{
  expect(screen.queryByRole('button',{name:'Toggle chat inspector'})).toBeNull();
 });
 it.each(['loading','error'])('opens a Home attachment while its chat project lookup is %s',async state=>{
+ // Load the real lazy editor before asserting the independent Home preview boundary.
+ await import('../../shell/src/components/preview-window/CodeEditor');
  const homePath=await realpath(await mkdtemp(join(tmpdir(),'eng461-home-attachment-')));
  try {
   await mkdir(join(homePath,'uploads'),{recursive:true});await writeFile(join(homePath,'uploads/attachment.txt'),'Owned attachment content');
@@ -136,15 +138,18 @@ it("ignores a saved terminal binding after its runtime tab was deleted", async (
 
 it("opens a folder with more than 1,000 files using a bounded visible window", async () => {
   vi.stubGlobal("fetch", vi.fn(async (url:string) => Response.json(url.includes("/files/search?") ? {results:[{name:"file_0000",path:"file_0000",type:"file"}],truncated:false} : { entries: Array.from({ length: 1002 }, (_, index) => ({ name: `file_${index.toString().padStart(4,"0")}`, type: "file" })) })));
-  render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
+  const { container } = render(<WebChatInspector chatId="chat_one" gatewayUrl="http://localhost:4000" layoutKey={null} rootWidth={1200} railWidth={260}
     filePath={null} onFilePathChange={vi.fn()} terminalSessionIds={[]}
     sideChatClient={{ getSideChat: vi.fn(), createSideChat: vi.fn(), askSideChat: vi.fn() }} onSendToMain={vi.fn()} onClose={vi.fn()}/>);
-  expect(await screen.findByRole("treeitem", { name: "file_0000" })).toBeTruthy();
-  expect(screen.getAllByRole("treeitem")).toHaveLength(1000);
-  expect(screen.getByRole("button",{name:"Next files in Home"})).toBeTruthy();
-  fireEvent.click(screen.getByRole("button",{name:"Next files in Home"}));
-  await screen.findByRole("treeitem",{name:"file_1001"});
-  expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+  expect((await screen.findByText("file_0000")).closest('[role="treeitem"]')).toBeTruthy();
+  // Count mounted production rows directly: accessibility-name scans over 1,000
+  // rows obscure the bounded-rendering outcome this regression protects.
+  expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(1000);
+  const nextFiles = screen.getByRole("button",{name:"Next files in Home"});
+  expect(nextFiles).toBeTruthy();
+  fireEvent.click(nextFiles);
+  expect((await screen.findByText("file_1001")).closest('[role="treeitem"]')).toBeTruthy();
+  expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(2);
   fireEvent.click(screen.getByRole("button",{name:"Filter files"}));
   fireEvent.change(screen.getByRole("searchbox",{name:"Filter files"}),{target:{value:"file_0000"}});
   expect(await screen.findByRole("button",{name:"Open search result file_0000"})).toBeTruthy();

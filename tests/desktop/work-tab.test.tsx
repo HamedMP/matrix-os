@@ -1158,9 +1158,9 @@ describe("WorkTab rail integration", () => {
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
 
-    // A floating Chat can leave only 660px beside its hosted sidebar. The
+    // Below the combined 360px chat and 240px inspector minimum widths, the
     // exclusive inspector must begin below the still-interactive window toolbar.
-    resizeWork(660);
+    resizeWork(599);
     fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
     const narrowInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement!;
     expect(narrowInspector.style.top).toBe("48px");
