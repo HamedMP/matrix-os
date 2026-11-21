@@ -335,7 +335,7 @@ function WorkTabContent({
       setSurfaceWidth(Number.isFinite(width) ? Math.max(0, width) : 0);
       const firstMeasurement = !measuredWidthRef.current;
       measuredWidthRef.current = true;
-      const nextLayout = width > 0 ? workLayoutForWidth(width) : "narrow";
+      const nextLayout = width > 0 ? workLayoutForWidth(width, hostedChrome) : "narrow";
       const inspectorFocused = Boolean(
         inspectorRegionRef.current?.contains(document.activeElement),
       );

@@ -18,9 +18,9 @@ export const DEFAULT_INSPECTOR_WIDTH = 400;
 export const MIN_CHAT_WIDTH = 360;
 export const COLLAPSE_RESIZE_THRESHOLD = 48;
 
-export function workLayoutForWidth(width: number): WorkLayout {
+export function workLayoutForWidth(width: number, hostedChrome = false): WorkLayout {
   if (width >= WIDE_WORK_MIN_WIDTH) return "wide";
-  if (width >= MEDIUM_WORK_MIN_WIDTH) return "medium";
+  if (width >= (hostedChrome ? MIN_CHAT_WIDTH + MIN_INSPECTOR_WIDTH : MEDIUM_WORK_MIN_WIDTH)) return "medium";
   return "narrow";
 }
 

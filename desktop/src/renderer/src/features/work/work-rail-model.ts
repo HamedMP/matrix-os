@@ -51,7 +51,14 @@ export function buildWorkRailSearchResults(
   const normalized = query.trim().toLocaleLowerCase();
   const seen = new Set<string>();
   const results: WorkRailSearchResult[] = [];
-  const newestFirst = [...records].sort(compareCanonicalChatActivity);
+  const newestFirst = [...records].sort((left, right) => {
+    if (left.chat.lifecycle === "archived" && right.chat.lifecycle === "archived") {
+      const archiveOrder = Date.parse(right.chat.archivedAt ?? right.chat.updatedAt)
+        - Date.parse(left.chat.archivedAt ?? left.chat.updatedAt);
+      if (archiveOrder) return archiveOrder;
+    }
+    return compareCanonicalChatActivity(left, right);
+  });
   for (const record of newestFirst) {
     if (seen.has(record.chat.id)) continue;
     seen.add(record.chat.id);
