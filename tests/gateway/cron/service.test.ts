@@ -137,4 +137,30 @@ describe("T120a: Cron service", () => {
     expect(onTrigger).toHaveBeenCalledTimes(1);
     svc2.stop();
   });
+  it("reports no next run without jobs", () => {
+    service.start();
+    expect(service.nextRunAt()).toBeNull();
+  });
+
+  it("reports the earliest next run across interval, once and cron jobs", () => {
+    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+    service.start();
+    service.addJob(makeJob({ id: "cron", schedule: { type: "cron", cron: "*/25 * * * *" } }));
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:25:00.000Z");
+    service.addJob(makeJob({ id: "once", schedule: { type: "once", at: "2026-11-21T12:20:00.000Z" } }));
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:20:00.000Z");
+    service.addJob(makeJob({ id: "interval", schedule: { type: "interval", intervalMs: 10 * 60_000 } }));
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:10:00.000Z");
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:20:00.000Z");
+    service.removeJob("once");
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:20:00.000Z");
+    service.removeJob("interval");
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:25:00.000Z");
+  });
+
+  it("does not report jobs while stopped", () => {
+    service.addJob(makeJob({ id: "interval", schedule: { type: "interval", intervalMs: 60_000 } }));
+    expect(service.nextRunAt()).toBeNull();
+  });
 });

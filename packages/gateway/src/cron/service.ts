@@ -13,11 +13,20 @@ export interface CronService {
   addJob(job: CronJob): void;
   removeJob(jobId: string): boolean;
   listJobs(): CronJob[];
+  /** Earliest upcoming run across scheduled jobs, or null when none is scheduled or the service is stopped. */
+  nextRunAt(): Date | null;
+}
+
+interface TimerEntry {
+  handle: ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>;
+  /** Epoch ms of the next run; interval entries advance on every tick. */
+  nextAt: number;
 }
 
 export function createCronService(config: CronServiceConfig): CronService {
   const { store, onTrigger } = config;
-  const timers = new Map<string, ReturnType<typeof setInterval> | ReturnType<typeof setTimeout>>();
+  // Both maps hold one entry per scheduled job in the store; clearJob removes them on removal/stop.
+  const timers = new Map<string, TimerEntry>();
   const cronTasks = new Map<string, cron.ScheduledTask>();
   let started = false;
 
@@ -25,24 +34,30 @@ export function createCronService(config: CronServiceConfig): CronService {
     clearJob(job.id);
 
     switch (job.schedule.type) {
-      case "interval":
-        timers.set(
-          job.id,
-          setInterval(() => onTrigger(job), job.schedule.intervalMs),
-        );
+      case "interval": {
+        const intervalMs = job.schedule.intervalMs;
+        const entry: TimerEntry = {
+          nextAt: Date.now() + intervalMs,
+          handle: setInterval(() => {
+            entry.nextAt = Date.now() + intervalMs;
+            onTrigger(job);
+          }, intervalMs),
+        };
+        timers.set(job.id, entry);
         break;
+      }
 
       case "once": {
-        const delay = new Date(job.schedule.at).getTime() - Date.now();
-        const safeDelay = Math.max(0, delay);
-        timers.set(
-          job.id,
-          setTimeout(() => {
+        const at = new Date(job.schedule.at).getTime();
+        const safeDelay = Math.max(0, at - Date.now());
+        timers.set(job.id, {
+          nextAt: Number.isFinite(at) ? at : Date.now(),
+          handle: setTimeout(() => {
             onTrigger(job);
             timers.delete(job.id);
             store.remove(job.id);
           }, safeDelay),
-        );
+        });
         break;
       }
 
@@ -58,8 +73,8 @@ export function createCronService(config: CronServiceConfig): CronService {
   function clearJob(jobId: string): void {
     const timer = timers.get(jobId);
     if (timer !== undefined) {
-      clearInterval(timer as ReturnType<typeof setInterval>);
-      clearTimeout(timer as ReturnType<typeof setTimeout>);
+      clearInterval(timer.handle as ReturnType<typeof setInterval>);
+      clearTimeout(timer.handle as ReturnType<typeof setTimeout>);
       timers.delete(jobId);
     }
     const task = cronTasks.get(jobId);
@@ -98,6 +113,19 @@ export function createCronService(config: CronServiceConfig): CronService {
 
     listJobs(): CronJob[] {
       return store.list();
+    },
+
+    nextRunAt(): Date | null {
+      if (!started) return null;
+      let earliest: number | null = null;
+      for (const timer of timers.values()) {
+        if (earliest === null || timer.nextAt < earliest) earliest = timer.nextAt;
+      }
+      for (const task of cronTasks.values()) {
+        const next = task.getNextRun()?.getTime();
+        if (next !== undefined && Number.isFinite(next) && (earliest === null || next < earliest)) earliest = next;
+      }
+      return earliest === null ? null : new Date(earliest);
     },
   };
 }

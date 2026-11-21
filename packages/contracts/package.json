@@ -29,7 +29,8 @@
     "./http-request-deadlines": "./src/http-request-deadlines.ts",
     "./ai-usage": "./src/ai-usage/index.ts",
     "./ai-usage/node": "./src/ai-usage/node.ts",
-    "./routine-destination": "./src/routine-destination.ts"
+    "./routine-destination": "./src/routine-destination.ts",
+    "./runtime-lifecycle": "./src/runtime-lifecycle.ts"
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",
