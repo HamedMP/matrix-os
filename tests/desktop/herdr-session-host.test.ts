@@ -8,12 +8,12 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectHc, type HcSocket } from "@desktop/main/local-terminals/hc-client";
-import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
-import { createAttachmentSlots } from "@desktop/main/local-terminals/hc-sessions";
+import { connectHc, type HcSocket } from "@matrix-os/herdr-core-client/client";
+import { encodeFrame, HC_FRAME } from "@matrix-os/herdr-core-client/protocol";
+import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
 import {
   acceptsRemoteCore, createHerdrSessionHost, HERDR_SESSION_METHODS, HerdrTransportError, restrictHcConnection,
-} from "@desktop/main/local-terminals/herdr-session-host";
+} from "@matrix-os/herdr-core-client/session-host";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 
 const REMOTE_HELLO = { version: "0.1.14", generation: 1, framed: true, features: ["framed", "attach", "events", "status", "shell"],
