@@ -96,3 +96,12 @@ export function buildMcpConnectionInventory(
   }));
   return [...mcp, ...legacy];
 }
+
+/** Connections that are live right now, for the "routes to" summary of the Matrix MCP endpoint card. */
+/** Services the Matrix MCP endpoint actually routes to: ready MCP servers only (connected apps are not exposed there). */
+export function connectedMcpServices(inventory: readonly McpInventoryEntry[]): Array<{ name: string; presetId?: string }> {
+  return inventory.flatMap(entry => {
+    if (entry.kind !== "mcp" || entry.statusLabel !== "Connected") return [];
+    return [entry.presetId ? { name: entry.name, presetId: entry.presetId } : { name: entry.name }];
+  });
+}
