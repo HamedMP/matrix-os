@@ -5,7 +5,10 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { herdrShellSession } from "./herdr-shell-session";
 import type { ShellSessionSummary } from "./terminal-session-state";
 
-const request: HerdrSessionsRequest = (path, init) => fetch(`${getGatewayUrl()}${path}`, init);
+const request: HerdrSessionsRequest = (path, init) => fetch(`${getGatewayUrl()}${path}`, {
+  ...init,
+  signal: init.signal ?? AbortSignal.timeout(10_000),
+});
 
 /** "Herdr sessions" after the project workspaces, on Web Desktop and Web Canvas (spec 2701). */
 export function ShellHerdrSessions({ selectedSessionId, onOpen }: {
