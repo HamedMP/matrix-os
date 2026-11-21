@@ -7,6 +7,7 @@ import { NativeAppBridge, createNativeAppAiRequester } from "@desktop/main/embed
 import { createNativeAppAiRoutesRequester, createNativeAppCapabilityRequester } from "@desktop/main/embeds/native-app-capabilities";
 import { EmbedService } from "@desktop/main/embeds/embed-service";
 import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
+import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
 
 vi.mock("electron", () => ({ net: { request: vi.fn() }, session: { fromPartition: vi.fn() } }));
 
@@ -19,7 +20,7 @@ function deferred<T>() {
 }
 
 // Execute the real composition callback without starting Electron's process.
-function authHooks(cancelChatElectronPreview?: () => void) {
+function authHooks(cancelChatElectronPreview?: () => void, cancelChatMacTerminal?: () => Promise<void>) {
   const source = ts.createSourceFile("index.ts", readFileSync(new URL("../../desktop/src/main/index.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   let callback = "";
   let binding = "";
@@ -32,11 +33,13 @@ function authHooks(cancelChatElectronPreview?: () => void) {
   expect(callback).not.toBe("");
   expect(binding).not.toBe("");
   const nativeAppChatNavigation = { cancelAll: vi.fn() };
-  return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage", "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", `
+  return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage",
+    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", `
     let invalidateAppCapabilities;
     const onAuthChanged = ${callback};
     return { nativeAppChatNavigation, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
-  `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn(), cancelChatElectronPreview) as {
+  `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn(),
+    cancelChatElectronPreview, cancelChatMacTerminal) as {
     nativeAppChatNavigation: typeof nativeAppChatNavigation;
     onAuthChanged(status: { signedIn: boolean; handle?: string }): void;
     bind(bridge: NativeAppBridge): void;
@@ -302,6 +305,36 @@ describe("Electron capability registration cancellation", () => {
     expect(claim).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     expect(returnResult).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["sign-out", { signedIn: false }],
+    ["account change", { signedIn: true, handle: "new-owner" }],
+  ] as const)("revokes the approved Mac terminal check on %s without dispatching it", async (_action, status) => {
+    const target = { chatId: "chat_old", worktreeId: "wt_old" };
+    const context = { ...target, projectId: "proj_old", scopeKey: "old-owner" };
+    const terminal = {
+      id: "t7",
+      run: vi.fn(),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const readTerminalRequest = vi.fn();
+    const returnTerminalResult = vi.fn();
+    const approve = vi.fn().mockResolvedValue(true);
+    const service = createChatMacTerminalService({
+      enabled: true, readTerminalContext: async () => context, isTerminalContextCurrent: () => true,
+      readTerminalRequest, isTerminalRequestCurrent: () => true, returnTerminalResult,
+      approve, prepareTerminal: async () => terminal,
+    });
+    const hooks = authHooks(undefined, service.cancelAll);
+    await expect(service.prepare(target)).resolves.toMatchObject({ status: "ready", terminalId: "t7" });
+    hooks.onAuthChanged(status);
+    expect(terminal.dispose).toHaveBeenCalledOnce();
+    await expect(service.run({ chatId: target.chatId, runId: "run_old" })).resolves.toEqual({ status: "unavailable" });
+    expect(approve).toHaveBeenCalledOnce();
+    expect(readTerminalRequest).not.toHaveBeenCalled();
+    expect(terminal.run).not.toHaveBeenCalled();
+    expect(returnTerminalResult).not.toHaveBeenCalled();
   });
 
   it.each(["close", "sign-out", "account change"] as const)("cancels active AI inference on %s without starting another credential path", async action => {
