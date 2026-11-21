@@ -590,6 +590,28 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
+  it("opens a requested Herdr session, which the Matrix session list never has", async () => {
+    // Found on a live VPS: Open on a Herdr attention alert was dropped (spec 2701).
+    useTabs.setState(useTabs.getInitialState(), true);
+    const sessions = [{ name: "matrix-main", status: "active" as const, placement: "active" as const }];
+    const load = vi.fn(async () => sessions);
+    useShellSessions.setState({ sessions, loading: false, creating: false, error: null, loadSequence: 1, load });
+    renderTab();
+
+    const herdrRef = `tws_00000000000000000000006865726472:tt_${"e".repeat(32)}`;
+    act(() => useTabs.getState().requestTerminalSession(herdrRef));
+
+    expect(await screen.findByRole("heading", { name: "Herdr session" })).toBeTruthy();
+    expect(load).not.toHaveBeenCalled();
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+
+    // A later authoritative Matrix list must not unselect it.
+    act(() => useShellSessions.setState((state) => ({
+      sessions: [...sessions], loadSequence: state.loadSequence + 1, authoritativeRevision: (state.authoritativeRevision ?? 0) + 1,
+    })));
+    expect(await screen.findByRole("heading", { name: "Herdr session" })).toBeTruthy();
+  });
+
   it("drops a requested tab that a fresh list still does not have", async () => {
     useTabs.setState(useTabs.getInitialState(), true);
     const sessions = [{ name: "matrix-main", status: "active" as const, placement: "active" as const }];
