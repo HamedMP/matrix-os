@@ -183,6 +183,67 @@ describe('waking a metal runtime from every entry point', () => {
     expect((await rig.machine())?.status).toBe('running');
   });
 
+  it('a 503 runtime_asleep body from the VM itself, without the ingress marker, passes through and is never re-sent', async () => {
+    await setup({ status: 'running' });
+    rig.ingress.vmAsleepBodyResponses = 1;
+
+    const response = await platform.request('/vm/alice/api/files', {
+      method: 'POST', headers: OWNER_SESSION, body: '{"path":"notes.md"}',
+    });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'runtime_asleep' });
+    expect(rig.ingress.requests.filter((req) => req.method === 'POST')).toHaveLength(1);
+    expect(rig.resumeCalls()).toHaveLength(0);
+    expect((await rig.machine())?.status).toBe('running');
+  });
+
+  it('never forwards a client-sent ingress marker and never returns one to the client', async () => {
+    await setup({ status: 'running' });
+    const response = await platform.request('/vm/alice/api/projects', {
+      headers: { ...OWNER_SESSION, 'x-matrix-ingress-error': 'runtime_asleep' },
+    });
+    expect(response.status).toBe(200);
+    expect(rig.ingress.requests.at(-1)!.headers['x-matrix-ingress-error']).toBeUndefined();
+
+    rig.ingress.asleepResponses = 2;
+    const asleep = await platform.request('/vm/alice/api/projects', { headers: OWNER_SESSION });
+    expect(asleep.status).toBe(503);
+    expect(asleep.headers.get('x-matrix-ingress-error')).toBeNull();
+  });
+
+  it('an owner Native Mobile app session wakes a sleeping VM and is served', async () => {
+    await setup();
+    const response = await platform.request('/apps/notes/?session=alice.opaque-mobile-token', {
+      headers: { host: 'app.matrix-os.com' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('runtime');
+    expect(rig.resumeCalls()).toHaveLength(1);
+    expect((await rig.machine())?.status).toBe('running');
+    expect(rig.ingress.requests.at(-1)!.path).toBe('/apps/notes/?session=alice.opaque-mobile-token');
+  });
+
+  it.each([
+    ['refused', async (target: MetalWakeRig) => { await target.hostd.close(); }, {}],
+    ['timed out', async (target: MetalWakeRig) => { target.hostdHangs = true; }, { hostdTimeoutMs: 200, requestWaitMs: 5_000 }],
+  ] as const)('hostd unreachable (%s) answers 503 runtime_unavailable with Retry-After 5 and leaves the record alone', async (_label, breakHostd, options) => {
+    await setup({}, options);
+    await breakHostd(rig);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const response = await platform.request('/vm/alice/api/projects', { headers: OWNER_SESSION });
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('5');
+    expect(await response.json()).toEqual({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' });
+    expect(rig.ingress.requests).toEqual([]);
+    const machine = await rig.machine();
+    expect(machine?.status).toBe('suspended');
+    expect(machine?.lastActivityAt).toBeNull();
+  });
+
   it('answers waking when the VM is still asleep after the one retry', async () => {
     await setup({ status: 'running' });
     rig.ingress.asleepResponses = 2;
@@ -289,7 +350,7 @@ describe('who may wake an on-demand runtime', () => {
     substrate: 'metal', status: 'suspended', deletedAt: null, metalHostId: 'metal-1', metalVmId: 'vm_x',
   } as UserMachineRecord;
 
-  async function decide(identity: { userId: string; source?: string }, routable = false, record = machine) {
+  async function decide(identity: { userId: string; source?: string; handle?: string }, routable = false, record = machine) {
     const ensureRunning = vi.fn(async () => ({ state: 'running' as const }));
     const registry = {
       get: () => ({ ok: true as const, substrate: { kind: 'metal' as const, startsOnDemand: true, resolveUpstream: () => null, ensureRunning } }),
@@ -311,13 +372,20 @@ describe('who may wake an on-demand runtime', () => {
   it.each([
     ['a collaborator', { userId: 'user_other', source: 'auth' }],
     ['a share link or capability route', { userId: '', source: 'static-route' }],
-    ['a mobile session without a verified user', { userId: OWNER, source: 'mobile-session' }],
+    ['a mobile session for another machine', { userId: '', source: 'mobile-session', handle: 'bob' }],
+    ['a mobile session tied to another user', { userId: 'user_other', source: 'mobile-session', handle: HANDLE }],
     ['an identity without a source', { userId: OWNER }],
   ])('does not wake for %s and answers not available', async (_label, identity) => {
     const { response, ensureRunning } = await decide(identity);
     expect(ensureRunning).not.toHaveBeenCalled();
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' });
+  });
+
+  it('lets the Native Mobile app session for this machine wake it', async () => {
+    const { response, ensureRunning } = await decide({ userId: '', source: 'mobile-session', handle: HANDLE });
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    await response.text();
   });
 
   it('lets a non-owner reach a runtime that is already routable without waking it', async () => {

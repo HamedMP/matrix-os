@@ -25,6 +25,8 @@ export interface FakeMetalIngress {
   requests: FakeIngressRequest[];
   /** The next N requests or upgrades answer 503 runtime_asleep, as the real ingress does for a suspended VM. */
   asleepResponses: number;
+  /** The next N requests reach the VM, whose app answers a 503 runtime_asleep body without the ingress marker. */
+  vmAsleepBodyResponses: number;
   close(): Promise<void>;
 }
 
@@ -36,7 +38,7 @@ function record(req: IncomingMessage, upgrade: boolean): FakeIngressRequest {
 
 export async function startFakeMetalIngress(cert: { key: string; cert: string }): Promise<FakeMetalIngress> {
   const requests: FakeIngressRequest[] = [];
-  const state = { asleepResponses: 0 };
+  const state = { asleepResponses: 0, vmAsleepBodyResponses: 0 };
   const server: Server = createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
     const recorded = record(req, false);
     requests.push(recorded);
@@ -46,6 +48,13 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
       recorded.body = Buffer.concat(chunks).toString('utf8');
       if (state.asleepResponses > 0) {
         state.asleepResponses -= 1;
+        // The ingress marks its own answer so it cannot be confused with a VM response.
+        res.writeHead(503, { 'content-type': 'application/json', 'x-matrix-ingress-error': 'runtime_asleep' });
+        res.end(ASLEEP_BODY);
+        return;
+      }
+      if (state.vmAsleepBodyResponses > 0) {
+        state.vmAsleepBodyResponses -= 1;
         res.writeHead(503, { 'content-type': 'application/json' });
         res.end(ASLEEP_BODY);
         return;
@@ -60,6 +69,11 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
     requests.push(record(req, true));
     if (state.asleepResponses > 0) {
       state.asleepResponses -= 1;
+      socket.end(`HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nx-matrix-ingress-error: runtime_asleep\r\nContent-Length: ${ASLEEP_BODY.length}\r\nConnection: close\r\n\r\n${ASLEEP_BODY}`);
+      return;
+    }
+    if (state.vmAsleepBodyResponses > 0) {
+      state.vmAsleepBodyResponses -= 1;
       socket.end(`HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: ${ASLEEP_BODY.length}\r\nConnection: close\r\n\r\n${ASLEEP_BODY}`);
       return;
     }
@@ -76,6 +90,8 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
     requests,
     get asleepResponses() { return state.asleepResponses; },
     set asleepResponses(value: number) { state.asleepResponses = value; },
+    get vmAsleepBodyResponses() { return state.vmAsleepBodyResponses; },
+    set vmAsleepBodyResponses(value: number) { state.vmAsleepBodyResponses = value; },
     async close() {
       for (const client of wss.clients) client.terminate();
       wss.close();

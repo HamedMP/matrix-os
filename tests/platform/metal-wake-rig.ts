@@ -31,6 +31,8 @@ export interface MetalWakeRig {
   ingress: FakeMetalIngress;
   substrates: SubstrateRegistry;
   resume: ResumeBehaviour;
+  /** When true, hostd accepts connections but never answers. */
+  hostdHangs: boolean;
   resumeCalls(): FakeHostdRequest[];
   machine(): ReturnType<typeof getUserMachine>;
   close(): Promise<void>;
@@ -39,16 +41,17 @@ export interface MetalWakeRig {
 export async function createMetalWakeRig(
   db: PlatformDB,
   overrides: Partial<NewUserMachine> = {},
-  options: { requestWaitMs?: number } = {},
+  options: { requestWaitMs?: number; hostdTimeoutMs?: number } = {},
 ): Promise<MetalWakeRig> {
   const cert = generateSelfSignedCert();
   const hostd = await startFakeHostd(cert);
   const ingress = await startFakeMetalIngress(cert);
   // Unique per rig: the owner-activity throttle is process-wide.
   const machineId = `metal-${randomUUID()}`;
-  const rig = { resume: { kind: 'state', state: 'running' } as ResumeBehaviour };
+  const rig = { resume: { kind: 'state', state: 'running' } as ResumeBehaviour, hostdHangs: false };
 
   hostd.handle((req, res: ServerResponse) => {
+    if (rig.hostdHangs) return;
     if (req.method === 'GET' && req.path === `/v1/vms/${VM_ID}`) {
       json(res, 200, {
         id: VM_ID, machineId, generation: GENERATION, handle: HANDLE, tier: 'free', state: 'suspended',
@@ -89,6 +92,7 @@ export async function createMetalWakeRig(
     createMetalSubstrate({
       loadMachine, hosts, apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN, caPem: cert.cert,
       ...(options.requestWaitMs === undefined ? {} : { requestWaitMs: options.requestWaitMs }),
+      ...(options.hostdTimeoutMs === undefined ? {} : { clientOptions: { timeoutMs: options.hostdTimeoutMs } }),
     }),
   ]);
 
@@ -99,6 +103,8 @@ export async function createMetalWakeRig(
     substrates,
     get resume() { return rig.resume; },
     set resume(value: ResumeBehaviour) { rig.resume = value; },
+    get hostdHangs() { return rig.hostdHangs; },
+    set hostdHangs(value: boolean) { rig.hostdHangs = value; },
     resumeCalls: () => hostd.requests.filter((req) => req.path.endsWith('/resume')),
     machine: () => getUserMachine(db, machineId),
     async close() {

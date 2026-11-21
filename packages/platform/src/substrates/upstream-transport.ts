@@ -19,8 +19,13 @@ import type { RuntimeUpstream } from './types.js';
  * internal header and the verified dispatcher turns it into the real Host.
  */
 export const UPSTREAM_HOST_HEADER = 'x-matrix-upstream-host';
-/** Header names that only the platform may set toward a runtime, never a client. */
-const RESERVED_UPSTREAM_HEADERS = [HOST_AUTH_HEADER, UPSTREAM_HOST_HEADER] as const;
+/**
+ * Set by the host ingress on its own error answers (for example
+ * `runtime_asleep`), so they cannot be confused with a VM response.
+ */
+export const INGRESS_ERROR_HEADER = 'x-matrix-ingress-error';
+/** Header names that only the platform or ingress may set, never a client; never returned to clients. */
+const RESERVED_UPSTREAM_HEADERS = [HOST_AUTH_HEADER, UPSTREAM_HOST_HEADER, INGRESS_ERROR_HEADER] as const;
 const MAX_VERIFIED_DISPATCHERS = 32;
 
 function credentialNames(upstream: RuntimeUpstream): string[] {

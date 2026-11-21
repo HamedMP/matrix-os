@@ -122,6 +122,18 @@ describe('WebSocket upgrades to a metal runtime', () => {
     expect(JSON.parse(outcome.body)).toEqual({ error: 'Matrix computer not ready', runtimeState: 'waking' });
   });
 
+  it('passes a VM-originated 503 runtime_asleep handshake through without the ingress marker, never retrying', async () => {
+    await db.executor.updateTable('user_machines').set({ status: 'running' }).where('machine_id', '=', rig.machineId).execute();
+    rig.ingress.vmAsleepBodyResponses = 1;
+
+    const outcome = await connect('/vm/alice/ws/terminal');
+
+    expect(outcome).toMatchObject({ kind: 'refused', status: 503 });
+    expect(rig.ingress.requests.filter((req) => req.upgrade)).toHaveLength(1);
+    expect(rig.resumeCalls()).toHaveLength(0);
+    expect((await rig.machine())?.status).toBe('running');
+  });
+
   it('concurrent upgrades share one resume', async () => {
     rig.resume = { kind: 'state', state: 'running', delayMs: 200 };
     const outcomes = await Promise.all([connect('/vm/alice/ws'), connect('/ws'), connect('/vm/alice/ws/terminal')]);

@@ -7,8 +7,8 @@ import { isSafeWebSocketUpgradePath, stripWebSocketUpgradeToken } from '../ws-up
 import type { SubstrateRegistry } from './registry.js';
 import { decideOnDemandWake, noteOwnerReachedRuntime, wakeRefusal, type WakeIdentity } from './substrate-wake.js';
 import type { RuntimeUpstream } from './types.js';
-import { isRuntimeAsleepBody, wakeAfterAsleep } from './runtime-asleep.js';
-import { isCredentialHeaderLine, trustedCaList } from './upstream-transport.js';
+import { isRuntimeAsleepBody, RUNTIME_ASLEEP_ERROR, wakeAfterAsleep } from './runtime-asleep.js';
+import { INGRESS_ERROR_HEADER, isCredentialHeaderLine, trustedCaList } from './upstream-transport.js';
 
 /**
  * WebSocket upgrades to on-demand runtimes (spec 2691, ENG-520 Task P3).
@@ -121,6 +121,12 @@ async function retryAfterAsleep(upgrade: OnDemandWebSocketUpgrade, substrates: S
 function readAsleepAnswer(buffered: Buffer, end: number): 'asleep' | 'other' | 'incomplete' {
   const head = buffered.subarray(0, end).toString('latin1');
   if (!/^HTTP\/1\.[01] 503 /.test(head)) return 'other';
+  const marked = head.split('\r\n').slice(1).some((line) => {
+    const colon = line.indexOf(':');
+    return colon > 0 && line.slice(0, colon).trim().toLowerCase() === INGRESS_ERROR_HEADER
+      && line.slice(colon + 1).trim() === RUNTIME_ASLEEP_ERROR;
+  });
+  if (!marked) return 'other';
   const length = Number(/\r\ncontent-length:\s*(\d+)/i.exec(head)?.[1] ?? Number.NaN);
   if (!Number.isSafeInteger(length) || length > MAX_ASLEEP_BODY_BYTES) return 'other';
   if (buffered.length < end + 4 + length) return 'incomplete';
@@ -192,7 +198,7 @@ function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, up
       upgrade.onResponded();
       const answer = sanitizeHandshake(buffered.subarray(0, end).toString('latin1'), upstream);
       socket.write(`${answer}\r\n\r\n`, 'latin1');
-      if (answer.startsWith('HTTP/1.1 101')) noteOwnerReachedRuntime(upgrade.db, machine, upgrade.identity);
+      if (answer.startsWith('HTTP/1.1 101')) noteOwnerReachedRuntime(upgrade.db, machine, upgrade.identity, 101);
       const rest = buffered.subarray(end + 4);
       if (rest.length > 0) socket.write(rest);
       connection.pipe(socket);

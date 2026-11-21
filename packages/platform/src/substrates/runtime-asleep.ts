@@ -2,11 +2,14 @@ import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDB, UserMachineRecord } from '../db.js';
 import type { SubstrateRegistry } from './registry.js';
 import { decideOnDemandWake, type SubstrateWakeDecision, type WakeIdentity } from './substrate-wake.js';
+import { INGRESS_ERROR_HEADER } from './upstream-transport.js';
 
 /**
  * A host can put a VM to sleep while the platform record still says running
  * (spec 2691, ENG-520 Task P3). The host ingress then answers 503
- * `{ "error": "runtime_asleep" }` without forwarding anything to the VM. The
+ * `{ "error": "runtime_asleep" }` with `x-matrix-ingress-error: runtime_asleep`
+ * without forwarding anything to the VM. The header is required: a VM app may
+ * return the same body, and that answer must pass through untouched. The
  * platform records the VM as suspended, runs the wake path once, and retries
  * the request once. Retrying a non-idempotent request is safe because the
  * ingress rejects before forwarding, so the VM never saw the first attempt.
@@ -45,7 +48,10 @@ function concat(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
  * the rest of the stream.
  */
 export async function readRuntimeAsleep(response: Response): Promise<{ asleep: true } | { asleep: false; response: Response }> {
-  if (response.status !== 503 || !response.body) return { asleep: false, response };
+  // Only the ingress's own marked answer counts; a VM may return the same body for its own reasons.
+  if (response.status !== 503 || !response.body || response.headers.get(INGRESS_ERROR_HEADER) !== RUNTIME_ASLEEP_ERROR) {
+    return { asleep: false, response };
+  }
   const declared = Number(response.headers.get('content-length') ?? '0');
   if (declared > MAX_ASLEEP_BODY_BYTES) return { asleep: false, response };
   const reader = response.body.getReader();
