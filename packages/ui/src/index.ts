@@ -75,6 +75,8 @@ export {
   ProviderSettingsTransportError,
   openProviderAgentSetup,
   useProviderSettingsController,
+  sessionProviderSettingsSnapshotCache,
+  createProviderSettingsSnapshotCache,
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
@@ -114,6 +116,7 @@ export { CODING_AGENT_ARTWORK } from "./coding-agent-artwork.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,
+  ProviderSettingsSnapshotCache,
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,

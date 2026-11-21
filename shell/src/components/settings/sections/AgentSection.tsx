@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
+import { AgentsProvidersView, sessionProviderSettingsSnapshotCache, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
@@ -58,17 +58,19 @@ export function AgentSection({
     automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled,
     transport,
     onCatalogChanged,
+    snapshotCache: sessionProviderSettingsSnapshotCache,
   });
   const synchronizedInitialSnapshot = useRef<string | null>(null);
   useEffect(() => {
-    if (!automaticCreditRefreshEnabled || !controller.snapshot
+    // A snapshot shown from an earlier open is not authoritative yet; wait for this open's read.
+    if (!automaticCreditRefreshEnabled || !controller.snapshot || controller.snapshotFromCache
       || synchronizedInitialSnapshot.current === controller.identityKey
       || getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
     // Terminal may have signed in after an open Chat cached its catalog.
     // Notify once per Computer; catalog listeners never refresh Settings back.
     synchronizedInitialSnapshot.current = controller.identityKey;
     onCatalogChanged();
-  }, [automaticCreditRefreshEnabled, controller.snapshot, controller.identityKey, identityKey, runtimeSlot, onCatalogChanged]);
+  }, [automaticCreditRefreshEnabled, controller.snapshot, controller.snapshotFromCache, controller.identityKey, identityKey, runtimeSlot, onCatalogChanged]);
 
   if (controller.snapshot === null) {
     const unavailable = controller.error !== null;

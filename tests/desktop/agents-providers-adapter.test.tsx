@@ -20,6 +20,7 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/speech/browser-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
+  sessionProviderSettingsSnapshotCache: undefined,
 }));
 
 import AgentsProvidersAdapter from "../../desktop/src/renderer/src/features/settings/AgentsProvidersAdapter";

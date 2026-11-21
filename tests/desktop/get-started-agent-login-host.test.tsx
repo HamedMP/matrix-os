@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({ controller: vi.fn() }));
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   useProviderSettingsController: mocks.controller,
+  sessionProviderSettingsSnapshotCache: undefined,
 }));
 
 import { DesktopGetStartedAgentLogin } from "../../desktop/src/renderer/src/features/get-started/DesktopGetStartedAgentLogin";

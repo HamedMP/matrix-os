@@ -46,6 +46,7 @@ vi.mock("@matrix-os/ui", async () => ({
     </div>
     );
   },
+  sessionProviderSettingsSnapshotCache: undefined,
   useProviderSettingsController: () => ({
     snapshot: providerControllerState.snapshot,
     selectedHarnessId: null,
