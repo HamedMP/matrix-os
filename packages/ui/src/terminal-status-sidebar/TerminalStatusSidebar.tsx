@@ -114,7 +114,7 @@ export function TerminalStatusSidebar(props: TerminalStatusSidebarProps) {
           className="relative flex size-8 items-center justify-center rounded-md text-[12px] tabular-nums"
           style={{ background: selected ? "var(--bg-hover, rgba(127,127,127,0.18))" : undefined, color: "var(--text-primary, var(--foreground, #171717))" }}>
           {index + 1}
-          <span className="absolute -right-0.5 -top-0.5"><StatusMark status={entry.status === "working" || entry.status === "idle" ? undefined : entry.status} /></span>
+          <span className="absolute -right-0.5 -top-0.5"><StatusMark status={entry.status} /></span>
         </button>;
       })}
     </nav>;

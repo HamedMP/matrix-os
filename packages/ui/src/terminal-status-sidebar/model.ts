@@ -91,12 +91,22 @@ function buildEntries(rows: readonly TerminalSidebarRow[]): TerminalSidebarEntry
     if (parent && parent !== entry) parent.children.push(entry);
     else roots.push(entry);
   }
+  // Every descendant below the last shown level, listed flat under it.
+  const flatten = (entry: TerminalSidebarEntry, path: Set<string>, out: TerminalSidebarEntry[]) => {
+    for (const child of entry.children) {
+      if (path.has(child.key)) continue;
+      path.add(child.key);
+      out.push({ ...child, children: [] });
+      flatten(child, path, out);
+    }
+    return out;
+  };
   const settle = (entry: TerminalSidebarEntry, depth: number, path: Set<string>): TerminalSidebarEntry => {
     // A cycle in parent links (bad data) is cut where it closes.
     const children = entry.children.filter((child) => !path.has(child.key));
     const next = new Set(path).add(entry.key);
     const settled = depth >= MAX_DEPTH
-      ? children.map((child) => ({ ...child, children: [] }))
+      ? flatten({ ...entry, children }, next, [])
       : children.map((child) => settle(child, depth + 1, next));
     settled.sort(compareEntries);
     return { ...entry, status: rollUpTerminalStatus([entry.status, ...settled.map((child) => child.status)]), children: settled };

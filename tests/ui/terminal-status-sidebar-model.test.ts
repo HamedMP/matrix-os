@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  terminalSidebarOrder,
   terminalStatusSections,
   terminalSinceLabel,
   type TerminalSidebarRow,
@@ -49,6 +50,21 @@ describe("terminal status sidebar sections", () => {
     ]);
     expect(sections[0]).toMatchObject({ id: "needs-you", rows: [{ key: "lead", status: "blocked", children: [{ key: "helper" }] }] });
     expect(sections[1]).toMatchObject({ id: "working", rows: [{ key: "other" }] });
+  });
+
+  it("lists sub-agents deeper than four levels under the last level, keeping their status", () => {
+    const keys = ["t1", "t2", "t3", "t4", "t5", "t6", "t7"];
+    const sections = terminalStatusSections(keys.map((key, index) => row(key, {
+      ...(index > 0 ? { parentKey: keys[index - 1] } : {}),
+      ...(key === "t7" ? { status: "blocked" as const } : {}),
+    })));
+    expect(terminalSidebarOrder(sections).map((entry) => entry.key).sort()).toEqual(keys);
+    const top = sections[0]!.rows[0]!;
+    expect(top.key).toBe("t1");
+    expect(top.status).toBe("blocked");
+    const fourth = top.children[0]!.children[0]!.children[0]!;
+    expect(fourth.key).toBe("t4");
+    expect(fourth.children.map((entry) => [entry.key, entry.children.length])).toEqual([["t7", 0], ["t5", 0], ["t6", 0]]);
   });
 
   it("groups by machine when asked, most urgent first within each", () => {

@@ -66,4 +66,11 @@ describe("terminal status sidebar", () => {
     fireEvent.click(screen.getByRole("button", { name: "shell" }));
     expect(onSelect).toHaveBeenLastCalledWith("c");
   });
+
+  it("marks working terminals as working in the narrow rail", () => {
+    render(<TerminalStatusSidebar rail now={NOW} folded={[]} onToggleFold={vi.fn()} onSelect={vi.fn()}
+      rows={[{ key: "w", name: "build", machine: mac, status: "working" }, { key: "i", name: "zsh", machine: mac }]} />);
+    expect(within(screen.getByRole("button", { name: "build" })).getByLabelText("Working")).toBeTruthy();
+    expect(within(screen.getByRole("button", { name: "zsh" })).queryByLabelText("Working")).toBeNull();
+  });
 });
