@@ -50,7 +50,7 @@ const LIFECYCLE_CODES: Record<LifecycleError["code"], ApiErrorCode> = {
   conflict: "conflict",
   busy: "busy",
   pool_full: "pool_full",
-  no_capacity: "pool_full",
+  no_capacity: "busy",
   snapshot_failed: "internal",
   failed: "internal",
 };
@@ -103,10 +103,8 @@ export function publicVm(record: VmRecord) {
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
-const errorFields = (error: unknown) =>
-  error instanceof Error
-    ? { error: error.name, message: error.message, code: (error as { code?: unknown }).code }
-    : { error: String(error) };
+// Hono hands onError only Error instances.
+const errorFields = (error: Error) => ({ error: error.name, message: error.message, code: (error as { code?: unknown }).code });
 
 function vmId(c: Context): string {
   const parsed = VmId.safeParse(c.req.param("id"));

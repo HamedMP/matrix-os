@@ -263,7 +263,7 @@ describe("hostd API", () => {
     await store.put(record());
     const cases: Array<[LifecycleError["code"], number, string]> = [
       ["pool_full", 507, "pool_full"],
-      ["no_capacity", 507, "pool_full"],
+      ["no_capacity", 503, "busy"],
       ["busy", 503, "busy"],
       ["conflict", 409, "conflict"],
       ["not_found", 404, "not_found"],
