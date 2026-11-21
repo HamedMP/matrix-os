@@ -43,6 +43,7 @@ import {
 } from "./TerminalSidebarItems";
 import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
+import { ShellHerdrSessions } from "./ShellHerdrSessions";
 import type { DesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
@@ -812,6 +813,7 @@ export function LocalTerminalSidebar({
     />
   ) : null;
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
+  const herdrSessions = <ShellHerdrSessions selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />;
 
   if (desktopParity) {
     return (
@@ -828,6 +830,7 @@ export function LocalTerminalSidebar({
             anchorElement: anchor,
             returnFocusElement: anchor,
           })}
+          extra={herdrSessions}
         />
         {closeConfirmationOverlay}
       </>
@@ -1124,6 +1127,7 @@ export function LocalTerminalSidebar({
             onDragEnd={finishShellDrag}
           />
         )}
+        {!shellsLoading && herdrSessions}
       </div>
       <div
         data-testid="terminal-sidebar-footer"
