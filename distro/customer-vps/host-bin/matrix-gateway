@@ -52,8 +52,10 @@ sync_bundled_home_assets() {
     return 1
   fi
 
-  if [ -d "$MATRIX_HOME/apps" ] && id matrix >/dev/null 2>&1; then
-    chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
+  local runtime_owner
+  runtime_owner="${MATRIX_RUNTIME_USER:-matrix}"
+  if [ -d "$MATRIX_HOME/apps" ] && id "$runtime_owner" >/dev/null 2>&1; then
+    chown -R "${runtime_owner}:${MATRIX_RUNTIME_GROUP:-$runtime_owner}" "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   fi
 }
 
