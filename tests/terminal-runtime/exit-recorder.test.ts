@@ -105,10 +105,11 @@ describe("command exit files", () => {
     await writeFile(target, "x");
     await symlink(target, join(directory, `matrix-tab-${"9".repeat(32)}.tmp`));
     expect(await recorder.read()).toEqual([]);
-    expect((await readdir(directory)).sort()).toEqual([`matrix-tab-${"f".repeat(32)}.tmp`]);
+    // The stale file goes; the fresh one and the symlink (never swept) stay.
+    expect((await readdir(directory)).sort()).toEqual([`matrix-tab-${"9".repeat(32)}.tmp`, `matrix-tab-${"f".repeat(32)}.tmp`]);
     expect(await readFile(target, "utf8")).toBe("x");
     await recorder.clear(`matrix-tab-${"f".repeat(32)}`);
-    expect(await readdir(directory)).toEqual([]);
+    expect(await readdir(directory)).toEqual([`matrix-tab-${"9".repeat(32)}.tmp`]);
   });
 
   it("skips a named pipe under a tab's name without waiting for a writer", async () => {

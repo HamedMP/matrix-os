@@ -82,17 +82,17 @@ export class TerminalExitRecorder {
 
   /**
    * A write interrupted between `printf` and `mv` leaves `<name>.tmp`. Each pass
-   * removes ones older than ten minutes. `lstat` never follows a link, and a
-   * link or other non-file under that name is removed itself (only the entry,
-   * never its target): the recorder only ever writes regular files.
+   * removes ones older than ten minutes. `lstat` never follows a link; links
+   * and anything else that is not a regular file are skipped (CLAUDE.md:
+   * temp sweeps skip symlinks), and `read()` never reads them either.
    */
   private async removeAbandonedTemp(path: string): Promise<void> {
     const info = await lstat(path).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     });
-    if (!info || info.isDirectory()) return;
-    if (info.isFile() && this.now() - info.mtimeMs < ABANDONED_TEMP_MS) return;
+    if (!info || !info.isFile() || info.isSymbolicLink()) return;
+    if (this.now() - info.mtimeMs < ABANDONED_TEMP_MS) return;
     await rm(path, { force: true });
   }
 
