@@ -80,6 +80,7 @@ export default defineConfig({
       "@matrix-os/contracts/ai-usage": path.resolve(__dirname, "packages/contracts/src/ai-usage/index.ts"),
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
       "@matrix-os/contracts/routine-destination": path.resolve(__dirname, "packages/contracts/src/routine-destination.ts"),
+      "@matrix-os/contracts/herdr-terminals": path.resolve(__dirname, "packages/contracts/src/herdr-terminals.ts"),
       "@matrix-os/contracts/routine-cli": path.resolve(__dirname, "packages/contracts/src/routine-cli.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/keyboard-shortcuts": path.resolve(__dirname, "packages/contracts/src/keyboard-shortcuts.ts"),
