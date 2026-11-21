@@ -56,7 +56,7 @@ export const AGENT_INSTALLS: AgentInstallDefinition[] = [
     id: "pi",
     label: "Pi",
     binary: "pi",
-    npmPackage: "@earendil-works/pi-coding-agent@latest",
+    npmPackage: "@earendil-works/pi-coding-agent@1.6.0",
     ignoreScripts: true,
     docsUrl: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
   },
