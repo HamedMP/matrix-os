@@ -122,6 +122,13 @@ export function refFor(workspace: WorkspaceRecord, tab: TabRecord): TerminalRef 
   return { workspaceId: workspace.id, tabId: tab.id };
 }
 
+const SAFE_ERROR_KIND = /^[a-z][a-z0-9_]{0,63}$/;
+
+function herdrErrorKind(error: unknown): string {
+  const code = error instanceof Error && "code" in error ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && SAFE_ERROR_KIND.test(code) ? code : "request_failed";
+}
+
 const listCommand = defineCommand({
   meta: { name: "list", description: "List terminal tabs grouped by project" },
   args: commonArgs,
@@ -133,8 +140,9 @@ const listCommand = defineCommand({
         client.listProjects(),
         client.listWorkspaces(),
         // Herdr is optional: an older gateway or an unreachable core only hides the section.
+        // The failure is reported on stderr as a coded kind only, never its raw message.
         client.listHerdrSessions().catch((error: unknown) => {
-          void error;
+          console.warn(`Herdr sessions unavailable (${herdrErrorKind(error)})`);
           return null;
         }),
       ]);

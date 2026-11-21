@@ -97,6 +97,27 @@ describe("shell CLI command", () => {
     expect(logs).toEqual(["No terminal tabs."]);
   });
 
+  it("keeps listing Matrix tabs and reports a safe error kind when the Herdr request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [{
+        id: WORKSPACE_ID, scope: "main", tabs: [{ id: TAB_ID, name: "Shell", cwd: "", status: "running" }],
+      }] });
+      if (url.endsWith("/api/terminal/herdr")) throw new Error("connect ECONNREFUSED /home/matrix/secret.sock");
+      throw new Error(`unexpected request ${url}`);
+    }));
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    vi.spyOn(console, "warn").mockImplementation((...parts: unknown[]) => warnings.push(parts.map(String).join(" ")));
+
+    await shellCommand.subCommands!.list.run!({ args: { dev: true, token: "tok" } } as never);
+
+    expect(logs).toEqual(["main:", `  ${TAB_ID}  Shell  running`]);
+    expect(process.exitCode).toBeUndefined();
+    expect(warnings).toEqual(["Herdr sessions unavailable (gateway_unreachable)"]);
+  });
+
   it("emits versioned JSON grouped by workspace", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });
