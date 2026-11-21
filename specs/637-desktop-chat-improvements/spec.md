@@ -44,10 +44,11 @@ The chat routes mount inside the authenticated Gateway app; navigation paging us
 - Row actions respect active-run restrictions. Archived list supports multi-select Restore and confirmed Delete. Project Archive all reports skipped running chats.
 - Right panel tabs: Files, Terminal, Side chat. Files show tree above a full-width preview separated by a draggable horizontal divider. Panel layout is saved per verified user, runtime, and chat. Width is 240–820 px, main chat is at least 360 px, drag under 192 px closes, double-click resets to 400 px.
 - Terminal tab close stops its session after active-session confirmation. Side chat transcript persists and Send to main inserts an editable composer draft.
+- File browsing and message previews use the active run's checkout, or the latest committed run when idle. A shared canonical scope selector preserves the worktree ID and rejects missing active-run or mismatched-project roots; Gateway ownership checks remain authoritative.
 
 ## Verification
 
 - Red/green production-boundary tests cover owner isolation, revision conflicts, active runs, bulk skip/Undo, search beyond 1,000 chats, independent paging, duplicate placements, read-only side-chat policy, and terminal close.
 - Publish the separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/`, covering archive, search, and Side chat instructions: [site PR #354](https://github.com/FinnaAI/matrix-os-site/pull/354).
-- Validate exact build in live Electron and Web Desktop at normal and narrow widths in light and dark themes. Attach distinct captures for both surfaces to each affected PR and Slack `#tech`, with exact commit/build and fixture limitations.
+- Validate the approved local runtime in Electron and Web Desktop at normal and narrow widths in light and dark themes. Attach distinct captures for both surfaces to every existing PR, with exact commit/build and fixture limitations. Per requester instruction, prepare the review message here for the requester to copy; send nothing to Slack.
 - CI and Greptile must pass before merge. Product/design/engineering owners should review the substantial behavior and visual changes.
