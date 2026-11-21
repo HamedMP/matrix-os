@@ -165,6 +165,22 @@ waits for input.
   `tailscale serve --https=443` (Headscale: `--http=80`) to nginx, which listens
   on `127.0.0.1:80` only; verification fails if port 80, 3000, 4000 or 8788
   listens on a public address.
+- **HTTP fallback.** If HTTPS certificates are off for the tailnet,
+  `tailscale serve --https=443` fails. The installer then serves tailnet-only
+  plain HTTP (`--http=80`) and prints an `http://` link plus a warning with the
+  command that switches to HTTPS once certificates are on. Tailnet traffic is
+  WireGuard-encrypted either way and nothing listens publicly. The gateway
+  builds pairing and machine links with the scheme of the served URL
+  (`MATRIX_TAILNET_URL` in `host.env`).
+- **Run-user access (ACL).** The run user joins the `matrix` group, but the
+  person's running `systemd --user` manager (which also runs their Herdr core)
+  keeps the groups it started with, and restarting it would end their Herdr
+  terminals. So the installer also grants the run user by POSIX ACL: `rwx` on
+  `/opt/matrix` (a named-user entry is checked before the group, so it must
+  match the group's rights), `rX` recursively on `env`, `bin` and `tls`, and
+  default `rX` entries on `env` and `tls` so later files inherit them. Bundle
+  files are extracted owned by root (`tar --no-same-owner`), not the build
+  machine's numeric owner. Skipped when the run user is `matrix`.
 - **Public.** `--access public` keeps nginx Basic Auth on port 80 and prints a
   warning pointing to the private options.
 - **Telemetry** stays opt-out and adds only `accessMode`, `browser` and
