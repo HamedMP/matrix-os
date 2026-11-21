@@ -57,6 +57,8 @@ export function createEventProjector(options: {
 }): EventProjector {
   const now = options.now ?? Date.now;
   let seq = 0;
+  let messageIndex = 0;
+  let messageId: string | undefined;
   let buffered = "";
   let bufferedBytes = 0;
   let lastFlushAt = now();
@@ -75,7 +77,7 @@ export function createEventProjector(options: {
   };
   const emitText = async (text: string) => {
     textEvents += 1;
-    await emit({ type: "assistant_delta", text });
+    await emit({ type: "assistant_delta", text, ...(messageId ? { messageId } : {}) });
     if (textEvents === LIVE_TEXT_EVENTS) {
       await emit({ type: "activity", label: BATCHED_LABEL, state: "completed" });
     }
@@ -117,6 +119,13 @@ export function createEventProjector(options: {
   };
 
   const project = async (event: AgentEvent) => {
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      // Pi awaits subscribed listeners. Keep buffered text on its original row
+      // before a steered reply (or another tool round) starts a new message.
+      await serial(flush);
+      messageId = `assistant_${++messageIndex}`;
+      return;
+    }
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       if (previewPaused) return;
       const delta = event.assistantMessageEvent.delta;

@@ -90,7 +90,8 @@ automation limitations with the evidence.
 
 - Owner-controlled canonical database and request IDs remain authoritative.
 - Queue next stores a durable turn; only explicit Steer targets the active Run.
-- No new endpoints, auth grants, migrations, DB writes, or transaction changes.
+- No new endpoints, auth grants, migrations, or transaction changes. Existing
+  append transactions retain separate assistant rows for distinct message IDs.
 - Failed or cancelled steering must never become an acknowledged lost prompt.
 - Same-run provider input remains bounded; rejection preserves prior receipts.
 - Recommend Chat owner review of receipt reconciliation and rapid steering.
@@ -112,3 +113,27 @@ its SharedChatComposer configuration and footer controls into a typed workspace
 composer component, keeping queue/admission callbacks at the controller boundary.
 The focused real-workspace regression must continue to cover the rendered button,
 queue acceptance, edit routing and committed steering receipts after extraction.
+
+## Matrix AI message-boundary follow-up
+
+Live Web Desktop05c88 testing after assistant output had started reproduced a
+misordered transcript: the steered ACK was appended to the earlier assistant
+message, placing it above the person's correction after reopening Chat.
+The managed Pi worker forwards text without assistant message identity, and the
+canonical mapper therefore folds every reply in the Run into one message.
+
+Preserve a bounded, Run-local assistant identity from Pi's message_start through
+the validated broker event and canonical mapper. Flush prior buffered text
+before changing identity; retain the legacy optional-identity path. Installed
+Pi Agent1.0.0 processEvents awaits subscribed listeners, including message_start;
+exercise the actual Agent in the regression instead of fabricating those events.
+No endpoint, auth grant, database schema or transaction change is required.
+The broker identity stays within the existing128-character reference bound;
+existing output byte/event budgets, timers and terminal cleanup remain intact.
+Acceptance: first assistant output, correction, and separate steered reply stay
+in order during streaming and after reload, with one receipt on the same Run.
+Repeat deployed desktop/native delayed-steer checks and update the public docs.
+The long-Unicode producer/consumer regression also exposed a split surrogate
+at the mapper's4000-character boundary. Follow the existing assistant-emitter
+pattern to keep each canonical chunk independently encodable without changing
+the limit or dropping a character; retain the same message identity per chunk.
