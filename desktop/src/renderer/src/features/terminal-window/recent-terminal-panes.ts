@@ -35,3 +35,12 @@ export function recentTerminalPanes<Pane extends TerminalPane>(
 export function samePanes(a: readonly TerminalPane[], b: readonly TerminalPane[]): boolean {
   return a.length === b.length && a.every((pane, index) => pane.key === b[index]!.key && pane.sessionName === b[index]!.sessionName);
 }
+
+/**
+ * The panes in a fixed order for the page: by key, not by recency. Moving a
+ * kept terminal in the page rebuilt it and attached it again, so a switch
+ * must only change which pane is hidden.
+ */
+export function pagePaneOrder<Pane extends TerminalPane>(panes: readonly Pane[]): Pane[] {
+  return [...panes].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}

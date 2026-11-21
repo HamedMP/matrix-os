@@ -173,6 +173,28 @@ describe("Terminal window computers", () => {
     expect(useConnection.getState().runtimeSlot).toBe("primary");
   });
 
+  // Fault detected: the shown pane was moved to the front of the list, so every
+  // switch moved the kept terminals in the page. Each move rebuilt a hidden
+  // terminal and attached it again: three reconnects and its whole replay per click.
+  it("switches between kept terminals without moving them in the page", async () => {
+    fetchMock.mockImplementation(async () => json(workspace([{ id: TAB_1, name: "build" }, { id: TAB_2, name: "deploy" }])));
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /build/ }));
+    await screen.findByTestId("terminal-view");
+    fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_2}`));
+    const panes = () => [...screen.getByRole("main", { name: "Terminal" }).children];
+    const before = panes();
+    expect(before).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: /build/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_1}`));
+    expect(panes()).toEqual(before);
+    fireEvent.click(screen.getByRole("button", { name: /deploy/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WS}:${TAB_2}`));
+    expect(panes()).toEqual(before);
+  });
+
   it("creates a terminal in the computer's main workspace and opens it", async () => {
     let created = false;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {

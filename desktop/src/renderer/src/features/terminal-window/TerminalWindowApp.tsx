@@ -9,7 +9,7 @@ import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
 import { setLiveAttachmentLimit } from "../terminal/terminal-runtime";
-import { recentTerminalPanes, samePanes, TERMINAL_WINDOW_LIVE_TABS, type TerminalPane } from "./recent-terminal-panes";
+import { pagePaneOrder, recentTerminalPanes, samePanes, TERMINAL_WINDOW_LIVE_TABS, type TerminalPane } from "./recent-terminal-panes";
 import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-machines";
 import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
 import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
@@ -454,7 +454,7 @@ function TerminalPanes({ view }: { view: TerminalWindow }) {
     <>
       {current ? null : <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />}
       <main aria-label="Terminal" hidden={!current} className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-        {panes.map((pane) => {
+        {pagePaneOrder(panes).map((pane) => {
           const shown = pane.key === current?.key;
           return (
             <div key={pane.key} hidden={!shown} className="flex min-h-0 min-w-0 flex-1 overflow-hidden">

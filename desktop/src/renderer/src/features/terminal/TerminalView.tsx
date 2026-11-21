@@ -497,6 +497,7 @@ export default function TerminalView({
       send: (frame) => attachmentRef.current?.scroll?.(frame),
       canWrite: () => nativeHistoryWriterRef.current,
       onState: () => gridPresentationRef.current?.schedule(),
+      shouldPoll: () => visibleRef.current,
     });
     nativeHistoryRef.current = nativeHistory;
     gridWriterRef.current = false;
