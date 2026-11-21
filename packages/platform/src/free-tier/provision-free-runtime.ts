@@ -99,6 +99,26 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
   }
 
   return {
+    /**
+     * Read-only: whether provisioning would admit or continue this owner on the
+     * free plan (ignoring the global ceiling, which `provision` answers as
+     * busy). The onboarding journey uses it to offer the free plan instead of
+     * checkout. Writes nothing and takes no locks.
+     */
+    async isEligible(clerkUserId: string, runtimeSlot: string = FREE_RUNTIME_SLOT): Promise<boolean> {
+      if (runtimeSlot !== FREE_RUNTIME_SLOT) return false;
+      const current = await getActiveUserMachineByClerkId(db, clerkUserId, FREE_RUNTIME_SLOT);
+      if (current && current.substrate !== 'metal') return false;
+      const entitlement = await db.executor.selectFrom('billing_entitlements').select('source')
+        .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
+      if (entitlement) return entitlement.source === 'free';
+      // A metal runtime without a free entitlement belongs to another plan.
+      if (current && current.status !== 'failed') return false;
+      if (!config.inviteRequired) return true;
+      const invite = await getFreeTierInvite(db, clerkUserId);
+      return Boolean(invite && !invite.consumedAt);
+    },
+
     async provision(input: { clerkUserId: string; handle: string }): Promise<FreeProvisionOutcome> {
       const admission = await admit(input.clerkUserId);
       if (admission.kind !== 'admitted') return admission;

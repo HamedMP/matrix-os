@@ -113,7 +113,8 @@ export interface JourneyRoutesOptions {
   settlingWindowMs?: number;
   now?: () => Date;
   /** Optional readiness annotation provider for the ready phase (Phase C wires this). */
-  resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;
+  resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;  /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
+  resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
 }
 
 function applyNoStore(c: Context): void {
@@ -137,6 +138,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       env: options.env,
       runtimeSlot,
       readiness,
+      ...(options.resolveFreePlanEligibility ? { resolveFreePlanEligibility: options.resolveFreePlanEligibility } : {}),
     });
   }
 

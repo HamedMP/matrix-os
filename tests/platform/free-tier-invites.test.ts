@@ -30,27 +30,29 @@ describe('free tier configuration', () => {
   it('is disabled unless explicitly enabled', () => {
     expect(loadFreeTierConfig({})).toEqual({ ok: false, reason: 'disabled' });
     for (const value of ['0', 'false', 'no', '']) {
-      expect(loadFreeTierConfig({ FREE_TIER_ENABLED: value, MATRIX_FREE_TIER_MAX_RUNTIMES: '5' }))
+      expect(loadFreeTierConfig({ MATRIX_FREE_TIER_ENABLED: value, MATRIX_FREE_TIER_MAX_RUNTIMES: '5' }))
         .toEqual({ ok: false, reason: 'disabled' });
     }
-    expect(loadFreeTierConfig({ FREE_TIER_ENABLED: '1', MATRIX_FREE_TIER_MAX_RUNTIMES: '5' }).ok).toBe(true);
+    expect(loadFreeTierConfig({ MATRIX_FREE_TIER_ENABLED: '1', MATRIX_FREE_TIER_MAX_RUNTIMES: '5' }).ok).toBe(true);
+    // Only the MATRIX_FREE_TIER_* names count; an unprefixed flag does nothing.
+    expect(loadFreeTierConfig({ FREE_TIER_ENABLED: '1', MATRIX_FREE_TIER_MAX_RUNTIMES: '5' })).toEqual({ ok: false, reason: 'disabled' });
   });
 
   it('requires a positive runtime ceiling and defaults to invite-only', () => {
-    expect(loadFreeTierConfig({ FREE_TIER_ENABLED: 'true' }))
+    expect(loadFreeTierConfig({ MATRIX_FREE_TIER_ENABLED: 'true' }))
       .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_FREE_TIER_MAX_RUNTIMES'] });
-    expect(loadFreeTierConfig({ FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '0' }).ok).toBe(false);
-    expect(loadFreeTierConfig({ FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '250' }))
+    expect(loadFreeTierConfig({ MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '0' }).ok).toBe(false);
+    expect(loadFreeTierConfig({ MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '250' }))
       .toEqual({ ok: true, config: { maxRuntimes: 250, inviteRequired: true } });
   });
 
   it('opens signup only on an explicit false', () => {
     const open = loadFreeTierConfig({
-      FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5', MATRIX_FREE_TIER_INVITE_REQUIRED: 'false',
+      MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5', MATRIX_FREE_TIER_INVITE_REQUIRED: 'false',
     });
     expect(open).toEqual({ ok: true, config: { maxRuntimes: 5, inviteRequired: false } });
     expect(loadFreeTierConfig({
-      FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5', MATRIX_FREE_TIER_INVITE_REQUIRED: 'no',
+      MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5', MATRIX_FREE_TIER_INVITE_REQUIRED: 'no',
     })).toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_FREE_TIER_INVITE_REQUIRED'] });
   });
 });

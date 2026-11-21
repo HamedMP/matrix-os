@@ -43,7 +43,7 @@ import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-
 const OWNER = 'user_freeowner';
 const NOW = new Date('2026-11-21T12:00:00.000Z');
 const BUNDLE_VERSION = 'matrix-os-host-2026.11.20-1';
-const ENABLED_ENV = { FREE_TIER_ENABLED: '1', MATRIX_FREE_TIER_MAX_RUNTIMES: '10' };
+const ENABLED_ENV = { MATRIX_FREE_TIER_ENABLED: '1', MATRIX_FREE_TIER_MAX_RUNTIMES: '10' };
 
 async function pinStableBundle(db: PlatformDB) {
   await upsertHostBundleRelease(db, {
@@ -230,9 +230,9 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(hostd.createVm).toHaveBeenCalledTimes(1);
   });
 
-  it('FREE_TIER_ENABLED=0 disables free provisioning', async () => {
+  it('MATRIX_FREE_TIER_ENABLED=0 disables free provisioning', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    const { routes } = routesFor({ env: { ...ENABLED_ENV, FREE_TIER_ENABLED: '0' } });
+    const { routes } = routesFor({ env: { ...ENABLED_ENV, MATRIX_FREE_TIER_ENABLED: '0' } });
 
     const implicit = await request(routes);
     expect(implicit.status).toBe(402);

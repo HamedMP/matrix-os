@@ -2,7 +2,7 @@ import { z } from 'zod/v4';
 
 /**
  * Free plan configuration (spec 2691, ENG-520; ported from PR #3414). The free
- * tier is off unless `FREE_TIER_ENABLED` is `1` or `true`, and it provisions
+ * tier is off unless `MATRIX_FREE_TIER_ENABLED` is `1` or `true`, and it provisions
  * only metal runtimes, so it also needs a configured metal substrate.
  */
 export interface FreeTierConfig {
@@ -31,7 +31,7 @@ function isEnabled(value: string | undefined): boolean {
 
 /** Read once at startup. Problems are reported by setting name only. */
 export function loadFreeTierConfig(env: NodeJS.ProcessEnv): FreeTierConfigResult {
-  if (!isEnabled(env.FREE_TIER_ENABLED)) return { ok: false, reason: 'disabled' };
+  if (!isEnabled(env.MATRIX_FREE_TIER_ENABLED)) return { ok: false, reason: 'disabled' };
   const raw = Object.fromEntries(Object.keys(FIELDS).map((key) => [key, env[key] === '' ? undefined : env[key]]));
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) {
