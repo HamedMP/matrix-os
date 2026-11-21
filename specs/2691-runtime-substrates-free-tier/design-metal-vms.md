@@ -112,7 +112,17 @@ A small service on each host that owns every VM on it. The platform is its only 
   reporting kernel arguments, and swap.
 - Guest kernel: direct boot of the pinned Ubuntu kernel shipped with the host release,
   with matching modules in the golden disk.
-- Disk: 20 GiB thin volume for free owners (quota enforced by the volume size).
+- Disk: 20 GiB thin volume for free owners (quota enforced by the volume size). Measured:
+  golden disk 16.7 GB per bundle release (keep 2 to 3 per host); trimmed memory snapshot
+  1.4 GB per sleeping owner.
+- **Storage tiers** (Claude's call, per Hamed's request to keep disk bounded and use R2):
+  owners seen in the last 7 days keep a memory snapshot (wake about 0.5 s); 7 to 30 days,
+  the snapshot is dropped and the disk kept (cold boot about 25 s); over 30 days, only R2
+  holds the data (restore in minutes). Owner database dumps and home files always go to
+  R2 through the existing backup. Snapshots are compressed in the background once
+  measured worthwhile. A 3.1 TB pool holds roughly 900 to 1,000 recent sleepers; more disk
+  comes from the EM-L620E (30 TB, EUR 749.99/month) rather than extra volumes, which
+  Elastic Metal cannot attach.
 
 ### 4. Memory
 
@@ -131,10 +141,12 @@ A small service on each host that owns every VM on it. The platform is its only 
 ### 5. Sleep and wake
 
 - **Sleep** (free owners only): after **1 hour with no owner interaction** (no proxied
-  owner requests, no attached terminal), the platform asks the host agent to suspend. A
-  running agent turn or routine, reported by the gateway, may delay sleep by **at most 1
-  more hour**; it can never keep a VM awake indefinitely. Both durations are platform
-  configuration (decided by Hamed: 1 to 2 hours; launch at 1 hour). The host agent trims,
+  owner requests, no attached terminal), the platform asks the host agent to suspend.
+  **A VM never sleeps while an agent turn, routine, or scheduled job is running; the
+  1 hour idle timer starts after the last one finishes** (decided by Hamed). Safety limit
+  (Claude's call): a free VM awake for 6 hours straight with no owner interaction is
+  flagged and suspended, and the owner is told why. Durations are platform configuration
+  (idle: decided by Hamed, 1 to 2 hours; launch at 1 hour). The host agent trims,
   waits for page reporting, snapshots, and stops the VM. Sleep takes about 8 to 11 s;
   the owner does not wait for it.
 - **Snapshot storage** lives in the host's data pool, never the root filesystem, with
@@ -145,9 +157,16 @@ A small service on each host that owns every VM on it. The platform is its only 
   agent restores it on demand (`memory_restore_mode=ondemand`), and the request is
   forwarded once the gateway answers (about 1 s). The platform shows the existing boot
   page if waking takes longer than 3 s.
+- **Every entry point wakes first**: Web shell, WebSockets (terminal, Chat streaming),
+  the Native Mobile app API, the `matrix` CLI, device sign-in, and remote MCP all pass
+  through the platform's `ensureRunning` before proxying. The request is held during the
+  wake (about 0.5 s measured) rather than failed; clients show a waking state only after
+  3 s. WebSocket upgrades wait for the gateway before upgrading.
 - **Scheduled wake**: on sleep, the gateway reports its next scheduled time (cron,
-  routines, background agents). The platform wakes the VM then; it goes back to sleep
-  when the gateway reports the work finished, or after a hard 30 minutes.
+  routines, background agents). The platform wakes the VM about 60 s before it so the job
+  starts on time; the VM sleeps again under the normal idle rule once the work finishes.
+  If a run was missed (for example during host trouble), the gateway runs it on the next
+  wake instead of skipping it. Push notifications from those runs go out as usual.
 - **Channels** (Telegram and other bridges): inbound messages need a running process.
   Free owners' channels poll on scheduled wakes (proposed: every 15 minutes); paid owners
   stay awake.
@@ -165,6 +184,12 @@ A small service on each host that owns every VM on it. The platform is its only 
 - Platform routing: `profile-routing.ts` resolves `https://<host address>:443` for metal
   machines instead of the VM's own IPv4, through the substrate's `resolveUpstream`. The
   platform verifies the host certificate (unlike today's VPS TLS, TODO #410).
+- **Bandwidth**: Scaleway meters speed, not volume; the host includes 1 Gbps with
+  unlimited traffic (upgrades: 2 Gbps EUR 99.99, 5 Gbps EUR 249.99, 10 Gbps EUR 449.99 per
+  month). Launch on 1 Gbps with each free VM shaped to 50 Mbit/s plus short bursts;
+  upgrade when the 95th percentile passes 60 percent of the link. The 25 Gbps private
+  network (EUR 29.99/month per host) is ordered with the second host for moves and
+  restores.
 - **Egress**: NAT through the host. Free VMs: outbound port 25 blocked, per-VM bandwidth
   and connection-rate limits, and an alert plus automatic throttle on sustained
   high-CPU or high-packet-rate patterns typical of mining and scanning.
