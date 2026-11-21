@@ -1,6 +1,6 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, Clipboard, Edit3, Folder, MoreHorizontal, PinIcon, PinOffIcon, Trash2, X } from "@renderer/lib/hugeicons";
-import { type Ref, useState } from "react";
+import { type ReactNode, type Ref, useState } from "react";
 import { TerminalStatusDot, terminalShellVisualStatus } from "@matrix-os/ui/terminal-agents";
 
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -63,6 +63,7 @@ export function TerminalSessionSidebar({
   onCopyConnectCommand,
   onPin,
   onDelete,
+  extra,
 }: {
   showHeader?: boolean;
   sessions: ShellSessionSummary[];
@@ -89,6 +90,8 @@ export function TerminalSessionSidebar({
   onCopyConnectCommand: (session: ShellSessionSummary) => void;
   onPin: (session: ShellSessionSummary, pinned: boolean) => void;
   onDelete: (session: ShellSessionSummary) => void;
+  /** Groups shown after the sessions, such as Herdr sessions. */
+  extra?: ReactNode;
 }) {
   const [actionsName, setActionsName] = useState<string | null>(null);
   return (
@@ -218,6 +221,7 @@ export function TerminalSessionSidebar({
             );
           })}
         </ul>
+        {extra}
       </aside>
     </OSWindowSafeView>
   );

@@ -6,6 +6,8 @@ import { TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contr
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
+import { herdrSessionRefKey, loadHerdrSessions, shouldShowHerdrSessions } from "@matrix-os/ui/herdr-sessions";
+import { herdrSessionsRequest } from "../terminal/herdr-desktop-session";
 
 const MAX_TABS_SHOWN = 200;
 
@@ -74,13 +76,26 @@ export function terminalsFailure(error: unknown): ComputerTerminalsFailure {
 }
 
 export async function listComputerTabs(api: ApiClient): Promise<ComputerTerminalTab[]> {
-  const listing = ListingSchema.parse(await api.get("/api/terminal/workspaces"));
-  return listing.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
+  const [listed, herdr] = await Promise.all([
+    api.get("/api/terminal/workspaces"),
+    // The computer's own Herdr sessions through its gateway (spec 2701); a
+    // gateway without the adapter lists none, and the SSH path still applies.
+    loadHerdrSessions(herdrSessionsRequest(api)).catch((error: unknown) => {
+      console.warn("[terminal-window] Herdr sessions unavailable:", error instanceof Error ? error.name : "unknown");
+      return null;
+    }),
+  ]);
+  const listing = ListingSchema.parse(listed);
+  const tabs = listing.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
     refKey: terminalRefKey({ workspaceId: workspace.id, tabId: tab.id }),
     name: tab.name,
     group: workspace.scope === "project" ? workspace.projectId ?? "project" : "main",
     ended: tab.status === "exited" || tab.status === "failed",
-  }))).slice(0, MAX_TABS_SHOWN);
+  })));
+  const herdrTabs = shouldShowHerdrSessions(herdr) ? herdr!.sessions.map((session) => ({
+    refKey: herdrSessionRefKey(session), name: session.title, group: "herdr", ended: false,
+  })) : [];
+  return [...tabs, ...herdrTabs].slice(0, MAX_TABS_SHOWN);
 }
 
 /**
