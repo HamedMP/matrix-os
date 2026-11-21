@@ -65,26 +65,26 @@ function NewTaskForm({ onClose, members, labels, defaultStatus, onCreate }: {
     <h2 className="text-[17px] font-semibold leading-[25px]">New task</h2>
     <label className="flex flex-col gap-1 text-[12px] font-medium" style={tone.secondary}>
       Title
-      <input required maxLength={300} value={title} onChange={(event) => setTitle(event.currentTarget.value)}
+      <input required maxLength={300} value={title} onChange={(event) => setTitle(event.currentTarget.value)} readOnly={busy}
         placeholder="What needs doing?" className={fieldClass} style={{ ...tone.border, ...tone.primary }}
         ref={focusOnMount} />
     </label>
     <label className="flex flex-col gap-1 text-[12px] font-medium" style={tone.secondary}>
       Description
-      <textarea rows={4} maxLength={20_000} value={description} onChange={(event) => setDescription(event.currentTarget.value)}
+      <textarea rows={4} maxLength={20_000} value={description} onChange={(event) => setDescription(event.currentTarget.value)} readOnly={busy}
         placeholder="Markdown supported" className={`${fieldClass} resize-y text-[14px]`} style={{ ...tone.border, ...tone.primary }} />
     </label>
     <div className="flex flex-wrap items-center gap-1">
-      <BoardPicker portal={false} label="Status" value={status} onChange={(value) => setStatus(value as TaskStatus)}
+      <BoardPicker portal={false} disabled={busy} label="Status" value={status} onChange={(value) => setStatus(value as TaskStatus)}
         options={BOARD_COLUMN_STATUSES.map((value) => ({ value, label: TASK_STATUS_LABEL[value], icon: <StatusIcon status={value} /> }))}
         trigger={<><StatusIcon status={status} />{TASK_STATUS_LABEL[status]}</>} />
-      <BoardPicker portal={false} label="Priority" value={priority} onChange={(value) => setPriority(value as TaskPriority)}
+      <BoardPicker portal={false} disabled={busy} label="Priority" value={priority} onChange={(value) => setPriority(value as TaskPriority)}
         options={[...TASK_PRIORITIES].reverse().map((value) => ({ value, label: TASK_PRIORITY_LABEL[value], icon: <PriorityIcon priority={value} /> }))}
         trigger={<><PriorityIcon priority={priority} />{TASK_PRIORITY_LABEL[priority]}</>} />
-      <BoardPicker portal={false} label="Assignee" value={assignee} onChange={(value) => setAssignee(value as ActorRef | "")}
+      <BoardPicker portal={false} disabled={busy} label="Assignee" value={assignee} onChange={(value) => setAssignee(value as ActorRef | "")}
         options={[{ value: "", label: "Unassigned" }, ...members.map((member) => ({ value: member.actor, label: member.name, keywords: member.handle }))]}
         trigger={<><ActorAvatar members={members} actor={assignee || null} size={16} />{assigneeName ?? "Unassigned"}</>} />
-      <BoardPicker portal={false} multiple label="Labels" value={chosenLabels} onChange={setChosenLabels}
+      <BoardPicker portal={false} disabled={busy} multiple label="Labels" value={chosenLabels} onChange={setChosenLabels}
         options={knownLabels.map((label) => ({ value: label, label }))}
         onCreate={(label) => setChosenLabels((current) => current.includes(label) ? current : [...current, label])}
         trigger={<>{chosenLabels.length ? chosenLabels.join(", ") : "Labels"}</>} />

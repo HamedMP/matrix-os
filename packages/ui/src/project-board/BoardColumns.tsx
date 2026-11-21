@@ -4,13 +4,13 @@ import {
   DndContext, DragOverlay, PointerSensor, useDroppable, useSensor, useSensors,
   type DragEndEvent, type DragOverEvent, type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Plus } from "lucide-react";
 import { useId, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { keyboardMoveTarget, type BoardColumns as Columns, type KeyboardMoveDirection } from "./board-model.js";
 import { StatusIcon } from "./board-primitives.js";
-import { BOARD_COLUMN_DROP_PREFIX, boardCollisionDetection } from "./board-collision.js";
+import { BOARD_COLUMN_DROP_PREFIX, boardCollisionDetection, orderAfterDrop } from "./board-collision.js";
 import { BoardScrollRow } from "./BoardScrollRow.js";
 import { focusOnMount, focusRing, tone } from "./board-style.js";
 import { TaskCard } from "./TaskCard.js";
@@ -99,11 +99,9 @@ export function BoardColumns({ columns, statuses, members, nowMs, allTasks, onOp
     if (!over || !current) return;
     const status = containerOf(current, statuses, activeKey);
     if (!status) return;
-    let list = current[status];
     const overKey = String(over.id);
-    if (!overKey.startsWith(COLUMN_PREFIX) && list.includes(overKey)) {
-      list = arrayMove(list, list.indexOf(activeKey), list.indexOf(overKey));
-    }
+    const list = overKey.startsWith(COLUMN_PREFIX) || current[status].includes(overKey)
+      ? orderAfterDrop(current[status], activeKey, overKey) : current[status];
     const index = list.indexOf(activeKey);
     const original = byId[activeKey];
     const originalIndex = original ? columns[original.status].findIndex((task) => task.id === activeKey) : -1;
