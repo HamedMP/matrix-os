@@ -365,6 +365,60 @@ describe("Claude catalog selection and CLI handoff", () => {
       .toEqual(["default", "opus", "sonnet"]);
   });
 
+  it("serves a recently verified profile inventory at once while one background read refreshes it", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    let models = [{ value: "claude-fable-5", displayName: "Fable" }];
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key: "owner_profile", retainOnRefresh: false, maxAgeMs: 5_000,
+      discover: async () => { reads++; await gate; return models; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source });
+    await service.getCatalog(principal);
+    expect(reads).toBe(1);
+    // A send after the short profile cache expired must not wait for a fresh CLI read.
+    await vi.advanceTimersByTimeAsync(6_000);
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    models = [...models, { value: "claude-fable-5-1", displayName: "Fable 5.1" }];
+    const served = await service.getCatalog(principal);
+    expect(served.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-fable-5")).toBe(true);
+    expect(reads).toBe(2);
+    await service.getCatalog(principal);
+    expect(reads).toBe(2);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const refreshed = await service.getCatalog(principal);
+    expect(refreshed.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-fable-5-1")).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  it("waits for a fresh read once a profile inventory is older than the stale window or its credential context changed", async () => {
+    vi.useFakeTimers();
+    let key = "generation_one";
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key, retainOnRefresh: false, maxAgeMs: 5_000,
+      discover: async () => { reads++; if (key !== "generation_one") throw new Error("private detail"); return [{ value: "claude-fable-5", displayName: "Fable" }]; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source });
+    await service.getCatalog(principal);
+    key = "generation_two";
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect((await service.getCatalog(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .map((entry) => entry.id)).toEqual(["default", "opus", "sonnet"]);
+    expect(reads).toBe(2);
+    key = "generation_one";
+    await service.getCatalog(principal);
+    await vi.advanceTimersByTimeAsync(300_001);
+    key = "generation_three";
+    expect((await service.getCatalog(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .map((entry) => entry.id)).toEqual(["default", "opus", "sonnet"]);
+  });
+
   it("expires last-good data and deduplicates metadata without leaking stale account models", async () => {
     vi.useFakeTimers();
     let fail = false;
