@@ -137,3 +137,27 @@ The long-Unicode producer/consumer regression also exposed a split surrogate
 at the mapper's4000-character boundary. Follow the existing assistant-emitter
 pattern to keep each canonical chunk independently encodable without changing
 the limit or dropping a character; retain the same message identity per chunk.
+
+## Reasoning-only completion follow-up
+
+Exact d3e929 private-preview validation found Matrix AI runs marked completed
+without any assistant message, on both Mobile and Canvas. Read-only inspection
+of their saved managed Pi sessions confirmed a final assistant message with
+stopReason length and only a thinking block. Pi sets no errorMessage for this
+generation-limit outcome, so the worker incorrectly reports success.
+
+Treat a final length-limited assistant message without non-whitespace text as
+failed/unavailable through the existing safe error mapping. Inspect the final
+reply even when an earlier assistant message exists: an unanswered steering
+correction must not borrow that earlier output as evidence of success. Preserve
+the existing session save, cancellation/uncertainty precedence, bounded inference
+budget and partial textual output. Do not reveal reasoning or retry inference
+automatically. There is no new route, credential, schema, transaction or client
+DTO. Actual Pi worker regressions must detect both first-answer and post-steer
+silent completion and retain partial-text behavior; include them in the focused
+steering lane. Revalidate against the next exact preview bundle.
+
+Broader CI also found two native admission/attachment suites still selecting the
+old active-run Send label. Update only queue-mode selectors to Queue next; retain
+idle/edit Send and every race/upload assertion. Add both suites to the focused
+lane so the label's full consumer boundary runs on every steering iteration.
