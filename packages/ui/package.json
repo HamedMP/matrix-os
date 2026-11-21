@@ -20,6 +20,7 @@
     "./terminal-agents": "./src/terminal-agents/index.ts",
     "./terminal-pane-tree": "./src/terminal-pane-tree/index.ts",
     "./terminal-status-sidebar": "./src/terminal-status-sidebar/index.ts",
+    "./herdr-sessions": "./src/herdr-sessions/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./chat-composer.css": "./src/chat/composer/chat-composer.css",

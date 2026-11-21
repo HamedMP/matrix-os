@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { defineCommand } from "citty";
+import { shouldShowHerdrSessions } from "@matrix-os/contracts/herdr-terminals";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { createShellClient, type ShellClient, type TerminalRef } from "../shell-client.js";
@@ -128,14 +129,23 @@ const listCommand = defineCommand({
     const json = args.json === true;
     try {
       const client = await clientFromArgs(args);
-      const [projects, workspaces] = await Promise.all([client.listProjects(), client.listWorkspaces()]);
+      const [projects, workspaces, herdrList] = await Promise.all([
+        client.listProjects(),
+        client.listWorkspaces(),
+        // Herdr is optional: an older gateway or an unreachable core only hides the section.
+        client.listHerdrSessions().catch((error: unknown) => {
+          void error;
+          return null;
+        }),
+      ]);
       const projectLabels = new Map(parseProjects(projects).map((project) => [project.id, project.label]));
       const parsed = parseWorkspaces(workspaces);
+      const herdr = shouldShowHerdrSessions(herdrList) ? herdrList!.sessions : [];
       if (json) {
-        console.log(formatCliSuccess({ workspaces: parsed }));
+        console.log(formatCliSuccess({ workspaces: parsed, ...(herdr.length > 0 ? { herdr } : {}) }));
         return;
       }
-      if (parsed.every((workspace) => workspace.tabs.length === 0)) {
+      if (parsed.every((workspace) => workspace.tabs.length === 0) && herdr.length === 0) {
         console.log("No terminal tabs.");
         return;
       }
@@ -143,6 +153,8 @@ const listCommand = defineCommand({
         console.log(`${workspace.scope === "main" ? "main" : projectLabels.get(workspace.projectId ?? "") ?? workspace.projectId}:`);
         for (const tab of workspace.tabs) console.log(`  ${tab.id}  ${tab.name}  ${tab.status ?? "unknown"}  ${tab.cwd ?? ""}`.trimEnd());
       }
+      if (herdr.length > 0) console.log("herdr:");
+      for (const session of herdr) console.log(`  ${session.id}  ${session.title}  ${session.status ?? ""}  ${session.statusMessage ?? ""}`.trimEnd());
     } catch (err) {
       writeError(err, json);
       process.exitCode = 1;
