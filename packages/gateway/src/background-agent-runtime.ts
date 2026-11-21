@@ -38,7 +38,7 @@ export function createBackgroundAgentRuntime(options: {
   maxJobs?: number;
   spawnPrivate?: PrivateLaunchSpawn;
   withLock?: typeof withBackgroundRuntimeLock;
-}): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void> } {
+}): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void>; anyRunning(): Promise<boolean> } {
   const home = resolve(options.homePath);
   const root = join(home, "system", "background-agents");
   const maxJobs = z.number().int().min(1).max(128).parse(options.maxJobs ?? 32);
@@ -224,6 +224,8 @@ export function createBackgroundAgentRuntime(options: {
     async close() { closed = true; for (const channel of privateChannels) channel.close(); privateChannels.clear(); if (sweepTimer) clearInterval(sweepTimer); await tail; for (const channel of privateChannels) channel.close(); privateChannels.clear(); },
     withLock: (operation) => serial(() => operation(locked)),
     isRunning: (ref) => serial(() => isRunning(ref)),
+    /** One bounded systemctl query over every retained record (at most MAX_RECORDS). */
+    anyRunning: () => serial(async () => [...(await states(await records())).values()].some(Boolean)),
     stop: (ref) => serial(() => stop(ref)),
     start: (input) => serial(() => locked.start(input)),
   };

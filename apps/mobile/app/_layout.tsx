@@ -51,6 +51,7 @@ import { motion } from "@/lib/theme-v2";
 import { useStartupColors } from "@/lib/use-startup-colors";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
 import { ToastHost } from "@/components/ui/Toast";
+import { RuntimeWakeNotice } from "@/components/RuntimeWakeNotice";
 import {
   captureScreen,
   getAnalyticsClient,
@@ -407,6 +408,7 @@ function GatewayShell() {
               />
             </Stack>
             <ToastHost />
+            <RuntimeWakeNotice client={client} />
             <NotificationRouter connected={gateway !== null} setGateway={setGateway} />
             <PushRegistrationSync />
             <OtaUpdatePrompt />

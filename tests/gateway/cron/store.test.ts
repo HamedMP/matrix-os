@@ -94,4 +94,14 @@ describe("T120b: Cron store", () => {
     expect(store.list()).toHaveLength(1);
     expect(store.list()[0].name).toBe("v2");
   });
+
+  it("recordRun persists lastRunAt without dropping a job added while the write is in flight", async () => {
+    store.add(makeJob({ id: "j1" }));
+    const flushed = store.recordRun("j1", "2026-11-21T12:00:00.000Z");
+    store.add(makeJob({ id: "j2" }));
+    await flushed;
+    const loaded = createCronStore(join(homePath, "system", "cron.json")).load();
+    expect(loaded.map((j) => j.id)).toEqual(["j1", "j2"]);
+    expect(loaded[0].lastRunAt).toBe("2026-11-21T12:00:00.000Z");
+  });
 });

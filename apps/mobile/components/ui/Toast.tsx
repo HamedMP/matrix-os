@@ -9,13 +9,14 @@ import { useReduceMotion } from "@/lib/use-reduce-motion";
 import { TOAST_DURATION_MS, useToast, type Toast } from "@/lib/toast";
 
 import { Icon } from "./Icon";
-import { AlertIcon, CheckIcon } from "./icons";
+import { AlertIcon, CheckIcon, LoadingIcon } from "./icons";
 
 /** How long a toast takes to fade in, and again to fade out before it ends. */
 export const TOAST_FADE_MS = 180;
 // How far it slides down as it appears, unless the person has asked for less motion.
 const TOAST_SLIDE = 8;
 const TOAST_ICON_SIZE = 16;
+const TOAST_ICONS = { success: CheckIcon, error: AlertIcon, progress: LoadingIcon } as const;
 // Between the status bar and the toast.
 const TOAST_GAP = 8;
 
@@ -51,6 +52,8 @@ function ToastPill({ toast }: { toast: Toast }) {
     // Read out once on both platforms; a live region as well would read it twice on Android.
     AccessibilityInfo.announceForAccessibility(toast.message);
     shown.set(withTiming(1, { duration: TOAST_FADE_MS }));
+    // A persistent toast is taken away by whoever showed it, without a fade.
+    if (toast.persistent) return undefined;
     // The toast itself ends in `lib/toast`; this only fades it out first.
     const fadeOut = setTimeout(() => {
       shown.set(withTiming(0, { duration: TOAST_FADE_MS }));
@@ -70,7 +73,7 @@ function ToastPill({ toast }: { toast: Toast }) {
       style={[styles.pill, animatedStyle]}
     >
       <Icon
-        icon={toast.tone === "error" ? AlertIcon : CheckIcon}
+        icon={TOAST_ICONS[toast.tone]}
         size={TOAST_ICON_SIZE}
         color={theme.v2.colors.onControlPrimary}
         strokeWidth={2}

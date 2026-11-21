@@ -1,3 +1,5 @@
+import { RUNTIME_WAKE_MESSAGES } from "@matrix-os/contracts/runtime-wake";
+
 export const CLI_OUTPUT_VERSION = 1;
 
 const GENERIC_MESSAGES: Record<string, string> = {
@@ -23,6 +25,9 @@ const GENERIC_MESSAGES: Record<string, string> = {
   terminal_agent_blocked: "The agent is waiting for a person. Read its screen first, or pass --force.",
   terminal_finished: "That terminal has finished.",
   not_found: "Terminal not found.",
+  runtime_waking: RUNTIME_WAKE_MESSAGES.runtime_waking,
+  runtime_busy: RUNTIME_WAKE_MESSAGES.runtime_busy,
+  runtime_unavailable: RUNTIME_WAKE_MESSAGES.runtime_unavailable,
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {
