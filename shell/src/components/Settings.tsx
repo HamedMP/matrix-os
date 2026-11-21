@@ -216,12 +216,16 @@ function SettingsFrame({
   const canonicalLockedSection = lockedSection === undefined
     ? undefined
     : normalizeSettingsSectionId(lockedSection);
+  // Self-hosted frames have no managed account: Billing and Organization are
+  // hosted-only and their sections read Clerk, which is absent there.
+  const hostedOnlySection = (section: SectionId | undefined) =>
+    !showBillingSection && (section === "billing" || section === "organization");
   const resolvedDefaultSection = onboardingMode
     ? "default-installs"
-    : !showBillingSection && canonicalDefaultSection === "billing"
+    : hostedOnlySection(canonicalDefaultSection)
       ? "agents-providers"
       : canonicalDefaultSection;
-  const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
+  const resolvedLockedSection = hostedOnlySection(canonicalLockedSection)
     ? undefined
     : canonicalLockedSection;
   const setupBackdrop = onboardingMode
@@ -387,7 +391,7 @@ function SettingsFrame({
 
             <main hidden={mobile && !mobileDetail} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
-              {activeSection === "organization" && <OrganizationSection />}
+              {showBillingSection && activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
                 <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}

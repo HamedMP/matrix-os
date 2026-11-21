@@ -18,6 +18,8 @@ import {
   type SignupBillingHandoffLoadingSurface,
 } from "@/lib/signup-billing-handoff";
 import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
+import { SelfHostedUnavailable } from "@/components/auth/SelfHostedUnavailable";
+import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 import { Settings } from "./Settings";
 import { normalizeDeviceReturnPath } from "@/lib/device-onboarding";
 
@@ -267,7 +269,9 @@ function BillingGateRoute({
   const isAddComputerHandoff = searchParams.get("handoff") === "add-computer";
 
   if (isAddComputerHandoff) {
-    return <AddComputerOnboarding />;
+    // Adding computers is an account feature; self-hosted documents have no ClerkProvider.
+    // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
+    return isSelfHostedRuntime() ? <SelfHostedUnavailable feature="Adding a computer" /> : <AddComputerOnboarding />;
   }
   if (platformSessionActive) {
     return <>{children}</>;
