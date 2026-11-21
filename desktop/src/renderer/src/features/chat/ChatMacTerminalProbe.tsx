@@ -12,6 +12,8 @@ import { chatElectronPreviewWorktree } from "./ChatElectronPreview";
 
 type Preparation = InvokeResponse<"chat:mac-terminal-prepare">;
 type RunStatus = InvokeResponse<"chat:mac-terminal-run">["status"];
+type BackgroundStatus = InvokeResponse<"chat:mac-terminal-background-status">;
+type ActiveBackground = Extract<BackgroundStatus, { active: true }>;
 type Worktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
 
 const DRAFT_INTRO = "Request a read-only system check on the approved Mac terminal.";
@@ -22,6 +24,7 @@ const PREPARE_ERROR = {
   failed: "The Mac terminal check could not be prepared.",
   expired: "The Mac terminal approval expired. Clear the draft and request a new check.",
   changed: "The Chat or worktree changed. Request a new Mac terminal check.",
+  "stop-failed": "Background Mac checks could not be stopped. Try again.",
 };
 const RUN_STATUS: Record<RunStatus, string> = {
   returned: "Mac terminal result returned to this Chat.",
@@ -31,6 +34,7 @@ const RUN_STATUS: Record<RunStatus, string> = {
   "already-handled": "This Mac terminal check was already handled.",
 };
 const BUTTON_CLASS = "rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]";
+const BACKGROUND_STATUS_POLL_MS = 2_000;
 
 function makeDraft(targetId: string): string {
   return [
@@ -44,18 +48,34 @@ export function isMacTerminalProbeDraft(text: string): boolean {
   return text.startsWith(DRAFT_INTRO) || text.split("\n").some(line => line.startsWith(MAC_TERMINAL_PROBE_PREFIX));
 }
 
+export async function canSendBackgroundMacCheck(chatId: string, worktreeId: string, targetId: string): Promise<boolean> {
+  try {
+    const grant = await invoke("chat:mac-terminal-background-status", { chatId, worktreeId });
+    return grant.active && grant.targetId === targetId && grant.expiresAt > Date.now()
+      && grant.remaining > 0 && grant.phase === "waiting";
+  } catch (error: unknown) {
+    logFailure(error);
+    return false;
+  }
+}
+
 interface ChatMacTerminalProbeProps {
   active: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
-  onDraft?: (text: string, worktree: Worktree, expiresAt: number) => boolean;
+  onDraft?: (text: string, worktree: Worktree, expiresAt: number, backgroundTargetId?: string) => boolean;
+  onDiscardDraft?: (text: string) => void;
 }
 
-type PreparationState = Preparation | { status: "preparing" | "expired" | "changed" };
+type PreparationMode = "one-time" | "background";
+type PreparationState = Preparation | { status: "preparing"; mode: PreparationMode }
+  | { status: "expired" | "changed" | "stopping" | "stop-failed" };
 
 function preparationLabel(preparation: PreparationState | null, activeRun: boolean): string | undefined {
   if (!preparation) return;
-  if (preparation.status === "preparing") return "Waiting for one-time approval on this Mac…";
+  if (preparation.status === "preparing") return preparation.mode === "background"
+    ? "Waiting for background approval on this Mac…" : "Waiting for one-time approval on this Mac…";
+  if (preparation.status === "stopping") return "Stopping background Mac checks…";
   if (preparation.status === "ready") {
     const nextStep = activeRun ? "Waiting for the agent…" : "Send the draft to run it.";
     return `Mac terminal ${preparation.terminalId} approved for uname -s. ${nextStep}`;
@@ -63,11 +83,18 @@ function preparationLabel(preparation: PreparationState | null, activeRun: boole
   return PREPARE_ERROR[preparation.status];
 }
 
+function backgroundLabel(grant: ActiveBackground): string {
+  if (grant.phase === "running") return "Running the approved Mac check…";
+  if (grant.phase === "returning") return "Returning the Mac check result to this Chat…";
+  const units = grant.remaining === 1 ? "check" : "checks";
+  return `Background Mac checks approved. ${grant.remaining} ${units} left.`;
+}
+
 function logFailure(error: unknown) {
   console.warn("[mac-terminal-check] request unavailable", error instanceof Error ? error.name : "UnknownError");
 }
 
-export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatMacTerminalProbeProps) {
+export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDiscardDraft }: ChatMacTerminalProbeProps) {
   const { chat, activeRun, providerBinding } = detail.record;
   const root = chatElectronPreviewWorktree(detail);
   const readyToCheck = active && root !== null && !chat.collaboration && chat.lifecycle === "active"
@@ -82,11 +109,19 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
   const [available, setAvailable] = useState(false);
   const [preparation, setPreparation] = useState<PreparationState | null>(null);
   const [runResult, setRunResult] = useState<{ runId: string; status: RunStatus } | null>(null);
+  const [background, setBackground] = useState<{ scope: string; status: BackgroundStatus } | null>(null);
   const availability = useRef<Promise<boolean> | null>(null);
   const attempt = useRef<string | null>(null);
   const mounted = useRef(false);
   const stageDraft = useRef(onDraft);
-  const preparing = useRef(false);
+  const changingGrant = useRef(false);
+  const backgroundRevision = useRef(0);
+  const previousBackground = useRef<{ scope: string; targetId: string } | null>(null);
+  const worktreeId = root?.worktreeId;
+  const scope = JSON.stringify([chat.id, worktreeId]);
+  const backgroundStatus = background?.scope === scope ? background.status : null;
+  const activeBackground = backgroundStatus?.active ? backgroundStatus : null;
+  const backgroundTarget = activeBackground?.targetId;
 
   useEffect(() => {
     mounted.current = true;
@@ -110,6 +145,35 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
     return () => { current = false; };
   }, [readyToCheck]);
 
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- An IPC read keeps the visible Chat in sync with the native grant.
+  useEffect(() => {
+    if (!available || !readyToCheck || !worktreeId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      const revision = backgroundRevision.current;
+      if (!changingGrant.current) {
+        try {
+          const status = await invoke("chat:mac-terminal-background-status", { chatId: chat.id, worktreeId });
+          if (!stopped && revision === backgroundRevision.current) setBackground({ scope, status });
+        } catch (error: unknown) {
+          if (!stopped) logFailure(error);
+        }
+      }
+      if (!stopped) timer = setTimeout(() => { void refresh(); }, BACKGROUND_STATUS_POLL_MS);
+    };
+    void refresh();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [available, chat.id, readyToCheck, scope, worktreeId]);
+
+  useEffect(() => {
+    const previous = previousBackground.current;
+    if (backgroundStatus && previous?.scope === scope && previous.targetId !== backgroundTarget) {
+      onDiscardDraft?.(makeDraft(previous.targetId));
+    }
+    previousBackground.current = backgroundTarget ? { scope, targetId: backgroundTarget } : null;
+  }, [backgroundStatus, backgroundTarget, onDiscardDraft, scope]);
+
   const expiresAt = preparation?.status === "ready" ? preparation.expiresAt : null;
   useEffect(() => {
     if (expiresAt === null) return;
@@ -119,7 +183,7 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- A committed request delegates to main to verify and consume the native approval.
   useEffect(() => {
-    if (!available || !runId || attempt.current === runId) return;
+    if (!available || backgroundStatus?.active !== false || changingGrant.current || !runId || attempt.current === runId) return;
     attempt.current = runId;
     void invoke("chat:mac-terminal-run", { chatId: chat.id, runId })
       .then(reply => reply.status)
@@ -132,29 +196,70 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
         setRunResult({ runId, status });
         setPreparation(null);
       });
-  }, [available, chat.id, runId]);
+  }, [available, backgroundStatus?.active, chat.id, runId]);
 
-  async function prepare() {
-    if (!root || !stageDraft.current || preparing.current) return;
-    preparing.current = true;
-    setPreparation({ status: "preparing" });
+  async function prepare(mode: PreparationMode) {
+    if (!root || !stageDraft.current || changingGrant.current) return;
+    changingGrant.current = true;
+    backgroundRevision.current++;
+    setPreparation({ status: "preparing", mode });
     try {
-      const reply = await invoke("chat:mac-terminal-prepare", { chatId: chat.id, worktreeId: root.worktreeId });
-      if (reply.status === "ready" && reply.expiresAt <= Date.now()) {
+      const request = { chatId: chat.id, worktreeId: root.worktreeId };
+      const reply = mode === "background"
+        ? await invoke("chat:mac-terminal-background-start", request)
+        : await invoke("chat:mac-terminal-prepare", request);
+      if (reply.status !== "ready") {
+        setPreparation(reply);
+        return;
+      }
+      if (reply.expiresAt <= Date.now()) {
         setPreparation({ status: "expired" });
         return;
       }
-      if (reply.status === "ready" && !stageDraft.current?.(makeDraft(reply.targetId), root, reply.expiresAt)) {
+      const draft = makeDraft(reply.targetId);
+      const staged = "terminalId" in reply
+        ? stageDraft.current?.(draft, root, reply.expiresAt)
+        : stageDraft.current?.(draft, root, reply.expiresAt, reply.targetId);
+      if (!staged) {
         await invoke("chat:mac-terminal-cancel", { chatId: chat.id });
         setPreparation({ status: "changed" });
         return;
       }
-      setPreparation(reply);
+      if ("terminalId" in reply) {
+        setPreparation(reply);
+      } else {
+        const { targetId, expiresAt, remaining } = reply;
+        setBackground({ scope, status: { active: true, targetId, expiresAt, remaining, phase: "waiting" } });
+        setPreparation(null);
+      }
     } catch (error: unknown) {
       logFailure(error);
       setPreparation({ status: "unavailable" });
     } finally {
-      preparing.current = false;
+      changingGrant.current = false;
+    }
+  }
+
+  function stageAnother() {
+    if (!root || !activeBackground || activeBackground.expiresAt <= Date.now() || changingGrant.current) return;
+    const { targetId, expiresAt } = activeBackground;
+    stageDraft.current?.(makeDraft(targetId), root, expiresAt, targetId);
+  }
+
+  async function stopBackground() {
+    if (!activeBackground || changingGrant.current) return;
+    changingGrant.current = true;
+    backgroundRevision.current++;
+    setPreparation({ status: "stopping" });
+    try {
+      await invoke("chat:mac-terminal-cancel", { chatId: chat.id });
+      setBackground({ scope, status: { active: false } });
+      setPreparation(null);
+    } catch (error: unknown) {
+      logFailure(error);
+      setPreparation({ status: "stop-failed" });
+    } finally {
+      changingGrant.current = false;
     }
   }
 
@@ -162,12 +267,29 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
   const preparationStatus = preparation?.status;
   const result = runResult && (!runId || runResult.runId === runId) ? runResult.status : null;
   const runLabel = result ? RUN_STATUS[result] : runId ? "Checking the approved Mac terminal…" : undefined;
-  const status = preparationLabel(preparation, Boolean(activeRun)) ?? runLabel;
+  const status = preparationLabel(preparation, Boolean(activeRun))
+    ?? (activeBackground ? backgroundLabel(activeBackground) : runLabel);
+  const canPrepare = onDraft && !activeRun && backgroundStatus?.active === false
+    && preparationStatus !== "preparing" && preparationStatus !== "ready" && preparationStatus !== "stopping"
+    && (!runId || result);
   return (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[var(--text-secondary)]">
       {status ? <span role="status">{status}</span> : null}
-      {onDraft && !activeRun && preparationStatus !== "preparing" && preparationStatus !== "ready" && (!runId || result) ? (
-        <button type="button" className={BUTTON_CLASS} onClick={() => { void prepare(); }}>Request Mac terminal check</button>
+      {canPrepare ? (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={BUTTON_CLASS} onClick={() => { void prepare("one-time"); }}>Request Mac terminal check</button>
+          <button type="button" className={BUTTON_CLASS} onClick={() => { void prepare("background"); }}>Allow background Mac checks</button>
+        </div>
+      ) : null}
+      {activeBackground ? (
+        <div className="flex flex-wrap gap-2">
+          {onDraft && !activeRun && activeBackground.phase === "waiting" && activeBackground.remaining > 0
+            && preparationStatus !== "stopping" ? (
+              <button type="button" className={BUTTON_CLASS} onClick={stageAnother}>Draft another Mac check</button>
+            ) : null}
+          <button type="button" className={BUTTON_CLASS} disabled={preparationStatus === "stopping"}
+            onClick={() => { void stopBackground(); }}>Stop background Mac checks</button>
+        </div>
       ) : null}
     </div>
   );

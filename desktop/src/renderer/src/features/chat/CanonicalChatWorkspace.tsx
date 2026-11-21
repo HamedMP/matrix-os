@@ -91,7 +91,7 @@ import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { CHAT_ELECTRON_PREVIEW_DRAFT, ChatElectronPreview, chatElectronPreviewWorktree } from "./ChatElectronPreview";
-import { ChatMacTerminalProbe, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
+import { canSendBackgroundMacCheck, ChatMacTerminalProbe, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
 
@@ -101,6 +101,7 @@ type WorktreeDraft = {
   text: string;
   root: ChatWorktree;
   expiresAt?: number;
+  backgroundTargetId?: string;
 };
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
@@ -433,15 +434,23 @@ function CanonicalChatWorkspaceContent({
   const composerHasInput = Boolean(
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
-  const stageWorktreeDraft = composerHasInput || activeRun ? undefined : (text: string, root: ChatWorktree, expiresAt?: number) => {
+  const stageWorktreeDraft = composerHasInput || activeRun ? undefined : (
+    text: string, root: ChatWorktree, expiresAt?: number, backgroundTargetId?: string,
+  ) => {
     const current = composerOwner.current;
     if (!routedComposerChatId || current.client !== client || current.draftScope !== draftScope
       || current.identity !== desktopProviderIdentityKey(useConnection.getState())
       || current.identity !== admissionIdentity || current.worktree?.projectId !== root.projectId
       || current.worktree.worktreeId !== root.worktreeId || !seedChatDraft(routedComposerChatId, text)) return false;
-    worktreeDraft.current = { scope: draftScope, identity: admissionIdentity, text, root, expiresAt };
+    worktreeDraft.current = { scope: draftScope, identity: admissionIdentity, text, root, expiresAt, backgroundTargetId };
     setLocalComposerFocusRequestId(requestId => requestId + 1);
     return true;
+  };
+  const discardWorktreeDraft = (text: string) => {
+    const staged = worktreeDraft.current;
+    if (staged?.text !== text || staged.scope !== draftScope || staged.identity !== admissionIdentity) return;
+    worktreeDraft.current = null;
+    setDraft(current => current === text ? "" : current);
   };
   const transcript = controller.detail ? canonicalChatPresentation({
     ...controller.detail,
@@ -618,6 +627,15 @@ function CanonicalChatWorkspaceContent({
           ? "The Mac terminal draft or approval changed. Clear the draft and request a new check."
           : "The worktree selection changed. Clear the draft and request a new Electron preview.");
         return;
+      }
+      if (terminalRequest && staged?.backgroundTargetId) {
+        const authorized = requestedRoot && routedComposerChatId
+          && await canSendBackgroundMacCheck(routedComposerChatId, requestedRoot.worktreeId, staged.backgroundTargetId);
+        if (!isCurrentSubmission() || worktreeDraft.current !== staged) return;
+        if (!authorized) {
+          setSubmissionError("The background Mac check approval changed. Clear the draft and start a new check.");
+          return;
+        }
       }
       const input = {
         parts: directBotId ? botSubmissionParts(parts, botExecution.consentResources) : parts,
@@ -1143,6 +1161,7 @@ function CanonicalChatWorkspaceContent({
                 actorId={actorId}
                 detail={controller.detail}
                 onDraft={stageWorktreeDraft}
+                onDiscardDraft={discardWorktreeDraft}
               />
               {pendingTool ? (
                 <SupervisedToolApprovalBar
