@@ -1,8 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer as createHttpsServer, request as httpsRequest, type Server as HttpsServer } from "node:https";
+import {
+  createServer as createHttpsServer,
+  request as httpsRequest,
+  type Server as HttpsServer,
+} from "node:https";
 import { createServer as createNetServer, type AddressInfo, type Server as NetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
+import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
@@ -334,4 +339,139 @@ describe("host ingress", () => {
     expect((await first).status).toBe(200);
     expect((await send(authed())).status).toBe(200);
   });
+
+  it("forwards a chunked body on a bodyless method framed, so an embedded request is never seen", async () => {
+    await store.put(record());
+    await startIngress();
+    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
+    for (const method of ["GET", "DELETE", "OPTIONS"]) {
+      const reply = await new Promise<number>((resolve, reject) => {
+        const req = httpsRequest(
+          {
+            host: "127.0.0.1",
+            port: ingressPort,
+            method,
+            path: `/${method.toLowerCase()}`,
+            headers: { ...authed(), "transfer-encoding": "chunked" },
+            rejectUnauthorized: false,
+            agent: false,
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.on("error", reject);
+        req.write(smuggled);
+        req.end();
+      });
+      expect(reply).toBe(200);
+    }
+    // A follow-up request reuses the pooled upstream socket; a desynced socket would surface the embedded request.
+    expect((await send(authed(), { path: "/after" })).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen.map((r) => r.url)).toEqual(["/get", "/delete", "/options", "/after"]);
+    expect(seen.slice(0, 3).map((r) => r.body)).toEqual([smuggled, smuggled, smuggled]);
+    expect(seen[0]!.headers["transfer-encoding"]).toBe("chunked");
+  });
+
+  it("400 for a request carrying both content-length and transfer-encoding", async () => {
+    await store.put(record());
+    await startIngress();
+    const raw = await rawTls(
+      "POST / HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+        TOKEN +
+        "\r\ncontent-length: 5\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n0\r\n\r\n",
+    );
+    expect(raw.startsWith("HTTP/1.1 400")).toBe(true);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("releases the per-VM slot when a WebSocket client disconnects during a slow lookup", async () => {
+    await store.put(record());
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let listCalls = 0;
+    const slowStore = {
+      list: async () => {
+        listCalls++;
+        await gate;
+        return store.list();
+      },
+      onChange: (cb: (id: string) => void) => store.onChange(cb),
+    };
+    await startIngress({ store: slowStore, maxUpstreamPerVm: 1 });
+    const client = await rawTlsSocket();
+    client.write(
+      "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+        TOKEN +
+        "\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
+        "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+    await expect.poll(() => listCalls).toBe(1);
+    client.destroy();
+    await new Promise((r) => setTimeout(r, 100));
+    open();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(seen).toHaveLength(0);
+    expect((await send(authed())).status).toBe(200);
+  });
+
+  it("releases the per-VM slot when an HTTP client disconnects during a slow lookup", async () => {
+    await store.put(record());
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let listCalls = 0;
+    const slowStore = {
+      list: async () => {
+        listCalls++;
+        await gate;
+        return store.list();
+      },
+      onChange: (cb: (id: string) => void) => store.onChange(cb),
+    };
+    await startIngress({ store: slowStore, maxUpstreamPerVm: 1 });
+    const client = await rawTlsSocket();
+    client.write("GET /gone HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " + TOKEN + "\r\n\r\n");
+    await expect.poll(() => listCalls).toBe(1);
+    client.destroy();
+    await new Promise((r) => setTimeout(r, 100));
+    open();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(seen.map((r) => r.url)).not.toContain("/gone");
+    expect((await send(authed())).status).toBe(200);
+  });
+
+  it("releases the per-VM slot when opening the upstream request throws", async () => {
+    await store.put(record());
+    let calls = 0;
+    const upstreamRequest = ((...args: Parameters<typeof httpsRequest>) => {
+      calls++;
+      if (calls === 1) throw new TypeError("synthetic request failure");
+      return httpsRequest(...args);
+    }) as typeof httpsRequest;
+    await startIngress({ maxUpstreamPerVm: 1, upstreamRequest });
+    const first = await send(authed());
+    expect(first.status).toBe(502);
+    expect(JSON.parse(first.body)).toEqual({ error: "runtime_unreachable" });
+    expect((await send(authed())).status).toBe(200);
+  });
 });
+
+function rawTlsSocket(): Promise<TLSSocket> {
+  return new Promise((resolve, reject) => {
+    const socket = tlsConnect({ host: "127.0.0.1", port: ingressPort, rejectUnauthorized: false }, () => resolve(socket));
+    socket.once("error", reject);
+  });
+}
+
+async function rawTls(payload: string): Promise<string> {
+  const socket = await rawTlsSocket();
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    socket.on("data", (c: Buffer) => chunks.push(c));
+    socket.on("error", () => resolve(Buffer.concat(chunks).toString()));
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+    socket.write(payload);
+  });
+}

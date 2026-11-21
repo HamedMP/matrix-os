@@ -34,6 +34,7 @@ const HOP_BY_HOP = new Set([
 ]);
 
 export type IngressErrorCode =
+  | "bad_request"
   | "unauthorized"
   | "runtime_unknown"
   | "runtime_asleep"
@@ -42,6 +43,7 @@ export type IngressErrorCode =
   | "runtime_unreachable";
 
 const STATUS: Record<IngressErrorCode, number> = {
+  bad_request: 400,
   unauthorized: 401,
   runtime_unknown: 404,
   runtime_asleep: 503,
@@ -59,6 +61,8 @@ export interface IngressDeps {
   connectTimeoutMs?: number;
   idleTimeoutMs?: number;
   maxUpstreamPerVm?: number;
+  // Seam for tests; defaults to node:https request.
+  upstreamRequest?: typeof httpsRequest;
   log?: (event: string, fields: Record<string, unknown>) => void;
   now?: () => number;
 }
@@ -106,11 +110,28 @@ function forwardedHeaders(req: IncomingMessage, upgrade: boolean): OutgoingHttpH
   const priorText = Array.isArray(prior) ? prior.join(", ") : prior;
   out["x-forwarded-for"] = priorText ? `${priorText}, ${client}` : client;
   out["x-forwarded-proto"] = "https";
+  // Request framing is re-established on the upstream hop, never left to
+  // Node's per-method defaults: for GET/DELETE/OPTIONS/HEAD Node would write a
+  // body raw with no length on a keep-alive socket, letting a client smuggle a
+  // second request (with forged platform headers) into the VM's nginx. A
+  // chunked incoming body is therefore always forwarded chunked. Bodies on
+  // these methods stay allowed (DELETE with a body is legitimate).
+  if (req.headers["transfer-encoding"] !== undefined) {
+    out["transfer-encoding"] = "chunked";
+    delete out["content-length"];
+  }
   if (upgrade) {
     out.connection = "Upgrade";
     out.upgrade = req.headers.upgrade ?? "websocket";
   }
   return out;
+}
+
+// Ambiguous framing (both content-length and transfer-encoding) is rejected
+// outright rather than resolved, so the ingress and the VM can never disagree
+// on where a request ends. Node's parser also rejects it; this is the backstop.
+export function hasAmbiguousFraming(req: IncomingMessage): boolean {
+  return req.headers["transfer-encoding"] !== undefined && req.headers["content-length"] !== undefined;
 }
 
 function stripHopByHop(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
@@ -149,7 +170,7 @@ function sendError(res: ServerResponse, code: IngressErrorCode): void {
 function writeSocketError(socket: Socket, code: IngressErrorCode): void {
   const body = errorBody(code);
   const lines = Object.entries({ ...errorHeaders(code, body), connection: "close" }).map(([k, v]) => `${k}: ${v}`);
-  const reason = code === "unauthorized" ? "Unauthorized" : code === "runtime_unknown" ? "Not Found" : code === "runtime_unreachable" ? "Bad Gateway" : "Service Unavailable";
+  const reason = code === "bad_request" ? "Bad Request" : code === "unauthorized" ? "Unauthorized" : code === "runtime_unknown" ? "Not Found" : code === "runtime_unreachable" ? "Bad Gateway" : "Service Unavailable";
   if (socket.writable) socket.end(`HTTP/1.1 ${STATUS[code]} ${reason}\r\n${lines.join("\r\n")}\r\n\r\n${body}`);
   else socket.destroy();
 }
@@ -161,6 +182,7 @@ export function createIngress(deps: IngressDeps): Ingress {
   const connectTimeoutMs = deps.connectTimeoutMs ?? UPSTREAM_CONNECT_TIMEOUT_MS;
   const idleTimeoutMs = deps.idleTimeoutMs ?? IDLE_SOCKET_TIMEOUT_MS;
   const maxPerVm = deps.maxUpstreamPerVm ?? MAX_UPSTREAM_PER_VM;
+  const upstreamRequest = deps.upstreamRequest ?? httpsRequest;
   if (deps.hostAuthToken.length < 16) throw new Error("host auth token too short");
   const tokenDigest = digest(deps.hostAuthToken);
 
@@ -254,7 +276,6 @@ export function createIngress(deps: IngressDeps): Ingress {
     if (entry === null) return { ok: false, code: "runtime_unknown" };
     if (ASLEEP.has(entry.state)) return { ok: false, code: "runtime_asleep" };
     if (entry.state !== "running" || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
-    if (!acquire(entry.id)) return { ok: false, code: "runtime_busy" };
     return { ok: true, entry };
   }
 
@@ -265,7 +286,7 @@ export function createIngress(deps: IngressDeps): Ingress {
   // Opens the upstream request with a connect (TCP + TLS) timeout. Reused
   // keep-alive sockets have already completed their handshake.
   function openUpstream(req: IncomingMessage, entry: IndexEntry, upgrade: boolean) {
-    const upstream = httpsRequest({
+    const upstream = upstreamRequest({
       host: entry.privateIPv4,
       port: upstreamPort,
       method: req.method,
@@ -294,17 +315,36 @@ export function createIngress(deps: IngressDeps): Ingress {
   }
 
   async function onRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const result = await route(req);
+    const result: Route = hasAmbiguousFraming(req) ? { ok: false, code: "bad_request" } : await route(req);
     if (!result.ok) {
       req.resume();
       sendError(res, result.code);
       return;
     }
+    // The client may have gone away while the lookup was awaited: never take a
+    // slot or open an upstream for it.
+    if (req.destroyed || res.closed) return;
     const { entry } = result;
+    if (!acquire(entry.id)) {
+      req.resume();
+      sendError(res, "runtime_busy");
+      return;
+    }
+    // From here every path releases: the close listener is attached before
+    // anything that can throw.
     const release = releaser(entry.id);
-    const upstream = openUpstream(req, entry, false);
-    res.once("close", () => {
+    res.once("close", release);
+    let upstream: ReturnType<typeof openUpstream>;
+    try {
+      upstream = openUpstream(req, entry, false);
+    } catch (error: unknown) {
+      log("ingress.upstream_open_failed", { id: entry.id, ...errorFields(error) });
       release();
+      req.resume();
+      sendError(res, "runtime_unreachable");
+      return;
+    }
+    res.once("close", () => {
       if (!res.writableFinished) upstream.destroy();
     });
     upstream.once("response", (up) => {
@@ -325,12 +365,19 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   async function onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<void> {
     socket.on("error", (error) => log("ingress.client_socket_failed", errorFields(error)));
-    const result = await route(req);
+    const result: Route = hasAmbiguousFraming(req) ? { ok: false, code: "bad_request" } : await route(req);
     if (!result.ok) {
       writeSocketError(socket, result.code);
       return;
     }
+    // The client may have disconnected during the lookup: its close event has
+    // already fired, so a slot taken now would never be released.
+    if (socket.destroyed) return;
     const { entry } = result;
+    if (!acquire(entry.id)) {
+      writeSocketError(socket, "runtime_busy");
+      return;
+    }
     const release = releaser(entry.id);
     // Upgraded sockets leave the server's connection list; track them so
     // close() can drain them. Bounded by the per-VM connection cap.
@@ -340,7 +387,15 @@ export function createIngress(deps: IngressDeps): Ingress {
       release();
     });
     socket.setTimeout(idleTimeoutMs, () => socket.destroy());
-    const upstream = openUpstream(req, entry, true);
+    let upstream: ReturnType<typeof openUpstream>;
+    try {
+      upstream = openUpstream(req, entry, true);
+    } catch (error: unknown) {
+      log("ingress.upstream_open_failed", { id: entry.id, upgrade: true, ...errorFields(error) });
+      release();
+      writeSocketError(socket, "runtime_unreachable");
+      return;
+    }
     socket.once("close", () => upstream.destroy());
     upstream.once("upgrade", (up, upSocket: Socket, upHead: Buffer) => {
       const lines = [`HTTP/1.1 ${up.statusCode ?? 101} ${up.statusMessage ?? "Switching Protocols"}`];
