@@ -112,7 +112,6 @@ export function ChatInput({
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
-  const mayQueue = referenceCount > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -345,9 +344,9 @@ export function ChatInput({
           onSubmit={() => void handleSubmit()}
           onAbort={canAbort ? onAbortCurrent : undefined}
           busy={busy}
-          submitWhileBusy={mayQueue}
+          submitWhileBusy
           canSubmit={canSend}
-          sendLabel={busy && mayQueue ? "Queue next" : "Send"}
+          sendLabel={busy ? "Queue next" : "Send"}
           placeholder={editorPlaceholder}
           attachments={attachments.length || resources.length || projectSkillDraft.paths.length ? (
             <div data-slot="composer-context-row" className="flex min-w-0 flex-col gap-2 px-4 pt-3">
@@ -395,7 +394,7 @@ export function ChatInput({
           status={<ChatSpeechQuotaStatus speech={speech} />}
           trailingControls={(
             <>
-              <ChatSpeechInputButton speech={speech} disabled={busy && !mayQueue} />
+              <ChatSpeechInputButton speech={speech} disabled={sending} />
               {botControls ?? toolbarControls}
             </>
           )}

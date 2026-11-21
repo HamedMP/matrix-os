@@ -43,6 +43,24 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); state.store.dispose(); vi.restoreAllMocks(); });
 const mount = () => renderHook(() => useCanonicalChatState({ navigationScope: "owner/runtime/main", navigationGeneration: "same_session" }));
 const options = { instanceId: "pi_default", model: "model", interactionMode: "default" as const, permissionMode: "supervised" as const };
+it("sends plain-text corrections to the durable queue while a run is active", async () => {
+  const running = detail();
+  running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };
+  const queuedTurn = { id: "cqturn_correction", chatId: "chat_same", clientRequestId: "req_correction", position: 1,
+    parts: [{ type: "text" as const, text: "Use the new instructions" }], selection: { instanceId: "pi_default", model: "model" },
+    interactionMode: "default", permissionMode: "supervised", createdAt: "2026-11-21T00:00:00Z", updatedAt: "2026-11-21T00:00:00Z" };
+  vi.mocked(state.client.detail).mockResolvedValue(running);
+  state.client.queueTurn = vi.fn(async () => ({ queuedTurn, queueDepth: 1 }));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.activeRunId).toBe("run_same"));
+  let accepted: boolean | void = false;
+  await act(async () => { accepted = await hook.result.current.submitMessage("Use the new instructions", undefined, options); });
+  expect(accepted).toBe(true);
+  expect(state.client.admitTurn).not.toHaveBeenCalled();
+  expect(state.client.queueTurn).toHaveBeenCalledWith("chat_same", expect.objectContaining({
+    baseRevision: 0, parts: queuedTurn.parts,
+  }));
+});
 it("includes a scheduled result in the displayed read boundary", async () => {
   const snapshot = detail();
   snapshot.messages = routineReceiptReadFixture(snapshot.record.chat.id);

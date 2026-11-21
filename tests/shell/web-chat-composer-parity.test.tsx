@@ -2,7 +2,7 @@
 
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +75,40 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Web Chat composer matches Electron Desktop", () => {
+  it.each(["Enter", "button"])("queues an ordinary correction while busy using %s and clears only after acceptance", async (method) => {
+    let acknowledge!: () => void;
+    let finish!: (accepted: boolean) => void;
+    const onSubmit = vi.fn((_text, _files, options) => {
+      acknowledge = options.onAccepted;
+      return new Promise<boolean>(resolve => { finish = resolve; });
+    });
+    render(<ChatApp {...base} messages={conversation} busy activeRunId="run_composer"
+      onAbortCurrent={vi.fn()} onSubmit={onSubmit} />);
+    const editor = await screen.findByRole("textbox", { name: "Message chat" });
+    await waitFor(() => expect(within(toolbar()).getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Claude Sonnet 5"));
+    fireEvent.change(editor, { target: { value: "Focus on the streaming bug instead" } });
+    if (method === "Enter") fireEvent.keyDown(editor, { key: "Enter" });
+    else fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(editor).toHaveValue("Focus on the streaming bug instead");
+    await act(async () => { acknowledge(); finish(true); });
+    await waitFor(() => expect(editor).toHaveValue(""));
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("retains a busy correction after queue rejection so the owner can retry", async () => {
+    const onSubmit = vi.fn(async () => false);
+    render(<ChatApp {...base} messages={conversation} busy activeRunId="run_composer"
+      onAbortCurrent={vi.fn()} onSubmit={onSubmit} />);
+    const editor = await screen.findByRole("textbox", { name: "Message chat" });
+    await waitFor(() => expect(within(toolbar()).getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Claude Sonnet 5"));
+    fireEvent.change(editor, { target: { value: "Keep my correction" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(editor).toHaveValue("Keep my correction");
+    expect(screen.getByRole("button", { name: "Queue next" })).toBeEnabled();
+  });
+
   it("puts attach, model, effort and access controls in the composer toolbar instead of the header", async () => {
     render(<ChatApp {...base} messages={conversation} />);
     await waitFor(() => expect(within(toolbar()).getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Claude Sonnet 5"));

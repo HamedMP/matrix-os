@@ -1,6 +1,6 @@
 import "../../../packages/ui/src/chat-agents/chat-agents.css";
 import "../../../packages/ui/src/chat/composer/chat-composer.css";
-import React from "react";
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChatApp } from "../../../shell/src/components/ChatApp";
 import { FileBrowser } from "../../../shell/src/components/file-browser/FileBrowser";
@@ -14,6 +14,7 @@ import type { ChatAgentClient } from "@matrix-os/ui";
 const fixtureParams = new URL(window.location.href).searchParams;
 const empty = fixtureParams.get("empty") === "true";
 const matrixFiles = fixtureParams.get("matrixFiles") === "true";
+const steering = fixtureParams.get("steering") === "true";
 const pickerState = fixtureParams.get("pickerState");
 window.fetch = async request => {
   if (matrixFiles) {
@@ -45,6 +46,37 @@ const client = {
 } as unknown as ChatAgentClient;
 
 const root = document.getElementById("root")!;
+function SteeringPreview() {
+  const [busy, setBusy] = useState(true);
+  const [turns, setTurns] = useState<import("@matrix-os/contracts").CanonicalChatQueuedTurn[]>([]);
+  const [messages, setMessages] = useState([{ id: "msg_preview", role: "assistant" as "assistant" | "user",
+    content: "Working on the original request. Queue a correction, then choose Steer.", timestamp: 0 }]);
+  return <ChatApp messages={messages} sessionId="chat_steering_preview" busy={busy} activeRunId={busy ? "run_preview" : undefined}
+    onAbortCurrent={() => setBusy(false)} connected navigationFresh conversations={[]}
+    onNewChat={() => undefined} onSwitchConversation={() => undefined}
+    queuedTurns={turns} canSteerQueuedTurns
+    onCancelQueuedTurn={async id => { setTurns(current => current.filter(turn => turn.id !== id)); return true; }}
+    onSteerQueuedTurn={async id => {
+      const turn = turns.find(candidate => candidate.id === id);
+      if (!turn) return false;
+      const text = turn.parts.filter(part => part.type === "text").map(part => part.text).join("\n");
+      setTurns(current => current.filter(candidate => candidate.id !== id));
+      setMessages(current => [...current.slice(-98), { id, role: "user", content: text, timestamp: Date.now() },
+        { id: `reply_${id}`, role: "assistant", content: `Correction received: ${text}`, timestamp: Date.now() }]);
+      return true;
+    }}
+    onSubmit={async (text, _files, options) => {
+      if (turns.length >= 16) return false;
+      const id = `cqturn_${crypto.randomUUID().replaceAll("-", "")}`;
+      const now = new Date().toISOString();
+      setTurns(current => [...current, { id, chatId: "chat_steering_preview", position: current.length + 1,
+        clientRequestId: options?.clientRequestId ?? id, parts: [{ type: "text", text }],
+        selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" }, interactionMode: "default",
+        permissionMode: "supervised", createdAt: now, updatedAt: now }]);
+      options?.onAccepted?.();
+      return true;
+    }} />;
+}
 const chat = <ChatApp
   messages={empty ? [] : [{ id: "msg_layout", role: "assistant", content: "Layout fixture ready", timestamp: 0 }]}
   sessionId="chat_layout" agentClient={client} busy={false} connected navigationFresh isCurrentAuthority={() => true}
@@ -58,7 +90,7 @@ const chat = <ChatApp
 if (matrixFiles) {
   usePreviewWindow.setState({ draftAuthority: organizationDriveNavigationIdentity(null, null, window.location.origin) });
 }
-createRoot(root).render(matrixFiles ? (
+createRoot(root).render(steering ? <SteeringPreview /> : matrixFiles ? (
   <div className="grid h-full" style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)" }}>
     <section aria-label="Matrix Files app" className="min-w-0 border-r"><FileBrowser windowId="fixture-files" active /></section>
     <section aria-label="Chat app" className="min-w-0 overflow-hidden">{chat}</section>

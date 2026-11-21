@@ -7,6 +7,6 @@ export function chatInputPlaceholder({ transcribing, recording, connected, unava
 }
 
 export function canSendChatInput(input: { connected: boolean; sending: boolean; busy: boolean; references: number; text: string; attachments: number }) {
-  return input.connected && !input.sending && (!input.busy || input.references > 0)
+  return input.connected && !input.sending
     && Boolean(input.text.trim() || input.references || input.attachments);
 }
