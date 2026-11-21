@@ -103,7 +103,7 @@
       },
       "eslint-config-next@16.2.3": {
         "dependencies": {
-          "next": "16.4.1"
+          "next": "16.4.6"
         }
       },
       "electron-vite@*": {
