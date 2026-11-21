@@ -23,6 +23,19 @@ function frameWithParent(record: SiteRecord, answer: (request: any) => Reply) {
   return { dom, requests, os: (dom.window as any).MatrixOS };
 }
 
+
+function frameWithHeldReplies(record: SiteRecord) {
+  const held: Array<{ request: any; port: MessagePort }> = [];
+  const dom = new JSDOM(siteFrame('<html><head></head><body></body></html>', record), { url: `${record.url}/frame`, runScripts: 'dangerously', beforeParse(window) {
+    Object.defineProperty(window, 'TextDecoder', { value: TextDecoder });
+    Object.defineProperty(window, 'MessageChannel', { value: NodeMessageChannel });
+    Object.defineProperty(window, 'parent', { configurable: true, value: { postMessage(message: any, _origin: string, ports: MessagePort[]) { held.push({ request: message.request, port: ports[0]! }); } } });
+  } });
+  const reply = (index: number, answer: Reply) => { held[index]!.port.postMessage(answer); held[index]!.port.close(); };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  return { dom, held, reply, settle, os: (dom.window as any).MatrixOS };
+}
+
 describe('public site frame data bridge', () => {
   it('exposes the owner bridge shape and relays db calls without naming the app', async () => {
     const rows = [{ id: 'row-1', title: 'Plan', done: false }];
@@ -57,6 +70,33 @@ describe('public site frame data bridge', () => {
       expect(requests[0]).toEqual({ kind: 'kvWrite', key: 'boardstate', value: `${APP_BRIDGE_STORED_VALUE_PREFIX}{"value":{"columns":3}}` });
       expect(await os.readData('board/state')).toEqual({ columns: 3 });
       await expect(os.readData('///')).rejects.toThrow('Invalid change');
+    } finally { dom.window.close(); }
+  });
+
+  it('sends one save per key at a time so an older save cannot overwrite a newer one', async () => {
+    const { dom, held, reply, settle, os } = frameWithHeldReplies(site);
+    try {
+      const saves = [os.writeData('note', 'a'), os.writeData('note', 'ab'), os.writeData('note', 'abc')];
+      const read = os.readData('note');
+      await settle();
+      expect(held.map(entry => entry.request.kind)).toEqual(['kvWrite']);
+      reply(0, { ok: true, result: { ok: true } });
+      await settle();
+      // The queued saves collapse into the newest value; the read waits for it.
+      expect(held.map(entry => entry.request.value)).toEqual([
+        `${APP_BRIDGE_STORED_VALUE_PREFIX}{"value":"a"}`, `${APP_BRIDGE_STORED_VALUE_PREFIX}{"value":"abc"}`,
+      ]);
+      reply(1, { ok: true, result: { ok: true } });
+      await Promise.all(saves);
+      await settle();
+      expect(held[2]!.request).toEqual({ kind: 'kvRead', key: 'note' });
+      reply(2, { ok: true, result: { value: `${APP_BRIDGE_STORED_VALUE_PREFIX}{"value":"abc"}` } });
+      expect(await read).toBe('abc');
+      const other = os.writeData('other', 1);
+      await settle();
+      expect(held[3]!.request.key).toBe('other');
+      reply(3, { error: 'boom' });
+      await expect(other).rejects.toThrow('Shared data is unavailable');
     } finally { dom.window.close(); }
   });
 

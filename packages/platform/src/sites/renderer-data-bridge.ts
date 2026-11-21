@@ -44,8 +44,26 @@ const collaborate=(action,write)=>{
  const pending=db(rest).then(result=>rest.action==='count'&&result?result.count:result);
  return (write?wrote(rest.table,pending):pending).catch(error=>{console.warn('[MatrixOS site] collaboration request failed',error instanceof Error?error.message:'UnknownError');throw Error('Collaboration unavailable')});
 };
-const readData=value=>{try{return request({kind:'kvRead',key:key(value)}).then(result=>decode(result&&result.value))}catch(error){return Promise.reject(error)}};
-const writeData=(value,data)=>{try{const safe=key(value);return request({kind:'kvWrite',key:safe,value:encode(data)}).then(()=>{notify(safe)})}catch(error){return Promise.reject(error)}};
+// One save per key in flight, like the owner bridge: queued saves collapse to the newest
+// value so an older request can never land last, and reads wait for the key's saves.
+const saves=new Map();
+const drain=(safe,queue)=>{
+ const entry=queue.next;queue.next=null;
+ queue.running=request({kind:'kvWrite',key:safe,value:entry.value}).then(()=>{notify(safe);entry.resolve()},entry.reject)
+  .finally(()=>{queue.running=null;if(queue.next)drain(safe,queue);else saves.delete(safe)});
+};
+const readData=value=>{try{
+ const safe=key(value);const queue=saves.get(safe);const pending=queue?(queue.next?queue.next.promise:queue.running):null;
+ const read=()=>request({kind:'kvRead',key:safe}).then(result=>decode(result&&result.value));
+ return pending?pending.then(read,read):read();
+}catch(error){return Promise.reject(error)}};
+const writeData=(value,data)=>{try{
+ const safe=key(value);const encoded=encode(data);let queue=saves.get(safe);
+ if(!queue){if(saves.size>=64)return Promise.reject(Error('Try again later'));queue={running:null,next:null};saves.set(safe,queue)}
+ if(queue.next){queue.next.value=encoded;return queue.next.promise}
+ const entry={value:encoded};entry.promise=new Promise((resolve,reject)=>{entry.resolve=resolve;entry.reject=reject});
+ queue.next=entry;if(!queue.running)drain(safe,queue);return entry.promise;
+}catch(error){return Promise.reject(error)}};
 return{
  app:Object.freeze({name:appName}),readData,writeData,onDataChange:subscribe,
  db:Object.freeze({
