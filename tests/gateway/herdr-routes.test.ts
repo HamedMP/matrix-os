@@ -141,6 +141,18 @@ describe("WS /ws/terminal/herdr", () => {
     expect(core.terminals.get("t1")!.input).toEqual([]);
   });
 
+  it("attaches an observer socket to the core as watch-only, and only the writer as a typing viewer", async () => {
+    const { core, connect } = await gateway();
+    core.add("t1");
+    const observer = connect(`id=t1&user=${OWNER}&cols=400&rows=150`);
+    await observer.until(() => observer.frames.some((frame) => frame.type === "attached"));
+    const writer = connect(`id=t1&user=${OWNER}&lease=exclusive`);
+    await writer.until(() => writer.frames.some((frame) => frame.type === "attached"));
+    const attaches = core.calls.filter((call) => call.method === "terminal.attach");
+    expect(attaches[0]!.params).toMatchObject({ observe: true, cols: 400, rows: 150 });
+    expect(attaches[1]!.params).not.toHaveProperty("observe");
+  });
+
   it("brackets the core's first paint in a replay, so a browser pane reveals the terminal", async () => {
     // Found on a live VPS: the shell's terminal pane stays hidden until
     // replay-end, so a Herdr session opened blank although output arrived.

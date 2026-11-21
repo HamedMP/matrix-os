@@ -233,6 +233,18 @@ describe("herdr adapter attachments", () => {
     expect(reasons).toEqual(["t1:exited", "t2:disconnected"]);
   });
 
+  it("reads as a watch-only viewer, so a read never resizes the owner's program", async () => {
+    const { core, adapter } = setup();
+    core.add("t1", { screen: "x" });
+    await adapter.list();
+    await adapter.captureScreen("t1", 10);
+    await adapter.writeInput("t1", "ls\r");
+    const attaches = core.calls.filter((call) => call.method === "terminal.attach");
+    expect(attaches[0]!.params).toMatchObject({ observe: true });
+    // Typing needs a typing viewer.
+    expect(attaches[1]!.params).not.toHaveProperty("observe");
+  });
+
   it("asks the core for as much history as a read wants", async () => {
     const { core, adapter } = setup();
     core.add("t1", { screen: "x" });

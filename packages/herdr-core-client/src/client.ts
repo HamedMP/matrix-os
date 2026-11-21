@@ -80,8 +80,12 @@ interface PendingCall {
 export interface HcConnection {
   readonly version: string;
   call(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
-  /** `history` is how many scrollback lines the core replays first (default 2,000). */
-  attach(params: { terminal: string; cols: number; rows: number; history?: number }, handlers: HcStreamHandlers): Promise<HcStream>;
+  /**
+   * `history` is how many scrollback lines the core replays first (default 2,000).
+   * `observe` attaches watch-only: the core never takes this viewer's typing or
+   * size, so it cannot resize the program (herdr-core `terminal.attach` param).
+   */
+  attach(params: { terminal: string; cols: number; rows: number; history?: number; observe?: boolean }, handlers: HcStreamHandlers): Promise<HcStream>;
   onDisconnect(listener: () => void): void;
   close(): void;
 }

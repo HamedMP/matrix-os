@@ -21,7 +21,7 @@ const DEFAULT_TTL_MS = 2_000;
 const DEFAULT_REFRESH_MS = 30_000;
 /** Attachments across every viewer and verb; each WS viewer holds one. */
 export const HERDR_MAX_ATTACHMENTS = 32;
-// A read attaches as an observer and renders the core's paint on a grid large
+// A read attaches watch-only and renders the core's paint on a grid large
 // enough that the core's own screen is not wrapped or clipped: at least this,
 // and at least the last writer's size, up to the largest size a writer may set.
 const CAPTURE_SIZE = { cols: 300, rows: 100 };
@@ -234,12 +234,13 @@ export function createHerdrAdapter(options: {
   }
 
   async function attach(
-    id: string, size: { cols: number; rows: number }, handlers: HerdrAttachmentHandlers, replay: { history?: number } = {},
+    id: string, size: { cols: number; rows: number }, handlers: HerdrAttachmentHandlers,
+    stream: { history?: number; observe?: boolean } = {},
   ): Promise<HerdrAttachment> {
     if (closed) throw new HerdrAdapterError("unavailable");
     let attachId: number;
     try {
-      attachId = await host.attach(id, size, replay);
+      attachId = await host.attach(id, size, stream);
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "too many terminal attachments") throw new HerdrAdapterError("capacity");
       throw error;
@@ -289,7 +290,8 @@ export function createHerdrAdapter(options: {
         consumed();
       },
       closed: () => { ended = true; },
-    }, { history: lines });
+    // Watch only: the core never sizes the program to a read's grid.
+    }, { history: lines, observe: true });
     const started = Date.now();
     try {
       // The paint arrives in a burst; it is complete once the stream goes quiet.
