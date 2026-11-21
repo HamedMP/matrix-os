@@ -226,7 +226,7 @@
     "codex-fixture-ajv": "npm:ajv@6.15.0",
     "drizzle-orm": "^0.45.2",
     "fflate": "0.8.3",
-    "hono": "^4.12.25",
+    "hono": "^4.13.16",
     "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
