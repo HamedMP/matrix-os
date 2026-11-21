@@ -2,7 +2,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { useSharedAppDirectory } from "../../packages/ui/src/collaboration/useSharedAppDirectory.js";
+import { sharedAppTargetName, useSharedAppDirectory } from "../../packages/ui/src/collaboration/useSharedAppDirectory.js";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events.js";
 import { SharedAppDirectoryNotice } from "../../packages/ui/src/collaboration/SharedAppDirectoryNotice.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
@@ -22,7 +22,7 @@ it("loads every metadata page and removes a stopped share on discovery refresh",
     : path.includes("cursor=") ? { items: [target] } : { items: [], nextCursor: "next" }) };
   const { result } = renderHook(() => useSharedAppDirectory(api, "user_member"));
   await waitFor(() => expect(result.current.items).toEqual([target]));
-  expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared-apps?limit=100&cursor=next");
+  expect(api.get).toHaveBeenCalledWith("/api/collaboration/shared-apps?limit=100&fields=display&cursor=next");
   shared = false;
   act(() => notifyCollaborationDiscoveryChanged());
   await waitFor(() => expect(result.current.items).toEqual([]));
@@ -81,6 +81,20 @@ it("lets an in-flight page finish when the polling timer fires", async () => {
   expect(result.current.items).toEqual([]);
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(api.get).toHaveBeenCalledTimes(1);
+});
+
+it("names a shared app from the owner's manifest name and falls back to its slug", () => {
+  expect(sharedAppTargetName({ appId: "shared-tasks-lab", name: "Team Tracker" })).toBe("Team Tracker");
+  expect(sharedAppTargetName({ appId: "shared-tasks-lab" })).toBe("Shared tasks lab");
+});
+
+it("shows the owner's platform icon for a shared app in the Web Mobile launcher", () => {
+  const iconUrl = `/api/collaboration/shared-apps/${target.scopeId}/icon?v=${"c".repeat(64)}`;
+  const app = { id: "shared:tasks", name: "Team Tracker", path: `__shared-app__:${target.scopeId}`,
+    iconSlug: "apps", iconUrl, sharedAppTarget: { ...target, name: "Team Tracker", iconUrl } };
+  render(<MobileLauncher apps={[app]} onOpen={() => undefined} onOpenSettings={() => undefined}
+    openStackCount={0} onShowSwitcher={() => undefined} onCloseAll={() => undefined} />);
+  expect(screen.getByRole("button", { name: /Team Tracker/ }).querySelector("img")?.getAttribute("src")).toBe(iconUrl);
 });
 
 it("marks and opens a shared app in the Web Mobile launcher", () => {

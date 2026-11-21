@@ -6,7 +6,7 @@ import { invoke, onEvent } from "../../lib/operator";
 import { useTabs } from "../../stores/tabs";
 import { useConnection } from "../../stores/connection";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
-import { lookupSharedApp, sharedAppDisplayName } from "@matrix-os/ui/collaborative-app-sharing";
+import { lookupSharedApp, sharedAppTargetName } from "@matrix-os/ui/collaborative-app-sharing";
 import { useDesktopCollaborationApi } from "./DesktopCollaborationOrganization";
 
 interface PendingSharedAppLink { link: SharedAppDeepLink | null; set(link: SharedAppDeepLink | null): void }
@@ -60,7 +60,7 @@ export function SharedAppDeepLinkOpener() {
       // Honour the link's expectations, like the web /shared/app route.
       if ((link.expectedShareRevision && link.expectedShareRevision !== target.shareRevision)
         || (link.expectedBuildId && link.expectedBuildId !== target.buildId)) { toast.error(OUTDATED_LINK); return; }
-      const tabId = useTabs.getState().openTab({ kind: "app", slug: target.appId, title: sharedAppDisplayName(target.appId), sharedAppTarget: target });
+      const tabId = useTabs.getState().openTab({ kind: "app", slug: target.appId, title: sharedAppTargetName(target), sharedAppTarget: target });
       useDesktopSurfaces.getState().activateSurface(tabId);
     }).catch((error: unknown) => {
       console.warn("[shared-app-link] lookup unavailable", error instanceof Error ? error.name : "UnknownError");

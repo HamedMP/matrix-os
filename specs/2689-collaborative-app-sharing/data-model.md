@@ -106,6 +106,11 @@ Constraints:
 - Rebind CASes binding/scope and bumps auth epoch atomically.
 - Stop changes scope/binding atomically and never deletes app rows.
 
+### Shared app presentation (platform, ENG-490)
+
+- `collaboration_app_icons(runtime_id, sha256)`: primary key; `content_type` in PNG/WebP/JPEG; `bytes` BYTEA of 12 to 262144 bytes; `created_at`, `last_uploaded_at`. Owner-runtime uploads only. Capped at 64 per runtime, with the oldest unreferenced icon evicted under a per-runtime advisory lock; unreferenced icons older than 7 days are collected in bounded batches.
+- `collaboration_directory.app_name` (at most 120 characters) and `app_icon_sha256` are written in the same transaction as the rest of the directory event. `app_icon_sha256` is set only when `(runtime_id, sha256)` exists and the share is not stopped. A dangling address from a collection race serves `404` and heals on the next event.
+
 ### Shared app launch session
 
 Ephemeral bounded state:

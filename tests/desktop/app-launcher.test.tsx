@@ -58,6 +58,33 @@ describe("AppLauncher", () => {
     ]));
   });
 
+  it("shows the owner's name and authenticated platform icon for an organization app", async () => {
+    const scopeId = "10000000-0000-4000-8000-000000000001";
+    const iconUrl = `/api/collaboration/shared-apps/${scopeId}/icon?v=${"c".repeat(64)}`;
+    const target = {
+      scopeId, runtimeId: "runtime_owner",
+      organizationId: "org_team", authorityGeneration: 1, appId: "shared-tasks-lab",
+      catalogId: "30000000-0000-4000-8000-000000000001",
+      readinessId: "40000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64), buildId: "b".repeat(64), shareRevision: "1",
+      owner: { actorId: "user_owner", displayName: "Owner" }, name: "Team Tracker", iconUrl,
+    };
+    useConnection.setState({ userId: "user_member", organizationId: "org_team", organizationStatus: "member" });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [target] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppLauncher presentation="launchpad" />);
+    const tile = await screen.findByRole("button", { name: "Team Tracker" });
+    // Resolved against the platform origin, where the trusted core attaches the member's bearer.
+    expect(tile.querySelector("img")?.getAttribute("src")).toBe(`https://platform.test${iconUrl}`);
+    expect(tile.innerHTML).not.toContain("/icons/shared-tasks-lab");
+    fireEvent.click(tile);
+    expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Team Tracker", sharedAppTarget: target }),
+    ]));
+  });
+
   it("filters apps in the Electron Desktop launchpad without dismissing it", async () => {
     // Fault: chip pointer events reach the launchpad backdrop, which closes before the filter applies.
     const target = {

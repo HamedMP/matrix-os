@@ -157,9 +157,18 @@ describe("renderer opener", () => {
     usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
     render(<SharedAppDeepLinkOpener />);
     await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ sharedAppTarget: target })])));
-    expect(get.mock.calls).toEqual([[`/api/collaboration/shared-apps/${SCOPE}`]]);
+    expect(get.mock.calls).toEqual([[`/api/collaboration/shared-apps/${SCOPE}?fields=display`]]);
     expect(usePendingSharedAppLink.getState().link).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  // Fault: a link-opened window titled from the slug while the launcher showed the owner's name.
+  it("titles a link-opened app with the owner's app name", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, useTabs } = await opener();
+    platformWith(async () => ({ ...target, name: "Team Tracker" }));
+    usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
+    render(<SharedAppDeepLinkOpener />);
+    await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Team Tracker" })])));
   });
 
   it("never opens a scope the platform says is not shared with the member", async () => {
