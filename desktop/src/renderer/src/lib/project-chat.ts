@@ -142,6 +142,13 @@ export async function openProjectChat(
   return loadCodingAgentConversation(projectId, options.threadId);
 }
 
+/** Ends a project's pending new-chat request, whichever project key it was made with. */
+export function endComposerRequest(project: { slug: string; id?: string }): void {
+  const launcher = useProjectChatLauncher.getState();
+  launcher.consumeComposer(project.slug);
+  if (project.id) launcher.consumeComposer(project.id);
+}
+
 /**
  * Routes a coding-agent thread (notification, palette, or Recents) into its
  * project context. The project is resolved from the runtime summary or the
