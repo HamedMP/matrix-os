@@ -36,6 +36,10 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   // Present, including an empty array for a plain shell, until activation.
   // Optional only so state written before startup-intent persistence remains readable.
   startupCommand: StartupCommandSchema.optional(),
+  // Whether the current pane runs a command, which Zellij keeps open after it
+  // exits (a shell's exit closes its pane). Set at activation; absent in older
+  // state, where the tab is treated as possibly held.
+  heldOnExit: z.boolean().optional(),
 }).strict();
 const InternalWorkspaceBaseSchema = z.object({
   id: TerminalWorkspaceIdSchema,
@@ -289,6 +293,7 @@ export class TerminalWorkspaceStore {
       // A tab from older state keeps no time until its pane changes.
       if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
+      if (tab.startupCommand !== undefined) tab.heldOnExit = tab.startupCommand.length > 0;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
       if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
@@ -695,6 +700,7 @@ export class TerminalWorkspaceStore {
       zellijPaneAssignedAt: _paneAssignedAt,
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
+      heldOnExit: _heldOnExit,
       ...publicTab
     } = tab;
     return TerminalTabSchema.parse({ ...publicTab, incarnation: terminalTabIncarnation(tab) });
