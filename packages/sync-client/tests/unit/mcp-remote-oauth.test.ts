@@ -6,7 +6,7 @@
  * flight during `matrix mcp login`/`logout` overwrites the new login or
  * recreates the deleted credentials.
  */
-import { mkdtemp, rm, writeFile, readdir, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, readdir, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -155,6 +155,44 @@ describe("remote MCP refresh lock", () => {
       expect(held.nonce).toMatch(/^[a-f0-9]{32}$/);
     });
     expect((await readdir(dir))).toEqual([]);
+  });
+
+  const deadLock = () => JSON.stringify({ pid: 2_147_483_646, createdAt: Date.now(), nonce: "dead" });
+
+  it("leaves a dead process's lock alone while another bridge is recovering it", async () => {
+    // Fault: two bridges both judged the lock stale; the slower one's unlink
+    // then deleted the faster one's fresh replacement and both refreshed.
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    await writeFile(`${path}.recover`, "");
+    let ran = false;
+    await expect(withProfileRefreshLock(path, async () => { ran = true; }, { waitMs: 300 })).rejects.toThrow("busy");
+    expect(ran).toBe(false);
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ nonce: "dead" });
+  });
+
+  it("clears a recovery marker abandoned past its grace period", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    await writeFile(`${path}.recover`, "");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(`${path}.recover`, old, old);
+    await expect(withProfileRefreshLock(path, async () => "ran", { waitMs: 1_000 })).resolves.toBe("ran");
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("lets only one of many bridges recovering the same dead lock run at a time", async () => {
+    const path = join(dir, "mcp-oauth.json.lock");
+    await writeFile(path, deadLock());
+    let active = 0;
+    let peak = 0;
+    await Promise.all(Array.from({ length: 12 }, () => withProfileRefreshLock(path, async () => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+    })));
+    expect(peak).toBe(1);
+    expect(await readdir(dir)).toEqual([]);
   });
 });
 

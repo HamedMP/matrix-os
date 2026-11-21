@@ -8,6 +8,12 @@
  * visible lock always has complete content from its creator. A lock is broken
  * only when its PID is gone, it is older than STALE_MS, or it is unreadable
  * AND its mtime is past the same grace period; never immediately.
+ *
+ * Breaking is serialized by a `<lock>.recover` marker: a bridge removes a stale
+ * lock only while it holds the marker and after judging the lock again. Without
+ * it, two bridges could both judge one dead lock stale and the slower `unlink`
+ * would delete the faster bridge's fresh replacement. A marker whose owner died
+ * is cleared after the same grace period.
  */
 import { randomBytes } from "node:crypto";
 import { link, readFile, stat, unlink, writeFile } from "node:fs/promises";
@@ -53,6 +59,24 @@ async function isStale(path: string, now: number): Promise<boolean> {
   return !processAlive(held.pid) || now - held.createdAt > STALE_MS;
 }
 
+/** Returns true when this process held the recovery marker, so the caller may retry at once. */
+async function breakStaleLock(path: string): Promise<boolean> {
+  const marker = `${path}.recover`;
+  try { await writeFile(marker, String(process.pid), { flag: "wx", mode: 0o600 }); }
+  catch (error: unknown) {
+    if (errorCode(error) !== "EEXIST") throw error;
+    try {
+      if (Date.now() - (await stat(marker)).mtimeMs > STALE_MS) await ignoreMissing(unlink(marker));
+    } catch (statError: unknown) { if (errorCode(statError) !== "ENOENT") throw statError; }
+    return false;
+  }
+  try {
+    // Judge again under the marker: another bridge may have replaced the lock already.
+    if (await isStale(path, Date.now())) await ignoreMissing(unlink(path));
+  } finally { await ignoreMissing(unlink(marker)); }
+  return true;
+}
+
 export async function withProfileRefreshLock<T>(path: string, operation: () => Promise<T>,
   options: { waitMs?: number } = {}): Promise<T> {
   const nonce = randomBytes(16).toString("hex");
@@ -66,7 +90,7 @@ export async function withProfileRefreshLock<T>(path: string, operation: () => P
         break;
       } catch (error: unknown) {
         if (errorCode(error) !== "EEXIST") throw error;
-        if (await isStale(path, Date.now())) { await ignoreMissing(unlink(path)); continue; }
+        if (await isStale(path, Date.now()) && await breakStaleLock(path)) continue;
         if (Date.now() >= deadline) throw new Error("Matrix MCP tokens are busy in another process");
         await new Promise(resolve => setTimeout(resolve, POLL_MS));
       }
