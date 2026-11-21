@@ -1,3 +1,4 @@
+import { randomUUID } from "./random-uuid.js";
 import { CanonicalCreateChatTurnRequestSchema, CanonicalChatTurnAdmissionResponseSchema, type CanonicalChatDetailResponse, type CanonicalChatRecord,
   type CanonicalChatTurnAdmissionResponse, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 
@@ -114,7 +115,7 @@ export function createCanonicalChatAdmissionTracker() {
         requestedExecutionRoot: input.executionRoot,
         ...(sourcePayload === payload ? {} : { sourcePayload }),
         id: seed && !attempts.some(item => item.identity === identity && item.scope === scope && item.id === seed)
-          ? seed : `req_${crypto.randomUUID().replaceAll("-", "")}`, resolve, receipt: promise, lastRead: 0 };
+          ? seed : `req_${randomUUID().replaceAll("-", "")}`, resolve, receipt: promise, lastRead: 0 };
       attempts.push(attempt);
       return attempt;
     },

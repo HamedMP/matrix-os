@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationDiscussionMessageSchema,
   CollaborationDiscussionMessagesResponseSchema,
@@ -125,7 +126,7 @@ export function useSessionDiscussion(input: {
     setError(false);
     try {
       const message = CollaborationDiscussionMessageSchema.parse(await input.api.post(`${base}/messages`, {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedRevision: input.scope.revision,
         text: draft.trim(),
       }));

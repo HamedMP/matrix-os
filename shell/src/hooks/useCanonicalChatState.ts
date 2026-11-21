@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
 import { createCanonicalChatRowActions } from "@/lib/canonical-chat-client";
@@ -54,7 +55,7 @@ const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
-  return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+  return `req_${randomUUID().replaceAll("-", "")}`;
 }
 
 // Events that can add, move, remove or reclassify a Chat. Run, queue and

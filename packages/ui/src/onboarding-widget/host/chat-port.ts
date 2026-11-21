@@ -1,3 +1,4 @@
+import { randomUUID } from "../../random-uuid.js";
 import type {
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
@@ -21,7 +22,7 @@ export interface OnboardingChatPort {
 }
 
 export function onboardingRequestId(): string {
-  return `req_${crypto.randomUUID().replaceAll("-", "")}`;
+  return `req_${randomUUID().replaceAll("-", "")}`;
 }
 
 export interface OnboardingAdmissionRequestIds {

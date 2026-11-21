@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import {
   CollaborationAppActionResponseSchema,
   CollaborationRevisionSchema,
@@ -64,7 +65,7 @@ export function createOwnerCollaborativeAppTransport(input: {
 }): OwnerCollaborativeAppTransport {
   const appId = AppIdSchema.parse(input.appId);
   const encodedAppId = encodeURIComponent(appId);
-  const requestId = input.createRequestId ?? (() => crypto.randomUUID());
+  const requestId = input.createRequestId ?? (() => randomUUID());
   let subscribedScopeId: string | null = null;
   let unsubscribe: (() => void) | null = null;
   let subscriptionGeneration = 0;

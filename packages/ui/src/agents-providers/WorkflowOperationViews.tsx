@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { WorkflowLoadingSpinner } from "./WorkflowLoadingSpinner.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 import { keyFormatFailure } from "./key-format.js";
@@ -229,7 +230,7 @@ export function WorkflowDisconnectDialog({ state }: { state: HarnessWorkflowCont
                         {
                           harnessInstanceId: harness.id,
                           kind: "uninstall",
-                          idempotencyKey: crypto.randomUUID(),
+                          idempotencyKey: randomUUID(),
                         },
                         signal,
                       );

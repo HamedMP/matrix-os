@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DownloadPathSchema, FileDownloadResultSchema,
@@ -36,7 +37,7 @@ export function useFileDownload(scope: string, transport: FileDownloadTransport)
     setState({ scope, filename, pending: true });
     void Promise.resolve().then(() => {
       request.controller.signal.throwIfAborted();
-      return transport({ path, requestId: crypto.randomUUID(), signal: request.controller.signal });
+      return transport({ path, requestId: randomUUID(), signal: request.controller.signal });
     }).then((result) => {
       const parsed = FileDownloadResultSchema.safeParse(result);
       return parsed.success ? parsed.data : { status: "error", code: "failed" } as const;

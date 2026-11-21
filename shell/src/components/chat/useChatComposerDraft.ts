@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 
@@ -11,7 +12,7 @@ export function useChatComposerDraft(scope: string, identity: unknown) {
   const draft = store.identity === identity ? store.drafts[scope] ?? emptyDraft : emptyDraft;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable draft writers are effect dependencies in ChatInput, including non-compiler tests and development.
   const update = useCallback((patch: Partial<Pick<Draft, "text" | "resources">>, replace = false) => {
-    const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
+    const requestId = `req_${randomUUID().replaceAll("-", "")}`;
     setStore((current) => {
     if (current.identity !== identity) return current;
     const drafts = { ...current.drafts };
@@ -32,7 +33,7 @@ export function useChatComposerDraft(scope: string, identity: unknown) {
         if (current.identity !== identity) return current;
         const existing = current.drafts[target];
         if (existing && (existing.text.trim() || existing.resources.length)) return current;
-        const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
+        const requestId = `req_${randomUUID().replaceAll("-", "")}`;
         const drafts = { ...current.drafts, [target]: { ...emptyDraft, text, requestId, permissionIdentity: requestId } };
         for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
         return { identity, drafts };

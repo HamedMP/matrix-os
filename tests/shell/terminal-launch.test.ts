@@ -16,6 +16,18 @@ describe("terminal launch paths", () => {
     sessionStorage.clear();
   });
 
+  it("queues Terminal launches over plain tailnet HTTP, where browsers hide crypto.randomUUID", () => {
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+    vi.stubGlobal("crypto", { getRandomValues });
+    try {
+      enqueueTerminalLaunch("claude-login");
+      const [launch] = drainTerminalLaunchQueue();
+      expect(launch?.tabId).toMatch(/^tt_[0-9a-f]{32}$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("maps onboarding setup actions to startup commands", () => {
     expect(terminalLaunchConfig("claude-login")).toMatchObject({
       label: "Claude login",
