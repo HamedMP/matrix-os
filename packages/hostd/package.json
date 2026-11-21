@@ -4,16 +4,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./ch-client": "./src/ch-client.ts"
+    "./ch-client": "./src/ch-client.ts",
+    "./guest-client": "./src/guest-client.ts",
+    "./memory-controller": "./src/memory-controller.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
   },
   "dependencies": {
     "undici": "7.30.1"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "esbuild": "0.25.12",
     "typescript": "^5.9.3"
   }
 }
