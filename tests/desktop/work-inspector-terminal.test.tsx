@@ -2,7 +2,8 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { CanonicalChatDetailResponse, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
@@ -116,6 +117,58 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it.each(["Next question", "First question"])("preserves the edited Side chat draft %s when an earlier answer completes", async nextDraft => {
+    let answer!: (value: CanonicalSideChatSnapshot) => void;
+    const client = {
+      getSideChat: vi.fn(async () => ({ threadId: "side_fixture", messages: [] })),
+      createSideChat: vi.fn(),
+      askSideChat: vi.fn(() => new Promise<CanonicalSideChatSnapshot>(resolve => { answer = resolve; })),
+    };
+    render(<SideChatPanel chatId="chat_draft" client={client} onSendToMain={vi.fn()} />);
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "First question" } });
+    const send = screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement;
+    await waitFor(() => expect(send.disabled).toBe(false));
+    fireEvent.click(send);
+    await waitFor(() => expect(client.askSideChat).toHaveBeenCalledOnce());
+    fireEvent.change(input, { target: { value: "Editing the next draft" } });
+    fireEvent.change(input, { target: { value: nextDraft } });
+    await act(async () => answer({ threadId: "side_fixture", messages: [{ seq: 1, role: "assistant", content: "First answer", createdAt: NOW }] }));
+    expect(await screen.findByText("First answer")).toBeTruthy();
+    expect(input.value).toBe(nextDraft);
+  });
+
+  it("retries a failed Side chat read without losing the question already typed", async () => {
+    const client = {
+      getSideChat: vi.fn().mockRejectedValueOnce(new Error("Synthetic offline read")).mockResolvedValueOnce({
+        threadId: "side_fixture", messages: [{ seq: 1, role: "assistant", content: "Saved answer", createdAt: NOW }],
+      }),
+      createSideChat: vi.fn(), askSideChat: vi.fn(),
+    };
+    render(<SideChatPanel chatId="chat_retry" client={client} onSendToMain={vi.fn()} />);
+    await screen.findByRole("alert");
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Keep this question" } });
+    const retry = screen.getByRole("button", { name: "Retry loading side chat" });
+    expect((screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    expect(await screen.findByText("Saved answer")).toBeTruthy();
+    expect(client.getSideChat).toHaveBeenCalledTimes(2);
+    expect(input.value).toBe("Keep this question");
+    expect((screen.getByRole("button", { name: "Send side question" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(client.askSideChat).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Side chat in the New tab picker before its main chat exists", async () => {
+    render(<WorkFilesInspector projects={[]} active />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add inspector tab" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "New tab" }));
+    expect(screen.getByRole("tabpanel", { name: "New tab" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Side chat/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Browser/ })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Side chat" })).toBeNull();
+  });
+
   it("turns a New tab picker into a side chat and hides the extra add button while choosing", async () => {
     render(<WorkFilesInspector detail={detail("chat_picker")} projects={[]} active/>);
     fireEvent.click(screen.getByRole("button", { name: "Add inspector tab" }));

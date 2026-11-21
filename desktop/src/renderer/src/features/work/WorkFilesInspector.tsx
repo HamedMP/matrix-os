@@ -424,6 +424,7 @@ function WorkInspectorContent({
     setSelectedId(NEW_TAB.id); setMenuOpen(false);
   };
   const chooseTool = (kind: Exclude<InspectorTool, "new">) => {
+    if (kind === "side-chat" && !detail) return;
     setTabs(current => current.filter(tab => tab.kind !== "new"));
     if (kind === "terminal") { void createTerminal(); return; }
     const target = kind === "files" ? FILES_TAB : kind === "browser" ? BROWSER_TAB : SIDE_CHAT_TAB;
@@ -508,10 +509,10 @@ function WorkInspectorContent({
           </DropdownMenu.Root>
 }
           trailing={onClose ? <button ref={closeButtonRef} type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="mb-1 ml-auto grid size-7 shrink-0 place-items-center"><PanelRightCloseIcon size={14} aria-hidden/></button> : undefined}/>
-        {selected.kind === "new" ? <ChatInspectorNewTab browser onChoose={chooseTool} recent={[
+        {selected.kind === "new" ? <ChatInspectorNewTab browser sideChat={Boolean(detail)} onChoose={chooseTool} recent={[
           ...(selectedFile ? [{ id: "recent-file", kind: "files" as const, title: selectedFile.label, subtitle: selectedFile.path, onOpen: () => chooseTool("files") }] : []),
           ...attachableSessions.map(session => ({ id: session.id, kind: "terminal" as const, title: session.name, subtitle: "Terminal", onOpen: () => { setTabs(current => current.filter(tab => tab.kind !== "new")); openTerminal(session); } })),
-          ...(tabs.some(tab => tab.kind === "side-chat") ? [{ id: "recent-side", kind: "side-chat" as const, title: "Side chat", onOpen: () => chooseTool("side-chat") }] : []),
+          ...(detail && tabs.some(tab => tab.kind === "side-chat") ? [{ id: "recent-side", kind: "side-chat" as const, title: "Side chat", onOpen: () => chooseTool("side-chat") }] : []),
         ]}/> : null}
         {terminalCreateStatus === "error" ? (
           <p role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>

@@ -24,6 +24,8 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
+  const [readAttempt, setReadAttempt] = useState(0);
+  const draftRevision = useRef(0);
   const generation = useRef(0);
   useEffect(() => {
     const current = ++generation.current;
@@ -39,11 +41,12 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
       setError("Side chat could not be loaded. Try again.");
     }).finally(() => { if (generation.current === current) setLoading(false); });
     return () => { generation.current++; };
-  }, [chatId, client]);
+  }, [chatId, client, readAttempt]);
   const send = async () => {
     const text = draft.trim();
     if (!text || pending || !snapshot) return;
     const current = generation.current;
+    const submittedRevision = draftRevision.current;
     setPending(true);
     setError(null);
     try {
@@ -51,7 +54,7 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
       const response = await client.askSideChat(chatId, { clientRequestId: `req_${crypto.randomUUID().replaceAll("-", "")}`, text });
       if (generation.current !== current) return;
       setSnapshot(response);
-      setDraft("");
+      if (draftRevision.current === submittedRevision) setDraft("");
     } catch (cause: unknown) {
       if (generation.current !== current) return;
       console.warn("[side-chat] Turn failed:", cause instanceof Error ? cause.name : "UnknownError");
@@ -84,10 +87,11 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
       </article>)}
     </div>
     {error ? <p role="alert" className="px-3 py-1 text-xs" style={{ color: "var(--danger-text, var(--destructive-text, var(--destructive)))" }}>{error}</p> : null}
+    {error && !snapshot && !loading ? <Button variant="ghost" size="sm" aria-label="Retry loading side chat" onClick={() => setReadAttempt(attempt => attempt + 1)}>Retry</Button> : null}
     <form className="side-chat-composer" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <textarea aria-label="Ask side chat" placeholder="Ask on the side…" value={draft} onChange={event => setDraft(event.target.value)} maxLength={8_000} rows={1}
+      <textarea aria-label="Ask side chat" placeholder="Ask on the side…" value={draft} onChange={event => { draftRevision.current++; setDraft(event.target.value); }} maxLength={8_000} rows={1}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }}/>
-      <Button type="submit" size="sm" aria-label="Send side question" disabled={pending || loading || !draft.trim()} className="side-chat-send"><ArrowUp size={16} aria-hidden/></Button>
+      <Button type="submit" size="sm" aria-label="Send side question" disabled={pending || loading || !snapshot || !draft.trim()} className="side-chat-send"><ArrowUp size={16} aria-hidden/></Button>
     </form>
   </section>;
 }

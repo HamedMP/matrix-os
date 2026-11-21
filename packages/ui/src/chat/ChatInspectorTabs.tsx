@@ -36,12 +36,12 @@ export function ChatInspectorTabs({ tabs, selectedId, onSelect, onClose, onAdd, 
   </div>{tabs.find(tab => tab.id === selectedId)?.kind !== "new" ? addControl ?? <Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label="Add inspector tab" onClick={onAdd}><Plus size={16} aria-hidden/></Button> : null}{trailing}</header>;
 }
 
-export function ChatInspectorNewTab({ browser = false, onChoose, recent = [] }: {
-  browser?: boolean; onChoose(kind: Exclude<InspectorTool, "new">): void;
+export function ChatInspectorNewTab({ browser = false, sideChat = true, onChoose, recent = [] }: {
+  browser?: boolean; sideChat?: boolean; onChoose(kind: Exclude<InspectorTool, "new">): void;
   recent?: readonly { id: string; kind: Exclude<InspectorTool, "new">; title: string; subtitle?: string; onOpen(): void }[];
 }) {
   const choices = [{ kind: "files" as const, label: "Files", shortcut: "⌘P" }, { kind: "terminal" as const, label: "Terminal", shortcut: "⌃`" },
-    { kind: "side-chat" as const, label: "Side chat", shortcut: "⌥⌘S" }, ...(browser ? [{ kind: "browser" as const, label: "Browser", shortcut: "⌘T" }] : [])];
+    ...(sideChat ? [{ kind: "side-chat" as const, label: "Side chat", shortcut: "⌥⌘S" }] : []), ...(browser ? [{ kind: "browser" as const, label: "Browser", shortcut: "⌘T" }] : [])];
   return <div className="desktop-chat-design chat-inspector-picker" role="tabpanel" aria-label="New tab" id="work-inspector-panel-new-tab"><h2>Open</h2>
     {choices.map(choice => <button type="button" key={choice.kind} onClick={() => onChoose(choice.kind)}><InspectorToolIcon kind={choice.kind}/><span>{choice.label}</span><kbd>{choice.shortcut}</kbd></button>)}
     {recent.length ? <><h2>Recent</h2>{recent.map(item => <button type="button" key={item.id} onClick={item.onOpen}><InspectorToolIcon kind={item.kind}/><span>{item.title}{item.subtitle ? <small>{item.subtitle}</small> : null}</span></button>)}</> : null}
