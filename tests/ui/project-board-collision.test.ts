@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { closestCorners, type ClientRect, type CollisionDetection } from "@dnd-kit/core";
-import { boardCollisionDetection } from "../../packages/ui/src/project-board/board-collision";
+import { boardCollisionDetection, orderAfterDrop } from "../../packages/ui/src/project-board/board-collision";
 
 function rect(left: number, top: number, width: number, height: number): ClientRect {
   return { left, top, width, height, right: left + width, bottom: top + height };
@@ -36,6 +36,19 @@ describe("boardCollisionDetection", () => {
   });
 
   it("falls back to overlap when the pointer is outside every column", () => {
-    expect(boardCollisionDetection(args({ x: 270, y: 900 })).length).toBeGreaterThanOrEqual(0);
+    // The pointer is right of In review, but the dragged card still overlaps that column.
+    const outside = { ...args({ x: 560, y: 60 }), collisionRect: rect(440, 20, 240, 80) };
+    expect(boardCollisionDetection(outside)[0]?.id).toBe("column:in_review");
+  });
+});
+
+describe("orderAfterDrop", () => {
+  it("moves a card dropped on its own column's blank space to the end", () => {
+    expect(orderAfterDrop(["a", "b", "c"], "a", "column:todo")).toEqual(["b", "c", "a"]);
+  });
+
+  it("puts a card dropped on another card in that card's place", () => {
+    expect(orderAfterDrop(["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
+    expect(orderAfterDrop(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
   });
 });
