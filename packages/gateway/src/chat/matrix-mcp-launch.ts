@@ -52,22 +52,95 @@ export interface MatrixMcpRunContext {
   integrationRead?: boolean;
 }
 
-/** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(scope: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call" = "call", driveContext = false, integrationRead = false): string {
+/** Matrix Core MCP (spec 2691): progressive discovery is safe in every mode. */
+export const MATRIX_CORE_MCP_DISCOVERY_TOOLS = [
+  "mcp__matrix-integrations__list_services",
+  "mcp__matrix-integrations__search_tools",
+  "mcp__matrix-integrations__describe_tool",
+] as const;
+
+/** Broker calls plus status-only approval polling; added only where calls are auto-approved. */
+export const MATRIX_CORE_MCP_CALL_TOOLS = [
+  "mcp__matrix-integrations__call_tool",
+  "mcp__matrix-integrations__get_approval",
+] as const;
+
+/** Harness labels for usage analytics; they never select authority. */
+export type MatrixMcpHarness = "claude_code" | "codex" | "opencode" | "hermes";
+export type MatrixMcpLaunchScope = "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call";
+export const MATRIX_MCP_LAUNCHER = "/opt/matrix/bin/matrix-integrations-mcp";
+export const MATRIX_MCP_SERVER_NAME = "matrix-integrations";
+export const MATRIX_MCP_RUN_TOKEN_ENV = "MATRIX_AGENT_INTEGRATIONS_TOKEN";
+
+function toolSurface(scope: MatrixMcpLaunchScope, driveContext: boolean, integrationRead: boolean): string {
+  if (scope === "preview_drive_call") return "preview-drive-call";
+  if (scope.startsWith("chat_")) return `${scope.replace("_", "-")}${driveContext ? "-drive" : ""}`;
+  return `custom-mcp-${scope}${integrationRead ? "-integrations" : ""}${driveContext ? "-drive" : ""}`;
+}
+
+/**
+ * The one stdio server every harness receives. `--require-scoped-capability`
+ * survives MCP child environment sanitization and makes the host launcher deny
+ * machine-bearer fallback; `--harness` is forwarded only as a usage label.
+ */
+export function matrixMcpServerLaunch(scope: MatrixMcpLaunchScope, options: {
+  harness: MatrixMcpHarness; driveContext?: boolean; integrationRead?: boolean;
+}): { command: string; args: string[] } {
+  return {
+    command: MATRIX_MCP_LAUNCHER,
+    args: ["--require-scoped-capability", `--tool-surface=${toolSurface(scope, options.driveContext === true, options.integrationRead === true)}`,
+      `--harness=${options.harness}`],
+  };
+}
+
+/** Claude Code `--mcp-config` JSON. */
+export function matrixMcpConfig(scope: MatrixMcpLaunchScope = "call", driveContext = false, integrationRead = false): string {
   return JSON.stringify({
-    mcpServers: {
-      "matrix-integrations": {
-        command: "/opt/matrix/bin/matrix-integrations-mcp",
-        // An argv flag survives MCP child environment sanitization and makes
-        // the host launcher deny machine-bearer fallback for this Chat Run.
-        args: ["--require-scoped-capability", `--tool-surface=${scope === "preview_drive_call" ? "preview-drive-call" : scope.startsWith("chat_") ? `${scope.replace("_", "-")}${driveContext ? "-drive" : ""}` : `custom-mcp-${scope}${integrationRead ? "-integrations" : ""}${driveContext ? "-drive" : ""}`}`],
-      },
-    },
+    mcpServers: { [MATRIX_MCP_SERVER_NAME]: matrixMcpServerLaunch(scope, { harness: "claude_code", driveContext, integrationRead }) },
   });
+}
+
+/**
+ * Codex `-c key=value` overrides (values are TOML; JSON strings and string
+ * arrays are valid TOML). `env_vars` forwards only the run bearer by name.
+ */
+export function codexMatrixMcpConfigArgs(scope: "call" | "discovery"): string[] {
+  const server = matrixMcpServerLaunch(scope, { harness: "codex" });
+  const key = `mcp_servers.${MATRIX_MCP_SERVER_NAME}`;
+  return [
+    "-c", `${key}.command=${JSON.stringify(server.command)}`,
+    "-c", `${key}.args=${JSON.stringify(server.args)}`,
+    "-c", `${key}.env_vars=${JSON.stringify([MATRIX_MCP_RUN_TOKEN_ENV])}`,
+  ];
+}
+
+const OPENCODE_CORE_DISCOVERY = ["list_services", "search_tools", "describe_tool"] as const;
+const OPENCODE_CORE_CALL = ["call_tool", "get_approval"] as const;
+
+/**
+ * OpenCode `mcp` block plus exact permission grants. OpenCode names MCP tools
+ * `<server>_<tool>`; only the Core tools are allowed, never a server wildcard.
+ */
+export function openCodeMatrixMcpConfig(scope: "call" | "discovery"): {
+  mcp: Record<string, unknown>; permission: Record<string, "allow">;
+} {
+  const server = matrixMcpServerLaunch(scope, { harness: "opencode" });
+  const tools = scope === "call" ? [...OPENCODE_CORE_DISCOVERY, ...OPENCODE_CORE_CALL] : [...OPENCODE_CORE_DISCOVERY];
+  return {
+    mcp: { [MATRIX_MCP_SERVER_NAME]: { type: "local", command: [server.command, ...server.args],
+      environment: { [MATRIX_MCP_RUN_TOKEN_ENV]: `{env:${MATRIX_MCP_RUN_TOKEN_ENV}}` } } },
+    permission: Object.fromEntries(tools.map(tool => [`${MATRIX_MCP_SERVER_NAME}_${tool}`, "allow" as const])),
+  };
 }
 
 export interface MatrixMcpRunCapability {
   token: string;
+  /**
+   * Call/discovery scopes only: extends a still-live grant by one lifetime.
+   * The bearer is fixed in a long-lived harness process env (Codex), so the
+   * owner of the run renews it instead of reissuing. False once revoked or expired.
+   */
+  renew?(): boolean;
   surface?: "preview_drive_call";
   previewDrive?: { runGrant: string; chatId: string; runId: string };
   revoke(): void;
@@ -245,7 +318,16 @@ export function createMatrixMcpCapabilityRegistry(options: {
         live: () => !closed && active.has(key) && now() < expiresAt,
       }) : undefined;
       active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? { driveContext: true } : {}), ...(input.integrationRead === true ? { integrationRead: true } : {}), expiresAt, authority });
+      // Chat-call grants carry an authority bound to the original expiry; they are not renewable.
+      const renewable = input.scope === "call" || input.scope === "discovery";
       return { token, revoke: () => { active.delete(key); },
+        ...(renewable ? { renew: () => {
+          sweep();
+          const grant = active.get(key);
+          if (closed || !grant) return false;
+          grant.expiresAt = now() + LIFETIME_MS;
+          return true;
+        } } : {}),
         ...(authority ? { grantIntegrationTool: authority.grantIntegrationTool } : {}) };
     },
     resolve(token, method, path) {

@@ -425,6 +425,8 @@ export class CustomMcpBroker {
     localProjection: CustomMcpServerProjection | null;
     approvalGranted?: boolean;
     approvalReceipt?: string;
+    /** External `/mcp` clients only: an owner-approved approval on their own client lease. */
+    externalApprovalId?: string;
     actorId?: string;
     runId?: string;
   }): Promise<unknown> {
@@ -435,7 +437,7 @@ export class CustomMcpBroker {
     onProgress?: McpProgressListener; signal?: AbortSignal;
     userId: string; serverId: string; toolName: string;
     arguments?: Record<string, unknown>; localProjection: CustomMcpServerProjection | null;
-    approvalGranted?: boolean; approvalReceipt?: string; actorId?: string; runId?: string;
+    approvalGranted?: boolean; approvalReceipt?: string; externalApprovalId?: string; actorId?: string; runId?: string;
   }, managedPresetId?: string): Promise<unknown> {
     if (input.approvalGranted === true) throw new CustomMcpBrokerError("forbidden");
     const row = await this.requirePrivate(input.userId, input.serverId);
@@ -462,7 +464,8 @@ export class CustomMcpBroker {
       throw new CustomMcpBrokerError("forbidden");
     }
     if (tool.approval === "always_ask" || localTool.approval === "always_ask") {
-      if (!input.actorId || !input.runId || !input.approvalReceipt) {
+      if (!input.actorId || !input.runId || (!input.approvalReceipt && !input.externalApprovalId)
+        || (input.approvalReceipt && input.externalApprovalId)) {
         throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
       }
       let argsDigest: string;
@@ -471,11 +474,11 @@ export class CustomMcpBroker {
         console.warn("[custom-mcp] invalid approval arguments:", error instanceof Error ? "error" : "non-error");
         throw new CustomMcpBrokerError("invalid");
       }
-      const consumed = await this.options.db.consumeCustomMcpToolApproval({
-        userId: input.userId, actorId: input.actorId, runId: input.runId,
-        serverId: input.serverId, serverRevision: row.revision,
-        toolName: input.toolName, argsDigest, receipt: input.approvalReceipt,
-      });
+      const binding = { userId: input.userId, actorId: input.actorId, runId: input.runId,
+        serverId: input.serverId, serverRevision: row.revision, toolName: input.toolName, argsDigest };
+      const consumed = input.externalApprovalId
+        ? await this.options.db.consumeExternalCustomMcpToolApproval({ ...binding, approvalId: input.externalApprovalId })
+        : await this.options.db.consumeCustomMcpToolApproval({ ...binding, receipt: input.approvalReceipt! });
       if (!consumed) throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
     }
     const authorization = await this.readAuthorization(input.userId, row);
@@ -507,6 +510,7 @@ export class CustomMcpBroker {
     arguments?: Record<string, unknown>;
     approvalGranted?: boolean;
     approvalReceipt?: string;
+    externalApprovalId?: string;
     actorId?: string;
     runId?: string;
   }): Promise<unknown> {
