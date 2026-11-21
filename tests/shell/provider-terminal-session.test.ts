@@ -51,6 +51,23 @@ describe("provider terminal session handoff", () => {
       .resolves.toEqual([providerRef]);
   });
 
+  it("opens a Herdr session by asking about its tab, since workspace lists never include Herdr", async () => {
+    // Found on a live VPS: Open on a Herdr attention alert showed the Terminal
+    // window but never selected the session (spec 2701).
+    const herdrRef = `tws_00000000000000000000006865726472:${OTHER_TAB_ID}`;
+    expect(enqueueExistingTerminalRef(herdrRef, "window-a")).toBe(true);
+    const fetcher = vi.fn(async (url: string) => (url.endsWith("/api/terminal/workspaces")
+      ? Response.json(workspaceResponse([tab(PROVIDER_TAB_ID, "main", "running")]))
+      : Response.json({ tab: { id: OTHER_TAB_ID, status: "running" }, state: "live" })));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: fetcher as never }))
+      .resolves.toEqual([herdrRef]);
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/workspaces/tws_00000000000000000000006865726472/tabs/${OTHER_TAB_ID}`),
+      expect.anything(),
+    );
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+  });
+
   it("queues only opaque canonical session ids and targets the active terminal", () => {
     expect(enqueueExistingTerminalSession("term_observe_abc123", "window-a")).toBe(false);
     expect(enqueueExistingTerminalSession("provider-login", "window-a")).toBe(true);

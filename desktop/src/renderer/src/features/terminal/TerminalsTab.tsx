@@ -24,6 +24,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { useTerminalAgentEvents } from "../../stores/terminal-agent-events";
 import { mergeTerminalAgentStatus } from "@matrix-os/ui/terminal-agents";
 import { DesktopHerdrSessions } from "./DesktopHerdrSessions";
+import { herdrDesktopSessionFromRefKey } from "./herdr-desktop-session";
 import {
   parseTerminalAgentStatuses,
   terminalAgentCreateOptions,
@@ -120,6 +121,10 @@ export default function TerminalsTab({
   const [selectedName, setSelectedName] = useState<string | null>(() => mostRecentShell(shells)?.name ?? null);
   const [liveSessionName, setLiveSessionName] = useState<string | null>(null);
   const [openedSessionNames, setOpenedSessionNames] = useState<string[]>([]);
+  // Herdr sessions are never in the Matrix session list (spec 2701); the ones
+  // opened here are kept beside it so selection and headers can find them.
+  const [herdrOpened, setHerdrOpened] = useState<ShellSessionSummary[]>([]);
+  const knownShells = useMemo(() => [...shells, ...herdrOpened], [shells, herdrOpened]);
   const [busyNames, setBusyNames] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<ShellSessionSummary | null>(null);
   const [renamingName, setRenamingName] = useState<string | null>(null);
@@ -155,17 +160,17 @@ export default function TerminalsTab({
 
   useEffect(() => {
     if (loading || error || authoritativeRevision === 0) return;
-    const liveNames = new Set(shells.map((shell) => shell.name));
+    const liveNames = new Set(knownShells.map((shell) => shell.name));
     setOpenedSessionNames((current) => {
       const retained = current.filter((name) => liveNames.has(name));
       return retained.length === current.length ? current : retained;
     });
     setLiveSessionName((current) => current && liveNames.has(current) ? current : null);
     setSelectedName((current) => current && liveNames.has(current) ? current : null);
-  }, [authoritativeRevision, error, loading, shells]);
+  }, [authoritativeRevision, error, loading, knownShells]);
 
   const latestShell = useMemo(() => mostRecentShell(shells), [shells]);
-  const selected = selectedName && shells.some((shell) => shell.name === selectedName)
+  const selected = selectedName && knownShells.some((shell) => shell.name === selectedName)
     ? selectedName
     : latestShell?.name ?? null;
   const visibleSessionNames = useMemo(() => {
@@ -264,13 +269,18 @@ export default function TerminalsTab({
     }
   }, [api, patchUiState]);
 
+  const openHerdrSession = useCallback((shell: ShellSessionSummary) => {
+    setHerdrOpened((current) => [...current.filter((known) => known.name !== shell.name), shell].slice(-MAX_PRESERVED_TERMINALS));
+    showShellDetail(shell);
+  }, [showShellDetail]);
+
   useEffect(() => {
     if (!latestShell || (selectedName && liveSessionName)) return;
     const selectedShell = selectedName
-      ? shells.find((shell) => shell.name === selectedName)
+      ? knownShells.find((shell) => shell.name === selectedName)
       : latestShell;
     if (selectedShell) showShellDetail(selectedShell);
-  }, [latestShell, liveSessionName, selectedName, shells, showShellDetail]);
+  }, [latestShell, liveSessionName, selectedName, knownShells, showShellDetail]);
 
   useEffect(() => {
     if (!terminalSessionRequest) return;
@@ -280,7 +290,13 @@ export default function TerminalsTab({
       consumeTerminalSessionRequest(terminalSessionRequest.requestId);
       return;
     }
-    const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
+    const requestedShell = knownShells.find((shell) => shell.name === terminalSessionRequest.sessionName);
+    const requestedHerdr = requestedShell ? null : herdrDesktopSessionFromRefKey(terminalSessionRequest.sessionName);
+    if (requestedHerdr) {
+      openHerdrSession(requestedHerdr);
+      consumeTerminalSessionRequest(terminalSessionRequest.requestId);
+      return;
+    }
     if (!requestedShell) {
       if (loading || creating || error || loadSequence === 0) return;
       // The agent events stream can name a tab before the periodic list refresh has it,
@@ -307,7 +323,8 @@ export default function TerminalsTab({
     error,
     loading,
     loadSequence,
-    shells,
+    knownShells,
+    openHerdrSession,
     showShellDetail,
     terminalSessionRequest,
   ]);
@@ -371,7 +388,7 @@ export default function TerminalsTab({
   };
 
   const overviewSelected = selected === null;
-  const headerSession = shells.find((shell) => shell.name === selected);
+  const headerSession = knownShells.find((shell) => shell.name === selected);
 
   return (
     <TerminalSidebarLayout header={(controls) => (<>
@@ -416,7 +433,7 @@ export default function TerminalsTab({
         }}
         deletingName={deleteTarget && isShellBusy(deleteTarget.name) ? deleteTarget.name : null}
         onDelete={setDeleteTarget}
-        extra={<DesktopHerdrSessions api={api} selectedName={selectedName} onOpen={showShellDetail} />}
+        extra={<DesktopHerdrSessions api={api} selectedName={selectedName} onOpen={openHerdrSession} />}
       />
     )}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
