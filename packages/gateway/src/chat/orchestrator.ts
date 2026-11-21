@@ -20,6 +20,7 @@ import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmission
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
+import { chatSendTimingsEnabled, createChatDispatchTimer } from "./send-timing.js";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
 import { createMatrixAssistantOutput } from "./matrix-assistant-output.js";
@@ -574,6 +575,7 @@ export class CanonicalChatOrchestrator {
     sharedScopeId?: string,
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
+    const sendTiming = chatSendTimingsEnabled() ? createChatDispatchTimer(run.id, run.driverKind) : undefined;
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
@@ -643,6 +645,7 @@ export class CanonicalChatOrchestrator {
       let responseCharacterCount = 0;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
+      sendTiming?.adapterStart();
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
@@ -652,6 +655,7 @@ export class CanonicalChatOrchestrator {
           throw new Error("Provider emitted an event after cancellation");
         }
         const event = CanonicalProviderRunEventSchema.parse(rawEvent);
+        sendTiming?.providerEvent();
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
           const state = adapter.serializeState(adapter.parseState(event.state));
@@ -677,6 +681,7 @@ export class CanonicalChatOrchestrator {
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);
+          sendTiming?.displayableText();
         } else if (event.type === "assistant.attachment") {
           failureStage = "persistence";
           await this.options.repository.appendAssistantAttachment(owner, {
