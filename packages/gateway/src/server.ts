@@ -256,6 +256,7 @@ import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibi
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { createPrivateNetworkRuntime } from "./server/private-network-runtime.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
 import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
@@ -1282,11 +1283,15 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
   app.use("*", securityHeadersMiddleware());
+  // Spec 2701: reject foreign Tailscale identities before bearer auth sees the request.
+  const privateNetwork = await createPrivateNetworkRuntime({ env: process.env, homePath, db: kyselyInstance });
+  app.use("*", privateNetwork.identity);
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
   registerRoutineDirectResourceFence(app);
+  app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1885,6 +1890,7 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       nativeClaudeRecovery = undefined;
+      privateNetwork.close();
       nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
