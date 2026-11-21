@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 import { OverflowingChatTitle, useMinuteClock } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
-import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
+import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "@matrix-os/ui";
+import { DESKTOP_Z_INDEX } from "../../../design/layering";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
 import type { Project } from "../../../stores/board";
@@ -84,7 +85,7 @@ export function WorkRailProjectGroup({
   ];
   return (
     <div>
-      <ProjectActionsMenu items={items}>
+      <ProjectActionsMenu items={items} zIndex={DESKTOP_Z_INDEX.popover}>
         <div data-chat-title-row data-current={activeProjectSlug === group.slug && !activeChatId || undefined} className="work-rail-project group/project relative flex min-w-0 items-center">
           <div className="work-rail-project-main">
             <button
@@ -111,7 +112,7 @@ export function WorkRailProjectGroup({
             </button>
           </div>
           <div className="work-rail-project-actions flex shrink-0 items-center gap-0.5">
-            <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} />
+            <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} zIndex={DESKTOP_Z_INDEX.popover} />
             <button
               type="button"
               aria-label={`New chat in ${group.name}`}

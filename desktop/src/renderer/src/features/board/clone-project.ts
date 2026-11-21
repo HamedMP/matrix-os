@@ -2,6 +2,7 @@
 // for minutes, so this call uses the authenticated ApiClient with an explicit
 // operation timeout. Keeping the request in ApiClient preserves its 401
 // session-expiry callback and safe error-code parsing.
+import { CLONE_FAILED_COPY, COMPUTER_UNREACHABLE_COPY, SESSION_EXPIRED_COPY, cloneErrorMessage } from "@matrix-os/ui";
 import type { ApiClient } from "../../lib/api";
 import { AppError } from "../../lib/errors";
 import { parseProject, type Project } from "../../stores/board";
@@ -13,25 +14,6 @@ export const CLONE_REQUEST_TIMEOUT_MS = 310_000;
 export type ClonedProject = Project;
 
 type CloneResult = { ok: true; project: ClonedProject } | { ok: false; message: string };
-
-function cloneErrorMessage(code: string | null): string {
-  switch (code) {
-    case "slug_conflict":
-      return "A project with that name already exists. Choose a different folder name.";
-    case "github_auth_required":
-      return "GitHub isn't connected on this computer. Sign in from the terminal, then try again.";
-    case "github_ssh_setup_required":
-      return "Open Settings → Connect Apps → GitHub Developer to finish SSH setup, then try again.";
-    case "invalid_repository_url":
-      return "That doesn't look like a GitHub repository URL.";
-    case "invalid_slug":
-    case "invalid_branch":
-    case "invalid_request":
-      return "Check the folder name and branch, then try again.";
-    default:
-      return "Couldn't clone the repository. Check the URL and try again.";
-  }
-}
 
 export async function cloneProject(options: {
   api: ApiClient;
@@ -66,13 +48,13 @@ export async function cloneProject(options: {
     console.warn("[add-project] clone request failed:", kind);
     if (err instanceof AppError) {
       if (err.category === "unauthorized") {
-        return { ok: false, message: "Your session has expired. Please sign in again." };
+        return { ok: false, message: SESSION_EXPIRED_COPY };
       }
       if (err.detail) return { ok: false, message: cloneErrorMessage(err.detail) };
       if (err.category === "offline" || err.category === "timeout") {
-        return { ok: false, message: "Couldn't reach your Matrix computer. Check the connection and try again." };
+        return { ok: false, message: COMPUTER_UNREACHABLE_COPY };
       }
     }
-    return { ok: false, message: "Couldn't clone the repository. Check the URL and try again." };
+    return { ok: false, message: CLONE_FAILED_COPY };
   }
 }

@@ -1,11 +1,13 @@
 "use client";
 
-import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
-  type ChatImportSourceFilterValue } from "@matrix-os/ui";
-import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, ProjectActionsButton, ProjectActionsMenu, filterChatsByImportSource, useMinuteClock,
+  type ChatImportSourceFilterValue, type ProjectMenuAction } from "@matrix-os/ui";
+import { ChevronRight, Folder, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { MAX_PROJECT_CHAT_ROWS, usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
+import { WebAddProjectDialog, WebProjectDeleteDialog } from "./WebProjectDialogs";
 import { projectChats, type WebProject, type WebProjectsState } from "./web-projects";
 
 // Same page size as the Electron Desktop project list.
@@ -32,10 +34,19 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
 }) {
   const { projects, loading, error, retry } = state;
   const [groupExpanded, setGroupExpanded] = useState(true);
+  // Web Mobile follows Native Mobile, which does not manage projects yet.
+  const manage = !mobile;
+  const [addOpen, setAddOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ identity: string; project: WebProject } | null>(null);
+  const deleting = deleteTarget?.identity === state.identity ? deleteTarget.project : null;
+  const openAdd = () => { setGroupExpanded(true); setAddOpen(true); };
   // Same rail geometry as Electron Desktop: no inset of its own, so the heading lines up with the lifecycle sections.
   return <nav aria-label="Projects">
     <ChatRailSection label="Projects" count={projects.length} countLabel={`${projects.length} hidden ${projects.length === 1 ? "project" : "projects"}`}
-      expanded={groupExpanded} onExpandedChange={setGroupExpanded}>
+      expanded={groupExpanded} onExpandedChange={setGroupExpanded}
+      action={manage ? <button type="button" aria-label="Create project" title="New project" className="matrix-chat-rail-section-action" onClick={openAdd}>
+        <Plus aria-hidden="true" size={15} strokeWidth={1.5} />
+      </button> : undefined}>
       {loading ? <p role="status" className="matrix-web-project-note">Loading projects…</p> : null}
       {error ? <div className="matrix-web-project-note">
         <p role="alert">Projects could not be loaded.</p>
@@ -43,18 +54,26 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       </div> : null}
       {!loading && !error && projects.length === 0 ? <div className="matrix-web-project-note">
         <p className="matrix-web-project-note-title">No projects on this computer yet.</p>
-        <p>Create a project in Matrix Desktop to get started.</p>
+        <p>{manage ? "Create a project to get started." : "Create a project in Matrix Desktop to get started."}</p>
+        {manage ? <button type="button" className="matrix-web-project-more" onClick={openAdd}>Create your first project</button> : null}
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
         chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)} listedChatIds={listedChatIds}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
-        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/>)}
+        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}
+        onDelete={manage ? () => setDeleteTarget({ identity: state.identity, project }) : undefined}/>)}
     </ChatRailSection>
+    {manage ? <>
+      <WebAddProjectDialog open={addOpen} gatewayUrl={gatewayUrl} scope={state.identity} projects={projects} onClose={() => setAddOpen(false)}
+        onProjectAdded={project => { retry(); onFocusProject(project); }} />
+      {/* The list refreshes only after the gateway confirms; a focused project then drops out of focus with it. */}
+      <WebProjectDeleteDialog project={deleting} gatewayUrl={gatewayUrl} onClose={() => setDeleteTarget(null)} onDeleted={() => retry()} />
+    </> : null}
   </nav>;
 }
 
 function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile, unreadOnly, sourceFilter, searchQuery }: {
+  mobile, unreadOnly, sourceFilter, searchQuery, onDelete }: {
   project: WebProject;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -68,7 +87,12 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
+  onDelete?: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Same action list as the Electron Desktop row; delete opens after the menu closes so the dialog takes focus.
+  const actions: ProjectMenuAction[] = onDelete ? [{ label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true,
+    onSelect: () => { window.setTimeout(onDelete, 0); } }] : [];
   const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
@@ -81,8 +105,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   // Never hide the open Chat behind Show more.
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
-  return <div>
-    <div className="matrix-web-project" data-mobile={mobile || undefined}>
+  const row = <div className="matrix-web-project" data-mobile={mobile || undefined} data-menu-open={menuOpen || undefined}>
       <button type="button" aria-label={project.name} title={project.name} className="matrix-web-project-select"
         onClick={() => onFocusProject(project)}>
         {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} />}
@@ -92,7 +115,11 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
         className="matrix-web-project-disclosure" onClick={toggleExpanded}>
         <ChevronRight aria-hidden="true" size={12} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
       </button>
-    </div>
+      {actions.length > 0 ? <ProjectActionsButton name={project.name} items={actions} zIndex={SHELL_Z_INDEX.popover}
+        className="matrix-web-project-actions" onOpenChange={setMenuOpen} /> : null}
+    </div>;
+  return <div>
+    {actions.length > 0 ? <ProjectActionsMenu items={actions} zIndex={SHELL_Z_INDEX.popover}>{row}</ProjectActionsMenu> : row}
     {expanded ? <div className="matrix-web-project-chats">
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
