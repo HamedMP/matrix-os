@@ -98,8 +98,11 @@ unchanged.
   writer used per terminal (LRU, bounded). `send`/`keys` type through a short
   attachment at that size (120×36 when none), so a verb does not fight the
   open pane's size. `read` attaches as an observer and renders the core's paint
-  on a 300×100 grid (≤ 10,000 scrollback lines, ≤ 8 MiB) so the core's screen
-  is neither wrapped nor clipped.
+  on a grid at least as large as the last writer's size, bounded to the
+  largest allowed terminal (500×200), and 300×100 when no writer is known
+  (≤ 10,000 scrollback lines, ≤ 8 MiB), so the core's screen is neither
+  wrapped nor clipped. The requested history depth is passed to the core and
+  is part of the short (400 ms) capture cache key.
 
 ### Layer 3 · Surfaces
 
@@ -257,6 +260,21 @@ Needs reviewer approval.
 - Gateway restart: no Herdr state is owned by Matrix; nothing to recover
   beyond the LRU id map, rebuilt from the next list.
 
+## Deadlines and cleanup
+
+| Wait | Deadline | On expiry |
+| --- | --- | --- |
+| `herdr-core connect` handshake and each core call | 10 s | Child killed (SIGTERM, SIGKILL after 2 s); adapter reports `unavailable` and retries with 1 s → 30 s backoff |
+| First paint on a new viewer | 250 ms | Viewer is attached anyway; the paint follows |
+| `read` capture | 1.5 s (quiet after 120 ms of no output) | Returns what was rendered; attachment closed |
+| Installer: find `herdr-core` on the login PATH | 15 s | Treated as not installed |
+| Installer: install Tailscale | 300 s | Install fails with a message |
+| Installer: Tailscale login (auth key, or the interactive wait) | 120 s | Warns, prints the retry command, continues without private access |
+| Installer: browser use install, then health check | 30 min, then 60 s | Warns and continues; the unit retries at boot |
+
+Every spawned child and attachment is closed on its deadline; nothing is left
+waiting after the installer exits or the gateway shuts down.
+
 ## Resource management
 
 - One herdr-core connection per gateway; attachments share the existing slot
@@ -275,6 +293,7 @@ Needs reviewer approval.
 | 4 | "Herdr sessions" group on three surfaces, `matrix shell list` | packages/ui, shell, desktop, sync-client |
 | 5 | Installer: own account (after S1), Herdr, browser use, Tailscale/Headscale | scripts, distro, docs |
 | 6 | Electron terminal performance from herdr-app findings | desktop |
+| — | Public docs: self-host install, Herdr sessions, private network (separate PR in `FinnaAI/matrix-os-site`, `content/docs/`) | site repo, after this stack merges |
 
 ## Risks and open questions
 
