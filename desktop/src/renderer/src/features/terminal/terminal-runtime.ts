@@ -9,7 +9,12 @@ let manager: AttachManager | null = null;
 
 // The Terminal window registers a factory for terminals that are not gateway
 // sockets (local ones). Sessions are matched by name prefix.
-let alternateSockets: { prefix: string; create(sessionName: string, events: ShellSocketEvents): SocketControl } | null = null;
+let alternateSockets: {
+  prefix: string;
+  create(sessionName: string, events: ShellSocketEvents): SocketControl;
+  /** The source repaints the whole terminal on attach (herdr-core does). */
+  repaintsOnAttach?: boolean;
+} | null = null;
 
 export function setAlternateTerminalSockets(factory: typeof alternateSockets): void {
   alternateSockets = factory;
@@ -18,6 +23,7 @@ export function setAlternateTerminalSockets(factory: typeof alternateSockets): v
 export function getAttachManager(): AttachManager {
   if (!manager) {
     manager = new AttachManager({
+      repaintsOnAttach: (sessionName) => alternateSockets?.repaintsOnAttach === true && sessionName.startsWith(alternateSockets.prefix),
       createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => {
         if (alternateSockets && sessionName.startsWith(alternateSockets.prefix)) return alternateSockets.create(sessionName, events);
         const { platformHost, runtimeSlot } = useConnection.getState();

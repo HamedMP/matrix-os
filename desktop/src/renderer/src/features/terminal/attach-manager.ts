@@ -25,6 +25,12 @@ export interface TerminalDimensions {
 export interface AttachManagerOptions {
   createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => SocketControl;
   bufferCacheCap?: number;
+  /**
+   * Sessions whose source repaints the whole terminal on attach. A snapshot
+   * of theirs is never kept: shown before the repaint, it would only be
+   * painted over, and its scrollback would stay below the source's own.
+   */
+  repaintsOnAttach?: (sessionName: string) => boolean;
 }
 
 export interface ActiveAttachment {
@@ -48,6 +54,7 @@ function errorText(err: unknown): string {
 export class AttachManager {
   private readonly createSocket: AttachManagerOptions["createSocket"];
   private readonly bufferCacheCap: number;
+  private readonly repaintsOnAttach: (sessionName: string) => boolean;
   private readonly buffers = new Map<string, string>();
   private active: ActiveSocket | null = null;
   private generation = 0;
@@ -56,6 +63,7 @@ export class AttachManager {
   constructor(options: AttachManagerOptions) {
     this.createSocket = options.createSocket;
     this.bufferCacheCap = Math.max(1, Math.floor(options.bufferCacheCap ?? DEFAULT_BUFFER_CACHE_CAP));
+    this.repaintsOnAttach = options.repaintsOnAttach ?? (() => false);
   }
 
   get activeSessionName(): string | null {
@@ -83,6 +91,7 @@ export class AttachManager {
         // Output for a view that is gone is dropped; that still counts as taken.
         else written?.();
       },
+      onRepaint: () => { if (this.isLive(generation)) events.onRepaint?.(); },
       onNativeScroll: (state) => { if (this.isLive(generation)) events.onNativeScroll?.(state); },
       onNativeScrollSupported: (supported) => { if (this.isLive(generation)) events.onNativeScrollSupported?.(supported); },
       onCanonicalSize: (size) => {
@@ -118,6 +127,10 @@ export class AttachManager {
   }
 
   cacheBuffer(sessionName: string, serialized: string): void {
+    if (this.repaintsOnAttach(sessionName)) {
+      this.buffers.delete(sessionName);
+      return;
+    }
     if (this.buffers.has(sessionName)) {
       this.buffers.delete(sessionName);
     } else if (this.buffers.size >= this.bufferCacheCap) {
@@ -130,6 +143,7 @@ export class AttachManager {
   }
 
   getCachedBuffer(sessionName: string): string | null {
+    if (this.repaintsOnAttach(sessionName)) return null;
     const value = this.buffers.get(sessionName);
     if (value === undefined) return null;
     this.buffers.delete(sessionName);
