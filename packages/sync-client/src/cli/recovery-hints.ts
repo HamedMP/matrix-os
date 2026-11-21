@@ -12,6 +12,9 @@ const HINTS: Record<string, string> = {
   auth_expired: "Auth expired. Run `mos login` to refresh this profile.",
   unsupported_version: "Daemon protocol is incompatible. Please update the Matrix CLI and restart the daemon.",
   unknown_command: "Daemon command is not supported. Please update the Matrix CLI and daemon together.",
+  runtime_waking: "Your Matrix computer is waking up. Retry the command in a few seconds.",
+  runtime_busy: "Matrix is at capacity. Retry the command in a minute.",
+  runtime_unavailable: "Your Matrix computer is unavailable. Retry shortly, or run `mos doctor`.",
 };
 
 export function recoveryHintForCode(code: string): string {
