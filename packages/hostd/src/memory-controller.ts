@@ -115,8 +115,11 @@ export function createMemoryController(deps: MemoryControllerDeps): MemoryContro
   }
 
   async function sampleVm(record: VmRecord, budget: { mib: number }): Promise<void> {
-    const ch = deps.ch(record.id);
+    // Everything, including the client factory, stays inside the try: one VM's
+    // failure must never reject the tick or the loop.
+    let ch: ChClient | undefined;
     try {
+      ch = deps.ch(record.id);
       const info = await ch.info(opSignal());
       if (info.state !== "Running") return;
       const stats = await deps.guest(record.id).stats(opSignal());
@@ -136,7 +139,13 @@ export function createMemoryController(deps: MemoryControllerDeps): MemoryContro
     } catch (error: unknown) {
       log("memory.sample_failed", { id: record.id, ...errorFields(error) });
     } finally {
-      await ch.close().catch((error: unknown) => log("memory.ch_close_failed", { id: record.id, ...errorFields(error) }));
+      if (ch !== undefined) {
+        try {
+          await ch.close();
+        } catch (error: unknown) {
+          log("memory.ch_close_failed", { id: record.id, ...errorFields(error) });
+        }
+      }
     }
   }
 

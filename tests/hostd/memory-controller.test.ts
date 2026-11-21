@@ -221,6 +221,21 @@ describe("memory controller loop", () => {
     expect(h.closes.sort()).toEqual(["vm_a", "vm_b"]);
   });
 
+  it("logs a VM whose CH client factory throws and still serves the others", async () => {
+    const h = harness([
+      { record: record("vm_a"), actualMiB: 2048, stats: PRESSURED },
+      { record: record("vm_b"), actualMiB: 2048, stats: PRESSURED },
+    ]);
+    const factory = h.deps.ch;
+    h.deps.ch = (id) => {
+      if (id === "vm_a") throw new Error("bad socket path");
+      return factory(id);
+    };
+    await expect(createMemoryController(h.deps).tick()).resolves.toBeUndefined();
+    expect(h.resizes).toEqual([{ id: "vm_b", bytes: 3072 * MiB }]);
+    expect(h.logs.some((l) => l.event === "memory.sample_failed" && l.fields.id === "vm_a")).toBe(true);
+  });
+
   it("spends host headroom across VMs within one tick", async () => {
     const h = harness(
       [
