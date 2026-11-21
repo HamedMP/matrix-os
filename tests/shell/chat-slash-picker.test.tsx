@@ -191,7 +191,7 @@ it("selects a project skill separately from the message and only passes its rela
 
 it("offers Queue next for a project skill alone during an active run", async () => {
   const submit = vi.fn();
-  render(<Harness projectSlash={projectScope("proj_one", "review")} initial="Wait for this turn" submit={submit} busy />);
+  render(<Harness projectSlash={projectScope("proj_one", "review")} initial="" submit={submit} busy />);
   const input = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
   expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
   fireEvent.keyDown(input, { key: "Enter" });

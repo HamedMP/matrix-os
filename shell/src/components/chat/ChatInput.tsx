@@ -112,6 +112,7 @@ export function ChatInput({
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
+  const mayQueue = Boolean(activeRunId);
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -156,7 +157,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
+  const canSend = (!busy || mayQueue) && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);
@@ -344,9 +345,9 @@ export function ChatInput({
           onSubmit={() => void handleSubmit()}
           onAbort={canAbort ? onAbortCurrent : undefined}
           busy={busy}
-          submitWhileBusy
+          submitWhileBusy={mayQueue}
           canSubmit={canSend}
-          sendLabel={busy ? "Queue next" : "Send"}
+          sendLabel={busy && mayQueue ? "Queue next" : "Send"}
           placeholder={editorPlaceholder}
           attachments={attachments.length || resources.length || projectSkillDraft.paths.length ? (
             <div data-slot="composer-context-row" className="flex min-w-0 flex-col gap-2 px-4 pt-3">

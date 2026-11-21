@@ -70,17 +70,27 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("shared Web Chat run cancellation", () => {
-  it.each(["Web Desktop", "Web Canvas"] as const)("%s stops the active run once without submitting or clearing the draft", async (surface) => {
+  it.each(["Web Desktop", "Web Canvas"] as const)("%s queues a busy draft and restores Stop after acceptance", async (surface) => {
     const chat = chatState();
     renderWindow(surface, chat);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-model")).toBe("gpt-5.6-sol"));
     const editor = screen.getByRole("textbox", { name: "Message chat" });
     fireEvent.change(editor, { target: { value: "Keep this draft" } });
+    const queue = screen.getByRole("button", { name: "Queue next", exact: true });
+    expect((queue as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "Stop", exact: true })).toBeNull();
+    fireEvent.click(queue);
+    await waitFor(() => expect(chat.submitMessage).toHaveBeenCalledOnce());
+    await waitFor(() => expect((editor as HTMLTextAreaElement).value).toBe(""));
+    expect(vi.mocked(chat.submitMessage).mock.calls[0]?.[0]).toBe("Keep this draft");
+    expect(chat.abortCurrent).not.toHaveBeenCalled();
     const stop = await screen.findByRole("button", { name: "Stop", exact: true });
     expect((stop as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(stop);
     expect(chat.abortCurrent).toHaveBeenCalledOnce();
-    expect(chat.submitMessage).not.toHaveBeenCalled();
-    expect((editor as HTMLTextAreaElement).value).toBe("Keep this draft");
+    expect(chat.submitMessage).toHaveBeenCalledOnce();
+    expect((editor as HTMLTextAreaElement).value).toBe("");
   });
   it.each(["Web Desktop", "Web Canvas"] as const)("%s can stop an existing run when the provider becomes unavailable", async (surface) => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/system/info")
@@ -93,6 +103,7 @@ describe("shared Web Chat run cancellation", () => {
     expect((stop as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(stop);
     expect(chat.abortCurrent).toHaveBeenCalledOnce();
+    expect(chat.submitMessage).not.toHaveBeenCalled();
   });
   it.each(["admission", "loading", "queued-only"])("does not offer Stop for %s without an active run", async (state) => {
     const chat = chatState();
@@ -112,6 +123,20 @@ describe("shared Web Chat run cancellation", () => {
     expect(screen.queryByRole("button", { name: "Stop", exact: true })).toBeNull();
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect(chat.abortCurrent).not.toHaveBeenCalled();
+  });
+  it("retains a typed draft without submitting while admission has no active Run", async () => {
+    const chat = chatState();
+    chat.activeRunId = undefined;
+    renderChat(chat);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })
+      .getAttribute("data-model")).toBe("gpt-5.6-sol"));
+    const editor = screen.getByRole("textbox", { name: "Message chat" });
+    fireEvent.change(editor, { target: { value: "Keep this until admission settles" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await act(async () => { await Promise.resolve(); });
+    expect(chat.submitMessage).not.toHaveBeenCalled();
+    expect((editor as HTMLTextAreaElement).value).toBe("Keep this until admission settles");
+    expect((screen.getByRole("button", { name: "Send", exact: true }) as HTMLButtonElement).disabled).toBe(true);
   });
   it("swaps Stop for Queue next while a referenced Agent request is drafted, like Electron Desktop", async () => {
     const chat = chatState();
@@ -138,6 +163,7 @@ describe("shared Web Chat run cancellation", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Remove Meeting notes/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Stop", exact: true }));
     expect(chat.abortCurrent).toHaveBeenCalledOnce();
+    expect(chat.submitMessage).not.toHaveBeenCalled();
   });
   it("shares the active-run Stop action with the Web Mobile renderer", async () => {
     const chat = chatState();

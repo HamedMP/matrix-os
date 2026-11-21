@@ -1,5 +1,6 @@
 # Reliable Chat steering and regression loop
 
+Task: [ENG-518](https://linear.app/matrix-os/issue/ENG-518/fix-chat-steering-delivery-and-recovery-regressions).
 Related: [GTM-178](https://linear.app/matrix-os/issue/GTM-178/add-explicit-steer-and-durable-next-prompt-queue-to-canonical-chat).
 
 ## Verified defects
@@ -35,6 +36,7 @@ Keep the provider buffer in its own module for the same reason.
 | Starting state | Action | Expected result | Regression lane |
 | --- | --- | --- | --- |
 | Web run streaming, plain draft | Enter or Queue next | Durable queued turn; draft clears after acceptance | Web composer and canonical authority tests |
+| Admission/loading busy, no active Run | Type and Enter | Draft remains; Send stays disabled; no second admission | Web cancellation/admission tests |
 | Web queue rejected | Submit correction | Draft remains retryable | Web composer test |
 | Active run finishes before Queue reaches the server | Retry unchanged draft after definite rejection | Retry can use Send; uncertain delivery retains original Queue ID | Canonical authority tests for 409, 408, 503 |
 | Desktop steering pending, newer snapshot | Accept correction | Message appears once; newer metadata retained; queue row removed | Desktop steering recovery tests |
@@ -63,11 +65,12 @@ native Electron, or Native Mobile.
 Web Canvas, Web Desktop, and Web Mobile share the changed composer/controller;
 capture each on an exact-head running shell before readiness. Electron Desktop
 has a separate controller and needs its own native screenshot/recording.
-Native Mobile uses separate code and is unchanged; reviewer confirmation of
-that exclusion remains required. Retain captures outside Git, attach them to
-the PRs and ticket, then share qualified evidence in Slack tech and link back.
-The current task permits the built-in browser only, so a native Electron
-capture is unavailable through the allowed manual verification surface.
+Native Mobile uses separate code and is unchanged; the requester approved that
+exclusion on 21 November 2026. Retain captures outside Git, attach them to the
+PRs and ticket, then share qualified evidence in Slack tech and link back.
+The requester authorized disposable PR previews and native Electron testing.
+Use only the built-in browser for Web checks, and record native rendering or
+automation limitations with the evidence.
 
 ## Invariants
 

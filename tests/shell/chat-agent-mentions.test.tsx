@@ -76,7 +76,7 @@ it("preserves text and selected references across Chat switches", async () => {
 });
 it("queues a referenced request while the current Chat is busy", async () => {
   const submit = vi.fn(async () => true);
-  render(<ChatApp {...base} busy onSubmit={submit} agentClient={client} />);
+  render(<ChatApp {...base} busy activeRunId="run_referenced" onSubmit={submit} agentClient={client} />);
   await waitFor(() => expect((screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).disabled).toBe(false));
   fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "@mee" } });
   fireEvent.click(await screen.findByRole("option", { name: /Meeting notes/ }));
@@ -193,17 +193,19 @@ it("keeps the first website recipe handoff and rejected new Chat draft until exp
   expect(screen.queryByRole("button", { name: "Remove Meeting notes" })).toBeNull();
 });
 
-it("preserves the existing text-only busy composer behavior without treating text as new reference work", async () => {
-  const submit = vi.fn();
-  render(<ChatApp {...base} busy onSubmit={submit} agentClient={client} />);
+it("queues an ordinary correction without treating text as Agent reference work", async () => {
+  const submit = vi.fn<React.ComponentProps<typeof ChatApp>["onSubmit"]>(async () => true);
+  render(<ChatApp {...base} busy activeRunId="run_ordinary" onSubmit={submit} agentClient={client} />);
   const editor = screen.getByRole("textbox", { name: "Message chat" });
-  await waitFor(() => expect((editor as HTMLTextAreaElement).disabled).toBe(false));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })
+    .getAttribute("data-model")).toBe("gpt-5.6-sol"));
   fireEvent.change(editor, { target: { value: "Ordinary text while running" } });
-  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.queryByRole("button", { name: "Queue next" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Queue next" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByRole("button", { name: "Send", exact: true })).toBeNull();
   fireEvent.keyDown(editor, { key: "Enter" });
-  expect(submit).not.toHaveBeenCalled();
-  expect((editor as HTMLTextAreaElement).value).toBe("Ordinary text while running");
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  expect(submit.mock.calls[0]?.[2]?.resources).toBeUndefined();
+  await waitFor(() => expect((editor as HTMLTextAreaElement).value).toBe(""));
 });
 
 it("resets optional Full access when a website handoff replaces a draft with the same Agent", async () => {
