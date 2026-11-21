@@ -258,6 +258,24 @@ esac
     expect(readFileSync(marker, "utf8")).toContain("done");
   });
 
+  it("falls back to tailnet-only HTTP when the tailnet has no HTTPS certificates", () => {
+    // Found on a live VPS: with certificates off, serve failed and the printed
+    // https link never opened. Tailnet traffic is already encrypted end to end.
+    const bin = join(dir, "bin");
+    spawnSync("mkdir", ["-p", bin]);
+    writeFileSync(join(bin, "tailscale"), `#!/bin/sh
+echo "$*" >> "${join(dir, "calls")}"
+case "$*" in *--https=443*) exit 1 ;; esac
+exit 0
+`);
+    chmodSync(join(bin, "tailscale"), 0o755);
+    const result = run(`MATRIX_INSTALL_LOG=/dev/null; OPT_ACCESS=tailscale; MATRIX_TAILNET_URL=https://box.tail1.ts.net; configure_tailscale_serve; echo "url=$MATRIX_TAILNET_URL"`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(dir, "calls"), "utf8")).toContain("serve --bg --yes --http=80 http://127.0.0.1:80");
+    expect(result.stdout).toContain("url=http://box.tail1.ts.net");
+    expect(result.stdout + result.stderr).toMatch(/HTTPS/);
+  });
+
   it("records only the chosen options in telemetry", () => {
     const result = run(
       `curl() { for arg; do case "$arg" in {*) printf '%s\\n' "$arg" >"${join(dir, "payload.json")}";; esac; done; }

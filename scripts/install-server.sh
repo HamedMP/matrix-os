@@ -861,8 +861,14 @@ configure_tailscale_serve() {
     timeout 60 tailscale serve --bg --yes --http=80 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 http://127.0.0.1:80"; return 0; }
   else
-    timeout 60 tailscale serve --bg --yes --https=443 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1 \
-      || { warn "tailscale serve failed (HTTPS certificates may be off for your tailnet). Enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 http://127.0.0.1:80"; return 0; }
+    if ! timeout 60 tailscale serve --bg --yes --https=443 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1; then
+      # Certificates are off for this tailnet. Tailnet traffic is already
+      # encrypted end to end, so serve plain HTTP there instead of nothing.
+      timeout 60 tailscale serve --bg --yes --http=80 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1 \
+        || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 http://127.0.0.1:80"; return 0; }
+      MATRIX_TAILNET_URL="${MATRIX_TAILNET_URL/#https:/http:}"
+      warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 http://127.0.0.1:80"
+    fi
   fi
   ok "Matrix is served on your private network only"
 }
