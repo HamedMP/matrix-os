@@ -161,3 +161,13 @@ Broader CI also found two native admission/attachment suites still selecting the
 old active-run Send label. Update only queue-mode selectors to Queue next; retain
 idle/edit Send and every race/upload assertion. Add both suites to the focused
 lane so the label's full consumer boundary runs on every steering iteration.
+
+The broader worker/broker attachment regression expected anonymous reply text.
+Require the new assistant_2 identity after its tool round trip, preserving every
+image, file-read, completion and cleanup assertion. Include that orchestration
+suite in the steering lane. Before adding behavior to its 1,153-line test module,
+extract its shared fixture and attachment cases into focused modules.
+
+The mentioned-draft retry suite also needs mode-specific button selectors before
+and after its active-state transition. Keep both original-operation and request-ID
+assertions, and include the suite in the repeatable lane.
