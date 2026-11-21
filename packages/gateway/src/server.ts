@@ -1283,9 +1283,8 @@ export async function createGateway(config: GatewayConfig) {
     },
   }));
   app.use("*", securityHeadersMiddleware());
-  // Spec 2701: reject foreign Tailscale identities before bearer auth sees the request.
   const privateNetwork = await createPrivateNetworkRuntime({ env: process.env, homePath, db: kyselyInstance });
-  app.use("*", privateNetwork.identity);
+  app.use("*", privateNetwork.identity); // Spec 2701: foreign Tailscale identities fail before bearer auth.
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
@@ -1372,12 +1371,7 @@ export async function createGateway(config: GatewayConfig) {
     finalizeWithSummary, logUnexpectedJsonParseFailure,
   });
 
-  app.get(
-    "/ws/forward",
-    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
-  );
-
-
+  app.get("/ws/forward", upgradeWebSocket(() => forwardTunnelHub.createHandler()));
 
   registerCodingAgentThreadWebSocketRoutes({
     app, upgradeWebSocket, codingAgentThreadStream,
