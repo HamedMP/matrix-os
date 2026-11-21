@@ -115,7 +115,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await chmod(snapshotsDir, 0o700).catch(() => undefined);
+  await chmod(snapshotsDir, 0o700);
   await rm(root, { recursive: true, force: true });
   vi.restoreAllMocks();
 });

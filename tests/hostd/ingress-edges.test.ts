@@ -242,7 +242,7 @@ describe("host ingress edges", () => {
       return req;
     }) as typeof httpsRequest;
     await start({ upstreamPort: await listen(vm), upstreamRequest });
-    await send(authed()).catch(() => undefined);
+    expect((await send(authed())).status).toBe(502);
     await expect.poll(() => has("ingress.upstream_failed")).toBe(true);
     expect(logs.find((l) => l.event === "ingress.upstream_failed")!.fields.code).toBe("ETIMEDOUT");
   });

@@ -54,7 +54,9 @@ afterEach(async () => {
     await new Promise((r) => server.close(r));
   }
   vi.restoreAllMocks();
-  await chmod(join(dir, "vms", ID), 0o700).catch(() => undefined);
+  await chmod(join(dir, "vms", ID), 0o700).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
   await rm(dir, { recursive: true, force: true });
 });
 
