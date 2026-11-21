@@ -17,4 +17,6 @@ export interface CronJob {
   schedule: CronSchedule;
   target?: CronTarget;
   createdAt: string;
+  /** ISO time the most recent run started; absent until the job first runs. */
+  lastRunAt?: string;
 }
