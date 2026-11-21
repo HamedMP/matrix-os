@@ -1,7 +1,9 @@
+import { createSlackSummarySubmitter, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import {Hono} from "hono";
 import type {SlackBridgeEnvelope,SlackPublicationIdentity} from "@matrix-os/contracts/slack-bridge";
 import type {CollaborationAuthority} from "../collaboration/authority.js";
 import {createSlackBridgeRoutes} from "./slack-bridge.js";
+import type { PrivateSlackThreadContext } from "../slack/private-thread-context.js";
 
 interface SlackInboxTransport {
   receive(envelope:SlackBridgeEnvelope):Promise<unknown>;
@@ -13,13 +15,15 @@ interface SlackInboxTransport {
 /** The ingress acknowledges only durable storage; background passes never overlap. */
 export function registerOwnerSlack(options:{
   app:Hono;ownerId:string;token?:string;authority:Pick<CollaborationAuthority,"authorize">;
-  personal?:SlackInboxTransport;company?:SlackInboxTransport;brainRoutes?:Hono;
+  personal?:SlackInboxTransport;company?:SlackInboxTransport;brainRoutes?:Hono;context?:PrivateSlackThreadContext;
+  summaries?: SlackMentionSummaries;
   now?:()=>Date;startDrain?:boolean;
 }) {
   let stopping=false;
   let active:Promise<void>|undefined;
   const authorizePublication=options.company?.authorizePublication?.bind(options.company);
-  const services=[options.personal,options.company].filter((service):service is SlackInboxTransport=>!!service);
+  const context=options.context;
+  const services=[options.personal,options.company,options.summaries].filter((service):service is NonNullable<typeof service>=>!!service);
   const unavailable=new Hono();unavailable.all("*",c=>c.json({error:"Slack unavailable"},503));
   if(options.token && /^[a-f0-9]{64}$/.test(options.token)) {
     options.app.route("/",createSlackBridgeRoutes({ownerId:options.ownerId,token:options.token,authority:options.authority,now:options.now,
@@ -28,6 +32,7 @@ export function registerOwnerSlack(options:{
         const allowed=await authorizePublication(input);
         return !stopping && allowed;
       },
+      receiveContext: context ? async envelope => !stopping && await context.receive(envelope) : undefined,
       async receive(envelope){
         const service=envelope.event.kind==="direct_message"?options.personal:options.company;
         if(stopping || !service)throw new Error("SlackServiceUnavailable");
@@ -85,6 +90,7 @@ export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:s
         }
       }
       if(options.bots.adapter) {
+        options.bots.slackMentionSummaries?.attach(createSlackSummarySubmitter({db:ownerBotExecutor(options.repository.kysely),orchestrator:options.orchestrator}));
         const personalDb=options.repository.kysely as unknown as Kysely<SlackPersonalDatabase>;
         await bootstrapSlackPersonalDatabase(personalDb);
         const botDb=ownerBotExecutor(options.repository.kysely);
@@ -97,5 +103,5 @@ export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:s
       console.warn("[slack] owner composition unavailable",error instanceof Error?error.name:"UnknownError");
     }
   }
-  return registerOwnerSlack({app:options.app,ownerId,token:options.token,authority,personal,company:company?.service,brainRoutes:company?.routes});
+  return registerOwnerSlack({app:options.app,ownerId,token:options.token,authority,personal,company:company?.service,brainRoutes:company?.routes,context:options.bots?.slackThreadContext,summaries:options.bots?.slackMentionSummaries});
 }

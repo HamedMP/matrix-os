@@ -54,6 +54,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "slack.rules":"write",
   "routine.cli": "write",
   "routine.propose":"write",
   "routine.control":"write",
@@ -199,6 +200,7 @@ export function createBotToolDispatcher(deps: {
   homePath: string;
   githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
   managedRoutine?: { execute(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal): Promise<BotToolResult> };
+  slackRules?: import("../slack/rule-tools.js").SlackRuleTools;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
   jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
@@ -336,7 +338,7 @@ export function createBotToolDispatcher(deps: {
     if (request.args.selection.model !== binding.route.modelId) throw new BotBrokerActionError("invalid_arguments");
   }
   return {
-    effectClass: (request) => request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.cli" ? (["list", "show", "request"].includes(request.args.operation) ? "read" : "write") : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "slack.rules" ? ["list","get"].includes(request.args.operation)?"read":"write" : request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.cli" ? (["list", "show", "request"].includes(request.args.operation) ? "read" : "write") : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
       if (request.capability === "routine.cli") {
         if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
@@ -371,6 +373,10 @@ export function createBotToolDispatcher(deps: {
           if (await workspace(binding) !== root) throw new BotBrokerActionError("stale_generation");
           await deps.assertSource?.(binding, signal);
         }) };
+      }
+      if(request.capability==="slack.rules"){
+        if(!deps.slackRules || isManagedPiBinding(binding))throw new BotBrokerActionError("not_granted");
+        return {result:await deps.slackRules.execute(binding,request.args,signal)};
       }
       if (request.capability === "routine.propose" || request.capability === "routine.control") {
         const native = await deps.nativeTask?.routine?.(binding, request, signal);

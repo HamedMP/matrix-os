@@ -1,3 +1,7 @@
+import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
+import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
+import { createEnrolledSlackReadSource, type EnrolledSlackReadSource } from "../slack/enrolled-read-source.js";
+import { createSlackMentionSummaries, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
 import { createRoutineOriginStartup, type RoutineOriginStartup } from "./routine-origin.js";
 import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
@@ -7,6 +11,8 @@ import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
+import { createPrivateSlackThreadContext, type PrivateSlackThreadContext } from "../slack/private-thread-context.js";
+import { createSlackOwnerClient } from "./slack-owner-client.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -157,6 +163,8 @@ export interface BotServices extends RoutineOriginStartup {
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   managedAdapter?: CanonicalChatProviderAdapter;
+  slackThreadContext?: PrivateSlackThreadContext;
+  slackMentionSummaries?: SlackMentionSummaries;
   close(): Promise<void>;
 }
 
@@ -256,9 +264,13 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
   const routines=createBotRoutineExecution({db,transact,approvals:routineApprovals,available:()=>Boolean(options.host?.available),now:options.now});
-  const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
+  const enrolledPlatform = options.routineActionPlatform;
+  const enrolledPreview = enrolledPlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot;
+  const integrationClient = options.integrations || enrolledPreview
+    ? createBotIntegrationClient(options.integrations ?? (async () => new Response(null, {status:503}))) : undefined;
+  let enrolledSlack: EnrolledSlackReadSource | undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
+    ? createBotIntegrationTools({ client: integrationClient, enrolledSlack: { owns:id=>id.startsWith("slack_enrolled_"), inventory:(binding,signal)=>enrolledSlack?.inventory(binding,signal)??Promise.resolve(undefined), call:(binding,args,signal)=>{ if(!enrolledSlack)throw new BotStateError("not_found");return enrolledSlack.call(binding,args,signal); } }, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
       assertSharedAttachmentSource: createSharedAttachmentSource({ roots: options.executionRoots, group: options.group }) })
     : undefined;
   const connections = integrationClient && integrationTools
@@ -407,10 +419,39 @@ export async function startBots(options: {
   });
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
+  let slackThreadContext: PrivateSlackThreadContext | undefined;
+  let slackMentionSummaries: SlackMentionSummaries | undefined;
+  let slackRules: SlackRuleTools | undefined;
+  const platform = options.routineActionPlatform;
+  if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
+    try {
+      const slackClient = createSlackOwnerClient(platform);
+      const botAvailable = async (target: {ownerId:string;botId:string;chatId:string}) => {
+        const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
+        return Boolean(bot?.recipeRef && !bot.archived);
+      };
+      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
+      slackThreadContext = await createPrivateSlackThreadContext({
+        db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
+        onReceive: slackMentionSummaries.receive,
+        botAvailable: async target => {
+          const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
+          return Boolean(bot?.recipeRef && !bot.archived);
+        },
+      });
+      slackRules=createSlackRuleTools({db,ownerId:options.runtimeOwnerId,runtimeId:platform.machineId,context:slackThreadContext,afterCommit:chatId=>retireRevokedSlackJobs(db,options.runtimeOwnerId!,chatId,runId=>orchestrator.cancel(runId))});
+      enrolledSlack = createEnrolledSlackReadSource({ context: slackThreadContext, read: slackClient.readEnrolledContext });
+    } catch (error) {
+      console.warn("[bots] Slack thread context unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
   const orchestrator = createBotTaskOrchestrator({
     routineProposals: routineCli?.proposals,
     ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
     inputHistory,
+    slackThreadContext: slackThreadContext?.prompt,
+    slackSummaries: slackMentionSummaries,
+    slackRuleTools:Boolean(slackRules),
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
@@ -451,7 +492,7 @@ export async function startBots(options: {
   const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
-    homePath: options.homePath, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    homePath: options.homePath, slackRules, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
@@ -491,7 +532,9 @@ export async function startBots(options: {
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
+      consumeReadonlyInference: async binding => !isManagedPiBinding(binding) && Boolean(await slackMentionSummaries?.consumeInference(binding)),
       revalidateBinding: async (binding) => {
+        if (binding.readonlySummary && (isManagedPiBinding(binding) || !await slackMentionSummaries?.assertAuthorized(binding))) return false;
         if (!isManagedPiBinding(binding)) {
           try { await revalidateSource(binding); return true; }
           catch (error: unknown) { console.warn("[bots] Custom authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
@@ -508,7 +551,8 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
-    orchestrator, routines, proposals: routineCli?.proposals,
+    toolOutputKey: options.toolOutputKey,
+    orchestrator, routines, summaries: slackMentionSummaries, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   routineOriginRuntime.routineOrigin?.start();
@@ -529,8 +573,11 @@ export async function startBots(options: {
     tasks,
     adapter,
     managedAdapter: managed.adapter,
+    slackThreadContext,
+    slackMentionSummaries,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
+      await slackMentionSummaries?.close();
       await routineOriginRuntime.routineOrigin?.close();
       await routines.stop();
       chatgptPlanPeers?.close();

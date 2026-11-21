@@ -181,7 +181,7 @@ export function createBotBrokerActions(deps: {
   }
 
   async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal, finalDelivery = false): Promise<void> {
-    if (!isManagedPiBinding(binding) && binding.requestClass === "background") {
+    if (!isManagedPiBinding(binding) && (binding.requestClass === "background" || binding.readonlySummary)) {
       const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
       if (signal.aborted || !deps.inference.revalidateBinding
         || !await untilAborted(Promise.resolve(deps.inference.revalidateBinding(binding)), signal)) {
@@ -336,10 +336,12 @@ export function createBotBrokerActions(deps: {
           case "bot.input.image":
             return success(request.requestId, BotImageChunkSchema.parse(await deps.runs.readImageChunk(binding, request.image)));
           case "bot.session.load": {
+            if (binding.readonlySummary) return success(request.requestId, { revision: 0, messages: [], needsRecompaction: false });
             const snapshot = isManagedPiBinding(binding) ? await deps.managedSessions!.load(key) : await deps.sessions.load({ ...key, botId: binding.botId });
             return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages, needsRecompaction: snapshot.needsRecompaction });
           }
           case "bot.session.save": {
+            if (binding.readonlySummary) return success(request.requestId, { revision: request.session.baseRevision + 1 });
             const fields = {
               ...key,
               baseRevision: request.session.baseRevision,

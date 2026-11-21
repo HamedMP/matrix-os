@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { createSlackBridgeRoutes } from "../../packages/gateway/src/startup/slack-bridge.js";
-import { signSlackBridgeRequest } from "../../packages/contracts/src/slack-bridge.js";
+import { signSlackBridgeRequest, signSlackContextSource, SLACK_CONTEXT_SOURCE_HEADER, SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER } from "../../packages/contracts/src/slack-bridge.js";
+import { createSlackHomeTransport } from "../../packages/platform/src/slack-home-transport.js";
+import { createHmac } from "node:crypto";
 import {Hono} from "hono";
 import {authMiddleware} from "../../packages/gateway/src/auth.js";
 
@@ -21,6 +23,52 @@ async function request(path: string, data: unknown, secret = token) {
     ...await signSlackBridgeRequest({token:secret,path,body,now:now()})}};
 }
 describe("owner Slack bridge", () => {
+  it("extracts only authenticated source extensions from the real platform transport", async () => {
+    const source = { version: 1 as const, ownerMention: false, textDigest: "c".repeat(64), proof: "e".repeat(64) };
+    const envelope = { ownerId, botId: "bot_12345678", chatId: "chat_private", runtimeId: "runtime_preview",
+      grantId: "d".repeat(64), event: { eventId: "Ev123", appId: "A123", teamId: "T123", userId: "U456",
+        channelId: "C123", ts: "1795000000.000001", threadTs: "1795000000.000001", text: "ordinary source" }, source };
+    const receiveContext = vi.fn().mockResolvedValue(true);
+    const bridge = createSlackBridgeRoutes({ ownerId, token, receive: vi.fn(), receiveContext, authority: { authorize: vi.fn() } });
+    const home = createSlackHomeTransport({ fetchImpl: (url, init) => Promise.resolve(bridge.fetch(new Request(url, init))) });
+    expect(await home({ ownerId, origin: "https://192.0.2.1", token }, "context", envelope)).toEqual({ accepted: true });
+    expect(receiveContext).toHaveBeenCalledExactlyOnceWith(envelope);
+  });
+
+  it("rejects missing, forged, oversized or conflicting source extensions before context storage", async () => {
+    const source = { version: 1 as const, ownerMention: true, textDigest: "c".repeat(64), proof: "e".repeat(64) };
+    const envelope = { ownerId, botId: "bot_12345678", chatId: "chat_private", runtimeId: "runtime_preview",
+      grantId: "d".repeat(64), event: { eventId: "Ev123", appId: "A123", teamId: "T123", userId: "U456",
+        channelId: "C123", ts: "1795000000.000001", threadTs: "1795000000.000001", text: "ordinary source" } };
+    const receiveContext = vi.fn().mockResolvedValue(true);
+    const bridge = createSlackBridgeRoutes({ ownerId, token, receive: vi.fn(), receiveContext, authority: { authorize: vi.fn() }, now });
+    const path = "/api/internal/slack/context";
+    const body = JSON.stringify(envelope);
+    const base = await signSlackBridgeRequest({ token, path, body, now: now() });
+    const extension = await signSlackContextSource({ token, path, body, timestamp: base["x-matrix-slack-timestamp"], source });
+    const malformed = JSON.stringify({ ...source, version: 2 });
+    const malformedSignature = createHmac("sha256", token)
+      .update(`matrix-slack-context-source-v1\nPOST\n${path}\n${base["x-matrix-slack-timestamp"]}\n${body}\n${malformed}`).digest("hex");
+    for (const headers of [
+      { [SLACK_CONTEXT_SOURCE_HEADER]: extension[SLACK_CONTEXT_SOURCE_HEADER] },
+      { [SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER]: extension[SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER] },
+      { ...extension, [SLACK_CONTEXT_SOURCE_HEADER]: JSON.stringify({ ...source, ownerMention: false }) },
+      { ...extension, [SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER]: "f".repeat(64) },
+      { ...extension, [SLACK_CONTEXT_SOURCE_HEADER]: "x".repeat(513) },
+      { ...extension, [SLACK_CONTEXT_SOURCE_HEADER]: "{}" },
+      { [SLACK_CONTEXT_SOURCE_HEADER]: malformed, [SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER]: malformedSignature },
+    ]) {
+      expect((await bridge.request(path, { method: "POST", body, headers: { ...base, ...headers } })).status).toBe(401);
+    }
+    const changedBody = JSON.stringify({ ...envelope, event: { ...envelope.event, text: "substituted source" } });
+    const changedBase = await signSlackBridgeRequest({ token, path, body: changedBody, now: now() });
+    expect((await bridge.request(path, { method: "POST", body: changedBody, headers: { ...changedBase, ...extension } })).status).toBe(401);
+    const changedTimestamp = await signSlackBridgeRequest({ token, path, body, now: new Date(now().getTime() - 1000) });
+    expect((await bridge.request(path, { method: "POST", body, headers: { ...changedTimestamp, ...extension } })).status).toBe(401);
+    expect((await bridge.request(path, await request(path, { ...envelope, source }))).status).toBe(400);
+    expect((await bridge.request(path, { method: "POST", body: JSON.stringify({ ...envelope, source }), headers: { ...base, ...extension } })).status).toBe(401);
+    expect(receiveContext).not.toHaveBeenCalled();
+  });
   it("accepts bridge signatures through global gateway auth without accepting anonymous events",async()=>{
     const {app:bridge}=setup();const app=new Hono();app.use("*",authMiddleware("owner-session-secret"));app.route("/",bridge);
     const payload={ownerId,organizationId:"org_company",actorId:ownerId,scopeId,action:"manage_members"};
@@ -55,6 +103,23 @@ describe("owner Slack bridge", () => {
     expect((await app.request("/api/internal/slack/events",{...init,body:JSON.stringify({...envelope,actorId:"user_attacker"})})).status).toBe(401);
     expect((await app.request("/api/internal/slack/events",await request("/api/internal/slack/events",envelope,"b".repeat(64)))).status).toBe(401);
     expect(receive).toHaveBeenCalledTimes(1);
+  });
+  it("authenticates the private context route separately from dispatching Slack turns", async () => {
+    const receive = vi.fn();
+    const receiveContext = vi.fn().mockResolvedValue(true);
+    const bridge = createSlackBridgeRoutes({ ownerId, token, receive, receiveContext, authority: { authorize: vi.fn() }, now });
+    const path = "/api/internal/slack/context";
+    const envelope = { ownerId, botId: "bot_12345678", chatId: "chat_private", runtimeId: "preview_runtime",
+      grantId: "d".repeat(64), event: { eventId: "Ev123", appId: "A123", teamId: "T123", userId: "U123",
+        channelId: "C123", ts: "1759230000.200", threadTs: "1759230000.123", text: "Plain fixture reply" } };
+    const signedContext = await request(path, envelope);
+    expect((await bridge.request(path, await request("/api/internal/slack/events", envelope))).status).toBe(401);
+    expect((await bridge.request(path, { ...signedContext, body: JSON.stringify({ ...envelope, runtimeId: "other_runtime" }) })).status).toBe(401);
+    expect((await bridge.request(path, await request(path, { ...envelope, ownerId: "user_other" }))).status).toBe(403);
+    expect(receiveContext).not.toHaveBeenCalled();
+    expect((await bridge.request(path, signedContext)).status).toBe(202);
+    expect(receiveContext).toHaveBeenCalledExactlyOnceWith(envelope);
+    expect(receive).not.toHaveBeenCalled();
   });
   it("rejects owner substitution, missing signature, oversized input and expired signatures",async()=>{
     const {app,receive}=setup();

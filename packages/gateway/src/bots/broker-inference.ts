@@ -78,6 +78,7 @@ const BotInferenceBodySchema = z.object({
 
 export interface BotInferenceDependencies {
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
+  consumeReadonlyInference?(binding: PiRuntimeBinding): Promise<boolean>;
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
@@ -171,6 +172,7 @@ export async function forwardBotInference(
     }
     return failure(request.requestId, "invalid_request");
   }
+  if (binding.readonlySummary && !validReadonlySummaryInference(request, binding, parsedBody)) return failure(request.requestId, "invalid_request");
   const imageInput = validateBotImageInferenceBody(request.body);
   if (!imageInput.valid || (imageInput.imageCount > 0 && !binding.route.input.includes("image"))) return failure(request.requestId, "invalid_request");
   const isolated = deps.isolatedChat?.targets(binding) === true;
@@ -282,6 +284,7 @@ export async function forwardBotInference(
         if (await bindingValid() !== true) return false;
         if (signal.aborted || !await stillAuthorized()) return false;
         if (isolated && (!await deps.isolatedChat!.consume(binding) || signal.aborted || !await stillAuthorized())) return false;
+        if (binding.readonlySummary && (!deps.consumeReadonlyInference || !await deps.consumeReadonlyInference(binding) || signal.aborted || !await stillAuthorized())) return false;
         return true;
       });
       if (!permitted) return "denied";
@@ -407,4 +410,14 @@ function validIsolatedInference(request: ScopeRuntimeBotInferenceRequest, bindin
     console.warn("[bots] Isolated inference refused:", error instanceof Error ? error.name : "UnknownError");
     return false;
   }
+}
+
+const ReadonlySummaryInferenceSchema = IsolatedInferenceSchema.extend({
+ max_tokens:z.number().int().positive().max(2048).optional(),max_completion_tokens:z.number().int().positive().max(2048).optional(),
+});
+function validReadonlySummaryInference(request:ScopeRuntimeBotInferenceRequest,binding:PiRuntimeBinding,body:unknown){
+ if(binding.group||isManagedPiBinding(binding)||binding.capabilities.length||binding.route.maxOutputTokens>2048||Buffer.byteLength(request.body)>131072)return false;
+ const parsed=ReadonlySummaryInferenceSchema.safeParse(body);
+ return parsed.success&&parsed.data.model===binding.route.modelId&&parsed.data.messages.filter(m=>m.role==="user").length===1&&parsed.data.messages.at(-1)?.role==="user"
+  &&(binding.route.api==="anthropic-messages"?request.action==="inference.messages"&&request.path==="/v1/messages?beta=true":binding.route.api==="openai-completions"&&request.action==="inference.chat_completions"&&request.path==="/v1/chat/completions");
 }

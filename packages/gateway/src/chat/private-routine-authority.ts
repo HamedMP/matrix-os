@@ -1,4 +1,5 @@
-import { sql, type Expression, type Kysely, type Transaction } from "kysely";
+import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
+import { sql, type Expression, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 import { ChatConflictError } from "./errors.js";
@@ -19,31 +20,39 @@ export function hasNonPrivateChatScopeSql(
   )`;
 }
 
-export async function hasNonPrivateChatScope(executor: Executor, owner: ChatOwner, chatId: string): Promise<boolean> {
+export async function hasNonPrivateChatScope(executor: QueryExecutorProvider, owner: ChatOwner, chatId: string): Promise<boolean> {
   const predicate = hasNonPrivateChatScopeSql(sql.val(owner.type), sql.val(owner.ownerId), sql.val(chatId));
   const result = await sql<{ non_private: boolean }>`SELECT ${predicate} AS non_private`.execute(executor);
   // Missing schema and database failures propagate; neither proves private authority.
   return result.rows[0]!.non_private;
 }
 
-/** Caller holds the Chat row lock through admission/output commit. Never lock a scope after Chat. */
+function isPrivateAutomaticRequest(requestId: string): boolean {
+  return requestId.startsWith("req_routine_") || requestId.startsWith("req_slack_summary_");
+}
+
+/** Caller holds the Chat row lock through admission/output commit. Never lock a scope after Chat.
+ * Private automatic sources include routines and opted-in Slack summaries. */
 export async function assertPrivateRoutineRequest(executor: Executor, owner: ChatOwner, chatId: string, requestId: string): Promise<void> {
-  if (!requestId.startsWith("req_routine_")) return;
-  if (owner.type !== "personal" || await hasNonPrivateChatScope(executor, owner, chatId)) {
+  if (!isPrivateAutomaticRequest(requestId)) return;
+  if (owner.type !== "personal" || await hasNonPrivateChatScope(executor, owner, chatId) || !await slackRulePublicationCurrent(executor,owner.ownerId,chatId,requestId)) {
     throw new ChatConflictError(chatId, 0);
   }
 }
 
-/** Preserve source identity when a routine queue is steered into an ordinary turn or retried. */
+/** Preserve private source identity when an automatic queue is steered into an ordinary turn or retried. */
 export async function assertPrivateRoutineTurn(executor: Executor, owner: ChatOwner, chatId: string, turnId: string): Promise<void> {
   const turn = await executor.selectFrom("chat_turns").select("client_request_id")
     .where("id", "=", turnId).where("chat_id", "=", chatId).executeTakeFirst();
-  if (turn?.client_request_id.startsWith("req_routine_")) {
+  if (turn && isPrivateAutomaticRequest(turn.client_request_id)) {
     return assertPrivateRoutineRequest(executor, owner, chatId, turn.client_request_id);
   }
   const queued = await executor.selectFrom("chat_queued_turns").select("client_request_id")
     .where("chat_id", "=", chatId).where("claimed_turn_id", "=", turnId)
-    .where("client_request_id", "like", "req\\_routine\\_%").limit(1).executeTakeFirst();
+    .where(eb => eb.or([
+      eb("client_request_id", "like", "req\\_routine\\_%"),
+      eb("client_request_id", "like", "req\\_slack\\_summary\\_%"),
+    ])).limit(1).executeTakeFirst();
   if (queued) await assertPrivateRoutineRequest(executor, owner, chatId, queued.client_request_id);
 }
 

@@ -1,9 +1,10 @@
 import { z } from "zod/v4";
+import { SlackChannelMetadataSchema } from "@matrix-os/contracts/slack-bridge";
 import { escapeSlackText } from "./security.js";
 import { SlackAppIdSchema, SlackTeamIdSchema, SlackUserIdSchema, SlackTimestampSchema, SlackChannelIdSchema, type SlackApi, type SlackMessagePage } from "./types.js";
 
 export const SLACK_BOT_SCOPES = ["app_mentions:read", "channels:history", "groups:history", "im:history", "im:read", "channels:read", "groups:read", "chat:write", "reactions:write"] as const;
-const MessagePageSchema = z.object({ messages: z.array(z.object({ user: SlackUserIdSchema.optional(), text: z.string().max(65_536).optional(), ts: SlackTimestampSchema, thread_ts: SlackTimestampSchema.optional() }).passthrough()).max(100),
+const MessagePageSchema = z.object({ messages: z.array(z.object({ user: SlackUserIdSchema.optional(), text: z.string().max(65_536).optional(), ts: SlackTimestampSchema, thread_ts: SlackTimestampSchema.optional(), reply_count:z.number().int().nonnegative().max(1_000_000).optional(), latest_reply:SlackTimestampSchema.optional() }).passthrough()).max(100),
   has_more: z.boolean().optional(), response_metadata: z.object({ next_cursor: z.string().max(1_024).optional() }).optional() }).passthrough();
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
@@ -57,7 +58,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
   async function messagePage(method: "conversations.replies" | "conversations.history", input: { token: string; channelId: string; cursor?: string; ts?: string; signal?: AbortSignal }): Promise<SlackMessagePage> {
     const parsed = MessagePageSchema.parse(await call(method, { channel: SlackChannelIdSchema.parse(input.channelId), limit: 15,
       ...(input.ts ? { ts: SlackTimestampSchema.parse(input.ts) } : {}), ...(input.cursor ? { cursor: z.string().max(1_024).parse(input.cursor) } : {}) }, input.token, input.signal));
-    return { messages: parsed.messages.map(({ user, text, ts, thread_ts }) => ({ ...(user ? { user } : {}), ...(text !== undefined ? { text } : {}), ts, ...(thread_ts ? { thread_ts } : {}) })),
+    return { messages: parsed.messages.map(({ user, text, ts, thread_ts, reply_count, latest_reply }) => ({ ...(user ? { user } : {}), ...(text !== undefined ? { text } : {}), ts, ...(thread_ts ? { thread_ts } : {}), ...(reply_count !== undefined ? {reply_count} : {}), ...(latest_reply ? {latest_reply} : {}) })),
       hasMore: parsed.has_more ?? false, ...(parsed.response_metadata?.next_cursor ? { nextCursor: parsed.response_metadata.next_cursor } : {}) };
   }
   return {
@@ -86,8 +87,29 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
       const result = z.object({ channel: z.object({ is_ext_shared: z.boolean().optional(), is_pending_ext_shared: z.boolean().optional(),
         is_member: z.boolean().optional(), pending_connected_team_ids: z.array(z.string().max(64)).max(100).optional() }).passthrough() }).passthrough()
         .parse(await call("conversations.info", { channel: channelId }, input.token, input.signal));
+      const sameChannel = result.channel.id === undefined || result.channel.id === channelId;
+      const metadata = SlackChannelMetadataSchema.safeParse({ id: result.channel.id, name: result.channel.name });
       return { isExternalShared: result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true || (result.channel.pending_connected_team_ids?.length ?? 0) > 0,
-        canAccess: channelId.startsWith("D") || (result.channel.is_member === true && result.channel.is_ext_shared === false) };
+        canAccess: sameChannel && (channelId.startsWith("D") || (result.channel.is_member === true && result.channel.is_ext_shared === false)),
+        ...(sameChannel && metadata.success ? { channelMetadata: metadata.data } : {}) };
+    },
+
+    async hasChannelMember(input) {
+      const channel = SlackChannelIdSchema.parse(input.channelId);
+      const member = SlackUserIdSchema.parse(input.userId);
+      const pageSchema = z.object({
+        members: z.array(SlackUserIdSchema).max(200),
+        response_metadata: z.object({ next_cursor: z.string().max(1024).optional() }).optional(),
+      });
+      let cursor: string | undefined;
+      for (let page = 0; page < 3; page += 1) {
+        const result = pageSchema.parse(await call("conversations.members", { channel, limit: 200, ...(cursor ? { cursor } : {}) }, input.token, input.signal));
+        if (result.members.includes(member)) return true;
+        const next = result.response_metadata?.next_cursor;
+        if (!next || next === cursor) return false;
+        cursor = next;
+      }
+      return false;
     },
     async addReaction(input) {
       await call("reactions.add", { channel: SlackChannelIdSchema.parse(input.channelId), timestamp: SlackTimestampSchema.parse(input.ts),
