@@ -28,8 +28,12 @@ export async function readSiteEmailCapability(db: PlatformDB, env: NodeJS.Proces
         || !env.ACCOUNT_DELETION_SECRET || Buffer.byteLength(env.ACCOUNT_DELETION_SECRET) < 32) return false;
     const marker = await sql<{ generation: number; fingerprint: string }>`
       SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'sites'`.execute(db.executor);
-    return marker.rows[0]?.generation === 3
-        && marker.rows[0]?.fingerprint === 'public-app-sites-email-invitations-v3';
+    // Email invitation tables arrived at generation 3. Later generations build
+    // on that revision, so they have them too; a different generation-3
+    // fingerprint is a branch that never ran the invitation migration.
+    const revision = marker.rows[0];
+    return revision !== undefined && (revision.generation > 3
+        || (revision.generation === 3 && revision.fingerprint === 'public-app-sites-email-invitations-v3'));
 }
 export function registerSiteRoutes(app: Hono<any>, options: {
     db: PlatformDB;

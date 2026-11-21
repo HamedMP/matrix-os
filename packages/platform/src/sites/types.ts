@@ -13,6 +13,9 @@ export interface SitesTable {
     access_mode: Generated<'public' | 'private_link' | 'private_email'>;
     active_version: string | null;
     created_at: string;
+    social_title: Generated<string | null>;
+    social_description: Generated<string | null>;
+    social_image_path: Generated<string | null>;
 }
 export interface SiteVersionsTable {
     id: string;

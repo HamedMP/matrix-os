@@ -149,7 +149,7 @@ export function createSitePublicRoutes(options: {
         // A private-to-public transition invalidates the database session. Clear
         // any path-scoped browser remnants on the next canonical page request.
         if (site.accessMode === 'public' && c.req.header('cookie')) clearSiteCookies(c, site.id);
-        return c.html(sitePage(site));
+        return c.html(sitePage(site, site.accessMode === 'public' ? await options.service.publicSocial(site) : undefined));
     });
     app.get('/:reference/frame', async (c) => { const reference = c.req.param('reference'); const site = await authorizedSite(c); if (!site?.activeVersion)
         throw new SiteError('not_found');

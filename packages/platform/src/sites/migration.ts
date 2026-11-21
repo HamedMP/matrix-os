@@ -9,6 +9,11 @@ export async function migrateSites(db: PlatformMigrationExecutor): Promise<void>
  )`.execute(db);
     await sql `ALTER TABLE public_sites ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'public'
       CHECK (access_mode IN ('public','private_link'))`.execute(db);
+    // Link-preview overrides; NULL falls back to title/description and no image.
+    await sql `ALTER TABLE public_sites
+      ADD COLUMN IF NOT EXISTS social_title TEXT CHECK (social_title IS NULL OR char_length(social_title) BETWEEN 1 AND 200),
+      ADD COLUMN IF NOT EXISTS social_description TEXT CHECK (social_description IS NULL OR char_length(social_description) BETWEEN 1 AND 1000),
+      ADD COLUMN IF NOT EXISTS social_image_path TEXT CHECK (social_image_path IS NULL OR char_length(social_image_path) <= 240)`.execute(db);
     await sql `CREATE TABLE IF NOT EXISTS public_site_versions (
   id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES public_sites(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, config JSONB NOT NULL, files JSONB NOT NULL

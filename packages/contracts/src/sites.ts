@@ -130,6 +130,20 @@ export const SiteDeploymentSchema = z.object({
   .refine((d) => new Set(d.files.map((f) => f.path)).size === d.files.length, "Duplicate asset")
   .refine((d) => d.files.reduce((sum, f) => sum + f.body.length / 4 * 3 - (f.body.endsWith("==") ? 2 : f.body.endsWith("=") ? 1 : 0), 0) <= SITE_MAX_BUNDLE_BYTES, "App is too large");
 export type SiteDeployment = z.infer<typeof SiteDeploymentSchema>;
+/** Raster types social crawlers render; SVG and GIF are excluded on purpose. */
+export const SITE_SOCIAL_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export const SiteSocialImagePathSchema = SiteAssetPathSchema.refine((p) => /\.(?:png|jpe?g|webp)$/i.test(p), "Unsupported preview image");
+/** Owner link-preview overrides; null falls back to the site title/description or no image. */
+export const SiteSocialUpdateSchema = z.object({
+  title: title.nullable(),
+  description: z.string().trim().min(1).max(1000).nullable(),
+  imagePath: SiteSocialImagePathSchema.nullable(),
+}).strict();
+export type SiteSocialUpdate = z.infer<typeof SiteSocialUpdateSchema>;
+export const SiteSocialSettingsSchema = SiteSocialUpdateSchema.extend({
+  imageOptions: z.array(SiteSocialImagePathSchema).max(SITE_MAX_FILES),
+}).strict();
+export type SiteSocialSettings = z.infer<typeof SiteSocialSettingsSchema>;
 export const SiteVersionSchema = z.object({ id: SiteIdSchema, createdAt: z.string().datetime() }).strict();
 export const SiteEmailInvitationsCapabilitySchema = z.object({ privateEmailInvitations: z.boolean() }).strict();
 export const SiteRecordSchema = z.object({

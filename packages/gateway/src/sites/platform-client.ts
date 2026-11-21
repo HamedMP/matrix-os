@@ -1,4 +1,4 @@
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationsCapabilitySchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationsCapabilitySchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteSocialSettingsSchema, type SiteSocialSettings, type SiteSocialUpdate } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 // 410: platform refused a retired capability (one-time links, ENG-490); relayed with generic copy only.
 export class SitePlatformError extends Error{constructor(readonly status:400|404|409|410|503){super('Publishing request failed');}}
@@ -14,6 +14,8 @@ export interface SitePlatformClient {
  resendEmailInvitation(slug:string,id:string,body:{baseRevision:number;invitationRevision:number}):Promise<z.infer<typeof SiteEmailInvitationMutationResponseSchema>>;
  revokeEmailInvitation(slug:string,id:string,body:{baseRevision:number;invitationRevision:number}):Promise<z.infer<typeof SiteEmailInvitationMutationResponseSchema>>;
  emailInvitationAudit(slug:string,query:{limit:number;cursor?:string}):Promise<z.infer<typeof SiteInvitationAuditPageSchema>>;
+ /** Link-preview settings: read without an update, replace with one. */
+ social(slug:string,update?:SiteSocialUpdate):Promise<SiteSocialSettings>;
 }
 export function createSitePlatformClient(options:{url:string;token:string;handle:string;runtimeSlot?:string}):SitePlatformClient{
  const base=new URL(options.url);if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new Error('Invalid site platform configuration');
@@ -61,5 +63,6 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
   emailInvitationAudit:async(slug,query)=>request(slug,'GET',undefined,
    `/invitations/audit?limit=${query.limit}${query.cursor?'&cursor='+encodeURIComponent(query.cursor):''}`,
    undefined,undefined,SiteInvitationAuditPageSchema) as Promise<z.infer<typeof SiteInvitationAuditPageSchema>>,
+  social:async(slug,update)=>request(slug,update===undefined?'GET':'PATCH',update,'/social',undefined,undefined,SiteSocialSettingsSchema) as Promise<SiteSocialSettings>,
  };
 }

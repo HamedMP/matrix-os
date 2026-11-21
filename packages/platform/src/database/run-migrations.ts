@@ -33,7 +33,7 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   });
   await runPlatformMigration(db, migrateGooglePurchases, { scope: 'billing-google-purchases', revision: GOOGLE_TRACKING_REVISION, deadlockAttempts: 12 });
   await runPlatformMigration(db, migrateSites, {
-    scope: 'sites', revision: { generation: 3, fingerprint: 'public-app-sites-email-invitations-v3' }, deadlockAttempts: 12,
+    scope: 'sites', revision: { generation: 4, fingerprint: 'public-app-sites-social-previews-v4' }, deadlockAttempts: 12,
   });
   await runPlatformMigration(db, migratePreviewPairPublisher, {
     scope: 'preview-pairs', revision: { generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' }, deadlockAttempts: 12,

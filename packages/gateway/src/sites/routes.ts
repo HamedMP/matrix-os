@@ -5,7 +5,7 @@ import { join, sep } from 'node:path';
 import { constants } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, SiteSlugAvailabilityQuerySchema, type SiteRecord, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationListQuerySchema, SiteInvitationAuditCursorSchema } from '@matrix-os/contracts';
+import { SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema, SiteIdSchema, SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, SiteSlugAvailabilityQuerySchema, type SiteRecord, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationListQuerySchema, SiteInvitationAuditCursorSchema, SiteSocialUpdateSchema } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
@@ -134,6 +134,12 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
   try{return c.json(await options.platform!.slugAvailability(c.req.param('slug')!,parsed.data.slug,c.req.raw.signal));}
   catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===400?'Invalid request':'Site unavailable'},error.status===400?400:503);throw error;}
  });
+ async function social(c:Context,update?:z.infer<typeof SiteSocialUpdateSchema>):Promise<Response>{
+  try{const slug=c.req.param('slug')!;return c.json(await (update===undefined?options.platform!.social(slug):options.platform!.social(slug,update)));}
+  catch(error){if(error instanceof SitePlatformError)return c.json({error:error.status===404?'Site not found':error.status===400?'Invalid request':'Site unavailable'},error.status===404||error.status===400?error.status:503);throw error;}
+ }
+ app.get(base+'/social',c=>social(c));
+ app.patch(base+'/social',limit,async c=>{const parsed=await body(c,SiteSocialUpdateSchema);return parsed.success?social(c,parsed.data):c.json({error:'Invalid request'},400);});
  app.post(base+'/access-links',limit,async c=>{
   const parsed=await body(c,SiteAccessLinkCreateRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
   try{return c.json(await options.platform!.createAccessLink(c.req.param('slug')!,parsed.data));}
