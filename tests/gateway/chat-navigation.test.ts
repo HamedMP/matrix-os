@@ -102,6 +102,20 @@ for (const [label, real] of [["PostgreSQL-compatible", false], ["real PostgreSQL
       expect(window.gap).toBe(false);
       expect(window.events.map(event => event.chatId)).toEqual([chatId]);
     });
+    it("keeps private scheduler Chats out of public project archive actions", async () => {
+      const { repository, db } = await setup(real);
+      const chatId = "chat_archive_public";
+      const hiddenId = "chat_routine_0123456789abcdef0123456789abcdef";
+      await repository.create(owner, { id: chatId, clientRequestId: "req_archive_public", title: "Visible Chat" });
+      await repository.create(owner, { id: hiddenId, clientRequestId: "req_archive_backing", title: "Scheduler" });
+      await sql`UPDATE chats SET project_id='project_public_archive' WHERE id IN (${chatId}, ${hiddenId})`.execute(db);
+
+      const result = await repository.archiveProjectChats(owner, "project_public_archive");
+      expect(result.archivedIds).toEqual([chatId]);
+      expect(result.archivedCount).toBe(1);
+      expect(result.skippedCount).toBe(0);
+      expect((await repository.get(owner, hiddenId))?.chat.lifecycle).toBe("active");
+    });
     it("preserves read/pin/attention and classifies archived/removed/group bindings safely", async () => {
       const { db, navigation, repository } = await setup(real);
       await seed(db, 4);

@@ -71,6 +71,7 @@ export async function archiveProjectChats(deps: MetadataDependencies, ownerInput
     const rows = await trx.selectFrom("chats").select(["id", "revision"])
       .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
       .where("project_id", "=", projectId).where("lifecycle", "=", "active")
+      .where(publicChatIdPredicate(sql.ref("chats.id")))
       .orderBy("id").limit(10_001).forUpdate().execute();
     if (rows.length > 10_000) throw new ChatBulkArchiveLimitError();
     const archivedIds: string[] = [];
@@ -111,6 +112,7 @@ export async function searchChats(
   let query = deps.kysely.selectFrom("chats")
     .selectAll("chats")
     .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
+    .where(publicChatIdPredicate(sql.ref("chats.id")))
     .where(sql<boolean>`(
       to_tsvector('simple', chats.title) @@ plainto_tsquery('simple', ${searchText})
       OR EXISTS (
