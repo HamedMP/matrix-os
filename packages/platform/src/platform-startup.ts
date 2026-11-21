@@ -64,6 +64,8 @@ import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createOrgMcpPresetGate } from './org-mcp/preset-gate.js';
+import { BOKIO_PRESET } from './bokio-integration.js';
 import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
@@ -774,11 +776,15 @@ async function startPlatformServerWithCleanup(
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
     deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
-    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    // Spec 2691: org policy also governs preset calls made through Integrations, which bypass the Core tool service.
+    const orgPresetGate = createOrgMcpPresetGate({ policy: orgMcp.policy,
+      resolveActorId: async userId => (await customDb.getUserById(userId))?.clerk_id });
+    const governedBroker = orgPresetGate.governBroker(broker);
+    const granolaBroker = createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager });
     managedMcpPresetBroker = createManagedPresetRouter({
       granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
-      bokio: bokioBroker,
+      bokio: orgPresetGate.governPresetBroker(bokioBroker, BOKIO_PRESET.url),
     });
     const managedOAuthFlow = managedLifecycle.oauth;
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({

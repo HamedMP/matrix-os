@@ -635,6 +635,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
             parameter,
           }, 400);
         }
+        // The organization blocks this server or action for the member (spec 2691).
+        if (err && typeof err === "object" && "code" in err && err.code === "org_policy_denied") {
+          return c.json({ error: "Action not permitted" }, 403);
+        }
         console.error("[integrations] MCP preset call failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: "Integration call failed" }, 502);
       }

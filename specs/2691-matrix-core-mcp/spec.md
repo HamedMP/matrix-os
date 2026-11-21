@@ -232,6 +232,9 @@ It is capped at 40 tools per session.
     membership in the platform projection. A member of several orgs is
     governed by all of them; any one block denies. A policy-store failure
     fails the call closed.
+    The same decision gates managed preset calls made through Integrations
+    (`/api/integrations/call`), which do not pass the Core tool service; a
+    denied call answers 403.
   - *Usage attribution* (`org_id`): the first org (by id) that denied the
     call; else the first org that governs the server; else the actor's only
     org; else none. Personal use of an ungoverned server by a member of
