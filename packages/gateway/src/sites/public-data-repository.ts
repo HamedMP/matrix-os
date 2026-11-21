@@ -127,7 +127,8 @@ export class SitePublicDataRepository {
       });
     }
     const action = request.action;
-    if (!isSafeName(appSlug)) throw new SitePublicDataError("unavailable");
+    // Same answer as the owner bridge, which refuses this app identity for db.* at request validation.
+    if (!isSafeName(appSlug)) throw new SitePublicDataError("invalid");
     const app = await this.options.resolveApp(appSlug);
     if (!app) throw new SitePublicDataError("unavailable");
     if (action.action === "appInfo") return { result: { installedVersion: app.installed_version }, changed: null };
