@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { CanonicalChatRecord } from '@matrix-os/contracts';
 import { groupWebChats, WebChatLifecycleGroups } from '../../shell/src/components/chat/WebChatLifecycleGroups';
 import type { RenameableConversation } from '../../shell/src/components/chat/ChatTitleRename';
@@ -54,4 +54,22 @@ it('retains explicit Done collapse for the mounted scope and starts the next sco
  view.rerender(<WebChatLifecycleGroups scopeKey="viewer-b" conversations={[row]} renderRow={renderRow}/>);
  expect(screen.getByRole('button', {name:'Done'}).getAttribute('aria-expanded')).toBe('true');
  expect(screen.getByRole('button', {name:'ordinary'})).toBeTruthy();
+});
+
+it('loads status groups independently, starting at ten and fetching twenty more', async () => {
+ const rows = Array.from({length:31}, (_,index)=>entry(`done_${index}`));
+ const loadPage = vi.fn(async (input: {group:string; limit:number; cursor?:string}) => ({
+  items: (input.group === 'done' ? rows.slice(input.cursor ? 10 : 0, input.cursor ? 30 : 10) : []).map(row=>({
+   ...row.canonicalRecord, readState:{version:0,unread:false,markedUnread:false,latestIncomingSeq:0,readThroughSeq:0},
+   classification:{kind:'ordinary' as const}, persistence:'personal' as const,
+  })), totalCount:input.group === 'done' ? 31 : 0, ...(input.group !== 'done' ? {} : input.cursor ? {nextCursor:'navcur_last'} : {nextCursor:'navcur_next'}),
+ }));
+ render(<WebChatLifecycleGroups conversations={rows} loadPage={loadPage} renderRow={item=><button>{item.id}</button>}/>);
+ await waitFor(()=>expect(loadPage).toHaveBeenCalledWith({group:'done',limit:10}));
+ expect(screen.getByRole('button',{name:'done_9'})).toBeTruthy();
+ expect(screen.queryByRole('button',{name:'done_10'})).toBeNull();
+ fireEvent.click(screen.getByRole('button',{name:'Show more Done chats'}));
+ await waitFor(()=>expect(loadPage).toHaveBeenCalledWith({group:'done',limit:20,cursor:'navcur_next'}));
+ expect(screen.getByRole('button',{name:'done_29'})).toBeTruthy();
+ expect(screen.queryByRole('button',{name:'done_30'})).toBeNull();
 });

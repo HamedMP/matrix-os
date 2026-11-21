@@ -1,6 +1,9 @@
-import React, { Fragment, useState, type ReactNode } from 'react';
-import { ChatRailSection, resolveCanonicalChatLifecycleGroup } from '@matrix-os/ui';
+import React, { Fragment, useContext, useState, type ReactNode } from 'react';
+import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, resolveCanonicalChatLifecycleGroup, type ChatImportSourceFilterValue } from '@matrix-os/ui';
 import type { RenameableConversation } from './ChatTitleRename';
+import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from '@matrix-os/contracts';
+import { orderWebChatRows } from "./useWebChatRailOrder";
+import { usePagedStatusGroup, withConversationReadUpdates } from './usePagedProjectChats';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
 export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {
@@ -16,18 +19,40 @@ export function groupWebChats(items: readonly RenameableConversation[]): Record<
   return result;
 }
 
-export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, renderRow }: {
+export function WebChatLifecycleGroups({ conversations, projects, attention, attentionCount = 0, scopeKey, navigationUpdatedAt, loadPage, excludedChatIds, unreadOnly = false, sourceFilter = 'all', chatReadStateUpdates = [], renderRow }: {
   attentionCount?: number; scopeKey?: string;
+  navigationUpdatedAt?: number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
+  loadPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  excludedChatIds?: readonly string[];
+  unreadOnly?: boolean;
+  sourceFilter?: ChatImportSourceFilterValue;
   conversations: readonly RenameableConversation[]; projects?: ReactNode; attention?: ReactNode; renderRow(item: RenameableConversation): ReactNode;
 }) {
+  const order = useContext(ChatRailOrderContext);
   const groups = groupWebChats(conversations);
+  const pinnedPage = usePagedStatusGroup('pinned', loadPage, scopeKey, navigationUpdatedAt);
+  const needsPage = usePagedStatusGroup('needsYou', loadPage, scopeKey, navigationUpdatedAt);
+  const workingPage = usePagedStatusGroup('working', loadPage, scopeKey, navigationUpdatedAt);
+  const donePage = usePagedStatusGroup('done', loadPage, scopeKey, navigationUpdatedAt);
+  const pages = { pinned: pinnedPage, needsYou: needsPage, working: workingPage, done: donePage };
   const [state, setState] = useState(() => ({scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}));
   let current = state;
   if (current.scopeKey !== scopeKey) { current = {scopeKey, expanded: {pinned: true, needsYou: true, working: true, done: true}}; setState(current); }
-  const section = (key: GroupKey, label: string, extra?: ReactNode) => groups[key].length || extra || key !== "pinned" ? <ChatRailSection key={key} label={label}
-    count={groups[key].length + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
+  const section = (key: GroupKey, label: string, extra?: ReactNode) => {
+    const page = pages[key];
+    const unordered = page && loadPage && !page.loading && !page.error || page && loadPage && page.rows.length
+      ? filterChatsByImportSource(page!.rows.map(row => withConversationReadUpdates(row, chatReadStateUpdates)).filter(row => !excludedChatIds?.includes(row.id) && (!unreadOnly || row.readState?.unread)), sourceFilter, row => row.canonicalRecord?.importSource)
+      : loadPage ? groups[key].slice(0, 10) : groups[key];
+    const rows = orderWebChatRows(unordered, order.chatIds, row=>row.id);
+    const count = page && loadPage && (page.rows.length > 0 || !page.loading && !page.error) ? page.count : groups[key].length;
+    return rows.length || extra || key !== "pinned" || Boolean(page?.cursor && loadPage) ? <ChatRailSection key={key} label={label}
+    count={count + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
     onExpandedChange={expanded => setState(value => value.scopeKey === scopeKey ? {...value, expanded: {...value.expanded, [key]: expanded}} : value)}>
-    {groups[key].map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
+    {rows.map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
+    {page && loadPage && page.cursor ? <button type="button" aria-label={`Show more ${label} chats`} className="matrix-web-project-more" disabled={page.loading} onClick={page.loadMore}>Show more</button> : null}
+    {page?.error && loadPage ? <p role="alert" className="matrix-web-project-note">Chats could not be loaded.</p> : null}
   </ChatRailSection> : null;
+  };
   return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;
 }

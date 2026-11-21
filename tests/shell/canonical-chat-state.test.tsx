@@ -38,6 +38,22 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it.each(["running", "completed"] as const)("projects the %s canonical run's worktree into Web file scope", async stage => {
+    const { snapshot } = createCanonicalChatFixture(stage);
+    const { project: _project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const current = { chat, projectId: "project_test", ...(activeRun ? { activeRun } : {}) };
+    const details = { record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities,
+      runs: snapshot.runs.map(run => ({ ...run, executionRoot: { kind: "worktree", projectId: "project_test", worktreeId: "wt_branch" } })) };
+    stubLegacyChatFetch(vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+      if (url.includes(`/api/chats/${chat.id}?`)) return Response.json(details);
+      throw new Error("Unexpected file-scope fixture request");
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    expect(result.current.chatFileScope).toEqual({ kind: "project", projectId: "project_test", worktreeId: "wt_branch" });
+  });
+
   it("submits the digest from the displayed active approval in Web Chat", async () => {
     const actionDigest = "e".repeat(64);
     const { snapshot } = createCanonicalChatFixture("approval_required");
@@ -249,6 +265,58 @@ describe("canonical shell Chat state", () => {
     });
 
     expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_a"]);
+  });
+
+  it("archives a Chat with its current revision and offers a restore operation", async () => {
+    const lifecycleRequests: Array<{ lifecycle: string; baseRevision: number }> = [];
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) return Response.json({ items: [record("chat_a", "Archive me")] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Archive me"));
+      if (url.includes("/api/chats/chat_a/lifecycle?") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { lifecycle: "active" | "archived"; baseRevision: number };
+        lifecycleRequests.push(body);
+        return Response.json({ ...record("chat_a", "Archive me", body.baseRevision + 1), chat: {
+          ...record("chat_a", "Archive me", body.baseRevision + 1).chat, lifecycle: body.lifecycle,
+        } });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => { await expect(result.current.archiveConversation?.("chat_a")).resolves.toEqual({ chatId: "chat_a", revision: 1 }); });
+    expect(lifecycleRequests).toEqual([{ lifecycle: "archived", baseRevision: 0 }]);
+    expect(result.current.conversations).toHaveLength(0);
+  });
+
+  it("archives a paged Chat absent from the initial rail list", async () => {
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });
+      if (url.includes("/api/chats/chat_paged?") && !init?.method) return Response.json(detail("chat_paged", "Older chat", 7));
+      if (url.includes("/api/chats/chat_paged/lifecycle?") && init?.method === "PATCH") return Response.json(record("chat_paged", "Older chat", 8));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    stubLegacyChatFetch(fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(0));
+    await act(async () => { await expect(result.current.archiveConversation?.("chat_paged")).resolves.toEqual({ chatId: "chat_paged", revision: 8 }); });
+    expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining("/api/chats/chat_paged/lifecycle?"), expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("renames a paged Chat absent from the initial rail list", async () => {
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });
+      if (url.includes("/api/chats/chat_paged?") && !init?.method) return Response.json(detail("chat_paged", "Older chat", 7));
+      if (url.includes("/api/chats/chat_paged/title?") && init?.method === "PATCH") {
+        expect(JSON.parse(String(init.body))).toEqual({ expectedTitleVersion: 7, title: "Renamed" });
+        return Response.json(record("chat_paged", "Renamed", 8));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    stubLegacyChatFetch(fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(0));
+    await act(async () => { await expect(result.current.renameConversation?.("chat_paged", "Renamed")).resolves.toBe(true); });
+    expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining("/api/chats/chat_paged/title?"), expect.objectContaining({ method: "PATCH" }));
   });
 
   it("does not let an older rename response regress a newer canonical refresh", async () => {
@@ -775,4 +843,20 @@ it("cleans an attachment uploaded before a project Skill's Chat moved", async ()
   expect(fetchFn.mock.calls.some(([url]) => url.includes("/turns"))).toBe(false);
   const deletion = fetchFn.mock.calls.find(([, init]) => init?.method === "DELETE");
   expect(deletion?.[0] && new URL(deletion[0]).searchParams.get("path")).toBe(uploadedPath);
+});
+
+it("publishes successful versioned read updates for older paged chats outside navigation", async () => {
+  const selected = record("chat_selected", "Selected");
+  const old = { ...record("chat_older", "Older"), readState: { unread: true, markedUnread: true, version: 2, readThroughSeq: 0, latestIncomingSeq: 1 } };
+  stubLegacyChatFetch(vi.fn(async (url: string) => {
+    if (url.includes("/read-state")) return Response.json(old);
+    if (url.includes("/api/chats?")) return Response.json({items:[selected]});
+    if (url.includes("/api/chats/chat_selected?")) return Response.json(detail("chat_selected","Selected"));
+    throw new Error("Unexpected read-state fixture request");
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(()=>expect(result.current.messages).toHaveLength(1));
+  await act(async()=>{ expect(await result.current.updateReadState?.("chat_older",{type:"mark_unread"})).toBe(true); });
+  expect(result.current.conversations.map(chat=>chat.id)).toEqual(["chat_selected"]);
+  expect(result.current.chatReadStateUpdates).toEqual([old]);
 });

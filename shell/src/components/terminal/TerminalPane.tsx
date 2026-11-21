@@ -152,6 +152,7 @@ export function TerminalPane({
   isFocused,
   focusRequestId = 0,
   sessionId: initialSessionId,
+  chatId,
   claudeMode,
   startupCommand,
   compatMode,
@@ -1363,6 +1364,7 @@ export function TerminalPane({
           terminalRef,
           fromSeq: replayRequest?.requestedSeq ?? 0,
           mobile: suppressNativeKeyboard,
+          chatId,
           lease: requestedOwnershipRef.current,
           size: declaredSize,
         });
@@ -1673,6 +1675,7 @@ export function TerminalPane({
     };
     // react-doctor-disable-next-line react-doctor/exhaustive-deps -- theme/font/cursor settings are deliberately excluded: re-running this effect would tear down and rebuild the WebSocket and xterm session. Those settings are applied live by the separate options-sync effect below, and live prop values are read through latest-value refs.
   }, [
+    chatId,
     claudeMode,
     cwd,
     allowRemoteResize,
