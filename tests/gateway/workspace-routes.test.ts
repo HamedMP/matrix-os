@@ -959,18 +959,7 @@ exit 1
     });
   });
 
-  it("routes task, preview, and workspace event APIs through workspace managers", async () => {
-    const task = {
-      id: "task_abc123",
-      projectSlug: "repo",
-      title: "Fix auth",
-      status: "todo",
-      priority: "high",
-      order: 0,
-      previewIds: [],
-      createdAt: "2026-04-26T00:00:00.000Z",
-      updatedAt: "2026-04-26T00:00:00.000Z",
-    };
+  it("routes preview and workspace event APIs through workspace managers", async () => {
     const preview = {
       id: "prev_abc123",
       projectSlug: "repo",
@@ -989,12 +978,6 @@ exit 1
       payload: { title: "Fix auth" },
       createdAt: "2026-04-26T00:00:00.000Z",
     };
-    const taskManager = {
-      createTask: vi.fn(async () => ({ ok: true, status: 201, task })),
-      listTasks: vi.fn(async () => ({ ok: true, tasks: [task], nextCursor: null })),
-      updateTask: vi.fn(async () => ({ ok: true, task: { ...task, status: "running" } })),
-      deleteTask: vi.fn(async () => ({ ok: true })),
-    };
     const previewManager = {
       createPreview: vi.fn(async () => ({ ok: true, status: 201, preview })),
       listPreviews: vi.fn(async () => ({ ok: true, previews: [preview], nextCursor: null })),
@@ -1006,23 +989,7 @@ exit 1
       publishEvent: vi.fn(async () => ({ ok: true, event })),
       listEvents: vi.fn(async () => ({ ok: true, events: [event], nextCursor: null })),
     };
-    const app = createWorkspaceRoutes({ homePath, taskManager, previewManager, eventStore });
-
-    const createdTask = await app.request(jsonRequest("/api/projects/repo/tasks", { title: "Fix auth", priority: "high" }));
-    expect(createdTask.status).toBe(201);
-    expect(taskManager.createTask).toHaveBeenCalledWith(
-      "repo",
-      { title: "Fix auth", priority: "high" },
-      { type: "user", id: "default" },
-    );
-    expect(eventStore.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "task.created" }));
-    await expect((await app.request("/api/projects/repo/tasks?includeArchived=true")).json()).resolves.toMatchObject({
-      tasks: [expect.objectContaining({ id: "task_abc123" })],
-    });
-    await expect((await app.request(patchJsonRequest("/api/projects/repo/tasks/task_abc123", { status: "running" }))).json()).resolves.toMatchObject({
-      task: expect.objectContaining({ status: "running" }),
-    });
-    await expect((await app.request(deleteJsonRequest("/api/projects/repo/tasks/task_abc123", {}))).json()).resolves.toEqual({ ok: true });
+    const app = createWorkspaceRoutes({ homePath, previewManager, eventStore });
 
     const createdPreview = await app.request(jsonRequest("/api/projects/repo/previews", {
       taskId: "task_abc123",

@@ -36,6 +36,8 @@ import { createPushTokenStore, type PushTokenStore } from "../notifications/push
 import { bootstrapNotificationDatabase, type NotificationDatabase } from "../notifications/schema.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
 import { OsViewStateRepository } from "../os-view-state/repository.js";
+import { bootstrapProjectTaskDatabase, type ProjectTaskDatabase } from "../project-tasks/database.js";
+import { ProjectTaskRepository } from "../project-tasks/repository.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { constructOwnerCollaboration } from "./collaboration.js";
@@ -89,6 +91,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   collaboration: GatewayCollaborationRuntime | null;
   messagingRepository: MessagingKyselyRepository | null;
   pushTokens: PushTokenStore | null;
+  projectTaskRepository: ProjectTaskRepository | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
@@ -124,7 +127,7 @@ export async function initializeOwnerDatabaseServices(
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
-    pushTokens: null,
+    pushTokens: null, projectTaskRepository: null,
   };
   let failClosedReason = options.initialFailureReason;
   const result = await bootOwnerDatabaseWithFallback({
@@ -160,6 +163,9 @@ export async function initializeOwnerDatabaseServices(
       services.chatExecutionRoots = ownerChatExecutionRoots;
       services.chatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
+      // Project boards after Chat and sharing; the board owns its own versioned schema.
+      await bootstrapProjectTaskDatabase(kysely as Kysely<ProjectTaskDatabase>);
+      services.projectTaskRepository = new ProjectTaskRepository(kysely as Kysely<ProjectTaskDatabase>);
       if (options.collaborationConfig) {
         const construction = await constructOwnerCollaboration({
           homePath: options.homePath, chatRepository, appRegistry, canvasRepository,

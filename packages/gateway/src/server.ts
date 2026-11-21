@@ -4,7 +4,6 @@ import { startUsageHistory } from "./ai-usage/history-service.js";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
-import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
 import { createCodexExecutionIdleProof } from "./coding-agents/codex-execution-observation.js";
@@ -64,6 +63,7 @@ import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { registerWorkspaceLifecycle } from "./server/workspace-lifecycle.js";
+import { registerProjectTaskRoutes } from "./server/project-task-routes.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
@@ -119,12 +119,7 @@ import { createCronChannelTrigger } from "./cron/channel-trigger.js";
 import { createCronService, type CronService } from "./cron/service.js";
 import { createCronStore } from "./cron/store.js";
 import { createDispatcher, type Dispatcher } from "./dispatcher.js";
-import {
-  createFundedAiCredentialManager,
-  loadFundedAiRuntimeConfig,
-} from "./funded-ai-credential-manager.js";
-import { createFundedAdmissionQueue } from "./funded-ai/admission-queue.js";
-import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiServices } from "./server/funded-ai-services.js";
 import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
 import { initializeJevRuntime } from "./jev/runtime.js";
@@ -302,16 +297,8 @@ const MAX_MAIN_WS_CLIENTS = 100;
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
-  const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
-  const canonicalPhaseDiscovery = createCanonicalPhaseDiscovery(fundedAiRuntimeConfig, process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID);
-  const fundedCredentialProvider = fundedAiRuntimeConfig
-    ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
-    : undefined;
-  // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
-  const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
-  const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
-    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig, canonicalPhaseDiscovery.routeOptions)
-    : undefined;
+  const { fundedAiRuntimeConfig, canonicalPhaseDiscovery, fundedCredentialProvider, fundedAdmission, fundedAiFundingSummaryReader } =
+    createFundedAiServices(process.env);
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
     getPrincipal: (c) => requireRequestPrincipal(c),
@@ -1772,6 +1759,9 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
 
+  registerProjectTaskRoutes({ app, homePath, repository: ownerDatabaseServices?.projectTaskRepository ?? null,
+    projectManager: codingAgentProjectManager, eventPublisher: workspaceEventPublisher, collaboration: gatewayCollaboration,
+    sendPush: (reply) => channelManager.send(reply) });
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const githubSettingsStore = providerSettingsStore;
   const githubDeveloperSetup = registerGithubDeveloperSetup({
