@@ -143,22 +143,31 @@ it("shows the composer for a new-chat request on a project remembered as Board, 
   expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
   expect(useProjectView.getState().viewFor("alpha")).toBe("board");
 
-  // The request being consumed keeps the composer for this visit; choosing Board shows the board again.
-  act(() => { useProjectChatLauncher.getState().consumeComposer("alpha"); });
-  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  // Choosing Board ends the request, so the board shows again and stays.
   fireEvent.click(within(screen.getByRole("group", { name: "Project view" })).getByRole("button", { name: "Board" }));
   expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
+  expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
 });
 
-it("lets Board end the composer override even while the new-chat request is still pending", async () => {
+it("scopes a new-chat request to its project and ends it on explicit Board navigation or leaving", async () => {
   const { useProjectChatLauncher } = await import("@desktop/renderer/src/lib/project-chat");
+  const { openProjectBoard } = await import("@desktop/renderer/src/lib/project-navigation");
   connect();
   useProjectView.getState().setView("alpha", "board");
-  renderLanding();
+  useProjectView.getState().setView("beta", "board");
+  const view = renderLanding();
   act(() => { useProjectChatLauncher.getState().requestComposer("alpha"); });
   expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
-  fireEvent.click(within(screen.getByRole("group", { name: "Project view" })).getByRole("button", { name: "Board" }));
+
+  // The same landing reused for another project keeps that project's Board.
+  const beta: Project = { id: "project_beta_id", slug: "beta", name: "Beta", kind: "folder" };
+  view.rerender(<ProjectLanding project={beta}><textarea aria-label="Project draft" /></ProjectLanding>);
   expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
-  expect(useProjectChatLauncher.getState().composerRequest).not.toBeNull();
-  act(() => { useProjectChatLauncher.getState().consumeComposer("alpha"); });
+  // Leaving alpha ended its request.
+  expect(useProjectChatLauncher.getState().composerRequest).toBeNull();
+
+  act(() => { useProjectChatLauncher.getState().requestComposer("beta"); });
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  act(() => { openProjectBoard("beta", "Beta"); });
+  expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
 });

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { FolderOpen, PencilEditIcon } from "@renderer/lib/hugeicons";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ProjectConversationList, useMinuteClock } from "@matrix-os/ui";
@@ -8,7 +8,7 @@ import { DesktopProjectAgentContext } from "./DesktopProjectAgentContext";
 import { useProjectLandingChats } from "./use-project-landing-chats";
 import type { Project } from "../../stores/board";
 import { useProjectView } from "../../stores/project-view";
-import { useProjectChatLauncher } from "../../lib/project-chat";
+import { endComposerRequest, useProjectChatLauncher } from "../../lib/project-chat";
 import { DesktopProjectBoard } from "./DesktopProjectBoard";
 import { ProjectEditDialog } from "../work/work-rail/ProjectActionDialogs";
 import { useProjectActions } from "../work/work-rail/use-project-actions";
@@ -28,17 +28,16 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
   const remembered: ProjectHomeView = useProjectView((s) => s.entries[project.slug]?.view) === "board" ? "board" : "overview";
-  // A new-chat request (Cmd/Ctrl+J, palette) shows the composer for this visit without changing the remembered view.
-  const composeRequest = useProjectChatLauncher((s) => (s.composerRequest && (s.composerRequest.projectId === project.slug || s.composerRequest.projectId === project.id)
-    ? s.composerRequest.requestId : null));
-  // Each request is honoured once: choosing a view ends the override even while the request is still pending.
-  const [compose, setCompose] = useState<{ handled: number | null; showing: boolean }>({ handled: null, showing: false });
-  if (composeRequest !== null && composeRequest !== compose.handled) setCompose({ handled: composeRequest, showing: true });
-  const view: ProjectHomeView = compose.showing ? "overview" : remembered;
+  // A pending new-chat request (Cmd/Ctrl+J, palette) shows this project's composer without changing the
+  // remembered view. Choosing a view, opening the Board, or leaving the project ends it.
+  const composePending = useProjectChatLauncher((s) => s.composerRequest !== null
+    && (s.composerRequest.projectId === project.slug || s.composerRequest.projectId === project.id));
+  const view: ProjectHomeView = composePending ? "overview" : remembered;
   const setView = (next: ProjectHomeView) => {
-    setCompose((current) => ({ ...current, showing: false }));
+    endComposerRequest(project);
     useProjectView.getState().setView(project.slug, next);
   };
+  useEffect(() => () => endComposerRequest(project), [project]);
   const board = showMetadata && view === "board";
   const list = conversationListState(records, useProjectLandingChats(project, client, eventSource, active && !board));
   const actions = useProjectActions(project);
