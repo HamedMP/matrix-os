@@ -4,6 +4,7 @@ import { registerOwnerDataImportTools } from "./data-imports.js";
 import { registerChatAgentTools } from "./chat-agents.js";
 import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
+import { registerProjectTaskTools } from "./project-tasks.js";
 import {
   callServiceHandler,
   connectServiceHandler,
@@ -215,5 +216,7 @@ export function createIntegrationsMcpServer(
 
     registerChatAgentTools(server, fetcher);
   }
+  // Spec 2699: the project board on the chat and full surfaces; discovery runs only read it.
+  if (full || (chat && !previewDrive)) registerProjectTaskTools(server, fetcher, { readOnly: discovery });
   return server;
 }

@@ -3,11 +3,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { describe, expect, it } from "vitest";
 
 const customDiscovery = ["list_custom_mcp_servers", "describe_custom_mcp_server"];
+const projectTaskTools = [
+  "project_task_list", "project_task_get", "project_task_create", "project_task_update",
+  "project_task_move", "project_task_comment", "project_task_start",
+];
 const fullBaseline = [
   "list_integration_inventory", "list_connected_services", "describe_service",
   "connect_service", "sync_services", "call_service", "disconnect_service",
   ...customDiscovery, "call_custom_mcp_tool", "jev_evaluate",
-  "list_chat_agent_options", "create_chat_agent",
+  "list_chat_agent_options", "create_chat_agent", ...projectTaskTools,
 ];
 
 async function withClient(surface: string | undefined, inspect: (client: Client) => Promise<void>) {
@@ -32,7 +36,7 @@ describe("Matrix MCP advertises only the selected runnable surface", () => {
       expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
         "list_integration_inventory", "list_connected_services", "describe_service",
         "connect_service", "sync_services", "call_service", "disconnect_service",
-        ...customDiscovery, "call_custom_mcp_tool",
+        ...customDiscovery, "call_custom_mcp_tool", ...projectTaskTools,
       ]);
       expect(client.getInstructions()).toContain("list_integration_inventory");
       expect(client.getInstructions()).toContain("account label");

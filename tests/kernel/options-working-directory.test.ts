@@ -78,7 +78,7 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined, undefined);
   });
 
   it("registers owner audio transcription only from an injected managed dependency", async () => {
@@ -91,6 +91,7 @@ describe("kernel working directory", () => {
       "/home/matrix/home",
       undefined,
       ownerAudioTranscriber,
+      undefined,
       undefined,
     );
   });
@@ -106,6 +107,6 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_wait");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools, undefined);
   });
 });

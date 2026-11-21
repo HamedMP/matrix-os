@@ -155,6 +155,25 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1].workingDirectory).toBeUndefined();
   });
 
+  // Fault detected: a task session's kernel run lost its project board binding between
+  // the chat adapter and the kernel, so its board tools were missing.
+  it("passes a server-set project board binding to only the selected dispatch", async () => {
+    const homePath = makeHomePath();
+    const configs: KernelConfig[] = [];
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
+    const projectTasks = { client: {} as never, session: { projectId: "proj_alpha", projectSlug: "matrix-os", taskId: "task_42" } };
+
+    await dispatcher.dispatch("work on the task", "session-one", () => {}, undefined, undefined, { projectTasks });
+    await dispatcher.dispatch("no project", "session-two", () => {});
+
+    expect(configs[0]!.projectTasks).toBe(projectTasks);
+    expect(configs[1]!.projectTasks).toBeUndefined();
+  });
+
   it("injects the managed owner-audio dependency into serial and batch kernels", async () => {
     const homePath = makeHomePath();
     const configs: KernelConfig[] = [];

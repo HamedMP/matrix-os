@@ -13,6 +13,7 @@ import {
   type MatrixDB,
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
+  type ProjectTaskKernelBinding,
   type TerminalAgentKernelTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
@@ -76,6 +77,8 @@ export interface KernelDispatchOverrides {
   workingDirectory?: string;
   /** Per-client native approval bridge. Never accepted from request JSON. */
   requestApproval?: RequestApprovalFn;
+  /** Project board binding for a task session's run. Server-set only; bounds the board tools to that project. */
+  projectTasks?: ProjectTaskKernelBinding;
 }
 
 export interface BatchEntry {
@@ -245,6 +248,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         terminalTools: opts.terminalTools,
+        ...(entry.kernelOverrides?.projectTasks ? { projectTasks: entry.kernelOverrides.projectTasks } : {}),
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
       };
       try {
