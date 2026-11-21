@@ -1,5 +1,6 @@
-# Loads hostd's own nftables tables (matrix_hostd, matrix_hostd_nat) from
-# /etc/matrix-hostd/nft.env. It never flushes the ruleset. A host-wide
+# Loads hostd's nftables tables (matrix_hostd, matrix_hostd_nat), the host
+# firewall of a metal host, from /etc/matrix-hostd/nft.env after checking the
+# ruleset accepts SSH on the public interface. It never flushes the ruleset. A host-wide
 # nftables reload that does flush (nftables.service) is followed by a reload
 # of this unit, which puts hostd's tables back.
 [Unit]

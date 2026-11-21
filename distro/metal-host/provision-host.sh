@@ -9,12 +9,14 @@
 #   --wan-iface IF          public interface (default: the default-route interface)
 #   --ingress-port N        owner ingress port (default 443)
 #   --api-port N            host API port (default 8443)
-#   --firewall MODE         exclusive|coexist|auto (default auto: coexist when
-#                           another ruleset already filters input; auto never
-#                           picks exclusive, which must be asked for)
+#   --data-disks A,B        two whole disks whose free space becomes the RAID1
+#                           PV for vmvg (a new "vmdata" partition on each);
+#                           only used when vmvg does not exist yet
 #   --confirm-firewall      cancel the pending firewall revert (run from a NEW
 #                           SSH session after a firewall change) and exit
 #
+# hostd's nftables tables are the host firewall (see nftables.conf); SSH on
+# the public interface is always accepted and checked before loading.
 # Any firewall change arms a 10-minute revert (matrix-hostd-nft-revert.timer)
 # that disables hostd's tables again unless confirmed, so a rule that locks
 # out SSH heals itself.
@@ -62,7 +64,7 @@ readonly ETC_DIR=/etc/matrix-hostd
 readonly OPT_DIR=/opt/matrix-hostd
 
 firewall_pending=0
-host_name="" wan="" ingress_port=443 api_port=8443 firewall=auto pool_device=""
+host_name="" wan="" ingress_port=443 api_port=8443 data_disks=""
 snapshots_size=400G swap_size=64G
 hostd_bundle="$REPO_ROOT/packages/hostd/dist/hostd/main.mjs"
 guest_agent="$REPO_ROOT/packages/hostd/dist/guest-agent/agent.mjs"
@@ -87,8 +89,7 @@ while [ "$#" -gt 0 ]; do
     --wan-iface) wan="$2" ;;
     --ingress-port) ingress_port="$2" ;;
     --api-port) api_port="$2" ;;
-    --firewall) firewall="$2" ;;
-    --pool-device) pool_device="$2" ;;
+    --data-disks) data_disks="$2" ;;
     --snapshots-size) snapshots_size="$2" ;;
     --swap-size) swap_size="$2" ;;
     --hostd-bundle) hostd_bundle="$2" ;;
@@ -106,7 +107,6 @@ done
 [ "$ingress_port" != "$api_port" ] || die "ingress and API ports must differ"
 [[ "$snapshots_size" =~ ^[0-9]+[GT]$ ]] || die "invalid --snapshots-size"
 [[ "$swap_size" =~ ^[0-9]+G$ ]] || die "invalid --swap-size"
-case "$firewall" in exclusive|coexist|auto) ;; *) die "--firewall must be exclusive, coexist or auto" ;; esac
 [ -f "$hostd_bundle" ] || die "hostd bundle missing (bun run --cwd packages/hostd build:hostd)"
 [ -f "$guest_agent" ] || die "guest agent bundle missing (bun run --cwd packages/hostd build:guest-agent)"
 if [ -z "$wan" ]; then
@@ -168,7 +168,7 @@ write_file() {
 
 # --- packages -----------------------------------------------------------------
 missing_packages=()
-for pkg in cloud-image-utils qemu-utils thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 nftables curl xz-utils; do
+for pkg in mdadm gdisk parted cloud-image-utils qemu-utils thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 nftables curl xz-utils; do
   # shellcheck disable=SC2016 # ${Status} is dpkg-query's format, not shell.
   has 'install ok installed' dpkg-query -W -f='${Status}' "$pkg" || missing_packages+=("$pkg")
 done
@@ -211,14 +211,41 @@ install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 
 install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644 >/dev/null
 
 # --- LVM: thin pool, snapshot filesystem, swap ---------------------------------
+# The data RAID1: a "vmdata" partition (type FD00) in the free space of each
+# disk, mirrored as /dev/md/vmdata, as the only PV of vmvg.
+partition_named() {
+  local disk="$1" part
+  for part in $(lsblk -nrpo NAME "$disk" | tail -n +2); do
+    if [ "$(lsblk -nro PARTLABEL "$part")" = vmdata ]; then printf '%s\n' "$part"; return 0; fi
+  done
+  return 1
+}
 if ! vgs "$VG" >/dev/null 2>&1; then
-  [ -n "$pool_device" ] || die "VG $VG does not exist; pass --pool-device"
-  pvcreate "$pool_device"
-  vgcreate "$VG" "$pool_device"
+  [[ "$data_disks" =~ ^/dev/[a-z0-9]+,/dev/[a-z0-9]+$ ]] || die "VG $VG does not exist; pass --data-disks /dev/A,/dev/B"
+  if [ ! -e /dev/md/vmdata ]; then
+    parts=()
+    for disk in ${data_disks/,/ }; do
+      [ -b "$disk" ] || die "$disk is not a block device"
+      if ! part="$(partition_named "$disk")"; then
+        sgdisk --new=0:0:0 --typecode=0:FD00 --change-name=0:vmdata "$disk" >/dev/null
+        partprobe "$disk"
+        udevadm settle --timeout=10
+        part="$(partition_named "$disk")" || die "could not create the vmdata partition on $disk"
+      fi
+      parts+=("$part")
+    done
+    mdadm --create /dev/md/vmdata --name=vmdata --level=1 --raid-devices=2 --metadata=1.2 --run "${parts[@]}"
+    md_line="$(mdadm --detail --brief /dev/md/vmdata)"
+    printf '%s\n' "$md_line" >>/etc/mdadm/mdadm.conf
+    update-initramfs -u >/dev/null
+    log "created RAID1 /dev/md/vmdata from ${parts[*]}"
+  fi
+  pvcreate /dev/md/vmdata
+  vgcreate "$VG" /dev/md/vmdata
 fi
 if ! lvs "$VG/$POOL" >/dev/null 2>&1; then
   # Leave room outside the pool for the swap LV and pool metadata growth.
-  lvcreate --type thin-pool --extents 90%FREE --name "$POOL" "$VG"
+  lvcreate --type thin-pool --extents 95%FREE --name "$POOL" "$VG"
   log "created thin pool $VG/$POOL"
 fi
 [ "$(lvs --noheadings -o segtype "$VG/$POOL" | tr -d ' ')" = thin-pool ] || die "$VG/$POOL is not a thin pool"
@@ -321,21 +348,18 @@ fi
 has "${BRIDGE_CIDR%/*}/" ip -4 addr show dev "$BRIDGE" || die "bridge $BRIDGE did not come up"
 
 # --- firewall --------------------------------------------------------------------
-if [ "$firewall" = auto ]; then
-  # Any existing input filter means someone else owns host access: coexist.
-  # exclusive (default deny, SSH only from the tailnet) is never guessed.
-  if has 'hook input' nft list ruleset; then
-    firewall=coexist
-  else
-    die "no existing input filter: choose --firewall exclusive (SSH only via tailscale0) or coexist"
-  fi
-fi
+# Dry run first: render with these exact parameters, require SSH on the
+# public interface to be accepted, and let nft parse it, before anything loads.
+/usr/local/libexec/matrix-hostd-nft render --template /usr/local/share/matrix-hostd/nftables.conf \
+  --wan "$wan" --ingress-port "$ingress_port" --api-port "$api_port" >"$work/nftables.nft"
+/usr/local/libexec/matrix-hostd-nft check "$work/nftables.nft" --wan "$wan"
+nft -c -f "$work/nftables.nft"
+log "firewall dry run: ruleset parses and accepts SSH on $wan"
 install -d -m 0755 "$ETC_DIR"
 nft_changed="$(write_file "$ETC_DIR/nft.env" 0644 <<EOF
 WAN=$wan
 INGRESS_PORT=$ingress_port
 API_PORT=$api_port
-MODE=$firewall
 EOF
 )"
 
@@ -383,6 +407,8 @@ set_env HOSTD_STATE_DIR "$STATE_DIR"
 set_env HOSTD_RUN_DIR /run/matrix-vm
 
 install -d -m 0750 -o root -g "$VM_USER" "$STATE_DIR/vms"
+# Serial logs: written by the VMM (matrix-vm), removed by hostd on destroy.
+install -d -m 0750 -o "$VM_USER" -g "$VM_USER" /var/log/matrix-vm
 install -d -m 0700 "$STATE_DIR/golden"
 
 # --- units -------------------------------------------------------------------------
@@ -412,7 +438,7 @@ for _ in $(seq 1 50); do
 done
 has LISTEN ss -ltn "sport = :$api_port" || die "hostd is not listening on $api_port (journalctl -u matrix-hostd)"
 
-log "host $host_name ready: hostd API :$api_port, ingress :$ingress_port, firewall $firewall, bridge $BRIDGE, Cloud Hypervisor $CH_VERSION"
+log "host $host_name ready: hostd API :$api_port, ingress :$ingress_port, bridge $BRIDGE, Cloud Hypervisor $CH_VERSION"
 if [ "$firewall_pending" = 1 ]; then
   log "firewall changed: open a NEW SSH session and run 'sudo $0 --confirm-firewall' within 10 minutes, or it is reverted"
 fi

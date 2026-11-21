@@ -23,7 +23,9 @@ idempotent: re-running one repairs drift and changes nothing else.
 | VM network | bridge `brmx` 10.78.0.1/22, NAT out the public interface |
 | Firewall | `table inet matrix_hostd` and `table ip matrix_hostd_nat` only, loaded by `matrix-hostd-nft.service` |
 
-The VMM runs as the unprivileged `matrix-vm` user. It gets `/dev/kvm` through
+hostd runs as root (it drives LVM, systemd units and taps), so it reaches
+each VM's `ch.sock` and `vsock.sock` without group access; the VMM runs as the
+unprivileged `matrix-vm` user. It gets `/dev/kvm` through
 the `kvm` group, `/dev/userfaultfd` (ondemand restore) and its own disks
 through a udev rule; `vm.unprivileged_userfaultfd` stays 0. Taps are created
 and brought up by root `ExecStartPre` lines, so the VMM needs no
@@ -32,23 +34,25 @@ SMTP (port 25) and any VM traffic to private ranges or the host.
 
 ## Provision
 
-Build the bundles on a checkout, copy the checkout to the host, then run:
+Build the bundles on a checkout, copy the checkout to the host, then run
+(`--data-disks` is needed only on a fresh host: it adds a `vmdata` partition
+in the free space of each disk, mirrors them as `/dev/md/vmdata` and creates
+`vmvg` with the thin pool `vmvg/pool` at 95% of it):
 
 ```bash
 bun run --cwd packages/hostd build:hostd
 bun run --cwd packages/hostd build:guest-agent
-sudo distro/metal-host/provision-host.sh --host-name <fqdn> [--ingress-port 443] [--firewall exclusive|coexist]
+sudo distro/metal-host/provision-host.sh --host-name <fqdn> [--ingress-port 443] [--data-disks /dev/nvme0n1,/dev/nvme1n1]
 ```
 
-Firewall modes:
-
-- `exclusive`: hostd's tables are the host firewall (default deny; SSH only
-  from `tailscale0`; ingress and API ports open). Must be asked for.
-- `coexist`: another ruleset already guards the host (the S7 spike host).
-  hostd's chains accept by default and only restrict VM traffic; a few accept
-  rules tagged `matrix-hostd-coexist` are added to that ruleset's `inet filter`
-  chains so hostd traffic passes them. `auto` (the default) picks this when
-  any input filter exists and refuses to guess otherwise.
+The firewall (`nftables.conf`) owns the host: input default deny except
+established traffic, SSH on the public interface (key-only sshd, never
+removed), anything on `tailscale0`, Headscale (443/tcp, 3478/udp), Tailscale
+direct (41641/udp), the ingress and API ports. Forwarding: `brmx` to the
+internet (NAT, no SMTP, no private ranges) and `tailscale0` to `brmx`.
+`provision-host.sh` dry-runs the rendered ruleset first (`matrix-hostd-nft
+check` requires SSH on the public interface to be accepted before any drop,
+then `nft -c`), and `matrix-hostd-nft apply` repeats the check before loading.
 
 Every firewall change arms `matrix-hostd-nft-revert.timer`: after 10 minutes
 it disables hostd's tables again. Open a **new** SSH session and run
@@ -92,7 +96,7 @@ checking no LV, record, snapshot, tap or active unit is left.
 - Locked out after a firewall change: wait for the revert timer. Otherwise,
   from a path that still reaches the host (SSH over the tailnet to
   `tailscale0`), run `systemctl disable --now matrix-hostd-nft.service` (its
-  stop removes hostd's tables and coexist rules) and fix
+  stop removes hostd's tables) and fix
   `/etc/matrix-hostd/nft.env`. Last resort: Scaleway rescue boot, mount the
   root filesystem, delete
   `etc/systemd/system/multi-user.target.wants/matrix-hostd-nft.service`, boot

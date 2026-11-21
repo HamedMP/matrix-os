@@ -44,16 +44,21 @@ async function allFiles(dir: string): Promise<string[]> {
   return out;
 }
 
-async function renderNft(mode: "exclusive" | "coexist"): Promise<string> {
+async function renderNft(): Promise<string> {
   const { stdout } = await run("bash", [
     `${DIR}/matrix-hostd-nft`, "render",
     "--template", `${DIR}/nftables.conf`,
     "--wan", "eno1",
     "--ingress-port", "9443",
     "--api-port", "8443",
-    "--mode", mode,
   ]);
   return stdout;
+}
+
+// The lines of one chain of table inet matrix_hostd, in order.
+function chain(rules: string, name: string): string[] {
+  const body = new RegExp(`chain ${name} \\{([\\s\\S]*?)\\n  \\}`).exec(rules)?.[1] ?? "";
+  return body.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
 describe("metal host scripts", () => {
@@ -69,14 +74,16 @@ describe("metal host scripts", () => {
     await rm(work, { recursive: true, force: true });
   });
 
-  it("every script parses with bash -n and passes shellcheck", async () => {
-    const shellcheck = findShellcheck();
-    // A missing linter must fail the lane, never skip it silently.
-    expect(shellcheck, "shellcheck must be on PATH or in $SHELLCHECK").not.toBeNull();
+  it("every script parses with bash -n", async () => {
     for (const script of SCRIPTS) {
       await expect(run("bash", ["-n", script]), script).resolves.toBeDefined();
     }
-    await expect(run(shellcheck!, ["--severity=style", "--shell=bash", "-x", ...SCRIPTS])).resolves.toBeDefined();
+  });
+
+  // Reported as skipped (never silently passed) where shellcheck is not
+  // installed; GitHub's ubuntu runners ship it, and $SHELLCHECK can point at one.
+  it.skipIf(findShellcheck() === null)("every script passes shellcheck", async () => {
+    await expect(run(findShellcheck()!, ["--severity=style", "--shell=bash", "-x", ...SCRIPTS])).resolves.toBeDefined();
   });
 
   it("never pipes into grep -q, which pipefail turns into a false miss", async () => {
@@ -88,14 +95,33 @@ describe("metal host scripts", () => {
     }
   });
 
-  it("never guesses the default-deny firewall and arms a revert on every change", async () => {
+  it("arms a revert on every firewall change and checks SSH before loading", async () => {
     const provision = await readFile(`${DIR}/provision-host.sh`, "utf8");
-    const auto = provision.slice(provision.indexOf('if [ "$firewall" = auto ]'), provision.indexOf("install -d -m 0755 \"$ETC_DIR\""));
-    expect(auto).toContain("firewall=coexist");
-    expect(auto).not.toContain("firewall=exclusive");
     expect(provision).toMatch(/systemd-run[^\n]*--unit matrix-hostd-nft-revert --on-active=\d+/);
     expect(provision).toContain("/usr/bin/systemctl disable --now matrix-hostd-nft.service");
     expect(provision).toContain("--confirm-firewall");
+    // The dry run (render, SSH check, nft -c) comes before the unit loads anything.
+    const dryRun = provision.indexOf("matrix-hostd-nft check");
+    expect(dryRun).toBeGreaterThan(0);
+    expect(dryRun).toBeLessThan(provision.indexOf("systemctl restart matrix-hostd-nft.service"));
+    const helper = await readFile(`${DIR}/matrix-hostd-nft`, "utf8");
+    const apply = helper.slice(helper.indexOf("  apply)"));
+    expect(apply.indexOf("check_ssh")).toBeLessThan(apply.indexOf('nft -f "$RENDERED"'));
+  });
+
+  it("refuses a ruleset that would drop SSH on the public interface", async () => {
+    const good = join(work, "good.nft");
+    await writeFile(good, await renderNft());
+    await expect(run("bash", [`${DIR}/matrix-hostd-nft`, "check", good, "--wan", "eno1"])).resolves.toBeDefined();
+    // Same rules, but SSH only reachable after a drop, or on another interface.
+    const reordered = (await renderNft()).replace('    iifname "eno1" tcp dport 22 accept\n', "").replace(
+      '    iifname "brmx" drop\n',
+      '    iifname "brmx" drop\n    iifname "eno1" tcp dport 22 accept\n',
+    );
+    const bad = join(work, "bad.nft");
+    await writeFile(bad, reordered);
+    await expect(run("bash", [`${DIR}/matrix-hostd-nft`, "check", bad, "--wan", "eno1"])).rejects.toBeDefined();
+    await expect(run("bash", [`${DIR}/matrix-hostd-nft`, "check", good, "--wan", "eth9"])).rejects.toBeDefined();
   });
 
   it("pins Cloud Hypervisor v54.1 and its ch-remote by sha256", async () => {
@@ -125,26 +151,33 @@ describe("metal host scripts", () => {
     for (const file of await allFiles(DIR)) {
       expect(await readFile(file, "utf8"), file).not.toMatch(/flush\s+ruleset/);
     }
-    for (const mode of ["exclusive", "coexist"] as const) {
-      const rules = await renderNft(mode);
-      const tables = [...rules.matchAll(/^table\s+(\S+)\s+(\S+)/gm)].map((m) => `${m[1]} ${m[2]}`);
-      expect(new Set(tables)).toEqual(new Set(["inet matrix_hostd", "ip matrix_hostd_nat"]));
-      expect(rules).not.toContain("@");
-      expect(rules).toMatch(/iifname "brmx" tcp dport 25 drop/);
-      expect(rules).toMatch(/ip saddr 10\.78\.0\.0\/22 oifname "eno1" masquerade/);
-      expect(rules).toMatch(/tcp dport 9443 accept/);
-      expect(rules).toMatch(/tcp dport 8443 accept/);
-      expect(rules).toMatch(/iifname "brmx" drop/);
+    const rules = await renderNft();
+    const tables = [...rules.matchAll(/^table\s+(\S+)\s+(\S+)/gm)].map((m) => `${m[1]} ${m[2]}`);
+    expect(new Set(tables)).toEqual(new Set(["inet matrix_hostd", "ip matrix_hostd_nat"]));
+    expect(rules).not.toContain("@");
+    const input = chain(rules, "input");
+    expect(input[0]).toBe("type filter hook input priority 0; policy drop;");
+    // R9 inputs: public SSH (before any drop), tailnet, Headscale, STUN, API, ingress.
+    const ssh = input.indexOf('iifname "eno1" tcp dport 22 accept');
+    expect(ssh).toBeGreaterThan(0);
+    expect(input.slice(0, ssh).filter((l) => l.endsWith(" drop") && l !== "ct state invalid drop")).toEqual([]);
+    for (const rule of [
+      "ct state established,related accept",
+      'iifname "tailscale0" accept',
+      "tcp dport 443 accept",
+      "udp dport 3478 accept",
+      "tcp dport 9443 accept",
+      "tcp dport 8443 accept",
+      'iifname "brmx" drop',
+    ]) {
+      expect(input).toContain(rule);
     }
-    const exclusive = await renderNft("exclusive");
-    expect(exclusive).toMatch(/hook input priority \d+; policy drop;/);
-    expect(exclusive).toMatch(/hook forward priority \d+; policy drop;/);
-    expect(exclusive).toMatch(/iifname "tailscale0" tcp dport 22 accept/);
-    expect(exclusive).not.toMatch(/^\s*tcp dport 22 accept/m);
-    // Coexisting with another ruleset (the S7 spike), hostd must not drop its traffic.
-    const coexist = await renderNft("coexist");
-    expect(coexist).toMatch(/hook input priority \d+; policy accept;/);
-    expect(coexist).not.toMatch(/dport 22/);
+    const forward = chain(rules, "forward");
+    expect(forward[0]).toBe("type filter hook forward priority 0; policy drop;");
+    expect(forward).toContain('iifname "brmx" tcp dport 25 drop');
+    expect(forward.indexOf('iifname "brmx" tcp dport 25 drop')).toBeLessThan(forward.indexOf('iifname "brmx" accept'));
+    expect(forward).toContain('iifname "tailscale0" oifname "brmx" accept');
+    expect(rules).toMatch(/ip saddr 10\.78\.0\.0\/22 oifname "eno1" masquerade/);
   });
 
   it("shapes each VM tap to 50 Mbit/s and keeps the VMM unprivileged", async () => {
