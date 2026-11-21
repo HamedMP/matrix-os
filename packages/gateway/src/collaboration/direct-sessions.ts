@@ -59,7 +59,9 @@ function ticketResourceKind(
 }
 
 export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown" | "exhausted";
-export type DirectSessionEndedListener = (session: CollaborationDirectSession, reason: DirectSessionEndReason) => void;
+/** Only a natural identity deadline; absent means authority loss must remain fail closed. */
+export type DirectSessionEndCause = "session_lifetime";
+export type DirectSessionEndedListener = (session: CollaborationDirectSession, reason: DirectSessionEndReason, cause?: DirectSessionEndCause) => void;
 
 export interface DirectConnectionLimits {
   perHome: number;
@@ -134,6 +136,18 @@ export class DirectSessionService {
   /** Sessions currently registered; the drain's observable, and zero once fenced. */
   liveSessionCount(): number {
     return this.sessions.size;
+  }
+
+  /** A different browser's older identity must not revoke this still-verified authority. */
+  hasFreshSessionFor(ended: CollaborationDirectSession): boolean {
+    const current = this.now().getTime();
+    for (const { session } of this.sessions.values()) {
+      if (!session.pendingGrantId && session.id !== ended.id && session.actorId === ended.actorId && session.scopeId === ended.scopeId
+        && session.organizationId === ended.organizationId && session.runtimeId === ended.runtimeId
+        && session.authorityGeneration === ended.authorityGeneration
+        && Date.parse(session.expiresAt) > current && Date.parse(session.evidenceExpiresAt) > current) return true;
+    }
+    return false;
   }
 
   /** `POST /api/collaboration/direct-sessions`: one-use ticket exchange with proof of possession. */
@@ -413,7 +427,7 @@ export class DirectSessionService {
   sweep(): void {
     const current = this.now().getTime();
     for (const record of [...this.sessions.values()]) {
-      if (Date.parse(record.session.expiresAt) <= current) this.end(record, "expired");
+      if (Date.parse(record.session.expiresAt) <= current) this.end(record, "expired", "session_lifetime");
     }
   }
 
@@ -446,7 +460,7 @@ export class DirectSessionService {
     const record = this.sessions.get(sessionId);
     if (!record) throw new DirectAuthError("expired", "Session is not active");
     if (Date.parse(record.session.expiresAt) <= this.now().getTime()) {
-      this.end(record, "expired");
+      this.end(record, "expired", "session_lifetime");
       throw new DirectAuthError("expired", "Session has expired");
     }
     return record;
@@ -534,7 +548,7 @@ export class DirectSessionService {
     }
   }
 
-  private end(record: SessionRecord, reason: DirectSessionEndReason): void {
+  private end(record: SessionRecord, reason: DirectSessionEndReason, cause?: DirectSessionEndCause): void {
     if (!this.sessions.delete(record.session.id)) return;
     // Flagged before notifying, matching the remove-before-notify ordering above, so a
     // concurrent holder can never see a record that is detached but not yet flagged.
@@ -542,7 +556,8 @@ export class DirectSessionService {
     for (const listener of [this.options.onEnded, ...this.endedListeners]) {
       if (!listener) continue;
       try {
-        listener(record.session, reason);
+        if (cause === undefined) listener(record.session, reason);
+        else listener(record.session, reason, cause);
       } catch (error: unknown) {
         console.warn("[collaboration-direct-sessions] end hook failed", error instanceof Error ? error.name : "UnknownError");
       }

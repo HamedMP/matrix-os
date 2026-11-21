@@ -107,7 +107,7 @@ describe("Canvas settings sections", () => {
       previewQuota: { requestsRemaining: 24 },
     });
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/vm/alice/~runtime/studio/api/speech/capabilities`,
+      `${window.location.origin}/vm/alice/~runtime/studio/api/speech/capabilities?dictation=extended`,
       expect.objectContaining({ method: "GET", credentials: "include", redirect: "error" }),
     );
   });

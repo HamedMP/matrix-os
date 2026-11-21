@@ -51,6 +51,8 @@ import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { BillingEntitlement } from './billing.js';
 import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
+import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -61,6 +63,13 @@ import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
+import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
+import type { ExternalCoreMcp } from './mcp-core-tools.js';
+import { createPlatformOrgMcp } from './org-mcp/startup.js';
+import { createOrgMcpPresetGate } from './org-mcp/preset-gate.js';
+import { BOKIO_PRESET } from './bokio-integration.js';
+import { createCoreRepoMachineAuthenticator, createPlatformCoreRepo } from './core-repo/startup.js';
+import { createJourneyUserResolver } from './journey-routes.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
 import {
@@ -107,7 +116,7 @@ import {
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import { bootstrapPlatformSlack } from './slack-startup.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
-import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
+import { createOwnerCustomMcpRouteOptions, getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
 import {
   PlatformSpeechConfigError,
@@ -190,6 +199,10 @@ interface GatewayCustomMcpModules {
   approvalRoutes: {
     createCustomMcpApprovalRoutes(options: Record<string, unknown>): Hono;
   };
+  catalogPresets: {
+    RegisteredMcpOAuthClients: { fromEnv(env: NodeJS.ProcessEnv): unknown };
+  };
+  coreTools: GatewayCoreToolsModule;
 }
 
 interface GatewayPlatformDbModule {
@@ -251,6 +264,9 @@ type CreatePlatformApp = (deps: {
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
+  externalCoreMcp?: ExternalCoreMcp;
+  orgMcpRoutes?: Hono<any>;
+  coreRepoRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -272,6 +288,7 @@ type CreatePlatformApp = (deps: {
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  substrateRegistry?: SubstrateRegistry;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -521,6 +538,13 @@ async function startPlatformServerWithCleanup(
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: process.env, collaboration, logError: logPlatformRouteError,
   });
+  // Spec 2691 layer 5: org governance of Matrix Core MCP (call-time policy + Organization → Connections routes).
+  const platformOrganizations = 'organizations' in collaboration ? collaboration.organizations : undefined;
+  const resolveSessionActor = createJourneyUserResolver({ clerkAuth, syncJwtSecret: platformJwtSecret });
+  const orgMcp = await createPlatformOrgMcp({ db: db.kysely as never,
+    organizations: platformOrganizations,
+    connectionsAvailable: process.env.CUSTOM_MCP_ENABLED === 'true',
+    resolveActor: resolveSessionActor });
   const slack = await bootstrapPlatformSlack({
     env: process.env, db, platformSecret, platformJwtSecret,
     clerkAuth, collaboration, customerVpsProxyDispatcher,
@@ -553,6 +577,7 @@ async function startPlatformServerWithCleanup(
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
+  let externalCoreMcp: ExternalCoreMcp | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
@@ -681,15 +706,19 @@ async function startPlatformServerWithCleanup(
     ].some((secret) => Boolean(secret) && secret === encryptionKeyRaw)) {
       throw new Error('MCP_CREDENTIAL_ENCRYPTION_KEY is required and must not reuse another platform secret');
     }
-    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule] = await Promise.all([
+    const [brokerModule, oauthModule, cryptoModule, routesModule, approvalRoutesModule, dbModule, catalogPresetsModule, coreToolsModule] = await Promise.all([
       importRuntimeModule<GatewayCustomMcpModules['broker']>('../../gateway/dist/integrations/custom-mcp/broker.js'),
       importRuntimeModule<GatewayCustomMcpModules['oauth']>('../../gateway/dist/integrations/custom-mcp/oauth.js'),
       importRuntimeModule<GatewayCustomMcpModules['crypto']>('../../gateway/dist/integrations/custom-mcp/crypto.js'),
       importRuntimeModule<GatewayCustomMcpModules['routes']>('../../gateway/dist/integrations/custom-mcp/routes.js'),
       importRuntimeModule<GatewayCustomMcpModules['approvalRoutes']>('../../gateway/dist/integrations/custom-mcp/approval-routes.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+      importRuntimeModule<GatewayCustomMcpModules['catalogPresets']>('../../gateway/dist/integrations/custom-mcp/catalog-presets.js'),
+      importRuntimeModule<GatewayCustomMcpModules['coreTools']>('../../gateway/dist/integrations/custom-mcp/core-tools.js'),
     ]);
     const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
+    // Spec 2691: Matrix-owned vendor apps are parsed once; a missing pair hides that preset.
+    const registeredMcpOAuthClients = catalogPresetsModule.RegisteredMcpOAuthClients.fromEnv(process.env);
     const customDb = dbModule.createPlatformDb(runtimeConfig.platformDatabaseUrl);
     let customDbClosed = false;
     const closeCustomMcpDb = async () => {
@@ -719,6 +748,7 @@ async function startPlatformServerWithCleanup(
       encryptionKey,
       clientId: oauthClientId,
       redirectUri: oauthRedirectUri,
+      registeredClients: registeredMcpOAuthClients,
       ...(MATRIX_OAUTH_CLIENT_METADATA.redirect_uris.includes(oauthRedirectUri) ? { clientMetadataUrl: MATRIX_OAUTH_CLIENT_METADATA_URL } : {}),
     });
     const bokioOAuth = new BokioOAuthManager({ db: customDb, encryptionKey, credentialCrypto: cryptoModule,
@@ -735,6 +765,9 @@ async function startPlatformServerWithCleanup(
       revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
       removeManagedPreset: managedLifecycle.removeManagedPreset,
     });
+    // Matrix Core MCP (spec 2691): one tool service over this broker; usage rows go to platform Postgres.
+    const coreMcp = await createPlatformCoreMcp({ db: db.kysely as never, coreModule: coreToolsModule, broker,
+      approvals: customDb, maintenance: backgroundWorkersEnabled, orgPolicy: orgMcp.policy });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
       if (customMcpClosed) return;
@@ -742,26 +775,32 @@ async function startPlatformServerWithCleanup(
       try {
         await broker.shutdown();
         await projection.drain();
+        // After the broker settles in-flight calls, so their usage rows are drained too.
+        await coreMcp.shutdown();
       } finally {
         await closeCustomMcpDb();
       }
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
     deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
-    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    // Spec 2691: org policy also governs preset calls made through Integrations, which bypass the Core tool service.
+    const orgPresetGate = createOrgMcpPresetGate({ policy: orgMcp.policy,
+      resolveActorId: async userId => (await customDb.getUserById(userId))?.clerk_id });
+    const governedBroker = orgPresetGate.governBroker(broker);
+    const granolaBroker = createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager });
     managedMcpPresetBroker = createManagedPresetRouter({
       granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
-      bokio: bokioBroker,
+      bokio: orgPresetGate.governPresetBroker(bokioBroker, BOKIO_PRESET.url),
     });
     const managedOAuthFlow = managedLifecycle.oauth;
     const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: managedOAuthFlow,
-      resolveUserId: async (c: Context) => resolveCustomMcpUserId(
-        c.get('platformUserId') as string | undefined,
-        c.get('platformHandle') as string | undefined,
-      ),
+      catalog: registeredMcpOAuthClients,
+      // Spec 2691: owner-session decisions for external `/mcp` writes (never on the internal router).
+      ownerApprovals: customDb,
+      ...createOwnerCustomMcpRouteOptions(db, customDb),
     });
     customMcpRoutes=new Hono();
     customMcpRoutes.use('/oauth/callback',createAccountDeletionMutationGuard({db,env:process.env,isMutation:()=>true,
@@ -774,13 +813,17 @@ async function startPlatformServerWithCleanup(
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
       oauth: managedOAuthFlow,
+      catalog: registeredMcpOAuthClients,
       allowToolCalls: true,
+      core: coreMcp.core,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('internalContainerClerkUserId') as string | undefined,
         c.get('internalContainerHandle') as string | undefined,
       ),
     });
+    externalCoreMcp = { core: coreMcp.core as ExternalCoreMcp['core'],
+      resolveUserId: async (clerkUserId: string) => (await customDb.getUserByClerkId(clerkUserId))?.id ?? null };
     internalCustomMcpApprovalRoutes = approvalRoutesModule.createCustomMcpApprovalRoutes(createInternalCustomMcpApprovalRouteOptions({
       db: customDb,
       broker,
@@ -801,6 +844,8 @@ async function startPlatformServerWithCleanup(
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let sitesObjectStore: GatewayR2Client | undefined;
+  // The primary R2 client, typed with deleteObject for Matrix Core tarball retention.
+  let coreRepoObjectStore: GatewayR2Client | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
   let sitesStorageGate: R2CapabilityGate | undefined;
   const storageConfig = resolvePlatformObjectStorage(process.env);
@@ -820,6 +865,7 @@ async function startPlatformServerWithCleanup(
     });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;
+    coreRepoObjectStore = r2;
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
   }
 
@@ -838,6 +884,12 @@ async function startPlatformServerWithCleanup(
     sitesStorageGate = createR2CapabilityGate({ storage: sitesObjectStore });
     registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
+
+  // Spec 2691 layer 6: Matrix Core repo sync (GitHub App + webhook) and the pinned-tarball routes VPSes install from.
+  const coreRepo = await createPlatformCoreRepo({ env: process.env, db: db.kysely as never, store: coreRepoObjectStore,
+    organizations: platformOrganizations, authenticateMachine: createCoreRepoMachineAuthenticator(db, platformSecret),
+    resolveActor: resolveSessionActor, backgroundWorkers: backgroundWorkersEnabled });
+  registerCustomMcpStartupCleanup(coreRepo.shutdown);
 
   // Runtime-only candidates reuse registration/status without provider clients,
   // paid lifecycle workers, or a second machine/organization source of truth.
@@ -1134,6 +1186,9 @@ async function startPlatformServerWithCleanup(
     customMcpRoutes,
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
+    externalCoreMcp,
+    orgMcpRoutes: orgMcp.routes,
+    coreRepoRoutes: coreRepo.routes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
@@ -1155,6 +1210,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
+    substrateRegistry: createPlatformSubstrateRegistry(db),
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
@@ -1217,6 +1273,7 @@ async function startPlatformServerWithCleanup(
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
+          coreRepo.shutdown(),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);

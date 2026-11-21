@@ -5,7 +5,9 @@ import {
   type ScopeRuntimeBrokerResponse,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { Agent } from "undici";
+import { createClaudeOwnerIdentityResolver, type ResolveClaudeOwnerIdentity } from "./claude-owner-identity.js";
 import { z } from "zod/v4";
+import { isCompleteCodexResponseStream } from "./codex-response-stream.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
   buildKernelCredentialLaunch,
@@ -207,11 +209,13 @@ export function createScopeRuntimeBroker(options: {
   fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: ResolveCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
+  resolveClaudeIdentity?: ResolveClaudeOwnerIdentity;
   resolveEgress?: ResolveEgress;
   fetchImpl?: typeof fetch;
   maxInFlight?: number;
 }) {
   const resolveCredentials = options.resolveCredentials ?? buildKernelCredentialLaunch;
+  const resolveClaudeIdentity = options.resolveClaudeIdentity ?? createClaudeOwnerIdentityResolver(options.homePath);
   const resolveCodexIdentity = options.resolveCodexIdentity
     ?? createCodexOwnerIdentityResolver({ homePath: options.homePath, fetchImpl: options.fetchImpl });
   const resolveEgress = options.resolveEgress ?? defaultResolveEgress;
@@ -270,19 +274,30 @@ export function createScopeRuntimeBroker(options: {
       const env = credentialLaunch.env;
       const apiKey = env?.ANTHROPIC_API_KEY;
       const authToken = env?.ANTHROPIC_AUTH_TOKEN;
-      if ((!apiKey && !authToken) || (apiKey && authToken)) {
+      const nativeProfile = authorization.accessSourceId === "owner_claude_profile"
+        || authorization.accessSourceId === "owner_anthropic_profile";
+      // A selected native account cannot silently use an ambient/key route.
+      if (nativeProfile && (apiKey || authToken)) return failure(request.requestId, "provider_unavailable");
+      const nativeIdentity = nativeProfile
+        ? await resolveClaudeIdentity(AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)])) : null;
+      if ((!apiKey && !authToken && !nativeIdentity) || (apiKey && authToken)) {
+        console.warn("[collaboration] selected inference identity unavailable", { nativeProfile });
         return failure(request.requestId, "provider_unavailable");
       }
-      const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+      const baseUrl = nativeProfile ? "https://api.anthropic.com"
+        : env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
       const headers = new Headers({
         accept: "text/event-stream",
         "content-type": "application/json",
       });
       if (apiKey) headers.set("x-api-key", apiKey);
       if (authToken) headers.set("authorization", `Bearer ${authToken}`);
+      if (nativeIdentity) headers.set("authorization", BearerHeaderSchema.parse(nativeIdentity.authorization));
       for (const [name, value] of Object.entries(request.headers)) {
         if (value) headers.set(name, value);
       }
+      if (nativeIdentity) headers.set("anthropic-beta",
+        [headers.get("anthropic-beta"), "oauth-2025-04-20"].filter(Boolean).join(","));
       const funded = authorization.accessSourceId === "matrix_included" ? options.fundedAdmission : undefined;
       // The runtime handle is authenticated and unique per shared run, so it keeps each turn's place in line.
       if (authorization.accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
@@ -322,6 +337,7 @@ export function createScopeRuntimeBroker(options: {
         : await send();
       if (response === "denied") return failure(request.requestId, "action_denied");
       if (!response.ok) {
+        console.warn("[collaboration] shared inference upstream unavailable", { status: response.status, nativeProfile });
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }
@@ -355,30 +371,38 @@ export function createScopeRuntimeBroker(options: {
         if (identity.url === "https://chatgpt.com/backend-api/codex/responses") {
           headers.set("originator", "codex_cli_rs");
         }
-        return fetchImpl(identity.url, {
+        const response = await fetchImpl(identity.url, {
           method: "POST",
           headers,
           body: request.body,
           redirect: "error",
           signal,
         });
+        return { response, url: identity.url };
       };
-      let response = await send();
-      if (response.status === 401) {
-        await discard(response);
-        response = await send(true);
+      let upstream = await send();
+      if (upstream.response.status === 401) {
+        await discard(upstream.response);
+        upstream = await send(true);
       }
+      const response = upstream.response;
       if (!response.ok) {
+        console.warn("[collaboration] shared Codex upstream unavailable", { status: response.status });
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }
       const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
+      const headers = !response.headers.has("content-type")
+        && upstream.url === "https://chatgpt.com/backend-api/codex/responses"
+        && isCompleteCodexResponseStream(body)
+        ? { "content-type": "text/event-stream" }
+        : safeResponseHeaders(response, "inference");
       return ScopeRuntimeBrokerResponseSchema.parse({
         version: 1,
         requestId: request.requestId,
         ok: true,
         status: response.status,
-        headers: safeResponseHeaders(response, "inference"),
+        headers,
         body,
       });
     }

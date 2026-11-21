@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import type { Insertable, Selectable, Updateable } from 'kysely';
+import { SubstrateKindSchema } from '@matrix-os/contracts';
 import {
   DEFAULT_DEVELOPER_TOOLS,
   parseDeveloperToolsJson,
@@ -26,6 +27,11 @@ const NullableProviderActionIdSchema = z.coerce.number().int().positive()
 
 export function parseNullableProviderActionId(value: number | string | null): number | null {
   return NullableProviderActionIdSchema.parse(value);
+}
+
+function toIsoTimestamp(value: Date | string | null): string | null {
+  if (value === null) return null;
+  return (value instanceof Date ? value : new Date(value)).toISOString();
 }
 
 export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineRecord {
@@ -70,6 +76,12 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     activationState: z.enum(['awaiting_billing', 'authorized']).parse(row.activation_state ?? 'authorized'),
     prebillingIntentId: row.prebilling_intent_id,
     activationAuthorizedAt: row.activation_authorized_at,
+    substrate: SubstrateKindSchema.parse(row.substrate),
+    generation: row.generation,
+    substrateRef: row.substrate_ref,
+    privateAddress: row.private_address,
+    lastActivityAt: toIsoTimestamp(row.last_activity_at),
+    startedAt: toIsoTimestamp(row.started_at),
   };
 }
 
@@ -113,6 +125,12 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     activation_state: record.activationState ?? 'authorized',
     prebilling_intent_id: record.prebillingIntentId ?? null,
     activation_authorized_at: record.activationAuthorizedAt ?? null,
+    substrate: record.substrate ?? 'vps',
+    generation: record.generation ?? 1,
+    substrate_ref: record.substrateRef ?? null,
+    private_address: record.privateAddress ?? null,
+    last_activity_at: record.lastActivityAt ?? null,
+    started_at: record.startedAt ?? null,
   };
 }
 
@@ -156,6 +174,12 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.activationState !== undefined) update.activation_state = values.activationState;
   if (values.prebillingIntentId !== undefined) update.prebilling_intent_id = values.prebillingIntentId;
   if (values.activationAuthorizedAt !== undefined) update.activation_authorized_at = values.activationAuthorizedAt;
+  if (values.substrate !== undefined) update.substrate = values.substrate;
+  if (values.generation !== undefined) update.generation = values.generation;
+  if (values.substrateRef !== undefined) update.substrate_ref = values.substrateRef;
+  if (values.privateAddress !== undefined) update.private_address = values.privateAddress;
+  if (values.lastActivityAt !== undefined) update.last_activity_at = values.lastActivityAt;
+  if (values.startedAt !== undefined) update.started_at = values.startedAt;
   return update;
 }
 

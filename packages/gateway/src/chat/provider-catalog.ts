@@ -2,6 +2,7 @@ import { codexCatalogObservation } from "../ai-providers/codex-native-observatio
 import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
+import { createNativeExecutionModelResolver } from "./native-execution-model.js";
 import {
   botImageTotalMaximumForSelection, botAttachmentInputError, type BotAttachmentMetadata,
   CanonicalChatModelSelectionSchema,
@@ -78,6 +79,8 @@ export interface CodingModelCatalogProjection {
   models: Array<Omit<CanonicalModelDescriptor, "availability">>;
   options: CanonicalProviderOptionDescriptor[];
   defaultModel: string;
+  /** Trusted native inventory only. Omitted from every client catalog/last-seen fallback. */
+  executionModels?: Record<string, string>;
 }
 
 export interface ChatProviderCatalogReadOptions {
@@ -85,6 +88,7 @@ export interface ChatProviderCatalogReadOptions {
 }
 
 export interface ChatProviderCatalogService {
+  resolveExecutionModel?(principal: RequestPrincipal, selection: CanonicalChatModelSelection): Promise<string | null>;
   getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
   refresh(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
 }
@@ -139,7 +143,9 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    // Spec 2691: Codex and OpenCode launches carry the scoped Matrix Core MCP server.
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"]
+      : driverKind === "codex" || driverKind === "opencode" ? ["custom_mcp"] : [],
     approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
@@ -314,7 +320,8 @@ function systemSupports(driverKind: CanonicalProviderDriverKind): CanonicalProvi
     cancellation: true,
     steering: driverKind === "hermes" || driverKind === "openclaw" ? "same_run" : "none",
     attachments: ["file", "image", "structured_ref"],
-    tools: [],
+    // Hermes reaches the Matrix Core MCP broker through its registered stdio server.
+    tools: driverKind === "hermes" ? ["custom_mcp"] : [],
     approvals: false,
     userInput: driverKind === "hermes",
     worktrees: "none",
@@ -698,6 +705,7 @@ export function createChatProviderCatalogService(options: {
     return parsed.data;
   }
   const service: ChatProviderCatalogService = {
+    resolveExecutionModel: createNativeExecutionModelResolver(options),
     async refresh(principal, readOptions) {
       if (!options.observationScope?.(principal)) {
         options.invalidateCodingModelCatalog?.(principal);

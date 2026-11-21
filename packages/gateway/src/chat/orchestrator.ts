@@ -20,6 +20,7 @@ import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmission
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
+import { chatSendTimingsEnabled, createChatDispatchTimer } from "./send-timing.js";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
 import { createMatrixAssistantOutput } from "./matrix-assistant-output.js";
@@ -75,7 +76,7 @@ import {
   CanonicalQueueAdmissionError,
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
-import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
+import { reconcileOwnerChatRuns } from "./active-run-recovery.js";
 import { hasStoppingChatExecution } from "./dispatch-ownership.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
 import { boundedOperation } from "../bounded-operation.js";
@@ -574,6 +575,7 @@ export class CanonicalChatOrchestrator {
     sharedScopeId?: string,
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
+    const sendTiming = chatSendTimingsEnabled() ? createChatDispatchTimer(run.id, run.driverKind) : undefined;
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
@@ -643,6 +645,7 @@ export class CanonicalChatOrchestrator {
       let responseCharacterCount = 0;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
+      sendTiming?.adapterStart();
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
         : adapter.start(input);
@@ -652,6 +655,7 @@ export class CanonicalChatOrchestrator {
           throw new Error("Provider emitted an event after cancellation");
         }
         const event = CanonicalProviderRunEventSchema.parse(rawEvent);
+        sendTiming?.providerEvent();
         if (terminal) throw new Error("Provider emitted an event after completion");
         if (event.type === "state.updated") {
           const state = adapter.serializeState(adapter.parseState(event.state));
@@ -677,6 +681,7 @@ export class CanonicalChatOrchestrator {
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);
+          sendTiming?.displayableText();
         } else if (event.type === "assistant.attachment") {
           failureStage = "persistence";
           await this.options.repository.appendAssistantAttachment(owner, {
@@ -1138,67 +1143,14 @@ export class CanonicalChatOrchestrator {
   }
 
   private async reconcileOwnerActiveRuns(owner: ChatOwner): Promise<number> {
-    const contexts = await this.options.repository.listActiveRunContexts(owner, MAX_ACTIVE_RUNS_GLOBAL);
-    let reconciled = 0;
-    for (const context of contexts) {
-      if (this.active.has(context.latestRun.id) || this.pendingDispatch.has(context.latestRun.id)) continue;
-      const completedAt = (this.options.now ?? (() => new Date()))().toISOString();
-      try {
-        await this.assertPersonalExecutionAllowed(owner, context.latestRun.chatId);
-      } catch (error: unknown) {
-        if (!(error instanceof CanonicalChatOrchestrationError)) throw error;
-        const finished = await this.options.repository.finishRun(owner, {
-          chatId: context.latestRun.chatId,
-          runId: context.latestRun.id,
-          outcome: "failed",
-          sharedRequestState: "interrupted",
-          completedAt,
-          diagnostic: diagnoseChatRunFailure(error, "preparation"),
-        });
-        if (finished.transitioned) reconciled += 1;
-        continue;
-      }
-      const error = safeError(
-        "run_unavailable",
-        "The Run was interrupted when Matrix restarted.",
-        true,
-        ["retry"],
-      );
-      try {
-        const recovery = await recoverOrphanedRun({
-          owner,
-          run: context.latestRun,
-          repository: this.options.repository,
-          adapter: this.options.adapters.get(context.latestRun.driverKind),
-          messageId: assistantMessageId,
-          persistActivities: (activities) => this.persistActivities(owner, context.latestRun, activities, completedAt),
-          completedAt,
-        });
-        if (recovery === "pending") continue;
-        if (recovery) {
-          reconciled += 1;
-          continue;
-        }
-        try {
-          await this.persistActivities(owner, context.latestRun, [{ type: "run.error", error }], completedAt);
-        } catch (activityError: unknown) {
-          console.warn(
-            "[chat/orchestrator] Reconciliation activity could not be persisted:",
-            activityError instanceof Error ? activityError.name : "UnknownError",
-          );
-        }
-        const finished = await this.options.repository.finishRun(owner, {
-          chatId: context.latestRun.chatId,
-          runId: context.latestRun.id,
-          outcome: "failed",
-          completedAt,
-          diagnostic: { stage: "recovery", category: "unknown" },
-        });
-        if (finished.transitioned) reconciled += 1;
-      } catch (reconcileError: unknown) {
-        if (!(reconcileError instanceof ChatRunNotActiveError)) throw reconcileError;
-      }
-    }
+    const reconciled = await reconcileOwnerChatRuns({
+      repository: this.options.repository, adapters: this.options.adapters,
+      isActiveOrPreparing: (runId, chatId) => this.active.has(runId) || this.pendingDispatch.has(runId)
+        || this.sharedExecution.isPreparingChat(chatId),
+      assertPersonalExecutionAllowed: (scope, chatId) => this.assertPersonalExecutionAllowed(scope, chatId),
+      persistActivities: (scope, run, events, at) => this.persistActivities(scope, run, events, at),
+      now: this.options.now,
+    }, owner);
     await this.queuedRecovery.recover(owner,
       (scope, limit, cursor) => this.options.repository.listQueuedChatIds(scope, limit, cursor),
       chatId => this.dispatchNextQueued(owner, chatId));

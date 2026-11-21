@@ -1018,7 +1018,9 @@ function CanonicalChatWorkspaceContent({
               runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId}
               headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
               : <CanonicalSharedChatPanel api={collaborationApi} actorId={actorId}
-                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id} />
+                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id}
+                projectId={controller.detail!.record.projectId ?? undefined}
+                headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
           ) : (
             <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
               Shared Chat is unavailable. Reconnect your Matrix account and try again.

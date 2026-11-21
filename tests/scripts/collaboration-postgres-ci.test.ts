@@ -154,7 +154,11 @@ describe("required collaboration PostgreSQL workflow", () => {
   it("retains required jobs, exact-source checkout and all commands within measured bounded qualification windows", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
     expect(job.needs).toBe("changes");
-    expect(job["timeout-minutes"]).toBeGreaterThanOrEqual(20);
+    // Run44769544317 reached the final bounded runner at23m17, then the25m
+    // job deadline killed passing assertions. Preserve its full240s aggregate
+    // allowance plus120s for reports/cleanup; no suite deadline is relaxed.
+    const observedPreQualificationSeconds = 23 * 60 + 17;
+    expect(job["timeout-minutes"] * 60).toBeGreaterThanOrEqual(observedPreQualificationSeconds + 240 + 120);
     expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");

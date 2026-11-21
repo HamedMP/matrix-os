@@ -379,10 +379,12 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
     ]);
 
     const claimed = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: "cturn_f_1", runId: "run_f_1", messageId: "msg_f_1", claimedAt: now,
     });
     expect(claimed?.message).toMatchObject({ actorId: collaborationActors.owner, purpose: "ai_request" });
     const blocked = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: "cturn_f_2", runId: "run_f_2", messageId: "msg_f_2", claimedAt: now,
     });
     expect(blocked).toBeNull();

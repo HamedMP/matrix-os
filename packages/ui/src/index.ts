@@ -34,6 +34,33 @@ export {
   parseGithubDeveloperAccessStatus,
 } from "./integrations/GithubDeveloperAccess.js";
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
+export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
+export { McpConnectionInventory, McpSectionHeading, McpStatusPill, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { MatrixMcpEndpointCard, type MatrixMcpEndpointCardProps } from "./integrations/MatrixMcpEndpointCard.js";
+export { DEFAULT_MATRIX_MCP_ENDPOINT, matrixMcpClientSetups, matrixMcpEndpointUrl, type MatrixMcpClientSetup } from "./integrations/matrix-mcp-endpoint.js";
+export { McpServiceLogo, McpServiceLogoStack, type McpServiceLogoProps } from "./integrations/McpServiceLogo.js";
+export { McpRowAction, McpToolPolicyList, type McpToolApproval, type McpToolPolicyListProps } from "./integrations/McpToolPolicyList.js";
+export { McpCustomServerForm, type McpCustomAuthMode, type McpCustomServerFormProps } from "./integrations/McpCustomServerForm.js";
+export { ExternalMcpApprovalsIndicator, ExternalMcpApprovalsPanel } from "./integrations/external-mcp-approvals.js";
+export { createExternalMcpApprovalsFetchTransport, type ExternalMcpApprovalsTransport } from "./integrations/external-mcp-approvals-client.js";
+export {
+  OrganizationConnectionsPanel,
+  OrganizationMcpSettings,
+  OrganizationMcpVisibilityNotice,
+  type WithOrganizationMcpClient,
+} from "./organization-mcp/OrganizationConnectionsPanel.js";
+export { useOrganizationMcpClient } from "./organization-mcp/use-organization-mcp-client.js";
+export { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, type OrganizationMcpAdminClient } from "./organization-mcp/client.js";
+export {
+  REMOTE_MCP_DEPARTMENT_LABELS,
+  buildMcpConnectionInventory,
+  connectedMcpServices,
+  customMcpErrorMessage,
+  filterRemoteMcpPresets,
+  parseRemoteMcpCatalog,
+  type McpInventoryEntry,
+  type RemoteMcpPreset,
+} from "./integrations/remote-mcp-presets.js";
 export type {
   GithubDeveloperAccessClient,
   GithubDeveloperAccessStatus,
@@ -344,6 +371,7 @@ export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
 export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
 export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";
 export { ChatPromptInput, ChatPromptStopButton } from "./chat/composer/ChatPromptInput.js";
+export { ChatHumanMessageBubble } from "./chat/ChatHumanMessageBubble.js";
 export { ChatComposerSelect, type ChatComposerSelectOption } from "./chat/composer/ChatComposerSelect.js";
 export { ChatComposerOptionControls, ChatComposerAttachButton, type ChatComposerOptionControl } from "./chat/composer/ChatComposerOptionControls.js";
 export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.js";

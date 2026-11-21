@@ -37,7 +37,7 @@ describe("browser platform speech client", () => {
     const client = createBrowserSpeechClient({ baseUrl: "https://app.example/vm/alice", fetcher });
     await expect(client.capabilities()).resolves.toEqual(capabilities);
     expect(fetcher).toHaveBeenCalledWith(
-      "https://app.example/vm/alice/api/speech/capabilities",
+      "https://app.example/vm/alice/api/speech/capabilities?dictation=extended",
       expect.objectContaining({ method: "GET", cache: "no-store", credentials: "include" }),
     );
   });

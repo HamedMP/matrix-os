@@ -35,7 +35,11 @@ export interface SyncReport {
 }
 
 export function ensureHome(homePath: string = DEFAULT_HOME): SyncReport & { homePath: string } {
-  if (existsSync(homePath)) {
+  // An existing but empty directory holds no owner data yet (pre-created volume
+  // mount or provisioning mkdir), so it takes the first-boot path. The sync path
+  // would leave it without the owner-protected defaults: icons, wallpapers,
+  // theme and desktop settings.
+  if (existsSync(homePath) && readdirSync(homePath).length > 0) {
     const report = syncTemplate(homePath);
     if (!existsSync(join(homePath, ".git"))) {
       initGit(homePath);
