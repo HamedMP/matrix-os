@@ -9,6 +9,7 @@ import {
   LifecycleError,
   type CreateVmSpec,
   type LifecycleClock,
+  type LifecycleConfig,
   type VmLifecycle,
 } from "../../packages/hostd/src/vm-lifecycle.js";
 import { createVmStore, type VmStore } from "../../packages/hostd/src/vm-store.js";
@@ -37,6 +38,7 @@ let execFailures: Map<string, number>;
 let lvExists: boolean;
 let chState: ChVmInfo["state"];
 let snapshotError: Error | null;
+let resumeError: Error | null;
 let trimGate: Deferred | null;
 let healthy: (now: number) => boolean;
 let freeBytes: number;
@@ -82,6 +84,7 @@ function fakeCh(): ChClient {
     },
     async resume() {
       events.push("ch:resume");
+      if (resumeError) throw resumeError;
       chState = "Running";
     },
     async snapshot(destinationDir) {
@@ -100,6 +103,26 @@ function fakeCh(): ChClient {
   };
 }
 
+function makeLifecycle(config: Partial<LifecycleConfig> = {}): VmLifecycle {
+  return createVmLifecycle({
+    store,
+    exec: fakeExec,
+    ch: () => fakeCh(),
+    pool: { freeBytes: async () => freeBytes },
+    gatewayHealth: async () => {
+      events.push("health");
+      return healthy(clock.t);
+    },
+    trim: async () => {
+      events.push("trim");
+      if (trimGate) await trimGate.promise;
+    },
+    clock,
+    log: () => {},
+    config: { vmsDir, snapshotsDir, serialLogDir: join(root, "log"), runDir: join(root, "run"), ...config },
+  });
+}
+
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "hostd-life-"));
   vmsDir = join(root, "vms");
@@ -111,6 +134,7 @@ beforeEach(async () => {
   lvExists = false;
   chState = "Shutdown";
   snapshotError = null;
+  resumeError = null;
   trimGate = null;
   healthy = () => true;
   freeBytes = 1024 ** 4;
@@ -126,23 +150,7 @@ beforeEach(async () => {
     },
   };
   store = createVmStore(vmsDir);
-  lifecycle = createVmLifecycle({
-    store,
-    exec: fakeExec,
-    ch: () => fakeCh(),
-    pool: { freeBytes: async () => freeBytes },
-    gatewayHealth: async () => {
-      events.push("health");
-      return healthy(clock.t);
-    },
-    trim: async () => {
-      events.push("trim");
-      if (trimGate) await trimGate.promise;
-    },
-    clock,
-    log: () => {},
-    config: { vmsDir, snapshotsDir, serialLogDir: join(root, "log"), runDir: join(root, "run") },
-  });
+  lifecycle = makeLifecycle();
 });
 
 afterEach(async () => {
@@ -337,6 +345,44 @@ describe("VM lifecycle", () => {
     await expect(stat(join(snapshotsDir, vm.id))).rejects.toMatchObject({ code: "ENOENT" });
     await lifecycle.start(vm.id);
     expect(execCalls.at(-1)).toEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("the VM directory lets the VM user traverse it while the record stays private", async () => {
+    const vm = await lifecycle.create(spec);
+    const vmDir = join(vmsDir, vm.id);
+    expect(execCalls).toContainEqual(["chgrp", "matrix-vm", vmDir]);
+    expect((await stat(vmDir)).mode & 0o777).toBe(0o750);
+    expect((await stat(join(vmDir, "record.json"))).mode & 0o777).toBe(0o600);
+    const order = execCalls.map((c) => c.join(" "));
+    expect(order.indexOf(`chgrp matrix-vm ${vmDir}`)).toBeLessThan(order.indexOf(`systemctl start matrix-vm@${vm.id}.service`));
+  });
+
+  it("a cold boot after a Cloud Hypervisor upgrade relabels the record so the next resume restores", async () => {
+    const vm = await createSuspended();
+    lifecycle = makeLifecycle({ chVersion: "v55.0" });
+    await lifecycle.resume(vm.id, 2000);
+    expect(execCalls).toContainEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running", chVersion: "v55.0" });
+    await lifecycle.suspend(vm.id);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ snapshot: { chVersion: "v55.0" } });
+    execCalls = [];
+    await lifecycle.resume(vm.id, 2000);
+    expect(execCalls).toContainEqual(["systemctl", "start", `matrix-vm-restore@${vm.id}.service`]);
+    expect(has("systemctl start matrix-vm@")).toBe(false);
+  });
+
+  it("a failed resume after a failed snapshot marks the VM failed and the next resume recovers it", async () => {
+    const vm = await createRunning();
+    snapshotError = new Error("snapshot broke");
+    resumeError = new Error("resume broke");
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "failed" });
+    snapshotError = null;
+    resumeError = null;
+    execCalls = [];
+    await expect(lifecycle.resume(vm.id, 2000)).resolves.toBe("running");
+    expect(execCalls).toContainEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
   });
 

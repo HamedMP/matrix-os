@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ChError, type ChClient } from "./ch-client.js";
@@ -47,6 +47,8 @@ export interface LifecycleConfig {
   prefixLength: number;
   nameservers: readonly string[];
   vmUser: string;
+  // Group that may traverse a VM's state directory to open its seed image.
+  vmGroup: string;
   execTimeoutMs: number;
   chTimeoutMs: number;
   restoreTimeoutMs: number;
@@ -73,6 +75,7 @@ export const DEFAULT_LIFECYCLE_CONFIG: LifecycleConfig = {
   prefixLength: 22,
   nameservers: ["1.1.1.1", "9.9.9.9"],
   vmUser: "matrix-vm",
+  vmGroup: "matrix-vm",
   execTimeoutMs: 60_000,
   chTimeoutMs: 30_000,
   restoreTimeoutMs: 10_000,
@@ -346,6 +349,10 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
           "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
           "--name", `mx-${record.id}`, `${cfg.volumeGroup}/golden-${spec.goldenVersion}`,
         ]);
+        // The VMM (vmGroup) must traverse the directory to open seed.img; record.json stays 0600.
+        const vmDir = join(cfg.vmsDir, record.id);
+        await sh(["chgrp", cfg.vmGroup, vmDir]);
+        await chmod(vmDir, 0o750);
         await writeSeed(record, spec.userData);
         await writeFileAtomic(join(cfg.vmsDir, record.id, "unit.env"), unitEnv(record, address), 0o644);
         await sh(["systemctl", "start", vmUnit(record.id)]);
@@ -362,7 +369,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await stopUnits(record.id);
     await dropSnapshot(record.id);
     await sh(["systemctl", "start", vmUnit(record.id)]);
-    return save(record, { state: "running", snapshot: null });
+    // The record carries the version of the VMM now running, which labels its next snapshot.
+    return save(record, { state: "running", snapshot: null, chVersion: cfg.chVersion });
   }
 
   async function restore(record: VmRecord): Promise<void> {
@@ -397,7 +405,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     const resuming = await save(record, { state: "resuming" });
     try {
       await restore(resuming);
-      return await save(resuming, { state: "running" });
+      return await save(resuming, { state: "running", chVersion: cfg.chVersion });
     } catch (error: unknown) {
       log("vm_restore_failed", { id: record.id, ...errorFields(error) });
       try {
@@ -456,16 +464,19 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       await stopUnits(record.id);
     } catch (error: unknown) {
       log("vm_snapshot_failed", { id: record.id, alert: true, ...errorFields(error) });
+      let state: "running" | "failed" = "running";
       if (paused) {
         try {
           await withCh(record.id, (client) => client.resume(chSignal()));
         } catch (resumeError: unknown) {
+          // The VM may be left paused: "failed" makes the next wake cold-boot it.
+          state = "failed";
           log("vm_resume_after_snapshot_failure_failed", { id: record.id, alert: true, ...errorFields(resumeError) });
         }
       }
       await rm(newDir, { recursive: true, force: true });
-      await save(suspending, { state: "running" });
-      throw new LifecycleError("snapshot_failed", "snapshot failed; VM left running", { cause: error });
+      await save(suspending, { state });
+      throw new LifecycleError("snapshot_failed", "VM snapshot failed", { cause: error });
     }
 
     // The VMM has exited: the old snapshot is no longer mapped and can be replaced.
