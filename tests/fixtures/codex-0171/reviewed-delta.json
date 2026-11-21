@@ -1,0 +1,158 @@
+[
+  {
+    "path": "/definitions/ClientRequest/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/CurrentTimeReadParams",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/CurrentTimeReadResponse",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/McpServerElicitationRequestParams/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/ServerNotification/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/ServerRequest/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/AccountUpdateReason",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/AccountUpdatedNotification/properties/reason",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/CodexErrorInfo/anyOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ListMcpServerStatusParams/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpResourceReadParams/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpServerOauthLoginParams/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpServerStatus/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpServerStatusUpdatedNotification/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/McpServerToolCallParams/properties/environmentId",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ModelProviderDefaultSetParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/OtelRequirements/properties/headers_helper",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/OtelRequirements/properties/headers_helper_refresh_interval_ms",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/Project/properties/position",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/Project/required",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ProjectListParams/properties/sortKey/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ProjectMoveParams/properties/beforeProjectId/description",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadItem/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadListParams/properties/includedThreadIds",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadListParams/properties/useStateDbOnly/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeCoverage",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeEntry",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeFrameChannels",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeHandoffMode",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeItem/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeItem/properties/observedAtMs",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeListParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeListResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeOrder",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeVoiceTranscript",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchCancelParams",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchCancelResponse",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchParams/properties/searchTerm/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadSearchPartialNotification",
+    "operation": "remove"
+  }
+]

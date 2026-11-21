@@ -18,6 +18,11 @@ const changed = {
   "item/completed": "bd38783bca8b6bd3ecf75796883f3784bffca1d7797c33b3248e43a754e92c0d",
   "turn/completed": "ea32be3552e720e9f07bffae9bb0b4270c0f33a7d86a1df9c701fc77197e3906",
 };
+// 0.169.0 is a retained exact record; later releases moved the latest pin and consumed digests.
+const historicalExecContract = { ...execContract, latestVerifiedVersion: "0.169.0" };
+const historicalAppServerContract = { ...appServerContract, latestVerifiedVersion: "0.169.0",
+  requiredServerProtocolSchemaDigests: { ...appServerContract.requiredServerProtocolSchemaDigests, ...changed,
+    "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05" } };
 
 describe("published Codex 0.169.0 qualification", () => {
   it("retains the reviewed routine bridge protocol for the new exact release", () => {
@@ -61,8 +66,9 @@ describe("published Codex 0.169.0 qualification", () => {
   it.each(["linux-x64", "darwin-arm64"])("accepts exact published bytes and consumed payloads on %s", runtimeTarget => {
     expect(hash(execBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
     expect(hash(schemaBytes)).toBe("d2d0612646b0739dd264067ef944442a5485e44529c793bebf3985e9a9df6cfc");
-    expect(() => verifyCodexProviderContracts({ version: "0.169.0", execContract, appServerContract,
-      execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget })).not.toThrow();
+    expect(() => verifyCodexProviderContracts({ version: "0.169.0", execContract: historicalExecContract,
+      appServerContract: historicalAppServerContract, execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes,
+      runtimeTarget })).not.toThrow();
   });
 
   it("accounts for every changed consumed notification while approval payloads remain unchanged", () => {
@@ -86,8 +92,9 @@ describe("published Codex 0.169.0 qualification", () => {
   it("rejects unknown versions, altered vendor bytes and changed consumed approval semantics", () => {
     expect(codexContractStatus("codex-cli 0.169.0", execContract)).toEqual({ status: "verified", version: "0.169.0" });
     expect(codexContractStatus("codex-cli 0.168.0", execContract)).toEqual({ status: "unverified_older", version: "0.168.0" });
-    expect(codexContractStatus("codex-cli 0.169.1", execContract)).toEqual({ status: "unverified_newer", version: "0.169.1" });
-    const input = { version: "0.169.0", execContract, appServerContract, execSchemaBytes: execBytes,
+    expect(codexContractStatus("codex-cli 0.169.2", execContract)).toEqual({ status: "unverified_older", version: "0.169.2" });
+    const input = { version: "0.169.0", execContract: historicalExecContract,
+      appServerContract: historicalAppServerContract, execSchemaBytes: execBytes,
       appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64" };
     expect(() => verifyCodexProviderContracts({ ...input, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]) }))
       .toThrow("Codex app-server schema digest changed");
@@ -96,7 +103,7 @@ describe("published Codex 0.169.0 qualification", () => {
       v.properties.method.enum.includes("item/permissions/requestApproval")).description = "unreviewed authority change";
     const alteredBytes = Buffer.from(JSON.stringify(altered));
     expect(() => verifyCodexProviderContracts({ ...input, appServerSchemaBytes: alteredBytes,
-      appServerContract: { ...appServerContract, verifiedVersions: { ...appServerContract.verifiedVersions,
+      appServerContract: { ...historicalAppServerContract, verifiedVersions: { ...appServerContract.verifiedVersions,
         "0.169.0": { schemaSha256: hash(alteredBytes) } } } })).toThrow("Codex app-server payload schema changed");
   });
 });
