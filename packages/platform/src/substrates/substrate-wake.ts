@@ -121,7 +121,7 @@ async function markRunning(db: PlatformDB, machine: UserMachineRecord, now: Date
   if (machine.status !== 'running') {
     await db.ready;
     const row = await db.executor.updateTable('user_machines')
-      .set({ status: 'running', awake_since: now, next_wake_at: null })
+      .set({ status: 'running', awake_since: now, next_wake_at: null, wake_failures: 0 })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', machine.status)

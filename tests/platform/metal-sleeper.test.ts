@@ -18,12 +18,15 @@ import {
   LIFECYCLE_ALERT_AFTER_MS,
   METAL_SLEEP_INTERVAL_MS,
   SCHEDULED_WAKE_LEAD_MS,
-  createLifecycleReader,
+  SLEEP_PASS_BUDGET_MS,
+  SLEEP_RECHECK_AFTER_MS,
+  WAKE_RETRY_MAX_MS,
   createMetalSleeper,
   startMetalSleeperWorker,
   type LifecycleRead,
   type MetalSleeperDeps,
 } from '../../packages/platform/src/substrates/metal-sleeper.js';
+import { createLifecycleReader } from '../../packages/platform/src/substrates/metal-lifecycle-reader.js';
 import { createMetalHostDirectory, createMetalSubstrate, HOST_AUTH_HEADER } from '../../packages/platform/src/substrates/metal-substrate.js';
 import { createSubstrateRegistry } from '../../packages/platform/src/substrates/registry.js';
 import type {
@@ -347,7 +350,8 @@ describe('metal idle sleeper', () => {
     ensureRunning.mockResolvedValueOnce({ state: 'failed', code: 'provider_unavailable' });
 
     await s.tick(NOW);
-    expect(await machine(id)).toMatchObject({ status: 'suspended', nextWakeAt: ago(MINUTE) });
+    // Backed off by one minute behind fresh wakes.
+    expect(await machine(id)).toMatchObject({ status: 'suspended', nextWakeAt: new Date(NOW.getTime() + MINUTE).toISOString() });
     expect(logs).toContainEqual({ event: 'scheduled_wake_failed', fields: { machineId: id, state: 'failed', code: 'provider_unavailable' } });
 
     const later = new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS);
@@ -380,6 +384,84 @@ describe('metal idle sleeper', () => {
 
     expect(ensureRunning).toHaveBeenCalledTimes(20);
     expect(ensureRunning.mock.calls.map((call) => call[0].machineId)).toEqual(ids.slice(0, 20));
+  });
+
+  it('more than 50 always-skipped candidates still let a sleepable VM sleep', async () => {
+    const stuck = new Set<string>();
+    for (let i = 0; i < 51; i += 1) {
+      stuck.add(await seedMachine({ overrides: { lastActivityAt: ago(3 * HOUR + i * MINUTE) } }));
+    }
+    const idle = await seedMachine();
+    const { sleeper: s, readLifecycle } = sleeper({
+      lifecycle: async (m) => (stuck.has(m.machineId) ? { ok: false, code: 'unreachable' } : { ok: true, status: IDLE }),
+    });
+
+    await s.tick(NOW);
+    expect(await machine(idle)).toMatchObject({ status: 'running' });
+    await s.tick(new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS));
+
+    expect(SLEEP_RECHECK_AFTER_MS).toBe(5 * MINUTE);
+    expect(await machine(idle)).toMatchObject({ status: 'suspended' });
+    // Each stuck runtime is read once, then rotated behind the others until its recheck time.
+    expect(readLifecycle).toHaveBeenCalledTimes(52);
+  });
+
+  it('more than 20 failing due wakes still let other due wakes run, and failures back off up to 15 minutes', async () => {
+    const failing = new Set<string>();
+    for (let i = 0; i < 21; i += 1) {
+      failing.add(await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago((40 - i) * MINUTE), awakeSince: null } }));
+    }
+    const healthy = await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE), awakeSince: null } });
+    const { sleeper: s, ensureRunning } = sleeper();
+    ensureRunning.mockImplementation(async (ref) => (failing.has(ref.machineId)
+      ? { state: 'failed', code: 'provider_unavailable' }
+      : { state: 'running' }));
+
+    await s.tick(NOW);
+    const first = [...failing][0]!;
+    expect(await machine(first)).toMatchObject({ status: 'suspended', nextWakeAt: new Date(NOW.getTime() + MINUTE).toISOString() });
+    await s.tick(new Date(NOW.getTime() + 1_000));
+    expect(await machine(healthy)).toMatchObject({ status: 'running' });
+
+    // Doubling backoff, capped.
+    let at = new Date(NOW.getTime() + MINUTE);
+    for (const delay of [2, 4, 8, 15, 15]) {
+      await s.tick(at);
+      const next = (await machine(first)).nextWakeAt;
+      expect(next).toBe(new Date(at.getTime() + delay * MINUTE).toISOString());
+      at = new Date(next!);
+    }
+    expect(WAKE_RETRY_MAX_MS).toBe(15 * MINUTE);
+  });
+
+  it('records a VM the host already put to sleep as asleep, keeping its scheduled wake', async () => {
+    const wakeAt = new Date(NOW.getTime() + 30 * MINUTE).toISOString();
+    const id = await seedMachine({ overrides: { nextWakeAt: wakeAt } });
+    const { sleeper: s, stop, ensureRunning } = sleeper({ lifecycle: { ok: false, code: 'asleep' } });
+
+    await s.tick(NOW);
+    expect(stop).not.toHaveBeenCalled();
+    expect(await machine(id)).toMatchObject({ status: 'suspended', nextWakeAt: wakeAt });
+
+    await s.tick(new Date(wakeAt));
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+  });
+
+  it('stops starting sleep candidates once the pass budget is spent', async () => {
+    await seedMachine();
+    await seedMachine();
+    await seedMachine();
+    let clock = 0;
+    const { sleeper: s, readLifecycle } = sleeper({
+      elapsedMs: () => clock,
+      lifecycle: async () => { clock += SLEEP_PASS_BUDGET_MS + 1; return { ok: true, status: { ...IDLE, busy: true, busyReasons: ['chat_run'] } }; },
+    });
+
+    await s.tick(NOW);
+
+    expect(SLEEP_PASS_BUDGET_MS).toBe(45_000);
+    expect(readLifecycle).toHaveBeenCalledTimes(1);
   });
 
   it('never wakes a paid VM through the scheduled wake pass', async () => {
@@ -620,6 +702,17 @@ describe('lifecycle reader', () => {
     server.handle((_req, res) => json(res, 503, { error: 'lifecycle_unavailable' }));
     await expect(reader()(machine, new AbortController().signal)).resolves.toEqual({ ok: false, code: 'unavailable' });
     server.handle((_req, res) => json(res, 401, { error: 'unauthorized' }));
+    await expect(reader()(machine, new AbortController().signal)).resolves.toEqual({ ok: false, code: 'unavailable' });
+  });
+
+  it('answers asleep only for the ingress-marked runtime_asleep answer', async () => {
+    server.handle((_req, res) => {
+      res.writeHead(503, { 'content-type': 'application/json', 'x-matrix-ingress-error': 'runtime_asleep' });
+      res.end(JSON.stringify({ error: 'runtime_asleep' }));
+    });
+    await expect(reader()(machine, new AbortController().signal)).resolves.toEqual({ ok: false, code: 'asleep' });
+    // The same body from the VM itself, without the ingress marker, is just unavailable.
+    server.handle((_req, res) => json(res, 503, { error: 'runtime_asleep' }));
     await expect(reader()(machine, new AbortController().signal)).resolves.toEqual({ ok: false, code: 'unavailable' });
   });
 

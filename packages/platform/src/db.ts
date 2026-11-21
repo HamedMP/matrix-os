@@ -114,6 +114,8 @@ export interface UserMachinesTable {
   next_wake_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   awake_since: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   idle_guard_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  sleep_checked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  wake_failures: Generated<number>;
 }
 
 export interface AiFundedGlobalPolicyTable {

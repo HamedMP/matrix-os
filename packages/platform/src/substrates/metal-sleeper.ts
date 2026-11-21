@@ -1,12 +1,11 @@
 import { sql, type ExpressionBuilder } from 'kysely';
-import { RuntimeLifecycleStatusSchema, type RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecycle';
+import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecycle';
 import { mapUserMachine } from '../database/user-machine-records.js';
 import type { PlatformDatabase, PlatformDB, UserMachineRecord } from '../db.js';
-import { buildPlatformVerificationToken } from '../platform-token.js';
-import type { SubstrateRegistry } from './registry.js';
+import { markRuntimeAsleep } from './runtime-asleep.js';
 import { wakeOnDemandRuntime } from './substrate-wake.js';
 import type { OnDemandRuntimeSubstrate, RuntimeRef } from './types.js';
-import { applyUpstreamCredentials, needsVerifiedTransport, verifiedDispatcher } from './upstream-transport.js';
+import type { LifecycleRead } from './metal-lifecycle-reader.js';
 
 /**
  * Idle sleep and scheduled wake for free metal runtimes (spec 2691, ENG-520
@@ -37,14 +36,18 @@ export const SCHEDULED_WAKE_LEAD_MS = 60_000;
  * before it may sleep again (its next scheduled time may already be past).
  */
 export const WAKE_SETTLE_MS = 5 * 60_000;
-export const LIFECYCLE_TIMEOUT_MS = 10_000;
-export const LIFECYCLE_RESPONSE_LIMIT_BYTES = 4 * 1024;
 export const LIFECYCLE_ALERT_AFTER_MS = 6 * 60 * 60_000;
 export const LIFECYCLE_ALERT_REPEAT_MS = 60 * 60_000;
 export const SLEEP_CANDIDATES_PER_TICK = 50;
 export const WAKES_PER_TICK = 20;
+/** A checked candidate rotates behind the others until this long has passed, so runtimes skipped every tick cannot starve the scan. */
+export const SLEEP_RECHECK_AFTER_MS = 5 * 60_000;
+/** The sleep pass starts no new candidate after this long, so a slow pass cannot hold off the next scheduled wakes. */
+export const SLEEP_PASS_BUDGET_MS = 45_000;
+/** A failing scheduled wake is retried after 1 min, doubling up to this cap, so failures rotate behind fresh wakes. */
+export const WAKE_RETRY_BASE_MS = 60_000;
+export const WAKE_RETRY_MAX_MS = 15 * 60_000;
 const LIFECYCLE_ALERT_TRACK_MAX = 10_000;
-const LIFECYCLE_PATH = '/api/system/lifecycle';
 const ASLEEP_STATUS = 'suspended';
 const HOUR_MS = 60 * 60_000;
 
@@ -55,11 +58,7 @@ function errorCode(error: unknown): string {
   return error instanceof Error ? error.name : 'unknown';
 }
 
-export type LifecycleFailureCode = 'not_routable' | 'timeout' | 'unreachable' | 'unavailable' | 'invalid_response';
-
-export type LifecycleRead =
-  | { ok: true; status: RuntimeLifecycleStatus }
-  | { ok: false; code: LifecycleFailureCode };
+export type { LifecycleFailureCode, LifecycleRead } from './metal-lifecycle-reader.js';
 
 export interface MetalSleeperDeps {
   db: PlatformDB;
@@ -67,6 +66,8 @@ export interface MetalSleeperDeps {
   /** Reads the runtime's lifecycle answer. Throws only when `signal` aborts. */
   readLifecycle(machine: UserMachineRecord, signal: AbortSignal): Promise<LifecycleRead>;
   log?: Log;
+  /** Monotonic milliseconds for the sleep pass budget. */
+  elapsedMs?: () => number;
 }
 
 export interface MetalSleeper {
@@ -101,6 +102,7 @@ type Verdict =
 export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
   const { db, substrate } = deps;
   const log = deps.log ?? defaultLog;
+  const elapsedMs = deps.elapsedMs ?? (() => performance.now());
   // Insertion-ordered LRU of runtimes whose lifecycle is unavailable or incomplete, capped.
   const unavailableSince = new Map<string, { since: number; warnedAt: number | null }>();
   let running: Promise<void> | undefined;
@@ -144,6 +146,19 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     return { sleep: true, guard, nextWakeAt: new Date(wakeAt) };
   }
 
+  /** Moves a failed wake behind fresh ones: retry after 1, 2, 4 … minutes, at most 15. */
+  async function backOff(machineId: string, generation: number, failures: number, now: Date): Promise<void> {
+    const delay = Math.min(WAKE_RETRY_BASE_MS * 2 ** Math.min(failures, 16), WAKE_RETRY_MAX_MS);
+    await db.executor.updateTable('user_machines')
+      .set({ next_wake_at: new Date(now.getTime() + delay), wake_failures: failures + 1 })
+      .where('machine_id', '=', machineId)
+      .where('generation', '=', generation)
+      .where('status', '=', ASLEEP_STATUS)
+      .where('wake_failures', '=', failures)
+      .where('deleted_at', 'is', null)
+      .execute();
+  }
+
   async function wakeDue(now: Date, signal: AbortSignal): Promise<void> {
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
@@ -175,13 +190,16 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
           log('scheduled_wake_needs_recovery', { machineId: machine.machineId });
           continue;
         }
-        // Left due: the next tick retries.
         log('scheduled_wake_failed', {
           machineId: machine.machineId, state: result.state, ...(result.state === 'failed' ? { code: result.code } : {}),
         });
+        await backOff(row.machine_id, row.generation, row.wake_failures, now);
       } catch (error: unknown) {
         if (signal.aborted) return;
         log('scheduled_wake_failed', { machineId: machine.machineId, state: 'error', code: errorCode(error) });
+        await backOff(row.machine_id, row.generation, row.wake_failures, now).catch((backOffError: unknown) => {
+          log('scheduled_wake_backoff_failed', { machineId: machine.machineId, code: errorCode(backOffError) });
+        });
       }
     }
   }
@@ -195,6 +213,14 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       if (signal.aborted) throw error;
       log('lifecycle_read_failed', { machineId: machine.machineId, code: errorCode(error) });
       noteUnavailable(machine.machineId, 'read_failed', nowMs);
+      return;
+    }
+    if (!read.ok && read.code === 'asleep') {
+      // The host already sleeps this VM (for example a suspend accepted just before a platform restart).
+      // Record it asleep with its scheduled wake kept, so the wake pass picks it up.
+      noteHealthy(machine.machineId);
+      await markRuntimeAsleep(db, machine);
+      log('sleep_recorded_host_asleep', { machineId: machine.machineId });
       return;
     }
     if (!read.ok) {
@@ -250,7 +276,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     }
 
     const recorded = await db.executor.updateTable('user_machines')
-      .set({ status: ASLEEP_STATUS, awake_since: null, ...(verdict.guard ? { idle_guard_at: now } : {}) })
+      .set({ status: ASLEEP_STATUS, awake_since: null, wake_failures: 0, ...(verdict.guard ? { idle_guard_at: now } : {}) })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', 'running')
@@ -276,23 +302,40 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       .execute();
     const idleBefore = new Date(nowMs - IDLE_SLEEP_AFTER_MS);
     const settledBefore = new Date(nowMs - WAKE_SETTLE_MS);
+    const recheckBefore = new Date(nowMs - SLEEP_RECHECK_AFTER_MS);
+    const startedAt = elapsedMs();
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
       .where('m.status', '=', 'running')
       .where('m.deleted_at', 'is', null)
       .where('m.awake_since', '<=', settledBefore)
+      .where((eb) => eb.or([eb('m.sleep_checked_at', 'is', null), eb('m.sleep_checked_at', '<=', recheckBefore)]))
       .where((eb) => eb.or([
         eb('m.last_activity_at', '<=', idleBefore),
         eb.and([eb('m.last_activity_at', 'is', null), eb('m.awake_since', '<=', idleBefore)]),
       ]))
       .where(ownedByFreePlan)
+      .orderBy(sql`m.sleep_checked_at NULLS FIRST`)
       .orderBy(sql`coalesce(m.last_activity_at, m.awake_since)`).orderBy('m.machine_id')
       .limit(SLEEP_CANDIDATES_PER_TICK)
       .execute();
     for (const row of rows) {
       if (signal.aborted) return;
+      if (elapsedMs() - startedAt >= SLEEP_PASS_BUDGET_MS) {
+        log('sleep_pass_budget_spent', { remaining: rows.length - rows.indexOf(row) });
+        return;
+      }
       const machine = mapUserMachine(row);
       try {
+        // Stamped before the check, so a runtime that fails or is skipped rotates behind the others.
+        const stamped = await db.executor.updateTable('user_machines').set({ sleep_checked_at: now })
+          .where('machine_id', '=', machine.machineId)
+          .where('generation', '=', machine.generation)
+          .where('status', '=', 'running')
+          .where('deleted_at', 'is', null)
+          .returning('machine_id')
+          .executeTakeFirst();
+        if (!stamped) continue;
         await sleepOne(machine, now, signal);
       } catch (error: unknown) {
         if (signal.aborted) return;
@@ -364,84 +407,5 @@ export function startMetalSleeperWorker(input: {
     drain() {
       return inFlight ?? Promise.resolve();
     },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Lifecycle reader
-
-async function readBoundedText(body: ReadableStream<Uint8Array>): Promise<string | null> {
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) break;
-    size += next.value.length;
-    if (size > LIFECYCLE_RESPONSE_LIMIT_BYTES) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(next.value);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch (error: unknown) {
-    if (error instanceof SyntaxError) return undefined;
-    throw error;
-  }
-}
-
-/**
- * Reads `GET /api/system/lifecycle` from the runtime's gateway through its
- * substrate upstream (for metal, the host ingress with its credential and
- * verified TLS), authenticated with the same platform runtime credential the
- * session-routing proxy uses. Failures are typed codes; nothing from the
- * response reaches a log.
- */
-export function createLifecycleReader(input: {
-  substrates: SubstrateRegistry;
-  platformSecret: string;
-  timeoutMs?: number;
-}): MetalSleeperDeps['readLifecycle'] {
-  const timeoutMs = input.timeoutMs ?? LIFECYCLE_TIMEOUT_MS;
-  return async (machine, signal) => {
-    const resolution = input.substrates.resolveUpstream(machine, { path: LIFECYCLE_PATH });
-    if (resolution.kind !== 'upstream') return { ok: false, code: 'not_routable' };
-    const { upstream } = resolution;
-    const headers = new Headers({
-      accept: 'application/json',
-      authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, input.platformSecret)}`,
-    });
-    applyUpstreamCredentials(headers, upstream);
-    signal.throwIfAborted();
-    const timeout = AbortSignal.timeout(timeoutMs);
-    const combined = AbortSignal.any([signal, timeout]);
-    try {
-      const response = await fetch(upstream.url, {
-        method: 'GET',
-        headers,
-        redirect: 'error',
-        signal: combined,
-        ...(needsVerifiedTransport(upstream) ? { dispatcher: verifiedDispatcher(upstream) } : {}),
-      } as RequestInit);
-      if (!response.ok || !response.body) {
-        await response.body?.cancel();
-        return { ok: false, code: 'unavailable' };
-      }
-      const text = await readBoundedText(response.body);
-      if (text === null) return { ok: false, code: 'invalid_response' };
-      const parsed = RuntimeLifecycleStatusSchema.safeParse(parseJson(text));
-      return parsed.success ? { ok: true, status: parsed.data } : { ok: false, code: 'invalid_response' };
-    } catch (error: unknown) {
-      if (signal.aborted) throw signal.reason;
-      if (timeout.aborted) return { ok: false, code: 'timeout' };
-      if (error instanceof Error) return { ok: false, code: 'unreachable' };
-      throw error;
-    }
   };
 }

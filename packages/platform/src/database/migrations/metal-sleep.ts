@@ -6,13 +6,17 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
  * runtimes. `awake_since` is stamped whenever a metal runtime becomes running,
  * `next_wake_at` is when the sleeper must wake a sleeping runtime (60 s before
  * its next scheduled job), and `idle_guard_at` records when the 6 h idle guard
- * suspended a runtime that still reported work. The partial index serves the
- * sleeper's wake scan.
+ * suspended a runtime that still reported work. `sleep_checked_at` rotates the
+ * sleep scan past runtimes it checked recently, and `wake_failures` backs off a
+ * scheduled wake that keeps failing, so neither scan starves behind runtimes
+ * that fail every tick. The partial index serves the sleeper's wake scan.
  */
 export async function migrateMetalSleep(db: PlatformMigrationExecutor): Promise<void> {
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS next_wake_at TIMESTAMPTZ`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS awake_since TIMESTAMPTZ`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS idle_guard_at TIMESTAMPTZ`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS sleep_checked_at TIMESTAMPTZ`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS wake_failures INTEGER NOT NULL DEFAULT 0`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_user_machines_metal_next_wake
     ON user_machines (next_wake_at)

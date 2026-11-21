@@ -5,7 +5,8 @@ import { loadMetalSubstrateConfig } from './metal-config.js';
 import { createMetalHostsRepository } from './metal-hosts-repository.js';
 import { createMetalProvisioner, type MetalProvisioner } from './metal-provisioner.js';
 import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
-import { createLifecycleReader, createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
+import { createLifecycleReader } from './metal-lifecycle-reader.js';
+import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
