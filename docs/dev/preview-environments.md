@@ -556,8 +556,11 @@ gh workflow run preview-host-bundle.yml -f ref=<branch> -f channel=dev
   `platform-preview-secret` through workload identity and masks it. Then it
   registers the bundle at `PREVIEW_PUBLIC_URL` (default
   `https://preview.matrix-os.com`) and checks that the platform reports the
-  same sha256. `scripts/ci/resolve-preview-platform-url.sh` stops the run when
-  the target is not a bare HTTPS origin or is a production host.
+  same sha256. `scripts/ci/resolve-preview-platform-url.sh` is an allowlist:
+  it accepts only `https://preview.matrix-os.com` or the
+  `matrix-platform-preview` Cloud Run origin (optionally `pr-<N>---` tagged),
+  and stops the run for anything else. The publish job also re-checks the
+  version (`-preview-`) and channel (`none` or `dev`) itself.
 - **Versions** default to `v<date>-preview-<sha12>-<run>-<attempt>`. A custom
   `version` must contain `-preview-`, so a preview upload can never take an
   immutable production release key in the shared store. Preview bundles are

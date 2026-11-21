@@ -51,13 +51,35 @@ describe('preview platform URL guard', () => {
   });
 
   it.each([
+    ['https://PREVIEW.matrix-os.com', 'https://preview.matrix-os.com'],
+    ['https://matrix-platform-preview-abc123def4-ey.a.run.app', 'https://matrix-platform-preview-abc123def4-ey.a.run.app'],
+    ['https://pr-42---matrix-platform-preview-abc123def4-ey.a.run.app/', 'https://pr-42---matrix-platform-preview-abc123def4-ey.a.run.app'],
+  ])('accepts the allowlisted preview origin %s', (url, expected) => {
+    const result = runGuard(url);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(expected);
+  });
+
+  it.each([
     'https://app.matrix-os.com',
     'https://app.matrix-os.com/',
     'https://APP.matrix-os.com',
     'https://api.matrix-os.com',
     'https://matrix-os.com',
     'https://www.matrix-os.com',
-  ])('refuses the production host %s', (url) => {
+    'https://app.matrix-os.com.',
+    'https://app.matrix-os.com..',
+    'https://preview.matrix-os.com.',
+    'https://matrix-platform-abc123def4-ey.a.run.app',
+    'https://pr-42---matrix-platform-abc123def4-ey.a.run.app',
+    'https://203.0.113.5',
+    'https://[2001:db8::1]',
+    'https://preview.matrix-os.com.evil.example',
+    'https://evil-preview.matrix-os.com',
+    'https://matrix-platform-preview-abc123def4-ey.a.run.app.evil.example',
+    'https://pr-0---matrix-platform-preview-abc123def4-ey.a.run.app',
+    'https://future-prod.matrix-os.com',
+  ])('refuses the non-allowlisted host %s', (url) => {
     const result = runGuard(url);
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe('');
@@ -68,7 +90,12 @@ describe('preview platform URL guard', () => {
     'https://preview.matrix-os.com/path',
     'https://user@preview.matrix-os.com',
     'https://preview.matrix-os.com:8443',
+    'https://preview.matrix-os.com:443',
+    'https://preview.matrix-os.com?x=1',
+    'https://preview.matrix-os.com#x',
+    'https://preview.matrix-os.com//',
     'preview.matrix-os.com',
+    '',
   ])('refuses a non-origin or non-HTTPS URL %s', (url) => {
     const result = runGuard(url);
     expect(result.status).not.toBe(0);
@@ -159,6 +186,18 @@ describe('preview host bundle workflow', () => {
     expect(publishText).toMatch(/::add-mask::\$\{?PLATFORM_SECRET/);
     expect(publishText).toMatch(/\.\/scripts\/publish-release\.sh "\$VERSION" --channel "\$CHANNEL"/);
     expect(publishText).not.toContain('GITHUB_ENV');
+  });
+
+  it('re-validates version and channel in the publish job instead of trusting build outputs', () => {
+    const validate = publish.steps.find((step) => step.name === 'Validate build outputs');
+    expect(validate).toBeDefined();
+    expect((validate as { if?: string }).if).toBeUndefined();
+    expect(validate?.run).toMatch(/\*-preview-\*/);
+    expect(validate?.run).toMatch(/\*-collabpair-\*/);
+    expect(validate?.run).toMatch(/none\|dev\)/);
+    const index = publish.steps.indexOf(validate as Step);
+    const secretIndex = publish.steps.findIndex((step) => step.run?.includes('platform-preview-secret'));
+    expect(index).toBeLessThan(secretIndex);
   });
 
   it('verifies the registered sha256 and reports version and sha256 in the job summary', () => {

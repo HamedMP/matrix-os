@@ -213,6 +213,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # Re-check build outputs here instead of trusting the job that ran
+      # branch code: only -preview- versions and none/dev channels publish.
+      - name: Validate build outputs
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] ||
+             [[ "$VERSION" != *-preview-* ]] ||
+             [[ "$VERSION" == *-collabpair-* ]]; then
+            echo "Refusing to publish a version outside the preview namespace." >&2
+            exit 1
+          fi
+          case "$CHANNEL" in
+            none|dev) ;;
+            *) echo "Refusing to publish to a channel other than none or dev." >&2; exit 1 ;;
+          esac
+          if ! [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Build job did not report a commit SHA." >&2
+            exit 1
+          fi
+
       - name: Resolve preview platform URL
         id: target
         run: |
