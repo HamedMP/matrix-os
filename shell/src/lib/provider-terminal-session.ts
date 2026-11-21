@@ -172,6 +172,26 @@ async function readBoundedJson(response: Response, limit: number): Promise<unkno
  * One known tab, looked up on its own: used when the workspace list is too big to
  * read (finished history counts toward its limits). "gone" when it ended or vanished.
  */
+// Names learned while confirming a tab, so a tab opened by reference is titled
+// like its sidebar row. Bounded; the oldest name is forgotten first.
+const MAX_REMEMBERED_NAMES = 64;
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const terminalRefNames = new Map<string, string>();
+
+function rememberTerminalRefName(terminalRef: string, name: unknown): void {
+  if (typeof name !== "string") return;
+  const safe = name.replace(UNSAFE_NAME_CHARS, "").trim().slice(0, 120);
+  if (!safe) return;
+  terminalRefNames.delete(terminalRef);
+  terminalRefNames.set(terminalRef, safe);
+  while (terminalRefNames.size > MAX_REMEMBERED_NAMES) terminalRefNames.delete(terminalRefNames.keys().next().value!);
+}
+
+/** The name the gateway gave a tab confirmed by reference, if one was learned. */
+export function terminalRefDisplayName(terminalRef: string): string | null {
+  return terminalRefNames.get(terminalRef) ?? null;
+}
+
 function isHerdrTerminalRefKey(terminalRef: string): boolean {
   return terminalRef.startsWith(`${HERDR_TERMINAL_WORKSPACE_ID}:`);
 }
@@ -187,8 +207,9 @@ async function lookUpTerminalRef(fetcher: Fetcher, terminalRef: string): Promise
   if (response.status === 404) return "gone";
   const value = await readBoundedJson(response, TAB_RESPONSE_LIMIT_BYTES);
   if (!value || typeof value !== "object") return "unknown";
-  const facts = value as { tab?: { id?: unknown; status?: unknown }; state?: unknown };
+  const facts = value as { tab?: { id?: unknown; status?: unknown; name?: unknown }; state?: unknown };
   if (facts.tab?.id !== tabId || (facts.state !== "live" && facts.state !== "finished")) return "unknown";
+  rememberTerminalRefName(terminalRef, facts.tab.name);
   return facts.state === "live" && typeof facts.tab.status === "string" && ACTIVE_TAB_STATUSES.has(facts.tab.status) ? "live" : "gone";
 }
 

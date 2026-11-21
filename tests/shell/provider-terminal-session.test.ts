@@ -8,6 +8,7 @@ import {
   enqueueExistingTerminalRef,
   enqueueExistingTerminalSession,
   hasQueuedExistingTerminalSession,
+  terminalRefDisplayName,
 } from "../../shell/src/lib/provider-terminal-session.js";
 
 const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
@@ -58,7 +59,7 @@ describe("provider terminal session handoff", () => {
     expect(enqueueExistingTerminalRef(herdrRef, "window-a")).toBe(true);
     const fetcher = vi.fn(async (url: string) => (url.endsWith("/api/terminal/workspaces")
       ? Response.json(workspaceResponse([tab(PROVIDER_TAB_ID, "main", "running")]))
-      : Response.json({ tab: { id: OTHER_TAB_ID, status: "running" }, state: "live" })));
+      : Response.json({ tab: { id: OTHER_TAB_ID, status: "running", name: "deploy agent" }, state: "live" })));
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: fetcher as never }))
       .resolves.toEqual([herdrRef]);
     expect(fetcher).toHaveBeenCalledWith(
@@ -66,6 +67,9 @@ describe("provider terminal session handoff", () => {
       expect.anything(),
     );
     expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    // The opened tab is titled with the session's name, not its raw reference.
+    expect(terminalRefDisplayName(herdrRef)).toBe("deploy agent");
+    expect(terminalRefDisplayName(providerRef)).toBeNull();
   });
 
   it("queues only opaque canonical session ids and targets the active terminal", () => {
