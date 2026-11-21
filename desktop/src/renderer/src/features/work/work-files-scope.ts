@@ -1,4 +1,4 @@
-import { canonicalExecutionRootProjectId, resolveChatMessageLink } from "@matrix-os/contracts";
+import { canonicalChatFileScope, canonicalExecutionRootProjectId, resolveChatMessageLink } from "@matrix-os/contracts";
 import type { InspectorFileTarget } from "../panels/InspectorFilesPanel";
 import type { CanonicalChatDetailResponse, CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
@@ -13,30 +13,11 @@ export function resolveWorkFilesScope(
   projects: readonly Project[],
 ): WorkFilesScope {
   const { record } = detail;
-  if (!record.projectId) return { kind: "home", chatId: record.chat.id };
-
-  const project = projects.find((candidate) => candidate.id === record.projectId);
+  const scope = canonicalChatFileScope(detail);
+  if (scope.kind !== "project") return { kind: scope.kind, chatId: record.chat.id };
+  const project = projects.find(candidate => candidate.id === scope.projectId);
   if (!project) return { kind: "unavailable", chatId: record.chat.id };
-
-  const run = record.activeRun
-    ? detail.runs.find((candidate) => candidate.id === record.activeRun?.runId)
-    : detail.runs.at(-1);
-  if (record.activeRun && !run) {
-    return { kind: "unavailable", chatId: record.chat.id };
-  }
-  if (run?.executionRoot && canonicalExecutionRootProjectId(run.executionRoot) !== record.projectId) {
-    return { kind: "unavailable", chatId: record.chat.id };
-  }
-
-  return {
-    kind: "project",
-    chatId: record.chat.id,
-    projectId: project.slug,
-    label: project.name,
-    ...(run?.executionRoot?.kind === "worktree"
-      ? { worktreeId: run.executionRoot.worktreeId }
-      : {}),
-  };
+  return { ...scope, chatId: record.chat.id, projectId: project.slug, label: project.name };
 }
 
 export function resolveChatInspectorTarget(rawPath: string, scope: WorkFilesScope): InspectorFileTarget | null {

@@ -39,6 +39,7 @@ function InspectorContent({
   rootWidth,
   railWidth,
   project,
+  worktreeId,
   projectLoading,
   projectError,
   onRetryProject,
@@ -237,9 +238,10 @@ function InspectorContent({
                 }}
               >
                 {projectLoading ? <p role="status" className="p-3 text-sm text-muted-foreground">Loading project files…</p> : projectError ? <div className="p-3 text-sm"><p role="alert">Project files are unavailable.</p><Button variant="outline" size="sm" className="mt-2" onClick={onRetryProject}>Retry project files</Button></div> : <WebChatFileTree
-                  key={JSON.stringify([gatewayUrl, project?.id, project?.slug])}
+                  key={JSON.stringify([gatewayUrl, project?.id, project?.slug, worktreeId])}
                   gatewayUrl={gatewayUrl}
                   project={project}
+                  worktreeId={worktreeId}
                   selectedPath={filePath ?? undefined}
                   revealKey={fileOpenRequest}
                   onOpenFile={onFilePathChange}

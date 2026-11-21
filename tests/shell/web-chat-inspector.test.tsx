@@ -21,6 +21,21 @@ vi.mock("../../shell/src/hooks/useTheme", () => ({ useTheme: () => ({}) }));
 vi.mock("@clerk/nextjs",()=>({useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
 vi.mock("../../shell/src/components/chat-provider-onboarding",()=>({ChatProviderOnboarding:({children}:{children:React.ReactNode})=><>{children}</>}));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
+it('continues browsing beyond the mounted nesting limit instead of showing an empty folder', async () => {
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>{
+  const path=new URL(url).searchParams.get('path')??'';
+  const depth=path?path.split('/').length:0;
+  return Response.json({entries:depth<14?[{name:`d${depth+1}`,type:'directory'}]:[{name:'deep.txt',type:'file'}]});
+ }));
+ const open=vi.fn();render(<WebChatInspector {...inspectorProps({onFilePathChange:open})}/>);
+ for(let depth=1;depth<=13;depth++)fireEvent.click(await screen.findByRole('treeitem',{name:`d${depth}`,exact:true}));
+ fireEvent.click(await screen.findByRole('button',{name:'Open folder d13',exact:true}));
+ fireEvent.click(await screen.findByRole('treeitem',{name:'d14',exact:true}));
+ fireEvent.click(await screen.findByRole('treeitem',{name:'deep.txt',exact:true}));
+ expect(open).toHaveBeenCalledWith([...Array.from({length:14},(_,index)=>`d${index+1}`),'deep.txt'].join('/'));
+ fireEvent.click(screen.getByRole('button',{name:'Back to Matrix Home',exact:true}));
+ expect(await screen.findByRole('treeitem',{name:'d1',exact:true})).toBeTruthy();
+});
 it.each([1512,768])('blocks inspector file names and saved Side chat text from session replay at width %s',async rootWidth=>{
  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({entries:[{name:'private.txt',type:'file'}]})));
  const sideChatClient={getSideChat:vi.fn(async()=>({threadId:'side_'+'a'.repeat(32),messages:[{seq:1,role:'assistant' as const,content:'Private saved answer',createdAt:'2026-11-17T00:00:00.000Z'}]})),createSideChat:vi.fn(),askSideChat:vi.fn()};

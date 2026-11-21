@@ -67,22 +67,23 @@ export function ChatFilePanel({ path, onClose, embedded = false, gatewayUrl, onE
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeButton.current?.focus(); }, [path]);
   const resourceKey = resource ? JSON.stringify(resource) : "";
+  const scopeKey = JSON.stringify([gatewayUrl ?? null, resourceKey]);
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<(
     { status: "ready"; descriptor: FilePreviewDescriptor } | { status: "failed" }
-  ) & { path: string; attempt: number }>();
-  const state = result?.path === path && result.attempt === attempt ? result : { status: "loading" as const };
+  ) & { path: string; attempt: number; scopeKey: string }>();
+  const state = result?.path === path && result.attempt === attempt && result.scopeKey === scopeKey ? result : { status: "loading" as const };
   useEffect(() => {
     const controller = new AbortController();
     void loadDescriptor(path, controller.signal, gatewayUrl, resourceKey ? JSON.parse(resourceKey) : undefined).then((descriptor) => {
-      if (!controller.signal.aborted) setResult({ status: "ready", descriptor, path, attempt });
+      if (!controller.signal.aborted) setResult({ status: "ready", descriptor, path, attempt, scopeKey });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[chat-file] preview failed", error instanceof Error ? error.name : "UnknownError");
-      setResult({ status: "failed", path, attempt });
+      setResult({ status: "failed", path, attempt, scopeKey });
     });
     return () => controller.abort();
-  }, [attempt, path, gatewayUrl, resourceKey]);
+  }, [attempt, path, gatewayUrl, resourceKey, scopeKey]);
   const retry = () => setAttempt((value) => value + 1);
   return <aside aria-label="Chat file preview" className={embedded ? "flex min-h-0 w-full flex-1 flex-col bg-background" : "absolute inset-y-0 right-0 z-30 flex w-[min(100%,520px)] flex-col border-l bg-background shadow-xl"} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
     {embedded ? <ChatInspectorFileHeader name={path.split("/").at(-1) ?? path} path={path} onCopy={() => navigator.clipboard.writeText(path)} onExpand={onExpand}/> : <header className="flex items-center justify-between gap-2 border-b p-3"><span className="truncate text-sm">{path.split("/").at(-1)}</span><button ref={closeButton} type="button" onClick={onClose} className="rounded px-2 py-1 hover:bg-muted">Close preview</button></header>}

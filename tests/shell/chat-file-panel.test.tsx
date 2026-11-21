@@ -1,10 +1,32 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatFilePanel, loadChatFile } from "../../shell/src/components/chat/ChatFilePanel";
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => "http://localhost:4000" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it("clears the previous resource immediately when the same file path changes scope", async () => {
+  const path = "src/config.txt";
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn(async (url: string) => {
+    const project = new URL(url).searchParams.get("kind") === "project";
+    if (url.includes("/metadata?")) {
+      if (project) return new Promise<Response>(resolve => { finish = resolve; });
+      return Response.json({ resource: { kind: "home", path }, name: "config.txt", mimeType: "text/plain", sizeBytes: 12, kind: "text", version: "home_config", canDownload: true });
+    }
+    return new Response(project ? "Project value" : "Home value");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<ChatFilePanel path={path} resource={{ kind: "home", path }} onClose={vi.fn()} />);
+  await screen.findByText("Home value");
+  view.rerender(<ChatFilePanel path={path} resource={{ kind: "project", projectId: "demo", path }} onClose={vi.fn()} />);
+  expect(screen.queryByText("Home value")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("Loading preview…");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await act(async () => finish(Response.json({ resource: { kind: "project", projectId: "demo", path }, name: "config.txt", mimeType: "text/plain", sizeBytes: 13, kind: "text", version: "project_config", canDownload: true })));
+  expect(await screen.findByText("Project value")).toBeTruthy();
+});
 
 it.each(["budget%20draft.txt", "100%.txt", " note.txt ", "report.txt:42"])("opens the literal filesystem path %s without parsing it as a link", async path => {
   const fetcher = vi.fn(async (url: string) => url.includes("/metadata?") ? Response.json({

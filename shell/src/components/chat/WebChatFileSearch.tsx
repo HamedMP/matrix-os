@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { FileCode2 } from "lucide-react";
+import { searchWorktreeFiles, type WorktreeFileScope } from "./web-chat-worktree-files";
 import { z } from "zod/v4";
 
 const SearchResponse = z.object({
@@ -8,8 +9,8 @@ const SearchResponse = z.object({
   truncated: z.boolean(),
 });
 type Result = z.infer<typeof SearchResponse>["results"][number];
-export function WebChatFileSearch({ gatewayUrl, rootPath, query, onOpenFile }: {
-  gatewayUrl: string; rootPath: string; query: string; onOpenFile(path: string): void;
+export function WebChatFileSearch({ gatewayUrl, rootPath, query, worktree, onOpenFile }: {
+  worktree?: WorktreeFileScope; gatewayUrl: string; rootPath: string; query: string; onOpenFile(path: string): void;
 }) {
   const [retry, setRetry] = useState(0);
   const [state, setState] = useState<{ query: string; status: "ready" | "error"; results: Result[]; truncated: boolean } | null>(null);
@@ -17,12 +18,12 @@ export function WebChatFileSearch({ gatewayUrl, rootPath, query, onOpenFile }: {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ q: query, path: rootPath, limit: "200" });
-      void fetch(`${gatewayUrl}/api/files/search?${params}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
+      const request = worktree ? searchWorktreeFiles(gatewayUrl, worktree, rootPath, query, controller.signal) : fetch(`${gatewayUrl}/api/files/search?${params}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]) })
         .then(async response => {
           if (!response.ok) throw new Error("FileSearchUnavailable");
           return SearchResponse.parse(await response.json());
-        })
-        .then(data => {
+        });
+      void request.then(data => {
           if (controller.signal.aborted) return;
           const results = data.results.slice(0, 200).filter(entry => entry.type === "file" && !entry.path.startsWith("/")
             && !entry.path.includes("\\") && !entry.path.split("/").some(part => part === ".." || part === ".")
@@ -36,7 +37,7 @@ export function WebChatFileSearch({ gatewayUrl, rootPath, query, onOpenFile }: {
         });
     }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [gatewayUrl, rootPath, query, retry]);
+  }, [gatewayUrl, rootPath, query, retry, worktree]);
   if (state?.query !== query) return <p role="status" className="px-3 py-1 text-xs text-muted-foreground">Searching files…</p>;
   if (state.status === "error") return <p role="alert" className="px-3 py-1 text-xs">Files could not be searched. <button type="button" className="underline" onClick={() => { setState(null); setRetry(value => value + 1); }}>Retry</button></p>;
   return <div aria-label="Matching chat files">

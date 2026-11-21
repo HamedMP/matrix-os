@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
 import { ChatInspectorFileRoot } from "@matrix-os/ui";
 import { z } from "zod/v4";
 import { WebChatFileSearch } from "./WebChatFileSearch";
+import { loadWorktreeFileEntries, type WorktreeFileScope } from "./web-chat-worktree-files";
+import { Button } from "@/components/ui/button";
 
 const FileEntrySchema = z
   .object({
@@ -27,6 +29,8 @@ function FileBranch({
   onOpenFile,
   selectedPath,
   revealKey,
+  onBrowseFolder,
+  worktree,
 }: {
   gatewayUrl: string;
   path: string;
@@ -37,6 +41,8 @@ function FileBranch({
   selectedPath?: string;
   revealKey?: object;
   onOpenFile(path: string): void;
+  onBrowseFolder(path: string): void;
+  worktree?: WorktreeFileScope;
 }) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -48,14 +54,14 @@ function FileBranch({
     const controller = new AbortController();
     setStatus("loading");
     setEntries([]);
-    void fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, {
+    const request = worktree ? loadWorktreeFileEntries(gatewayUrl, worktree, path, controller.signal) : fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, {
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("FileListUnavailable");
         return FileListSchema.parse(await response.json());
-      })
-      .then((data) => {
+      });
+    void request.then((data) => {
         if (controller.signal.aborted) return;
         const all = Array.isArray(data) ? data : data.entries;
         // The existing endpoint returns the directory. Retain only one window, filtering before slicing.
@@ -76,7 +82,7 @@ function FileBranch({
         }
       });
     return () => controller.abort();
-  }, [gatewayUrl, path, retry, query, offset, selectedPath, revealKey]);
+  }, [gatewayUrl, path, retry, query, offset, selectedPath, revealKey, worktree]);
   return (
     <div role={depth ? "group" : "tree"} aria-label={depth ? undefined : "Chat files"} className="min-w-0">
       {status === "loading" ? (
@@ -142,8 +148,11 @@ function FileBranch({
                   selectedPath={selectedPath}
                   revealKey={revealKey}
                   onOpenFile={onOpenFile}
+                  onBrowseFolder={onBrowseFolder}
+                  worktree={worktree}
                 />
               ) : null}
+              {directory && open && depth >= 12 ? <Button variant="ghost" size="sm" aria-label={`Open folder ${entry.name}`} onClick={() => onBrowseFolder(fullPath)}>Open folder</Button> : null}
             </div>
           );
         })}
@@ -154,6 +163,7 @@ function FileTree({
   gatewayUrl,
   rootPath = "",
   rootLabel = "Matrix Home",
+  worktree,
   selectedPath,
   revealKey,
   onOpenFile,
@@ -161,6 +171,7 @@ function FileTree({
   gatewayUrl: string;
   rootPath?: string;
   rootLabel?: string;
+  worktree?: WorktreeFileScope;
   selectedPath?: string;
   revealKey?: object;
   onOpenFile(path: string): void;
@@ -170,9 +181,15 @@ function FileTree({
     return parts.slice(0,-1).map((_, index) => [rootPath, ...parts.slice(0,index+1)].filter(Boolean).join("/")).slice(-20);
   };
   const [expanded, setExpanded] = useState<string[]>(parents);
+  const selectedRoot = () => {
+    const parts = selectedPath?.split("/") ?? [];
+    return parts.length > 12 ? [rootPath, ...parts.slice(0, -8)].filter(Boolean).join("/") : rootPath;
+  };
+  const [browseRoot, setBrowseRoot] = useState(selectedRoot);
   useEffect(() => {
     const reveal = parents();
     if (reveal.length) setExpanded(current => [...current.filter(path => !reveal.includes(path)), ...reveal].slice(-20));
+    setBrowseRoot(selectedRoot());
     // Each file-open request reveals its ancestors, including reopening the same path.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath, selectedPath, revealKey]);
@@ -185,12 +202,13 @@ function FileTree({
     );
   return (
     <>
-      <ChatInspectorFileRoot label={rootLabel} value={query} onChange={setQuery}/>
+      <ChatInspectorFileRoot label={rootLabel} value={query} onChange={value => setQuery(worktree ? value.slice(0, 80) : value)}/>
+      {browseRoot !== rootPath ? <div className="flex items-center gap-2 px-2 text-xs"><Button variant="ghost" size="sm" aria-label={`Back to ${rootLabel}`} onClick={() => setBrowseRoot(rootPath)}>Back to {rootLabel}</Button><span className="truncate">{browseRoot}</span></div> : null}
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
-        {query.trim() ? <WebChatFileSearch key={rootPath} gatewayUrl={gatewayUrl} rootPath={rootPath} query={query.trim()} onOpenFile={onOpenFile}/> : <FileBranch
-          key={rootPath}
+        {query.trim() ? <WebChatFileSearch key={browseRoot} gatewayUrl={gatewayUrl} worktree={worktree} rootPath={browseRoot} query={query.trim()} onOpenFile={onOpenFile}/> : <FileBranch
+          key={browseRoot}
           gatewayUrl={gatewayUrl}
-          path={rootPath}
+          path={browseRoot}
           depth={0}
           expanded={expanded}
           toggle={toggle}
@@ -198,6 +216,8 @@ function FileTree({
           selectedPath={selectedPath ? [rootPath, selectedPath].filter(Boolean).join("/") : undefined}
           revealKey={revealKey}
           onOpenFile={onOpenFile}
+          onBrowseFolder={path => { setBrowseRoot(path); setQuery(""); }}
+          worktree={worktree}
         />}
       </div>
     </>
@@ -207,21 +227,24 @@ function FileTree({
 export function WebChatFileTree({
   gatewayUrl,
   project,
+  worktreeId,
   selectedPath,
   revealKey,
   onOpenFile,
 }: {
   gatewayUrl: string;
   project?: { id: string; slug: string };
+  worktreeId?: string;
   selectedPath?: string;
   revealKey?: object;
   onOpenFile(path: string): void;
 }) {
+  const worktree = useMemo(() => project && worktreeId ? { projectId: project.slug, worktreeId } : undefined, [project?.slug, worktreeId]);
   const [root, setRoot] = useState<string | null>(null),
     [error, setError] = useState(false),
     [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (!project) return;
+    if (!project || worktreeId) return;
     const controller = new AbortController();
     void fetch(
       `${gatewayUrl}/api/projects/${encodeURIComponent(project.slug)}/files-location?projectId=${encodeURIComponent(project.id)}`,
@@ -249,8 +272,10 @@ export function WebChatFileTree({
         }
       });
     return () => controller.abort();
-  }, [gatewayUrl, project, attempt]);
+  }, [gatewayUrl, project, worktreeId, attempt]);
+  if (worktreeId && !project) return <p role="alert" className="p-3 text-sm">Project files are unavailable.</p>;
   if (!project) return <FileTree gatewayUrl={gatewayUrl} selectedPath={selectedPath} revealKey={revealKey} onOpenFile={onOpenFile} />;
+  if (worktree) return <FileTree gatewayUrl={gatewayUrl} rootLabel={`${project!.slug} worktree`} worktree={worktree} selectedPath={selectedPath} revealKey={revealKey} onOpenFile={onOpenFile}/>;
   if (error)
     return (
       <p role="alert" className="p-3 text-sm">
