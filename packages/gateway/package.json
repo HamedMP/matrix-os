@@ -41,7 +41,7 @@
     "@pipedream/sdk": "^2.4.3",
     "@types/node-cron": "^3.0.11",
     "chokidar": "^4.0.0",
-    "hono": "^4.12.25",
+    "hono": "^4.13.16",
     "jose": "^6.2.3",
     "kysely": "^0.28.17",
     "node-cron": "^4.2.1",
