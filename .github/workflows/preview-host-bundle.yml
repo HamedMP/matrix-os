@@ -1,0 +1,332 @@
+# Preview Host Bundle
+#
+# Builds a host bundle from any branch or commit and registers it with the
+# PREVIEW platform (preview.matrix-os.com / matrix-platform-preview), so staging
+# end-to-end tests can pin a VM to that exact bundle without anyone handling
+# bundle-store or platform secrets by hand. Never targets production.
+#
+# Flow:
+#   build   — check out inputs.ref, build with ./scripts/build-host-bundle.sh
+#             exactly like host-bundle-release.yml (same script, Node 24,
+#             frozen lockfile, NEXT_PUBLIC_* build env). Holds no publish
+#             credentials: branch code never runs next to them.
+#   publish — in the Preview environment, from this workflow's own revision:
+#             upload the immutable bundle to the shared bundle store, register
+#             it with the preview platform using the preview operator secret
+#             (Secret Manager platform-preview-secret, read through workload
+#             identity), verify the registered sha256, and summarize.
+#
+# Versions always contain "-preview-" so a preview upload can never occupy a
+# production release key (system-bundles/<version>/ is immutable and the
+# bundle store is shared with production).
+
+name: Preview Host Bundle
+
+on:
+  # GitHub dispatches workflow_dispatch only from the default branch's copy, so
+  # pushes to same-repo e2e/** branches run the same build+publish with
+  # defaults (ref = pushed SHA, default version, channel none).
+  push:
+    branches:
+      - "e2e/**"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to build"
+        required: true
+        type: string
+      version:
+        description: "Optional version; must contain -preview- (default v<date>-preview-<sha12>-<run>-<attempt>)"
+        required: false
+        default: ""
+        type: string
+      channel:
+        description: "Preview platform channel to promote (none registers only)"
+        required: false
+        default: "none"
+        type: choice
+        options:
+          - none
+          - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-host-bundle-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build host bundle
+    # Native modules must run on the Ubuntu 24.04 customer image (glibc 2.39).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${{ vars.NEXT_PUBLIC_CLERK_SIGN_IN_URL || '/sign-in' }}
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${{ vars.NEXT_PUBLIC_CLERK_SIGN_UP_URL || '/sign-up' }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+      # Source-map upload credentials are deliberately absent: the release
+      # build treats them as optional, and branch code must not receive them.
+      INPUT_REF: ${{ inputs.ref || github.sha }}
+      INPUT_VERSION: ${{ inputs.version || '' }}
+      INPUT_CHANNEL: ${{ inputs.channel || 'none' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      build_sha: ${{ steps.version.outputs.build_sha }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) ;;
+            push)
+              if [[ "$GITHUB_REF" != refs/heads/e2e/* ]]; then
+                echo "Push runs are limited to e2e/** branches." >&2
+                exit 1
+              fi
+              ;;
+            *) echo "Unsupported trigger." >&2; exit 1 ;;
+          esac
+          if ! [[ "$INPUT_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$ ]] || [[ "$INPUT_REF" == *..* ]]; then
+            echo "ref must be a branch, tag, or commit SHA." >&2
+            exit 1
+          fi
+          case "$INPUT_CHANNEL" in
+            none|dev) ;;
+            *) echo "channel must be none or dev." >&2; exit 1 ;;
+          esac
+          if [ -n "$INPUT_VERSION" ]; then
+            if ! [[ "$INPUT_VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] ||
+               [[ "$INPUT_VERSION" != *-preview-* ]] ||
+               [[ "$INPUT_VERSION" == *-collabpair-* ]]; then
+              echo "version must match [A-Za-z0-9._-]{1,128}, contain -preview-, and not contain -collabpair-." >&2
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Validate public build environment
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required for host bundles." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to build a host bundle with the example Clerk publishable key." >&2
+            exit 1
+          fi
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          BUILD_SHA="$(git rev-parse HEAD)"
+          VERSION="${INPUT_VERSION:-v$(date -u +%Y.%m.%d)-preview-${BUILD_SHA:0:12}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}}"
+          {
+            echo "version=$VERSION"
+            echo "channel=$INPUT_CHANNEL"
+            echo "build_sha=$BUILD_SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "Preview version: $VERSION (commit $BUILD_SHA)"
+
+      - name: Build host bundle
+        id: build
+        env:
+          HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+          HOST_BUNDLE_CHANNEL: ${{ steps.version.outputs.channel }}
+          MATRIX_BUILD_SHA: ${{ steps.version.outputs.build_sha }}
+          MATRIX_BUILD_REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./scripts/build-host-bundle.sh
+          SHA256="$(sha256sum dist/host-bundle/matrix-host-bundle.tar.gz | awk '{print $1}')"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: preview-host-bundle
+          path: |
+            dist/host-bundle/matrix-host-bundle.tar.gz
+            dist/host-bundle/matrix-host-bundle.tar.gz.sha256
+            dist/host-bundle/incremental-manifest.json
+            dist/host-bundle/objects/**
+            dist/host-bundle/manifest.json
+            dist/host-bundle/release.json
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Publish to the preview platform
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: Preview
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      PREVIEW_PUBLIC_URL: ${{ vars.PREVIEW_PUBLIC_URL || 'https://preview.matrix-os.com' }}
+      # Shared bundle store: the same credentials the release workflow uses and
+      # the preview platform mounts (Secret Manager r2-bundles-*).
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      VERSION: ${{ needs.build.outputs.version }}
+      CHANNEL: ${{ needs.build.outputs.channel }}
+      BUILD_SHA: ${{ needs.build.outputs.build_sha }}
+      BUILD_SHA256: ${{ needs.build.outputs.sha256 }}
+      BUILD_REF: ${{ inputs.ref || github.ref_name }}
+      # Preview bundles never seed golden snapshots.
+      GOLDEN_SNAPSHOT_ELIGIBLE: "false"
+      HOST_BUNDLE_DIST_DIR: dist/host-bundle
+    steps:
+      # The workflow's own revision, not inputs.ref: only reviewed publish
+      # tooling runs next to the publish credentials.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Re-check build outputs here instead of trusting the job that ran
+      # branch code: only -preview- versions and none/dev channels publish.
+      - name: Validate build outputs
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] ||
+             [[ "$VERSION" != *-preview-* ]] ||
+             [[ "$VERSION" == *-collabpair-* ]]; then
+            echo "Refusing to publish a version outside the preview namespace." >&2
+            exit 1
+          fi
+          case "$CHANNEL" in
+            none|dev) ;;
+            *) echo "Refusing to publish to a channel other than none or dev." >&2; exit 1 ;;
+          esac
+          if ! [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Build job did not report a commit SHA." >&2
+            exit 1
+          fi
+
+      - name: Resolve preview platform URL
+        id: target
+        run: |
+          set -euo pipefail
+          PLATFORM_PUBLIC_URL="$(bash scripts/ci/resolve-preview-platform-url.sh)"
+          echo "url=$PLATFORM_PUBLIC_URL" >> "$GITHUB_OUTPUT"
+          if [ -z "${GCP_PROJECT_ID:-}" ]; then
+            echo "GCP_PROJECT_ID must be set in the Preview environment." >&2
+            exit 1
+          fi
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: preview-host-bundle
+          path: dist/host-bundle
+
+      - name: Verify bundle integrity
+        run: |
+          set -euo pipefail
+          for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 incremental-manifest.json manifest.json release.json; do
+            if [ ! -f "$HOST_BUNDLE_DIST_DIR/$file" ]; then
+              echo "Bundle artifact is missing $file." >&2
+              exit 1
+            fi
+          done
+          if ! [[ "$BUILD_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Build job did not report a bundle sha256." >&2
+            exit 1
+          fi
+          actual="$(sha256sum "$HOST_BUNDLE_DIST_DIR/matrix-host-bundle.tar.gz" | awk '{print $1}')"
+          if [ "$actual" != "$BUILD_SHA256" ]; then
+            echo "Downloaded bundle does not match the built bundle." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Install AWS CLI
+        run: |
+          set -euo pipefail
+          if ! command -v aws &>/dev/null; then
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            sudo /tmp/aws/install
+          fi
+
+      - name: Publish and register with the preview platform
+        env:
+          PLATFORM_PUBLIC_URL: ${{ steps.target.outputs.url }}
+        run: |
+          set -euo pipefail
+          # Re-check the resolved target in the step that holds the secret.
+          [ "$(PREVIEW_PUBLIC_URL="$PLATFORM_PUBLIC_URL" bash scripts/ci/resolve-preview-platform-url.sh)" = "$PLATFORM_PUBLIC_URL" ]
+          PLATFORM_SECRET="$(gcloud secrets versions access latest \
+            --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          if [ -z "$PLATFORM_SECRET" ]; then
+            echo "platform-preview-secret has no readable value." >&2
+            exit 1
+          fi
+          echo "::add-mask::${PLATFORM_SECRET}"
+          export PLATFORM_SECRET
+          ./scripts/publish-release.sh "$VERSION" --channel "$CHANNEL" \
+            --changelog "Preview bundle from ${BUILD_REF} (${BUILD_SHA:0:12})"
+
+      - name: Verify registration and summarize
+        env:
+          PLATFORM_PUBLIC_URL: ${{ steps.target.outputs.url }}
+        run: |
+          set -euo pipefail
+          registered="$(curl --fail --silent --show-error --max-time 15 --proto '=https' \
+            "${PLATFORM_PUBLIC_URL}/system-bundles/releases/${VERSION}.json" | jq -r '.sha256 // ""')"
+          if [ "$registered" != "$BUILD_SHA256" ]; then
+            echo "The preview platform does not report the published sha256 for $VERSION." >&2
+            exit 1
+          fi
+          size="$(stat --printf='%s' "$HOST_BUNDLE_DIST_DIR/matrix-host-bundle.tar.gz")"
+          {
+            echo "## Preview host bundle"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Version | \`$VERSION\` |"
+            echo "| sha256 | \`$BUILD_SHA256\` |"
+            echo "| Size (bytes) | $size |"
+            echo "| Ref | \`$BUILD_REF\` |"
+            echo "| Commit | \`$BUILD_SHA\` |"
+            echo "| Channel | $CHANNEL |"
+            echo "| Platform | $PLATFORM_PUBLIC_URL |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Registered $VERSION on $PLATFORM_PUBLIC_URL with sha256 $BUILD_SHA256"
