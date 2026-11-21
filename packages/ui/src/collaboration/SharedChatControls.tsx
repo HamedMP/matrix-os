@@ -4,8 +4,11 @@ import {
   type CollaborationApproval,
   type CollaborationAiRequest,
   type CollaborationScope,
+  type CanonicalChatModelSelection,
 } from "@matrix-os/contracts";
-import { ArrowUp, Users } from "lucide-react";
+import { Users } from "lucide-react";
+import { ChatPromptInput } from "../chat/composer/ChatPromptInput.js";
+import { CHAT_CONTENT_WIDTH_CLASS } from "../chat/ChatConversation.js";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
@@ -18,6 +21,7 @@ type SharedAiState = {
   approvals: CollaborationApproval[];
   pendingAction: string | null;
   error: SharedAiError;
+  selection?: CanonicalChatModelSelection;
 };
 type SharedAiAction =
   | { type: "loaded"; response: ReturnType<typeof CollaborationAiRequestsResponseSchema.parse> }
@@ -61,8 +65,8 @@ export function SharedChatControls({
   const { state, submitAi, control, decide } = controller;
   const presentation = sharedComposerPresentation(scope, state);
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
-  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6">
-    <div className="mx-auto max-w-3xl">
+  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6 lg:px-8">
+    <div className={`mx-auto ${CHAT_CONTENT_WIDTH_CLASS}`}>
       <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
         actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
       <SharedAiErrors discussionError={false} error={state.error} />
@@ -90,6 +94,7 @@ type SharedComposerPresentation = {
   inputLabel: string;
   placeholder: string;
   submitLabel: string;
+  modelLabel?: string;
 };
 
 function sharedComposerPresentation(
@@ -98,7 +103,8 @@ function sharedComposerPresentation(
 ): SharedComposerPresentation {
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available";
+    && scope.capabilities.requestAi && (state.availability === "available"
+      || scope.membershipMode === "inherited" && state.availability === "checking");
   const sending = state.pendingAction === "submit";
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
@@ -111,13 +117,14 @@ function sharedComposerPresentation(
   return {
     canRequestAi, canCompose: canRequestAi, sending, status,
     showQueue: state.availability === "available"
-      && (relevantRequests.length > 1
-        || relevantRequests.some((request) => ["queued", "waiting_for_approval"].includes(request.state))
+      && (relevantRequests.length > 0
         || retryable
         || state.approvals.some((approval) => approval.state === "pending")),
     inputLabel: "Message Chat",
     placeholder: !writableRole ? "Read-only access" : canRequestAi ? "Message Chat…" : "AI is unavailable",
     submitLabel: sending ? "Sending…" : "Send",
+    ...(state.selection ? { modelLabel: `${state.selection.instanceId === "codex_default" ? "Codex"
+      : ["claude_shared", "claude_code_default"].includes(state.selection.instanceId) ? "Claude" : "AI"} · ${state.selection.model}` } : {}),
   };
 }
 
@@ -131,18 +138,13 @@ function SharedComposerInput({ presentation, draft, updateDraft, submit }: {
   updateDraft(text: string, mode: CollaborationDraft["mode"]): void;
   submit(): Promise<void>;
 }) {
-  return <div data-slot="shared-chat-composer"
-    className="flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2 pl-4 shadow-[var(--shadow-2)]">
-    <label className="min-w-0 flex-1 py-1"><span className="sr-only">{presentation.inputLabel}</span>
-      <textarea aria-label={presentation.inputLabel} rows={2} value={draft.text}
-        disabled={!presentation.canCompose || presentation.sending} placeholder={presentation.placeholder}
-        onChange={(event) => updateDraft(event.target.value, draft.mode)}
-        className="block w-full resize-none border-0 bg-transparent p-0 text-sm leading-5 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60" />
-    </label>
-    <button type="button" aria-label={presentation.submitLabel} title={presentation.submitLabel}
-      className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--text-primary)] text-[var(--bg-surface)] transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-30"
-      disabled={!presentation.canCompose || presentation.sending || !draft.text.trim()}
-      onClick={() => void submit()}><ArrowUp aria-hidden className="size-4" /></button>
+  return <div data-slot="shared-chat-composer">
+    <ChatPromptInput value={draft.text} onChange={text => updateDraft(text, draft.mode)}
+      onSubmit={() => void submit()} busy={presentation.sending}
+      disabled={!presentation.canCompose || presentation.sending}
+      ariaLabel={presentation.inputLabel} placeholder={presentation.placeholder}
+      controls={presentation.modelLabel ? <span aria-label="Configured agent" className="px-2 py-1 text-xs text-muted-foreground">{presentation.modelLabel}</span> : null}
+      sendLabel={presentation.submitLabel} />
   </div>;
 }
 
@@ -171,9 +173,10 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI recovery failed",
         failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "refresh_failed", retainQueue: hadAvailable.current });
+      dispatch({ type: "refresh_failed", retainQueue: hadAvailable.current
+        || scope.membershipMode === "inherited" });
     }
-  }, [api, endpoint]);
+  }, [api, endpoint, scope.membershipMode]);
 
   useEffect(() => {
     if (!scope.capabilities.requestAi) {
@@ -185,7 +188,8 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available";
+    && scope.capabilities.requestAi && (state.availability === "available"
+      || scope.membershipMode === "inherited" && state.availability === "checking");
 
   const submitAi = async () => {
     if (!canRequestAi || !draft.text.trim() || state.pendingAction) return;
@@ -258,6 +262,7 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         availability: sharedAiAvailability(action.response.capability.status),
         requests: action.response.requests,
         approvals: action.response.approvals,
+        selection: action.response.capability.effectiveSelection,
         error: null,
       };
     case "unavailable":
@@ -294,7 +299,7 @@ function SharedAiErrors({ discussionError, error }: { discussionError: boolean; 
     {discussionError ? <p role="alert" className="mb-2 text-sm">Message was not sent. Your draft is still here—try again.</p> : null}
     {error === "request" ? <p role="alert" className="mb-2 text-sm">AI request was not accepted. Your draft is still here—try again.</p> : null}
     {error === "control" ? <p role="alert" className="mb-2 text-sm">The request changed or the control could not be applied. Refresh and try again.</p> : null}
-    {error === "recovery" ? <p role="alert" className="mb-2 text-sm">Queue updates are delayed. The last confirmed order is shown.</p> : null}
+    {error === "recovery" ? <p role="status" className="mb-2 text-xs text-muted-foreground">Connection delayed. You can still try sending your message.</p> : null}
   </>;
 }
 
@@ -311,20 +316,16 @@ function SharedAiQueue({ requests, approvals, actorId, role, pendingAction, cont
     if (approval.state === "pending") pending.push(approval);
     return pending;
   }, []) : [];
-  return <section aria-label="Shared AI queue" className="mb-3 max-h-56 space-y-2 overflow-y-auto rounded-xl border p-3">
-    <div className="flex items-center justify-between gap-2">
-      <h2 className="text-sm font-medium">AI requests</h2>
-      <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{requests.length} accepted</span>
-    </div>
-    {requests.length === 0 ? <p className="text-sm" style={{ color: "var(--text-secondary)" }}>No AI requests yet.</p>
+  return <section aria-label="Chat activity" className="mb-3 max-h-40 space-y-2 overflow-y-auto">
+    {requests.length === 0 ? null
       : requests.map((request) => {
         const controllable = canControl(role, actorId, request);
         const cancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(request.state);
         const retry = ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state);
-        return <article key={request.id} className="rounded-lg border px-3 py-2">
+        return <article key={request.id} className="flex items-center rounded-lg px-1 py-1.5">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-medium">{request.acceptedSequence} · {request.actor.displayName}</span>
-            <span className="rounded-full border px-2 py-0.5">{requestStateLabel(request.state)}</span>
+            <span className="font-medium">{request.actor.displayName}</span>
+            <span className="text-muted-foreground">{requestStateLabel(request.state)}</span>
             <span className="min-w-0 flex-1 truncate" title={request.text}>{request.text}</span>
             {controllable && cancel ? <button type="button" className={smallButtonClass}
               aria-label={`Cancel request ${request.acceptedSequence}`}
@@ -357,7 +358,8 @@ function compareAcceptedSequence(left: CollaborationAiRequest, right: Collaborat
 }
 
 function requestStateLabel(state: CollaborationAiRequest["state"]): string {
-  return state.replaceAll("_", " ");
+  return state === "queued" ? "Preparing reply…" : state === "claimed" || state === "running"
+    ? "Working…" : state === "waiting_for_approval" ? "Tool approval needed" : state.replaceAll("_", " ");
 }
 
 function decisionLabel(decision: "approve" | "approve_for_session" | "decline" | "cancel"): string {

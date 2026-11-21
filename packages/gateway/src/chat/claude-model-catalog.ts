@@ -56,7 +56,9 @@ function aliasName(id: string, resolvedModel?: string): string {
 }
 
 function markLastSeen(catalog: CodingModelCatalogProjection): CodingModelCatalogProjection {
-  return { ...catalog, models: catalog.models.map((model) => ({
+  // Stale display labels are not authority for a native wire model.
+  const { executionModels: _executionModels, ...display } = catalog;
+  return { ...display, models: catalog.models.map((model) => ({
     ...model,
     displayName: MOVING_ALIASES.has(model.id)
       ? model.displayName.replace(" · currently ", " · last seen ") : model.displayName,
@@ -66,6 +68,7 @@ function markLastSeen(catalog: CodingModelCatalogProjection): CodingModelCatalog
 function projectModels(value: unknown): CodingModelCatalogProjection {
   const rows = z.array(ModelInfoSchema).min(1).max(64).parse(value);
   const catalog = claudeFallbackCatalog();
+  catalog.executionModels = Object.create(null) as Record<string, string>;
   // Keep legacy aliases/default stable, without claiming that a documented
   // model absent from this runtime's inventory is available on this account.
   for (const row of rows) {
@@ -75,6 +78,8 @@ function projectModels(value: unknown): CodingModelCatalogProjection {
     // resolvedModel may be useful for a label but is not a substitute value.
     if (!id.success) continue;
     const model = id.data;
+    if (resolved.success) catalog.executionModels[model] = resolved.data;
+    else if (!MOVING_ALIASES.has(model)) catalog.executionModels[model] = model;
     const existing = catalog.models.find((entry) => entry.id === model);
     if (existing) {
       if (MOVING_ALIASES.has(model)) existing.displayName = aliasName(model,

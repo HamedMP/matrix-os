@@ -1,3 +1,4 @@
+import { resolveCanonicalChatScope } from "./resolve-chat-scope.js";
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
@@ -14,6 +15,8 @@ import {
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CanonicalPartView, keyedCanonicalParts } from "./CanonicalPartView.js";
+import { ChatHumanMessageBubble } from "../chat/ChatHumanMessageBubble.js";
+import { Conversation, ConversationContent, ConversationItem } from "../chat/ChatConversation.js";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
@@ -38,7 +41,7 @@ export type ChatCollaborationView =
   | { kind: "home" }
   | { kind: "invitation"; invitationId: string }
   | { kind: "chat"; scopeId: string }
-  | { kind: "canonical-chat"; chatId: string }
+  | { kind: "canonical-chat"; chatId: string; projectId?: string }
   | { kind: "terminal"; scopeId: string }
   | { kind: "project"; scopeId: string }
   | { kind: "app"; scopeId: string; expectedBuildId?: string; expectedShareRevision?: string };
@@ -90,7 +93,7 @@ export function ChatCollaboration({
     api={api} scopeId={view.scopeId}
     expectedBuildId={view.expectedBuildId} expectedShareRevision={view.expectedShareRevision} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
-    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
+    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} projectId={view.projectId} storage={storage} onMetadata={onChatMetadata}
     headerContainer={headerContainer} layers={layers} />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
     scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
@@ -759,13 +762,13 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       </button>
       <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} zIndex={layers?.popover} />
     </div>;
-  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
+  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full flex-col overflow-hidden">
     {headerContainer
       ? createPortal(collaborationChrome, headerContainer)
       : <div data-slot="collaboration-session-subheader" className="flex min-h-11 items-center justify-end border-b px-3">
         {collaborationChrome}
       </div>}
-    <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
+    <SharedChatHistory state={state} actorId={actorId} loadMoreMessages={loadMoreMessages} />
     <SharedChatControls key={state.scope.id} api={api} scope={state.scope} actorId={actorId}
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
       changeDraftMode={changeDraftMode} discussionSending={state.sending} discussionError={state.error === "send"}
@@ -774,11 +777,12 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
   </main>;
 }
 
-export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata, headerContainer, layers }: {
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, projectId, storage, onMetadata, headerContainer, layers }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
   chatId: string;
+  projectId?: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
@@ -792,7 +796,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
   useEffect(() => {
     let current = true;
     setResolution({ chatId, scopeId: null, loading: true });
-    void resolveCanonicalChatScope(api, chatId).then((scopeId) => {
+    void resolveCanonicalChatScope(api, chatId, projectId).then((scopeId) => {
       if (current) setResolution({ chatId, scopeId, loading: false });
     }).catch((error: unknown) => {
       console.warn("[chat-collaboration] canonical scope resolution failed",
@@ -800,7 +804,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
       if (current) setResolution({ chatId, scopeId: null, loading: false });
     });
     return () => { current = false; };
-  }, [api, chatId]);
+  }, [api, chatId, projectId]);
   if (resolution.chatId !== chatId || resolution.loading) {
     return <p role="status" className="p-8">Loading shared Chat…</p>;
   }
@@ -809,56 +813,45 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
     scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
-async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
-  let cursor: string | undefined;
-  const seenCursors = Object.create(null) as Record<string, true | undefined>;
-  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
-    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-    const page = CollaborationDiscoveryResponseSchema.parse(
-      await api.get(`/api/collaboration/shared?limit=100${suffix}`),
-    );
-    const match = page.items.find((item) => item.status === "accepted"
-      && item.resource !== undefined && "chat" in item.resource && item.resource.chat.id === chatId);
-    if (match?.status === "accepted") return match.scopeId;
-    if (!page.nextCursor) return null;
-    if (seenCursors[page.nextCursor]) throw new Error("CollaborationDiscoveryCursorLoop");
-    seenCursors[page.nextCursor] = true;
-    cursor = page.nextCursor;
-  }
-  throw new Error("CollaborationDiscoveryPageLimit");
-}
 
-function SharedChatHistory({ state, loadMoreMessages }: {
+function SharedChatHistory({ state, actorId, loadMoreMessages }: {
   state: SharedChatState;
+  actorId: string;
   loadMoreMessages: () => Promise<void>;
 }) {
   const timeline = projectSharedChatTimeline(state.messages);
-  return <section aria-label="Chat history" className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+  return <Conversation><ConversationContent className="justify-start gap-6 pt-8 sm:pt-12">
     {timeline.length === 0 ? <div className="py-12 text-center">
       <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start a conversation</h2>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Everyone here collaborates with the same Matrix AI session.</p>
-    </div> : timeline.map((message) => <NativeSharedMessageView key={message.id} message={message} />)}
+    </div> : timeline.map((message) => <ConversationItem key={message.id} messageId={message.id} scrollAnchor={message.side === "human"}>
+      <NativeSharedMessageView message={message} actorId={actorId} ownerId={state.scope?.ownerId} />
+    </ConversationItem>)}
     {state.historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
     {state.hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
       disabled={state.loadingMoreMessages} onClick={() => void loadMoreMessages()}>
       {state.loadingMoreMessages ? "Loading…" : "Load more messages"}
     </button></div> : null}
-  </section>;
+  </ConversationContent></Conversation>;
 }
 
-function NativeSharedMessageView({ message }: { message: ReturnType<typeof projectSharedChatTimeline>[number] }) {
-  if (message.side === "human") return <article className="ml-auto max-w-[82%] text-right">
+function NativeSharedMessageView({ message, actorId, ownerId }: {
+  message: ReturnType<typeof projectSharedChatTimeline>[number]; actorId: string; ownerId?: string;
+}) {
+  if (message.side === "human") return <article className="ml-auto flex max-w-[min(85%,48rem)] flex-col items-end text-right">
     <p className="mb-1 flex items-center justify-end gap-1.5 px-1 text-[11px] text-muted-foreground">
       <span>{message.attribution?.displayName ?? "Unknown participant"}</span>
+      {message.attribution?.actorId === actorId ? <span className="text-muted-foreground">(You)</span>
+        : message.attribution?.actorId === ownerId ? <span className="text-muted-foreground">(Owner)</span> : null}
       <span aria-hidden className="grid size-5 place-items-center rounded-full bg-[var(--bg-hover)] text-[9px] font-semibold">
         {(message.attribution?.displayName ?? "?").slice(0, 1).toUpperCase()}
       </span>
     </p>
-    <div className="inline-block rounded-2xl bg-[var(--bg-hover)] px-4 py-2 text-left text-sm">
+    <ChatHumanMessageBubble className="text-left">
       {keyedCanonicalParts(message.id, message.parts).map(({ key, part }) => <CanonicalPartView key={key} part={part} human />)}
-    </div>
+    </ChatHumanMessageBubble>
   </article>;
-  return <article className="mr-auto max-w-[88%]">
+  return <article className="mr-auto w-full">
     <div className="space-y-2 break-words">
       {keyedCanonicalParts(message.id, message.parts).map(({ key, part }) => <CanonicalPartView key={key} part={part} />)}
     </div>

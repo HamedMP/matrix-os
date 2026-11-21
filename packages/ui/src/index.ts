@@ -371,6 +371,7 @@ export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
 export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
 export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";
 export { ChatPromptInput, ChatPromptStopButton } from "./chat/composer/ChatPromptInput.js";
+export { ChatHumanMessageBubble } from "./chat/ChatHumanMessageBubble.js";
 export { ChatComposerSelect, type ChatComposerSelectOption } from "./chat/composer/ChatComposerSelect.js";
 export { ChatComposerOptionControls, ChatComposerAttachButton, type ChatComposerOptionControl } from "./chat/composer/ChatComposerOptionControls.js";
 export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.js";

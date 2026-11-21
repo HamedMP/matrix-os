@@ -187,8 +187,10 @@ describe("shared Chat two-account lifecycle", () => {
       <SharedChatPanel api={editorApi} actorId="user_editor" runtimeId="editor-runtime" scopeId={scopeId} />,
     );
     expect(await within(owner.container).findByLabelText("Message Chat")).toBeVisible();
+    expect(owner.container.querySelector('[data-slot="message-scroller-content"]')).not.toBeNull();
     expect(within(owner.container).queryByRole("button", { name: "Ask AI" })).toBeNull();
     expect(await within(editor.container).findByLabelText("Message Chat")).toBeVisible();
+    expect(editor.container.querySelector('[data-slot="message-scroller-content"]')).not.toBeNull();
     expect(within(editor.container).queryByRole("button", { name: "Ask AI" })).toBeNull();
 
     fireEvent.click(within(editor.container).getByRole("button", { name: "Open discussion" }));

@@ -3,10 +3,13 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { connect, type Socket } from "node:net";
+import { createUnixSocketTempDir } from "../helpers/unix-socket-temp.js";
 import { describe, expect, it, vi } from "vitest";
 import { buildWorkerBundle } from "./worker-bundles.js";
 import {
   createSingleUseCommandSocketSlot,
+  startCommandServer,
   parseScopeRuntimeWorkerArguments,
   parseScopeRuntimeChatRequest,
   prepareScopeRuntimeWorkerEnvironment,
@@ -28,6 +31,38 @@ const argumentsFixture = [
 const execFileAsync = promisify(execFile);
 
 describe("scope runtime worker boundary", () => {
+  it("lets the capability-free supervisor reach the Chat worker without accepting a foreign generation", async () => {
+    const directory = await createUnixSocketTempDir();
+    const socketPath = join(directory, "worker.sock");
+    const slot = createSingleUseCommandSocketSlot<Socket>();
+    const previousUmask = process.umask(0o077);
+    let server: Awaited<ReturnType<typeof startCommandServer>> | undefined;
+    try {
+      server = await startCommandServer(parseScopeRuntimeWorkerArguments(argumentsFixture), slot, socketPath);
+      // The supervisor has no CAP_DAC_OVERRIDE and does not share DynamicUser's UID.
+      expect((await stat(socketPath)).mode & 0o777).toBe(0o666);
+      const reply = await new Promise<string>((resolve, reject) => {
+        const socket = connect(socketPath);
+        let output = "";
+        socket.setEncoding("utf8");
+        socket.setTimeout(2_000, () => socket.destroy(new Error("Worker did not reject stale generation")));
+        socket.once("error", reject);
+        socket.on("data", chunk => { output += chunk; });
+        socket.once("close", () => resolve(output));
+        socket.once("connect", () => socket.end(JSON.stringify({
+          version: 1, type: "runtime.chat", runtimeHandle: argumentsFixture[0],
+          executionGeneration: "999", model: "opus", prompt: "Must not execute",
+        }) + "\n"));
+      });
+      expect(reply).toBe("");
+    } finally {
+      process.umask(previousUmask);
+      slot.destroyActive();
+      if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("caps command sockets at one and drains the active socket on shutdown", () => {
     const slot = createSingleUseCommandSocketSlot<{ destroy(): void }>();
     let closeFirst = () => undefined;
