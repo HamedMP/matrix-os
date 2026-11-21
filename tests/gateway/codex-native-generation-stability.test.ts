@@ -53,6 +53,8 @@ it("keeps the durable Codex generation when only the ChatGPT plan changes", asyn
   f.changePlan(); f.next();
   const after = await f.reader();
   expect(nativeAccountPrincipalFingerprint(after!)).toBe(nativeAccountPrincipalFingerprint(before!));
+  expect(before?.connectionDetails?.planName).toBe("ChatGPT Plus");
+  expect(after?.connectionDetails?.planName).toBe("ChatGPT Pro");
 });
 
 it("changes the durable Codex generation for a different signed-in account", async () => {

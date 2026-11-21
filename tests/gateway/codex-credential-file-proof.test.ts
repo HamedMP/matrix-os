@@ -103,3 +103,16 @@ it("derives a stable private account identity that survives token refresh", asyn
   expect(await read()).toMatchObject({ identity: null, proof: expect.stringMatching(/^[a-f0-9]{64}$/) });
   expect((await read())?.proof).toBe(await f.read());
 });
+
+it("binds a file-backed API key identity to a hash of the key, never the key", async () => {
+  const f = await fixture();
+  const read = createCodexCredentialFileEvidenceReader({ homePath: f.home, allowApiKey: true });
+  await writeFile(f.file, JSON.stringify({ OPENAI_API_KEY: "synthetic-key-first" }));
+  const first = await read();
+  expect(first?.identity).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(first)).not.toContain("synthetic-key");
+  await writeFile(f.file, JSON.stringify({ auth_mode: "apikey", tokens: null, OPENAI_API_KEY: "synthetic-key-first" }));
+  expect((await read())?.identity).toBe(first?.identity);
+  await writeFile(f.file, JSON.stringify({ OPENAI_API_KEY: "synthetic-key-second" }));
+  expect((await read())?.identity).not.toBe(first?.identity);
+});
