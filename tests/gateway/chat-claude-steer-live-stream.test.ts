@@ -54,6 +54,32 @@ it("does not acknowledge a correction after Claude has already emitted its resul
   }
 }, 20_000);
 
+it("refuses a new correction that would make accepted shutdown input invalid", async () => {
+  const h = await createClaudeSteerStreamHarness();
+  try {
+    const admitted = await h.admit();
+    await vi.waitFor(() => expect(h.children).toHaveLength(1));
+    await vi.waitFor(async () => expect((await h.getDetail()).record.activeRun?.status).toBe("running"));
+    vi.spyOn(h.children[0]!, "kill").mockImplementation(() => undefined);
+    const steer = (clientRequestId: string, text: string) => h.orchestrator.steerRun(h.owner, h.chatId, admitted.run.id, {
+      clientRequestId, expectedTurnId: admitted.turn.id, parts: [{ type: "text", text }],
+    });
+    await expect(steer("req_large_first", "A".repeat(20_000))).resolves.toMatchObject({ steering: "accepted" });
+    await expect(steer("req_large_second", "B".repeat(20_000))).rejects.toMatchObject({ status: 503 });
+    h.children[0]!.exit(null, "SIGTERM");
+    await vi.waitFor(() => expect(h.children).toHaveLength(2));
+    expect(JSON.stringify(h.children[1]!.inputFrames)).toContain("A".repeat(20_000));
+    expect(JSON.stringify(h.children[1]!.inputFrames)).not.toContain("B".repeat(100));
+    h.children[1]!.finish();
+    await h.orchestrator.drain();
+    expect((await h.getDetail()).messages.filter(message => message.role === "user")).toHaveLength(2);
+  } finally {
+    h.children[0]?.exit(null, "SIGTERM");
+    h.children[1]?.finish();
+    await h.close();
+  }
+}, 20_000);
+
 it("publishes accepted Claude Steer text and tool progress over HTTP before result or exit", async () => {
   const h = await createClaudeSteerStreamHarness();
   const controller = new AbortController();

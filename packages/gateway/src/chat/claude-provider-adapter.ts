@@ -243,8 +243,8 @@ export function createClaudeChatProviderAdapter(options: {
     let emittedState = resumeState;
     let protectedSessionId: string | undefined;
     let steerPrompt: string | undefined;
-    const steering = createClaudeSteeringBuffer();
     let protectedSteerInput: CanonicalProviderRunInput<ClaudeChatState> | undefined;
+    const steering = createClaudeSteeringBuffer(input, () => protectedSteerInput?.context);
     let cancellationRequested = false;
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;

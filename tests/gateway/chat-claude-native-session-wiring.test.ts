@@ -333,12 +333,13 @@ describe("Claude per-phase adapter wiring", () => {
     expect(nativeSessions.runTurn).not.toHaveBeenCalled();
     expect(nativeSessions.cancel).toHaveBeenCalledExactlyOnceWith({ owner: input.owner, chatId: input.chatId, runId: "run_a" });
   });
-  it.each(["ordinary", "protected", "protected rapid", "unconfirmed close"])("steers a %s scheduled phase safely", async mode => {
+  it.each(["ordinary", "protected", "protected rapid", "protected prompt limit", "unconfirmed close"])("steers a %s scheduled phase safely", async mode => {
     const protectedPhase = mode !== "ordinary";
     let count = 0;
     let finishShutdown: (() => void) | undefined;
     const history = { version: 1 as const, requestHash: "a".repeat(64), chats: [],
-      history: { chatId: input.chatId, title: "Original Chat", throughSeq: 9, text: "User: Original admitted instructions", truncated: false } };
+      history: { chatId: input.chatId, title: "Original Chat", throughSeq: 9,
+        text: "User: Original admitted instructions" + (mode === "protected prompt limit" ? "h".repeat(80_000) : ""), truncated: false } };
     const prepareSteeringContext = vi.fn(async () => history);
     const writes: unknown[] = [];
     const nativeSessions = pool(async o => {
@@ -349,7 +350,7 @@ describe("Claude per-phase adapter wiring", () => {
       o.onStdout(frame({ type: "system", subtype: "init", session_id: session }));
       if (count === 1) return new Promise((_resolve, reject) => o.signal.addEventListener("abort", () => {
         const finish = () => reject(new CanonicalCliError("aborted"));
-        if (mode === "protected rapid") finishShutdown = finish;
+        if (mode === "protected rapid" || mode === "protected prompt limit") finishShutdown = finish;
         else finish();
       }, { once: true }));
       if (protectedPhase && o.requireProtectedSession) throw new Error("Protected child already closed");
@@ -372,6 +373,12 @@ describe("Claude per-phase adapter wiring", () => {
           clientRequestId: "req_steer_again", prompt: "and preserve cancellation", parts: [{ type: "text", text: "and preserve cancellation" }] });
       } finally { finishShutdown?.(); }
     }
+    if (mode === "protected prompt limit") {
+      try {
+        await expect(adapter.steer!({ owner: input.owner, chatId: input.chatId, runId: input.runId, turnId: input.turnId,
+          clientRequestId: "req_overlong_context", prompt: "z".repeat(20_000), parts: [{ type: "text", text: "z".repeat(20_000) }] })).rejects.toThrow();
+      } finally { finishShutdown?.(); }
+    }
     if (settlement) {
       await settlement;
       expect(onCleanupUnconfirmed).toHaveBeenCalledOnce();
@@ -391,6 +398,7 @@ describe("Claude per-phase adapter wiring", () => {
       expect(replacement.input.prompt).toContain("Original admitted instructions");
       expect(replacement.input.prompt).toContain("Current user request:\nowner changed direction");
       if (mode === "protected rapid") expect(replacement.input.prompt).toContain("owner changed direction\n\nand preserve cancellation");
+      if (mode === "protected prompt limit") expect(replacement.input.prompt).not.toContain("z".repeat(100));
       expect(replacement.input.prompt).not.toContain("AUTOMATIC_SCHEDULE_MARKER");
       expect(writes.at(-1)).toMatchObject({ session_id: "" });
     } else {
