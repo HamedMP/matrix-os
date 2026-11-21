@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { TerminalPane } from "./TerminalPane";
+import { isHerdrRefKey } from "./herdr-shell-session";
 import type { PaneNode } from "@/stores/terminal-store";
 import type { Theme } from "@/hooks/useTheme";
 
@@ -74,7 +75,9 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
           position: "relative",
         }}
       >
-        {node.sessionId && unavailableSessionIds.includes(node.sessionId) ? (
+        {node.sessionId && unavailableSessionIds.includes(node.sessionId) && isHerdrRefKey(node.sessionId) ? (
+          <EndedHerdrSessionPane />
+        ) : node.sessionId && unavailableSessionIds.includes(node.sessionId) ? (
           <RecoverableSessionPane
             sessionId={node.sessionId}
             cwd={node.cwd}
@@ -228,6 +231,20 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, f
           unavailableSessionIds={unavailableSessionIds}
           onRecoverSession={onRecoverSession}
         />
+      </div>
+    </div>
+  );
+}
+
+/** An ended Herdr terminal: herdr-core owns it, so Matrix offers no recovery. */
+function EndedHerdrSessionPane() {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background p-6 text-foreground">
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+        <div className="text-sm font-semibold">This Herdr session has ended</div>
+        <p className="m-0 text-xs text-muted-foreground">
+          Close this pane, or open another session from Herdr sessions in the sidebar.
+        </p>
       </div>
     </div>
   );
