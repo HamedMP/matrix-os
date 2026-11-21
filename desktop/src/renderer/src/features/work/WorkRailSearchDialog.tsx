@@ -312,7 +312,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
   const dialogWidth = bounds ? Math.max(0, Math.min(600, bounds.right - bounds.left - 32)) : 600;
   const fittedCenter = bounds && centerX !== undefined ? Math.max(bounds.left + 16 + dialogWidth / 2, Math.min(bounds.right - 16 - dialogWidth / 2, centerX)) : centerX;
   return (
-    <Dialog open={open} onClose={close} width={dialogWidth} title="Search chats" top="12vh" centerX={fittedCenter}>
+    <Dialog open={open} onClose={close} width={dialogWidth} title="Search chats" top="min(128px, 14vh)" centerX={fittedCenter}>
       <div className="desktop-chat-design chat-search-design">
         <WorkSearchField query={query} disabled={archiveActionBusy} listboxId={listboxId}
           selectedOptionId={results[selectedIndex] ? `${listboxId}-option-${selectedIndex}` : undefined}

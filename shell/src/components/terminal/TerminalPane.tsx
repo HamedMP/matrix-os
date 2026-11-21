@@ -186,7 +186,8 @@ export function TerminalPane({
   const sessionIdRef = useRef<string | null>(initialSessionId ?? null);
   const lastSeqRef = useRef<number>(0);
   const hasReplayCursorRef = useRef(false);
-  const lastPresentationRevisionRef = useRef(0);
+  // No presentation has been painted yet, even if attach announces a replay cursor.
+  const lastPresentationRevisionRef = useRef(-1);
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingReconnectBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -469,7 +470,7 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
       lastSeqRef.current = 0;
       hasReplayCursorRef.current = false;
-      lastPresentationRevisionRef.current = 0;
+      lastPresentationRevisionRef.current = -1;
       setControlsConnection({ sessionName: null, connected: false });
       resumeLeaseRef.current();
     }
@@ -614,7 +615,7 @@ export function TerminalPane({
         sessionIdRef.current = cachedRestore.sessionId;
         lastSeqRef.current = cachedRestore.lastSeq;
         hasReplayCursorRef.current = cachedRestore.hasReplayCursor;
-        lastPresentationRevisionRef.current = 0;
+        lastPresentationRevisionRef.current = -1;
       }
       log("init", {
         cached: !!cached,
@@ -986,6 +987,7 @@ export function TerminalPane({
             track("cold-replay-timeout", { requestedSeq: options.replayRequest?.requestedSeq });
             lastSeqRef.current = 0;
             hasReplayCursorRef.current = false;
+            lastPresentationRevisionRef.current = -1;
             term.reset();
             setConnectionNotice("reconnecting");
             ws.close();

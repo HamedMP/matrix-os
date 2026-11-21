@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { Copy, FileCode2, Folder, Globe, Maximize2, MessagesSquare, Plus, SquareTerminal, X } from "lucide-react";
+import { Copy, FileCode2, Folder, Globe, Maximize2, MessagesSquare, Plus, Search, SquareTerminal, X } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Tooltip } from "../Tooltip.js";
 import { Button } from "../Button.js";
+import { Input } from "../Input.js";
 import "./desktop-chat.css";
 
 export type InspectorTool = "files" | "terminal" | "side-chat" | "browser" | "new";
@@ -67,4 +68,25 @@ export function ChatInspectorResizeHandle({ side, label, value, min, max, onPoin
       if (!direction) return;
       event.preventDefault(); onKeyboardResize(side === "left" ? -direction * 16 : direction * 16);
     }}><span className="chat-inspector-resize-line" style={{ background: side === "left" ? "transparent" : "var(--chat-line)" }}/><span className="chat-inspector-resize-grip"/><span className="chat-inspector-resize-width" aria-hidden>{Math.round(value)} px</span></div>;
+}
+
+
+export function ChatInspectorFileRoot({ label, value, onChange }: { label: string; value: string; onChange(value: string): void }) {
+  const [open, setOpen] = useState(Boolean(value));
+  const input = useRef<HTMLInputElement>(null);
+  const expanded = open || Boolean(value);
+  useEffect(() => { if (open) input.current?.focus(); }, [open]);
+  return <div className="desktop-chat-design chat-inspector-root">
+    <div className="chat-inspector-root-heading"><span>{label}</span><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={expanded ? "Close file filter" : "Filter files"} aria-expanded={expanded}
+      onClick={() => { setOpen(!expanded); if (expanded) onChange(""); }}>
+      {expanded ? <X size={14} aria-hidden/> : <Search size={14} aria-hidden/>}
+    </Button></div>
+    {expanded ? <Input ref={input} type="search" aria-label="Filter files" placeholder="Filter files…" maxLength={80} value={value} onChange={event => onChange(event.target.value)} className="chat-inspector-root-search"/> : null}
+  </div>;
+}
+export function ChatMessageFileLink({ path, label, onOpen }: { path: string; label: string; onOpen(): void }) {
+  return <Button variant="secondary" className="desktop-chat-design chat-message-file-link" aria-label={`Open ${label}`} title={path} onClick={onOpen}
+    style={{ maxWidth: "100%", padding: "7px 10px", border: "1px solid var(--chat-input)", borderRadius: 8, fontFamily: "inherit", fontSize: 14, fontWeight: 400, lineHeight: "20px", color: "var(--chat-fg)", background: "var(--chat-bg)", verticalAlign: "middle" }}>
+    <FileCode2 size={14} aria-hidden style={{ flexShrink: 0 }}/><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{path}</span>
+  </Button>;
 }

@@ -436,7 +436,7 @@ function WorkInspectorContent({
     const target = event.target;
     if (target instanceof HTMLElement && target.closest("input, textarea, [contenteditable=true]")) return;
     const key = event.key.toLowerCase();
-    const kind = event.metaKey && event.altKey && key === "s" ? "side-chat"
+    const kind = event.metaKey && event.altKey && (key === "s" || event.code === "KeyS") ? "side-chat"
       : event.metaKey && !event.altKey && key === "p" ? "files"
       : event.ctrlKey && !event.metaKey && key === "`" ? "terminal" : null;
     if (!kind || (kind === "side-chat" && !detail)) return;
@@ -542,7 +542,7 @@ function WorkInspectorContent({
                 background: "var(--bg-surface)",
               }}
             >
-              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
+              <InspectorFilesPanel rootLabel={selectedFile?.kind !== "home" && scope.kind === "project" ? scope.projectId : "Matrix Home"} scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile && fileTreeVisible ? (
@@ -574,7 +574,7 @@ function WorkInspectorContent({
             {tabs.some((tab) => tab.kind === "browser") ? <div hidden={selected.kind !== "browser"} className={selected.kind === "browser" ? "flex min-h-0 flex-1 flex-col" : "hidden"} role="tabpanel" aria-label="Browser" id="work-inspector-panel-browser">
               <SidebarBrowser active={active && selected.kind === "browser"} />
             </div> : null}
-            {selected.kind === "side-chat" ? <div role="tabpanel" aria-label="Side chat" id="work-inspector-panel-side-chat" className="flex min-h-0 flex-1 flex-col">
+            {tabs.some(tab => tab.kind === "side-chat") ? <div role="tabpanel" aria-label="Side chat" hidden={selected.kind !== "side-chat"} id="work-inspector-panel-side-chat" className={selected.kind === "side-chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
               {detail && chatClient && sideDraft ? <SideChatPanel chatTitle={detail?.record.chat.title} chatId={detail.record.chat.id} client={chatClient}
                 onSendToMain={text => sideDraft.request(detail.record.chat.id, text)}/>
                 : <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>Side chat is unavailable.</p>}
@@ -614,7 +614,7 @@ function WorkInspectorContent({
         </div>
       </aside>
       <Dialog open={terminalCloseTarget !== null} onClose={() => setTerminalCloseTarget(null)} width={400} title="Stop this terminal?">
-        <div className="space-y-4 p-4 text-sm" style={{ color: "var(--text-primary)" }}>
+        <div className="desktop-chat-design space-y-4 p-4 text-sm" style={{ color: "var(--text-primary)" }}>
           <p>Closing this tab stops its terminal session.</p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setTerminalCloseTarget(null)}>Cancel</Button>

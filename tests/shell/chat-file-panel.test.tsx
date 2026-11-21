@@ -1,10 +1,32 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatFilePanel, loadChatFile } from "../../shell/src/components/chat/ChatFilePanel";
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => "http://localhost:4000" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it("clears the previous resource immediately when the same file path changes scope", async () => {
+  const path = "src/config.txt";
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn(async (url: string) => {
+    const project = new URL(url).searchParams.get("kind") === "project";
+    if (url.includes("/metadata?")) {
+      if (project) return new Promise<Response>(resolve => { finish = resolve; });
+      return Response.json({ resource: { kind: "home", path }, name: "config.txt", mimeType: "text/plain", sizeBytes: 12, kind: "text", version: "home_config", canDownload: true });
+    }
+    return new Response(project ? "Project value" : "Home value");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const view = render(<ChatFilePanel path={path} resource={{ kind: "home", path }} onClose={vi.fn()} />);
+  await screen.findByText("Home value");
+  view.rerender(<ChatFilePanel path={path} resource={{ kind: "project", projectId: "demo", path }} onClose={vi.fn()} />);
+  expect(screen.queryByText("Home value")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("Loading preview…");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await act(async () => finish(Response.json({ resource: { kind: "project", projectId: "demo", path }, name: "config.txt", mimeType: "text/plain", sizeBytes: 13, kind: "text", version: "project_config", canDownload: true })));
+  expect(await screen.findByText("Project value")).toBeTruthy();
+});
 
 it.each(["budget%20draft.txt", "100%.txt", " note.txt ", "report.txt:42"])("opens the literal filesystem path %s without parsing it as a link", async path => {
   const fetcher = vi.fn(async (url: string) => url.includes("/metadata?") ? Response.json({
@@ -105,4 +127,25 @@ it("downloads the authenticated image bytes already loaded by Web Chat File Prev
   });
   expect(loadedBytes).toEqual(bytes.buffer);
   expect(click.mock.contexts[0]).toMatchObject({ href: "blob:result", download: "result.png" });
+});
+
+it("previews a project file through its verified project resource instead of Home", async () => {
+ const resource={kind:"project" as const,projectId:"project_matrix",path:"desktop/src/nav/MobileNav.tsx"};
+ const request=vi.fn(async(url:string)=>url.includes('/metadata?')?Response.json({resource,name:"MobileNav.tsx",mimeType:"text/plain",sizeBytes:7,kind:"text",version:"project_file",canDownload:true}):new Response('Project content'));
+ vi.stubGlobal('fetch',request);
+ render(<ChatFilePanel path={resource.path} resource={resource} embedded gatewayUrl="http://localhost:4000" onClose={vi.fn()}/>);
+ await screen.findByText('Project content', undefined, { timeout: 5_000 });
+ const query=new URL(request.mock.calls[0][0]).searchParams;
+ expect(query.get('kind')).toBe('project');expect(query.get('projectId')).toBe('project_matrix');
+ expect(query.get('path')).toBe(resource.path);
+});
+
+it('shows an embedded code preview with line numbers and prevents editing',async()=>{
+ vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>url.includes('/metadata?')?Response.json({resource:{kind:'home',path:'preview.ts'},name:'preview.ts',mimeType:'text/typescript',sizeBytes:17,kind:'text',version:'code_preview',canDownload:true}):new Response('const value = 1;')));
+ render(<ChatFilePanel path="preview.ts" embedded onClose={vi.fn()}/>);
+ const editor=await screen.findByRole('textbox',{name:'Preview preview.ts'});
+ expect(editor.getAttribute('contenteditable')).toBe('false');
+ expect(editor.getAttribute('aria-readonly')).toBe('true');
+ expect(document.querySelector('.cm-lineNumbers')?.textContent).toContain('1');
 });

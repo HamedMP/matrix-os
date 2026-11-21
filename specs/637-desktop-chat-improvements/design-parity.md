@@ -14,6 +14,8 @@ The November 16 side-by-side audit supersedes the previous visual-readiness asse
 
 WorkTab already exceeds the entrypoint size guideline. Extract responsive layout/resize primitives before adding archive navigation. Archive state and its page outlet live in WorkSurfaceRuntime. Extract the inspector tab strip and picker to packages/ui rather than extending the large WorkFilesInspector with a second tab implementation. Web consumes these same implementations.
 
+The existing WorkTab integration harness also exceeds 1,000 lines. Its follow-up extraction should move shared client/ResizeObserver fixtures into one test helper and move hosted-window chrome cases into a focused suite, retaining the real WorkTab-to-SurfaceChrome boundary. The narrow toolbar regression extends the existing hosted-window case so it does not duplicate those fixtures.
+
 ## Behavior checks
 
 - Main/side transcripts remain server-separated; Copy cannot submit a main-chat turn.
@@ -45,3 +47,45 @@ Extract active/latest run-root selection into the pure shared `canonicalChatFile
 ### Paged read and restored search correction
 
 Successful read mutations publish a versioned, owner/runtime-scoped cache of at most 500 recently updated chat records. Project and status placements merge that read projection without resetting rows, cursor positions, counts, or transcript metadata; unread-only project rows filter the merged state. Older records are not inserted into the initial global navigation window. Restored search tombstones affect Archived only; permanent deletions affect every lifecycle, including subsequent pages. Focused production-boundary regressions exercise the state producer, retained page consumer, and restoration across active search scopes. Broad unit qualification completes in exact-head CI under the requester’s recorded exception; focused tests, typecheck, patterns and React review still run locally.
+
+### Local design correction qualification
+
+The requester approved local Web and native Electron qualification in place of a deployed preview, and explicitly prohibited Slack posts. The final inspector layer covers the Web Files/Terminal/Side chat implementation plus the native pane alignment correction: reserve the Chat toolbar only over the conversation and keep its actions before the inspector, leaving the inspector tab row unobstructed. Short native conversations use the shared bottom-aligned transcript layout. Inspector transport, lifecycle/layout state, and rendering are separate focused modules.
+
+Local evidence uses an isolated Postgres database and Matrix home, an isolated encrypted Electron QA profile, and the real local Zellij adapter without the Linux systemd lifecycle. The transcript is committed through the production canonical orchestrator using a synthetic adapter; side-chat replies are seeded, and no production provider or customer data is used. Web uses the existing local E2E authentication/billing bypass. Provider availability, computer inventory, and organization Drives are not qualified by these fixtures. Broad local suite execution remains limited by legacy Node ABI and Linux host fixtures; focused tests and exact-build captures do not replace Linux CI.
+
+### Final live-review corrections
+
+The local Web run exposed a producer/consumer mismatch: chats retain canonical project IDs, while the existing file-preview and terminal APIs resolve verified project slugs. The Web inspector now follows the native adapter at that boundary. A regression creates an actual temporary project and routes a rendered chat file click through the production Gateway preview service.
+
+Both desktops use the compact project-root label with an on-demand file filter and shared full-path file links. Web short transcripts align above the composer; desktop starter suggestions stay in the empty state. Web Search cancels the base dialog's individual translate offset before applying its explicit main-pane position. Archive navigation exits for every accepted destination. Manual rail order applies to independently loaded status and project placements, including chats absent from the initial summaries. Terminal discovery rejects pre-mutation responses, creation evicts mounted views without stopping sessions, and hidden Chat cannot handle inspector shortcuts.
+
+The follow-up qualification keeps unsent side questions mounted across tab switches on both desktops and uses the existing Web code editor in read-only mode for numbered file previews. Opened files reveal their parent folders and selection; large directory views retain 1,000 rows at a time and filter before windowing, with Previous/Next access through the existing directory endpoint. Project-resource conversion is shared by desktop and mobile preview paths. Search centers over the conversation when the inspector is open, and shared controls explicitly consume the desktop color tokens in dark mode. Manual reordering preserves saved positions outside the moved subset, respects the displayed page order, and rejects stale targets.
+
+Final review regressions additionally preserve explicit selection when the startup chat is reselected, snapshot the displayed server group's order before its first manual move, and reveal each ancestor's correct directory window. The file filter uses the existing bounded Gateway search within the verified file root, including unopened folders; it retains at most 200 matches and asks for a narrower filter when truncated. Phone headers omit desktop inspector controls while retaining their existing file-preview fallback. The New tab picker includes the current file and saved Side chat alongside terminals.
+
+The final narrow Electron capture found that an exclusive Files inspector could cover the floating window's still-active title/share controls. Hosted narrow inspectors now begin below the shared OS window gesture height; docked inspectors retain the Figma-aligned tab row. The production WorkTab integration regression fails without that offset and checks that closing the inspector still returns to Chat.
+
+### Full CI fixture reconciliation
+
+The first full CI run exposed two stale test assumptions. The long-title Electron test still required the agent-state marker after the title, while Figma and the corrected production row place it before the title. Its bounds assertion now checks the leading marker without removing the trailing unread, clipping, pin/menu reachability, or two-width checks. The offline Bot-header fixture replaced the runtime module and omitted its new archive exports; its partial replacement now retains the real production archive provider, outlet, and hook. The original bundle fails with five missing exports and the corrected bundle compiles successfully. These corrections do not change runtime source.
+
+The unchanged `side-chat-main-draft.test.tsx` and `chat-inspector-layout.test.ts` suites are retained byte-for-byte in the final inspector integration layer, keeping the native layer within 50 files while adding the two required E2E corrections. No regression coverage is removed from the integrated stack. The CI fixture corrections do not change runtime source; source commit labels remain explicit rather than relabeling earlier builds. Local validation covers the real fixture bundler and production-boundary unit suites; the full UI lanes run in CI.
+
+### Terminal discovery beyond the mounted window
+
+A later review found that discovery retained the last 12 bound sessions while a fresh layout mounted the first 11. With 13 running terminals this removed metadata for a visible live tab. Discovery now prioritizes the latest mounted tabs, including tabs opened while its request is pending, then fills spare slots with other bound sessions. Mounted metadata stays last so creating a new terminal evicts unmounted candidates before visible tabs. Three production-hook regressions reproduce the original fault for fresh/saved layouts and an in-flight tab change; the full 33-test inspector suite passes after the correction. Creation beyond the cap additionally checks every mounted terminal remains available without stopping older sessions. This Web runtime correction requires a new production build and refreshed Web comparisons; native runtime source remains unchanged.
+
+### Final integration and first terminal presentation
+
+Restore the three archive, Side chat and paged-native-rail suites retained unchanged during the native size split; only the relocated paging import changes. Update the retained inspector/main-draft tests to the existing owning modules. Provider catalog coalescing counts only the catalog route, so the separately authenticated WebSocket token probe cannot masquerade as a duplicate catalog read.
+
+The production TerminalPane stream regression reproduces a revision-zero snapshot at seq 54 after attach.nextSeq 55: no terminal write occurs before the fix. An unpainted presentation now starts below revision zero; attach's sequence cursor is not evidence of a painted screen. Cache-discard, owner-change and cold-replay timeout resets use the same sentinel, while retained presentations keep their cached watermark. Both cursor-zero and cursor-55 cases must paint once, continue output, and reject a duplicate stale snapshot.
+
+TerminalPane remains a large composition file. Keep this correction in its existing watermark initialization/reset sites; the extraction boundary for further replay work is the snapshot/output transition and its presentation cursor, preserving the real component/socket tests. No additional terminal feature belongs in that composition without this extraction.
+
+### Inspector review qualification
+
+File previews hide prior results immediately when resource or computer changes. Deep folders expose an explicit Open folder path with Back to root, retaining the mounted-depth and row-window bounds. Web worktree reads and search use the existing owner-checked coding-agent file routes with the verified slug/worktree ID; primary checkout and Home routes remain independent. Directory transport allows at most 100 pages of 100 entries within one ten-second budget and rejects missing/repeated cursors. The Native adapter uses the same shared run-scope selector. Existing preview selection is scoped to owner, computer, chat and run root, so unavailable/changed roots cannot retain old content.
+
+The worktree integration test uses a real temporary owner home/project, real Gateway file services and Hono routes. Only the unrelated socket/provider surfaces and worktree registry source are fixtures. The Node TS loader avoids Vite’s browser rewrite of native launch URLs; its encoder and Uint8Array must use the same realm in jsdom. Producer regressions remain in the Web layer’s canonical state suite rather than duplicated in the inspector layer.

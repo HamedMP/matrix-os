@@ -1137,7 +1137,7 @@ describe("WorkTab rail integration", () => {
     const hostedMain = within(hostedMainElement);
     expect(hostedMain.queryByRole("heading", { name: "Global chat" })).toBeNull();
     expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
-    expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(hostedMainElement.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
     expect(screen.getByTestId("right-pane-width").textContent).toBe("400");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
@@ -1157,6 +1157,16 @@ describe("WorkTab rail integration", () => {
 
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+
+    // Below the combined 360px chat and 240px inspector minimum widths, the
+    // exclusive inspector must begin below the still-interactive window toolbar.
+    resizeWork(599);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const narrowInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement!;
+    expect(narrowInspector.style.top).toBe("48px");
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Hide inspector" }));
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 
   it("renames the active Chat from a single click on the center header", async () => {
@@ -1278,7 +1288,7 @@ describe("WorkTab rail integration", () => {
     await screen.findByText("Chat center");
 
     expect(screen.getByTestId("draft-chrome").textContent).toBe("");
-    expect(document.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(document.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
   });
 
   it("returns a stale narrow inspector to Chat when Work becomes inactive", async () => {

@@ -45,7 +45,7 @@ import { WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from
 import { WorkFilesInspector } from "./WorkFilesInspector";
 import { BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { useWorkBotHeaderBinding } from "./use-work-bot-header-binding";
-import { OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
+import { OS_WINDOW_GESTURE_HEIGHT, OS_WINDOW_PANE_TRIGGER_CLASS_NAME } from "../desktop-shell/OSWindow";
 import type { WorkFilesScope } from "./work-files-scope";
 import { chatInspectorLayoutKey, useChatInspectorLayout } from "../../stores/files-navigation";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
@@ -107,7 +107,9 @@ export function ResponsiveWorkInspector({
       className={!visible ? "hidden" : layout === "narrow"
         ? "absolute inset-0 z-20 flex w-full"
         : "relative flex min-h-0 shrink-0"}
-      style={layout === "narrow" ? undefined : { width }}
+      style={layout === "narrow"
+        ? showInlineControls ? undefined : { top: OS_WINDOW_GESTURE_HEIGHT }
+        : { width }}
     >
       {visible && layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} onReset={onResetWidth} /> : null}
       <WorkFilesInspector
@@ -768,6 +770,7 @@ function WorkTabContent({
       ? <div ref={setBotHeaderContainer} data-slot="desktop-bot-header" className="no-drag pointer-events-auto h-12 min-w-0 w-full" />
       : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
+    actionsBeforeRightPane: true,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: archiveNavigation?.open || agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
@@ -803,17 +806,11 @@ function WorkTabContent({
     <ChatFileNavigationProvider key={`${runtimeSlot}:${authGeneration}`} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatId ?? "draft"}`} reveal={openInspector}>
     <div
       ref={workRef}
-      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${hostedChrome && hasInspector ? "[&_[data-slot=shared-chat-surface]]:pt-12" : ""}`}
+      data-chat-header-reserved={hostedChrome && hasInspector || undefined}
       data-layout={layout}
       data-pane={layout === "narrow" ? narrowPane : undefined}
     >
-      {hostedChrome && hasInspector ? (
-        <div
-          data-work-main-header
-          aria-hidden="true"
-          className="h-12 shrink-0"
-        />
-      ) : null}
       {renameChatError ? (
         <div role="alert" className="shrink-0 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
           {renameChatError}

@@ -119,6 +119,17 @@ describe("web desktop window controls", () => {
     expect(Number.parseFloat(frame.style.bottom || "0")).toBe(0);
   });
 
+  it("starts maximized desktop Chat below the global bar without a duplicate title row", () => {
+    const win: AppWindow={id:"chat",title:"Chat",path:"__chat__",x:20,y:20,width:640,height:480,minimized:false,zIndex:10};
+    const noop=vi.fn();
+    const view=render(<DesktopWindow win={win} dockPosition="bottom" fullscreenWindowId={win.id}
+      interacting={false} minimizingIds={new Set()} onAnimateMinimize={noop} onCloseWindow={noop}
+      onDragEnd={noop} onDragMove={noop} onDragStart={noop} onFocusWindow={noop} onOpenWindow={noop}
+      onResizeInteractionChange={noop} onToggleFullscreen={noop} topInset={38}/>);
+    expect(view.container.querySelector('[data-slot="card-header"]')).toBeNull();
+    view.unmount();
+  });
+
   it("keeps floating windows below the desktop header", () => {
     expect(desktopWindowTop(20, 38)).toBe("58px");
   });
