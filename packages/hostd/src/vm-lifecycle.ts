@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ChError, type ChClient } from "./ch-client.js";
@@ -107,6 +107,12 @@ export interface VmLifecycle {
   resume(id: string, budgetMs: number): Promise<ResumeResult>;
   stop(id: string): Promise<VmRecord>;
   destroy(id: string): Promise<void>;
+  // Hotplugs or unplugs memory to targetMiB; refuses unless the VM is running.
+  resize(id: string, targetMiB: number): Promise<void>;
+  // Changes tier and memory ceiling; a raised ceiling takes effect at the next cold boot.
+  setPolicy(id: string, policy: { tier: VmTier; maxMiB: number }): Promise<VmRecord>;
+  // Resolves once every operation queued so far has settled.
+  idle(): Promise<void>;
 }
 
 export type LifecycleErrorCode =
@@ -310,7 +316,13 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     validateSpec(spec);
     // Allocation is serialized host-wide so two creates never share an address or a machine.
     const claim = allocation.then(async () => {
-      const existing = (await store.list()).find((r) => r.machineId === spec.machineId);
+      let existing = (await store.list()).find((r) => r.machineId === spec.machineId);
+      if (existing?.state === "failed" && existing.generation === spec.generation) {
+        // A failed attempt is not a VM: clear it and create afresh.
+        const failedId = existing.id;
+        await enqueue(failedId, "destroy", () => destroy(failedId));
+        existing = undefined;
+      }
       if (existing !== undefined) {
         if (existing.generation === spec.generation) return { record: existing, fresh: false, address: 0 };
         throw new LifecycleError("conflict", "machine already has a VM with another generation");
@@ -536,8 +548,44 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await store.remove(id);
   }
 
+  async function resize(id: string, targetMiB: number): Promise<void> {
+    const record = await load(id);
+    if (!Number.isSafeInteger(targetMiB) || targetMiB < record.bootMiB || targetMiB > record.maxMiB) {
+      throw new LifecycleError("invalid", "memory target out of range");
+    }
+    if (record.state !== "running") throw new LifecycleError("conflict", `VM is ${record.state}`);
+    await withCh(id, (client) => client.resizeMemory(targetMiB * MiB, chSignal()));
+  }
+
+  async function setPolicy(id: string, policy: { tier: VmTier; maxMiB: number }): Promise<VmRecord> {
+    const record = await load(id);
+    const { tier, maxMiB } = policy;
+    const valid =
+      (tier === "free" || tier === "paid") &&
+      Number.isSafeInteger(maxMiB) &&
+      maxMiB > record.bootMiB &&
+      maxMiB % 128 === 0;
+    if (!valid) throw new LifecycleError("invalid", "invalid VM policy");
+    if (record.state === "creating") throw new LifecycleError("conflict", "VM is still being created");
+    const envPath = join(cfg.vmsDir, id, "unit.env");
+    const env = await readFile(envPath, "utf8");
+    await writeFileAtomic(envPath, env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`), 0o644);
+    return save(record, { tier, maxMiB });
+  }
+
+  async function idle(): Promise<void> {
+    while (inflight.size > 0) {
+      await Promise.allSettled([...inflight.values()].map((entry) => entry.promise));
+    }
+    await allocation;
+  }
+
   return {
     create,
+    resize: (id, targetMiB) => enqueue(id, `resize:${targetMiB}`, () => resize(id, targetMiB)),
+    setPolicy: (id, policy) =>
+      enqueue(id, `policy:${policy.tier}:${policy.maxMiB}`, () => setPolicy(id, policy)),
+    idle,
     start: (id) => enqueue(id, "start", async () => wake(await load(id))),
     suspend: (id) => enqueue(id, "suspend", async () => suspend(await load(id))),
     async resume(id, budgetMs) {

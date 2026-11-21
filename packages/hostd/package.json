@@ -6,14 +6,18 @@
   "exports": {
     "./ch-client": "./src/ch-client.ts",
     "./guest-client": "./src/guest-client.ts",
-    "./memory-controller": "./src/memory-controller.ts"
+    "./memory-controller": "./src/memory-controller.ts",
+    "./api": "./src/api.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
   },
   "dependencies": {
-    "undici": "7.30.1"
+    "@hono/node-server": "^1.19.15",
+    "hono": "^4.12.25",
+    "undici": "7.30.1",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^25.2.3",

@@ -93,7 +93,9 @@ function fakeCh(): ChClient {
       await writeFile(join(destinationDir, "memory-ranges"), "mem");
       await writeFile(join(destinationDir, "state.json"), "{}");
     },
-    async resizeMemory() {},
+    async resizeMemory(totalBytes) {
+      events.push(`ch:resize ${totalBytes}`);
+    },
     async powerButton() {
       events.push("ch:power-button");
       chState = "Shutdown";
@@ -389,5 +391,82 @@ describe("VM lifecycle", () => {
   it("unknown ids reject with not_found", async () => {
     await expect(lifecycle.resume("vm_ffffffffffffffffffffffff", 1000)).rejects.toMatchObject({ code: "not_found" });
     await expect(lifecycle.suspend("nope")).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("VM lifecycle (host API operations)", () => {
+  it("a repeated create for a failed record of the same generation destroys it and recreates the VM", async () => {
+    execFailures.set("lvcreate", 5);
+    await expect(lifecycle.create(spec)).rejects.toMatchObject({ code: "failed" });
+    const [failed] = await store.list();
+    execFailures.clear();
+    execCalls = [];
+    const vm = await lifecycle.create(spec);
+    expect(vm.id).not.toBe(failed!.id);
+    expect(vm.state).toBe("running");
+    expect(execCalls).toContainEqual([
+      "systemctl", "stop", `matrix-vm@${failed!.id}.service`, `matrix-vm-restore@${failed!.id}.service`,
+    ]);
+    await expect(store.get(failed!.id)).resolves.toBeNull();
+    expect((await store.list()).map((r) => r.id)).toEqual([vm.id]);
+  });
+
+  it("a create racing an in-progress create returns the record still creating", async () => {
+    const first = lifecycle.create(spec);
+    const second = await lifecycle.create(spec);
+    expect(second.state).toBe("creating");
+    const done = await first;
+    expect(done).toMatchObject({ id: second.id, state: "running" });
+  });
+
+  it("resize sends the target size to Cloud Hypervisor for a running VM", async () => {
+    const vm = await createRunning();
+    await lifecycle.resize(vm.id, 3072);
+    expect(events).toContain(`ch:resize ${3072 * 1024 * 1024}`);
+  });
+
+  it("resize waits behind a suspend in the VM's queue and then refuses without touching Cloud Hypervisor", async () => {
+    const vm = await createRunning();
+    trimGate = deferred();
+    const suspending = lifecycle.suspend(vm.id);
+    await Promise.resolve();
+    const resizing = lifecycle.resize(vm.id, 3072);
+    trimGate.resolve();
+    await suspending;
+    await expect(resizing).rejects.toMatchObject({ code: "conflict" });
+    expect(events.some((e) => e.startsWith("ch:resize"))).toBe(false);
+  });
+
+  it("resize rejects a target outside boot..max as invalid", async () => {
+    const vm = await createRunning();
+    await expect(lifecycle.resize(vm.id, 1024)).rejects.toMatchObject({ code: "invalid" });
+    await expect(lifecycle.resize(vm.id, 9216)).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("setPolicy updates the tier and memory ceiling and the hotplug size of the next boot", async () => {
+    const vm = await createRunning();
+    const next = await lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 16384 });
+    expect(next).toMatchObject({ tier: "paid", maxMiB: 16384 });
+    await expect(store.get(vm.id)).resolves.toMatchObject({ tier: "paid", maxMiB: 16384 });
+    const env = await readFile(join(vmsDir, vm.id, "unit.env"), "utf8");
+    expect(env).toContain("HOTPLUG_MIB=14336\n");
+    expect(env).toContain("BOOT_MIB=2048\n");
+    await expect(lifecycle.setPolicy(vm.id, { tier: "free", maxMiB: 2048 })).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("idle resolves once every queued operation has settled", async () => {
+    const vm = await createRunning();
+    trimGate = deferred();
+    const suspending = lifecycle.suspend(vm.id);
+    let idle = false;
+    const waiting = lifecycle.idle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    trimGate.resolve();
+    await suspending;
+    await waiting;
+    expect(idle).toBe(true);
   });
 });
