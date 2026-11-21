@@ -251,6 +251,15 @@ describe("ShellSocket URL building", () => {
     expect(h.latest().url).toContain("&chat=chat_selected-one");
   });
 
+  it("attaches a Herdr terminal through the Herdr socket with the same query", () => {
+    const herdrWorkspace = "tws_00000000000000000000006865726472";
+    const h = createHarness({ sessionName: `${herdrWorkspace}:${TAB_ID}` });
+    h.socket.connect();
+    expect(h.latest().url).toBe(
+      `wss://app.matrix-os.com/ws/terminal/herdr?workspaceId=${herdrWorkspace}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
+    );
+  });
+
   it("keeps standalone workspace-tab URLs free of Chat context", () => {
     const h = createHarness();
     h.socket.connect();

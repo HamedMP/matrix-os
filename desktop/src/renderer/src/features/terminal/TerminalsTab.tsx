@@ -23,6 +23,7 @@ import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { useTerminalAgentEvents } from "../../stores/terminal-agent-events";
 import { mergeTerminalAgentStatus } from "@matrix-os/ui/terminal-agents";
+import { DesktopHerdrSessions } from "./DesktopHerdrSessions";
 import {
   parseTerminalAgentStatuses,
   terminalAgentCreateOptions,
@@ -415,6 +416,7 @@ export default function TerminalsTab({
         }}
         deletingName={deleteTarget && isShellBusy(deleteTarget.name) ? deleteTarget.name : null}
         onDelete={setDeleteTarget}
+        extra={<DesktopHerdrSessions api={api} selectedName={selectedName} onOpen={showShellDetail} />}
       />
     )}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

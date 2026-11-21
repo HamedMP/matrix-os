@@ -60,6 +60,8 @@ describe("Terminal window computers", () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   const requests = () => fetchMock.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(url)}`);
+  // Each listing also asks that computer's gateway for its Herdr sessions (spec 2701).
+  const tabRequests = () => requests().filter((request) => request.includes("/api/terminal/workspaces"));
 
   it("asks a computer for its terminals only when it is opened, addressing that computer", async () => {
     fetchMock.mockImplementation(async (url: string) => json(workspace(String(url).includes("runtime=extra")
@@ -70,12 +72,12 @@ describe("Terminal window computers", () => {
 
     fireEvent.click(extra);
     expect(await screen.findByRole("button", { name: /deploy/ })).toBeTruthy();
-    expect(requests()).toEqual([`GET ${HOST}/api/terminal/workspaces?runtime=extra`]);
+    expect(requests().sort()).toEqual([`GET ${HOST}/api/terminal/herdr?runtime=extra`, `GET ${HOST}/api/terminal/workspaces?runtime=extra`]);
     expect(extra.getAttribute("aria-expanded")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: /Main Computer/ }));
     expect(await screen.findByRole("button", { name: /build/ })).toBeTruthy();
-    expect(requests()[1]).toBe(`GET ${HOST}/api/terminal/workspaces`);
+    expect(tabRequests()[1]).toBe(`GET ${HOST}/api/terminal/workspaces`);
     expect(fetchMock.mock.calls.every(([, init]) => !new Headers((init as RequestInit).headers).has("authorization"))).toBe(true);
   });
 
@@ -115,7 +117,7 @@ describe("Terminal window computers", () => {
     expect(await screen.findByRole("button", { name: "started on my phone" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "build" })).toBeTruthy();
     expect(screen.queryByText("Loading terminals…")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(tabRequests()).toHaveLength(2);
     expect(requests().every(request => !request.includes("runtime=extra"))).toBe(true);
   });
 
