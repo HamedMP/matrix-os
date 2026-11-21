@@ -1,8 +1,11 @@
 import { constants } from "node:fs";
-import { mkdir, open, readdir, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const TAB_NAME = /^matrix-tab-[0-9a-f]{32}$/;
+const TEMP_NAME = /^matrix-tab-[0-9a-f]{32}\.tmp$/;
+/** A temporary file this old was left by a write that never finished. */
+const ABANDONED_TEMP_MS = 10 * 60_000;
 /** Most exit files one pass reads; the rest wait for the next pass. */
 const MAX_FILES_PER_PASS = 1_024;
 const MAX_FILE_BYTES = 16;
@@ -28,8 +31,11 @@ export interface TerminalExitRecord {
 export class TerminalExitRecorder {
   private readonly directory: string;
 
-  constructor(options: { directory: string }) {
+  private readonly now: () => number;
+
+  constructor(options: { directory: string; now?: () => number }) {
     this.directory = options.directory;
+    this.now = options.now ?? Date.now;
   }
 
   /** Creates the directory, private to the owner. */
@@ -44,7 +50,7 @@ export class TerminalExitRecorder {
 
   /** Removes a file left by an earlier run of the same tab, before it starts again. */
   async clear(zellijTabName: string): Promise<void> {
-    await rm(this.path(zellijTabName), { force: true });
+    await this.remove(zellijTabName);
   }
 
   /** The exit codes written so far. Unknown names, symlinks and bad contents are skipped. */
@@ -56,6 +62,9 @@ export class TerminalExitRecorder {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+    for (const name of names.filter((entry) => TEMP_NAME.test(entry)).slice(0, MAX_FILES_PER_PASS)) {
+      await this.removeAbandonedTemp(join(this.directory, name));
+    }
     const records: TerminalExitRecord[] = [];
     for (const name of names.filter((entry) => TAB_NAME.test(entry)).slice(0, MAX_FILES_PER_PASS)) {
       const exitCode = await this.readCode(join(this.directory, name));
@@ -64,8 +73,27 @@ export class TerminalExitRecorder {
     return records;
   }
 
+  /** Removes a tab's exit file and any temporary file its write left. */
   async remove(zellijTabName: string): Promise<void> {
-    await rm(this.path(zellijTabName), { force: true });
+    const path = this.path(zellijTabName);
+    await rm(path, { force: true });
+    await rm(`${path}.tmp`, { force: true });
+  }
+
+  /**
+   * A write interrupted between `printf` and `mv` leaves `<name>.tmp`. Each pass
+   * removes ones older than ten minutes. `lstat` never follows a link, and a
+   * link or other non-file under that name is removed itself (only the entry,
+   * never its target): the recorder only ever writes regular files.
+   */
+  private async removeAbandonedTemp(path: string): Promise<void> {
+    const info = await lstat(path).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (!info || info.isDirectory()) return;
+    if (info.isFile() && this.now() - info.mtimeMs < ABANDONED_TEMP_MS) return;
+    await rm(path, { force: true });
   }
 
   private path(zellijTabName: string): string {

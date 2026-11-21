@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +88,27 @@ describe("command exit files", () => {
     await writeFile(target, "4\n");
     await symlink(target, join(directory, `matrix-tab-${"d".repeat(32)}`));
     expect(await recorder.read()).toEqual([]);
+  });
+
+  it("removes temporary files a write left behind, once they are old, and on clear", async () => {
+    const directory = await tempDir();
+    const now = Date.parse("2026-11-21T12:00:00Z");
+    const recorder = new TerminalExitRecorder({ directory, now: () => now });
+    await recorder.prepare();
+    const stale = join(directory, `${TAB_NAME}.tmp`);
+    const fresh = join(directory, `matrix-tab-${"f".repeat(32)}.tmp`);
+    await writeFile(stale, "1");
+    await writeFile(fresh, "2");
+    await utimes(stale, new Date(now - 11 * 60_000), new Date(now - 11 * 60_000));
+    await utimes(fresh, new Date(now), new Date(now));
+    const target = join(await tempDir(), "kept");
+    await writeFile(target, "x");
+    await symlink(target, join(directory, `matrix-tab-${"9".repeat(32)}.tmp`));
+    expect(await recorder.read()).toEqual([]);
+    expect((await readdir(directory)).sort()).toEqual([`matrix-tab-${"f".repeat(32)}.tmp`]);
+    expect(await readFile(target, "utf8")).toBe("x");
+    await recorder.clear(`matrix-tab-${"f".repeat(32)}`);
+    expect(await readdir(directory)).toEqual([]);
   });
 
   it("skips a named pipe under a tab's name without waiting for a writer", async () => {
