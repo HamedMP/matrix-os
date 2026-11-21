@@ -55,7 +55,7 @@ import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
 import { SideChatDraftContext, type SideChatDraftRequest } from "./WorkSurfaceRuntime";
 
-function ResponsiveWorkInspector({
+export function ResponsiveWorkInspector({
   detail,
   scope,
   projects,
@@ -98,36 +98,18 @@ function ResponsiveWorkInspector({
   resolveDraftChatId?: () => Promise<string | null>;
   onDraftTerminalCreated?: (chatId: string, session: TerminalSessionSummary) => void;
 }) {
-  if (!visible) {
-    return (
-      <>
-        <div hidden><WorkFilesInspector detail={detail} scope={scope} projects={projects} active={false} /></div>
-        {showInlineControls && layout !== "narrow" ? (
-          <aside
-            aria-label="Show Chat inspector rail"
-            className="flex w-9 shrink-0 items-start justify-center border-l pt-2"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-          >
-            <PaneButton buttonRef={openButtonRef} label="Show inspector" controls="work-inspector" expanded={false} onClick={onOpen}>
-              <PanelRightOpen size={15} aria-hidden />
-            </PaneButton>
-          </aside>
-        ) : null}
-      </>
-    );
-  }
-  return (
+  return <>
     <div
       ref={regionRef}
       id="work-inspector"
       aria-hidden={!visible}
       hidden={!visible}
-      className={layout === "narrow"
+      className={!visible ? "hidden" : layout === "narrow"
         ? "absolute inset-0 z-20 flex w-full"
         : "relative flex min-h-0 shrink-0"}
       style={layout === "narrow" ? undefined : { width }}
     >
-      {layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} onReset={onResetWidth} /> : null}
+      {visible && layout !== "narrow" ? <ResizeHandle side="left" label="Resize Chat inspector" value={width} min={MIN_INSPECTOR_WIDTH} max={maxWidth} onPointerDown={onResizeStart} onKeyboardResize={onResizeKeyboard} onReset={onResetWidth} /> : null}
       <WorkFilesInspector
         detail={detail}
         scope={scope}
@@ -135,14 +117,22 @@ function ResponsiveWorkInspector({
         initialTerminal={initialTerminal}
         resolveDraftChatId={resolveDraftChatId}
         onDraftTerminalCreated={onDraftTerminalCreated}
-        active={active}
+        active={active && visible}
         className="h-full w-full"
         onClose={showInlineControls ? onClose : undefined}
         closeLabel={layout === "narrow" ? "Back to chat" : "Hide inspector"}
         closeButtonRef={closeButtonRef}
       />
     </div>
-  );
+    {!visible && showInlineControls && layout !== "narrow" ? (
+      <aside aria-label="Show Chat inspector rail" className="flex w-9 shrink-0 items-start justify-center border-l pt-2"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+        <PaneButton buttonRef={openButtonRef} label="Show inspector" controls="work-inspector" expanded={false} onClick={onOpen}>
+          <PanelRightOpen size={15} aria-hidden />
+        </PaneButton>
+      </aside>
+    ) : null}
+  </>;
 }
 
 export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
@@ -178,10 +168,13 @@ function WorkTabContent({
 }) {
   const archiveNavigation = useWorkArchiveNavigation();
   const api = useConnection((state) => state.api);
+  const signedIn = useConnection((state) => state.status === "signed-in");
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const verifiedUserId = useConnection((state) => state.userId);
   const projects = useBoard((state) => state.projects);
+  const projectsStatus = useBoard((state) => state.projectsStatus);
+  const loadProjects = useBoard((state) => state.loadProjects);
   const workRef = useRef<HTMLDivElement>(null);
   const showToolsRef = useRef<HTMLButtonElement>(null);
   const inspectorCloseRef = useRef<HTMLButtonElement>(null);
@@ -265,6 +258,11 @@ function WorkTabContent({
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
   const presentationVisible = hostedChrome ? visible : active;
+  useEffect(() => {
+    if (signedIn && presentationVisible && api && useBoard.getState().projectsStatus === "idle") {
+      void loadProjects(api);
+    }
+  }, [signedIn, presentationVisible, api, projectsStatus, loadProjects]);
   const agentProviderCatalog = useWorkAgentProviderCatalog(projects.length > 0, presentationVisible);
   const routeKey = `${presentationVisible}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
   const hasInspector = Boolean(!archiveNavigation?.open && presentationVisible && (route === "chat" || route === "project"));

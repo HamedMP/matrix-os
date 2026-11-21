@@ -451,7 +451,7 @@ describe("WorkTab rail integration", () => {
         delete: vi.fn(),
       } as never,
     }, true);
-    useBoard.setState({ ...useBoard.getInitialState(), projects: [alpha] }, true);
+    useBoard.setState({ ...useBoard.getInitialState(), projects: [alpha], projectsStatus: "ready" }, true);
     useProjectView.setState(useProjectView.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
@@ -462,6 +462,18 @@ describe("WorkTab rail integration", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
     await screen.findByText("What should your agent do?");
     expect(chatTabProps.draftRequests.filter(Boolean)).toEqual([]);
+  });
+
+  it("loads project navigation on a cold Chat start without opening Sidebar or the context picker", async () => {
+    useBoard.setState({ projects: [], projectsStatus: "idle" });
+    const api = useConnection.getState().api!;
+    const get = vi.mocked(api.get);
+    const original = get.getMockImplementation()!;
+    get.mockImplementation(async path => path === "/api/workspace/projects" ? { projects: [alpha] } : original(path));
+    render(<WorkTab route="chat" active initialChatView="draft" />);
+    expect(await screen.findByRole("button", { name: "Alpha", exact: true })).toBeTruthy();
+    expect(get.mock.calls.filter(([path]) => path === "/api/workspace/projects")).toHaveLength(1);
+    expect(useBoard.getState().projectsStatus).toBe("ready");
   });
 
   afterEach(() => {

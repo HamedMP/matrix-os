@@ -7,6 +7,10 @@ import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
+import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
+import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
+import { SideChatDraftContext } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
+import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -117,6 +121,35 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it("keeps the real Side chat question and inspector instance when hidden and reopened", async () => {
+    useConnection.setState({ userId: "user_test" });
+    const chatDetail = detail("chat_hide_draft");
+    const key = chatInspectorLayoutKey("user_test", "primary", "chat_hide_draft");
+    useChatInspectorLayout.getState().update(key, { selectedTabId: "side-chat", openTabIds: ["files", "side-chat"] });
+    const getSideChat = vi.fn(async () => ({ threadId: "side_fixture", messages: [] }));
+    const client = { getSideChat, createSideChat: vi.fn(), askSideChat: vi.fn() } as unknown as CanonicalChatClient;
+    const { api, runtimeSlot, authGeneration } = useConnection.getState();
+    const draftContext = { pending: null, request: vi.fn(), consume: vi.fn() };
+    const renderInspector = (visible: boolean) => <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
+      <SideChatDraftContext.Provider value={draftContext}>
+        <ResponsiveWorkInspector detail={chatDetail} projects={[]} visible={visible} active layout="wide" width={400} maxWidth={820}
+          onClose={vi.fn()} onOpen={vi.fn()} onResizeStart={vi.fn()} onResizeKeyboard={vi.fn()} onResetWidth={vi.fn()}
+          closeButtonRef={null} openButtonRef={null} regionRef={null} showInlineControls />
+      </SideChatDraftContext.Provider>
+    </CanonicalChatClientProvider>;
+    const view = render(renderInspector(true));
+    await waitFor(() => expect(getSideChat).toHaveBeenCalledOnce());
+    const input = screen.getByRole("textbox", { name: "Ask side chat" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Keep this unsent side question" } });
+    view.rerender(renderInspector(false));
+    expect(screen.queryByRole("textbox", { name: "Ask side chat" })).toBeNull();
+    view.rerender(renderInspector(true));
+    expect(screen.getByRole("textbox", { name: "Ask side chat" })).toBe(input);
+    expect(input.value).toBe("Keep this unsent side question");
+    expect(getSideChat).toHaveBeenCalledOnce();
+    expect(client.askSideChat).not.toHaveBeenCalled();
+  });
+
   it.each([null, "Revised question"])("uses the saved Side chat request identity on retry unless the draft changes to %s", async revisedDraft => {
     const client = {
       getSideChat: vi.fn(async () => ({ threadId: "side_fixture", messages: [] })),
