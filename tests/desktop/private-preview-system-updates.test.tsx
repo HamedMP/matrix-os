@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import SystemSection from "../../desktop/src/renderer/src/features/settings/sections/SystemSection";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
+// The private network panel has its own suite (tests/ui/private-network-*.test.ts*);
+// keep these update-focused fakes free of its extra requests.
+vi.mock("../../desktop/src/renderer/src/features/settings/sections/PrivateNetworkSection", () => ({ default: () => null }));
+
 describe("Electron owner-managed Preview updates", () => {
   afterEach(() => { cleanup(); useConnection.setState({ api: null }); vi.restoreAllMocks(); });
   it("shares the owner-managed policy notice and keeps provenance without refresh/channel controls", async () => {
