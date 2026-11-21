@@ -1258,9 +1258,8 @@ export async function createGateway(config: GatewayConfig) {
   }
   // Before CORS and auth, so a refused browser origin reaches neither.
   registerBrowserOriginGates(app, { env: process.env, allowedOrigins: allowedOriginController });
-  // Spec 2701: reject foreign Tailscale identities before bearer auth sees the request.
   const privateNetwork = await createPrivateNetworkRuntime({ env: process.env, homePath, db: kyselyInstance });
-  app.use("*", privateNetwork.identity);
+  app.use("*", privateNetwork.identity); // Spec 2701: foreign Tailscale identities fail before bearer auth.
   registerGatewayAccessMiddleware(app, {
     resolveAllowedOrigin: allowedOriginController.resolve,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
@@ -1352,12 +1351,7 @@ export async function createGateway(config: GatewayConfig) {
     finalizeWithSummary, logUnexpectedJsonParseFailure,
   });
 
-  app.get(
-    "/ws/forward",
-    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
-  );
-
-
+  app.get("/ws/forward", upgradeWebSocket(() => forwardTunnelHub.createHandler()));
 
   registerCodingAgentThreadWebSocketRoutes({
     app, upgradeWebSocket, codingAgentThreadStream,
