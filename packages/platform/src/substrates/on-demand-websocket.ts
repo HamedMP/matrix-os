@@ -198,7 +198,7 @@ function relay(upgrade: OnDemandWebSocketUpgrade, machine: UserMachineRecord, up
       upgrade.onResponded();
       const answer = sanitizeHandshake(buffered.subarray(0, end).toString('latin1'), upstream);
       socket.write(`${answer}\r\n\r\n`, 'latin1');
-      if (answer.startsWith('HTTP/1.1 101')) noteOwnerReachedRuntime(upgrade.db, machine, upgrade.identity, 101);
+      if (answer.startsWith('HTTP/1.1 101')) noteOwnerReachedRuntime(upgrade.db, machine, upgrade.identity);
       const rest = buffered.subarray(end + 4);
       if (rest.length > 0) socket.write(rest);
       connection.pipe(socket);

@@ -850,7 +850,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath)) });
         if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, explicitWakeJson, applyNoStoreHeaders);
         const upstream = sent.response;
-        noteOwnerReachedRuntime(db, machine, identity, upstream.status);
+        noteOwnerReachedRuntime(db, machine, identity);
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         stripUpstreamCredentials(responseHeaders, resolution.upstream);
@@ -915,11 +915,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           runningMachine = handleMachine;
         }
       }
-    }
-    if (!runningMachine && identity.source === 'mobile-session') {
-      // A Native Mobile app session may wake its own sleeping runtime (substrate-wake mayWakeRuntime).
-      const sessionMachine = await getActiveUserMachineByHandle(db, identity.handle);
-      if (sessionMachine && takesOnDemandPath(sessionMachine)) runningMachine = sessionMachine;
     }
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
@@ -1045,7 +1040,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         shouldReleaseRuntimeProxyTimeout(c.req.method, path)) });
         if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, sessionWakeJson, applyNoStoreHeaders);
         const upstream = sent.response;
-        noteOwnerReachedRuntime(db, runningMachine, identity, upstream.status);
+        noteOwnerReachedRuntime(db, runningMachine, identity);
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,

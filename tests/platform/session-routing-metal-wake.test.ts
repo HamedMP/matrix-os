@@ -212,17 +212,31 @@ describe('waking a metal runtime from every entry point', () => {
     expect(asleep.headers.get('x-matrix-ingress-error')).toBeNull();
   });
 
-  it('an owner Native Mobile app session wakes a sleeping VM and is served', async () => {
+  it('the Native Mobile client, sending the owner\'s Clerk bearer, wakes a sleeping VM from /vm/<handle>/health and API routes', async () => {
+    await setup();
+    // apps/mobile/lib/gateway-client.ts sends `Authorization: Bearer <Clerk session token>` on every /vm/<handle> call.
+    const nativeMobile = { host: 'app.matrix-os.com', authorization: `Bearer ${OWNER}`, accept: 'application/json' };
+
+    const health = await platform.request('/vm/alice/health', { headers: nativeMobile });
+    expect(health.status).toBe(200);
+    expect(rig.resumeCalls()).toHaveLength(1);
+    expect((await rig.machine())?.status).toBe('running');
+
+    const api = await platform.request('/vm/alice/api/projects', { headers: nativeMobile });
+    expect(api.status).toBe(200);
+    expect(rig.ingress.requests.map((req) => req.path)).toEqual(['/health', '/api/projects']);
+  });
+
+  it('a WebView app session token alone never wakes a sleeping VM', async () => {
     await setup();
     const response = await platform.request('/apps/notes/?session=alice.opaque-mobile-token', {
       headers: { host: 'app.matrix-os.com' },
     });
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('runtime');
-    expect(rig.resumeCalls()).toHaveLength(1);
-    expect((await rig.machine())?.status).toBe('running');
-    expect(rig.ingress.requests.at(-1)!.path).toBe('/apps/notes/?session=alice.opaque-mobile-token');
+    expect(response.status).toBe(503);
+    expect(rig.hostd.requests).toEqual([]);
+    expect(rig.ingress.requests).toEqual([]);
+    expect((await rig.machine())?.status).toBe('suspended');
   });
 
   it.each([
@@ -372,20 +386,14 @@ describe('who may wake an on-demand runtime', () => {
   it.each([
     ['a collaborator', { userId: 'user_other', source: 'auth' }],
     ['a share link or capability route', { userId: '', source: 'static-route' }],
-    ['a mobile session for another machine', { userId: '', source: 'mobile-session', handle: 'bob' }],
-    ['a mobile session tied to another user', { userId: 'user_other', source: 'mobile-session', handle: HANDLE }],
+    ['a WebView app session (platform cannot verify its token)', { userId: '', source: 'mobile-session', handle: HANDLE }],
+    ['a mobile session naming the owner without a verified credential', { userId: OWNER, source: 'mobile-session', handle: HANDLE }],
     ['an identity without a source', { userId: OWNER }],
   ])('does not wake for %s and answers not available', async (_label, identity) => {
     const { response, ensureRunning } = await decide(identity);
     expect(ensureRunning).not.toHaveBeenCalled();
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' });
-  });
-
-  it('lets the Native Mobile app session for this machine wake it', async () => {
-    const { response, ensureRunning } = await decide({ userId: '', source: 'mobile-session', handle: HANDLE });
-    expect(ensureRunning).toHaveBeenCalledTimes(1);
-    await response.text();
   });
 
   it('lets a non-owner reach a runtime that is already routable without waking it', async () => {

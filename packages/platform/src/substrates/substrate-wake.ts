@@ -40,8 +40,6 @@ const defaultLog: Log = (message, detail) => console.error(message, JSON.stringi
 export interface WakeIdentity {
   userId: string;
   source?: string;
-  /** The handle the identity is routed to; Native Mobile app sessions carry only this. */
-  handle?: string;
 }
 
 export type SubstrateWakeDecision =
@@ -73,19 +71,15 @@ export function isRuntimeOwner(machine: Pick<UserMachineRecord, 'clerkUserId'>, 
 }
 
 /**
- * A Native Mobile app session for this machine (ruling: using the mobile app
- * wakes the computer). The platform sees only the session's handle; the
- * opaque token is minted and checked by the runtime itself, so the session is
- * scoped to its own machine and to no other user.
+ * Who may start an on-demand runtime: only an identity the platform verified
+ * as the owner (Clerk session or platform/native token, source `auth`). The
+ * Native Mobile client sends the owner's Clerk bearer on `/vm/<handle>` calls,
+ * so it wakes through this rule. WebView app-session tokens are minted and
+ * checked only by the runtime, so the platform cannot verify them and they
+ * never wake a runtime.
  */
-function isMachineMobileSession(machine: Pick<UserMachineRecord, 'clerkUserId' | 'handle'>, identity: WakeIdentity): boolean {
-  return identity.source === 'mobile-session' && identity.handle === machine.handle
-    && (identity.userId === '' || identity.userId === machine.clerkUserId);
-}
-
-/** Who may start an on-demand runtime: its owner, or the Native Mobile app session for it. */
-export function mayWakeRuntime(machine: Pick<UserMachineRecord, 'clerkUserId' | 'handle'>, identity: WakeIdentity): boolean {
-  return isRuntimeOwner(machine, identity) || isMachineMobileSession(machine, identity);
+export function mayWakeRuntime(machine: Pick<UserMachineRecord, 'clerkUserId'>, identity: WakeIdentity): boolean {
+  return isRuntimeOwner(machine, identity);
 }
 
 /** A non-VPS machine in a state an owner request may wake; it takes the proxy path even while not routable. */
@@ -296,20 +290,13 @@ export async function recordOwnerActivity(db: PlatformDB, machineId: string, now
   return true;
 }
 
-/**
- * Fire-and-forget activity stamp for an owner request that reached an
- * on-demand runtime. A mobile app session counts only once the runtime
- * accepted it, so a made-up session token cannot keep a VM awake.
- */
+/** Fire-and-forget activity stamp for a verified owner request that reached an on-demand runtime. */
 export function noteOwnerReachedRuntime(
   db: PlatformDB,
-  machine: Pick<UserMachineRecord, 'machineId' | 'clerkUserId' | 'handle' | 'substrate'>,
+  machine: Pick<UserMachineRecord, 'machineId' | 'clerkUserId' | 'substrate'>,
   identity: WakeIdentity,
-  upstreamStatus: number,
 ): void {
-  if (machine.substrate === 'vps') return;
-  const counts = isRuntimeOwner(machine, identity) || (isMachineMobileSession(machine, identity) && upstreamStatus < 400);
-  if (!counts) return;
+  if (machine.substrate === 'vps' || !isRuntimeOwner(machine, identity)) return;
   recordOwnerActivity(db, machine.machineId, new Date()).catch((error: unknown) => {
     console.error('[substrate-wake] owner activity write failed', error instanceof Error ? error.name : 'unknown');
   });
