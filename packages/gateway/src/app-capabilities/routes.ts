@@ -93,6 +93,10 @@ export function createAppCapabilityRoutes(options: Options): Hono {
       console.warn("[app-capabilities] request failed", error instanceof Error ? error.name : "UnknownError");
       if (error instanceof BotIntegrationError) {
         if (error.effectUnknown) return context.json({ error: "Integration result is uncertain. Check the service before retrying." }, 502);
+        if (error.code === "resync_required") return context.json({
+          error: "Mailbox history expired. Run a bounded resync before continuing.",
+          code: "gmail_history_expired", resync_required: true,
+        }, 409);
         const status = error.code === "ambiguous" ? 409 : error.code === "missing" ? 404
           : error.code === "denied" ? 403 : error.code === "invalid" ? 400 : 503;
         return context.json(failures[error.code], status);

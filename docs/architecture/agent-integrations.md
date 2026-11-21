@@ -19,7 +19,11 @@ Matrix exposes one stable integration boundary with these operations:
 - list and describe personal Custom MCP servers
 - call one selected Custom MCP tool through the Matrix broker
 
-Pipedream remains behind this boundary for OAuth and provider-token custody. It is never configured separately in an agent or customer VPS.
+Pipedream remains behind this boundary for its connections and provider-token custody. It is never configured separately in an agent or customer VPS.
+
+The restricted Gmail pilot also offers a Matrix-owned Google OAuth connection alongside Pipedream. Direct Gmail credentials are encrypted in platform Postgres and bound to the exact owner/account. The immutable staff allowlist and default-off switch control admission; existing grants and per-write approvals still apply. Native account IDs never fall back to Pipedream. Disabling the pilot blocks consent, mailbox actions and refresh while retaining confirmed revocation and account-deletion cleanup. See [verification readiness](../../specs/551-direct-gmail/verification-readiness.md).
+
+The pilot does not establish Google verification or model-recipient, retention or deletion qualification. Public rollout remains gated on that evidence. Native lifecycle handlers live in focused modules; changes to the large legacy route file should remain narrow dispatch guards until its separate extraction.
 
 The managed catalog contains 15 services. Google Docs, Notion, Figma, PostHog,
 Jira, X, and a customer-connected read-only Stripe account use the Pipedream

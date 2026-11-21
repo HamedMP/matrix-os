@@ -6,7 +6,7 @@ export const JevUserLabelId = z.string().max(160).regex(/^Label_[A-Za-z0-9_-]+$/
 export const JevCategoryLabel = z.enum(Object.values(EMAIL_TRIAGE_LABELS));
 const Identity = { externalUserId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/),
   accountId: z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/) };
-const Input = z.discriminatedUnion("kind", [
+export const BoundedGmailLabelsSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...Identity, kind: z.literal("labels") }),
   z.strictObject({ ...Identity, kind: z.literal("message-labels"), messageId: JevInboxGmailIdSchema }),
   z.strictObject({ ...Identity, kind: z.literal("create-label"), name: JevCategoryLabel }),
@@ -29,7 +29,7 @@ export function createBoundedPipedreamLabels(options: {
   const project = z.string().min(1).max(160).regex(/^[A-Za-z0-9_-]+$/).parse(options.projectId);
   const environment = z.enum(["development", "production"]).parse(options.environment);
   return async (raw: unknown, callerSignal?: AbortSignal): Promise<unknown> => {
-    const input = Input.parse(raw);
+    const input = BoundedGmailLabelsSchema.parse(raw);
     return boundedOperation(async signal => {
       const target = new URL("https://gmail.googleapis.com/gmail/v1/users/me/labels");
       let body: string | undefined;
