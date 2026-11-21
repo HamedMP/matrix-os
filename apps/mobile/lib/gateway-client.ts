@@ -71,7 +71,11 @@ import {
   type SourceControlPrepareCommitResponse,
   boundedListSchema,
 } from "@matrix-os/contracts";
+import { fetchWithRuntimeWake, RUNTIME_WAKE_ERROR_CODES } from "@matrix-os/contracts/runtime-wake";
+import { RuntimeWakeTracker, type RuntimeWakeHandler } from "@/lib/runtime-wake-tracker";
 import { z } from "zod/v4";
+
+export type { RuntimeWakeEvent } from "@/lib/runtime-wake-tracker";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -365,6 +369,7 @@ export class GatewayClient {
   private state: ConnectionState = "disconnected";
   private messageHandlers = new Set<MessageHandler>();
   private stateHandlers = new Set<StateHandler>();
+  private runtimeWake = new RuntimeWakeTracker();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = false;
@@ -472,6 +477,15 @@ export class GatewayClient {
   onStateChange(handler: StateHandler): () => void {
     this.stateHandlers.add(handler);
     return () => this.stateHandlers.delete(handler);
+  }
+
+  /** True once a request has waited at least 3 s for the computer to wake. */
+  get isWakeNoticeVisible(): boolean {
+    return this.runtimeWake.isNoticeVisible;
+  }
+
+  onRuntimeWake(handler: RuntimeWakeHandler): () => void {
+    return this.runtimeWake.subscribe(handler);
   }
 
   connect(): void {
@@ -613,15 +627,61 @@ export class GatewayClient {
     return this.fetchAbsolute(this.withBaseQuery(`${base}${path}`), init);
   }
 
+  /**
+   * Waits for a sleeping computer: a 503 wake response is retried per the
+   * shared policy (`@matrix-os/contracts/runtime-wake`), each attempt with
+   * fresh auth headers and its own timeout. Mutating requests are retried
+   * only when the platform answered with `runtimeState`, which it sends
+   * before proxying. When retrying stops, the last response is returned
+   * unchanged (callers already treat a 503 as failure) and a `failed`
+   * event carries the typed reason to the UI.
+   */
   private async fetchAbsolute(url: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(url, {
-      ...init,
-      headers: {
-        ...(await this.authHeaders()),
-        ...(init.headers as Record<string, string> | undefined),
-      },
-      signal: init.signal ?? createTimeoutSignal(DEFAULT_GATEWAY_FETCH_TIMEOUT_MS),
-    });
+    let waiting = false;
+    try {
+      const { response, exhausted } = await fetchWithRuntimeWake(
+        async () => fetch(url, {
+          ...init,
+          headers: {
+            ...(await this.authHeaders()),
+            ...(init.headers as Record<string, string> | undefined),
+          },
+          signal: init.signal ?? createTimeoutSignal(DEFAULT_GATEWAY_FETCH_TIMEOUT_MS),
+        }),
+        {
+          method: init.method,
+          signal: init.signal,
+          onWaiting: () => {
+            if (waiting) return;
+            waiting = true;
+            this.runtimeWake.begin();
+          },
+        },
+      );
+      if (waiting) {
+        waiting = false;
+        this.runtimeWake.end();
+      }
+      if (exhausted) this.runtimeWake.fail(RUNTIME_WAKE_ERROR_CODES[exhausted.kind]);
+      return response;
+    } finally {
+      if (waiting) this.runtimeWake.end();
+    }
+  }
+
+  /**
+   * Resolves once the computer answers (or the wake budget runs out). A
+   * React Native WebSocket cannot read the status of a refused upgrade, so
+   * reconnects wait on this wake-aware HTTP probe first.
+   */
+  async waitForRuntimeAwake(): Promise<boolean> {
+    try {
+      const res = await this.fetchGateway("/health");
+      return res.ok;
+    } catch (err: unknown) {
+      logGatewayCatchWarning("runtime wake probe unavailable", err);
+      return false;
+    }
   }
 
   async webViewHeaders(): Promise<Record<string, string> | undefined> {

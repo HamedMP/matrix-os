@@ -62,6 +62,8 @@ export class MobileTerminalClient {
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq, "exclusive");
     const connection = new MobileTerminalConnection(ws, options, async (fromSeq, ownership) => {
+      // A sleeping computer refuses the upgrade; wait for its wake before reopening.
+      await this.gateway.waitForRuntimeAwake();
       const nextToken = await this.gateway.getWsToken();
       this.gateway.setWebSocketToken(nextToken);
       return this.gateway.openTerminalWebSocket(nextToken, options.sessionId, fromSeq, ownership);
