@@ -75,7 +75,9 @@ export class TerminalExitRecorder {
 
   private async readCode(path: string): Promise<number | null> {
     // O_NOFOLLOW: a symlink planted under a tab's name is never followed.
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch((error: unknown) => {
+    // O_NONBLOCK: a named pipe opens at once instead of waiting for a writer,
+    // and the regular-file check below rejects it.
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error: unknown) => {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ELOOP") return null;
       throw error;

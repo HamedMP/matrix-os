@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TerminalRuntime,
   type ZellijAttachment,
@@ -33,12 +33,23 @@ const TAB_NAME = `matrix-tab-${"a".repeat(32)}`;
 class RecordingZellij implements ZellijRuntimeAdapter {
   readonly commands: Array<string[] | undefined> = [];
   listCalls = 0;
+  /** Tabs Zellij already has, by internal name, as after a restart. */
+  readonly existing = new Map<string, { tabId: number; paneId: string }>();
   private nextTabId = 1;
+  /** Starts the command, then never answers, like a service stopped mid-launch. */
+  constructor(private readonly hangAfterLaunch = false) {}
   async ensureSession(): Promise<void> { /* sessions are implicit */ }
   async createTab(_session: string, input: { internalName: string; command?: string[] }) {
     this.commands.push(input.command);
     const tabId = this.nextTabId++;
+    if (this.hangAfterLaunch) return new Promise<never>(() => undefined);
     return { tabId, paneId: `terminal_${tabId}` };
+  }
+  async findTabsByInternalName(_session: string, names: string[]) {
+    return Object.fromEntries(names.flatMap((name) => {
+      const ids = this.existing.get(name);
+      return ids ? [[name, ids]] : [];
+    }));
   }
   async openAttachment(): Promise<ZellijAttachment> {
     return { write: async () => undefined, resize: async () => undefined, close: async () => undefined };
@@ -77,6 +88,17 @@ describe("command exit files", () => {
     await writeFile(target, "4\n");
     await symlink(target, join(directory, `matrix-tab-${"d".repeat(32)}`));
     expect(await recorder.read()).toEqual([]);
+  });
+
+  it("skips a named pipe under a tab's name without waiting for a writer", async () => {
+    const directory = await tempDir();
+    const recorder = new TerminalExitRecorder({ directory });
+    await recorder.prepare();
+    expect(spawnSync("mkfifo", [join(directory, TAB_NAME)]).status).toBe(0);
+    await writeFile(join(directory, `matrix-tab-${"e".repeat(32)}`), "5\n");
+    const read = recorder.read();
+    const outcome = await Promise.race([read, new Promise((resolve) => setTimeout(() => resolve("stalled"), 2_000))]);
+    expect(outcome).toEqual([{ zellijTabName: `matrix-tab-${"e".repeat(32)}`, exitCode: 5 }]);
   });
 });
 
@@ -119,5 +141,30 @@ describe("runtime with command exit files", () => {
     await writeFile(join(exitDirectory, TAB_NAME), "0\n");
     await runtime.sweepRecordedExits();
     expect(await readdir(exitDirectory)).toEqual([]);
+  });
+
+  it("keeps a command's exit file after the service stops mid-launch", async () => {
+    const homePath = await tempDir();
+    const exitDirectory = join(homePath, "exits");
+    const exits = new TerminalExitRecorder({ directory: exitDirectory });
+    await exits.prepare();
+    const firstStore = new TerminalWorkspaceStore({ homePath });
+    const stopping = new RecordingZellij(true);
+    const first = new TerminalRuntime({ store: firstStore, zellij: stopping, exits });
+    const workspace = await first.ensureWorkspace({ projectId: "app" });
+    void first.createTab(workspace.id, { name: "agent", cwd: "", command: ["claude"] });
+    await vi.waitFor(() => expect(stopping.commands).toHaveLength(1));
+
+    // A new service finds the pane the wrapped command already runs in.
+    const store = new TerminalWorkspaceStore({ homePath });
+    const [tab] = Object.values((await store.getRuntimeWorkspace(workspace.id))!.tabs);
+    const zellij = new RecordingZellij();
+    zellij.existing.set(tab!.zellijTabName, { tabId: 7, paneId: "terminal_7" });
+    const runtime = new TerminalRuntime({ store, zellij, exits });
+    await runtime.restoreAll();
+    expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab!.id]!.status).toBe("running");
+
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(0);
   });
 });

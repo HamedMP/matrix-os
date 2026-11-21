@@ -301,7 +301,7 @@ export class TerminalRuntime {
           ? await this.zellij.findTabByInternalName?.(stagedWorkspace.zellijSessionName, internalTab.zellijTabName)
           : undefined;
         if (!runtimeIds) {
-          const launch = await this.commandLaunch(internalTab.zellijTabName, startupCommand, Boolean(internalTab.nativeHost));
+          const launch = await this.commandLaunch({ workspaceId, tabId: stagedTab.id }, internalTab.zellijTabName, startupCommand, Boolean(internalTab.nativeHost));
           // The command starts inside createTab: mark the pane's start before it.
           const launchedAt = this.store.currentTime();
           runtimeIds = {
@@ -441,7 +441,7 @@ export class TerminalRuntime {
             await this.store.markTabExited({ workspaceId, tabId: tab.id });
             continue;
           }
-          const launch = await this.commandLaunch(tab.zellijTabName, tab.startupCommand, false);
+          const launch = await this.commandLaunch({ workspaceId, tabId: tab.id }, tab.zellijTabName, tab.startupCommand, false);
           const launchedAt = this.store.currentTime();
           ids = {
             ...await this.zellij.createTab(workspace.zellijSessionName, {
@@ -912,11 +912,21 @@ export class TerminalRuntime {
   }
 
   /** The command Zellij runs for a tab: under the exit recorder when there is one. */
-  private async commandLaunch(zellijTabName: string, command: readonly string[] | undefined, nativeHost: boolean): Promise<{ command?: string[]; exitRecorded: boolean }> {
+  private async commandLaunch(
+    ref: TerminalRef,
+    zellijTabName: string,
+    command: readonly string[] | undefined,
+    nativeHost: boolean,
+  ): Promise<{ command?: string[]; exitRecorded: boolean }> {
     if (!command?.length) return { exitRecorded: false };
     // A native tab's pane runs the host's attach helper; its host owns the tab's lifetime.
-    if (!this.exits || nativeHost) return { command: [...command], exitRecorded: false };
+    if (!this.exits || nativeHost) {
+      await this.store.markExitRecorded(ref, false);
+      return { command: [...command], exitRecorded: false };
+    }
     await this.exits.clear(zellijTabName);
+    // Saved before the command starts, so recovery after a stop mid-launch keeps it.
+    await this.store.markExitRecorded(ref, true);
     return { command: this.exits.wrap(zellijTabName, command), exitRecorded: true };
   }
 

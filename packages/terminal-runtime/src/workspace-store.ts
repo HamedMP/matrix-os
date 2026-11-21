@@ -307,7 +307,9 @@ export class TerminalWorkspaceStore {
       tab.zellijPaneId = zellijPaneId;
       if (tab.startupCommand !== undefined) {
         tab.heldOnExit = tab.startupCommand.length > 0;
-        tab.exitRecorded = runtimeIds.exitRecorded === true;
+        // Recovery finds the pane without knowing how it was launched; the
+        // choice saved before launch (markExitRecorded) then stands.
+        tab.exitRecorded = runtimeIds.exitRecorded ?? tab.exitRecorded === true;
       }
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
@@ -568,6 +570,22 @@ export class TerminalWorkspaceStore {
       tab.status = "unavailable"; tab.exitCode = null; tab.revision++; tab.updatedAt = now;
       workspace.revision++; workspace.updatedAt = now; state.revision++;
       return this.toPublicTab(tab);
+    });
+  }
+
+  /**
+   * Saves, before a starting tab's command is launched, that the command writes
+   * its own exit file, so a service stopped mid-launch recovers the tab without
+   * falling back to the `list-panes` sweep.
+   */
+  async markExitRecorded(refInput: TerminalRef, exitRecorded: boolean): Promise<void> {
+    const ref = TerminalRefSchema.parse(refInput);
+    await this.mutate((state) => {
+      const tab = state.workspaces[ref.workspaceId]?.tabs[ref.tabId];
+      if (!tab) throw new TerminalRuntimeError("not_found");
+      if (tab.exitRecorded === exitRecorded) return;
+      tab.exitRecorded = exitRecorded;
+      state.revision += 1;
     });
   }
 
