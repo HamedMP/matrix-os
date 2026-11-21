@@ -108,6 +108,7 @@ export function SharedChatComposer({
   onAbort,
   busy,
   submitWhileBusy = false,
+  sendLabel = "Send",
   disabled = false,
   placeholder = "How can I help you today?",
   ariaLabel = "Message chat",
@@ -149,6 +150,7 @@ export function SharedChatComposer({
   onAbort?: () => void;
   busy: boolean;
   submitWhileBusy?: boolean;
+  sendLabel?: string;
   disabled?: boolean;
   placeholder?: string;
   ariaLabel?: string;
@@ -462,6 +464,7 @@ export function SharedChatComposer({
         onAbort={onAbort}
         busy={busy}
         submitWhileBusy={submitWhileBusy}
+        sendLabel={sendLabel}
         disabled={disabled}
         canSubmit={!providerCatalogLoading && !blockedDriveContext && !speechActive && !disabled && (draftCanSubmit || canSendProjectSkill)}
         autoFocus={autoFocus}

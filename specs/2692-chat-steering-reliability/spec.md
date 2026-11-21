@@ -95,3 +95,20 @@ automation limitations with the evidence.
 - Same-run provider input remains bounded; rejection preserves prior receipts.
 - Recommend Chat owner review of receipt reconciliation and rapid steering.
 - No merge or production rollout is part of this task.
+
+## Native submit-label follow-up and extraction plan
+
+Live Electron testing at40abb1a768 completed queue admission, draft clearing,
+explicit steering and ELECTRON-ALPHA-ACK on the provider preview with Matrix AI.
+The busy submit action still said Send while it stored a queued turn. Label
+ordinary active-run submissions Queue next, preserving Send for idle drafts and
+editing an existing queued message. Move the complete queue/edit/reorder/cancel/
+steer scenario out of the1700-line workspace suite into a focused test file;
+retain all assertions except the corrected busy-button expectation.
+
+CanonicalChatWorkspace is a1140-line composition entrypoint. This follow-up adds
+only the submit-label binding. Before another composer behavior is added, extract
+its SharedChatComposer configuration and footer controls into a typed workspace
+composer component, keeping queue/admission callbacks at the controller boundary.
+The focused real-workspace regression must continue to cover the rendered button,
+queue acceptance, edit routing and committed steering receipts after extraction.
