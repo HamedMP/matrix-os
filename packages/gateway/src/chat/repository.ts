@@ -3,7 +3,7 @@ import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
 import { readChatImportSource } from "./import-source.js";
-import { listChats, updateChat, renameChat } from "./metadata-repository.js";
+import { archiveProjectChats, listChats, searchChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
@@ -662,6 +662,7 @@ export class ChatRepository {
         title_manual: false,
         activity_at: timestamp,
         lifecycle: "active",
+        archived_at: null,
         attention: "none",
         revision: 0,
         message_count: 0,
@@ -921,6 +922,13 @@ export class ChatRepository {
 
   async update(owner: ChatOwner, chatId: string, input: UpdateChatInput): Promise<ChatRecord> {
     return updateChat(this.metadataDependencies(), owner, chatId, input);
+  }
+
+  async archiveProjectChats(ownerInput: ChatOwner, projectIdInput: string): Promise<{
+    archivedIds: string[]; archived: Array<{ chatId: string; revision: number }>;
+    skippedIds: string[]; archivedCount: number; skippedCount: number;
+  }> {
+    return archiveProjectChats(this.metadataDependencies(), ownerInput, projectIdInput);
   }
 
   async rename(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<ChatRecord> {
@@ -1626,26 +1634,10 @@ export class ChatRepository {
     queryInput: string,
     limitInput = 20,
     projectId?: string | null,
+    lifecycle?: "active" | "archived",
+    cursor?: { updatedAt: string; chatId: string },
   ): Promise<ChatRecord[]> {
-    const owner = validateOwner(ownerInput);
-    const searchText = queryInput.trim().slice(0, 200);
-    if (!searchText) return [];
-    let query = this.kysely.selectFrom("chats")
-      .innerJoin("chat_messages", "chat_messages.chat_id", "chats.id")
-      .selectAll("chats")
-      .distinct()
-      .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
-      .where(publicChatIdPredicate(sql.ref("chats.id")))
-      .where("chat_messages.state", "=", "committed")
-      .where(sql<boolean>`to_tsvector('simple', chat_messages.search_text) @@ plainto_tsquery('simple', ${searchText})`);
-    if (projectId !== undefined) {
-      query = projectId === null
-        ? query.where("chats.project_id", "is", null)
-        : query.where("chats.project_id", "=", requireSafeRef(projectId));
-    }
-    const rows = await query.orderBy("chats.updated_at", "desc")
-      .limit(Math.max(1, Math.min(100, Math.trunc(limitInput)))).execute();
-    return Promise.all(rows.map((row) => toPrincipalRecord(this.kysely, owner, row)));
+    return searchChats(this.metadataDependencies(), ownerInput, queryInput, limitInput, projectId, lifecycle, cursor);
   }
 
   async exportChat(ownerInput: ChatOwner, chatId: string): Promise<ChatExport | null> {
