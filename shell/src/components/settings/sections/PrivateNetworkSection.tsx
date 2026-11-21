@@ -13,12 +13,18 @@ class PrivateNetworkRequestError extends Error {
 }
 
 function createShellTransport(base: string): PrivateNetworkTransport {
-  async function send<T>(method: "GET" | "POST" | "DELETE", path: string, body: unknown, signal: AbortSignal): Promise<T> {
+  async function send<T>(
+    method: "GET" | "POST" | "DELETE",
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<T> {
     const response = await fetch(`${base}${path}`, {
       method,
       credentials: "include",
       cache: "no-store",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       ...(method === "GET" ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
     });
     if (!response.ok) throw new PrivateNetworkRequestError(response.status);
@@ -26,7 +32,7 @@ function createShellTransport(base: string): PrivateNetworkTransport {
   }
   return {
     get: (path, signal) => send("GET", path, undefined, signal),
-    post: (path, body, signal) => send("POST", path, body, signal),
+    post: (path, body, signal, options) => send("POST", path, body, signal, options?.timeoutMs),
     delete: (path, body, signal) => send("DELETE", path, body, signal),
   };
 }

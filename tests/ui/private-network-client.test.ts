@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createPrivateNetworkClient,
   PRIVATE_NETWORK_BASE_PATH,
+  PRIVATE_NETWORK_CONNECT_TIMEOUT_MS,
+  PRIVATE_NETWORK_DISCONNECT_TIMEOUT_MS,
   type PrivateNetworkTransport,
 } from "../../packages/ui/src/private-network/client";
 import {
@@ -37,13 +39,21 @@ describe("createPrivateNetworkClient", () => {
       [`${PRIVATE_NETWORK_BASE_PATH}/machines`, signal],
     ]);
     expect(transport.post.mock.calls).toEqual([
-      [`${PRIVATE_NETWORK_BASE_PATH}/connect`, {}, signal],
-      [`${PRIVATE_NETWORK_BASE_PATH}/disconnect`, { confirm: true }, signal],
+      [`${PRIVATE_NETWORK_BASE_PATH}/connect`, {}, signal, { timeoutMs: PRIVATE_NETWORK_CONNECT_TIMEOUT_MS }],
+      [`${PRIVATE_NETWORK_BASE_PATH}/disconnect`, { confirm: true }, signal, { timeoutMs: PRIVATE_NETWORK_DISCONNECT_TIMEOUT_MS }],
       [`${PRIVATE_NETWORK_BASE_PATH}/join-codes`, {}, signal],
     ]);
     expect(transport.delete.mock.calls).toEqual([
       [`${PRIVATE_NETWORK_BASE_PATH}/machines/0123456789abcdef0123456789abcdef`, { revision: 7 }, signal],
     ]);
+  });
+
+  it("gives connect and disconnect enough time for the gateway's full Tailscale wait", () => {
+    // Gateway worst case (packages/gateway/src/private-network/tailscale-cli.ts + routes.ts):
+    // connect = status 10 s + login-link wait 15 s + status 10 s + route status 10 s;
+    // disconnect = tailscale down 15 s + status 10 s.
+    expect(PRIVATE_NETWORK_CONNECT_TIMEOUT_MS).toBeGreaterThan(45_000);
+    expect(PRIVATE_NETWORK_DISCONNECT_TIMEOUT_MS).toBeGreaterThan(25_000);
   });
 
   it.each(["../etc", "0123456789ABCDEF0123456789ABCDEF", "abc", "0123456789abcdef0123456789abcdef/x"])(

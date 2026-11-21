@@ -7,6 +7,15 @@
 
 export const PRIVATE_NETWORK_BASE_PATH = "/api/system/private-network";
 
+/**
+ * Connect and disconnect wait on the Tailscale CLI on the gateway, longer than
+ * an ordinary request. Gateway worst case (`tailscale-cli.ts`, `routes.ts`):
+ * connect = status 10 s + login-link wait 15 s + status 10 s + route status 10 s;
+ * disconnect = `tailscale down` 15 s + status 10 s. Each adds a margin.
+ */
+export const PRIVATE_NETWORK_CONNECT_TIMEOUT_MS = 50_000;
+export const PRIVATE_NETWORK_DISCONNECT_TIMEOUT_MS = 30_000;
+
 export type PrivateNetworkAccessMode = "tailscale" | "headscale" | "public";
 
 export type PrivateNetworkState =
@@ -70,9 +79,14 @@ export interface JoinCodeResponse {
   command: string;
 }
 
+export interface PrivateNetworkRequestOptions {
+  /** Replaces the surface's default request timeout for slow operations. */
+  timeoutMs?: number;
+}
+
 export interface PrivateNetworkTransport {
   get<T>(path: string, signal: AbortSignal): Promise<T>;
-  post<T>(path: string, body: unknown, signal: AbortSignal): Promise<T>;
+  post<T>(path: string, body: unknown, signal: AbortSignal, options?: PrivateNetworkRequestOptions): Promise<T>;
   delete<T>(path: string, body: unknown, signal: AbortSignal): Promise<T>;
 }
 
@@ -91,8 +105,9 @@ export function createPrivateNetworkClient(transport: PrivateNetworkTransport): 
   const base = PRIVATE_NETWORK_BASE_PATH;
   return {
     status: (signal) => transport.get(base, signal),
-    connect: (signal) => transport.post(`${base}/connect`, {}, signal),
-    disconnect: (signal) => transport.post(`${base}/disconnect`, { confirm: true }, signal),
+    connect: (signal) => transport.post(`${base}/connect`, {}, signal, { timeoutMs: PRIVATE_NETWORK_CONNECT_TIMEOUT_MS }),
+    disconnect: (signal) =>
+      transport.post(`${base}/disconnect`, { confirm: true }, signal, { timeoutMs: PRIVATE_NETWORK_DISCONNECT_TIMEOUT_MS }),
     machines: (signal) => transport.get(`${base}/machines`, signal),
     createJoinCode: (signal) => transport.post(`${base}/join-codes`, {}, signal),
     removeMachine: (id, revision, signal) => {

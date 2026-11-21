@@ -12,7 +12,8 @@ export default function PrivateNetworkSection() {
     const runtime = api.forRuntime(runtimeSlot);
     return createPrivateNetworkClient({
       get: (path, signal) => runtime.get(path, { signal, cache: "no-store" }),
-      post: (path, body, signal) => runtime.post(path, body, { signal }),
+      post: (path, body, signal, options) =>
+        runtime.post(path, body, options?.timeoutMs ? { signal, timeoutMs: options.timeoutMs } : { signal }),
       delete: (path, body, signal) => runtime.delete(path, body, { signal }),
     });
   }, [api, runtimeSlot]);
