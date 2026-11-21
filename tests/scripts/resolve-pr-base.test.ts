@@ -59,6 +59,16 @@ describe("CI wiring", () => {
 
   it.each(["pr-size", "patterns"])("%s diffs against the resolved PR base, not github.base_ref", (job) => {
     const resolver = jobs[job].steps.find((step: { id?: string }) => step.id === "pr-base");
+    if (job === "pr-size") {
+      // The size lane reuses the earlier bounded metadata read and pins its
+      // immutable base SHA; do not add another API call just to resolve a ref.
+      const scan = jobs[job].steps.find((step: { name?: string }) => step.name === "Enforce the 50-file / 3000-addition PR limit");
+      expect(jobs.changes.outputs.review_base_sha).toBe("${{ steps.superseded.outputs.review_base_sha }}");
+      expect(scan.env.REVIEW_BASE_SHA).toBe("${{ needs.changes.outputs.review_base_sha }}");
+      expect(scan.run).toContain('check-added-patterns.mjs --base "$REVIEW_BASE_SHA" --only pr-size');
+      expect(resolver).toBeUndefined();
+      return;
+    }
     expect(resolver?.run).toContain("node scripts/ci/resolve-pr-base.mjs");
     expect(resolver?.env?.PR_NUMBER).toBe("${{ github.event.pull_request.number }}");
     expect(resolver?.env?.FALLBACK_BASE_REF).toBe("${{ github.base_ref }}");

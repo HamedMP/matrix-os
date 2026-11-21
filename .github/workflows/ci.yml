@@ -31,6 +31,7 @@ jobs:
     outputs:
       source_sha: ${{ github.sha }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
+      review_base_sha: ${{ steps.superseded.outputs.review_base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
       # A superseded PR head skips every heavy lane: queued runs for pushes that a newer push replaced
       # would otherwise each spend a full CI on the saturated hosted runner pool.
@@ -99,8 +100,14 @@ jobs:
         with:
           script: |
             const pull=context.payload.pull_request;
+            // Native-stack events can name trunk while the PR's live base is its
+            // immediate parent. Pin the review boundary from the existing API read.
+            // On API failure the event base remains a conservative fallback.
+            core.setOutput('review_base_sha',pull.base.sha);
             try{
               const {data:live}=await github.rest.pulls.get({...context.repo,pull_number:pull.number,request:{timeout:10000}});
+              if(!/^[0-9a-f]{40}$/.test(live.base.sha))throw new Error('PR base SHA unavailable');
+              core.setOutput('review_base_sha',live.base.sha);
               const stale=live.head.sha!==pull.head.sha;
               core.setOutput('stale',String(stale));
               if(stale)core.notice(`PR head ${pull.head.sha} was superseded by ${live.head.sha}; skipping CI lanes for the old head.`);
@@ -327,22 +334,10 @@ jobs:
         with:
           node-version: 24
 
-      - name: Resolve the PR's base branch
-        id: pr-base
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          FALLBACK_BASE_REF: ${{ github.base_ref }}
-        # Native stack layers report the stack trunk as base_ref; diff against the layer's real parent.
-        run: |
-          ref="$(node scripts/ci/resolve-pr-base.mjs)"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
       - name: Enforce the 50-file / 3000-addition PR limit
         env:
-          BASE_REF: ${{ steps.pr-base.outputs.ref }}
-        run: node scripts/review/check-added-patterns.mjs --base "origin/$BASE_REF" --only pr-size
+          REVIEW_BASE_SHA: ${{ needs.changes.outputs.review_base_sha }}
+        run: node scripts/review/check-added-patterns.mjs --base "$REVIEW_BASE_SHA" --only pr-size
 
   react-doctor:
     name: React Doctor
