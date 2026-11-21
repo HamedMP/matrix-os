@@ -21,6 +21,7 @@ import {
   drainExistingTerminalSessionQueueWithRetry,
   enqueueExistingTerminalRef,
   hasQueuedExistingTerminalSession,
+  terminalRefDisplayName,
   PROVIDER_TERMINAL_SESSION_EVENT,
 } from "@/lib/provider-terminal-session";
 import { useTerminalSettings, type TerminalThemeId } from "@/stores/terminal-settings";
@@ -856,7 +857,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
           setActiveTabId(existingTab.id);
           requestPaneFocus(getPaneIdsForSession(existingTab.paneTree, sessionId)[0] ?? getFirstPaneId(existingTab.paneTree));
         } else {
-          addSessionTab(formatShellDisplayName(sessionId), sessionId);
+          addSessionTab(terminalRefDisplayName(sessionId) ?? formatShellDisplayName(sessionId), sessionId);
         }
       }
     })();
