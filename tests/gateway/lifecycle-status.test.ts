@@ -10,9 +10,8 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { createBotRoutinesRepository } from "../../packages/gateway/src/bots/repositories/routines.js";
 import { createCronStore } from "../../packages/gateway/src/cron/store.js";
 import { createCronService, type CronService } from "../../packages/gateway/src/cron/service.js";
-import { createHeartbeatRunner } from "../../packages/gateway/src/heartbeat/runner.js";
 import { createTerminalLiveOwnership } from "../../packages/gateway/src/terminal-live-ownership.js";
-import { createChatRunActivity, readLifecycleStatus } from "../../packages/gateway/src/lifecycle/status.js";
+import { createChatRunActivity, gatewayLifecycleSources, readLifecycleStatus } from "../../packages/gateway/src/lifecycle/status.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { insertChat } from "./bots/bot-state-support.js";
 
@@ -166,21 +165,6 @@ describe("lifecycle status", () => {
     });
     expect(status.nextScheduledAt).toBe(new Date(NOW.getTime() + 2 * HOUR).toISOString());
   });
-
-  it("a pending heartbeat does not set nextScheduledAt", async () => {
-    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
-    vi.setSystemTime(NOW);
-    const heartbeat = createHeartbeatRunner({ homePath: tmpdir(), dispatcher: {} as never, everyMinutes: 30 });
-    heartbeat.start();
-    try {
-      // A gateway-shaped source bag that still carries the heartbeat must not let it drive wake-ups.
-      const sources = { heartbeat, cron: { nextRunAt: () => null }, now: () => NOW };
-      expect(await readLifecycleStatus(sources)).toEqual({ busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: true });
-    } finally {
-      heartbeat.stop();
-      vi.useRealTimers();
-    }
-  });
 });
 
 describe("lifecycle nextScheduledAt with real cron and routines", () => {
@@ -261,5 +245,60 @@ describe("lifecycle nextScheduledAt with real cron and routines", () => {
     expect(await routines.hasActiveFire(at(6 * 60_000))).toBe(false);
     expect(await routines.hasActiveFire(at(31 * 60_000))).toBe(true);
     expect((await routines.nextFireAt(at(6 * 60_000)))?.toISOString()).toBe(retryAfter);
+  });
+});
+
+describe("gateway lifecycle source composition", () => {
+  const cronAt = new Date(NOW.getTime() + HOUR);
+  const base = {
+    terminals: { attachedViewerCount: () => 0 },
+    backgroundAgents: { anyRunning: async () => false },
+    cron: { nextRunAt: () => cronAt },
+  };
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { warn = vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  afterEach(() => { warn.mockRestore(); });
+
+  it("reports unknown and an incomplete schedule before bot services have started", async () => {
+    const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: db, bots: null });
+    expect(await readLifecycleStatus({ ...sources, now: () => NOW })).toEqual({
+      busy: true, busyReasons: ["unknown"], nextScheduledAt: cronAt.toISOString(), scheduleComplete: false,
+    });
+  });
+
+  it("reports unknown and an incomplete schedule when the configured owner database did not start", async () => {
+    const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: null, bots: null });
+    expect(await readLifecycleStatus({ ...sources, now: () => NOW })).toEqual({
+      busy: true, busyReasons: ["unknown"], nextScheduledAt: cronAt.toISOString(), scheduleComplete: false,
+    });
+  });
+
+  it("treats chat runs and routines as not applicable without an owner database", async () => {
+    const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: false, chatDb: null, bots: null });
+    expect(await readLifecycleStatus({ ...sources, now: () => NOW })).toEqual({
+      busy: false, busyReasons: [], nextScheduledAt: cronAt.toISOString(), scheduleComplete: true,
+    });
+  });
+
+  it("treats routines as not applicable once bot services started without them", async () => {
+    const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: db, bots: { routines: false } });
+    expect(sources.routines).toBeUndefined();
+    expect(await readLifecycleStatus({ ...sources, now: () => NOW })).toEqual({
+      busy: false, busyReasons: [], nextScheduledAt: cronAt.toISOString(), scheduleComplete: true,
+    });
+  });
+
+  it("reads chat runs and routines once the owner database and bot routines are ready", async () => {
+    const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: db, bots: { routines: true } });
+    const status = await readLifecycleStatus({ ...sources, now: () => NOW });
+    expect(status).toMatchObject({ busy: false, busyReasons: [], scheduleComplete: true });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("never includes the heartbeat among the composed sources", () => {
+    for (const bots of [null, { routines: true }]) {
+      const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: db, bots });
+      expect(Object.keys(sources).sort()).toEqual(["backgroundAgents", "chatRuns", "cron", "routines", "terminals"]);
+    }
   });
 });

@@ -1416,7 +1416,8 @@ export async function createGateway(config: GatewayConfig) {
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit, logBestEffortFailure,
   });
   registerLifecycleRoutes({ app, readStatus: () => readLifecycleStatus(gatewayLifecycleSources({
-    chatDb: chatRepository?.kysely ?? null, routinesEnabled: Boolean(botServices?.routines),
+    ownerDatabaseConfigured: Boolean(databaseUrl), chatDb: chatRepository?.kysely ?? null,
+    bots: botServices ? { routines: Boolean(botServices.routines) } : null,
     terminals: terminalLiveOwnership, backgroundAgents: backgroundAgentRuntime, cron: cronService,
   })) });
 

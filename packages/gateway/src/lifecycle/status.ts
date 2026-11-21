@@ -49,32 +49,50 @@ export function createChatRunActivity(db: Kysely<ChatDatabase>): ChatRunActivity
   };
 }
 
+/** A configured source whose service has not started (or failed to start); reading it reports unknown. */
+export class LifecycleSourceNotReadyError extends Error {
+  constructor() {
+    super("Lifecycle source not ready");
+    this.name = "LifecycleSourceNotReadyError";
+  }
+}
+
+const notReady = (): Promise<never> => Promise.reject(new LifecycleSourceNotReadyError());
+
 /**
  * Compose the gateway's live sources per request. The owner database and bot
  * services start after route registration, so callers pass their current values.
- * Routine tables exist only once bot services bootstrapped them.
+ * Each owner-database source is tri-state:
+ * - ready: read it;
+ * - not applicable (no owner database configured, or bot services started without routines): omit it;
+ * - not ready (configured but not started yet, or failed to start): a source that rejects, so the
+ *   status reports busy `unknown` and, for routines, an incomplete schedule.
  */
 export function gatewayLifecycleSources(deps: {
+  /** DATABASE_URL is set, so chat runs and routines are expected to exist. */
+  ownerDatabaseConfigured: boolean;
   chatDb: Kysely<ChatDatabase> | null;
-  routinesEnabled: boolean;
+  /** null until bot services have started; then whether they include routines. */
+  bots: { routines: boolean } | null;
   terminals: LifecycleSources["terminals"];
   backgroundAgents: LifecycleSources["backgroundAgents"];
   cron: LifecycleSources["cron"];
 }): LifecycleSources {
-  const { chatDb } = deps;
-  const routines = chatDb && deps.routinesEnabled ? createBotRoutinesRepository(ownerBotExecutor(chatDb)) : undefined;
-  return {
-    ...(chatDb ? { chatRuns: createChatRunActivity(chatDb) } : {}),
-    ...(routines ? {
-      routines: {
-        hasActiveFire: (now: Date) => routines.hasActiveFire(now.toISOString()),
-        nextFireAt: (now: Date) => routines.nextFireAt(now.toISOString()),
-      },
-    } : {}),
-    terminals: deps.terminals,
-    backgroundAgents: deps.backgroundAgents,
-    cron: deps.cron,
-  };
+  const { chatDb, bots, ownerDatabaseConfigured } = deps;
+  const sources: LifecycleSources = { terminals: deps.terminals, backgroundAgents: deps.backgroundAgents, cron: deps.cron };
+  if (chatDb) sources.chatRuns = createChatRunActivity(chatDb);
+  else if (ownerDatabaseConfigured) sources.chatRuns = { hasActiveRun: notReady };
+  if (chatDb && bots?.routines) {
+    // Bot services bootstrap the routine tables before they are assigned, so the repository is safe to read.
+    const routines = createBotRoutinesRepository(ownerBotExecutor(chatDb));
+    sources.routines = {
+      hasActiveFire: (now: Date) => routines.hasActiveFire(now.toISOString()),
+      nextFireAt: (now: Date) => routines.nextFireAt(now.toISOString()),
+    };
+  } else if (ownerDatabaseConfigured && (bots === null || !chatDb)) {
+    sources.routines = { hasActiveFire: notReady, nextFireAt: notReady };
+  }
+  return sources;
 }
 
 class LifecycleSourceTimeoutError extends Error {
