@@ -290,6 +290,8 @@ It is capped at 40 tools per session.
     `MATRIX_CORE_REPO_GITHUB_WEBHOOK_SECRET`, and `MATRIX_CORE_REPO_SOURCES`
     (`[{orgId, installationId, repository, ref?}]`, ref defaults to
     `stable`). Anything missing or invalid turns the feature off (503).
+    An empty list is valid and keeps the routes on, so removing the last
+    org answers with an empty pins list and its skills are uninstalled.
     The org ↔ installation mapping is operator-reviewed; self-serve binding
     needs a GitHub user check and is deferred.
     Config is the source of truth: an org removed from the sources gets no

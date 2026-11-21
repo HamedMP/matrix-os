@@ -49,7 +49,7 @@ export function parseCoreRepoConfig(env: NodeJS.ProcessEnv): CoreRepoConfig | nu
     console.warn("[core-repo] configuration rejected: MATRIX_CORE_REPO_SOURCES is not JSON");
     return null;
   }
-  const sources = z.array(SourceSchema).min(1).max(500).safeParse(parsed);
+  const sources = z.array(SourceSchema).max(500).safeParse(parsed);
   if (!sources.success || new Set(sources.data.map(source => source.orgId)).size !== sources.data.length) {
     console.warn("[core-repo] configuration rejected: MATRIX_CORE_REPO_SOURCES is invalid");
     return null;

@@ -31,6 +31,14 @@ describe("Matrix Core repo config", () => {
       { MATRIX_CORE_REPO_SOURCES: JSON.stringify([{ ...source }, { ...source, repository: "acme/other" }]) },
     ]) expect(parseCoreRepoConfig(env(broken))).toBeNull();
   });
+
+  // Fault: removing the last org disables the routes (503), so installers keep that org's skills forever.
+  it("stays enabled with an empty sources list so the last removed org gets an empty pins answer", () => {
+    expect(parseCoreRepoConfig(env({ MATRIX_CORE_REPO_SOURCES: "[]" }))?.sources).toEqual([]);
+    expect(parseCoreRepoConfig(env({ MATRIX_CORE_REPO_SOURCES: undefined }))).toBeNull();
+    expect(parseCoreRepoConfig(env({ MATRIX_CORE_REPO_SOURCES: "" }))).toBeNull();
+    expect(parseCoreRepoConfig(env({ MATRIX_CORE_REPO_SOURCES: "{}" }))).toBeNull();
+  });
 });
 
 describe("GitHub Core repo client", () => {
