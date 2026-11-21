@@ -135,6 +135,43 @@ describe("CLI waits for a waking Matrix computer", () => {
     expect(new Set(signals).size).toBe(3);
   });
 
+  it("tells the user on stderr, once, when a wake takes longer than 3 s", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(waking())
+      .mockResolvedValueOnce(waking())
+      .mockResolvedValueOnce(waking())
+      .mockResolvedValueOnce(workspaces());
+    const client = createShellClient({ gatewayUrl: "http://gateway", fetch: fetchImpl });
+
+    const result = client.listWorkspaces();
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(stderr).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(result).resolves.toEqual([{ id: "main" }]);
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(stderr).toHaveBeenCalledWith("Waking your Matrix computer…\n");
+    expect(stdout).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing for a wake that finishes under 3 s", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const quickWake = wakeResponse({ runtimeState: "starting" }, "2");
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(quickWake).mockResolvedValueOnce(workspaces());
+    const client = createShellClient({ gatewayUrl: "http://gateway", fetch: fetchImpl });
+
+    const result = client.listWorkspaces();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(result).resolves.toEqual([{ id: "main" }]);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(stderr).not.toHaveBeenCalled();
+    expect(stdout).not.toHaveBeenCalled();
+  });
+
   it("does not retry a 503 runtime_unavailable more than once", async () => {
     const fetchImpl = vi.fn(async () => unavailable());
     const client = createShellClient({ gatewayUrl: "http://gateway", fetch: fetchImpl });
