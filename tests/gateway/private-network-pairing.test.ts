@@ -115,7 +115,7 @@ describe("private network pairing", () => {
     Peer: { a: { HostName: "second", DNSName: "second.tail1234.ts.net.", Online: true } },
   };
 
-  function setup(options: { selfHosted?: boolean } = {}) {
+  function setup(options: { selfHosted?: boolean; tailnetScheme?: "http" | "https" | null } = {}) {
     const exec: TailscaleExec = vi.fn(async (args) => {
       if (args[0] === "status") return { stdout: JSON.stringify(status), stderr: "" };
       return { stdout: "", stderr: "" };
@@ -130,6 +130,7 @@ describe("private network pairing", () => {
       config: {
         selfHosted: options.selfHosted ?? true, accessMode: "tailscale", loginServer: null, installOwnerLogin: "alice@example.com",
         runUser: "alice", updateChannel: "dev", ownerId: OWNER, machineId: "self-host-matrix", tailscaleBin: "/usr/bin/tailscale",
+        tailnetScheme: options.tailnetScheme ?? null,
       },
       tailscale,
       ownerLogins,
@@ -158,6 +159,15 @@ describe("private network pairing", () => {
     const signature = sign(null, Buffer.from(pairingMessage({ ...challenge, publicKey: key.publicKey, name: "second", dnsName }), "utf8"), key.privateKey).toString("base64url");
     return request("POST", "/pairing/complete", { joinCode: code, challengeId: challenge.challengeId, publicKey: key.publicKey, signature, name: "second", dnsName });
   }
+
+  it("links to this machine over the scheme the installer served, such as HTTP without tailnet certificates", async () => {
+    // Found on a live VPS: certificates were off, Matrix was served over tailnet
+    // HTTP, but the join command pointed the second server at https.
+    const { request } = setup({ tailnetScheme: "http" });
+    expect(await (await request("GET", "")).json()).toMatchObject({ machine: { url: "http://primary.tail1234.ts.net" } });
+    const issued = await (await request("POST", "/join-codes", {})).json() as { code: string; command: string };
+    expect(issued.command).toContain("--join http://primary.tail1234.ts.net --join-code");
+  });
 
   it("pairs a second machine end to end and lists it with live tailnet status", async () => {
     const { request } = setup();

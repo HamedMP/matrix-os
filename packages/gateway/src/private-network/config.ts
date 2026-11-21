@@ -12,6 +12,8 @@ export interface PrivateNetworkConfig {
   ownerId: string | null;
   machineId: string | null;
   tailscaleBin: string;
+  /** How install-server.sh served Matrix on the tailnet (HTTP when the tailnet has no certificates). */
+  tailnetScheme: "http" | "https" | null;
 }
 
 const ACCESS_MODES = new Set<PrivateNetworkAccessMode>(["tailscale", "headscale", "public"]);
@@ -25,6 +27,13 @@ function httpsOrigin(value: string | undefined): string | null {
     if (error instanceof TypeError) return null;
     throw error;
   }
+}
+
+function urlScheme(value: string | undefined): "http" | "https" | null {
+  if (!value) return null;
+  if (value.startsWith("https://")) return "https";
+  if (value.startsWith("http://")) return "http";
+  return null;
 }
 
 export function readPrivateNetworkConfig(env: NodeJS.ProcessEnv = process.env): PrivateNetworkConfig {
@@ -42,6 +51,7 @@ export function readPrivateNetworkConfig(env: NodeJS.ProcessEnv = process.env): 
     updateChannel: channel && /^[A-Za-z0-9._-]{1,32}$/.test(channel) ? channel : null,
     ownerId: env.MATRIX_USER_ID?.trim() || null,
     machineId: env.MATRIX_MACHINE_ID?.trim() || null,
+    tailnetScheme: urlScheme(env.MATRIX_TAILNET_URL),
     tailscaleBin: env.MATRIX_TAILSCALE_BIN && env.MATRIX_TAILSCALE_BIN.startsWith("/") ? env.MATRIX_TAILSCALE_BIN : "/usr/bin/tailscale",
   };
 }

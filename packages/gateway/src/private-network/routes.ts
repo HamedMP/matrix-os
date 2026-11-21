@@ -92,7 +92,8 @@ async function readJson<T>(c: Context, schema: z.ZodType<T>): Promise<JsonResult
 }
 
 function machineUrl(config: PrivateNetworkConfig, dnsName: string): string {
-  return `${config.accessMode === "headscale" ? "http" : "https"}://${dnsName}`;
+  const scheme = config.tailnetScheme ?? (config.accessMode === "headscale" ? "http" : "https");
+  return `${scheme}://${dnsName}`;
 }
 
 export function createPrivateNetworkRoutes(options: PrivateNetworkRouteOptions): Hono {
