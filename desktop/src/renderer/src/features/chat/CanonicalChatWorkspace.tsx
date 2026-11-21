@@ -90,6 +90,7 @@ import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
+import { CHAT_ELECTRON_PREVIEW_DRAFT, ChatElectronPreview, chatElectronPreviewWorktree } from "./ChatElectronPreview";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
@@ -252,6 +253,7 @@ function CanonicalChatWorkspaceContent({
   const draftScope = globalView === "conversation" && routedComposerChatId
     ? `chat:${routedComposerChatId}` : `new:${projectId ?? "global"}`;
   const composerOwner = useRef({ client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) });
+  const previewDraft = useRef<{ scope: string; identity: string; projectId: string; worktreeId: string } | null>(null);
   useLayoutEffect(() => {
     composerOwner.current = { client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) };
   });
@@ -575,6 +577,14 @@ function CanonicalChatWorkspaceContent({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
+      const previewRequest = submission.text === CHAT_ELECTRON_PREVIEW_DRAFT;
+      const previewRoot = previewRequest && controller.detail ? chatElectronPreviewWorktree(controller.detail) : null;
+      if (previewRequest && (!previewRoot || previewDraft.current?.scope !== draftScope
+        || previewDraft.current.identity !== owner.identity || previewDraft.current.projectId !== previewRoot.projectId
+        || previewDraft.current.worktreeId !== previewRoot.worktreeId)) {
+        setSubmissionError("The worktree selection changed. Clear the draft and request a new Electron preview.");
+        return;
+      }
       const input = {
         parts: directBotId ? botSubmissionParts(parts, botExecution.consentResources) : parts,
         selection: {
@@ -584,7 +594,8 @@ function CanonicalChatWorkspaceContent({
         },
         interactionMode: selection.interactionMode,
         permissionMode: mentionPermission.permissionMode,
-        ...(submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
+        ...(previewRoot ? { executionRoot: previewRoot }
+          : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
@@ -1085,6 +1096,20 @@ function CanonicalChatWorkspaceContent({
             </div>
             </ChatContextMenu>
             <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
+              <ChatElectronPreview
+                key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
+                active={active && !inspectorExclusive && !botIdentityUnknown && !directBotId
+                  && authStatus === "signed-in" && routedComposerChatId === controller.detail.record.chat.id}
+                actorId={actorId}
+                detail={controller.detail}
+                onDraft={composerHasInput || activeRun ? undefined : (text) => {
+                  const root = controller.detail && chatElectronPreviewWorktree(controller.detail);
+                  if (!root) return;
+                  previewDraft.current = { scope: draftScope, identity: admissionIdentity, projectId: root.projectId, worktreeId: root.worktreeId };
+                  setDraft((current) => current.trim() ? current : text);
+                  setLocalComposerFocusRequestId((requestId) => requestId + 1);
+                }}
+              />
               {pendingTool ? (
                 <SupervisedToolApprovalBar
                   label={`Waiting for you · ${pendingTool.bar}`}

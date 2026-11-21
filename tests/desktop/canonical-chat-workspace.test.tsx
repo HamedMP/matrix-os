@@ -128,6 +128,34 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
   });
 
+  it("sends the Electron preview draft in the selected Chat's isolated worktree", async () => {
+    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
+    const ipc = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
+      ? { available: true } : { ok: true });
+    window.operator = { ...window.operator, invoke: ipc };
+    const routeClient = client();
+    const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_preview" } as const;
+    const run = { ...snapshot.runs[0]!, executionRoot: worktree };
+    vi.mocked(routeClient.getDetail).mockResolvedValue({
+      record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: snapshot.activities,
+    });
+    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+      record, message: snapshot.messages[0]!, turn: snapshot.turns[0]!, run, admission: "accepted",
+    });
+
+    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
+      initialView="conversation" active catalog={providerCatalog} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request Electron preview" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent)
+      .toContain("MATRIX_ELECTRON_PREVIEW_V1"));
+    expect(routeClient.admitTurn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
+      expect.objectContaining({ executionRoot: worktree }), { chatScope: "project" }));
+    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
+  });
+
   it("submits live approval actions from the canonical transcript", async () => {
     const approval = createCanonicalChatFixture("approval_required").snapshot;
     const approvalRecord = {
