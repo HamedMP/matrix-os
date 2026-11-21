@@ -208,9 +208,6 @@ ln -sfn "node-$NODE_VERSION" "$OPT_DIR/node"
 
 hostd_changed="$(install_file "$hostd_bundle" "$OPT_DIR/hostd.mjs" 0644)"
 install_file "$guest_agent" "$OPT_DIR/guest-agent/agent.mjs" 0644 >/dev/null
-# A changed helper or template is a firewall change: it re-arms the revert.
-nft_changed="$(install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755)"
-nft_changed+="$(install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644)"
 
 # --- LVM: thin pool, snapshot filesystem, swap ---------------------------------
 # The data RAID1: a "vmdata" partition (type FD00) in the free space of each
@@ -352,18 +349,27 @@ has "${BRIDGE_CIDR%/*}/" ip -4 addr show dev "$BRIDGE" || die "bridge $BRIDGE di
 # --- firewall --------------------------------------------------------------------
 # Dry run first: render with these exact parameters, require SSH on the
 # public interface to be accepted, and let nft parse it, before anything loads.
-/usr/local/libexec/matrix-hostd-nft render --template /usr/local/share/matrix-hostd/nftables.conf \
+# Uses the new helper and template from this checkout; nothing is installed yet.
+bash "$SCRIPT_DIR/matrix-hostd-nft" render --template "$SCRIPT_DIR/nftables.conf" \
   --wan "$wan" --ingress-port "$ingress_port" --api-port "$api_port" >"$work/nftables.nft"
-/usr/local/libexec/matrix-hostd-nft check "$work/nftables.nft" --wan "$wan"
+bash "$SCRIPT_DIR/matrix-hostd-nft" check "$work/nftables.nft" --wan "$wan"
 nft -c -f "$work/nftables.nft"
 log "firewall dry run: ruleset parses and accepts SSH on $wan"
+# Installed only here, just before the decision to arm. A run that dies after
+# this point still cannot load them: outside an open window the unit loads only
+# rules matching the confirmed fingerprint, and the retry sees the difference.
+install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755 >/dev/null
+install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644 >/dev/null
 install -d -m 0755 "$ETC_DIR"
-nft_changed+="$(write_file "$ETC_DIR/nft.env" 0644 <<EOF
+write_file "$ETC_DIR/nft.env" 0644 >/dev/null <<EOF
 WAN=$wan
 INGRESS_PORT=$ingress_port
 API_PORT=$api_port
 EOF
-)"
+# The firewall changed when what would load differs from the last confirmed
+# rules and helper (or nothing was ever confirmed).
+nft_changed=""
+if /usr/local/libexec/matrix-hostd-nft changed; then nft_changed=changed; fi
 
 # --- hostd configuration ---------------------------------------------------------
 install -d -m 0700 "$ETC_DIR/tls"

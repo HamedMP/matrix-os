@@ -100,7 +100,7 @@ describe("metal host scripts", () => {
     // Every firewall load from provisioning goes through arm (marker + revert timer;
     // its behaviour is tested below), after the dry run (render, SSH check, nft -c).
     expect(provision).not.toMatch(/systemctl (re)?start[^\n]*matrix-hostd-nft\.service/);
-    const dryRun = provision.indexOf("/usr/local/libexec/matrix-hostd-nft check");
+    const dryRun = provision.indexOf('"$SCRIPT_DIR/matrix-hostd-nft" check');
     expect(dryRun).toBeGreaterThan(0);
     expect(dryRun).toBeLessThan(provision.indexOf("/usr/local/libexec/matrix-hostd-nft arm"));
     expect(provision).toContain("--confirm-firewall");
@@ -306,6 +306,9 @@ case "$verb" in
 esac
 exit 0
 `;
+  const FAKE_NFT = `#!/usr/bin/env bash
+printf 'nft %s\\n' "$*" >>"$FAKE_STATE/log"
+`;
   const FAKE_SYSTEMD_RUN = `#!/usr/bin/env bash
 printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
 : >"$FAKE_STATE/active-${TIMER}"
@@ -326,6 +329,7 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     await run("mkdir", ["-p", bin]);
     await writeFile(join(bin, "systemctl"), FAKE_SYSTEMCTL, { mode: 0o755 });
     await writeFile(join(bin, "systemd-run"), FAKE_SYSTEMD_RUN, { mode: 0o755 });
+    await writeFile(join(bin, "nft"), FAKE_NFT, { mode: 0o755 });
     env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
   });
   afterAll(async () => {
@@ -334,8 +338,27 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
   beforeEach(async () => {
     state = await mkdtemp(join(dir, "state-"));
     marker = join(state, "firewall-unconfirmed");
-    env = { ...env, FAKE_STATE: state, MATRIX_HOSTD_FIREWALL_MARKER: marker };
+    template = join(state, "nftables.conf");
+    await writeFile(template, await readFile("distro/metal-host/nftables.conf", "utf8"));
+    await writeFile(join(state, "nft.env"), "WAN=eno1\nINGRESS_PORT=9443\nAPI_PORT=8443\n");
+    env = {
+      ...env,
+      FAKE_STATE: state,
+      MATRIX_HOSTD_FIREWALL_MARKER: marker,
+      MATRIX_HOSTD_FIREWALL_CONFIRMED: join(state, "firewall-confirmed.sha256"),
+      MATRIX_HOSTD_NFT_TEMPLATE: template,
+      MATRIX_HOSTD_NFT_ENV: join(state, "nft.env"),
+      MATRIX_HOSTD_NFT_RENDERED: join(state, "nftables.nft"),
+    };
   });
+  let template: string;
+  const loads = async () => (await log()).split("\n").filter((l) => /^nft -f /.test(l)).length;
+  // Brings the fake host to "confirmed firewall running and enabled".
+  const confirmed = async () => {
+    await nft("arm");
+    const result = await nft("confirm");
+    expect(result.code, result.out).toBe(0);
+  };
 
   it("arm starts the firewall unenabled, with a marker and a revert timer", async () => {
     await writeFile(join(state, `enabled-${FW}`), "");
@@ -398,6 +421,42 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     expect(confirmed.out).toMatch(/already confirmed/);
   });
 
+  it("confirm records the fingerprint of the confirmed rules and helper", async () => {
+    await confirmed();
+    expect((await nft("changed")).code).not.toBe(0);
+    expect((await readFile(join(state, "firewall-confirmed.sha256"), "utf8")).trim()).toMatch(/^[a-f0-9]{64}$/);
+    // The confirmed ruleset reloads fine with no window open.
+    const result = await nft("apply");
+    expect(result.code, result.out).toBe(0);
+    expect(await loads()).toBe(1);
+  });
+
+  it("a run that died after installing new rules never loads them unconfirmed", async () => {
+    await confirmed();
+    // The failed run: the new template is on disk, nothing was armed.
+    await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41641 accept", "udp dport 41642 accept"));
+    // A reboot (the unit is enabled) or a reload refuses the unconfirmed rules.
+    const reboot = await nft("apply");
+    expect(reboot.code).not.toBe(0);
+    expect(reboot.out).toMatch(/not confirmed/i);
+    expect(await loads()).toBe(0);
+    // The retry sees the change and arms instead of reloading.
+    expect((await nft("changed")).code).toBe(0);
+    await nft("arm");
+    expect(existsSync(marker)).toBe(true);
+    expect(has(`active-${TIMER}`)).toBe(true);
+    expect(has(`enabled-${FW}`)).toBe(false);
+    expect((await nft("apply")).code).toBe(0);
+    expect(await loads()).toBe(1);
+  });
+
+  it("parameter changes and a missing confirmation record also count as changed", async () => {
+    expect((await nft("changed")).code).toBe(0);
+    await confirmed();
+    await writeFile(join(state, "nft.env"), "WAN=eno1\nINGRESS_PORT=443\nAPI_PORT=8443\n");
+    expect((await nft("changed")).code).toBe(0);
+  });
+
   it("wires the units so only a confirmed firewall survives reboot or hostd restarts", async () => {
     const hostd = await readFile("distro/metal-host/systemd/matrix-hostd.service", "utf8");
     expect(hostd).not.toMatch(/^(Wants|Requires|BindsTo)=.*matrix-hostd-nft/m);
@@ -409,8 +468,12 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     expect(provision).not.toMatch(/systemctl enable[^\n]*matrix-hostd-nft/);
     expect(provision).toContain("matrix-hostd-nft confirm");
     expect(provision).toContain("matrix-hostd-nft arm");
-    // A rules or helper change counts as a firewall change and re-arms.
-    expect(provision).toMatch(/nft_changed[^\n]*install_file "\$SCRIPT_DIR\/matrix-hostd-nft"/);
-    expect(provision).toMatch(/nft_changed[^\n]*install_file "\$SCRIPT_DIR\/nftables\.conf"/);
+    // Change detection is the rendered rules + helper against the confirmed
+    // fingerprint, and the new files are installed only in the firewall step.
+    expect(provision).toContain("/usr/local/libexec/matrix-hostd-nft changed");
+    const firewallStep = provision.indexOf("# --- firewall ---");
+    for (const file of ['install_file "$SCRIPT_DIR/matrix-hostd-nft"', 'install_file "$SCRIPT_DIR/nftables.conf"']) {
+      expect(provision.indexOf(file)).toBeGreaterThan(firewallStep);
+    }
   });
 });

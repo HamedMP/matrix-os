@@ -65,7 +65,12 @@ back an unconfirmed firewall. hostd only orders itself after the firewall; it
 never pulls it in. Open a **new** SSH session and run
 `sudo distro/metal-host/provision-host.sh --confirm-firewall` to keep the
 change: it cancels the timer, removes the marker and enables the unit. It
-exits non-zero if the revert already happened; then re-run provisioning.
+exits non-zero if the revert already happened; then re-run provisioning. Confirmation records a
+fingerprint of the rendered ruleset and the helper
+(`/var/lib/matrix-hostd/firewall-confirmed.sha256`). Outside an open window
+the unit loads only rules matching it, and provisioning treats any difference
+as a change to arm, so rules installed by a run that died before arming are
+never reloaded or loaded at boot.
 
 Never run `nft flush ruleset` or reload another tool's ruleset to fix hostd's;
 `systemctl reload matrix-hostd-nft` replaces only hostd's tables.

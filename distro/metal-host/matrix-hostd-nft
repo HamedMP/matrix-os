@@ -11,6 +11,7 @@
 #   matrix-hostd-nft arm                   # load a changed firewall, unconfirmed
 #   matrix-hostd-nft guard                 # ExecStartPre: refuse a stale unconfirmed load
 #   matrix-hostd-nft confirm               # keep it: enable the unit, cancel the revert
+#   matrix-hostd-nft changed               # exit 0 if rules/helper differ from the confirmed ones
 #
 # Dead-man switch. A changed firewall is loaded by `arm`, which writes the
 # marker (the time the unconfirmed window opened), starts the unit WITHOUT
@@ -20,11 +21,18 @@
 # unit refuses to load and the host fails open. So a reboot (which loses the
 # transient timer, and the unit is not enabled anyway) or any later start of
 # the unit after the window can never bring back an unconfirmed firewall.
+#
+# Confirmation records a fingerprint (sha256 of the rendered ruleset and of
+# this helper). Outside an open window, apply loads only rules matching it, and
+# provisioning treats any difference as a change to arm. So rules installed by
+# a run that died before arming are neither reloaded nor loaded at boot.
 set -euo pipefail
 
-readonly ENV_FILE=/etc/matrix-hostd/nft.env
-readonly TEMPLATE=/usr/local/share/matrix-hostd/nftables.conf
-readonly RENDERED=/etc/matrix-hostd/nftables.nft
+readonly ENV_FILE="${MATRIX_HOSTD_NFT_ENV:-/etc/matrix-hostd/nft.env}"
+readonly TEMPLATE="${MATRIX_HOSTD_NFT_TEMPLATE:-/usr/local/share/matrix-hostd/nftables.conf}"
+readonly RENDERED="${MATRIX_HOSTD_NFT_RENDERED:-/etc/matrix-hostd/nftables.nft}"
+# sha256 of the last confirmed rendered ruleset plus this helper.
+readonly CONFIRMED="${MATRIX_HOSTD_FIREWALL_CONFIRMED:-/var/lib/matrix-hostd/firewall-confirmed.sha256}"
 readonly MARKER="${MATRIX_HOSTD_FIREWALL_MARKER:-/var/lib/matrix-hostd/firewall-unconfirmed}"
 readonly WINDOW_S=600
 readonly UNIT=matrix-hostd-nft.service
@@ -81,6 +89,21 @@ guard() {
   return 1
 }
 
+# Fingerprint of what apply would load now: rendered ruleset + this helper.
+fingerprint() {
+  load_env
+  { render "$TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT"; sha256sum <"${BASH_SOURCE[0]}"; } | sha256sum | awk '{print $1}'
+}
+
+# Exit 0 when the current rules/helper are not the confirmed ones (or nothing
+# was ever confirmed); 1 when they match.
+changed() {
+  local current recorded=""
+  current="$(fingerprint)"
+  if [ -f "$CONFIRMED" ]; then recorded="$(head -c 64 "$CONFIRMED")"; fi
+  [ "$current" != "$recorded" ]
+}
+
 arm() {
   install -d -m 0755 "$(dirname "$MARKER")"
   date +%s >"$MARKER.tmp"
@@ -106,6 +129,9 @@ confirm() {
   systemctl stop "$REVERT.timer"
   # The timer could have fired between the checks and the stop.
   systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
+  install -d -m 0755 "$(dirname "$CONFIRMED")"
+  fingerprint >"$CONFIRMED.tmp"
+  mv -f "$CONFIRMED.tmp" "$CONFIRMED"
   rm -f "$MARKER"
   systemctl enable --quiet "$UNIT"
   echo "matrix-hostd-nft: firewall confirmed; revert cancelled; enabled at boot"
@@ -142,6 +168,10 @@ case "$cmd" in
     ;;
   apply)
     guard || exit 1
+    # No open window: only the confirmed rules may load (boot, reload).
+    if [ ! -e "$MARKER" ] && changed; then
+      die "REFUSING to load: these rules were not confirmed (installed by a run that did not arm?); re-run provision-host.sh and confirm"
+    fi
     load_env
     umask 022
     render "$TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT" >"$RENDERED.tmp"
@@ -153,9 +183,10 @@ case "$cmd" in
   guard) guard ;;
   arm) arm ;;
   confirm) confirm ;;
+  changed) changed ;;
   remove)
     if nft list table inet matrix_hostd >/dev/null 2>&1; then nft delete table inet matrix_hostd; fi
     if nft list table ip matrix_hostd_nat >/dev/null 2>&1; then nft delete table ip matrix_hostd_nat; fi
     ;;
-  *) die "usage: matrix-hostd-nft render|check|apply|remove|arm|guard|confirm" ;;
+  *) die "usage: matrix-hostd-nft render|check|apply|remove|arm|guard|confirm|changed" ;;
 esac
