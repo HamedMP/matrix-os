@@ -10,6 +10,7 @@ import { serveStaticFileWithin } from "../app-runtime/serve-static.js";
 import { VIEWER_BRIDGE_SCRIPT, injectViewerBridge } from "./viewer-bridge.js";
 import { SHARED_BROWSER_ACTION_DEADLINE_MS, SHARED_BROWSER_ACTION_MAX_BYTES, SharedBrowserActionSchema, SharedBrowserControlSchema } from "@matrix-os/contracts";
 import { SharedBrowserError, type SharedBrowserBroker } from "../shared-browser/broker.js";
+import { sharedBrowserFailureResult } from "../shared-browser/action-failure.js";
 
 const PREFIX = "/apps/browser-lab";
 const CONTROL = z.discriminatedUnion("action", [
@@ -210,9 +211,11 @@ export function registerBrowserLabRoutes(app: Hono, options: BrowserLabOptions):
       if (Buffer.byteLength(JSON.stringify(value)) > 192 * 1024) return unavailable(c);
       return c.json(value, 200, { "Cache-Control": "no-store" });
     } catch (error) {
-      if (error instanceof SharedBrowserError && !error.dispatched && ["observe_again", "browser_changed", "browser_busy", "tab_limit"].includes(error.code)) {
-        return c.json({ success: false, content: error.message, automation: options.sharedBrowser.broker.status() }, 200, { "Cache-Control": "no-store" });
+      if (error instanceof SharedBrowserError && error.code === "approval_unavailable" && !error.dispatched) {
+        return c.json({ success: false, content: error.message }, 200, { "Cache-Control": "no-store" });
       }
+      const failure = sharedBrowserFailureResult(error, grant.binding, options.sharedBrowser.broker);
+      if (failure) return c.json(failure, 200, { "Cache-Control": "no-store" });
       console.warn("[shared-browser] Agent action unavailable", error instanceof SharedBrowserError ? error.code : "operation_failed");
       return c.json({ error: "The browser action is unavailable. Its effect must be checked before retrying." }, 409);
     } finally { activeAgent--; }

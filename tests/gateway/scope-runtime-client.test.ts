@@ -251,6 +251,7 @@ describe("scope runtime client", () => {
 
   it("creates and stops by opaque handle without caller-controlled host configuration", async () => {
     const path = await socketPath("matrix-scope-operations-");
+    let stopped = false;
     const server = await listen(path, (frame) => {
       const request = ScopeRuntimeRequestSchema.parse(frame);
       if (request.type === "capability.get") return capabilityResponse(request.requestId);
@@ -276,6 +277,11 @@ describe("scope runtime client", () => {
           text: "Scoped response",
         };
       }
+      if (request.type === "runtime.stop" && stopped) {
+        return { version: 1, type: "runtime.result", requestId: request.requestId,
+          ok: false, error: "runtime_not_found" };
+      }
+      if (request.type === "runtime.stop") stopped = true;
       return {
         version: 1,
         type: "runtime.result",
@@ -322,6 +328,8 @@ describe("scope runtime client", () => {
       executionGeneration: "1",
       state: "stopped",
     });
+    await expect(client.stopRuntime({ runtimeHandle: RUNTIME_HANDLE }))
+      .rejects.toMatchObject({ code: "runtime_not_found" });
     expect(JSON.stringify(server.frames)).not.toMatch(/\/home|command|environment|unitProperties/);
     await client.close();
   });

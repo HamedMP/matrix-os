@@ -5,6 +5,7 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "../chat/database.js";
 import { hasHistoricalThreadSchema } from "./v9-compatibility.js";
+import { canReadRetainedRoutinePreview, hasRetainedRoutinePreviewSchema, RETAINED_ROUTINE_PREVIEW_VERSIONS } from "./retained-routine-preview.js";
 import { BOT_MIGRATIONS, type BotMigration } from "./database-migrations.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
@@ -208,15 +209,53 @@ export interface BotDatabase {
   };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
+  routine_cli_proposals: {
+    owner_id: string; computer_id: string; client_request_id: string; canonical_request_id: string; request_hash: string;
+    stage: import("./repositories/routine-cli-proposals.js").RoutineCliProposalStage;
+    run_id: string | null; task_id: string | null; interaction_id: string | null; runtime_handle: string | null; execution_generation: string | null;
+    revision: Revision; created_at: Timestamp; updated_at: Timestamp;
+  };
+  routine_cli_requests: {
+    owner_id: string; computer_id: string; client_request_id: string; operation_digest: string;
+    operation: Json<import("./routine-cli-requests.js").RoutineCliMutationOperation>;
+    source_context: Json<import("./routine-cli-source-context.js").RoutineCliSourceContext>;
+    source_invocation: Json<import("./routine-cli-source.js").RoutineCliVerifiedInvocation>;
+    target_snapshot: Json<import("./routine-cli-targets.js").RoutineCliResolvedTarget>;
+    admission: Json<import("./routine-cli-requests.js").RoutineCliAdmission>;
+    revision: Revision; created_at: Timestamp;
+  };
+  routine_cli_sources: {
+    source_id: string; owner_id: string; computer_id: string; source_key: string; generation: string;
+    context_hash: string; source_context: Json<import("./routine-cli-source-context.js").RoutineCliSourceContext>;
+    issued_at: Timestamp; expires_at: Timestamp; revoked_at: NullableTimestamp;
+  };
+  routine_cli_capabilities: {
+    source_id: string; owner_id: string; computer_id: string; invocation_id: string;
+    token_hash: string | null; operation_digest: string; issued_at: Timestamp; expires_at: Timestamp; consumed_at: NullableTimestamp;
+  };
+  routine_direct_chat_contexts: {
+    owner_id: string; computer_id: string; source_chat_id: string; bot_id: string; chat_id: string;
+    activated_at: NullableTimestamp;
+  };
+  routine_cli_preferences: {
+    owner_id: string; computer_id: string; bot_id: string | null; chat_id: string | null;
+    binding_created_at: NullableTimestamp; revision: Revision; updated_at: Timestamp;
+  };
   bot_schema_migrations: BotSchemaMigrationsTable;
   bot_operations: BotOperationsTable;
   bot_chat_bindings: BotChatBindingsTable;
   bot_agent_sessions: BotAgentSessionsTable;
   bot_tasks: BotTasksTable;
+  routine_chat_deliveries: {
+    owner_id: string; source_chat_id: string; routine_id: string; fire_id: string; attempt: number; kind: "status" | "output";
+    message_id: string; receipt: Json<import("@matrix-os/contracts").RoutineChatReceiptPart>; created_at: Timestamp;
+  };
   bot_routines: {
     routine_id: string; owner_id: string; bot_id: string; chat_id: string;
     proposal: Json<import("@matrix-os/contracts").BotRoutineProposal>;
     approved_source: Json<import("./routine-authorization.js").RoutineAuthorization> | null; approval_id: string | null;
+    origin_computer_id: ColumnType<string | null, string | null | undefined, string | null>;
+    origin_request_id: ColumnType<string | null, string | null | undefined, string | null>;
     status: import("@matrix-os/contracts").BotRoutineStatus;
     next_fire_at: NullableTimestamp; revision: Revision; created_at: Timestamp; updated_at: Timestamp;
   };
@@ -256,11 +295,23 @@ function assertOrdered(migrations: readonly BotMigration[]): void {
   }
 }
 
+const previewBaseVersion = RETAINED_ROUTINE_PREVIEW_VERSIONS[0].version - 1;
+
 /** Called under the migration lock before any pending DDL can run. */
-async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<void> {
+async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<boolean> {
+  const mayHaveRetainedPreview = migrations.length === previewBaseVersion
+    && migrations.every((migration, index) => migration === BOT_MIGRATIONS[index]);
   const recorded = await db.selectFrom("bot_schema_migrations").select(["version", "name"])
-    .orderBy("version").limit(migrations.length + 1).execute();
-  for (const row of recorded) {
+    .orderBy("version").limit(migrations.length + 1 + (mayHaveRetainedPreview ? RETAINED_ROUTINE_PREVIEW_VERSIONS.length : 0)).execute();
+  const lastVersion = recorded.at(-1)?.version ?? 0;
+  if (migrations === BOT_MIGRATIONS && lastVersion > previewBaseVersion && lastVersion <= migrations.length && recorded.length !== lastVersion) {
+    throw new BotSchemaError("invalid_migrations");
+  }
+  const retainedPreview = mayHaveRetainedPreview && recorded.length === migrations.length + RETAINED_ROUTINE_PREVIEW_VERSIONS.length && recorded.every((row, index) => {
+    const expected = index < migrations.length ? migrations[index] : RETAINED_ROUTINE_PREVIEW_VERSIONS[index - migrations.length];
+    return row.version === expected?.version && row.name === expected.name;
+  });
+  for (const row of retainedPreview ? recorded.slice(0, migrations.length) : recorded) {
     const migration = migrations[row.version - 1];
     if (!migration) throw new BotSchemaError("newer_schema");
     if (row.name !== migration.name) {
@@ -269,13 +320,15 @@ async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrati
       if (!retainedThreadV9 || !(await hasHistoricalThreadSchema(db))) throw new BotSchemaError("invalid_migrations");
     }
   }
+  if (retainedPreview && !await canReadRetainedRoutinePreview(db)) throw new BotSchemaError("newer_schema");
+  return retainedPreview;
 }
 
 /**
  * Applies pending bot migrations. Each version runs in its own transaction
  * under a schema advisory lock, so concurrent gateways apply it once, and a
  * failed version rolls back without undoing earlier ones. Requires the chat
- * schema to exist. Refuses a database migrated by a newer build.
+ * schema to exist. Only the proven dormant retained preview can use v15 while its newer ledger stays intact.
  */
 export async function bootstrapBotDatabase(
   db: Kysely<OwnerBotDatabase>,
@@ -293,7 +346,7 @@ export async function bootstrapBotDatabase(
   for (const migration of migrations) {
     const ran = await db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
-      await assertCompatibleSchema(trx, migrations);
+      if (await assertCompatibleSchema(trx, migrations)) return "retained_preview";
       const existing = await trx.selectFrom("bot_schema_migrations")
         .select("version").where("version", "=", migration.version).executeTakeFirst();
       if (existing) return false;
@@ -301,11 +354,17 @@ export async function bootstrapBotDatabase(
       await trx.insertInto("bot_schema_migrations").values({ version: migration.version, name: migration.name }).execute();
       return true;
     });
+    if (ran === "retained_preview") return { applied };
     if (ran) applied.push(migration.version);
   }
   await db.transaction().execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
     await assertCompatibleSchema(trx, migrations);
+    // This runtime can reconcile live origin work, but it still requires the exact
+    // additive schema. The v15 fallback retains its separate dormancy check.
+    if (migrations === BOT_MIGRATIONS && !await hasRetainedRoutinePreviewSchema(trx)) {
+      throw new BotSchemaError("newer_schema");
+    }
   });
   return { applied };
 }

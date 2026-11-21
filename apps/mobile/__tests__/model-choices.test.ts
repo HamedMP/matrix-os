@@ -242,7 +242,7 @@ describe("the model trigger's state", () => {
 describe("the notices under the model trigger", () => {
   it("has none for a selection that can run", () => {
     expect(modelNotices(catalogOf(matrixInstance()), SONNET, false))
-      .toEqual({ reserved: [], unavailable: [], recovery: null });
+      .toEqual({ reserved: [], recovery: null });
   });
 
   it("lists the models whose credit is held", () => {
@@ -250,11 +250,17 @@ describe("the notices under the model trigger", () => {
       .toEqual([{ key: modelKey(SONNET.instanceId, SONNET.model), text: "Sonnet 5 · Matrix AI · Credit reserved" }]);
   });
 
-  it("lists the models of a running engine that cannot run themselves", () => {
+  it("has none for a model that is not chosen and cannot run", () => {
     const catalog = catalogOf(matrixInstance([[SONNET.model, "Sonnet 5"], [GLM.model, "GLM Flash", "unavailable"]]));
 
-    expect(modelNotices(catalog, SONNET, false).unavailable)
-      .toEqual([{ key: modelKey(GLM.instanceId, GLM.model), text: "GLM Flash · Matrix AI · Model unavailable" }]);
+    expect(modelNotices(catalog, SONNET, false)).toEqual({ reserved: [], recovery: null });
+  });
+
+  it("asks for another model when the chosen one cannot run", () => {
+    const catalog = catalogOf(matrixInstance([[SONNET.model, "Sonnet 5"], [GLM.model, "GLM Flash", "unavailable"]]));
+
+    expect(modelNotices(catalog, GLM, false).recovery)
+      .toBe("Saved model unavailable. Choose another model or check Agents & providers.");
   });
 
   it("gives the engine's reason when the saved model's engine cannot run", () => {

@@ -5,8 +5,10 @@ import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/
 import { buildPlatformVerificationToken, buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
+import { registerSiteRoutes } from '../../packages/platform/src/sites/registration.js';
 import { randomUUID } from 'node:crypto';
 import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
+import { seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
 let app: Hono;
 const secret = 's'.repeat(40);
@@ -52,23 +54,102 @@ it('preserves the legacy site response unless the gateway negotiates access mode
  expect(current).toMatchObject({title:'Legacy updated',accessMode:'private_link',revision:2});
 });
 
-it('preserves legacy access-link listings unless the gateway negotiates pagination',async()=>{
+it('keeps email capability fields out of version 2 gateway responses', async () => {
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'contract-upgrade',title:'Upgrade',description:'',slug:null,revision:0,status:'published',access_mode:'private_email',active_version:null,created_at:new Date().toISOString()}).execute();
+ const versioned=new Hono();
+ versioned.route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db,emailCapability:async()=>true})}));
+ const url='/internal/containers/launch/sites/contract-upgrade?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`};
+ const previous=await (await versioned.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:'2'}})).json() as Record<string,unknown>;
+ expect(previous.accessMode).toBe('private_email');
+ expect(previous).not.toHaveProperty('capabilities');
+ const current=await (await versioned.request(url,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:'3'}})).json() as Record<string,unknown>;
+ expect(current).toMatchObject({accessMode:'private_email',capabilities:{privateEmailInvitations:true}});
+});
+
+it('registers only with concrete dependencies and advertises email readiness as false by default', async () => {
+ const missing = { db: undefined, platformSecret: secret } as unknown as Parameters<typeof registerSiteRoutes>[1];
+ expect(() => registerSiteRoutes(new Hono(), missing)).toThrow();
+ expect(() => registerSiteRoutes(new Hono(), { db, platformSecret: '' })).toThrow();
+ const siteId = randomUUID();
+ await db.executor.insertInto('public_sites').values({ id: siteId, owner_id: 'user_launch', machine_id: identity.machineId,
+  app_slug: 'email-capability', title: 'Email capability', description: '', slug: null, revision: 0,
+  status: 'published', access_mode: 'public', active_version: null, created_at: new Date().toISOString() }).execute();
+ const registered = new Hono();
+ registerSiteRoutes(registered, { db, platformSecret: secret, edgeSecret: 'e'.repeat(40), env: { MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED: 'true' } });
+ const response = await registered.request('/internal/containers/launch/sites/email-capability?runtimeSlot=primary', {
+  headers: { authorization: `Bearer ${token}`, [SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]: SITE_MANAGEMENT_CONTRACT_VERSION },
+ });
+ expect(response.status).toBe(200);
+ expect(await response.json()).toMatchObject({ capabilities: { privateEmailInvitations: false } });
+});
+
+it('lists and revokes legacy access links but refuses to create new ones for any client contract',async()=>{
  const siteId=randomUUID();
  await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-event',title:'Private event',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()}).execute();
  const url='/internal/containers/launch/sites/private-event/access-links?runtimeSlot=primary';
  const listUrl=`${url}&limit=50`;
  const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ const currentHeaders={...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
  expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
- const created=await app.request(url,{method:'POST',headers,body:JSON.stringify({baseRevision:1})});
- expect(created.status).toBe(200);
- const value=await created.json() as {link:{id:string};url:string};
- expect(value.url).toMatch(new RegExp(`^https://matrix\\.page/${siteId}#access=`));
+ for(const requestHeaders of [headers,currentHeaders]){
+  const created=await app.request(url,{method:'POST',headers:requestHeaders,body:JSON.stringify({baseRevision:1})});
+  expect(created.status).toBe(410);
+  expect(await created.json()).toEqual({error:'One-time links are no longer available'});
+ }
+ expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
+ const seeded=await seedLegacyAccessLink(db,siteId);
  const listed=await (await app.request(listUrl,{headers})).json();
- expect(listed).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})]});
- expect(JSON.stringify(listed)).not.toContain('#access=');
- expect(await (await app.request(listUrl,{headers:{...headers,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}})).json()).toEqual({links:[expect.objectContaining({id:value.link.id,status:'unclaimed'})],nextCursor:null});
- expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${value.link.id}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
+ expect(listed).toEqual({links:[expect.objectContaining({id:seeded.linkId,status:'unclaimed'})]});
+ expect(JSON.stringify(listed)).not.toContain(seeded.secret);
+ expect(await (await app.request(listUrl,{headers:currentHeaders})).json()).toEqual({links:[expect.objectContaining({id:seeded.linkId,status:'unclaimed'})],nextCursor:null});
+ expect((await app.request(`${url.replace('?runtimeSlot=primary','')}/${seeded.linkId}?runtimeSlot=primary`,{method:'DELETE',headers})).status).toBe(200);
  expect(await (await app.request(listUrl,{headers})).json()).toEqual({links:[]});
+});
+it('serves bounded email invitation and audit endpoints only to the exact owner machine',async()=>{
+ const siteId=randomUUID();
+ await db.executor.insertInto('public_sites').values({id:siteId,owner_id:'user_launch',machine_id:identity.machineId,
+  app_slug:'email-event',title:'Email event',description:'',slug:null,revision:1,status:'published',
+  access_mode:'private_email',active_version:null,created_at:new Date().toISOString()}).execute();
+ const enabled=new Hono();enabled.route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,
+  service:createSitesService({db}),emailEnabled:async()=>true}));
+ const url='/internal/containers/launch/sites/email-event/invitations?runtimeSlot=primary';
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json'};
+ expect((await enabled.request(url,{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify({baseRevision:1,emailAddresses:['person@example.com']})})).status).toBe(401);
+ const created=await enabled.request(url,{method:'POST',headers,
+  body:JSON.stringify({baseRevision:1,emailAddresses:['person@example.com']})});
+ expect(created.status).toBe(200);
+ const result=await created.json() as {results:Array<{invitation:{id:string;revision:number}}>;siteRevision:number};
+ expect(result.results[0]).toMatchObject({outcome:'queued'});
+ const invitationId=result.results[0]!.invitation.id;
+ expect((await enabled.request(url,{headers})).status).toBe(200);
+ expect((await enabled.request(url+'&limit=0',{headers})).status).toBe(400);
+ expect((await enabled.request(url,{method:'POST',headers,body:'x'.repeat(33*1024)})).status).toBe(413);
+ const revoked=await enabled.request(`${url.replace('?runtimeSlot=primary','')}/${invitationId}?runtimeSlot=primary`,{
+  method:'DELETE',headers,body:JSON.stringify({baseRevision:result.siteRevision,invitationRevision:0})});
+ expect(revoked.status).toBe(200);
+ const audit=await enabled.request('/internal/containers/launch/sites/email-event/invitations/audit?runtimeSlot=primary',{headers});
+ expect(audit.status).toBe(200);
+ expect((await audit.json() as {events:Array<{type:string}>}).events.map(event=>event.type))
+  .toEqual(expect.arrayContaining(['invitation_created','invitation_revoked']));
+});
+
+it('maps a switch into one-time links to a generic gone response while legacy private sites stay editable',async()=>{
+ const publicId=randomUUID();
+ const privateId=randomUUID();
+ await db.executor.insertInto('public_sites').values([
+  {id:publicId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'public-switch',title:'Public',description:'',slug:null,revision:1,status:'published',access_mode:'public',active_version:null,created_at:new Date().toISOString()},
+  {id:privateId,owner_id:'user_launch',machine_id:identity.machineId,app_slug:'private-keep',title:'Private',description:'',slug:null,revision:1,status:'published',access_mode:'private_link',active_version:null,created_at:new Date().toISOString()},
+ ]).execute();
+ const headers={authorization:`Bearer ${token}`,'content-type':'application/json',[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
+ const refused=await app.request('/internal/containers/launch/sites/public-switch?runtimeSlot=primary',{method:'PATCH',headers,body:JSON.stringify({accessMode:'private_link',baseRevision:1})});
+ expect(refused.status).toBe(410);
+ expect(await refused.json()).toEqual({error:'One-time links are no longer available'});
+ const kept=await app.request('/internal/containers/launch/sites/private-keep?runtimeSlot=primary',{method:'PATCH',headers,body:JSON.stringify({title:'Private renamed',accessMode:'private_link',baseRevision:1})});
+ expect(kept.status).toBe(200);
+ expect(await kept.json()).toMatchObject({title:'Private renamed',accessMode:'private_link',revision:2});
 });
 
 it('rejects legacy handle credentials, different machines, different slots and old token epochs',async()=>{
@@ -107,4 +188,24 @@ it.each(['expired', 'caller-aborted'] as const)('never activates %s publication 
 it.each(['NaN', '-1', '1.5', '1e12', '9999999999999999'])('rejects an invalid internal publication deadline %s', async deadline => {
  const response = await app.request('/internal/containers/launch/sites/event?runtimeSlot=primary', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-matrix-site-deadline': deadline }, body: '{}' });
  expect(response.status).toBe(400);
+});
+
+it('advertises disabled invitation readiness before publication without creating a site', async () => {
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ expect((await app.request(url)).status).toBe(401);
+ const response=await app.request(url,{headers:{authorization:'Bearer '+token}});
+ expect(response.status).toBe(200);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+ expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(await db.executor.selectFrom('public_sites').select('id').where('app_slug','=','not-published').execute()).toEqual([]);
+});
+it('reads readiness through verified machine authority and rejects untrusted query input', async () => {
+ const enabled=vi.fn(async()=>true);
+ const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:enabled}));
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ expect((await ready.request(url)).status).toBe(401);
+ expect(enabled).not.toHaveBeenCalled();
+ const response=await ready.request(url,{headers:{authorization:'Bearer '+token}});
+ expect(await response.json()).toEqual({privateEmailInvitations:true});
+ expect((await ready.request(url+'&enabled=true',{headers:{authorization:'Bearer '+token}})).status).toBe(400);
 });

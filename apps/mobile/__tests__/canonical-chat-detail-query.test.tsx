@@ -50,3 +50,24 @@ it("reconciles a chat with the gateway every time it is opened", async () => {
   unmount();
   queryClient.clear();
 });
+
+it("keeps a newer streamed detail but takes the snapshot's newer read state", async () => {
+  const unread = { unread: true, markedUnread: false, version: 4, readThroughSeq: 1, latestIncomingSeq: 2 };
+  mockFetchChatDetail.mockImplementation(async () => ({ ...detailFor("chat_read"), record: { chat: { id: "chat_read", revision: 1 }, readState: unread } }));
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  const { result, unmount } = renderHook(() => useCanonicalChatDetail("chat_read"), { wrapper });
+  await waitFor(() => expect(result.current.detail?.record.readState).toEqual(unread));
+  const key = jest.requireActual("@/lib/requests/query-keys").mobileQueryKeys.canonicalChatDetail("owner", "test:primary", "chat_read");
+  // Streamed frames moved the cached detail past the snapshot, without a read state.
+  queryClient.setQueryData(key, { ...detailFor("chat_read"), record: { chat: { id: "chat_read", revision: 9 } } });
+
+  await queryClient.refetchQueries({ queryKey: key });
+
+  await waitFor(() => expect(result.current.detail?.record.chat.revision).toBe(9));
+  expect(result.current.detail?.record.readState).toEqual(unread);
+  unmount();
+  queryClient.clear();
+});

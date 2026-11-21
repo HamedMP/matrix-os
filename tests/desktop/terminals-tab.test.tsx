@@ -12,6 +12,7 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
 import { useTerminalAppearance } from "../../desktop/src/renderer/src/stores/terminal-appearance";
+import { useTerminalAgentEvents } from "../../desktop/src/renderer/src/stores/terminal-agent-events";
 
 const terminalMounts = vi.hoisted(() => new Map<string, number>());
 const installedAgents = {
@@ -141,6 +142,19 @@ describe("TerminalsTab", () => {
     expect(document.querySelector("[data-terminal-overview] h1")).toBeNull();
   });
 
+  it("does not show a routine confirmations entry in signed-in Electron Terminal", () => {
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active" }],
+      loading: false,
+      error: null,
+    });
+
+    renderTab();
+
+    expect(screen.getByTestId("terminal-view-matrix-main")).toBeTruthy();
+    expect(screen.queryByText("Routine confirmations")).toBeNull();
+  });
+
   it("changes only the inner shell palette while native Terminal chrome stays on Desktop tokens", async () => {
     useShellSessions.setState({
       sessions: [{ name: "matrix-main", status: "active" }],
@@ -234,6 +248,30 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole("button", { name: "Open matrix-open" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open matrix-bg" })).toBeTruthy();
     expect(screen.queryByText("Workspace Only")).toBeNull();
+  });
+
+  // Fault detected: a remote agent waiting on the person shows no status in the Electron
+  // Terminal sidebar, or a finished-history entry keeps showing a stale dot.
+  it("overlays live agent status from the events stream onto remote tab rows", () => {
+    const workspaceId = `tws_${"0".repeat(32)}`;
+    const blocked = `${workspaceId}:tt_${"a".repeat(32)}`;
+    const closed = `${workspaceId}:tt_${"b".repeat(32)}`;
+    useShellSessions.setState({ sessions: [
+      { name: blocked, subtitle: "review", status: "active" },
+      { name: closed, subtitle: "build", status: "active" },
+    ] as never });
+    useTerminalAgentEvents.setState({ connected: true, tabs: {
+      [blocked]: { ref: { workspaceId, tabId: `tt_${"a".repeat(32)}` }, name: "review", cwd: "", state: "live", agentStatus: "blocked" },
+      [closed]: { ref: { workspaceId, tabId: `tt_${"b".repeat(32)}` }, name: "build", cwd: "", state: "finished", agentStatus: "working" },
+    } });
+
+    renderTab();
+
+    const row = screen.getByRole("button", { name: "Open review" });
+    expect(row.querySelector('[data-agent-status="waiting"]')?.getAttribute("title")).toBe("Needs you");
+    expect(screen.getByRole("button", { name: "Open build" }).querySelector("[data-agent-status]")).toBeNull();
+    act(() => { useTerminalAgentEvents.setState({ tabs: {} }); });
+    expect(row.querySelector("[data-agent-status]")).toBeNull();
   });
 
   it("does not duplicate the Mission Control breadcrumb inside the Terminal surface", () => {
@@ -523,6 +561,52 @@ describe("TerminalsTab", () => {
     expect(useTabs.getState().terminalSessionRequest).toBeNull();
   });
 
+  // Fault detected (review of #3300 @b0ffbf47c): Open on an attention card for a tab the
+  // last list refresh had not seen yet was dropped instead of selecting that tab.
+  it("refreshes the list once for a requested tab it has not seen yet", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const load = vi.fn(async () => {
+      const sessions = [
+        { name: "matrix-main", status: "active" as const, placement: "active" as const },
+        { name: "matrix-new", status: "active" as const, placement: "active" as const },
+      ];
+      useShellSessions.setState((state) => ({ sessions, loading: false, loadSequence: state.loadSequence + 1 }));
+      return sessions;
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      loading: false,
+      creating: false,
+      error: null,
+      loadSequence: 1,
+      load,
+    });
+    renderTab();
+
+    act(() => useTabs.getState().requestTerminalSession("matrix-new"));
+
+    expect(await screen.findByRole("heading", { name: "matrix-new" })).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().terminalSessionRequest).toBeNull();
+  });
+
+  it("drops a requested tab that a fresh list still does not have", async () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    const sessions = [{ name: "matrix-main", status: "active" as const, placement: "active" as const }];
+    const load = vi.fn(async () => {
+      useShellSessions.setState((state) => ({ sessions, loading: false, loadSequence: state.loadSequence + 1 }));
+      return sessions;
+    });
+    useShellSessions.setState({ sessions, loading: false, creating: false, error: null, loadSequence: 1, load });
+    renderTab();
+
+    act(() => useTabs.getState().requestTerminalSession("matrix-gone"));
+
+    await waitFor(() => expect(useTabs.getState().terminalSessionRequest).toBeNull());
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("heading", { name: "matrix-gone" })).toBeNull();
+  });
+
   it("keeps a requested Recent pending during a create-triggered canonical refresh", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().requestTerminalSession("matrix-created");
@@ -764,7 +848,8 @@ describe("TerminalsTab", () => {
 
     fireEvent.click(screen.getByRole("menuitem", { name: /Codex/ }));
     await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api, {
-      cmd: "codex --no-alt-screen",
+      managedAgent: "codex",
+      compatMode: "codex-tui",
       agent: "codex",
     }));
   });

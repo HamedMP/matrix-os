@@ -37,9 +37,11 @@ describe("owner sessions use endpoint registration, not another member's denial 
     let onMessage!: (raw: string) => void;
     const acknowledgments: Array<{ authorityGeneration: number }> = [];
     const revoke = vi.fn();
+    const onMembershipEnded = vi.fn(async () => undefined);
     const control = new CollaborationControlClient({
       platformBaseUrl: origin, runtimeId, ownerId, relayHandle: "owner", serviceToken: "s".repeat(40),
       identity: { keyId: "home", publicKey }, sessions: { revoke }, membership, now: () => clock, startTimers: false,
+      onMembershipEnded,
       fetchImpl: (async () => Response.json({ protocolVersion: 2,
         runtime: { runtimeId: logicalRuntimeId, authorityGeneration: endpointGeneration, registeredAt: clock.toISOString() },
         platformSigningKeys: [{ keyId: "platform", algorithm: "ed25519", publicKey: ed25519PublicKeyRaw(platformKey) }],
@@ -87,6 +89,7 @@ describe("owner sessions use endpoint registration, not another member's denial 
       } }));
       await vi.waitFor(() => expect(acknowledgments.some(ack => ack.authorityGeneration === 2)).toBe(true));
       expect(revoke).toHaveBeenCalledOnce();
+      expect(onMembershipEnded).toHaveBeenCalledWith({ organizationId, actorId: "user_removed_member" });
       expect(control.authorityGeneration()).toBe(2);
       expect(control.registeredAuthorityGeneration()).toBe(1);
       // The platform endpoint and the tickets it issues remain at 1 after the denial acknowledgment.
@@ -113,6 +116,7 @@ describe("owner sessions use endpoint registration, not another member's denial 
         fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(),
       } }));
       await vi.waitFor(() => expect(acknowledgments.some(ack => ack.authorityGeneration === 3)).toBe(true));
+      expect(onMembershipEnded).toHaveBeenCalledWith({ organizationId, actorId: ownerId });
       expect(control.registeredAuthorityGeneration()).toBe(2);
       releaseMembership!();
       await denied;

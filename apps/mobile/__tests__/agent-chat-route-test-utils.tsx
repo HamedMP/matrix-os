@@ -85,7 +85,7 @@ export function snapshot(overrides: Record<string, unknown> = {}) {
 
 export function chatDetail(overrides: Record<string, unknown> = {}) {
   return {
-    record: { projectId: null, chat: { id: "chat_research", title: "Account research", revision: 4 } },
+    record: { projectId: null, chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_research", title: "Account research", revision: 4 } },
     runs: [], turns: [], activities: [],
     messages: [{ id: "msg_reply", chatId: "chat_research", role: "assistant", state: "committed", seq: 1,
       parts: [{ type: "text", text: "Brief ready for your call." }], createdAt: "2026-09-09T00:00:01.000Z" }],

@@ -1,4 +1,3 @@
-import { readRecoveredUnknowns } from "./ai-funded-recovery-lifecycle.js";
 import { sql } from "kysely";
 import type { FundedAiPriorityReason, FundedAiRequestClass } from "@matrix-os/contracts";
 import type { PlatformDB } from "./db.js";
@@ -29,13 +28,13 @@ function conflicts(left: FundedBillingMode, right: FundedBillingMode): boolean {
   return left === "usage" || right === "usage";
 }
 
+/** Call after recoverTerminalOutcomes with the same owner lock still held. */
 export async function findConflictingActiveReservation(
   executor: Executor,
   ownerId: string,
   billingMode: FundedBillingMode,
   checked: Date,
 ): Promise<boolean> {
-  await readRecoveredUnknowns(executor, ownerId);
   const active = await executor.selectFrom("ai_funded_usage_reservations")
     .select("reservation_id").where("owner_id", "=", ownerId)
     .where((eb) => eb.or([
@@ -57,7 +56,7 @@ export async function findConflictingActiveReservation(
 
 /**
  * Owner-wide interactive priority. Must run inside the authorization
- * transaction after the owner advisory lock. Claims are keyed to the
+ * transaction after recovery under the owner advisory lock. Claims are keyed to the
  * requesting runtime slot and the gateway's turn claim key, so relay retries
  * (new request ids) and credential rotation keep their place and distinct
  * turns on one runtime keep their order. A rejected decision may have written a claim, so

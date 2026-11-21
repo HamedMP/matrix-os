@@ -10,6 +10,7 @@ import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/c
 import { markSessionStopConfirmed } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { recoverStoppedCodexContinuation } from "../../packages/gateway/src/coding-agents/codex-stopped-continuation.js";
+import { createCodexRoutineSources, nativeCodexRoutineAdmission } from "../../packages/gateway/src/chat/codex-routine-source.js";
 import { withNativeBrowserExecution } from "../../packages/gateway/src/chat/native-browser-execution-context.js";
 
 const homes: string[] = [];
@@ -101,6 +102,24 @@ describe("stopped Codex Chat continuation", () => {
     expect(f.publishEvents.mock.invocationCallOrder[0]).toBeLessThan(f.startSession.mock.invocationCallOrder[0]!);
     const index = JSON.parse(await readFile(join(f.homePath, "system/ai-providers/codex-execution-sessions.json"), "utf8"));
     expect(index).toEqual([expect.objectContaining({ sessionId: "sess_legacy", binding: result.resumeState!.nativeAccountBinding })]);
+  });
+
+  it("prepares the scoped routine source before restarting a stopped Codex Chat", async () => {
+    const f = await fixture();
+    const sources = createCodexRoutineSources({} as NonNullable<Parameters<typeof createCodexRoutineSources>[0]>, f.homePath);
+    const input = { owner: { ownerId: "owner" }, signal: f.context.signal };
+    const source = sources.open(input as Parameters<typeof sources.open>[0], () => {})!;
+    const launch = f.startSession.getMockImplementation()!;
+    f.startSession.mockImplementation(async () => {
+      expect(nativeCodexRoutineAdmission("owner")!.launch("sess_legacy")).toMatchObject({ onReady: expect.any(Function) });
+      return launch();
+    });
+    try {
+      await expect(source.withContext(() => f.resume())).resolves.toMatchObject({ outcome: "delivered" });
+      expect(f.startSession).toHaveBeenCalledOnce();
+    } finally {
+      await source.close();
+    }
   });
 
   it("continues the same Chat after an idle Codex account switch and committed revocation", async () => {

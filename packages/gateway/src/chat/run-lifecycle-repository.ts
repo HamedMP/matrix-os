@@ -7,6 +7,7 @@ import {
   CanonicalChatMessagePartSchema,
   CanonicalChatAssistantTextPartSchema,
   CanonicalChatMessageSchema,
+  CanonicalChatModelSelectionSchema,
   CanonicalChatRunActivitySchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
@@ -31,6 +32,7 @@ import {
   jsonb,
   messageAttribution,
   messageSearchText,
+  parseJson,
   toActivity,
   toMessage,
   toRun,
@@ -166,7 +168,7 @@ export class ChatRunLifecycleRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
-  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
+  }) {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
     if (!await selectOwnedChat(this.kysely, owner, CanonicalChatIdSchema.parse(input.chatId))) return null;
@@ -176,6 +178,7 @@ export class ChatRunLifecycleRepository {
         "chat_run_adapter_state.schema_version",
         "chat_run_adapter_state.state",
         "chat_runs.execution_root_fingerprint",
+        "chat_runs.selection", "chat_runs.interaction_mode", "chat_runs.permission_mode",
       ])
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
@@ -212,7 +215,9 @@ export class ChatRunLifecycleRepository {
     if (!row) return null;
     return {
       schemaVersion: row.schema_version,
-      state: typeof row.state === "string" ? JSON.parse(row.state) : row.state,
+      state: parseJson(row.state),
+      settings: { selection: CanonicalChatModelSelectionSchema.parse(parseJson(row.selection)),
+        interactionMode: row.interaction_mode, permissionMode: row.permission_mode },
       ...(row.execution_root_fingerprint === null ? {} : {
         executionRootFingerprint: row.execution_root_fingerprint,
       }),

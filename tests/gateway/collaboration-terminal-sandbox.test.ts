@@ -22,6 +22,7 @@ import {
   CollaborationRevocationEnforcer,
   SandboxRuntimeRegistry,
 } from "../../packages/gateway/src/collaboration/revocation-enforcer.js";
+import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 import { SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST } from "../../packages/scope-runtime/src/sandbox.js";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
@@ -31,6 +32,7 @@ const requestId = "20000000-0000-4000-8000-000000000001";
 
 function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "sandbox_shell"; contributorControl?: boolean }, extra: {
   revocations?: CollaborationRevocationEnforcer;
+  inheritedProject?: boolean;
 } = {}) {
   const actorId = `user_${role}`;
   const runtime = {
@@ -49,7 +51,9 @@ function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "s
   };
   const authority = {
     authorize: vi.fn(async ({ action }: { action: string }) => ({
-      actorId, ownerId: "user_owner", scopeId, membershipScopeId: scopeId, resourceKind: "terminal" as const,
+      actorId, ownerId: "user_owner", scopeId,
+      membershipScopeId: extra.inheritedProject ? "10000000-0000-4000-8000-000000000099" : scopeId,
+      resourceKind: "terminal" as const,
       resourceId: terminalId, role, authEpoch: 3, authorityRuntimeId: "runtime_owner", authorityGeneration: 1, capability: action,
     })),
   };
@@ -110,6 +114,41 @@ describe("dispatcher task policy", () => {
     await expect(viewer.dispatcher.dispatch({ scopeId, actorId: viewer.actorId, connectionId: "c1", action: acquire }))
       .rejects.toMatchObject({ code: "forbidden" });
   });
+
+  it("lets an organization member control an inherited sandbox terminal without a separate owner grant", async () => {
+    const projectTerminal = setup("editor", { taskProfile: "sandbox_shell", contributorControl: false }, {
+      inheritedProject: true,
+    });
+    await expect(projectTerminal.dispatcher.dispatch({
+      scopeId,
+      actorId: projectTerminal.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).resolves.toMatchObject({ action: "acquired" });
+  });
+
+  it("keeps an inherited owner host shell observe-only until the owner explicitly enables control", async () => {
+    const withheld = setup("editor", { taskProfile: "host_shell", contributorControl: false }, {
+      inheritedProject: true,
+    });
+    await expect(withheld.dispatcher.dispatch({
+      scopeId,
+      actorId: withheld.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(withheld.runtime.input).not.toHaveBeenCalled();
+
+    const granted = setup("editor", { taskProfile: "host_shell", contributorControl: true }, {
+      inheritedProject: true,
+    });
+    await expect(granted.dispatcher.dispatch({
+      scopeId,
+      actorId: granted.actorId,
+      connectionId: "c1",
+      action: acquire,
+    })).resolves.toMatchObject({ action: "acquired" });
+  });
 });
 
 describe("owner opt-in for Contributor control", () => {
@@ -147,6 +186,52 @@ describe("owner opt-in for Contributor control", () => {
 });
 
 describe("revocation enforcer", () => {
+  it("stops every runtime in a revoked scope without touching another scope", async () => {
+    const stopRuntime = vi.fn(async () => undefined);
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    const otherScope = "10000000-0000-4000-8000-000000000099";
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111" });
+    runtimes.bind({ scopeId, actorId: "actor_2", runtimeHandle: "runtime_22222222222222222222222222222222" });
+    runtimes.bind({ scopeId: otherScope, actorId: "actor_1", runtimeHandle: "runtime_33333333333333333333333333333333" });
+
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(2);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+    expect(runtimes.size).toBe(1);
+    runtimes.close();
+  });
+  it("keeps failed scope stops tracked and rejects cleanup until a retry succeeds", async () => {
+    let available = false;
+    const stopRuntime = vi.fn(async () => {
+      if (!available) throw new Error("supervisor unavailable");
+    });
+    const onStop = vi.fn();
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111", onStop });
+
+    await expect(runtimes.stopForScope(scopeId)).rejects.toThrow("Sandbox runtime stop failed");
+    expect(runtimes.size).toBe(1);
+    expect(onStop).toHaveBeenCalledOnce();
+
+    available = true;
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(1);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(runtimes.size).toBe(0);
+    runtimes.close();
+  });
+  it("treats a confirmed absent runtime as a completed retry without accepting other failures", async () => {
+    const stopRuntime = vi.fn()
+      .mockRejectedValueOnce(new ScopeRuntimeClientError("runtime_unavailable"))
+      .mockRejectedValueOnce(new ScopeRuntimeClientError("runtime_not_found"));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "actor_1", runtimeHandle: "runtime_11111111111111111111111111111111" });
+
+    await expect(runtimes.stopForScope(scopeId)).rejects.toThrow("Sandbox runtime stop failed");
+    expect(runtimes.size).toBe(1);
+    await expect(runtimes.stopForScope(scopeId)).resolves.toBe(1);
+    expect(runtimes.size).toBe(0);
+    runtimes.close();
+  });
   it("keeps another valid session's controller when one action budget is exhausted", async () => {
     const control = new TerminalControlCoordinator({ startTimer: false });
     const enforcer = new CollaborationRevocationEnforcer({ control });
@@ -254,6 +339,18 @@ describe("revocation enforcer", () => {
     expect(enforcer.size).toBe(2);
     expect(enforcer.isRevoked(scopeId, "c")).toBe(true);
     expect(enforcer.isRevoked(scopeId, "a")).toBe(false);
+  });
+
+  it("revokes every runtime before an owner provider-route mutation completes", async () => {
+    const stopRuntime = vi.fn(async (input: { runtimeHandle: string }) => ({
+      runtimeHandle: input.runtimeHandle, executionGeneration: "9", state: "stopped" as const,
+    }));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, maxEntries: 4, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_11111111111111111111111111111111" });
+    runtimes.bind({ scopeId: "20000000-0000-4000-8000-000000000002", actorId: "b", runtimeHandle: "runtime_22222222222222222222222222222222" });
+    await expect(runtimes.stopAll()).resolves.toBe(2);
+    expect(runtimes.size).toBe(0);
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
   });
 
   it("stops and evicts runtime bindings that outlive the maximum run age", async () => {

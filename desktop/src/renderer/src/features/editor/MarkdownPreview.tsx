@@ -67,7 +67,7 @@ export default function MarkdownPreview({ path }: { path: string }) {
   }, [api, path]);
 
   if (preview.status === "error") {
-    return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger)" }}>{preview.error}</div>;
+    return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger-text)" }}>{preview.error}</div>;
   }
   if (preview.status === "loading") {
     return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading…</div>;

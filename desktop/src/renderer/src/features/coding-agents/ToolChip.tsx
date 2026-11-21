@@ -50,7 +50,7 @@ export function ToolChip({ events }: { events: ToolEvent[] }) {
           </MarkerIcon>
           <MarkerContent
             className={cn("shrink truncate text-[12px] font-medium", completed ? undefined : "shimmer")}
-            style={{ color: failed ? "var(--danger)" : "var(--text-primary)" }}
+            style={{ color: failed ? "var(--danger-text)" : "var(--text-primary)" }}
           >
             {name}
           </MarkerContent>
@@ -59,7 +59,7 @@ export function ToolChip({ events }: { events: ToolEvent[] }) {
           </span>
           <StatusIcon
             className="size-3.5 shrink-0"
-            style={{ color: failed ? "var(--danger)" : completed && !cancelled ? "var(--success)" : "var(--text-tertiary)" }}
+            style={{ color: failed ? "var(--danger-text)" : completed && !cancelled ? "var(--success-text)" : "var(--text-tertiary)" }}
             aria-label={completed ? (failed ? "Failed" : cancelled ? "Cancelled" : "Completed") : "Running"}
           />
         </button>

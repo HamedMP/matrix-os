@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Folder } from "@renderer/lib/hugeicons";
+import { ChevronDown, ChevronRight, Folder, Search } from "@renderer/lib/hugeicons";
 import { FileTypeIcon } from "../files/FileTypeIcon";
 import { EMPTY_INSPECTOR_FILE_VIEW, useInspectorFileViews } from "../../stores/files-navigation";
+import { beginMatrixFileDrag, captureAttachmentConnection, endMatrixFileDrag, type MatrixAttachmentResource } from "../chat/attachments/matrix-file-attachment";
 export type InspectorTreeEntry = { path: string; kind: "file" | "directory" };
 type InspectorTreeDirectory = { status: "loading" | "ready" | "error"; entries: InspectorTreeEntry[] };
 const MAX_EXPANDED_FILE_DIRECTORIES = 200;
@@ -15,6 +16,9 @@ export function ExpandableFileTree({
   revealKey,
   renderEntry,
   searchEntries,
+  draggableResource,
+  fileActionLabel = "Open file",
+  attachmentPicker = false,
 }: {
   viewKey?: string;
   loadDirectory: (path: string) => Promise<InspectorTreeEntry[]>;
@@ -24,6 +28,9 @@ export function ExpandableFileTree({
   revealKey?: string;
   renderEntry?: (entry: InspectorTreeEntry, button: ReactElement) => ReactNode;
   searchEntries?: (query: string, signal: AbortSignal) => Promise<InspectorTreeEntry[]>;
+  draggableResource?: (path: string) => MatrixAttachmentResource | undefined;
+  fileActionLabel?: string;
+  attachmentPicker?: boolean;
 }) {
   const [initialView] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view ?? EMPTY_INSPECTOR_FILE_VIEW);
   const [localExpandedPaths, setLocalExpandedPaths] = useState<string[]>(initialView.expandedPaths);
@@ -137,6 +144,7 @@ export function ExpandableFileTree({
     });
   };
 
+  const dragConnection = captureAttachmentConnection();
   const renderDirectory = (path: string, depth: number) => {
     let directory = path === "" && filter && searchEntries
       ? search?.query === filter ? search.directory : { status: "loading", entries: [] } as InspectorTreeDirectory
@@ -161,7 +169,7 @@ export function ExpandableFileTree({
       return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--text-tertiary)" }}>Loading files…</p>;
     }
     if (directory.status === "error") {
-      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--danger)" }}>Files are unavailable.</p>;
+      return <p className="px-3 py-2 text-xs" style={{ paddingLeft: 12 + depth * 16, color: "var(--danger-text)" }}>Files are unavailable.</p>;
     }
     if (directory.entries.length === 0) {
       return depth === 0
@@ -170,13 +178,17 @@ export function ExpandableFileTree({
     }
     return directory.entries.map((entry) => {
       const expanded = entry.kind === "directory" && expandedPaths.includes(entry.path);
+      const resource = entry.kind === "file" ? draggableResource?.(entry.path) : undefined;
       const button = <button
             type="button"
             ref={entry.path === selectedPath ? selectedElement : undefined}
             aria-current={entry.path === selectedPath ? true : undefined}
             aria-label={entry.kind === "directory"
               ? `${expanded ? "Collapse" : "Expand"} folder ${entry.path}`
-              : `Open file ${entry.path}`}
+              : `${fileActionLabel} ${entry.path}`}
+            draggable={resource ? true : undefined}
+            onDragStart={resource ? event => beginMatrixFileDrag(event.dataTransfer, resource, dragConnection) : undefined}
+            onDragEnd={resource ? endMatrixFileDrag : undefined}
             {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
             className="flex w-full items-center gap-2.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
             style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)", background: entry.path === selectedPath ? "var(--bg-hover)" : undefined }}
@@ -210,7 +222,13 @@ export function ExpandableFileTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="files-listing" style={{ background: "var(--bg-surface)" }}>
-      {searchEntries ? <div className="shrink-0 border-b p-2" style={{ borderColor: "var(--border-subtle)" }}><input type="search" aria-label="Filter files" placeholder="Filter files…" maxLength={80} value={query} onChange={(event) => setQuery(event.target.value)} className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-xs" /></div> : null}
+      {searchEntries ? <div data-file-tree-search className="shrink-0 border-b p-2" style={{ borderColor: "var(--border-subtle)" }}>
+        <div data-file-tree-search-field>
+          {attachmentPicker ? <Search size={15} aria-hidden className="shrink-0" /> : null}
+          <input type="search" aria-label="Filter files" placeholder={attachmentPicker ? "Search files…" : "Filter files…"} maxLength={80} value={query}
+            onChange={(event) => setQuery(event.target.value)} className="w-full rounded-md border bg-transparent px-2.5 py-1.5 text-xs" />
+        </div>
+      </div> : null}
       <div data-files-list-header className="sr-only">Expandable file tree</div>
       <div ref={scrollElement} data-file-tree-scroll className="min-h-0 flex-1 overflow-y-auto" onScroll={(event) => {
         if (restoringScroll.current || event.currentTarget.closest("[hidden]")) return;

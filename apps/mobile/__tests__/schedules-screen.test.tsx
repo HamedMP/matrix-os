@@ -20,6 +20,11 @@ function draw(client = api()) {
   render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} />);
   return client;
 }
+it("directs an empty schedule list to a conversational request in a private Chat",async()=>{
+  const client=api();client.list.mockResolvedValue({items:[],pending:[],nextCursor:null});draw(client);
+  await screen.findByText(/Ask in a private Chat to schedule a task/);
+});
+
 it("shows bounded owner DTOs, timing, Computer and revision-bound pause without model text", async () => {
   const client = draw();
   fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
@@ -154,4 +159,16 @@ it("keeps the saved details visible if history navigation fails", async () => {
   await screen.findByText("This task’s Chat could not be opened. Try again.");
   expect(screen.getByText("Return FIXED TEXT")).toBeTruthy();
   expect(screen.queryByText("secret /home/path")).toBeNull();
+});
+
+it("keeps run history out of the definition view and opens the exact source Chat", async () => {
+  const client = api(), onOpenChat = jest.fn();
+  client.detail.mockResolvedValue({routine: {...routine, originChatId: "chat_source", originAvailable: true}, history: []});
+  render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={onOpenChat}/>);
+  fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
+  const source = await screen.findByRole("button", {name: "Open source Chat"});
+  expect(screen.queryByText("Recent runs")).toBeNull();
+  expect(screen.queryByRole("button", {name: "Open execution history"})).toBeNull();
+  fireEvent.press(source);
+  expect(onOpenChat).toHaveBeenCalledWith("chat_source");
 });

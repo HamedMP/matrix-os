@@ -1,0 +1,16 @@
+{
+  "version": "0.1.11",
+  "channel": "stable",
+  "date": "2026-10-05T14:07:33Z",
+  "locale": "en",
+  "title": "Shared projects in your rail",
+  "shortTitle": "Shared in the rail",
+  "summary": "A small update to the desktop app's Work rail.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "Projects shared with you appear in the Work rail next to your own."
+    }
+  ]
+}

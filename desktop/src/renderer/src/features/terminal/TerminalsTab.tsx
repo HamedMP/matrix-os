@@ -21,9 +21,11 @@ import { TerminalSessionSidebar } from "./TerminalSessionSidebar";
 import { DesktopTerminalSharing } from "./DesktopTerminalSharing";
 import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
+import { useTerminalAgentEvents } from "../../stores/terminal-agent-events";
+import { mergeTerminalAgentStatus } from "@matrix-os/ui/terminal-agents";
 import {
   parseTerminalAgentStatuses,
-  terminalAgentVisibleInstallCommand,
+  terminalAgentCreateOptions,
   UNKNOWN_TERMINAL_AGENT_STATUSES,
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
@@ -97,6 +99,8 @@ export default function TerminalsTab({
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
+  const agentTabs = useTerminalAgentEvents((s) => s.tabs);
+  const listedShells = useMemo(() => mergeTerminalAgentStatus(shells, agentTabs), [shells, agentTabs]);
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
@@ -179,6 +183,7 @@ export default function TerminalsTab({
   renamingNameRef.current = renamingName;
   const busyNamesRef = useRef<string[]>([]);
   busyNamesRef.current = busyNames;
+  const missingRequestRefreshRef = useRef<{ requestId: number; afterSequence: number } | null>(null);
 
   const isShellBusy = (name: string) => busyNames.includes(name);
 
@@ -242,10 +247,7 @@ export default function TerminalsTab({
 
   const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     if (!api || creating) return;
-    const created = await create(api, {
-      cmd: action === "launch" ? option.launchCommand : terminalAgentVisibleInstallCommand(option),
-      ...(action === "launch" ? { agent: option.id } : {}),
-    });
+    const created = await create(api, terminalAgentCreateOptions(option, action));
     if (created) showShellDetail(created);
   };
 
@@ -279,7 +281,18 @@ export default function TerminalsTab({
     }
     const requestedShell = shells.find((shell) => shell.name === terminalSessionRequest.sessionName);
     if (!requestedShell) {
-      if (!loading && !creating && !error && loadSequence > 0) {
+      if (loading || creating || error || loadSequence === 0) return;
+      // The agent events stream can name a tab before the periodic list refresh has it,
+      // so a missing tab gets one fresh list before the request is dropped.
+      const refresh = missingRequestRefreshRef.current;
+      if (api && refresh?.requestId !== terminalSessionRequest.requestId) {
+        missingRequestRefreshRef.current = { requestId: terminalSessionRequest.requestId, afterSequence: loadSequence };
+        void syncShellSessions(api).catch((err: unknown) => {
+          console.error("[terminals] Refresh for a requested tab failed:", err instanceof Error ? err.name : "unknown");
+        });
+        return;
+      }
+      if (!refresh || loadSequence > refresh.afterSequence) {
         consumeTerminalSessionRequest(terminalSessionRequest.requestId);
       }
       return;
@@ -287,6 +300,7 @@ export default function TerminalsTab({
     showShellDetail(requestedShell);
     consumeTerminalSessionRequest(terminalSessionRequest.requestId);
   }, [
+    api,
     consumeTerminalSessionRequest,
     creating,
     error,
@@ -372,7 +386,7 @@ export default function TerminalsTab({
       <TerminalSessionSidebar
         showHeader={false}
         {...controls}
-        sessions={shells}
+        sessions={listedShells}
         selectedName={selectedName}
         creating={creating}
         disabled={!api}
@@ -452,6 +466,7 @@ export default function TerminalsTab({
             <RetainedPane
               as="section"
               key={sessionName}
+              data-terminal-session={sessionName}
               active={active && selected}
               visible={visible && selected}
               className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg"

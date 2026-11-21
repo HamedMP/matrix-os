@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { useEffect, useLayoutEffect } from "react";
 import { act, cleanup, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useComputerTerminals } from "@desktop/renderer/src/features/terminal-window/use-computer-terminals";
 
 // These tests render the whole window and wait on mocked network replies. The
 // default one-second wait is too tight for the first render on a loaded CI
@@ -90,6 +91,32 @@ describe("Terminal window computers", () => {
     expect(screen.queryByText("Loading terminals…")).toBeNull();
     // Computers that were never opened are still not asked.
     expect(requests().every((request) => !request.includes("runtime=extra"))).toBe(true);
+  });
+
+  it("refreshes a newly committed listing when focus arrives before passive effects", async () => {
+    let tabs = [{ id: TAB_1, name: "build" }];
+    let focused = false;
+    fetchMock.mockImplementation(async () => json(workspace(tabs)));
+    function FocusDuringCommit() {
+      const { terminals, load } = useComputerTerminals(HOST, "focus-during-commit");
+      useEffect(() => { void load("primary"); }, [load]);
+      useLayoutEffect(() => {
+        if (focused || terminals.primary?.status !== "ready") return;
+        focused = true;
+        tabs = [...tabs, { id: TAB_2, name: "started on my phone" }];
+        for (const listener of focusListeners) listener({ focused: true });
+      }, [terminals]);
+      const state = terminals.primary;
+      return state?.status === "ready"
+        ? <>{state.tabs.map(tab => <button key={tab.refKey}>{tab.name}</button>)}</>
+        : <p>Loading terminals…</p>;
+    }
+    render(<FocusDuringCommit />);
+    expect(await screen.findByRole("button", { name: "started on my phone" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "build" })).toBeTruthy();
+    expect(screen.queryByText("Loading terminals…")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requests().every(request => !request.includes("runtime=extra"))).toBe(true);
   });
 
   it("lists a computer's terminals even when it is opened the instant the list appears", async () => {

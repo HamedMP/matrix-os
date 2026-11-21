@@ -41,6 +41,11 @@ describe("unified CLI command tree", () => {
       "ls",
       "--json",
     ]);
+    // Fault detected (live test on the #3300 preview): `matrix --profile x shell run -- bash -l`
+    // moved --profile after `--`, so bash received it as an argument and exited.
+    expect(normalizeLeadingGlobalFlags(["--profile", "pr-1", "shell", "run", "--", "bash", "-l"])).toEqual([
+      "shell", "run", "--profile", "pr-1", "--", "bash", "-l",
+    ]);
     expect(normalizeLeadingGlobalFlags(["--profile=local", "shell", "ls"])).toEqual([
       "shell",
       "ls",

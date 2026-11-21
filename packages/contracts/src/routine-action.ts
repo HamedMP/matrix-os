@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 
 export const ROUTINE_ACTION_PROOF_HEADER = "x-matrix-routine-action-proof";
 export const ROUTINE_ACTION_PATH = "/api/routine-cli/actions";
+export const ROUTINE_DIRECT_CHAT_ACTION_DESTINATION = "matrix-schedules";
 export const RoutineActionIdSchema = z.string().regex(/^rcact_[a-f0-9]{32}$/);
 export const RoutineActionDecisionSchema = z.enum(["approve", "decline", "cancel"]);
 export const RoutineActionSubmitSchema = z.strictObject({
@@ -48,5 +49,8 @@ export function routineActionConfirmationUrl(appOrigin: string, gatewayPath: str
 
 export const ROUTINE_ACTION_OUTCOME = { pending: "Awaiting your decision", approved: "This operation was allowed", declined: "This operation was declined", cancelled: "This request was cancelled", expired: "This request expired", unavailable: "This request is unavailable" } as const;
 export function routineActionDetails(view: RoutineActionView): string {
-  return `${view.sourceLabel}\nDestination ${view.target.botId} / ${view.target.chatId}\n${JSON.stringify(view.intent, null, 2)}`;
+  const destination = view.target.botId === ROUTINE_DIRECT_CHAT_ACTION_DESTINATION
+    ? "Runs in this Chat"
+    : `${view.sourceLabel}\nDestination ${view.target.botId} / ${view.target.chatId}`;
+  return `${destination}\n${JSON.stringify(view.intent, null, 2)}`;
 }

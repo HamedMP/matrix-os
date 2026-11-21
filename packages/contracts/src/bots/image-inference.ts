@@ -8,7 +8,11 @@ const mimeTypes = ["image/png", "image/jpeg", "image/webp"];
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 function keys(value: Record<string, unknown>, allowed: string[]) { return Object.keys(value).every(key => allowed.includes(key)); }
 /** Returns counts only; never returns submitted bytes or model text. */
-export function validateBotImageInferenceBody(body: string, maximumTextBytes = BOT_INFERENCE_TEXT_MAX_BYTES): { valid: boolean; imageCount: number } {
+export function validateBotImageInferenceBody(
+  body: string,
+  maximumTextBytes = BOT_INFERENCE_TEXT_MAX_BYTES,
+  maximumImageBytes = BOT_INPUT_IMAGE_TOTAL_MAX_BYTES,
+): { valid: boolean; imageCount: number } {
   if (body.length > BOT_IMAGE_INFERENCE_MAX_BYTES || encoder.encode(body).byteLength > BOT_IMAGE_INFERENCE_MAX_BYTES) return { valid: false, imageCount: 0 };
   try {
     const value: unknown = JSON.parse(body); if (!record(value)) return { valid: false, imageCount: 0 };
@@ -22,7 +26,8 @@ export function validateBotImageInferenceBody(body: string, maximumTextBytes = B
       if (botNativeImageMime(Uint8Array.from(prefix, char => char.charCodeAt(0))) !== mime) throw new Error("Image MIME");
       const length = encoded.length / 4 * 3 - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0);
       totalBytes += length; imageCharacters += encoded.length; imageCount++;
-      if (length > BOT_INPUT_IMAGE_MAX_BYTES || totalBytes > BOT_INPUT_IMAGE_TOTAL_MAX_BYTES || imageCount > BOT_INPUT_MAX_IMAGES) throw new Error("Image capacity");
+      if (length > BOT_INPUT_IMAGE_MAX_BYTES || totalBytes > Math.min(maximumImageBytes, BOT_INPUT_IMAGE_TOTAL_MAX_BYTES)
+        || imageCount > BOT_INPUT_MAX_IMAGES) throw new Error("Image capacity");
     };
     const messages = Array.isArray(value.input) ? value.input : Array.isArray(value.messages) ? value.messages : [];
     for (const message of messages) {

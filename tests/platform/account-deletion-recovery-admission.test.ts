@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { getActiveUserMachineByClerkId, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
@@ -18,7 +19,7 @@ describe('account deletion recovery admission', () => {
   const schedule = () => new AccountDeletionRepository(db.kysely, { secret }).accept({ clerkUserId: owner, appleTokens: [] }, false);
   const compose = (hetzner = createMockHetznerClient()) => ({ hetzner, service: createCustomerVpsService({
     db, hetzner, systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: vi.fn().mockResolvedValue(true) }),
-    config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
+    config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
     machineIdFactory: () => 'a1111111-1111-4111-8111-111111111111',
   }) });
   it('refuses a scheduled owner before changing recovery identity or creating a replacement', async () => {

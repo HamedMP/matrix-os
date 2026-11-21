@@ -1,6 +1,7 @@
 #!/opt/matrix/runtime/node/bin/node
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
@@ -62,6 +63,24 @@ if (
   || !GENERATION_PATTERN.test(descriptor.generation ?? "")
   || typeof descriptor.createdAt !== "string"
 ) fail("descriptor_invalid");
+
+// New immutable generations pin the attach process and Node executable together.
+// Legacy generations preserve their original three-asset entry and identity.
+const pinnedGeneration = join(runtimeRoot, "generations", descriptor.generation);
+if (existsSync(join(pinnedGeneration, "closure.json")) || existsSync(join(pinnedGeneration, "node"))) {
+  try {
+    const { validateTerminalClosure } = await import(pathToFileURL(join(pinnedGeneration, "generation-closure.mjs")).href);
+    await validateTerminalClosure(pinnedGeneration, descriptor.generation);
+    const node = join(pinnedGeneration, "node"), attach = join(pinnedGeneration, "matrix-terminal-attach.mjs");
+    if (realpathSync(process.execPath) !== realpathSync(node) || realpathSync(fileURLToPath(import.meta.url)) !== realpathSync(attach)) {
+      const pinned = spawn(node, [attach, runtimeId, ...remainingArgs], { env: process.env, stdio: "inherit" });
+      for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { if (pinned.exitCode === null) pinned.kill(signal); });
+      pinned.once("error", () => fail("attach_start_failed"));
+      pinned.once("exit", (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exit(code ?? 1); });
+      await new Promise(() => undefined);
+    }
+  } catch (error) { if (error instanceof Error) fail("generation_invalid"); fail("runtime_asset_unavailable"); }
+}
 
 let zellijPath;
 try {

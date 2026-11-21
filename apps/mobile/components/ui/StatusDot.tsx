@@ -1,7 +1,8 @@
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-export type StatusTone = "waiting" | "active";
+/** Amber: waits on the person. Green: at work. Unread: finished, not yet read. */
+export type StatusTone = "waiting" | "active" | "unread";
 
 export interface StatusDotProps {
   tone: StatusTone;
@@ -37,5 +38,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   active: {
     backgroundColor: theme.v2.colors.success,
+  },
+  unread: {
+    backgroundColor: theme.v2.colors.textDefault,
   },
 }));

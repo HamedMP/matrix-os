@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { FlatList, KeyboardAvoidingView, Platform } from "react-native";
+import { FlatList, Platform } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
 import { CHAT_SUGGESTIONS } from "../components/chat/chat-suggestions";
 import { DesignPreview } from "../dev/design-preview/DesignPreview";
@@ -8,6 +9,8 @@ import type { TranscriptMessage } from "../lib/canonical-chat-transcript";
 import { drawnTestIds } from "./chat-test-utils";
 import { flat } from "./ui-test-utils";
 
+// Preview frames use local data and never authenticate or read Matrix files.
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isLoaded: true, isSignedIn: false }) }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 

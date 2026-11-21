@@ -1,9 +1,9 @@
 import { useEffect, useRef, type ComponentProps, type ReactElement } from "react";
 import type { Button as SwiftUIButton } from "@expo/ui/swift-ui";
 import { Share, type PressableProps } from "react-native";
-import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { showToast } from "@/lib/toast";
 
 export type ChatMenuAction =
@@ -110,15 +110,10 @@ export function useChatMenuActions(chatId: string | null, text: string | null): 
 
 /** `current` says whether the result still belongs on screen. */
 async function copy(value: string, what: "text" | "chat ID", current: () => boolean) {
-  try {
-    const copied = await Clipboard.setStringAsync(value);
-    if (copied === false) throw new Error("Clipboard unavailable");
-    if (current()) showToast(what === "text" ? "Text copied" : "Chat ID copied");
-  } catch (error: unknown) {
-    // The platform's own words can name internals; the person gets ours.
-    console.warn("[chat] Clipboard copy failed", error instanceof Error ? error.name : "UnknownError");
-    if (current()) showToast(`Could not copy ${what}. Try again.`, "error");
-  }
+  await copyToClipboard(value, {
+    copied: what === "text" ? "Text copied" : "Chat ID copied",
+    failed: `Could not copy ${what}. Try again.`,
+  }, current);
 }
 
 async function share(text: string, current: () => boolean) {

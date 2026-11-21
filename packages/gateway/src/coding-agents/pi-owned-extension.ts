@@ -1,5 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { z } from "zod/v4";
+import { RoutineCliOperationSchema } from "@matrix-os/contracts/routine-cli";
+import { PI_ROUTINE_EXTENSION } from "./pi-routine-extension.js";
+import { createPiExtensionFiles } from "./pi-extension-files.js";
 import { join } from "node:path";
 
 // Loaded explicitly while --no-extensions disables owner/project discovery.
@@ -24,14 +27,21 @@ export default function (pi) {
 }
 `;
 
-export async function createPiOwnedExtension(): Promise<{ path: string; dispose: () => Promise<void> }> {
-  const directory = await mkdtemp(join(tmpdir(), "matrix-pi-extension-"));
+export async function createPiOwnedExtension(options: { routines?: boolean } = {}): Promise<{ path: string; routinePath?: string; dispose: () => Promise<void> }> {
+  const files = await createPiExtensionFiles();
+  const directory = files.directory;
   try {
     const path = join(directory, "ask-user.ts");
     await writeFile(path, SOURCE, { encoding: "utf8", mode: 0o600, flag: "wx" });
-    return { path, dispose: () => rm(directory, { recursive: true, force: true }) };
+    let routinePath: string | undefined;
+    if (options.routines) {
+      routinePath = join(directory, "routines.mjs");
+      const schema = JSON.stringify(z.toJSONSchema(RoutineCliOperationSchema, { target: "draft-7" }));
+      await writeFile(routinePath, PI_ROUTINE_EXTENSION.replace("__MATRIX_ROUTINE_SCHEMA__", schema), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    }
+    return { path, routinePath, dispose: files.dispose };
   } catch (error: unknown) {
-    await rm(directory, { recursive: true, force: true });
+    await files.dispose();
     throw error;
   }
 }

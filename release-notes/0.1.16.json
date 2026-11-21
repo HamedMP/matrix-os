@@ -1,0 +1,191 @@
+{
+  "version": "0.1.16",
+  "channel": "stable",
+  "date": "2026-10-22T01:44:06Z",
+  "locale": "en",
+  "title": "A browser for your agents",
+  "shortTitle": "Agent browser",
+  "summary": "Agents can use a real Chrome browser with your approval, and Matrix gets customizable themes.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "A browser your agents can use",
+      "body": "Your agents can browse in a Chrome window on your Matrix computer. You can watch it, and in Supervised mode every action waits for your approval, with Undo.",
+      "art": "shield",
+      "tone": "ink",
+      "prs": [
+        2583,
+        2584,
+        2585,
+        2586,
+        2587,
+        2526,
+        2617,
+        2619,
+        2640,
+        2642,
+        2662,
+        2686,
+        2687,
+        2697,
+        2698,
+        2722,
+        2688
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Custom themes",
+      "body": "Pick a Matrix theme or make your own. Badges and icons stay readable whatever you choose.",
+      "art": "sparkle",
+      "tone": "lime",
+      "prs": [
+        2428,
+        2420,
+        2663
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "A getting-started checklist opens each task in its own chat."
+    },
+    {
+      "kind": "new",
+      "text": "Try Matrix with a 14-day Starter trial."
+    },
+    {
+      "kind": "new",
+      "text": "Review Gmail drafts before they're sent."
+    },
+    {
+      "kind": "new",
+      "text": "Connected apps can take actions you explicitly allow."
+    },
+    {
+      "kind": "new",
+      "text": "Dictate messages on mobile."
+    },
+    {
+      "kind": "new",
+      "text": "The mobile terminal has the keys coding agents need."
+    },
+    {
+      "kind": "improved",
+      "text": "The mobile app moves more smoothly, with haptics, toasts and long-press menus."
+    },
+    {
+      "kind": "improved",
+      "text": "On mobile, a project's chats open above the project."
+    },
+    {
+      "kind": "improved",
+      "text": "The mobile app recovers when a chat fails to load, send or run."
+    },
+    {
+      "kind": "new",
+      "text": "The matrix CLI can update itself."
+    },
+    {
+      "kind": "new",
+      "text": "Imported conversations are labeled and can be filtered, and you can import several at once."
+    },
+    {
+      "kind": "improved",
+      "text": "Long Claude runs keep going past 30 minutes."
+    },
+    {
+      "kind": "improved",
+      "text": "Supervised mode offers an approval instead of a dead-end denial."
+    },
+    {
+      "kind": "improved",
+      "text": "Managed Pi shows command details and tool progress."
+    },
+    {
+      "kind": "fixed",
+      "text": "Terminal output comes back after you reattach."
+    },
+    {
+      "kind": "fixed",
+      "text": "Attachments, commands and bot status work again in Chat."
+    },
+    {
+      "kind": "fixed",
+      "text": "Signing in to Codex and Claude from Settings works again."
+    },
+    {
+      "kind": "fixed",
+      "text": "The mobile composer stays above the Android keyboard."
+    },
+    {
+      "kind": "fixed",
+      "text": "The mobile side panel stays shut when you swipe left."
+    },
+    {
+      "kind": "fixed",
+      "text": "Mobile Settings includes Connect Apps, and side panel titles fit."
+    },
+    {
+      "kind": "fixed",
+      "text": "Getting-started panels no longer overlap."
+    },
+    {
+      "kind": "improved",
+      "text": "Sharing is hidden on mobile for individual accounts."
+    }
+  ],
+  "hidden": [
+    2639,
+    2641,
+    2633,
+    2630,
+    2646,
+    2493,
+    2494,
+    2495,
+    2657,
+    2656,
+    2667,
+    2666,
+    2665,
+    2670,
+    2668,
+    2673,
+    2669,
+    2676,
+    2675,
+    2677,
+    2681,
+    2682,
+    2690,
+    2699,
+    2702,
+    2713,
+    2707,
+    2717,
+    2723,
+    2721,
+    2720,
+    2724,
+    2596,
+    2564,
+    2773,
+    2432,
+    2777,
+    2774,
+    2775,
+    2780,
+    2792,
+    2784,
+    2782,
+    2638,
+    2618,
+    2649,
+    2658,
+    2660,
+    2659,
+    2781
+  ]
+}

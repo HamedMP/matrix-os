@@ -1,14 +1,18 @@
 "use client";
 
+import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import { GetStartedAnswersProvider, GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
+import { useSourceChatBrowserEntry } from "@/hooks/useSourceChatBrowserEntry";
 import { useCanonicalChatState } from "@/hooks/useCanonicalChatState";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
+import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import { useCommandStore } from "@/stores/commands";
 import { ChatProvider } from "@/stores/chat-context";
+import { organizationDriveNavigationIdentity } from "@/stores/organization-drive-navigation";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
@@ -35,7 +39,9 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
 
 function readLaunchPathFromLocation(): string | null {
   if (typeof window === "undefined") return null;
-  if (readRecipePromptFromLocation()) return "__chat__";
+  const chatIds = new URLSearchParams(window.location.search).getAll("chat");
+  const chatId = CanonicalChatIdSchema.safeParse(chatIds.length === 1 ? chatIds[0] : null);
+  if (readRecipePromptFromLocation() || chatId.success) return "__chat__";
   const launch = new URLSearchParams(window.location.search).get("launch");
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
 }
@@ -130,6 +136,12 @@ function ShellHomeBody({
   // Canonical Chat captures this transport on mount. Shared navigation rewrites
   // history without replacing it; actual Computer switches reload the document.
   const [chatGatewayUrl] = useState(getGatewayUrl);
+  const fileAuthority = organizationDriveNavigationIdentity(userId, sessionId, chatGatewayUrl);
+  useLayoutEffect(() => {
+    if (!localAuthBypass && !nativeCollaborationActorId) {
+      usePreviewWindow.getState().setDraftAuthority(fileAuthority);
+    }
+  }, [fileAuthority, nativeCollaborationActorId]);
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
@@ -145,7 +157,17 @@ function ShellHomeBody({
     navigationScope: createShellChatNavigationScope(cacheScope, sessionId, chatGatewayUrl),
     navigationGeneration: sessionId ?? "self-hosted",
   });
+  useSourceChatBrowserEntry({identity:JSON.stringify([userId,sessionId,runtimeSlot,chatGatewayUrl]),connected:chat.connected,switchConversation:chat.switchConversation,isCurrent:chat.isCurrentAuthority});
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const handoffConsumed = useRef<string | null>(null);
+  useEffect(() => {
+    const values = new URLSearchParams(window.location.search).getAll("chat");
+    const target = CanonicalChatIdSchema.safeParse(values.length === 1 ? values[0] : null);
+    const key = JSON.stringify([userId, sessionId, target.success ? target.data : null]);
+    if (!userId || !target.success || initialCollaborationView || handoffConsumed.current === key) return;
+    handoffConsumed.current = key;
+    chat.switchConversation(target.data);
+  }, [userId, sessionId, initialCollaborationView, chat.switchConversation]);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,

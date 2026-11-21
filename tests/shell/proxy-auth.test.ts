@@ -105,6 +105,25 @@ describe("completed signup redirect validation", () => {
     )).toBe("/auth/device?user_code=BCDF-GHJK");
   });
 
+  it("returns a completed signup to the exact ai-insights.app satellite page", () => {
+    const satellite = "https://ai-insights.app/share?__clerk_synced=false#report=abc";
+    expect(resolveCompletedSignupRedirect(
+      `?redirect_url=${encodeURIComponent(satellite)}`,
+      appOrigin,
+    )).toBe(satellite);
+    for (const unsafe of [
+      "https://ai-insights.app.evil.com/share",
+      "https://ai-insights.app@evil.com/share",
+      "http://ai-insights.app/share",
+      "https://www.ai-insights.app/share",
+    ]) {
+      expect(resolveCompletedSignupRedirect(
+        `?redirect_url=${encodeURIComponent(unsafe)}`,
+        appOrigin,
+      )).toBe("/");
+    }
+  });
+
   it("rejects external, protocol-relative, auth-loop, and oversized destinations", () => {
     expect(resolveCompletedSignupRedirect(
       "?redirect_url=https%3A%2F%2Fevil.example%2Fsteal",
@@ -255,6 +274,22 @@ describe("proxy auth: completed signup recovery", () => {
     expect(response).toEqual({
       kind: "redirect",
       url: new URL("https://app.matrix-os.com/"),
+      status: 303,
+    });
+  });
+
+  it("returns a completed satellite signup to ai-insights.app with its query and fragment", async () => {
+    const { proxy } = await loadProxy("user_complete");
+    const satellite = "https://ai-insights.app/share?__clerk_synced=false#report=abc";
+
+    const response = await proxy(
+      signupRequest(`?redirect_url=${encodeURIComponent(satellite)}`) as Parameters<typeof proxy>[0],
+      {} as Parameters<typeof proxy>[1],
+    );
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL(satellite),
       status: 303,
     });
   });

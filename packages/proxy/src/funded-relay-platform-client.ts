@@ -3,6 +3,8 @@ import {
   FundedAiTerminalOutcomeResponseSchema, type FundedAiTerminalOutcomeRequest, type FundedAiTerminalOutcomeResponse,
   FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
+  FundedAiPricingReviewSnapshotSchema,
+  FundedAiPricingRouteFailureSchema,
   FundedAiReleaseResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiStartResponseSchema,
@@ -22,36 +24,39 @@ import {
 
 export class FundedControlPlaneError extends Error {
   constructor(readonly status: number, readonly priorityReason?: FundedAiPriorityReason,
-    readonly fundingReason?: "insufficient_credit" | "budget_exceeded") {
+    readonly fundingReason?: "insufficient_credit" | "budget_exceeded", readonly identityDenied = false) {
     super("Funded AI control-plane request failed");
     this.name = "FundedControlPlaneError";
   }
 }
 
-/** These are platform contract errors, never arbitrary provider error strings. */
-function fundingReasonFrom(status: number, text: string): "insufficient_credit" | "budget_exceeded" | undefined {
-  if (status !== 402 && status !== 403) return undefined;
-  let parsed: unknown;
-  try { parsed = JSON.parse(text) as unknown; }
-  catch (error: unknown) { if (error instanceof SyntaxError) return undefined; throw error; }
-  const safe = FundedAiSafeErrorSchema.safeParse(parsed);
-  if (!safe.success) return undefined;
-  if (status === 402 && safe.data.error.code === "insufficient_credit") return "insufficient_credit";
-  if (status === 403 && safe.data.error.code === "budget_exceeded") return "budget_exceeded";
-  return undefined;
-}
-
-/** Only the platform's allowlisted priority reasons pass through; anything else is dropped. */
-function priorityReasonFrom(text: string): FundedAiPriorityReason | undefined {
+/** Only allowlisted Platform contract errors affect Relay retry and quota handling. */
+function controlErrorFrom(status: number, text: string): FundedControlPlaneError {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (error) {
-    if (error instanceof SyntaxError) return undefined;
+    if (error instanceof SyntaxError) return new FundedControlPlaneError(status);
     throw error;
   }
   const safe = FundedAiSafeErrorSchema.safeParse(parsed);
-  return safe.success && safe.data.error.code === "rate_limited" ? safe.data.error.reason : undefined;
+  if (!safe.success) return new FundedControlPlaneError(status);
+  const detail = safe.data.error;
+  switch (detail.code) {
+    case "rate_limited":
+      return new FundedControlPlaneError(status, status === 429 ? detail.reason : undefined);
+    case "insufficient_credit":
+      return new FundedControlPlaneError(status, undefined, status === 402 ? detail.code : undefined);
+    case "budget_exceeded":
+      return new FundedControlPlaneError(status, undefined, status === 403 ? detail.code : undefined);
+    case "unauthorized":
+      return new FundedControlPlaneError(status, undefined, undefined, status === 401);
+    case "access_disabled":
+    case "model_not_allowed":
+      return new FundedControlPlaneError(status, undefined, undefined, status === 403);
+    default:
+      return new FundedControlPlaneError(status);
+  }
 }
 
 async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
@@ -104,37 +109,41 @@ export interface FundedPlatformClient {
   finalize(input: FundedAiFinalizationRequest, signal: AbortSignal): Promise<FundedAiFinalizationResponse>;
 }
 
+type ControlAction = "authorize" | "check" | "finalize" | "release" | "start" | "terminal"
+  | "pricing-reviews" | "pricing-route-failure";
+
 export function createFundedPlatformClient(options: Pick<
   FundedRelayConfig,
   "platformBaseUrl" | "relayControlToken" | "platformTimeoutMs" | "maxControlResponseBytes"
-> & { fetch: typeof fetch }): FundedPlatformClient {
+> & { fetch: typeof fetch }): FundedPlatformClient & {
+  readPricingReviews(signal: AbortSignal): Promise<z.output<typeof FundedAiPricingReviewSnapshotSchema>>;
+  reportPricingRouteFailure(input: z.input<typeof FundedAiPricingRouteFailureSchema>, signal: AbortSignal): Promise<void>;
+} {
   const platformBaseUrl = normalizeFundedPlatformOrigin(options.platformBaseUrl);
   const relayControlToken = options.relayControlToken;
   const platformTimeoutMs = options.platformTimeoutMs;
   const maxControlResponseBytes = options.maxControlResponseBytes;
   const fetchImpl = options.fetch;
 
-  async function call<T>(
-    action: "authorize" | "check" | "finalize" | "release" | "start" | "terminal",
-    body: unknown,
-    schema: z.ZodType<T>,
-    lifetimeSignal: AbortSignal,
-  ): Promise<T> {
-    const response = await fetchImpl(`${platformBaseUrl}/internal/ai/funded/${action}`, {
-      method: "POST",
+  function request(action: ControlAction, body: unknown, lifetimeSignal: AbortSignal) {
+    const isPricingRead = action === "pricing-reviews";
+    return fetchImpl(`${platformBaseUrl}/internal/ai/funded/${action}`, {
+      method: isPricingRead ? "GET" : "POST",
       headers: {
         authorization: `Bearer ${relayControlToken}`,
-        "content-type": "application/json",
+        ...(isPricingRead ? {} : { "content-type": "application/json" }),
       },
-      body: JSON.stringify(body),
+      ...(isPricingRead ? {} : { body: JSON.stringify(body) }),
       redirect: "error",
       signal: AbortSignal.any([lifetimeSignal, AbortSignal.timeout(platformTimeoutMs)]),
     });
+  }
+
+  async function call<T>(action: Exclude<ControlAction, "pricing-route-failure">, body: unknown, schema: z.ZodType<T>,
+    lifetimeSignal: AbortSignal): Promise<T> {
+    const response = await request(action, body, lifetimeSignal);
     const text = await readBoundedText(response, maxControlResponseBytes);
-    if (!response.ok) {
-      throw new FundedControlPlaneError(response.status, response.status === 429 ? priorityReasonFrom(text) : undefined,
-        fundingReasonFrom(response.status, text));
-    }
+    if (!response.ok) throw controlErrorFrom(response.status, text);
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;
@@ -146,6 +155,14 @@ export function createFundedPlatformClient(options: Pick<
   }
 
   return {
+    readPricingReviews: (signal) => call("pricing-reviews", undefined, FundedAiPricingReviewSnapshotSchema, signal),
+    async reportPricingRouteFailure(input, signal) {
+      const response = await request("pricing-route-failure", FundedAiPricingRouteFailureSchema.parse(input), signal);
+      if (response.status !== 204) {
+        await response.body?.cancel("unexpected route-failure acknowledgement");
+        throw new FundedControlPlaneError(response.status);
+      }
+    },
     check: (input, signal) => call("check", input, FundedAiPolicyCheckResponseSchema, signal),
     authorize: (input, signal) => call("authorize", input, FundedAiAuthorizationResponseSchema, signal),
     start: (input, signal) => call("start", input, FundedAiStartResponseSchema, signal),

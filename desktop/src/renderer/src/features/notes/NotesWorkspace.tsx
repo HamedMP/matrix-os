@@ -114,7 +114,7 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
                 <button
                   type="button"
                   aria-label={`Delete ${item.title.trim() || "Untitled"}`}
-                  className="absolute right-3 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/note:opacity-100"
+                  className="absolute right-3 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[var(--text-tertiary)] opacity-0 transition-opacity hover:bg-[var(--bg-hover)] hover:text-[var(--danger-text)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] group-hover/note:opacity-100"
                   onClick={() => setDeleteTarget(item.id)}
                 >
                   <Trash2 size={14} aria-hidden />

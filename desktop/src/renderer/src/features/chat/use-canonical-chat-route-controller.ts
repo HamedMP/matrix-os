@@ -1,6 +1,8 @@
+import { useDesktopRoutineConfirmation } from "./use-desktop-routine-confirmation";
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import { useChatReadState, mergeChatReadState, type CanonicalChatClientAdmission } from "@matrix-os/ui";
-import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatDisplayedIncomingSeq, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -23,7 +25,7 @@ import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitDesktopChatTurn } from "./canonical-chat-turn-admission";
+import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -499,16 +501,7 @@ export function useCanonicalChatRouteController({
       });
       if (!admitted) return null;
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
-      const streamed = detailRef.current;
-      const next: CanonicalChatDetailResponse = admitted.recoveredDetail ?? {
-        ...(current ?? { activities: [] }),
-        record: admitted.record,
-        messages: [...(current?.messages ?? []), admitted.message],
-        turns: [...(current?.turns ?? []), admitted.turn],
-        runs: [...(current?.runs ?? []), admitted.run],
-      };
-      const resolved = streamed?.record.chat.id === next.record.chat.id
-        && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
+      const resolved = resolveDesktopAdmittedDetail(admitted, current, detailRef.current);
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
       detailRef.current = resolved;
@@ -840,20 +833,28 @@ export function useCanonicalChatRouteController({
 
   const submitInput = useCanonicalInputSubmission({ client, detailRef, scopeRef: routeScopeRef, loadDetail, setError });
 
+  const routineConfirmation = useDesktopRoutineConfirmation({ client, identity: admissionIdentity, active, chatId: activeChatId, projectId });
   const submitApproval = useCallback(async (
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
     browserChoice?: BrowserPermissionChoice,
   ) => {
+    const routine = RoutineActionIdSchema.safeParse(approvalId).success;
+    if (routine && !routineConfirmation.isCurrent()) return false;
     const current = detailRef.current;
     const activeRun = current?.record.activeRun;
     if (!current || !activeRun) return false;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope && (!routine || routineConfirmation.isCurrent()));
     try {
       const approval = canonicalChatApprovals(current).find(item =>
         item.pending && item.runId === activeRun.runId && item.approvalId === approvalId);
       if (approval?.browserApproval && !browserChoice) throw new Error("Browser scope required");
+      if (routine) {
+        if (!approval) return false;
+        await routineConfirmation.open(approvalId);
+        return isCurrentScope(); // Browser opening is pending; canonical events alone settle the decision.
+      }
       await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, browserChoice ? browserPermissionRequest(approval, browserChoice, canonicalChatRequestId()) : {
         clientRequestId: canonicalChatRequestId(),
         decision,
@@ -869,7 +870,7 @@ export function useCanonicalChatRouteController({
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, routineConfirmation]);
 
   const retryTurn = useCallback(async (turnId: string) => {
     const current = detailRef.current;
@@ -944,7 +945,7 @@ export function useCanonicalChatRouteController({
   useChatReadState({
     chatId: activeChatId,
     state: detail?.record.chat.id === activeChatId ? detail.record.readState : undefined,
-    throughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    throughSeq: canonicalChatDisplayedIncomingSeq(detail?.messages ?? []),
     active, onRead: updateReadState,
   });
 

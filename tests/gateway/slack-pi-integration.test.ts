@@ -48,7 +48,8 @@ import type { ScopeRuntimeHost } from "../../packages/gateway/src/scope-runtime-
 import type { GatewayCollaborationRuntime } from "../../packages/gateway/src/collaboration/wiring.js";
 import type { BotRunSpec } from "@matrix-os/contracts";
 import { createBotStateDatabase, createRealBotStateDatabase } from "./bots/bot-state-support.js";
-import { allowAllOrganizationPrecondition, collaborationActors as actors, collaborationIds as ids, collaborationExecutionEligibility } from "./collaboration-test-support.js";
+import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
+import { collaborationActors as actors, collaborationIds as ids, collaborationExecutionEligibility } from "./collaboration-test-support.js";
 
 const ORG = "org_team";
 const SOURCE = "owner_anthropic_key";
@@ -107,7 +108,20 @@ async function setup(revisionRace = false) {
   await db.insertInto("collaboration_members").values({ scope_id: ids.scope, actor_id: actors.editor, role: "editor", status: "accepted",
     invitation_id: null, invited_by: actors.owner, accepted_at: new Date().toISOString(), expires_at: null,
     revision: 1, joined_at: new Date().toISOString(), updated_at: new Date().toISOString() }).execute();
-  const authority = new CollaborationAuthority(scopes, { organizationPrecondition: allowAllOrganizationPrecondition });
+  let editorIsMember = true;
+  let membershipEpoch = 1;
+  const organizationPrecondition = createOrganizationPrecondition({
+    source: { async assertMembership({ actorId, organizationId }) {
+      const member = organizationId === ORG
+        && (actorId === actors.owner || (actorId === actors.editor && editorIsMember));
+      return member
+        ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "members" as const,
+          membershipEpoch: String(membershipEpoch) }
+        : { member: false };
+    } },
+    now: () => new Date(),
+  });
+  const authority = new CollaborationAuthority(scopes, { organizationPrecondition });
   chats.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
   const eligibility = new OwnerAccountEligibility({ snapshots: { getSnapshotV3: async owner => { expect(owner).toBe(actors.owner); return snapshot(); } } });
   const policies = new CollaborationExecutionPolicyRepository(db, { eligibility, organizationAiSubmission: { resolve: async () => "members" } });
@@ -218,7 +232,8 @@ async function setup(revisionRace = false) {
     }) });
   const collaboration = { ...sharedCollaboration, chatExecutionAdapter: execution,
     sharedAiCapability: { generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } } } as unknown as GatewayCollaborationRuntime;
-  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, renewRuntime, readinessChecks, releaseEmployee, runtimes, revocationBindings };
+  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, renewRuntime, readinessChecks, releaseEmployee, runtimes, revocationBindings,
+    revokeEditorMembership() { editorIsMember = false; membershipEpoch += 1; } };
 }
 
 async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?: () => Promise<void>) {
@@ -363,8 +378,7 @@ describe("Slack company Pi composition", () => {
     const { company, platform, posts, signed } = await setupSlack(s);
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
     await completeCompanyRuns(s, company.service!);
-    await s.db.updateTable("collaboration_members").set({ status: "revoked" })
-      .where("scope_id", "=", ids.scope).where("actor_id", "=", actors.editor).execute();
+    s.revokeEditorMembership();
     await company.service!.drain();
     expect(posts).not.toHaveBeenCalled();
     expect(s.stream).toHaveBeenCalledTimes(2);

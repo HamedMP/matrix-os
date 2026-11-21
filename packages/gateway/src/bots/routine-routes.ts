@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { ChatAgentIdSchema, BotRoutineIdSchema } from "@matrix-os/contracts";
 import { BotRoutineControlSchema } from "@matrix-os/contracts";
-import { BotRoutineCenterQuerySchema, BotRoutineEditRequestSchema } from "@matrix-os/contracts";
+import { BotRoutineCenterQuerySchema, BotRoutineEditRequestSchema, BotRoutineOriginWireVersionSchema, BOT_ROUTINE_ORIGIN_ACCEPT } from "@matrix-os/contracts";
 import { BotStateError } from "./repositories/shared.js";
 import type { BotRoutineExecution } from "./routine-execution.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
@@ -21,8 +21,14 @@ function error(c: Context, code: keyof typeof errors) {
     message: errors[code][1]
   }, errors[code][0]);
 }
+const originVersions = z.array(BotRoutineOriginWireVersionSchema).max(1);
+function includesOrigin(c: Context) {
+  const version = originVersions.parse(c.req.queries("originVersion") ?? [])[0];
+  return version === undefined ? c.req.header("Accept") === BOT_ROUTINE_ORIGIN_ACCEPT : version === "1";
+}
+
 export function createBotRoutineRoutes(deps: {
-  routines?: Pick<BotRoutineExecution, "list" | "control"> & Partial<Pick<BotRoutineExecution, "center" | "detail" | "requestEdit">>;
+  routines?: Pick<BotRoutineExecution, "list" | "control"> & Partial<Pick<BotRoutineExecution, "center" | "detail" | "requestEdit" | "controlOwner">>;
   getPrincipal(c: Context): RequestPrincipal;
 }) {
   const app = new Hono(),
@@ -48,24 +54,25 @@ export function createBotRoutineRoutes(deps: {
   });
   app.get("/api/bot-routines", async c => {
     const principal = deps.getPrincipal(c);
-    const { runtime, ...query } = z.object({ runtime: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).optional() }).passthrough().parse(c.req.query());
+    const { runtime, originVersion, ...query } = z.object({ runtime: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).optional() }).passthrough().parse(c.req.query());
     const input = BotRoutineCenterQuerySchema.parse(query);
     if (!deps.routines?.center) return error(c, "unavailable");
     c.header("Cache-Control", "private, no-store");
-    return c.json(await deps.routines.center(principal.userId, input));
+    const result = includesOrigin(c) ? await deps.routines.center(principal.userId, input, true)
+      : await deps.routines.center(principal.userId, input);
+    return c.json(result);
   });
   app.get("/api/bot-routines/:routineId", async c => {
     const principal = deps.getPrincipal(c), routineId = BotRoutineIdSchema.parse(c.req.param("routineId"));
     if (!deps.routines?.detail) return error(c, "unavailable");
     c.header("Cache-Control", "private, no-store");
-    return c.json(await deps.routines.detail(principal.userId, routineId));
+    return c.json(await deps.routines.detail(principal.userId, routineId, includesOrigin(c)));
   });
   app.post("/api/bot-routines/:routineId/control", limit, async c => {
     const principal = deps.getPrincipal(c), routineId = BotRoutineIdSchema.parse(c.req.param("routineId"));
     const input = BotRoutineControlSchema.parse(await c.req.json());
-    if (!deps.routines?.detail) return error(c, "unavailable");
-    const { routine } = await deps.routines.detail(principal.userId, routineId);
-    const result = await deps.routines.control(principal.userId, routine.botId, routineId, input);
+    if (!deps.routines?.controlOwner) return error(c, "unavailable");
+    const result = await deps.routines.controlOwner(principal.userId, routineId, input);
     c.header("Cache-Control", "private, no-store");
     return c.json({ routineId: result.routineId, status: result.status, revision: result.revision });
   });

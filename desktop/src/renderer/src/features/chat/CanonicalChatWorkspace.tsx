@@ -1,3 +1,5 @@
+import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
+import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
@@ -47,7 +49,6 @@ import { pendingSupervisedTool, supervisedToolCallbacks } from "./supervised-too
 import { Plus, Search } from "@renderer/lib/hugeicons";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
-import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
 import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
@@ -62,6 +63,7 @@ import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
+import { useMatrixAttachmentControls } from "./attachments/use-matrix-attachment-controls";
 import { CanonicalChatIndex } from "./CanonicalChatIndex";
 import { DeleteConversationDialog } from "./DeleteConversationDialog";
 import { canonicalChatPresentation } from "./canonical-chat-presentation";
@@ -302,6 +304,7 @@ function CanonicalChatWorkspaceContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
+  const attachmentDraftScope = JSON.stringify([draftScope, draftRequestIdentity, draftProjectId]);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
   const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
@@ -383,6 +386,20 @@ function CanonicalChatWorkspaceContent({
   }, [controller.activeChatId, controller.detail?.record, initialChatId, initialView, onActiveChatChanged]);
 
   const composerProjectId = controller.detail ? controller.detail.record.projectId ?? null : draftProjectId;
+  const slashRecord = routedComposerChatId && controller.detail?.record.chat.id === routedComposerChatId
+    ? controller.detail.record : undefined;
+  const slashProjectId = routedComposerChatId ? slashRecord?.projectId ?? projectId : draftProjectId;
+  const slashActiveRunId = slashRecord?.activeRun?.runId;
+  const slashRuns = slashRecord ? controller.detail?.runs : undefined;
+  const slashRun = slashActiveRunId ? slashRuns?.find(run => run.id === slashActiveRunId) : slashRuns?.at(-1);
+  const projectSlashScope = useDesktopProjectSlashScope(slashProjectId ?? undefined, Boolean(
+    live && !explicitSharedRoute && !sharedScopeId && !directBotId && !botIdentityUnknown && !editingQueuedTurn
+    && authStatus === "signed-in" && actorId
+    && (!routedComposerChatId || (slashRecord?.chat.ownerScope.type === "personal"
+      && slashRecord.chat.ownerScope.ownerId === actorId && !slashRecord.chat.collaboration))
+    && (!slashActiveRunId || slashRun)
+    && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project"),
+  ));
   const context = projectContext(
     composerProjectId ?? undefined,
     projects,
@@ -405,6 +422,24 @@ function CanonicalChatWorkspaceContent({
   const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
+  const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
+  const draftAttachmentProject = !routedComposerChatId
+    ? projects.find(project => project.id === draftProjectId || project.slug === draftProjectId)
+    : undefined;
+  const matrixAttachments = useMatrixAttachmentControls({
+    api: api ?? null,
+    scopeKey: attachmentDraftScope,
+    project: existingFilesScope?.kind === "project" ? existingFilesScope : draftAttachmentProject
+      ? { kind: "project", projectId: draftAttachmentProject.slug, label: draftAttachmentProject.name, chatId: "attachment-picker" }
+      : undefined,
+    enabled: Boolean(active && live && attachmentPolicy.enabled && !inspectorExclusive && !botIdentityUnknown
+      && !explicitSharedRoute && !projectedSharedChat
+      && (!routedComposerChatId || (slashRecord && privateOwner?.type === "personal" && privateOwner.ownerId === actorId))),
+    locked: uploadingAttachments || controller.status === "loading",
+    queue: attachments,
+    deviceInput: fileInputRef,
+    validate: attachmentPolicy.error,
+  });
   const credentialScopeKey = active && live && api && authStatus === "signed-in" && actorId
     && privateOwner?.type === "personal" && privateOwner.ownerId === actorId
     && !sharedScopeId && !projectedSharedChat && chatConnection === "open"
@@ -485,7 +520,9 @@ function CanonicalChatWorkspaceContent({
     isCurrentSubmission: () => boolean,
   ): Promise<CanonicalChatMessagePart[] | null> => {
     const uploaded = await attachments.uploadAll();
-    if (!isCurrentSubmission()) return null;
+    if (!isCurrentSubmission() || (submission.projectSkill && (
+      submission.projectSkill.projectId !== slashProjectId || !submission.projectSkill.isCurrent()
+    ))) return null;
     if (!uploaded.ok) {
       setSubmissionError(chatSendFailureMessage(uploaded.error));
       return null;
@@ -514,6 +551,7 @@ function CanonicalChatWorkspaceContent({
       || !selectionAvailable
       || (activeRun && !mentionResources.length)
       || uploadingAttachments
+      || matrixAttachments.pending
     ) return;
     const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
     if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
@@ -546,6 +584,7 @@ function CanonicalChatWorkspaceContent({
         },
         interactionMode: selection.interactionMode,
         permissionMode: mentionPermission.permissionMode,
+        ...(submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
@@ -556,6 +595,7 @@ function CanonicalChatWorkspaceContent({
         settle: () => {
           if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
           mentionPermission.confirm(false);
+          submission.projectSkill?.onAccepted();
           updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
           for (const id of submittedAttachmentIds) attachments.remove(id);
         },
@@ -593,6 +633,7 @@ function CanonicalChatWorkspaceContent({
       || !selectionAvailable
       || composerAction
       || uploadingAttachments
+      || matrixAttachments.pending
     ) return;
     const attachmentError = attachmentPolicy.error(attachments.items.map(item => item.file));
     if (attachmentError) { setSubmissionError(chatSendFailureMessage(attachmentError)); return; }
@@ -626,6 +667,7 @@ function CanonicalChatWorkspaceContent({
         parts: directBotId ? botSubmissionParts(updatedParts, botExecution.consentResources) : updatedParts,
         selection: { instanceId: selection.instanceId, model: selection.model, ...(selection.options.length ? { options: selection.options } : {}) },
         interactionMode: selection.interactionMode, permissionMode: mentionPermission.permissionMode,
+        ...(submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
@@ -636,6 +678,7 @@ function CanonicalChatWorkspaceContent({
         settle: () => {
           if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
           mentionPermission.confirm(false);
+          submission.projectSkill?.onAccepted();
           updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
           for (const id of submittedAttachmentIds) attachments.remove(id);
         },
@@ -772,7 +815,9 @@ function CanonicalChatWorkspaceContent({
         permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}
-        draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
+        draftScopeKey={draftScope}
+        projectSlashScope={projectSlashScope}
+        projectSkillSubmitEnabled={selectionAvailable && !uploadingAttachments}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}
@@ -783,7 +828,7 @@ function CanonicalChatWorkspaceContent({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments}
-        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && (
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}
@@ -797,11 +842,11 @@ function CanonicalChatWorkspaceContent({
         instanceLocked={controller.detail?.record.providerBinding !== undefined}
         resources={resources}
         resourceSearch={resourceSearch}
-        onAttach={() => fileInputRef.current?.click()}
+        onAttach={matrixAttachments.onAttach}
         attachments={(
           <AttachmentPreviewRow
             items={attachments.items}
-            selectionError={attachments.selectionError}
+            selectionError={matrixAttachments.error ?? attachments.selectionError}
             disabled={uploadingAttachments}
             onRemove={attachments.remove}
             onRetry={(localId) => void attachments.retry(localId)}
@@ -964,8 +1009,9 @@ function CanonicalChatWorkspaceContent({
           "matrix-bot-chat-layout @container/bot-chat relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
           inspectorExclusive ? "hidden" : "flex",
         )}
-        {...attachments.paneProps}
+        {...matrixAttachments.paneProps}
       >
+        {matrixAttachments.dialog}
         {sharedScopeId || projectedSharedChat ? (
           collaborationApi && actorId ? (
             sharedScopeId ? <SharedChatPanel api={collaborationApi} actorId={actorId}
@@ -994,7 +1040,10 @@ function CanonicalChatWorkspaceContent({
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
-            <ConversationTranscript turns={transcript} callbacks={{
+            <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
+              ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
+              identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
+              openChat: selectChat,
               browserChatId: controller.detail.record.chat.id,
               browserPermissions: client.browserPermissions,
               openPermissionMode: () => setPermissionModeRequest(value => value + 1),

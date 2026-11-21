@@ -1,0 +1,280 @@
+[data-slot="dialog-content"].matrix-attachment-picker {
+  display: flex;
+  width: 580px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  min-height: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border-color: var(--border-subtle, var(--border));
+  border-radius: 14px;
+  background: var(--bg-overlay, var(--background, var(--bg-surface)));
+  color: var(--text-primary, var(--foreground));
+}
+
+.matrix-attachment-picker button,
+.matrix-attachment-picker input {
+  font: inherit;
+}
+
+.matrix-attachment-picker button:focus-visible,
+.matrix-attachment-picker input:focus-visible {
+  outline: 2px solid var(--text-tertiary, var(--ring));
+  outline-offset: 2px;
+}
+
+.matrix-attachment-picker button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.matrix-attachment-picker-header {
+  display: flex;
+  min-height: 68px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+}
+
+.matrix-attachment-picker-header [data-slot="dialog-title"] {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.matrix-attachment-icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, var(--muted-foreground));
+}
+
+.matrix-attachment-picker-content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 20px;
+}
+
+.matrix-attachment-picker-location {
+  display: flex;
+  min-height: 28px;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  color: var(--text-secondary, var(--muted-foreground));
+  font-size: 12px;
+}
+
+.matrix-attachment-picker-location > svg,
+.matrix-attachment-picker-search > svg {
+  flex: none;
+}
+
+.matrix-attachment-picker-source {
+  flex: none;
+  font-weight: 500;
+}
+
+.matrix-attachment-picker-location-divider {
+  width: 1px;
+  height: 14px;
+  flex: none;
+  margin: 0 2px;
+  background: var(--border-subtle, var(--border));
+}
+
+.matrix-attachment-picker-breadcrumbs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.matrix-attachment-picker-breadcrumbs > span {
+  display: inline-flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+}
+
+.matrix-attachment-picker-breadcrumbs button {
+  max-width: 160px;
+  overflow: hidden;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix-attachment-picker-breadcrumbs [aria-current="page"] {
+  color: var(--text-primary, var(--foreground));
+}
+
+.matrix-attachment-picker-search {
+  display: flex;
+  min-height: 36px;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  padding: 0 11px;
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: 8px;
+  background: var(--bg-sunken, var(--muted));
+  color: var(--text-secondary, var(--muted-foreground));
+}
+
+.matrix-attachment-picker-search input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary, var(--foreground));
+  font-size: 13px;
+}
+
+.matrix-attachment-picker-search input::placeholder {
+  color: var(--text-tertiary, var(--muted-foreground));
+}
+
+.matrix-attachment-picker-list {
+  height: min(45vh, 320px);
+  min-height: 100px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 10px -4px 12px;
+  font-size: 13px;
+  scrollbar-width: thin;
+}
+
+.matrix-attachment-picker-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.matrix-attachment-picker-row {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary, var(--foreground));
+  text-align: left;
+}
+
+.matrix-attachment-picker-row > svg {
+  flex: none;
+  color: var(--text-secondary, var(--muted-foreground));
+}
+
+.matrix-attachment-picker-row > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix-attachment-picker-row:not(:disabled):hover,
+.matrix-attachment-icon-button:not(:disabled):hover,
+.matrix-attachment-picker-breadcrumbs button:not(:disabled):hover,
+.matrix-attachment-device-button:not(:disabled):hover {
+  background: var(--bg-hover, var(--accent));
+}
+
+.matrix-attachment-picker-state {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 20px;
+  color: var(--text-secondary, var(--muted-foreground));
+  text-align: center;
+}
+
+.matrix-attachment-picker-retry {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary, var(--foreground));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.matrix-attachment-picker-notice {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary, var(--muted-foreground));
+}
+
+.matrix-attachment-picker-error {
+  color: var(--danger-text, var(--destructive));
+}
+
+.matrix-attachment-picker-footer {
+  display: flex;
+  min-height: 66px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-subtle, var(--border));
+  font-size: 13px;
+}
+
+.matrix-attachment-device-button,
+.matrix-attachment-cancel-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-primary, var(--foreground));
+}
+
+.matrix-attachment-device-button {
+  margin-left: -8px;
+  background: transparent;
+}
+
+.matrix-attachment-cancel-button {
+  background: var(--bg-sunken, var(--muted));
+}
+
+.matrix-attachment-cancel-button:hover {
+  background: var(--bg-hover, var(--accent));
+}

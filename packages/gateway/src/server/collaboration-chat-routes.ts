@@ -1,4 +1,10 @@
+import { createRoutineActionOwnerRoutes } from "../bots/routine-action-routes.js";
+import { registerRoutineOriginHttp } from "./routine-origin-routes.js";
+import { createRoutineCliExecutionRoutes } from "../bots/routine-cli-routes.js";
+import { RoutineCliError } from "../bots/routine-cli-errors.js";
+import { createRoutineCliDestinationRoutes } from "../bots/routine-cli-destination-routes.js";
 import { createBrowserGrantRoutes } from "../chat/browser-grant-routes.js";
+import { createAgentThreadChatRoutes } from "../chat/agent-thread-chat-routes.js";
 import type { BrowserApprovalControl } from "../chat/browser-approval-control.js";
 /** Mount canonical Chat, provider and collaboration routes after startup. */
 import { createChatNavigationRepository } from "../chat/navigation-repository.js";
@@ -97,6 +103,8 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
+  // Ahead of the canonical routes so their `/api/chats/*` wire-version middleware never applies to it.
+  app.route("/", createAgentThreadChatRoutes({ database: chatRepository?.kysely ?? null, getPrincipal: c => requireRequestPrincipal(c) }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -112,6 +120,12 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  registerRoutineOriginHttp({ app, bots: botServices, repository: chatRepository, orchestrator: canonicalChatOrchestrator });
+  app.route("/", createRoutineActionOwnerRoutes({ actions: botServices?.routineCli ?? null, getPrincipal: requireRequestPrincipal }));
+  app.route("/", createRoutineCliExecutionRoutes({ requests: { execute: input => {
+    if (!botServices?.routineCli) throw new RoutineCliError("unavailable"); return botServices.routineCli.execute(input);
+  } } }));
+  app.route("/", createRoutineCliDestinationRoutes({ targets: botServices?.routineDestination ?? null, getPrincipal: requireRequestPrincipal }));
   app.route("/", createBotRoutes({
     ...(botServices ? {
       recipes: botServices.recipes,

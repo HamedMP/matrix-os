@@ -1,3 +1,4 @@
+import { collaborativeAppBridgeBootstrap } from "./app-bridge-bootstrap.js";
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborationActorIdSchema,
@@ -273,14 +274,14 @@ export function createPlatformCollaborationRoutes(options: {
     if (!scopeId.success || !launchId.success || !assetPath.success) return safeJson(c, "Invalid request", 422);
     const opaqueAssetRequest = c.req.header("origin") === "null" && assetPath.data !== "index.html";
     const authenticatedActorId = await resolveValidatedActor(c, options.resolveActor);
-    const capability = !authenticatedActorId && opaqueAssetRequest
-      ? options.launchSessions.describeAssetCapability(launchId.data, scopeId.data)
-      : null;
-    const actorId = authenticatedActorId ?? capability?.actorId ?? null;
-    if (!actorId) return safeJson(c, "Unauthorized", 401);
     try {
+      const capability = !authenticatedActorId && opaqueAssetRequest
+        ? await options.launchSessions.resolveAssetCapability(launchId.data, scopeId.data)
+        : null;
+      const actorId = authenticatedActorId ?? capability?.actorId ?? null;
+      if (!actorId) return safeJson(c, "Unauthorized", 401);
       const admitted = await admitCollaborativeApp(options, actorId, scopeId.data);
-      const launch = capability ?? options.launchSessions.describe(launchId.data, actorId, scopeId.data);
+      const launch = capability ?? await options.launchSessions.resolve(launchId.data, actorId, scopeId.data);
       if (!admitted) {
         await options.launchSessions.revokeActor(scopeId.data, actorId);
         return safeJson(c, "Collaboration resource not found", 404);
@@ -435,6 +436,15 @@ async function readDiscoveryPage(
     : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
   // Metadata only: the client hydrates every item from the resource's home.
   const items: unknown[] = page.items.map((entry) => (
+    entry.kind === "project" && entry.organizationId ? {
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: "accepted",
+      organizationId: entry.organizationId,
+    } :
     // A pending grant addressed to this actor alone opens exactly like an organization-wide
     // one (accept the grant on the home), so it uses the same entry and every client --
     // including released ones, which parse the whole page strictly -- already handles it.
@@ -458,16 +468,21 @@ async function readDiscoveryPage(
       ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
     }));
   let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
-  if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
+  if (!page.nextCursor && options.listOrganizationIds) {
     const organizationIds = await listCurrentOrganizationIds(actorId, options);
     const remaining = limit - items.length;
     const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
       limit: Math.max(1, remaining),
       ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
+      projectsOnly: status === "accepted",
+      excludeProjectIndexStatus: status,
     });
     if (remaining > 0) {
       for (const entry of pending.items) {
-        items.push({
+        items.push(entry.kind === "project" ? {
+          scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
+          authorityGeneration: entry.authorityGeneration, status: "accepted", organizationId: entry.organizationId,
+        } : {
           scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
           authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
           grantId: entry.grantId,
@@ -668,9 +683,6 @@ function launchFailure(c: RouteContext, error: unknown) {
 }
 
 const MAX_BOOTSTRAP_HTML_BYTES = 1024 * 1024;
-// A direct request may need ticket issuance, session creation, one home call,
-// and one full re-authentication retry. Each network leg is bounded to 10s.
-const COLLABORATIVE_APP_BRIDGE_TIMEOUT_MS = 70_000;
 
 class PerActorRateLimit {
   private readonly attempts = new Map<string, number[]>();
@@ -736,10 +748,6 @@ async function injectCollaborativeAppBootstrap(
   return new Response(html, { status: response.status, headers });
 }
 
-/** A capability-minimal iframe bridge: participant context plus scoped query/mutate only. */
-function collaborativeAppBridgeBootstrap(): string {
-  return `<script>(()=>{const c=JSON.parse(document.getElementById("matrix-collaboration-context").textContent);const p=new Map();const l=new Set();const ask=(type,action,expectedRevision)=>new Promise((resolve,reject)=>{if(p.size>=32){reject(new Error("Shared app unavailable"));return}const requestId=crypto.randomUUID();const timer=setTimeout(()=>{p.delete(requestId);reject(new Error("Shared app unavailable"))},${COLLABORATIVE_APP_BRIDGE_TIMEOUT_MS});p.set(requestId,{resolve,reject,timer});parent.postMessage({type,requestId,action,...(expectedRevision===undefined?{}:{expectedRevision})},"*")});addEventListener("message",event=>{if(event.source!==parent||event.origin!==location.origin)return;const m=event.data;if(m?.type==="matrix:shared-app:response"&&typeof m.requestId==="string"){const request=p.get(m.requestId);if(!request)return;p.delete(m.requestId);clearTimeout(request.timer);m.ok?request.resolve(m.result):request.reject(new Error(typeof m.message==="string"?m.message:"Shared app unavailable"));return}if(m?.type==="matrix:shared-app:changed")for(const listener of [...l])try{listener()}catch(error){console.warn("Matrix shared app change listener failed",error instanceof Error?error.name:"UnknownError")}});addEventListener("pagehide",()=>{for(const request of p.values()){clearTimeout(request.timer);request.reject(new Error("Shared app unavailable"))}p.clear();l.clear()},{once:true});window.MatrixOS=window.MatrixOS||{};window.MatrixOS.collaboration=Object.freeze({participant:Object.freeze(c),query:action=>ask("matrix:shared-app:query",action),mutate:(action,expectedRevision)=>ask("matrix:shared-app:mutate",action,expectedRevision),onChange:listener=>{if(typeof listener!=="function"||l.size>=32)return()=>{};l.add(listener);return()=>l.delete(listener)}});parent.postMessage({type:"matrix:shared-app:ready"},"*")})()</script>`;
-}
 
 function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) {
   c.header("Cache-Control", "no-store");

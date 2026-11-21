@@ -1,4 +1,12 @@
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
+import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppDisplayName } from "@matrix-os/ui/collaborative-app-sharing";
+import { useSharedLauncherApps } from "../collaboration/useSharedLauncherApps";
+import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
+import {
+  LauncherFilterChips, NewAppDot, useOpenCount, effectiveLauncherFilter, launcherFilterChips, launcherFilterHint, matchesLauncherFilter, sharedTileLabel, useSeenSharedApps,
+  type LauncherFilter, type ShareOrganization,
+} from "@matrix-os/ui/share";
+import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
@@ -18,11 +26,13 @@ import {
   type OsViewMode,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
+  isOsViewFixedAppPath,
 } from "@matrix-os/contracts";
 type LauncherEntry =
   | { type: "create"; key: "__create-app__"; name: "Create app" }
   | { type: "os-view"; key: string; name: string; mode: OsViewMode }
   | { type: "fixed"; key: string; name: string; app: DesktopAppConfig }
+  | { type: "shared"; key: string; name: string; target: CollaborativeAppDirectoryItem }
   | { type: "installed"; key: string; name: string; app: MatrixApp };
 
 function AppIcon({ url, name, large = false }: { url: string | null; name: string; large?: boolean }) {
@@ -104,6 +114,16 @@ export default function AppLauncher({
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const openTab = useTabs((s) => s.openTab);
+  const shared = useSharedLauncherApps(launcherActive);
+  // Re-read memberships each time the launcher opens so a newly joined org gets its badge and chip.
+  const organizationListing = useDesktopOrganizations(useOpenCount(launcherActive));
+  const organizations = useMemo<ShareOrganization[]>(() => organizationListing.state === "loaded"
+    ? organizationListing.organizations.map(({ organizationId, name, memberCount }) => ({ organizationId, name, memberCount }))
+    : [], [organizationListing]);
+  const sharedScopeIds = useMemo(() => shared.items.map((item) => item.scopeId), [shared.items]);
+  const runtimeApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null, [api, runtimeSlot]);
+  const seen = useSeenSharedApps({ api: runtimeApi, scopeIds: sharedScopeIds, ready: launcherActive && shared.loaded });
+  const [chosenFilter, setChosenFilter] = useState<LauncherFilter>("all");
   const {
     data: apps = [],
     isPending,
@@ -177,12 +197,19 @@ export default function AppLauncher({
     ];
   }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((entry) => entry.name.toLowerCase().includes(q)
-      || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q)));
-  }, [entries, query]);
+  const allEntries = useMemo<LauncherEntry[]>(() => [...entries, ...shared.items.map((target) => ({
+    type: "shared" as const, key: `shared:${target.scopeId}`, name: sharedAppDisplayName(target.appId), target,
+  }))], [entries, shared.items]);
+  const filterEntry = (entry: LauncherEntry) => ({
+    organizationId: entry.type === "shared" ? entry.target.organizationId : null,
+    mine: entry.type === "installed" && !isOsViewFixedAppPath(entry.app.path ?? ""),
+  });
+  const chips = launcherFilterChips(allEntries.map(filterEntry), organizations);
+  const filter = effectiveLauncherFilter(chosenFilter, chips);
+  const organizationFor = (entry: LauncherEntry) => entry.type === "shared" ? organizations.find((item) => item.organizationId === entry.target.organizationId) ?? null : null;
+  const q = query.trim().toLowerCase();
+  const filtered = allEntries.filter((entry) => matchesLauncherFilter(filterEntry(entry), filter)
+    && (!q || entry.name.toLowerCase().includes(q) || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q))));
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
@@ -199,6 +226,12 @@ export default function AppLauncher({
   };
 
   const open = (entry: LauncherEntry) => {
+    if (entry.type === "shared") {
+      const tabId = openTab({ kind: "app", slug: entry.target.appId, title: entry.name, sharedAppTarget: entry.target });
+      onLaunch?.(tabId);
+      seen.markSeen(entry.target.scopeId);
+      return;
+    }
     if (entry.type === "create") {
       onCreateApp?.();
       return;
@@ -229,8 +262,7 @@ export default function AppLauncher({
     }
   };
 
-  if (presentation !== "launchpad" && error) {
-    return (
+  const installedNotice = presentation === "launchpad" ? null : error ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Apps unavailable"
@@ -243,28 +275,19 @@ export default function AppLauncher({
           ) : null
         }
       />
-    );
-  }
-
-  if (presentation !== "launchpad" && !isPending && !isFetching && apps.length === 0) {
-    return (
+    ) : !isPending && !isFetching && apps.length === 0 ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="No apps installed"
         description="Web apps in your Matrix workspace appear here. Ask Chat to create an app to get started."
       />
-    );
-  }
-
-  if (presentation !== "launchpad" && isPending && apps.length === 0) {
-    return (
+    ) : isPending && apps.length === 0 ? (
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Loading apps"
         description="Your installed apps will appear here once your computer responds."
       />
-    );
-  }
+    ) : null;
 
   return (
     <div
@@ -304,14 +327,19 @@ export default function AppLauncher({
             style={{ color: "var(--text-primary)", boxShadow: "none", borderRadius: 0 }}
           />
         </div>
-        {presentation === "launchpad" ? (
+        {presentation === "launchpad" ? <>
+          <div data-launchpad-interactive={presentation === "launchpad" || undefined}>
+            <LauncherFilterChips chips={chips} value={filter} className="mt-3" onChange={(next) => { setChosenFilter(next); setActive(0); }} />
+          </div>
           <p className="mt-3 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
-            Open an installed app, or choose Create app to start in Chat.
+            {launcherFilterHint(filter, filtered.length, chips, "Open an installed app, or choose Create app to start in Chat.")}
           </p>
-        ) : null}
+        </> : null}
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
-        {filtered.length === 0 ? (
+        <SharedAppDirectoryNotice directory={shared} />
+        {installedNotice}
+        {filtered.length === 0 && !installedNotice && !shared.loading ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
           <div data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
@@ -321,7 +349,7 @@ export default function AppLauncher({
                 <button
                   key={entry.key}
                   type="button"
-                  aria-label={entry.name}
+                  aria-label={sharedTileLabel(entry.name, organizationFor(entry), entry.type === "shared" && seen.isNew(entry.target.scopeId))}
                   data-launchpad-interactive={presentation === "launchpad" || undefined}
                   className={`flex flex-col items-center gap-2 rounded-xl transition-colors duration-100 ${presentation === "launchpad" ? "border border-transparent p-3" : "border p-4"}`}
                   style={{
@@ -332,7 +360,7 @@ export default function AppLauncher({
                   }}
                   onMouseEnter={() => setActive(i)}
                   onContextMenu={(event) => {
-                    if (entry.type === "create" || entry.type === "os-view") return;
+                    if (entry.type === "create" || entry.type === "os-view" || entry.type === "shared") return;
                     if (placementPending) return;
                     event.preventDefault();
                     const point = clampOsViewContextMenuPoint(
@@ -344,7 +372,9 @@ export default function AppLauncher({
                   }}
                   onClick={() => open(entry)}
                 >
-                  {entry.type === "create" ? (
+                  {entry.type === "shared" ? <span className="relative inline-flex">
+                    <AppIcon url={null} name={entry.name} large={presentation === "launchpad"} /><SharedAppBadge appName={entry.name} organization={organizationFor(entry)} />
+                  </span> : entry.type === "create" ? (
                     <span
                       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
                       style={{
@@ -367,14 +397,14 @@ export default function AppLauncher({
                     className="w-full truncate text-center text-sm font-medium"
                     style={{ color: "var(--text-primary)", textShadow: presentation === "launchpad" ? "0 1px 2px var(--bg-app)" : undefined }}
                   >
-                    {entry.name}
+                    {entry.type === "shared" && seen.isNew(entry.target.scopeId) ? <NewAppDot /> : null}{entry.name}
                   </span>
                 </button>
               );
             })}
           </div>
         )}
-        {contextMenu && contextMenu.entry.type !== "os-view" && onAddToDesktop ? (
+        {contextMenu && contextMenu.entry.type !== "os-view" && contextMenu.entry.type !== "shared" && onAddToDesktop ? (
           <div
             role="menu"
             data-launchpad-interactive
@@ -391,7 +421,7 @@ export default function AppLauncher({
               onClick={async () => {
                 if (placementPending) return;
                 const entry = contextMenu.entry;
-                if (entry.type === "create" || entry.type === "os-view") return;
+                if (entry.type === "create" || entry.type === "os-view" || entry.type === "shared") return;
                 const path = entry.app.path;
                 if (!path) {
                   setContextError("Could not add the app. Please try again.");

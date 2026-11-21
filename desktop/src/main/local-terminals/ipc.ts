@@ -38,15 +38,23 @@ export function registerLocalTerminalIpc(
       try { return { status: "ready", terminals: await host.list() }; }
       catch (error: unknown) { logFailure("local-terminal:list", error); return unavailable(); }
     },
-    "local-terminal:create": async ({ cols, rows }) => {
+    "local-terminal:create": async ({ cols, rows, agent, folder }) => {
       try {
-        const id = await host.create({ cols, rows });
+        const id = await host.create({ cols, rows }, { ...(agent ? { agent } : {}), ...(folder ? { folder } : {}) });
         return id ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:create", error); return unavailable(); }
     },
     "local-terminal:kill": async ({ id }) => {
       try { await host.kill(id); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:kill", error); return { ok: false }; }
+    },
+    "local-terminal:rename": async ({ id, name }) => {
+      try { await host.rename(id, name); return { ok: true }; }
+      catch (error: unknown) { logFailure("local-terminal:rename", error); return { ok: false }; }
+    },
+    "local-terminal:put": async ({ id, name, dataBase64 }) => {
+      try { return { ok: true, path: await host.put(id, name, dataBase64) }; }
+      catch (error: unknown) { logFailure("local-terminal:put", error); return { ok: false }; }
     },
     "local-terminal:attach": async ({ id, cols, rows }) => {
       try { return { ok: true, attachId: await host.attach(id, { cols, rows }) }; }

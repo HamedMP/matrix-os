@@ -1,3 +1,5 @@
+import type { RequestPrincipal } from "./request-principal.js";
+import { retainWorkspaceTerminalPrincipal } from "./terminal/workspace-launch.js";
 import { SessionStartBusyError, type SessionStartScope } from "./session-start-guard.js";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, opendir, realpath, rm } from "node:fs/promises";
@@ -68,6 +70,8 @@ export interface StartWorkspaceSessionRequest {
 }
 
 export interface StartWorkspaceSessionInput {
+  /** Authenticated route principal, never reconstructed from ownerScope or persisted. */
+  principal?: RequestPrincipal;
   ownerScope: OwnerScope;
   request: StartWorkspaceSessionRequest;
   /** Internal only: authenticated provider-thread recovery, never request-body data. */
@@ -436,12 +440,12 @@ export function createWorkspaceSessionOrchestrator(options: {
       sandbox = preflight.sandbox;
     }
 
-    const result = await (scope?.startSession ?? options.agentSessionManager.startSession)({
+    const result = await (scope?.startSession ?? options.agentSessionManager.startSession)(retainWorkspaceTerminalPrincipal({
       ...effectiveRequest,
       sessionId,
       ownerId: input.ownerScope.id,
       sandbox,
-    });
+    }, input.ownerScope.type === "user" && input.principal?.userId === input.ownerScope.id ? input.principal : undefined));
     if (!result.ok) {
       if (result.error.code === "runtime_ownership_retained") return result;
       if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);

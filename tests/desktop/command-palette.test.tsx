@@ -417,11 +417,12 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByText("Open thread Fix settings route"));
 
-    expect(openTab).toHaveBeenCalledWith({
+    // The canonical owner lookup finds none here, so the agent-thread route follows.
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith({
       kind: "project",
       projectSlug: "matrix-os",
       title: "matrix-os",
-    });
+    }));
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
   });
 
@@ -574,11 +575,12 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByText("Open thread Shared urgent thread"));
 
-    expect(openTab).toHaveBeenCalledWith({
+    // The canonical owner lookup finds none here, so the agent-thread route follows.
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith({
       kind: "project",
       projectSlug: "matrix-os",
       title: "matrix-os",
-    });
+    }));
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate"));
   });
 

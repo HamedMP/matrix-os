@@ -5,7 +5,7 @@ import { NewSessionMenu } from "./NewSessionMenu";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { useTerminalAppContext } from "./TerminalAppContext";
 import {
-  terminalAgentVisibleInstallCommand,
+  terminalAgentCreateOptions,
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
@@ -67,14 +67,7 @@ export function MobileTerminalActions({
   const createAgentSession = (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     setNewSessionMenuOpen(false);
     const label = action === "launch" ? option.label : `Install ${option.label}`;
-    const cmd = action === "launch"
-      ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
-      : terminalAgentVisibleInstallCommand(option);
-    void ctx.createShellSessionTab(label, getCwd(), {
-      cmd,
-      ...(action === "launch" ? { agent: option.id } : {}),
-      ...(action === "launch" && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
-    });
+    void ctx.createShellSessionTab(label, getCwd(), terminalAgentCreateOptions(option, action));
   };
 
   return (

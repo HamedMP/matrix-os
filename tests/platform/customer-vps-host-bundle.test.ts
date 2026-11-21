@@ -105,6 +105,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('matrix-shell');
     expect(script).toContain('matrix-code');
     expect(script).toContain('matrix-sync-agent');
+    expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-status"');
     expect(script).toContain('sha256sum');
     expect(script).toContain("pnpm --filter '@matrix-os/gateway' rebuild node-pty");
     expect(script).toContain('scripts/build-default-apps.mjs');
@@ -839,9 +840,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('preview VPS workflow waits for the exact healthy runtime before advertising it', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const runtimeReader = readFileSync(join(root, 'scripts/read-preview-runtime.sh'), 'utf8');
 
     expect(workflow).toContain('Waiting for ${HANDLE} to install ${VERSION}');
-    expect(workflow).toContain(
+    expect(workflow).toContain('runtime="$(.trusted-preview-workflow/scripts/read-preview-runtime.sh)"');
+    expect(runtimeReader).toContain(
       'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
     );
     expect(workflow).toContain('.healthy == true and .runtimeVersion == $v');
@@ -999,6 +1002,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
     const provisioningWait = readFileSync(join(root, 'scripts/wait-preview-provisioning.sh'), 'utf8');
+    const runtimeReader = readFileSync(join(root, 'scripts/read-preview-runtime.sh'), 'utf8');
 
     expect(workflow.match(/select\(\.handle == \$h and \.status != "deleted" and \.deletedAt == null\)/g))
       .toHaveLength(2);
@@ -1006,7 +1010,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       'select(.handle == $h and .machineId == $id and .runtimeSlot == $h and .deletedAt == null)',
     );
     expect(provisioningWait).toContain('select(.handle == $h and .machineId == $id and .deletedAt == null)');
-    expect(workflow).toContain(
+    expect(runtimeReader).toContain(
       'select(.handle == $h and .runtimeSlot == $h and .status != "deleted" and .deletedAt == null)',
     );
     expect(workflow).toContain(

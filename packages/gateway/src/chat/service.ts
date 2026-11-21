@@ -358,7 +358,7 @@ export function createCanonicalChatService(
       owner: ChatOwner,
       chatId: string,
       input: CanonicalCreateChatTurnRequest,
-      provenance?: { previewTurnProof?: string },
+      provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
     ): Promise<CanonicalChatTurnAdmissionResponse> {
       await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
@@ -376,6 +376,7 @@ export function createCanonicalChatService(
       owner: ChatOwner,
       chatId: string,
       input: CanonicalQueueChatTurnRequest,
+      provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
     ): Promise<CanonicalChatQueueAdmissionResponse> {
       await assertPersonalExecutionAllowed(owner, chatId);
       if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
@@ -385,6 +386,7 @@ export function createCanonicalChatService(
           owner,
           CanonicalChatIdSchema.parse(chatId),
           CanonicalQueueChatTurnRequestSchema.parse(input),
+          provenance,
         ),
       );
     },

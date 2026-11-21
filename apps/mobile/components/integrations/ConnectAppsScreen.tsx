@@ -12,6 +12,8 @@ import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { buildIntegrationSections, integrationDescription, integrationAuthType } from "@matrix-os/contracts/integration-marketplace";
+import GithubIcon from "@hugeicons/core-free-icons/GithubIcon";
+import { SettingsRow } from "@/components/settings/SettingsSurface";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
 import {
   SearchField,
@@ -172,6 +174,9 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
         <Spacer size="lg" />
       </Pressable>
 
+      <Spacer size="lg" />
+      <SettingsRow card title="GitHub Developer" detail="Private repositories, SSH, and commit identity"
+        icon={GithubIcon} onPress={() => router.push("/settings-detail/developer-access" as never)} />
       <Spacer size="2xl" />
       <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
       <Spacer size="md" />

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deriveAppSessionKey, signAppSession } from "../../packages/gateway/src/app-runtime/app-session.js";
 import { registerBrowserLabRoutes } from "../../packages/gateway/src/browser-lab/routes.js";
+import { openNativeSharedBrowserRun } from "../../packages/gateway/src/chat/native-shared-browser-run.js";
 import { createSharedBrowserBroker, SharedBrowserError } from "../../packages/gateway/src/shared-browser/broker.js";
 
 const cleanups:Array<()=>Promise<void>>=[];
@@ -28,6 +29,23 @@ describe("owner viewer and run-bound shared Chrome routes",()=>{
     expect((await s.agent({action:"snapshot"})).status).toBe(200);expect(s.driver.execute).toHaveBeenCalledOnce();
     s.controller.abort();expect((await s.agent({action:"snapshot"})).status).toBe(401);
   });
+  it("reports missing supervised approval authority without requesting a handoff", async () => {
+    const s = setup();
+    const lease = openNativeSharedBrowserRun({ broker: s.broker, gatewayPort: 4000, harness: "claude_code" }, {
+      owner: { type: "personal", ownerId: "owner" }, chatId: "chat-1", runId: "run-supervised",
+      permissionMode: "supervised", interactionMode: "default", signal: s.controller.signal,
+    })!;
+    const response = await s.agent({ action: "snapshot" }, lease.token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: false,
+      content: "Browser approvals are unavailable for this Chat.",
+    });
+    expect(s.broker.status().phase).toBe("idle");
+    expect(s.driver.execute).not.toHaveBeenCalled();
+    const viewer = await s.app.request("/apps/browser-lab/api/browser-status", { headers: { cookie: s.cookie } });
+    expect(await viewer.json()).toMatchObject({ humanControlAvailable: true });
+  });
   it("keeps watching read-only without implicitly taking over the agent",async()=>{
     const s=setup();await s.agent({action:"snapshot"});
     const status=await s.app.request("/apps/browser-lab/api/browser-status",{headers:{cookie:s.cookie}});
@@ -47,6 +65,39 @@ describe("owner viewer and run-bound shared Chrome routes",()=>{
       content: expect.stringMatching(/tab limit.*existing tab/i),
       automation: { phase: "agent" },
     });
+  });
+  it("recommends Stop for a follow-up observation after an uncertain click leaves the run unavailable", async () => {
+    const s = setup();
+    expect((await s.agent({ action: "snapshot" })).status).toBe(200);
+    s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_unavailable", true));
+    const click = await s.agent({ action: "click", observationId: "obs", ref: "submit" });
+    expect(click.status).toBe(409);
+
+    const followUp = await s.agent({ action: "snapshot" });
+    expect(followUp.status).toBe(200);
+    const result = await followUp.json();
+    expect(result).toMatchObject({
+      success: false,
+      content: expect.stringMatching(/unavailable.*Stop agent.*new run.*verify/i),
+      automation: { phase: "unavailable", run: { runId: s.binding.runId } },
+    });
+    expect(result.content).not.toMatch(/resume|took over/i);
+    expect(s.driver.execute).toHaveBeenCalledTimes(2);
+    expect((await s.owner("resume")).status).toBe(409);
+    expect(await (await s.owner("stop")).json()).toMatchObject({ automation: { phase: "idle", run: null } });
+  });
+  it("reports a control change without implying Resume when the agent still owns Chrome", async () => {
+    const s = setup();
+    s.driver.execute.mockRejectedValueOnce(new SharedBrowserError("browser_changed"));
+    const response = await s.agent({ action: "snapshot" });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      success: false,
+      content: expect.stringMatching(/control changed.*check the current browser state/i),
+      automation: { phase: "agent", run: { runId: s.binding.runId } },
+    });
+    expect(result.content).not.toMatch(/resume|took over/i);
   });
   it("owner takeover and resume keep Chrome and its current presentation",async()=>{
     const s=setup();await s.agent({action:"snapshot"});

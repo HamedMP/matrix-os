@@ -15,11 +15,34 @@ const actions: { name: string; call: (client: SiteClient, signal: AbortSignal) =
   { name: "list access links", call: (client, signal) => client.accessLinks("launch", signal) },
   { name: "create access link", call: (client, signal) => client.createAccessLink("launch", { baseRevision: 1 }, signal) },
   { name: "revoke access link", call: (client, signal) => client.revokeAccessLink("launch", "11111111-1111-4111-8111-111111111111", signal) },
+  { name: "list email invitations", call: (client, signal) => client.emailInvitations("launch", signal) },
+  { name: "create email invitations", call: (client, signal) => client.createEmailInvitations("launch", { baseRevision: 1, emailAddresses: ["viewer@example.com"] }, signal) },
+  { name: "resend email invitation", call: (client, signal) => client.resendEmailInvitation("launch", "11111111-1111-4111-8111-111111111111", { baseRevision: 1, invitationRevision: 0 }, signal) },
+  { name: "revoke email invitation", call: (client, signal) => client.revokeEmailInvitation("launch", "11111111-1111-4111-8111-111111111111", { baseRevision: 1, invitationRevision: 0 }, signal) },
+  { name: "list email invitation audit", call: (client, signal) => client.emailInvitationAudit("launch", signal) },
   { name: "read submissions", call: (client, signal) => client.submissions("launch", null, signal) },
   { name: "export submissions", call: (client, signal) => client.exportSubmissions("launch", null, signal) },
   { name: "delete submission", call: (client, signal) => client.deleteSubmission("launch", "11111111-1111-4111-8111-111111111111", signal) },
 ];
 describe("Electron site transport error parity", () => {
+  it("uses bounded owner invitation routes without exposing response errors", async () => {
+    const fetchFn=vi.fn(async(input:RequestInfo | URL,init?:RequestInit)=>{
+      const target=new URL(String(input));
+      if(init?.method==="GET" && target.pathname.endsWith("/invitations"))
+        return Response.json({invitations:[],nextCursor:null,siteRevision:1});
+      if(init?.method==="POST" && target.pathname.endsWith("/invitations"))
+        return Response.json({results:[{inputIndex:0,outcome:"invalid"}],siteRevision:1});
+      return new Response(null,{status:404});
+    });
+    const api=createApiClient({baseUrl:"https://app.matrix-os.com",getRuntimeSlot:()=>"primary",fetchFn});
+    const client=createDesktopSiteClient(api,"preview"),signal=new AbortController().signal;
+    await expect(client.emailInvitations("launch",signal)).resolves.toMatchObject({invitations:[],siteRevision:1});
+    await expect(client.createEmailInvitations("launch",{baseRevision:1,emailAddresses:["bad"]},signal))
+      .resolves.toMatchObject({results:[{outcome:"invalid"}]});
+    expect(String(fetchFn.mock.calls[0]?.[0])).toContain("/api/apps/launch/site/invitations?limit=50");
+    expect(String(fetchFn.mock.calls[0]?.[0])).toContain("runtime=preview");
+    expect(fetchFn.mock.calls[1]?.[1]?.method).toBe("POST");
+  });
   it.each(["JSON", "Blob"])("cancels an oversized %s response before buffering the complete body", async kind => {
     const cancel=vi.fn();let offset=0;
     const payload=new TextEncoder().encode(JSON.stringify({manifest:{publishing:{data:{description:"x".repeat(1_048_577)},forms:[]}}}));

@@ -140,7 +140,8 @@ describe("SidePanel search", () => {
     search("weekly");
 
     expect(chatRows()).toEqual(["side-panel-chat-chat-weekly"]);
-    expect(screen.getAllByTestId("side-panel-waiting-dot")).toHaveLength(1);
+    expect(screen.getAllByTestId("side-panel-status-dot")).toHaveLength(1);
+    expect(screen.getByText("Approval required")).toBeTruthy();
   });
 
   it("shows skeleton rows under the title matches while the server searches", () => {

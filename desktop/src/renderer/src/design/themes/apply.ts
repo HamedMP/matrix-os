@@ -18,7 +18,7 @@ export function resolveThemeMode(mode: ThemeMode): "dark" | "light" {
  * variant and overrides the semantic variables with
  * the theme's chrome layer.
  */
-export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: CustomTheme | null): void {
+export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: CustomTheme | null): { color: string; symbolColor: string } {
   const root = document.documentElement;
   const theme = getUnifiedTheme(themeId);
   const requested = resolveThemeMode(mode);
@@ -32,8 +32,10 @@ export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: Cus
   root.setAttribute("data-theme", effective);
   const paletteId = themeId === "custom" && custom ? "custom" : theme.id;
   root.setAttribute("data-theme-id", paletteId);
-  const vars = chromeToSemanticVars(getThemeChrome(themeId, effective, custom), paletteId);
+  const chrome = getThemeChrome(themeId, effective, custom);
+  const vars = chromeToSemanticVars(chrome, paletteId);
   for (const [name, value] of Object.entries(vars)) {
     root.style.setProperty(name, value);
   }
+  return { color: chrome.surface0, symbolColor: chrome.foreground };
 }

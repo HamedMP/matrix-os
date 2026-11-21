@@ -112,6 +112,27 @@ describe("CollaborationRelay", () => {
     expect(JSON.stringify(metadata)).not.toContain("forged");
   });
 
+  it("reports owner-home time to headers separately from the full streamed duration", async () => {
+    // Outcome: preview logs can tell an owner-VPS hop apart from body streaming.
+    let clock = 1_000;
+    const fetchImpl = vi.fn(async () => {
+      clock += 40;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { clock += 25; controller.enqueue(new Uint8Array(4)); controller.close(); },
+      }, { highWaterMark: 0 }), { status: 200 });
+    });
+    const { instance, metadata } = relay({ now: () => clock }, fetchImpl as never);
+    const response = await instance.forward({ actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null });
+    await response.arrayBuffer();
+    expect(metadata).toEqual([expect.objectContaining({ routeKind: "scope", upstreamHeadersMs: 40, durationMs: 65, responseBytes: 4 })]);
+  });
+
+  it("reports no owner-home time when the request never reached a home", async () => {
+    const { instance, metadata } = relay({}, vi.fn() as never);
+    await instance.forward({ actorId: "user_a", method: "GET", path: "/api/collaboration/unknown", query: "", headers: new Headers(), body: null });
+    expect(metadata[0]).toMatchObject({ routeKind: null, upstreamHeadersMs: null, outcome: "rejected" });
+  });
+
   it("keeps serving an in-flight request when policy storage is unavailable, because no policy lookup exists", async () => {
     const policyStore = { lookup: vi.fn(async () => { throw new Error("policy storage down"); }) };
     const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));

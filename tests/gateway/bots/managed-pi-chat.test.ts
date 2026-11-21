@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createOwnerToolOutputProjection } from "../../../packages/gateway/src/chat/owner-tool-output.js";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
@@ -17,6 +17,9 @@ import { managedPiChatInstances } from "../../../packages/gateway/src/chat/manag
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
+import { createChatExecutionRootResolver } from "../../../packages/gateway/src/chat/execution-root.js";
+import { createProjectManager } from "../../../packages/gateway/src/project-manager.js";
+import { createWorktreeManager } from "../../../packages/gateway/src/worktree-manager.js";
 import { createBotBrokerActions } from "../../../packages/gateway/src/bots/broker-actions.js";
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
@@ -169,24 +172,39 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
   expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
 });
 
-it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered artifact tools and isolated resumed transcript", async () => {
+it.each(["Chat workspace", "Project workspace"])("runs an ordinary canonical Matrix Chat in a %s through the pinned Pi loop", async workspace => {
   vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "2");
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "managed-pi-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const projects = createProjectManager({ homePath: home });
+  const roots = createChatExecutionRootResolver({ homePath: home, projects, worktrees: createWorktreeManager({ homePath: home }) });
+  const created = workspace === "Project workspace" ? await projects.createProject({
+    mode: "scratch", name: "Managed Pi instructions", slug: "pi-instructions", ownerScope: { type: "user", id: OWNER },
+  }) : undefined;
+  if (created && !created.ok) throw new Error("Project fixture creation failed");
+  const project = created?.project;
+  const projectInstructions = ["MATRIX_MANAGED_PI_AGENTS_FIXTURE", "MATRIX_MANAGED_PI_CLAUDE_FIXTURE"];
+  if (project) await Promise.all(["AGENTS.md", "CLAUDE.md"].map((name, index) =>
+    writeFile(join(project.localPath, name), projectInstructions[index]!)));
   const snapshot = makeAiProviderSnapshot();
   snapshot.accessSources.push({ ...snapshot.accessSources[0]!, id: "matrix_cloudflare", eligibleModelIds: [GLM], vendor: "cloudflare" });
   snapshot.models.push({ ...snapshot.models[0]!, id: GLM, vendor: "cloudflare", capabilities: ["tools"], eligibleAccessSourceIds: ["matrix_cloudflare"] });
   const providers = { getSnapshot: async () => snapshot };
   const registry = new BotRuntimeRegistry();
   const handle = fauxProvider({ models: [{ id: GLM, input: ["text"], contextWindow: 128000, maxTokens: 8192 }] });
+  const modelContexts: string[] = [];
   handle.setResponses([
     fauxAssistantMessage(fauxToolCall("write_artifact", { path: "proof.txt", content: "PI_MANAGED_PROOF", mimeType: "text/plain" }, { id: "call_write" }), { stopReason: "toolUse" }),
     fauxAssistantMessage(fauxText("Saved the file.")),
     fauxAssistantMessage(fauxToolCall("read_artifact", { path: "proof.txt" }, { id: "call_read" }), { stopReason: "toolUse" }),
     fauxAssistantMessage(fauxText("PI_MANAGED_PROOF")),
-  ]);
+  ].map(response => context => {
+    modelContexts.push(JSON.stringify(context));
+    return response;
+  }));
   const specs: unknown[] = []; let serial = 0;
-  const createRuntime = vi.fn(async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
+  const createRuntime = vi.fn(async (_input: Parameters<ScopeRuntimeHost["client"]["createRuntime"]>[0]) =>
+    ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
   const stopRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
     const call = async (body: Record<string, unknown>) => {
@@ -206,10 +224,10 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
       bridgeOrigin: "http://127.0.0.1:41000", route: { provider: handle.provider, model: handle.getModel() } });
     return { ok: true, reply };
   } } } as unknown as ScopeRuntimeHost;
-  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: async () => { throw new Error("No project" ); } } });
+  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots });
   const lifetime = new AbortController();
   const toolOutputKey = Buffer.alloc(32, 21);
-  const runtime = createManagedPiRuntime({ toolOutputKey, admission, host, providers, lifetime: lifetime.signal,
+  const runtime = createManagedPiRuntime({ toolOutputKey, homePath: home, expectedOwnerId: OWNER, admission, host, providers, lifetime: lifetime.signal,
     forgetRun: (runId) => actions.forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const actions: ReturnType<typeof createBotBrokerActions> = createBotBrokerActions({ db, registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
     managedSessions: createManagedPiSessionsRepository(db), managedCheckpoints: createManagedPiCheckpointsRepository(db),
@@ -218,10 +236,11 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const catalog = { getCatalog: async () => ({ revision: "managed_test", drivers: [{ kind: "matrix_pi" as const, displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" as const }],
     instances: managedPiChatInstances(snapshot).map((instance) => ({ ...instance, catalogRevision: "managed_test" })) }) };
-  const orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]) });
+  const orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]), executionRoots: roots });
   cleanup.push(async () => { await orchestrator.close(); await runtime.close(); });
   const owner = { type: "personal" as const, ownerId: OWNER }; const principal = { userId: OWNER, source: "jwt" as const };
-  const chat = await repository.create(owner, { id: "chat_managedchat", clientRequestId: "req_managedchat", title: "Matrix Chat" });
+  const chat = await repository.create(owner, { id: "chat_managedchat", clientRequestId: "req_managedchat", title: "Matrix Chat",
+    ...(project ? { projectId: project.id } : {}) });
   const selection = { instanceId: "matrix_pi_default", model: GLM };
   for (const [index, text] of ["Save the proof.", "Read the saved file."].entries()) {
     const current = await repository.get(owner, chat.chat.id);
@@ -231,7 +250,16 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   }
   expect(specs).toHaveLength(2); expect(specs).toEqual([expect.objectContaining({ route: expect.objectContaining({ modelId: GLM, api: "openai-completions" }) }), expect.objectContaining({ route: expect.objectContaining({ modelId: GLM }) })]);
   expect(specs).toEqual([expect.objectContaining({ limits: { maxToolActions: 60, maxInferenceCalls: 2 } }), expect.objectContaining({ limits: { maxToolActions: 60, maxInferenceCalls: 2 } })]);
-  const root = await managedPiWorkspace(home, OWNER, chat.chat.id); expect(await readFile(join(root.path, "proof.txt"), "utf8")).toBe("PI_MANAGED_PROOF");
+  const rootPath = project ? await realpath(project.localPath) : (await managedPiWorkspace(home, OWNER, chat.chat.id)).path;
+  expect(await readFile(join(rootPath, "proof.txt"), "utf8")).toBe("PI_MANAGED_PROOF");
+  expect(createRuntime.mock.calls).toHaveLength(2);
+  for (const [call] of createRuntime.mock.calls) expect(call.sandbox?.worktree).toMatchObject({ hostPath: rootPath, mode: "rw" });
+  expect(modelContexts).toHaveLength(4);
+  expect(modelContexts[0]).toContain("Save the proof.");
+  for (const marker of projectInstructions) {
+    expect(JSON.stringify(specs)).not.toContain(marker);
+    expect(modelContexts.join("\n")).not.toContain(marker);
+  }
   expect(await createManagedPiSessionsRepository(db).load({ ownerId: OWNER, chatId: chat.chat.id })).toMatchObject({ revision: 2, messages: expect.arrayContaining([expect.objectContaining({ role: "toolResult" })]) });
   expect(await db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
   expect(await db.selectFrom("bot_chat_bindings").selectAll().execute()).toEqual([]);

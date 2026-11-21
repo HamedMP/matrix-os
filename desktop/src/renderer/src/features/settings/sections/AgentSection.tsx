@@ -165,7 +165,7 @@ function ModelEffortCard() {
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>Model &amp; reasoning</span>
         <div className="flex items-center gap-2">
-          {status === "saved" ? <span className="text-xs" style={{ color: "var(--success)" }}>Saved</span> : null}
+          {status === "saved" ? <span className="text-xs" style={{ color: "var(--success-text)" }}>Saved</span> : null}
           <Button variant="primary" disabled={!dirty || status === "saving"} onClick={() => void save()}>
             <Save size={13} />
             {status === "saving" ? "Saving…" : "Save"}
@@ -202,7 +202,7 @@ function ModelEffortCard() {
               Higher effort means deeper thinking and slower, more thorough responses.
             </span>
           </div>
-          {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
+          {error ? <span className="text-xs" style={{ color: "var(--danger-text)" }}>{error}</span> : null}
         </>
       )}
     </Card>
@@ -255,7 +255,7 @@ function ProvidersCard() {
                   ) : null}
                 </div>
               </div>
-              <span className="text-right text-xs" style={{ color: a.status === "available" ? "var(--success)" : "var(--text-secondary)" }}>
+              <span className="text-right text-xs" style={{ color: a.status === "available" ? "var(--success-text)" : "var(--text-secondary)" }}>
                 {a.status === "available" ? "Ready" : (a.nextAction ?? a.status)}
               </span>
             </div>
@@ -301,7 +301,7 @@ function RuntimeProvidersCard() {
   return (
     <Card>
       <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>Coding agent providers</span>
-      {setupError ? <span className="text-xs" style={{ color: "var(--danger)" }}>{setupError}</span> : null}
+      {setupError ? <span className="text-xs" style={{ color: "var(--danger-text)" }}>{setupError}</span> : null}
       {!summary ? (
         <Empty text={error ?? "Checking provider status…"} />
       ) : summary.providers.length === 0 ? (

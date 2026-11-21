@@ -363,11 +363,20 @@ describe("canonical computer inventory route", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+        // An edge sending `Connection: close` must not make nginx drop the pooled upstream socket.
+        connection: "close, x-edge-hop",
+        "x-edge-hop": "edge-only",
+        "keep-alive": "timeout=5",
       },
     });
 
     expect(response.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.22:443/projects");
+    // The VPS pool keeps warm connections; `connection: close` would force a new TLS handshake per request.
+    const upstreamHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(upstreamHeaders.get("connection")).toBeNull();
+    expect(upstreamHeaders.get("x-edge-hop")).toBeNull();
+    expect(upstreamHeaders.get("keep-alive")).toBeNull();
   });
 
   it("quarantines a malformed persisted provisioning class without hiding valid computers", async () => {

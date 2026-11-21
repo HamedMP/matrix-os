@@ -200,7 +200,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
   const isPlatformChallenge = (response: Response, origin: string): boolean =>
     origin === platform.origin && response.status === 401 && response.headers.has(PLATFORM_CHALLENGE_HEADER);
 
-  /** Platform: `POST /api/collaboration/connections`. A 404/503 means the home is unreachable or the scope is unknown. */
+  /** Platform connection tickets distinguish unknown/denied scopes (404) from offline homes (503). */
   const issueTicket = async (scopeId: string, purpose: "direct_session" | "events" | "terminal", key: ProofKeyPair) => {
     const response = await guardedFetch(fetchImpl, new URL("/api/collaboration/connections", platform).href, {
       method: "POST",
@@ -210,7 +210,11 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       body: JSON.stringify({ clientRequestId: randomId(), scopeId, purpose, proofPublicKey: key.publicKeyRaw }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (response.status === 404 || response.status === 503) {
+    if (response.status === 404) {
+      await response.body?.cancel();
+      throw new CollaborationDirectError("not_found", "Collaboration resource not found");
+    }
+    if (response.status === 503) {
       await response.body?.cancel();
       throw new CollaborationDirectError("host_offline", "Collaboration home is unavailable");
     }
@@ -608,6 +612,7 @@ function throwForStatus(status: number, platformChallenge = false): void {
 
 function scopeStateFor(code: CollaborationDirectErrorCode): DirectScopeState {
   if (code === "host_offline") return "offline";
+  if (code === "not_found") return "denied";
   if (code === "upgrade_required" || code === "unauthenticated" || code === "denied") return code;
   return "idle";
 }

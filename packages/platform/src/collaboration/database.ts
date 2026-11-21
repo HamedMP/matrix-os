@@ -1,6 +1,7 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import { runPlatformMigration } from "../migration-runner.js";
 import type { CutoverCounts, CutoverPhase } from "./cutover.js";
+import type { CollaborativeAppLaunchIdentity } from "./app-launch-sessions.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -105,6 +106,10 @@ export interface CollaborationCutoverDispositionTable {
 }
 
 export interface CollaborationPlatformDatabase {
+  collaboration_app_launches: {
+    launch_id: string; client_request_id: string; actor_id: string; scope_id: string;
+    identity: CollaborativeAppLaunchIdentity; created_at: Timestamp; expires_at: Timestamp;
+  };
   collaboration_directory: CollaborationDirectoryTable;
   collaboration_user_index: CollaborationUserIndexTable;
   collaboration_connection_tickets: CollaborationConnectionTicketsTable;
@@ -121,6 +126,14 @@ export async function bootstrapPlatformCollaborationDatabase(
 }
 
 async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDatabase>): Promise<void> {
+  await sql`CREATE TABLE IF NOT EXISTS collaboration_app_launches (
+    launch_id UUID PRIMARY KEY, client_request_id UUID NOT NULL,
+    actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128), scope_id UUID NOT NULL,
+    identity JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE(actor_id, client_request_id), CHECK (expires_at > created_at)
+  )`.execute(trx);
+  await sql`CREATE INDEX IF NOT EXISTS idx_collaboration_app_launches_expiry
+    ON collaboration_app_launches(expires_at)`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_directory (
       scope_id UUID PRIMARY KEY,

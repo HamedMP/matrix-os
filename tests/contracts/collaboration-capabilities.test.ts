@@ -124,30 +124,28 @@ describe("collaboration capability contracts (S02 T013)", () => {
     expect(CollaborationGrantActivationSchema.safeParse({ ...activation, activatedBy: "user_owner" }).success).toBe(false);
   });
 
-  it("projects one bounded project access manager without changing wire presets", () => {
+  it("projects one role-free organization project access rule", () => {
     const presentation = {
       scopeId,
-      revision: "7",
+      organization: { id: organizationId, name: "Matrix" },
       owner: { actorId: "user_owner", displayName: "Nima" },
-      generalAccess: { grantId, preset: "contributor", revision: "3" },
-      people: [{
-        actor: { actorId: "user_ada", displayName: "Ada" },
-        status: "active",
-        effectivePreset: "contributor",
-        inherited: true,
-      }, {
-        actor: { actorId: "user_maya", displayName: "Maya" },
-        status: "pending",
-        effectivePreset: "viewer",
-        inherited: false,
-        directGrant: { grantId: "40000000-0000-4000-8000-000000000002", preset: "viewer", revision: "1" },
-      }],
+      lifecycle: "shared",
+      accessMode: "organization_full_access",
+      canAdministerShare: true,
     };
     expect(CollaborationProjectAccessPresentationSchema.parse(presentation)).toEqual(presentation);
-    expect(CollaborationProjectAccessPresentationSchema.safeParse({
-      ...presentation,
-      generalAccess: { ...presentation.generalAccess, preset: "editor" },
-    }).success).toBe(false);
+    for (const legacy of [
+      { generalAccess: { grantId, preset: "contributor", revision: "3" } },
+      { people: [] },
+      { role: "editor" },
+      { activationRequired: true },
+      { providerInstanceId: "provider_secret" },
+      { allowedModelIds: ["model-a"] },
+      { providerTermsAccepted: true },
+    ]) {
+      expect(CollaborationProjectAccessPresentationSchema.safeParse({ ...presentation, ...legacy }).success).toBe(false);
+    }
+    expect(CollaborationProjectAccessPresentationSchema.safeParse({ ...presentation, accessMode: "viewer" }).success).toBe(false);
   });
 
   it("bounds grant mutations to idempotent conditional writes", () => {

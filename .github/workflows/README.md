@@ -122,9 +122,13 @@ OTA payloads.
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
-| `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), `main` when the mobile app changes (publish to `preview`), manual (promote to `production` or roll back) | Required for mobile OTA publishing; path-filtered, so not a required PR check |
+| `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), manual only for releases (publish `main` to `preview`, promote to `production`, or roll back); merging to `main` publishes nothing | Required for mobile OTA publishing; path-filtered, so not a required PR check |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
+
+For an unpublished numbered verification bundle, dispatch `host-bundle-release.yml`
+on the reviewed branch with `channel=none` and `deploy_after_publish=false`.
+The same-SHA CI gate still applies; registration promotes no channel pointer.
 
 Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
 for review, pushing and reopening run core CI and Docker classification; retargeting the base

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import {
-    SITE_ACCESS_LINK_CLAIM_TTL_MS, SITE_PUBLISH_TIMEOUT_MS,
-    SITE_VIEWER_SESSION_TTL_MS, SiteAccessClaimSchema, SiteAccessLinkCreateRequestSchema,
-    SiteAccessLinkCreateResponseSchema, SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
+    SITE_PUBLISH_TIMEOUT_MS,
+    SITE_VIEWER_SESSION_TTL_MS, SiteAccessClaimSchema,
+    SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
     SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
-    type SiteAccessLinkSummary, type SiteRecord,
+    SiteSlugAvailabilityQuerySchema, SiteSlugAvailabilitySchema, classifySiteSlug, siteSlugSuggestionCandidates,
+    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability,
 } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
@@ -21,6 +22,8 @@ import {
 import { packagePrivateSiteHtml } from './private-package.js';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { emitSiteTelemetry, type SiteTelemetryCapture } from './telemetry.js';
+import { authorizeEmailViewerSession } from './email-viewer-sessions.js';
+import { revokeSiteEmailAuthorityForTransition } from './email-invitations.js';
 type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
     getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
@@ -31,13 +34,14 @@ const key = (owner: string, site: string, version: string, path: string) => `${s
 function ownership(db: PlatformDB, owner: SiteOwner) {
     return db.executor.selectFrom('public_sites').selectAll().where('owner_id', '=', owner.ownerId).where('machine_id', '=', owner.machineId).where('app_slug', '=', owner.appSlug);
 }
-async function project(db: PlatformDB, row: Selectable<SitesTable>): Promise<SiteRecord> {
+async function project(db: PlatformDB, row: Selectable<SitesTable>, emailCapability?: () => Promise<boolean>): Promise<SiteRecord> {
     const versions = await db.executor.selectFrom('public_site_versions').select(['id', 'created_at']).where('site_id', '=', row.id).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(50).execute();
     const active = row.active_version ? await db.executor.selectFrom('public_site_versions').select('config').where('id', '=', row.active_version).where('site_id', '=', row.id).executeTakeFirst() : undefined;
     return SiteRecordSchema.parse({ id: row.id, appSlug: row.app_slug, title: row.title, description: row.description, slug: row.slug,
         url: `https://matrix.page/${row.slug ?? row.id}`, revision: row.revision, status: row.status, accessMode: row.access_mode,
         activeVersion: row.active_version,
-        versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}) });
+        versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}),
+        ...(emailCapability ? { capabilities: { privateEmailInvitations: await emailCapability() } } : {}) });
 }
 function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now = Date.now()): SiteAccessLinkSummary {
     const expired = Date.parse(row.claimed_at ? row.session_expires_at! : row.claim_expires_at) <= now;
@@ -49,6 +53,16 @@ function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now =
         claimedAt: row.claimed_at,
         sessionExpiresAt: row.session_expires_at,
     });
+}
+/**
+ * One-time links (spec 2690) are retired: existing links drain until their
+ * claim/session expiry, but no site may newly enter `private_link`. A write that
+ * repeats `private_link` for a site already in that mode keeps the current mode,
+ * so legacy sites stay editable from older clients during the drain.
+ */
+function assertNoNewPrivateLink(requested: SiteRecord['accessMode'] | undefined, current: SiteRecord['accessMode'] | undefined) {
+    if (requested === 'private_link' && current !== 'private_link')
+        throw new SiteError('gone');
 }
 async function claimAlias(db: PlatformDB, siteId: string, slug: string | null | undefined) {
     if (!slug)
@@ -63,6 +77,8 @@ export function createSitesService(options: {
     storage?: Storage;
     env?: NodeJS.ProcessEnv;
     captureEvent?: SiteTelemetryCapture;
+    emailCapability?: () => Promise<boolean>;
+    emailSessionSecret?: string;
 }) {
     const { db, storage } = options;
     const captureEvent = options.captureEvent;
@@ -76,7 +92,7 @@ export function createSitesService(options: {
     const privateFrames = new Map<string, { expiresAt: number; value: Promise<string> }>();
     const PRIVATE_FRAME_CACHE_MAX = 4;
     const PRIVATE_FRAME_CACHE_TTL_MS = 5 * 60_000;
-    async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
+    async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row, options.emailCapability) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
         const row = await scoped.executor.selectFrom('public_sites').selectAll().where(eb => eb.or([
@@ -87,7 +103,7 @@ export function createSitesService(options: {
                 .whereRef('user_machines.clerk_user_id', '=', 'public_sites.owner_id')
                 .where('deleted_at', 'is', null).where('status', '!=', 'deleted')))
             .executeTakeFirst();
-        return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
+        return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row, options.emailCapability) : null;
     }
     async function deploy(owner: SiteOwner, input: unknown, publication: { deadlineAt?: number; signal?: AbortSignal } = {}) {
         const now = Date.now();
@@ -108,6 +124,14 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
+        if (request.accessMode === 'private_link') {
+            // Cheap pre-check so a refused first publication reserves no inventory and
+            // uploads no bytes; the locked check below remains authoritative.
+            await db.ready;
+            assertNoNewPrivateLink(request.accessMode, (await ownership(db, owner).select('access_mode').executeTakeFirst())?.access_mode);
+        }
+        if (request.accessMode === 'private_email' && !await options.emailCapability?.())
+            throw new SiteError('unavailable');
         const version = randomUUID();
         const uploaded: string[] = [];
         let activationCompleted = false;
@@ -121,7 +145,7 @@ export function createSitesService(options: {
             await assertCurrentPublishingRuntime(trx, owner);
             await trx.executor.insertInto('public_sites').values({ id: randomUUID(), owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
                 title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished',
-                access_mode: request.accessMode ?? 'public', active_version: null, created_at: new Date().toISOString(),
+                access_mode: 'public', active_version: null, created_at: new Date().toISOString(),
             }).onConflict(oc => oc.columns(['owner_id', 'machine_id', 'app_slug']).doNothing()).execute();
             check();
         }, env);
@@ -142,6 +166,7 @@ export function createSitesService(options: {
                 check();
                 if (request.baseRevision !== undefined && row.revision !== request.baseRevision)
                     throw new SiteError('conflict');
+                assertNoNewPrivateLink(request.accessMode, row.access_mode);
                 await claimAlias(trx, row.id, request.slug);
                 if (await trx.executor.selectFrom('public_site_versions').select('id').where('site_id', '=', row.id).limit(50).execute().then(v => v.length >= 50))
                     throw new SiteError('conflict');
@@ -158,8 +183,13 @@ export function createSitesService(options: {
                 }
                 await trx.executor.insertInto('public_site_versions').values({ id: version, site_id: row.id, created_at: new Date().toISOString(), config: sql `${JSON.stringify(request.config)}::jsonb`, files: sql `${JSON.stringify(files)}::jsonb` }).execute();
                 check();
-                if (request.accessMode === 'public' && row.access_mode === 'private_link')
+                if (request.accessMode !== undefined && request.accessMode !== 'private_link'
+                    && row.access_mode === 'private_link')
                     await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+                if (row.access_mode === 'private_email' && request.accessMode !== undefined
+                    && request.accessMode !== 'private_email')
+                    await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
+                        'mode_changed', request.accessMode);
                 const changed = await trx.executor.updateTable('public_sites').set({ title: request.title, description: request.description,
                     ...(request.slug !== undefined ? { slug: request.slug } : {}),
                     ...(request.accessMode !== undefined ? { access_mode: request.accessMode } : {}),
@@ -167,7 +197,7 @@ export function createSitesService(options: {
                 check();
                 if (!changed)
                     throw new SiteError('conflict');
-                const result = await project(trx, changed);
+                const result = await project(trx, changed, options.emailCapability);
                 check(); // Roll back activation if any awaited DB work crossed the deadline.
                 activationCompleted = true;
                 return result;
@@ -209,7 +239,7 @@ export function createSitesService(options: {
             const next = await trx.executor.updateTable('public_sites').set({ ...changes, revision: row.revision + 1 }).where('id', '=', row.id).where('revision', '=', row.revision).returningAll().executeTakeFirst();
             if (!next)
                 throw new SiteError('conflict');
-            return project(trx, next);
+            return project(trx, next, options.emailCapability);
         }, env));
     }
     async function patch(owner: SiteOwner, input: unknown) {
@@ -217,12 +247,20 @@ export function createSitesService(options: {
         if (!parsed.success)
             throw new SiteError('invalid_request');
         const request = parsed.data;
+        if (request.accessMode === 'private_email' && !await options.emailCapability?.())
+            throw new SiteError('unavailable');
         let previousAccessMode: SiteRecord['accessMode'] | undefined;
         const result = await mutate(owner, request.baseRevision, async (trx, row) => {
             previousAccessMode = row.access_mode;
+            assertNoNewPrivateLink(request.accessMode, row.access_mode);
             await claimAlias(trx, row.id, request.slug);
-            if (request.accessMode === 'public' && row.access_mode === 'private_link')
+            if (request.accessMode !== undefined && request.accessMode !== 'private_link'
+                && row.access_mode === 'private_link')
                 await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+            if (row.access_mode === 'private_email' && request.accessMode !== undefined
+                && request.accessMode !== 'private_email')
+                await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
+                    'mode_changed', request.accessMode);
             const { baseRevision: _, accessMode, ...changes } = request;
             return { ...changes, ...(accessMode !== undefined ? { access_mode: accessMode } : {}) };
         });
@@ -236,6 +274,8 @@ export function createSitesService(options: {
     async function unpublish(owner: SiteOwner, revision?: number) {
         const result = await mutate(owner, revision, async (trx, row) => {
             await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
+            if (row.access_mode === 'private_email' && row.status === 'published')
+                await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId, 'unpublished');
             return { status: 'unpublished' };
         });
         emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_UNPUBLISHED,
@@ -273,7 +313,7 @@ export function createSitesService(options: {
         if (!storage)
             throw new SiteError('unavailable');
         const site = await resolve(reference);
-        if (!site || site.accessMode !== 'private_link' || site.activeVersion !== version)
+        if (!site || site.accessMode === 'public' || site.activeVersion !== version)
             throw new SiteError('not_found');
         const cacheKey = `${site.id}:${version}:${path}`;
         const cached = privateFrames.get(cacheKey);
@@ -323,7 +363,12 @@ export function createSitesService(options: {
             const locked = await trx.executor.selectFrom('public_sites').selectAll().where('id', '=', site.id).forUpdate().executeTakeFirst();
             if (!locked || locked.status !== 'published')
                 throw new SiteError('not_found');
-            const projected = await project(trx, locked);
+            const projected = await project(trx, locked, options.emailCapability);
+            if (projected.accessMode === 'private_email') {
+                if (!options.emailSessionSecret || !await options.emailCapability?.()
+                    || !await authorizeEmailViewerSession(trx, projected.id, cookieHeader, options.emailSessionSecret))
+                    throw new SiteError('not_found');
+            }
             if (projected.accessMode === 'private_link') {
                 const credential = readSiteViewerCookie(cookieHeader, projected.id);
                 const link = credential ? await trx.executor.selectFrom('public_site_access_links').selectAll()
@@ -339,6 +384,7 @@ export function createSitesService(options: {
         readCredential: typeof readSiteViewerCookie, scoped = db) {
         const site = await resolve(reference, scoped);
         if (!site || site.accessMode === 'public') return site;
+        if (site.accessMode !== 'private_link') return null;
         const credential = readCredential(cookieHeader, site.id);
         if (!credential) return null;
         const row = await scoped.executor.selectFrom('public_site_access_links').selectAll()
@@ -372,31 +418,13 @@ export function createSitesService(options: {
             nextCursor: rows.length > parsed.data.limit && last ? `${last.created_at}|${last.id}` : null,
         });
     }
-    async function createAccessLink(owner: SiteOwner, input: unknown) {
-        const parsed = SiteAccessLinkCreateRequestSchema.safeParse(input);
-        if (!parsed.success) throw new SiteError('invalid_request');
-        const result = await managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async trx => {
-            await assertCurrentPublishingRuntime(trx, owner);
-            const site = await ownership(trx, owner).forUpdate().executeTakeFirst();
-            if (!site || site.status !== 'published' || site.access_mode !== 'private_link') throw new SiteError('not_found');
-            if (site.revision !== parsed.data.baseRevision) throw new SiteError('conflict');
-            const now = new Date();
-            const id = randomUUID();
-            const token = createSiteAccessSecret();
-            const row = {
-                id, site_id: site.id, claim_token_hash: hashSiteAccessSecret(token), session_token_hash: null,
-                created_at: now.toISOString(), claim_expires_at: new Date(now.getTime() + SITE_ACCESS_LINK_CLAIM_TTL_MS).toISOString(),
-                claimed_at: null, session_expires_at: null,
-            };
-            await trx.executor.insertInto('public_site_access_links').values(row).execute();
-            return SiteAccessLinkCreateResponseSchema.parse({
-                link: accessLinkSummary(row),
-                url: `https://matrix.page/${site.id}#access=${id}.${token}`,
-            });
-        }, env));
-        emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_CREATED,
-            { access_mode: 'private_link' }, owner.ownerId);
-        return result;
+    /**
+     * Retired (ENG-490): new one-time links can no longer be minted. The route and
+     * client surface stay so older gateways receive a clean, generic 410 instead of
+     * a crash; listing, revocation and claims of existing links keep working.
+     */
+    async function createAccessLink(_owner: SiteOwner, _input: unknown): Promise<never> {
+        throw new SiteError('gone');
     }
     async function revokeAccessLink(owner: SiteOwner, linkId: string) {
         const id = SiteIdSchema.safeParse(linkId);
@@ -411,6 +439,29 @@ export function createSitesService(options: {
         }, env));
         emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_LINK_REVOKED,
             { access_mode: 'private_link' }, owner.ownerId);
+    }
+    /**
+     * Read-only friendly-path check for the owner's share UI. Aliases are public
+     * routing data (matrix.page/<slug> resolves for anyone), so reporting `taken`
+     * reveals nothing private. The write path still claims aliases atomically.
+     */
+    async function slugAvailability(owner: SiteOwner, input: unknown): Promise<SiteSlugAvailability> {
+        const parsed = SiteSlugAvailabilityQuerySchema.safeParse(input);
+        if (!parsed.success) throw new SiteError('invalid_request');
+        const slug = parsed.data.slug;
+        const local = classifySiteSlug(slug);
+        if (local !== 'valid') return SiteSlugAvailabilitySchema.parse({ status: local, suggestions: [] });
+        await db.ready;
+        const own = await ownership(db, owner).select('id').executeTakeFirst();
+        const candidates = siteSlugSuggestionCandidates(slug, owner.appSlug === slug ? [] : [owner.appSlug]);
+        const claimed = await db.executor.selectFrom('public_site_aliases').select(['slug', 'site_id'])
+            .where('slug', 'in', [slug, ...candidates]).execute();
+        const takenByOthers = new Set(claimed.filter(row => row.site_id !== own?.id).map(row => row.slug));
+        if (!takenByOthers.has(slug)) return SiteSlugAvailabilitySchema.parse({ status: 'available', suggestions: [] });
+        return SiteSlugAvailabilitySchema.parse({
+            status: 'taken',
+            suggestions: candidates.filter(candidate => !takenByOthers.has(candidate)).slice(0, 2),
+        });
     }
     async function claimAccessLink(reference: string, input: unknown) {
         const parsed = SiteAccessClaimSchema.safeParse(input);
@@ -442,6 +493,6 @@ export function createSitesService(options: {
         return result;
     }
     return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
-        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink };
+        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability };
 }
 export type SitesService = ReturnType<typeof createSitesService>;

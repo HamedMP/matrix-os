@@ -19,7 +19,8 @@ export function createRoutineFullAccessVerificationRoutes(options: { platformSec
       if (!verified) return c.json({ error: "Origin unavailable" }, 403);
       const machine = await options.lookup!.resolveMachine(tuple.data.handle, tuple.data.runtimeSlot);
       if (verified.expiresAt <= Date.now() || !machine || machine.status !== "running" || machine.machineId !== tuple.data.machineId
-        || machine.clerkUserId !== tuple.data.ownerId || machine.runtimeSlot !== tuple.data.runtimeSlot) return c.json({ error: "Origin unavailable" }, 403);
+        || machine.clerkUserId !== tuple.data.ownerId || machine.runtimeSlot !== tuple.data.runtimeSlot
+        || (tuple.data.kind === "direct_turn" && machine.provisioningClass !== "customer")) return c.json({ error: "Origin unavailable" }, 403);
       return c.json({ verified }, 200, { "Cache-Control": "private, no-store" });
     } catch (error: unknown) {
       if (error instanceof HTTPException) throw error;

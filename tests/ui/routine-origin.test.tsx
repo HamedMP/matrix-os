@@ -1,0 +1,161 @@
+// @vitest-environment jsdom
+import React from "react";
+import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, type BotInteraction, type RoutineChatOriginView } from "@matrix-os/contracts";
+import { createRoutineOriginClient } from "../../packages/ui/src/chat/routine-origin-client";
+import { useRoutineOrigin } from "../../packages/ui/src/chat/use-routine-origin";
+import { RoutineReceipt } from "../../packages/ui/src/chat/RoutineReceipt";
+import { RoutineOriginApprovals } from "../../packages/ui/src/chat/RoutineOriginApprovals";
+import { routineReceiptMessage } from "../../packages/ui/src/chat/routine-receipt";
+import { createOwnerBrowserJsonRequest } from "../../packages/ui/src/routine-action/owner-browser-request";
+import { routineApprovalPlacement } from "../../packages/ui/src/chat/routine-approval-placement";
+import { nativeScheduledMessageFixture } from "../helpers/native-scheduled-message-fixture";
+afterEach(cleanup);
+const interaction: BotInteraction = {interactionId:"in_abcdefgh",chatId:"chat_executor",agentId:"bot_existing",taskId:"task_real_execution",kind:"approval",blocking:true,status:"pending",expiresAt:"2099-01-01T00:00:00.000Z",revision:7,payload:{kind:"approval",tool:"routine.activate",audience:"direct",policyRevision:3,argsDigest:"a".repeat(64),preview:JSON.stringify({proposal:{name:"Morning brief",prompt:"Write a private brief.",schedule:{kind:"once",at:"2099-01-01T00:00:00.000Z"},selection:{instanceId:"matrix_chatgpt_plan",model:"gpt-6-luna"},authorizedEffects:["read"]},source:{accountId:"account_private",computerId:"computer_fixture",grantRevision:3,definitionRevision:2}})}};
+const view = (): RoutineChatOriginView => ({sourceChatId:"chat_source",pending:[{sourceChatId:"chat_source",anchorMessageId:"msg_source",interaction}],deliveries:[],deliveryPending:false,hasMore:false});
+it.each([ROUTINE_DIRECT_CHAT_DISPLAY_BOT_ID, `bot_routine${"a".repeat(32)}`])(
+ "shows the actual Bot and reserves the scheduler name for direct Chat approvals (%s)", async (directId) => {
+ const bot = { ...view().pending[0]!, executorName: "Research Bot" };
+ const direct = { ...bot, executorName: "Private coordinator name", interaction: { ...interaction,
+   interactionId: "in_direct01", agentId: directId, chatId: `chat_routine_${"b".repeat(32)}` } };
+ const legacy = { ...view().pending[0]!, interaction: { ...interaction, interactionId: "in_legacy01", agentId: "bot_legacy01" } };
+ const client = createRoutineOriginClient(async () => ({ ...view(), pending: [bot, direct, legacy] }));
+ function Fixture() {
+  return <RoutineOriginApprovals state={useRoutineOrigin({ client, chatId: "chat_source", eligible: true })} />;
+ }
+ render(<Fixture />);
+ const [botCard, directCard, legacyCard] = await screen.findAllByRole("region", { name: "Schedule Morning brief" });
+ expect(within(botCard!).getByText("Research Bot")).toBeTruthy();
+ expect(within(botCard!).getByText("Bot")).toBeTruthy();
+ expect(within(botCard!).queryByText("Matrix Schedules")).toBeNull();
+ expect(within(directCard!).getByText("Matrix Schedules")).toBeTruthy();
+ expect(within(directCard!).getByText("Runs on")).toBeTruthy();
+ expect(within(directCard!).queryByText("Bot")).toBeNull();
+ expect(within(directCard!).queryByText("Private coordinator name")).toBeNull();
+ expect(within(directCard!).queryByText(directId)).toBeNull();
+ expect(within(legacyCard!).getByText("bot_legacy01")).toBeTruthy();
+});
+it("keeps a Chat quiet until its routine source endpoint becomes available", async () => {
+ const get = vi.fn().mockRejectedValueOnce(Object.assign(new Error("missing"), { status: 404 })).mockResolvedValue(view());
+ const client = { get, resolve: vi.fn() };
+ const { result } = renderHook(() => useRoutineOrigin({ client, chatId: "chat_source", eligible: true }));
+ await act(async () => { await Promise.resolve(); });
+ expect(result.current.error).toBe("");
+ expect(result.current.fresh).toBe(false);
+ act(() => result.current.refresh());
+ await waitFor(() => expect(result.current.view).toEqual(view()));
+});
+it("keeps two approvals in creation order when the later one is decided first", () => {
+ const earlier = { ...view().pending[0]!, createdAt: "2026-11-07T00:00:01.000Z" };
+ const later = { ...earlier, createdAt: "2026-11-07T00:00:02.000Z", interaction: { ...interaction, interactionId: "in_later" } };
+ const rows = [{ id: "msg_source", boundary: true }, { id: "msg_reply" }, { id: "msg_result", boundary: true }];
+ const order = (source: RoutineChatOriginView) => routineApprovalPlacement(source, rows).after.get("msg_reply")?.map(item => item.interaction.interactionId);
+ const expected = [interaction.interactionId, later.interaction.interactionId];
+ expect(order({ ...view(), pending: [later, earlier] })).toEqual(expected);
+ expect(order({ ...view(), pending: [earlier], history: [{ ...later, interaction: { ...later.interaction, status: "resolved" }, decision: "approve" }] })).toEqual(expected);
+});
+it.each(["?timeline=1", ""] as const)("falls back to the supported timeline %j without repeating a decision", async (supported) => {
+ const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+  if (options?.method === "POST") return Response.json({interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}});
+  return new URL(String(input)).search === supported ? Response.json(view()) : Response.json({}, { status: 400 });
+ });
+ const request = createOwnerBrowserJsonRequest("https://fixture.test", async () => null, fetcher);
+ const client = createRoutineOriginClient((path, method, body, options) => request({ path, method, body, ...options }));
+ await expect(client.get("chat_source")).resolves.toEqual(view());
+ await expect(client.get("chat_source")).resolves.toEqual(view());
+ await client.resolve("chat_source", interaction.interactionId, { kind:"approval",baseRevision:7,decision:"approve" });
+ expect(fetcher.mock.calls.map(([url, options]) => [new URL(String(url)).search, options?.method])).toEqual([
+  ["?timeline=2", "GET"], ["?timeline=1", "GET"],
+  ...(supported ? [] : [["", "GET"]]), [supported, "GET"], ["", "POST"],
+ ]);
+});
+it("parses authoritative executor names from the negotiated read", async () => {
+ const complete = { ...view(), pending: [{ ...view().pending[0]!, executorName: "Research Bot" }] };
+ const request = vi.fn(async () => complete);
+ await expect(createRoutineOriginClient(request).get("chat_source")).resolves.toEqual(complete);
+ expect(request).toHaveBeenCalledExactlyOnceWith("/api/chats/chat_source/routine-origin?timeline=2", "GET", undefined, { signal: undefined });
+});
+it("uses the source alias and unchanged canonical interaction revision, without a Bot binding context", async () => {
+ let decided=false;const request=vi.fn(async (_p:string, method:string)=>{if(method==="GET")return {...view(),pending:decided?[]:view().pending};decided=true;return {interaction:{interactionId:interaction.interactionId,status:"resolved",revision:8}};});
+ const client=createRoutineOriginClient(request);
+ function Fixture(){const state=useRoutineOrigin({client,chatId:"chat_source",eligible:true});return <RoutineOriginApprovals state={state}/>;}
+ render(<Fixture/>);
+ fireEvent.click(await screen.findByRole("button",{name:"Approve schedule"}));
+ await waitFor(()=>expect(request).toHaveBeenCalledWith("/api/chats/chat_source/routine-origin/in_abcdefgh/resolve","POST",{kind:"approval",baseRevision:7,decision:"approve"},expect.anything()));
+ expect(request.mock.calls.some(([p])=>p.includes("chat_executor/interactions"))).toBe(false);
+ await waitFor(()=>expect(screen.queryByRole("button",{name:"Approve schedule"})).toBeNull());
+ expect(screen.queryByText(/Your decision could not be confirmed/)).toBeNull();expect(screen.queryByRole("alert")).toBeNull();
+ expect(request.mock.calls.filter(([,method])=>method==="POST")).toHaveLength(1);
+});
+it("reconciles a lost acknowledgment before enabling another explicit decision; never retries mutation",async()=>{
+ let reads=0;const get=vi.fn(async()=>++reads===1?view():{...view(),pending:[]});const resolve=vi.fn(async()=>{throw new TypeError("connection lost secret");});
+ const client={get,resolve};const {result}=renderHook(()=>useRoutineOrigin({client,chatId:"chat_source",eligible:true}));
+ await waitFor(()=>expect(result.current.fresh).toBe(true));
+ await act(async()=>{await expect(result.current.resolve(interaction,{kind:"approval",baseRevision:7,decision:"approve"})).rejects.toThrow();});
+ expect(resolve).toHaveBeenCalledTimes(1);expect(get).toHaveBeenCalledTimes(2);expect(result.current.view?.pending).toEqual([]);
+});
+it("fences retained decisions and late reads across source/client changes including A to B to A",async()=>{
+ const get=vi.fn(async()=>view()),resolve=vi.fn();const client={get,resolve};
+ const {result,rerender}=renderHook(({chatId})=>useRoutineOrigin({client,chatId,eligible:true}),{initialProps:{chatId:"chat_source"}});
+ await waitFor(()=>expect(result.current.fresh).toBe(true)); const retained=result.current.resolve;
+ rerender({chatId:"chat_other"});rerender({chatId:"chat_source"});
+ await act(async()=>{await expect(retained(interaction,{kind:"approval",baseRevision:7,decision:"approve"})).rejects.toThrow();});
+ expect(resolve).not.toHaveBeenCalled();
+});
+it("accepts only server stored committed source receipt parts, never wording or user metadata",()=>{
+ const d=nativeScheduledMessageFixture();const m={...d.messages[0]!,turnId:undefined,runId:undefined};
+ const receipt={type:"routine_receipt" as const,engine:"matrix" as const,kind:"output" as const,routineId:`rt_${"a".repeat(24)}`,fireId:`fire_${"b".repeat(24)}`,attempt:1,status:"completed" as const,scheduledFor:m.createdAt,canonicalChatId:"chat_executor",canonicalTaskId:"task_real_execution",model:"gpt-6-luna"};
+ const message={...m,parts:[{type:"text" as const,text:"Real committed result"},receipt]};
+ expect(routineReceiptMessage(message,m.chatId)).toEqual(receipt);
+ for(const change of [{role:"user"},{state:"pending"},{turnId:"cturn_foreground"},{chatId:"chat_other"},{parts:[{type:"text",text:JSON.stringify(receipt)}]}]) expect(routineReceiptMessage({...message,...change} as typeof message,m.chatId)).toBeUndefined();
+ expect(d.turns).toHaveLength(1);expect(d.runs).toHaveLength(1);
+});
+it("retains the saved-decision notice after the resolved approval disappears from the fresh source read",async()=>{
+ let reads=0;const client={get:vi.fn(async()=>++reads===1?view():{...view(),pending:[]}),resolve:vi.fn(async()=>({interaction:{interactionId:interaction.interactionId,status:"resolved" as const,revision:8},continuationPending:true as const}))};
+ const {result}=renderHook(()=>useRoutineOrigin({client,chatId:"chat_source",eligible:true}));await waitFor(()=>expect(result.current.fresh).toBe(true));await act(async()=>{await result.current.resolve(interaction,{kind:"approval",decision:"approve",baseRevision:7});});
+ expect(result.current.view?.pending).toEqual([]);expect(result.current.notice).toContain("Your decision was saved");expect(client.resolve).toHaveBeenCalledTimes(1);
+});
+it("removes the private preview on read failure and rejects a callback retained from the earlier successful read",async()=>{
+ const get=vi.fn().mockResolvedValueOnce(view()).mockRejectedValue(new Error("unavailable"));
+ const client={get,resolve:vi.fn()};const {result}=renderHook(()=>useRoutineOrigin({client,chatId:"chat_source",eligible:true}));
+ await waitFor(()=>expect(result.current.fresh).toBe(true));const retained=result.current.resolve;
+ act(()=>result.current.refresh());await waitFor(()=>expect(result.current.fresh).toBe(false));
+ expect(result.current.view).toBeNull();
+ await expect(retained(interaction,{kind:"approval",decision:"approve",baseRevision:7})).rejects.toThrow();expect(client.resolve).not.toHaveBeenCalled();
+});
+it("pins a lost acknowledgment to the exact decision and revision when the canonical read still shows it pending",async()=>{
+ const client={get:vi.fn(async()=>view()),resolve:vi.fn().mockRejectedValueOnce(new TypeError("lost")).mockResolvedValue({interaction:{...interaction,status:"resolved",revision:8}})};
+ const {result}=renderHook(()=>useRoutineOrigin({client,chatId:"chat_source",eligible:true}));
+ await waitFor(()=>expect(result.current.fresh).toBe(true));
+ await act(async()=>{await expect(result.current.resolve(interaction,{kind:"approval",decision:"approve",baseRevision:7})).rejects.toThrow();});
+ await act(async()=>{await expect(result.current.resolve(interaction,{kind:"approval",decision:"deny",baseRevision:7})).rejects.toThrow();});
+ expect(client.resolve).toHaveBeenCalledTimes(1);
+ await act(async()=>{await result.current.resolve(interaction,{kind:"approval",decision:"approve",baseRevision:7});});expect(client.resolve).toHaveBeenCalledTimes(2);
+});
+it("cancels a pending decision transport when the source loses eligibility",async()=>{
+ let signal:AbortSignal|undefined;let finish!:()=>void;
+ const resolve=vi.fn(async (_chat:string,_id:string,_input:unknown,token?:AbortSignal)=>{signal=token;await new Promise<void>(r=>{finish=r;});throw new Error("offline");});
+ const client={get:vi.fn(async()=>view()),resolve};const {result,rerender}=renderHook(({eligible})=>useRoutineOrigin({client,chatId:"chat_source",eligible}),{initialProps:{eligible:true}});
+ await waitFor(()=>expect(result.current.fresh).toBe(true));let request!:Promise<unknown>;
+ act(()=>{request=result.current.resolve(interaction,{kind:"approval",decision:"deny",baseRevision:7}).catch(()=>undefined);});rerender({eligible:false});
+ const aborted=signal?.aborted;await act(async()=>{finish();await request;});expect(aborted).toBe(true);
+});
+it("shows the Schedules navigation hint even when only past deliveries overflow the source view",async()=>{
+ const client={get:vi.fn(async()=>({...view(),hasMore:true,pending:[]})),resolve:vi.fn()};
+ function Fixture(){return <RoutineOriginApprovals state={useRoutineOrigin({client,chatId:"chat_source",eligible:true})}/>;}
+ render(<Fixture/>);expect(await screen.findByText(/More scheduled task items are available in Schedules/)).toBeTruthy();
+});
+
+it("renders a Chat-owned result without exposing its internal executor Chat as a destination", () => {
+ const onOpenChat = vi.fn();
+ const receipt = { type: "routine_receipt" as const, engine: "matrix" as const, kind: "output" as const,
+   routineId: `rt_${"a".repeat(24)}`, fireId: `fire_${"b".repeat(24)}`, attempt: 1, status: "completed" as const,
+   scheduledFor: "2026-11-06T09:00:00.000Z", canonicalChatId: `chat_routine_${"c".repeat(32)}`,
+   canonicalTaskId: "task_real_execution", model: "gpt-6-luna" };
+ render(<RoutineReceipt receipt={receipt} text="Committed output" sourceChatId="chat_source" onOpenChat={onOpenChat} />);
+ expect(screen.getByText("Committed output")).toBeTruthy();
+ expect(screen.queryByRole("button", { name: "Open execution history" })).toBeNull();
+ expect(screen.queryByText(receipt.canonicalChatId)).toBeNull();
+ expect(onOpenChat).not.toHaveBeenCalled();
+});

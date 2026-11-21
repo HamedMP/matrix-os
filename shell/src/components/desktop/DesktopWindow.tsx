@@ -195,7 +195,7 @@ export function DesktopWindow({
         <div className={publishingSlug ? "flex w-[116px] shrink-0 justify-end" : "w-[78px] shrink-0"}>
           {publishingSlug && !isHidden && !isMinimizing ? (
             <div onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-              <AppSiteButton appSlug={publishingSlug} portalContainerRef={windowRef} />
+              <AppSiteButton appSlug={publishingSlug} appName={win.title} portalContainerRef={windowRef} />
             </div>
           ) : null}
         </div>
@@ -256,7 +256,7 @@ export function DesktopWindow({
                 onRenameConversation={chat.renameConversation}
                 onDeleteConversation={chat.deleteConversation}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} projectSkillRootAvailable={chat.projectSkillRootAvailable} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatRunStatusChange={chat.chatRunStatusChange}
                 onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
                 onSubmitInput={chat.submitInput}

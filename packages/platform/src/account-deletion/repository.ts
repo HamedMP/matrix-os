@@ -18,6 +18,10 @@ export function hashAccountDeletionOwner(owner: string, secret: string): string 
 export async function lockAccountDeletionOwner(db: Kysely<PlatformDatabase> | Transaction<PlatformDatabase>, ownerHash: string): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'account-deletion:' + ownerHash}, 0))`.execute(db);
 }
+/** Admit independent storage/financial work together while still fencing exclusive deletion transitions. */
+export async function lockAccountDeletionOwnerShared(db: Kysely<PlatformDatabase> | Transaction<PlatformDatabase>, ownerHash: string): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${'account-deletion:' + ownerHash}, 0))`.execute(db);
+}
 export type DeletionJob = Selectable<AccountDeletionJobsTable>;
 export class AccountDeletionConflictError extends Error {
   constructor() { super('Account deletion can no longer be cancelled.'); this.name = 'AccountDeletionConflictError'; }
@@ -60,6 +64,7 @@ export class AccountDeletionRepository {
     owner: string,
     identityDeleted: boolean,
     prepare: (transaction: Transaction<PlatformDatabase>) => Promise<AccountDeletionContext>,
+    afterAccept?: (transaction: Transaction<PlatformDatabase>) => Promise<void>,
   ): Promise<DeletionJob> {
     const ownerHash = this.ownerHash(owner);
     return this.db.transaction().execute(async (trx) => {
@@ -69,14 +74,21 @@ export class AccountDeletionRepository {
       const existing = await trx.selectFrom('account_deletion_jobs').selectAll()
         .where('owner_hash', '=', ownerHash).forUpdate().executeTakeFirst();
       if (existing && existing.status !== 'cancelled') {
-        if (!identityDeleted || existing.status === 'completed') return existing;
+        if (!identityDeleted || existing.status === 'completed') {
+          await afterAccept?.(trx);
+          return existing;
+        }
         const now = this.now().toISOString();
-        return trx.updateTable('account_deletion_jobs').set({ due_at: now, next_attempt_at: now, updated_at: now })
+        const updated = await trx.updateTable('account_deletion_jobs').set({ due_at: now, next_attempt_at: now, updated_at: now })
           .where('owner_hash', '=', ownerHash).returningAll().executeTakeFirstOrThrow();
+        await afterAccept?.(trx);
+        return updated;
       }
       const context = await prepare(trx);
       if (context.clerkUserId !== owner) throw new Error('Account deletion preparation failed.');
-      return this.acceptInTransaction(trx, context, identityDeleted, ownerHash);
+      const accepted = await this.acceptInTransaction(trx, context, identityDeleted, ownerHash);
+      await afterAccept?.(trx);
+      return accepted;
     });
   }
   private async acceptInTransaction(
@@ -105,15 +117,17 @@ export class AccountDeletionRepository {
         .where('owner_hash', '=', this.ownerHash(owner)).where('status', 'in', ['scheduled', 'processing']).execute();
     });
   }
-  async cancel(owner: string): Promise<DeletionJob | undefined> {
+  async cancel(owner: string, afterCancel?: (transaction: Transaction<PlatformDatabase>) => Promise<void>): Promise<DeletionJob | undefined> {
     const now = this.now().toISOString();
     return this.db.transaction().execute(async (trx) => {
       await lockAccountDeletionOwner(trx, this.ownerHash(owner));
       const row = await trx.selectFrom('account_deletion_jobs').selectAll().where('owner_hash', '=', this.ownerHash(owner)).forUpdate().executeTakeFirst();
       if (!row || row.status === 'cancelled') return row;
       if (row.status !== 'scheduled' || row.due_at <= now || row.lease_token !== null || !row.billing_stopped) throw new AccountDeletionConflictError();
-      return trx.updateTable('account_deletion_jobs').set({ status: 'cancelled', encrypted_context: null, updated_at: now, last_error_code: null })
+      const cancelled = await trx.updateTable('account_deletion_jobs').set({ status: 'cancelled', encrypted_context: null, updated_at: now, last_error_code: null })
         .where('owner_hash', '=', row.owner_hash).where('status', '=', 'scheduled').returningAll().executeTakeFirstOrThrow();
+      await afterCancel?.(trx);
+      return cancelled;
     });
   }
   async claim(owner: string | undefined, leaseMs: number): Promise<DeletionJob | undefined> {

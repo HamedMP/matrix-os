@@ -1,14 +1,15 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, useGetStartedAnswers, useGetStartedEnded,
+  GettingStartedPill, gettingStartedNextStep, shouldShowGettingStartedPill, usePublishGettingStartedProgress,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, useGetStartedConnectFailures, gettingStartedRowAction, gettingStartedRowView,
   type GettingStartedRequest, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
-import { Bot, ClipboardCheck, CreditCard, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "../../lib/hugeicons";
+import { Bot, CreditCard, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "../../lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { seedNewChatDraft } from "../chat/use-chat-composer-drafts";
@@ -38,11 +39,6 @@ function RowIconGlyph({ row }: { row: GettingStartedRow }) {
     case "billing": return <CreditCard {...props} />;
   }
 }
-
-const menuOverlay = {
-  acquire: () => useUi.getState().acquireRendererOverlay(),
-  release: () => useUi.getState().releaseRendererOverlay(),
-};
 
 export function gettingStartedAutoOpenKey(handle: string, runtimeSlot: string): string {
   return `matrix:getting-started:auto-opened:${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
@@ -119,12 +115,12 @@ function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } })
   );
 }
 
-export default function GettingStartedPopover(props: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } } = {}) {
+export default function GettingStartedPopover() {
   const { scope } = useGettingStartedVisibility();
-  return <GettingStartedPopoverContent key={scope} {...props} />;
+  return <GettingStartedPopoverContent key={scope} />;
 }
 
-function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } }) {
+function GettingStartedPopoverContent() {
   const api = useConnection((state) => state.api);
   const connectionStatus = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
@@ -135,7 +131,6 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
     visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
   } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
-  const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
@@ -303,39 +298,26 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   }, [open, isBlocked, autoOpenKey]);
 
 
-  const label = `Getting started — ${completedCount} of ${total}`;
   const progress = `${(completedCount / total) * 100}%`;
+  const next = useMemo(() => gettingStartedNextStep(rows), [rows]);
+  // The account menu's Getting started row opens this checklist as an explicit, focus-moving open.
+  const openFromMenu = useCallback(() => {
+    if (isBlocked()) return;
+    markManualOpen();
+    setOpen(true);
+    requestRefresh();
+  }, [isBlocked, markManualOpen, requestRefresh, setOpen]);
+  usePublishGettingStartedProgress(useMemo(() => (
+    snapshot.loaded ? { completed: completedCount, total, next, open: openFromMenu } : null
+  ), [completedCount, next, openFromMenu, snapshot.loaded, total]));
+  const showPill = shouldShowGettingStartedPill({ loaded: snapshot.loaded, completed: completedCount, total, open: requestedOpen });
 
-  const helpRow = Boolean(helpMenu);
-  const trigger = (closeHelp?: () => void) => <Popover.Trigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          title={label}
-          disabled={blocked}
-          onClick={() => {
-            if (requestedOpen) setOpen(false);
-            closeHelp?.();
-          }}
-          className={helpRow ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-lg p-2 text-left text-[13px] outline-none hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]" : "relative flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"}
-          style={{ color: "var(--text-secondary)" }}
-        >
-          <ClipboardCheck aria-hidden="true" size={16} />
-          {helpRow ? <><span className="flex-1">Getting started</span><span className="text-xs">{completedCount} of {total}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
-          {!helpRow && completedCount < total ? (
-            <span
-              aria-hidden="true"
-              className="absolute right-0.5 top-0.5 size-1.5 rounded-full"
-              style={{ background: "var(--accent)" }}
-            />
-          ) : null}
-        </button>
-      </Popover.Trigger>;
   return (
     <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={completedCount < total} gettingStarted={trigger}
-        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
-        anchorTrigger={(helpTrigger) => <Popover.Anchor asChild>{helpTrigger}</Popover.Anchor>} /> : trigger()}
+      {showPill ? <Popover.Trigger asChild>
+        <GettingStartedPill completed={completedCount} total={total} disabled={blocked}
+          onClick={() => { if (requestedOpen) setOpen(false); }} />
+      </Popover.Trigger> : null}
       <Popover.Portal>
         <Popover.Content
           role="dialog"
@@ -345,13 +327,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
           sideOffset={7}
           collisionPadding={12}
           onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={(event) => {
-            onCloseAutoFocus(event);
-            if (helpMenu && !requestedOpen) {
-              event.preventDefault();
-              helpTriggerRef.current?.focus();
-            }
-          }}
+          onCloseAutoFocus={onCloseAutoFocus}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

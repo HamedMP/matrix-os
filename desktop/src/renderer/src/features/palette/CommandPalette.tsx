@@ -284,7 +284,7 @@ export default function CommandPalette() {
           ))}
         </div>
         {actionError ? (
-          <div className="border-b px-4 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+          <div className="border-b px-4 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger-text)" }}>
             {actionError}
           </div>
         ) : null}

@@ -2,7 +2,7 @@ import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type { OwnerScope } from "./state-ops.js";
-import { createProjectFilesLocationService, createProjectMetadataService, ProjectMetadataPatchSchema, ProjectMetadataSlugSchema } from "./project-metadata.js";
+import { createProjectFilesLocationService, createProjectMetadataService, ProjectFilesLocationQuerySchema, ProjectMetadataPatchSchema, ProjectMetadataSlugSchema } from "./project-metadata.js";
 
 type Admission = <T>(input: {
   ownerScope: OwnerScope;
@@ -23,8 +23,12 @@ export function registerProjectMetadataRoutes(app: Hono, options: {
     try { ownerScope = options.getOwnerScope(c); }
     catch (error: unknown) { return options.principalError(c, error); }
     const slug = ProjectMetadataSlugSchema.safeParse(c.req.param("slug"));
-    if (!slug.success) return c.json({ error: { code: "invalid_request", message: "Project is invalid" } }, 400);
-    const result = await options.filesLocation(slug.data, ownerScope);
+    const query = ProjectFilesLocationQuerySchema.safeParse(c.req.query());
+    if (!slug.success || !query.success) {
+      return c.json({ error: { code: "invalid_request", message: "Project file reference is invalid" } }, 400);
+    }
+    if (query.data.projectId) c.header("Cache-Control", "no-store");
+    const result = await options.filesLocation(slug.data, ownerScope, query.data);
     if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
     return c.json({ path: result.path });
   });

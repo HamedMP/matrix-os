@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
 const sourceJobs = [
   'typecheck', 'shell-production-build', 'patterns', 'react-doctor',
-  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'e2e',
+  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'native-stdout-linux', 'e2e',
 ];
 
 interface GitHubFixture {
@@ -34,6 +34,8 @@ function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, p
         should_run: String(sourceChanges),
         docs_contract_tests: String(docsChanges),
         os_view_parity_tests: String(parityChanges),
+        trigger_requested: 'true',
+        fresh_head: 'true',
       },
     },
   };
@@ -52,11 +54,12 @@ function aggregateStatus(docsResult: string) {
       CHANGES_RESULT: 'success',
       DOCS_CONTRACT_RESULT: docsResult,
       OS_VIEW_PARITY_RESULT: 'success',
+      PR_SIZE_RESULT: 'skipped',
       GITHUB_STEP_SUMMARY: join(directory, 'summary.md'),
     };
     for (const name of [
       'TYPECHECK', 'SHELL_PRODUCTION_BUILD', 'PATTERNS', 'REACT_DOCTOR',
-      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'COLLABORATION_POSTGRES', 'FUNDED_HOST_ROOT', 'E2E',
+      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'COLLABORATION_POSTGRES', 'FUNDED_HOST_ROOT', 'NATIVE_STDOUT_LINUX', 'E2E',
     ]) env[`${name}_RESULT`] = 'skipped';
     execFileSync('bash', ['-c', step.run], { env, stdio: 'pipe' });
   } finally {
@@ -79,6 +82,12 @@ describe('CI job admission for documentation changes', () => {
     expect(schedules('os-view-parity', false, true, false)).toBe(false);
     expect(schedules('os-view-parity', false, true, true)).toBe(true);
     expect(schedules('ci-results', false, true, true)).toBe(true);
+  });
+
+  it('still checks PR size for a docs-only PR, but not on push ranges', () => {
+    const pr: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'synchronize', pull_request: { draft: false } } };
+    expect(schedules('pr-size', false, true, false, pr)).toBe(true);
+    expect(schedules('pr-size', false, true, false)).toBe(false);
   });
 
   it.each([

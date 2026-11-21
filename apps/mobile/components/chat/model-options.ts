@@ -31,6 +31,31 @@ export function modelOptionGroups(
   });
 }
 
+/**
+ * The selection of a newly chosen model, keeping the composer choices, such as
+ * reasoning effort, made for the model it replaces on the same engine, as web
+ * does. A value the engine no longer offers takes the engine's own, and so does
+ * every other option, among them the account an own-account route is bound to.
+ */
+export function selectionKeepingOptions(
+  catalog: CanonicalProviderCatalog | null,
+  current: CanonicalChatModelSelection | null,
+  next: CanonicalChatModelSelection,
+): CanonicalChatModelSelection {
+  if (!catalog || !current || current.instanceId !== next.instanceId) return next;
+  const instance = catalog.instances.find((candidate) => candidate.id === next.instanceId);
+  const saved = Object.fromEntries((current.options ?? []).map((option) => [option.id, option.value]));
+  let kept = next;
+  for (const option of instance?.options ?? []) {
+    if (option.placement !== "composer" || option.kind !== "enum" || !Object.hasOwn(saved, option.id)) continue;
+    const value = saved[option.id];
+    if (typeof value === "string" && option.values?.some((offered) => offered.value === value)) {
+      kept = selectionWithOption(kept, option.id, value);
+    }
+  }
+  return kept;
+}
+
 export function selectionWithOption(
   selection: CanonicalChatModelSelection,
   optionId: string,

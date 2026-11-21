@@ -272,3 +272,11 @@ export type AgentThreadSummary = z.infer<typeof AgentThreadSummarySchema>;
 export type AgentTurnLifecycleEvent = z.infer<typeof AgentTurnLifecycleEventSchema>;
 export type AgentThreadEvent = z.infer<typeof AgentThreadEventSchema>;
 export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
+
+export const AgentThreadIdSchema = ThreadIdSchema;
+/** The canonical Chat whose runs drive a coding-agent thread, from an owner-scoped lookup. */
+export const AgentThreadChatSchema = z.object({
+  chatId: prefixedId("chat_"),
+  projectId: ProjectIdSchema.optional(),
+}).strict();
+export type AgentThreadChat = z.infer<typeof AgentThreadChatSchema>;

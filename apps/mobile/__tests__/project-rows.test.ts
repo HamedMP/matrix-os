@@ -97,6 +97,23 @@ describe("projectChatRows", () => {
     expect(row).toEqual({ id: "chat_blank", title: "New chat", time: "1h" });
   });
 
+  it("carries each chat's status, worded and toned as on Desktop, and none for an idle chat", () => {
+    const rows = projectChatRows([
+      chat({ id: "chat_run", title: "Run", updatedAt: at(8, 11) }),
+      chat({ id: "chat_ask", title: "Ask", attention: "approval_required", updatedAt: at(8, 11) }),
+      chat({ id: "chat_idle", title: "Idle", updatedAt: at(8, 11) }),
+    ].map((record) => record.chat.id === "chat_run"
+      ? { ...record, activeRun: { runId: "run_1", turnId: "turn_1", status: "running" } } as CanonicalChatRecord
+      : record), NOW);
+
+    expect(rows.map((row) => row.status)).toEqual([
+      { state: "running", label: "Working…", tone: "active" },
+      { state: "approval_required", label: "Approval required", tone: "waiting" },
+      undefined,
+    ]);
+    expect("status" in rows[2]).toBe(false);
+  });
+
   it("leaves the time out when it cannot be read", () => {
     const [row] = projectChatRows([chat({ id: "chat_odd", title: "Odd", updatedAt: "never" })], NOW);
 

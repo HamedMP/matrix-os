@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react-native";
 
 import { useProjectComposer } from "../components/projects/use-project-composer";
+import { isMatrixAttachmentRetained } from "../lib/matrix-attachment-retention";
 import { catalogOf, engineInstance } from "./model-test-catalog";
 
 interface SentMessage {
@@ -11,14 +12,19 @@ interface SentMessage {
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
+  selection: { instanceId: string; model: string };
+  interactionMode: string;
+  permissionMode: string;
   onChatCreated?: (chatId: string) => void;
 }
 
 const mockMutate = jest.fn();
+const mockReset = jest.fn();
 let mockPending = false;
+let mockIsError = false;
 
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
-  useSendChatMessage: () => ({ mutate: mockMutate, isPending: mockPending }),
+  useSendChatMessage: () => ({ mutate: mockMutate, isPending: mockPending, isError: mockIsError, reset: mockReset }),
 }));
 
 const selection = { instanceId: "matrix-ai", model: "sonnet-5" };
@@ -44,6 +50,7 @@ describe("useProjectComposer", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPending = false;
+    mockIsError = false;
   });
 
   it("starts with an empty box that cannot be sent", () => {
@@ -76,8 +83,8 @@ describe("useProjectComposer", () => {
     expect(sent().turnRequestId).not.toBe(sent().chatRequestId);
   });
 
-  it("keeps the text in the box until the server has the message, then reports the chat and the model it started with", () => {
-    const { result, onChatStarted } = renderComposer();
+  it("keeps the text in the box until the server has the message, then reports the chat and the model and mode it started with", () => {
+    const { result, onChatStarted } = renderComposer({ turnModes: { interactionMode: "default", permissionMode: "full_access" } });
     act(() => result.current.setDraft("Draft the case study"));
     act(() => result.current.send());
 
@@ -86,7 +93,7 @@ describe("useProjectComposer", () => {
 
     act(() => sent().onChatCreated?.("chat_new"));
 
-    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection);
+    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection, "full_access");
     expect(result.current.draft).toBe("");
   });
 
@@ -99,7 +106,7 @@ describe("useProjectComposer", () => {
     act(() => result.current.setDraft("Draft the case study, and a summary"));
     act(() => sent().onChatCreated?.("chat_new"));
 
-    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection);
+    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection, "supervised");
     expect(result.current.draft).toBe("Draft the case study, and a summary");
   });
 
@@ -154,6 +161,25 @@ describe("useProjectComposer", () => {
     expect(mockMutate).toHaveBeenCalledTimes(2);
     expect(sent(1).chatRequestId).toBe(sent(0).chatRequestId);
     expect(sent(1).turnRequestId).toBe(sent(0).turnRequestId);
+  });
+
+  it("retries a failed send with the model and mode it was first sent with, and sends the next message with those chosen meanwhile", () => {
+    const { result, rerender, initialProps } = renderComposer();
+    act(() => result.current.setDraft("Draft the case study"));
+    act(() => result.current.send());
+    act(() => callbacks().onError());
+
+    // The server may have the first attempt: a retry under its request ids must be the same request.
+    const fullAccess = { interactionMode: "default", permissionMode: "full_access" };
+    const other = { instanceId: selection.instanceId, model: "sonnet-5-mini" };
+    rerender({ ...initialProps, selection: other, turnModes: fullAccess });
+    act(() => result.current.send());
+    expect(sent(1)).toMatchObject({ turnRequestId: sent(0).turnRequestId, selection, permissionMode: "supervised" });
+
+    act(() => result.current.setDraft("Draft the pricing page"));
+    act(() => result.current.send());
+    expect(sent(2)).toMatchObject({ selection: other, permissionMode: "full_access" });
+    expect(sent(2).turnRequestId).not.toBe(sent(0).turnRequestId);
   });
 
   it("gives different text its own request ids, and the first text its old ones when it comes back", () => {
@@ -227,6 +253,36 @@ describe("useProjectComposer", () => {
 
       act(() => result.current.removeAttachment(idOf("a")));
       expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["b.jpg"]);
+    });
+
+    it("drops Matrix attachments on an account, computer or project change while keeping device attachments", () => {
+      const { result, rerender, initialProps } = renderComposer({ matrixAttachmentScope: "account:computer:project" });
+      const fromMatrix = {
+        ...photo("a"),
+        matrixSource: { gatewayUrl: "https://matrix.test/vm/computer", userId: "account", path: "a.jpg" },
+      };
+      act(() => result.current.addAttachments([fromMatrix, photo("b")]));
+      expect(isMatrixAttachmentRetained(fromMatrix.uri)).toBe(true);
+      expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["a.jpg", "b.jpg"]);
+      const staleAdd = result.current.addAttachments;
+      rerender({ ...initialProps, matrixAttachmentScope: "account:another-computer:project" });
+      act(() => staleAdd([fromMatrix]));
+      rerender(initialProps);
+      act(() => staleAdd([fromMatrix]));
+      expect(result.current.attachments.map(attachment => attachment.name)).toEqual(["b.jpg"]);
+      expect(isMatrixAttachmentRetained(fromMatrix.uri)).toBe(false);
+    });
+
+    it.each(["add", "remove"])("clears the old send error on attachment %s", (action) => {
+      const { result, rerender, initialProps } = renderComposer();
+      act(() => result.current.addAttachments([photo("a")]));
+      mockIsError = true;
+      rerender(initialProps);
+      act(() => {
+        if (action === "add") result.current.addAttachments([photo("b")]);
+        else result.current.removeAttachment(idOf("a"));
+      });
+      expect(mockReset).toHaveBeenCalledTimes(1);
     });
 
     it("stay in the box until the chat is started, then only what was sent is cleared", () => {

@@ -7,7 +7,7 @@ import { boundedOperation } from "../bounded-operation.js";
 import { hermesDependencyArguments, hermesSdkRequirements } from "./jev-hermes-python.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-const PIN = "e06df9c2eae6901f4c88f464e0ae6e753c0428b8";
+const JEV_HERMES_PIN = "e06df9c2eae6901f4c88f464e0ae6e753c0428b8";
 const run = promisify(execFile);
 const command = async (args: string[], signal: AbortSignal) => {
   const result = await run("/usr/bin/git", args, { timeout: 10_000, maxBuffer: 4096, signal,
@@ -15,14 +15,14 @@ const command = async (args: string[], signal: AbortSignal) => {
   return result.stdout;
 };
 /** Exact spike-verified upstream source. Git builtins only, no shell, external diff, textconv, fsmonitor or hooks. */
-export async function verifyJevHermesRuntimePin(root: string, signal: AbortSignal,
-  runCommand: (args: string[], signal: AbortSignal) => Promise<string> = command): Promise<void> {
+export async function verifyHermesRuntimePin(root: string, expectedRevision: string, signal: AbortSignal,
+  runCommand: typeof command = command): Promise<void> {
   signal.throwIfAborted();
   const common = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", root];
   await boundedOperation(async (deadline) => {
     const revision = await runCommand([...common, "rev-parse", "HEAD"], deadline);
     deadline.throwIfAborted();
-    if (revision.trim() !== PIN) throw new Error("Restricted runtime setup required");
+    if (revision.trim() !== expectedRevision) throw new Error("Restricted runtime setup required");
     // Copied installs can have stale index stat data with unchanged source bytes.
     // Compare tracked content against the pinned HEAD, including staged changes.
     await runCommand([...common, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--"], deadline);
@@ -43,6 +43,11 @@ export async function verifyJevHermesRuntimePin(root: string, signal: AbortSigna
       }
     }
   }, 15_000, signal);
+}
+
+/** The restricted Jev runtime keeps its separately qualified revision. */
+export function verifyJevHermesRuntimePin(root: string, signal: AbortSignal, runCommand?: typeof command): Promise<void> {
+  return verifyHermesRuntimePin(root, JEV_HERMES_PIN, signal, runCommand);
 }
 
 /** Import the locked core SDK and selected transport's optional SDK in isolated Python; never load owner configuration or infer readiness from Git alone. */

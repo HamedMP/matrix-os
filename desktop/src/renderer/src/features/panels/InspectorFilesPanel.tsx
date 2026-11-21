@@ -12,6 +12,7 @@ import { FileTypeIcon } from "../files/FileTypeIcon";
 import { InspectorResourcePreview } from "./InspectorResourcePreview";
 import { useInspectorFileActions } from "../files/use-inspector-file-actions";
 import { FilePathSchema } from "@matrix-os/contracts";
+import { FileTrashDialogs, OpenTrashButton, useFileTrash } from "../files/FileTrashControls";
 import { FileDownloadStatus } from "../files/FileDownloadStatus";
 import { inspectorFileViewKey } from "../../stores/files-navigation";
 
@@ -95,6 +96,9 @@ export function InspectorFilesPanel({
   selectedDirectory = false,
   revealKey,
   onOpenFile,
+  attachmentPicker = false,
+  allowTrash = false,
+  onFileMovedToTrash,
 }: {
   scopeLabel?: string;
   scope?: WorkFilesScope;
@@ -104,6 +108,9 @@ export function InspectorFilesPanel({
   selectedDirectory?: boolean;
   revealKey?: string;
   onOpenFile?: (target: InspectorFileTarget) => void;
+  attachmentPicker?: boolean;
+  allowTrash?: boolean;
+  onFileMovedToTrash?: (path: string) => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -126,6 +133,7 @@ export function InspectorFilesPanel({
         selectedDirectory={selectedDirectory}
         revealKey={revealKey}
         onOpenFile={onOpenFile}
+        attachmentPicker={attachmentPicker}
       />
     );
   }
@@ -138,6 +146,9 @@ export function InspectorFilesPanel({
       browserOnly={browserOnly}
       forceList={forceList}
       onOpenFile={onOpenFile}
+      attachmentPicker={attachmentPicker}
+      allowTrash={allowTrash && !attachmentPicker}
+      onFileMovedToTrash={onFileMovedToTrash}
     />
   );
 }
@@ -149,6 +160,9 @@ function HomeFilesPanel({
   forceList,
   onOpenFile,
   selectedPath,
+  attachmentPicker,
+  allowTrash,
+  onFileMovedToTrash,
 }: {
   viewKey: string;
   scopeLabel: string;
@@ -158,6 +172,9 @@ function HomeFilesPanel({
   selectedPath?: string;
   selectedDirectory?: boolean;
   revealKey?: string;
+  attachmentPicker: boolean;
+  allowTrash: boolean;
+  onFileMovedToTrash?: (path: string) => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -202,7 +219,12 @@ function HomeFilesPanel({
       return parsed.success && (entry.type === "file" || entry.type === "directory") ? [{ path: parsed.data, kind: entry.type }] : [];
     });
   }, [api, runtimeSlot]);
-  const actions = useInspectorFileActions({ kind: "home", chatId: "home" });
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const trash = useFileTrash(allowTrash && browserOnly, (movedPath) => {
+    setRefreshRevision((revision) => revision + 1);
+    if (movedPath) onFileMovedToTrash?.(movedPath);
+  });
+  const actions = useInspectorFileActions({ kind: "home", chatId: "home" }, allowTrash ? trash.requestMove : undefined);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -218,10 +240,22 @@ function HomeFilesPanel({
         </div>
       ) : null}
       {browserOnly ? (
-        <ExpandableFileTree viewKey={viewKey} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries} renderEntry={actions.renderEntry} onOpenFile={handleOpenFile} />
+        <>
+          {allowTrash ? <div className="flex justify-end border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
+            <OpenTrashButton trash={trash} />
+          </div> : null}
+          <ExpandableFileTree attachmentPicker={attachmentPicker} key={refreshRevision} viewKey={attachmentPicker ? undefined : viewKey}
+            selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}
+            renderEntry={attachmentPicker ? undefined : actions.renderEntry}
+            fileActionLabel={attachmentPicker ? "Attach" : undefined}
+            draggableResource={attachmentPicker ? undefined : path => ({ kind: "home", path })}
+            onOpenFile={handleOpenFile}
+          />
+          {allowTrash ? <FileTrashDialogs trash={trash} /> : null}
+        </>
       ) : (
         <div className="shrink-0">
-          <ComputerFileBrowser compact framed forceList={forceList} onOpenFile={handleOpenFile} />
+          <ComputerFileBrowser compact framed allowTrash={allowTrash} forceList={forceList} onOpenFile={handleOpenFile} />
         </div>
       )}
       <FileDownloadStatus download={actions.download} />
@@ -257,6 +291,7 @@ function ProjectFilesPanel({
   selectedPath,
   selectedDirectory,
   revealKey,
+  attachmentPicker,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   browserOnly: boolean;
@@ -264,9 +299,10 @@ function ProjectFilesPanel({
   selectedPath?: string;
   selectedDirectory?: boolean;
   revealKey?: string;
+  attachmentPicker: boolean;
 }) {
   if (browserOnly) {
-    return <ProjectFilesTree revealKey={revealKey} selectedDirectory={selectedDirectory} selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} />;
+    return <ProjectFilesTree revealKey={revealKey} selectedDirectory={selectedDirectory} selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} attachmentPicker={attachmentPicker} />;
   }
   return <ProjectNavigableFilesPanel scope={scope} onOpenFile={onOpenFile} />;
 }
@@ -277,12 +313,14 @@ function ProjectFilesTree({
   selectedPath,
   selectedDirectory,
   revealKey,
+  attachmentPicker,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
   selectedDirectory?: boolean;
   revealKey?: string;
+  attachmentPicker: boolean;
 }) {
   const loadDirectory = useCallback(async (path: string): Promise<InspectorTreeEntry[]> => {
     const response = await browseProjectDirectory(scope, path || undefined);
@@ -311,7 +349,15 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ExpandableFileTree revealKey={revealKey} viewKey={inspectorFileViewKey(scope)} selectedDirectory={selectedDirectory} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries} renderEntry={actions.renderEntry} onOpenFile={openFile} />
+      <ExpandableFileTree
+        attachmentPicker={attachmentPicker}
+        revealKey={revealKey} viewKey={attachmentPicker ? undefined : inspectorFileViewKey(scope)}
+        selectedDirectory={selectedDirectory} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}
+        renderEntry={attachmentPicker ? undefined : actions.renderEntry}
+        fileActionLabel={attachmentPicker ? "Attach" : undefined}
+        draggableResource={attachmentPicker ? undefined : path => ({ kind: "project", projectId: scope.projectId, worktreeId: scope.worktreeId, path })}
+        onOpenFile={openFile}
+      />
     </div>
   );
 }
@@ -394,7 +440,7 @@ function ProjectNavigableFilesPanel({
           </button>
         ) : null}
         {status === "loading" ? <p className="p-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading files…</p> : null}
-        {status === "error" ? <p className="p-3 text-xs" style={{ color: "var(--danger)" }}>Files are unavailable.</p> : null}
+        {status === "error" ? <p className="p-3 text-xs" style={{ color: "var(--danger-text)" }}>Files are unavailable.</p> : null}
         {listing?.entries.items.map((entry) => (
           <button
             key={entry.path}

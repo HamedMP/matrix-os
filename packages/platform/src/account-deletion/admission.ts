@@ -1,5 +1,6 @@
 import type { PlatformDB } from '../db.js';
-import { hashAccountDeletionOwner, lockAccountDeletionOwner } from './repository.js';
+import { sql } from 'kysely';
+import { hashAccountDeletionOwner, lockAccountDeletionOwner, lockAccountDeletionOwnerShared } from './repository.js';
 import { lockBillingOwner } from '../billing/owner-lock.js';
 
 export interface AccountDeletionAdmission {
@@ -42,19 +43,58 @@ export async function getAccountDeletionAdmission(
   };
 }
 
-/** Keep this lock through the write: a route pre-check alone races deletion acceptance. */
-export async function withAccountDeletionOwnerLock<T>(
+type OwnerLane = 'exclusive' | 'funding' | 'storage';
+
+async function withOwnerFence<T>(
   db: PlatformDB,
   clerkUserId: string,
   work: (trx: PlatformDB, admission: AccountDeletionAdmission) => Promise<T>,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
+  lane: OwnerLane,
 ): Promise<T> {
   const secret = configuredSecret(env);
   return db.transaction(async (trx) => {
-    if (secret !== undefined) await lockAccountDeletionOwner(trx.executor, hashAccountDeletionOwner(clerkUserId, secret));
-    await lockBillingOwner(trx, clerkUserId);
+    if (secret !== undefined) {
+      const lock = lane === 'exclusive' ? lockAccountDeletionOwner : lockAccountDeletionOwnerShared;
+      await lock(trx.executor, hashAccountDeletionOwner(clerkUserId, secret));
+    }
+    if (lane === 'storage' && secret !== undefined) {
+      // Keep every storage publication serialized through its complete external side effect.
+      // Storage callbacks must not enter the exclusive deletion or financial lanes.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`storage-owner:${clerkUserId}`}, 0))`.execute(trx.executor);
+    } else {
+      // Without deletion configuration, retain the legacy billing lifecycle fence for storage too.
+      await lockBillingOwner(trx, clerkUserId);
+    }
     return work(trx, await getAccountDeletionAdmission(trx, clerkUserId, env));
   });
+}
+
+/** Keep this exclusive lock through the write; existing callers retain their original lock semantics. */
+export function withAccountDeletionOwnerLock<T>(
+  db: PlatformDB, clerkUserId: string,
+  work: (trx: PlatformDB, admission: AccountDeletionAdmission) => Promise<T>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<T> {
+  return withOwnerFence(db, clerkUserId, work, env, 'exclusive');
+}
+
+/** Shared deletion fence, then the unchanged exclusive billing owner lock and fresh admission. */
+export function withAccountDeletionFundingLock<T>(
+  db: PlatformDB, clerkUserId: string,
+  work: (trx: PlatformDB, admission: AccountDeletionAdmission) => Promise<T>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<T> {
+  return withOwnerFence(db, clerkUserId, work, env, 'funding');
+}
+
+/** Shared deletion fence plus its own exclusive storage lane; hold both until signing/I/O completes. */
+export function withAccountDeletionStorageLock<T>(
+  db: PlatformDB, clerkUserId: string,
+  work: (trx: PlatformDB, admission: AccountDeletionAdmission) => Promise<T>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<T> {
+  return withOwnerFence(db, clerkUserId, work, env, 'storage');
 }
 
 export async function withAccountDeletionAdmission<T>(

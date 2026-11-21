@@ -1,0 +1,40 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { terminalClosureFixture } from "../../helpers/terminal-closure.js";
+import { legacyTerminalGeneration } from "../../../packages/terminal-runtime/src/generation-closure.mjs";
+const run = promisify(execFile), helper = resolve("distro/customer-vps/host-bin/matrix-terminal-generation-id"), roots: string[] = [];
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+const assets = (dir: string) => ["zellij", "matrix-terminal-user-keeper.mjs", "matrix-terminal-attach.mjs"].map(name => join(dir, name));
+it("existing three-argument updater invocation validates all closure bytes when v2 metadata exists", async () => {
+  const f = await terminalClosureFixture(); roots.push(f.dir);
+  expect((await run("bash", [helper, ...assets(f.dir)])).stdout.trim()).toBe(f.generation);
+  await writeFile(join(f.dir, "terminal-writer.node"), "tampered");
+  await expect(run("bash", [helper, ...assets(f.dir)])).rejects.toMatchObject({ code: 1 });
+});
+it("preserves legacy three-asset identity and rejects symlink/missing closure assets", async () => {
+  const legacy = await mkdtemp("/tmp/t7old-"); roots.push(legacy);
+  const f = await terminalClosureFixture(); roots.push(f.dir);
+  for (const path of assets(f.dir)) await cp(path, join(legacy, path.split("/").at(-1)!));
+  expect((await run("bash", [helper, ...assets(legacy)])).stdout.trim()).toBe(await legacyTerminalGeneration(legacy));
+  const native = join(f.dir, "node_modules/node-pty/build/Release/pty.node"); await rm(native);
+  await expect(run("bash", [helper, ...assets(f.dir)])).rejects.toMatchObject({ code: 1 });
+  await symlink("/opt/matrix/app/node_modules/node-pty/build/Release/pty.node", native);
+  await expect(run("bash", [helper, ...assets(f.dir)])).rejects.toMatchObject({ code: 1 });
+});
+it("existing GC preserves native-host, legacy-live, current and rollback descriptors together", async () => {
+  const root = await mkdtemp("/tmp/t7gc-"); roots.push(root);
+  const runtime = join(root, "runtime"), descriptors = join(root, "descriptors"), app = join(root, "app"), rollback = join(root, "rollback");
+  await Promise.all([mkdir(join(runtime, "generations"), { recursive: true }), mkdir(descriptors), mkdir(app), mkdir(rollback)]);
+  const generations = ["1", "2", "3", "4", "5"].map(char => "gen_" + char.repeat(64));
+  for (const generation of generations) await mkdir(join(runtime, "generations", generation));
+  await writeFile(join(descriptors, "native-" + "a".repeat(32) + ".json"), JSON.stringify({ version: 1, kind: "terminal-native", generation: generations[0], launchId: "a".repeat(32) }));
+  await writeFile(join(descriptors, "rt_" + "b".repeat(32) + ".json"), JSON.stringify({ version: 1, generation: generations[1] }));
+  await writeFile(join(app, "TERMINAL_RUNTIME_GENERATION"), generations[2]!);
+  await writeFile(join(rollback, "TERMINAL_RUNTIME_GENERATION"), generations[3]!);
+  const result = await run("python3", [resolve("distro/customer-vps/host-bin/matrix-terminal-generation-gc.py"), "--delete", runtime, descriptors, app, rollback, "2"]);
+  expect(result.stdout.trim()).toBe(generations[4]);
+  expect((await readdir(join(runtime, "generations"))).sort()).toEqual(generations.slice(0, 4));
+});

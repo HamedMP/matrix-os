@@ -239,6 +239,39 @@ describe("S05 platform tickets, endpoints and control", () => {
       expect(project.signedTicket.ticket.runtime).toEqual({ runtimeId: logicalRuntimeId, authorityGeneration: 7 });
     });
 
+    it("issues root and inherited Chat tickets to every current organization member without a grant or activation", async () => {
+      const projectScope = "10000000-0000-4000-8000-000000000019";
+      const chatScope = "10000000-0000-4000-8000-000000000020";
+      await repository.applyDirectoryEvent({
+        eventId: "20000000-0000-4000-8000-000000000019", scopeId: projectScope, runtimeId,
+        ownerId: platformCollaborationActors.owner, kind: "project", organizationId, audience: "organization",
+        authorityGeneration: 3, metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+      });
+      await repository.applyDirectoryEvent({
+        eventId: "20000000-0000-4000-8000-000000000020", scopeId: chatScope, parentScopeId: projectScope,
+        runtimeId, ownerId: platformCollaborationActors.owner, kind: "chat", organizationId,
+        authorityGeneration: 3, metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+      });
+      const member = platformCollaborationActors.recipientWithoutComputer;
+      const scoped = new CollaborationTicketIssuer({
+        keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } }, repository, endpoints,
+        resolveOrganization: async (id) => id === projectScope || id === chatScope ? organizationId : null,
+        projection: { isCurrentMember: async ({ actorId }) => members.has(actorId) },
+        relayOrigin: "https://app.matrix-os.com", now: () => clock,
+      });
+      const request = (id: string, requestedScopeId: string) => scoped.issue({ actorId: member, request: {
+        clientRequestId: id, scopeId: requestedScopeId, purpose: "direct_session" as const,
+        proofPublicKey: clientProofKey().raw,
+      } });
+
+      const root = await request("40000000-0000-4000-8000-000000000019", projectScope);
+      const chat = await request("40000000-0000-4000-8000-000000000020", chatScope);
+      expect(root.signedTicket.ticket.resource).toEqual({ scopeId: projectScope, kind: "project" });
+      expect(chat.signedTicket.ticket.resource).toEqual({ scopeId: chatScope, kind: "chat" });
+    });
+
     it("reports host_offline for a home that never attached its control stream or went stale", async () => {
       const key = clientProofKey();
       const request = (id: string) => ({ actorId: platformCollaborationActors.owner, request: { clientRequestId: id, scopeId, purpose: "direct_session" as const, proofPublicKey: key.raw } });

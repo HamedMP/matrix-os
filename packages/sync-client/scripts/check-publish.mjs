@@ -19,6 +19,11 @@ const mustExist = [
   'src/index.ts',
   'src/lib/find-tsx-loader.mjs',
   'src/lib/node-runtime-guard.mjs',
+  'src/lib/routine-ipc-relay.mjs',
+  'src/cli/commands/routines.ts',
+  'src/cli/routine-client.ts',
+  'src/cli/routine-input.ts',
+  'src/cli/routine-output.ts',
   'scripts/build-binaries.mjs',
 ];
 

@@ -36,8 +36,8 @@ describe("provider settings runtime capability wiring", () => {
     expect(source).not.toContain("await providerGenericHarnessCoordinator.reconcilePending();");
     expect(source).toContain("runtimeCoordinator: providerGenericHarnessCoordinator");
     expect(source).toContain("harnessSettingsSource: providerSettingsStore");
-    expect(source).toContain('provider.providerId === "pi"');
-    expect(source).toContain('providerId: "pi"');
+    expect(source).toContain("createGatewayChatAdapters({");
+    expect(source).toContain("providers: codingAgentProviders, threads: codingAgentThreadStore");
   });
 
   it("advertises terminal login when one projected harness is supported and rejects another harness", async () => {

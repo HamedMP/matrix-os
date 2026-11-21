@@ -29,6 +29,7 @@ export interface FundedRelayConfig {
   gatewayToken: string;
   jevMaxCostMicrousd: number;
   pricingReviews?: FundedPricingReviews;
+  pricingRegistryEnabled?: boolean;
   jevPricingReview?: Readonly<JevPricingReview>;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
@@ -54,10 +55,10 @@ export interface FundedRelayConfig {
   settlementTtlMs: number;
 }
 
-function readEnabled(value: string | undefined): boolean {
+function readEnabled(value: string | undefined, name = "MATRIX_FUNDED_AI_ENABLED"): boolean {
   if (value === undefined || value === "" || value === "0" || value === "false") return false;
   if (value === "1" || value === "true") return true;
-  throw new Error("MATRIX_FUNDED_AI_ENABLED must be 0, 1, false, or true");
+  throw new Error(`${name} must be 0, 1, false, or true`);
 }
 
 function readRequired(env: NodeJS.ProcessEnv, name: string, maxLength = 4_096): string {
@@ -181,6 +182,7 @@ export function resolveFundedRelayConfig(
     gatewayBaseUrl,
     gatewayToken,
     pricingReviews: readFundedPricingReviews(env),
+    pricingRegistryEnabled: readEnabled(env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED, "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"),
     jevPricingReview: readJevPricingReview(env),
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,

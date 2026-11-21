@@ -30,6 +30,18 @@ function iconOf(label: string) {
 describe("Composer", () => {
   afterEach(cleanup);
 
+  it("shows a send error alongside an attachment warning", () => {
+    renderComposer({
+      attachmentNotice: "The selected model cannot read photos.",
+      sendError: "Could not confirm delivery. Retry to check again.",
+    });
+
+    expect(screen.getAllByRole("alert").map((alert) => alert.props.children)).toEqual([
+      "The selected model cannot read photos.",
+      "Could not confirm delivery. Retry to check again.",
+    ]);
+  });
+
   it("is a bordered card 12pt from the sides and 10pt above the tab bar", () => {
     renderComposer();
 

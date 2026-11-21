@@ -52,7 +52,7 @@ export async function createPreviewPairHostMetadata(root: string) {
 export function createPreviewPairSystemInfoApp(homePath: string, runningVersion: string) {
   const app = new Hono();
   registerSystemOperatorRoutes({ app, homePath, model: undefined, runningVersion,
-    interactionLogger: createInteractionLogger(homePath), pushAdapter: createPushAdapter(),
+    interactionLogger: createInteractionLogger(homePath), pushAdapter: createPushAdapter({ tokens: null }),
     posthogErrorTracker: createPostHogErrorTracker({ service: "matrix-gateway", env: {} }), ownerTelemetryDistinctId: "fixture",
     upgradeBodyLimit: bodyLimit({ maxSize: 4096 }), logBestEffortFailure: (context, error) => {
       console.warn("Fixture system route failed", context, error instanceof Error ? error.name : "UnknownError");

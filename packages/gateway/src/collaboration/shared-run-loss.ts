@@ -332,11 +332,13 @@ export async function interruptActiveSharedRuns(options: {
     ): Promise<void>;
   };
   scopeId?: string;
+  requestingActorId?: string;
 }): Promise<string[]> {
   const interrupted: string[] = [];
   let incomplete = 0;
   for (const run of await listActiveSharedRuns(options.db)) {
     if (options.scopeId && run.scopeId !== options.scopeId) continue;
+    if (options.requestingActorId && run.requestingActorId !== options.requestingActorId) continue;
     let attributed = true;
     try {
       await options.loss.recordInterruption({ ...omitOwner(run), reason: options.reason });

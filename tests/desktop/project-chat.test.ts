@@ -9,6 +9,8 @@ import {
   useProjectChatLauncher,
 } from "../../desktop/src/renderer/src/lib/project-chat";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { AppError } from "../../desktop/src/shared/app-error";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
@@ -412,6 +414,72 @@ describe("openProjectChat", () => {
 describe("openCodingAgentThread", () => {
   beforeEach(() => {
     resetStores();
+  });
+
+  it("opens the exact canonical conversation that owns an inbox thread", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/chats/by-agent-thread/thread_alpha") return { chatId: "chat_alpha", projectId: "proj_matrix" };
+      throw new AppError("notFound");
+    });
+    const previous = useConnection.getState().api;
+    useConnection.setState({ api: { get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as never });
+    try {
+      useCodingAgentWorkspace.setState({ summary: summaryWithThreads(), status: "ready", loadThreadSnapshot: vi.fn(async () => undefined) });
+      useBoard.setState({ projects: [{ id: "proj_matrix", slug: "matrix-os", name: "Matrix OS", kind: "folder" }] });
+
+      await openCodingAgentThread("thread_alpha");
+
+      const tabs = useTabs.getState();
+      expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)).toMatchObject({
+        kind: "work", workRoute: "project", projectSlug: "matrix-os", chatId: "chat_alpha", chatView: "conversation",
+      });
+    } finally {
+      useConnection.setState({ api: previous });
+    }
+  });
+
+  it("keeps the newer choice when an earlier thread's lookup finishes last", async () => {
+    let releaseFirst: (value: unknown) => void = () => undefined;
+    const get = vi.fn((path: string) => {
+      if (path === "/api/chats/by-agent-thread/thread_first") {
+        return new Promise((resolve) => { releaseFirst = resolve; });
+      }
+      if (path === "/api/chats/by-agent-thread/thread_second") return Promise.resolve({ chatId: "chat_second", projectId: "proj_matrix" });
+      return Promise.reject(new AppError("notFound"));
+    });
+    const previous = useConnection.getState().api;
+    useConnection.setState({ api: { get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as never });
+    try {
+      useBoard.setState({ projects: [{ id: "proj_matrix", slug: "matrix-os", name: "Matrix OS", kind: "folder" }] });
+
+      const first = openCodingAgentThread("thread_first");
+      await openCodingAgentThread("thread_second");
+      releaseFirst({ chatId: "chat_first", projectId: "proj_matrix" });
+      await first;
+
+      const tabs = useTabs.getState();
+      expect(tabs.tabs.find((tab) => tab.id === tabs.activeTabId)?.chatId).toBe("chat_second");
+    } finally {
+      useConnection.setState({ api: previous });
+    }
+  });
+
+  it.each(["notFound", "timeout", "server"] as const)("keeps the agent-thread route when the owner lookup ends in %s", async (category) => {
+    const previous = useConnection.getState().api;
+    useConnection.setState({ api: { get: vi.fn(async () => { throw new AppError(category); }), post: vi.fn(), patch: vi.fn(), delete: vi.fn() } as never });
+    try {
+      const loadThreadSnapshot = vi.fn(async () => undefined);
+      useCodingAgentWorkspace.setState({ summary: summaryWithThreads(), status: "ready", loadThreadSnapshot });
+      useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS", kind: "folder" }] });
+
+      await openCodingAgentThread("thread_alpha");
+
+      expect(useTabs.getState().tabs[0]).toMatchObject({ kind: "work", workRoute: "project", projectSlug: "matrix-os" });
+      expect(useTabs.getState().tabs[0]?.chatId).toBeUndefined();
+      expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_alpha");
+    } finally {
+      useConnection.setState({ api: previous });
+    }
   });
 
   it("routes a thread into its project from the runtime summary", async () => {

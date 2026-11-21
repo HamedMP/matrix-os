@@ -157,8 +157,25 @@ model popup reuses that scoped catalog and does not autofocus Search. Actual
 account, runtime and accepted Settings mutations invalidate the proper cache.
 Cached display state never authorizes execution.
 
-Shared semantics apply to Web Desktop, Electron Desktop and Web Canvas, and
-applicable mobile surfaces. Presentation layout may adapt.
+For organization-shared projects, Provider Settings is the only owner-facing AI
+configuration. The project does not persist a second source selection, model
+allowlist, provider acknowledgement, or long-lived account consent binding.
+Every active organization member who may work in the shared project may request
+AI through the owner's current ready global connection. A later owner Settings
+change governs later project requests automatically without project-level
+reconfirmation.
+
+This simpler project rule does not weaken provider execution admission. Each
+provider request revalidates the exact current owner authority immediately before
+dispatch; a concurrent logout or account change either preserves one verified
+authority for that request or causes no provider request. Account replacement
+fences new requests and stops or drains affected active work before the new
+connection becomes usable. Matrix never falls back to Matrix credit, another
+provider, another account, another model source, or a collaborator credential.
+Credentials remain unavailable to collaborators and project sandboxes.
+
+Shared semantics apply to Web Desktop, Electron Desktop and Web Canvas. Native
+Mobile parity remains separate. Presentation layout may adapt.
 
 ## Implementation boundaries
 

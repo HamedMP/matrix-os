@@ -28,6 +28,12 @@ const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
   navigationFresh?:boolean;
+  /** The global navigation window was cut off, so older Chats may be missing from it. */
+  navigationTruncated?:boolean;
+  /** Changes on every Chat change except streamed run text. */
+  chatChangeRevision?:number;
+  /** The newest run start/end/wait changes, each tagged with its revision. */
+  chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
@@ -46,6 +52,7 @@ export interface ChatState {
   composerIdentity?: object;
   isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
+  routineOriginChat?: import("@matrix-os/ui/routine-origin").RoutineOriginChat;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
   steerQueuedTurn?: (id: string) => Promise<boolean>;
@@ -53,6 +60,7 @@ export interface ChatState {
   canSteerQueuedTurns?: boolean;
   /** The open Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  projectSkillRootAvailable?: boolean;
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];
@@ -82,7 +90,7 @@ export interface ChatState {
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
   ) => void | Promise<boolean>;
-  newChat: () => Promise<void>;
+  newChat: (projectId?: string) => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
   abortCurrent: () => void;
@@ -101,6 +109,8 @@ export interface ChatSubmitOptions {
   clientRequestId?: string;
   displayText?: string;
   promptText?: string;
+  /** The selected Skill belongs to this project’s primary checkout. */
+  projectSkillProjectId?: string;
   instanceId?: string;
   model?: string;
   interactionMode?: string;

@@ -10,6 +10,7 @@ import {
   type SharedAppTarget,
 } from "../../packages/ui/src/collaboration/collaborative-app-sharing.js";
 import { CollaborationDirectError } from "../../packages/ui/src/collaboration/direct-client.js";
+import { startSharedAppLaunch } from "../../packages/ui/src/collaboration/shared-app-transport.js";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const launchId = "20000000-0000-4000-8000-000000000001";
@@ -195,6 +196,36 @@ describe("shared app transport", () => {
     const transport = createSharedAppTransport({ platform, direct: direct as never, target: changed });
     platform.post.mockRejectedValueOnce(new Error("postgres password=secret"));
     await expect(transport.launch()).rejects.toMatchObject({ code: "unavailable", message: "Shared app is unavailable." });
+  });
+
+  it("uses a pre-started launch once and retries a failed one with the same client request id", async () => {
+    // Fault: a pre-started launch posting twice, or a retry minting a new launch id.
+    const { platform, direct } = setup();
+    platform.post.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+    const initialLaunch = startSharedAppLaunch(platform, scopeId, { buildId: target.buildId, shareRevision: target.shareRevision });
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target, initialLaunch });
+
+    await expect(transport.launch()).rejects.toMatchObject({ code: "unavailable" });
+    await expect(transport.launch()).resolves.toMatchObject({ launchId });
+    expect(platform.post).toHaveBeenCalledTimes(2);
+    const ids = platform.post.mock.calls.map((call) => (call as unknown as [string, { clientRequestId: string }])[1].clientRequestId);
+    expect(ids[0]).toBe(initialLaunch.clientRequestId);
+    expect(ids[1]).toBe(initialLaunch.clientRequestId);
+  });
+
+  it("validates a pre-started launch response against the confirmed target", async () => {
+    const { platform, direct } = setup();
+    platform.post.mockImplementationOnce(async () => ({
+      target: { kind: "shared", scopeId, organizationId: target.organizationId, appId: target.appId,
+        catalogId: target.catalogId, buildId: "c".repeat(64), name: "Team tracker", owner: target.owner,
+        shareRevision: target.shareRevision },
+      launchId,
+      entryUrl: `/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/index.html`,
+      expiresAt: "2026-11-05T10:05:00.000Z",
+    }));
+    const initialLaunch = startSharedAppLaunch(platform, scopeId, { buildId: target.buildId, shareRevision: target.shareRevision });
+    const transport = createSharedAppTransport({ platform, direct: direct as never, target, initialLaunch });
+    await expect(transport.launch()).rejects.toMatchObject({ code: "invalid_response" });
   });
 
   it("rejects a launch response for a different app build", async () => {

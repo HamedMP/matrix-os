@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser.js";
+import { usePreviewWindow } from "../../shell/src/hooks/usePreviewWindow.js";
+import { getGatewayUrl } from "../../shell/src/lib/gateway.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -7,6 +9,7 @@ global.fetch = mockFetch;
 
 describe("useFileBrowser store", () => {
   beforeEach(() => {
+    vi.stubGlobal("window", { confirm: vi.fn(() => true), location: new URL("http://localhost:4000") });
     // Reset the store state
     useFileBrowser.setState({
       currentPath: "",
@@ -35,6 +38,11 @@ describe("useFileBrowser store", () => {
       ok: true,
       json: () => Promise.resolve({ path: "", entries: [] }),
     });
+  });
+
+  afterEach(() => {
+    usePreviewWindow.getState().setDraftAuthority(null);
+    vi.unstubAllGlobals();
   });
 
   describe("navigation", () => {
@@ -272,6 +280,23 @@ describe("useFileBrowser store", () => {
       );
     });
 
+    it("scopes a named folder to its captured parent and validates the leaf name", async () => {
+      const create = useFileBrowser.getState().createFolder;
+      const target = { parentPath: "workspaces/alpha", gatewayUrl: getGatewayUrl(), signal: new AbortController().signal };
+      useFileBrowser.setState({ currentPath: "workspaces/beta" });
+      await expect(create("notes", target)).resolves.toMatchObject({ ok: false });
+      useFileBrowser.setState({ currentPath: "workspaces/alpha" });
+      await expect(create("../notes", target)).resolves.toEqual({ ok: false, error: "Enter a folder name without slashes." });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ entries: [] }) });
+      await expect(create("Notes", target)).resolves.toEqual({ ok: true, path: "workspaces/alpha/Notes" });
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/files/mkdir"), expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "workspaces/alpha/Notes" }),
+      }));
+    });
+
     it("createFile calls touch API", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
@@ -282,6 +307,31 @@ describe("useFileBrowser store", () => {
         expect.stringContaining("/api/files/touch"),
         expect.objectContaining({ method: "POST" }),
       );
+    });
+
+    it("rejects traversal and reports duplicate filenames without a refresh", async () => {
+      useFileBrowser.setState({ currentPath: "workspaces/example" });
+      const create = useFileBrowser.getState().createFile;
+      await expect(create("../other-project.md")).resolves.toEqual({ ok: false, error: "Enter a file name without slashes." });
+      expect(mockFetch).not.toHaveBeenCalled();
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 409 });
+      await expect(create("notes.md")).resolves.toEqual({ ok: false, error: "The file name or folder is unavailable. Check the name and try again." });
+      expect(mockFetch).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("/api/files/touch"), expect.objectContaining({
+        body: JSON.stringify({ path: "workspaces/example/notes.md" }),
+      }));
+    });
+
+    it("does not refresh a different folder if an earlier create completes after navigation", async () => {
+      let finishCreate!: (response: { ok: boolean }) => void;
+      mockFetch.mockReturnValueOnce(new Promise(resolve => { finishCreate = resolve; }));
+      useFileBrowser.setState({ currentPath: "workspaces/alpha" });
+      const operation = useFileBrowser.getState().createFile("notes.md");
+      useFileBrowser.setState({ currentPath: "workspaces/beta" });
+      finishCreate({ ok: true });
+      await expect(operation).resolves.toMatchObject({ ok: false });
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect(useFileBrowser.getState().currentPath).toBe("workspaces/beta");
+      expect(useFileBrowser.getState().error).toBeNull();
     });
 
     it("deleteFiles calls delete API for each path", async () => {
@@ -296,6 +346,48 @@ describe("useFileBrowser store", () => {
       );
       expect(deleteCalls).toHaveLength(2);
       expect(useFileBrowser.getState().selectedPaths.size).toBe(0);
+    });
+
+    it("keeps files unchanged when Move to Trash is canceled", async () => {
+      vi.mocked(window.confirm).mockReturnValue(false);
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md"]) });
+
+      await useFileBrowser.getState().deleteFiles(["a.md"]);
+
+      expect(window.confirm).toHaveBeenCalledOnce();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["a.md"]);
+    });
+
+    it("retains failed rows and reports a bounded error after a mixed Trash result", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockRejectedValueOnce(new Error("raw filesystem path"));
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md", "b.md"]) });
+
+      await useFileBrowser.getState().deleteFiles(["a.md", "b.md"]);
+
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["b.md"]);
+      expect(useFileBrowser.getState().error).toBe("Move to Trash could not be confirmed for every item. Check Files or Trash.");
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/files/list?path="), expect.anything());
+    });
+
+    it("stops a Trash batch when the file authority changes at the same gateway", async () => {
+      const preview = usePreviewWindow.getState();
+      preview.setDraftAuthority("first-session");
+      let finishMove!: (response: { ok: boolean }) => void;
+      mockFetch.mockReturnValueOnce(new Promise(resolve => { finishMove = resolve; }));
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md", "b.md"]) });
+
+      const operation = useFileBrowser.getState().deleteFiles(["a.md", "b.md"]);
+      const signal = mockFetch.mock.calls[0][1].signal as AbortSignal;
+      preview.setDraftAuthority("replacement-session");
+      preview.setDraftAuthority("first-session");
+      finishMove({ ok: true });
+      await operation;
+
+      expect(signal.aborted).toBe(true);
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["a.md", "b.md"]);
     });
 
     it("rename calls rename API", async () => {

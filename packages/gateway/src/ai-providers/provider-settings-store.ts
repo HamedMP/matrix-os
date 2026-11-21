@@ -1,3 +1,4 @@
+import { readCollaborationNativeAccounts, qualifyNativeCodexCollaborationRoute, qualifyNativeClaudeCollaborationRoute } from "./collaboration-native-accounts.js";
 import { markCodexCatalogObservation, observeCodexNativeAccount } from "./codex-native-observation.js";
 import { createCodexNativeConnectionRecovery } from "./codex-native-connection-recovery.js";
 import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
@@ -11,6 +12,7 @@ import { renewProviderSettingsNativeObservation } from "./provider-settings-nati
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
+import { savedCollaborationRoute } from "./collaboration-provider-route.js";
 import { createProviderRuntimeRecoveryReader } from "./provider-runtime-recovery-reader.js";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
@@ -43,6 +45,7 @@ import {
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import {
   applyProviderConfigurationMutation,
+  providerSettingsMutationChangesExecutionAuthority,
   type ProviderConfigurationMutation,
 } from "./provider-settings-mutations.js";
 import { projectProviderSettings } from "./provider-settings-projector.js";
@@ -74,6 +77,7 @@ const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
 const DEFAULT_PROJECTION_AGE_MS = 5 * 60_000;
 const SECRET_MAX_CHARS = 64 * 1024;
+
 export { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 export type {
   CanonicalProviderSnapshotReader,
@@ -94,6 +98,8 @@ export interface ProviderSettingsStoreWriter {
 interface ProviderSettingsStoreOptions {
   observationScope?: () => "canonical_matrix" | undefined;
   prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  /** Drains shared project AI before a mutation can invalidate its current owner route. */
+  prepareSharedAiRouteChange?: () => Promise<void>;
   claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
   codexNativeAccountMetadataReader?: CodexNativeAccountMetadataReader;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -117,6 +123,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #observationScope?: ProviderSettingsStoreOptions["observationScope"];
   readonly #reader: CanonicalProviderSnapshotReader;
   readonly #prepareNativeCodexRevocation?: () => Promise<() => Promise<void>>;
+  readonly #prepareSharedAiRouteChange?: () => Promise<void>;
   readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
   readonly #nativeAccountMetadata?: CodexNativeAccountMetadataReader;
   readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -150,6 +157,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     this.#claudeAccountMetadata = options.claudeNativeAccountMetadataReader;
     this.#nativeAccountMetadata = options.codexNativeAccountMetadataReader;
     this.#prepareNativeCodexRevocation = options.prepareNativeCodexRevocation;
+    this.#prepareSharedAiRouteChange = options.prepareSharedAiRouteChange;
     this.#hermesAccountMetadata = options.hermesNativeAccountMetadataReader;
     this.#dependencies = options.dependencyCoordinator;
     this.#lifecycle = options.accountLifecycle;
@@ -455,6 +463,71 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }
 
+  /**
+   * Canonical route inventory fenced by the saved Provider Settings revision.
+   * Collaboration persists that revision as route provenance instead of the
+   * raw provider service's inventory revision.
+   */
+  async getCanonicalCollaborationSnapshot(
+    options: ProviderSnapshotReadOptions = {},
+  ): Promise<AiProviderSnapshotV3> {
+    if (this.#observationScope?.() === "canonical_matrix") {
+      options = { ...options, admissionScope: "canonical_matrix" };
+    }
+    await this.#serialize(() => this.#readRuntimeRecovery(options.refresh === true));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const generation = await this.#serialize(async () => this.#mutationGeneration);
+      const canonical = await this.#canonical({ ...options, refresh: options.refresh === true && attempt === 0 });
+      const config = await this.#serialize(async () => generation === this.#mutationGeneration
+        ? this.#configuration(canonical)
+        : null);
+      if (!config) continue;
+      const nativeCodexSubscription = config.harnesses.some((harness) => harness.harness === "codex"
+        && harness.enabled && harness.accessSourceId === "owner_openai_profile");
+      const nativeClaudeSubscription = config.harnesses.some((harness) => harness.harness === "claude"
+        && harness.enabled && harness.accessSourceId === "owner_claude_profile");
+      let projected: ProviderSettingsSnapshot | undefined;
+      const { codexMetadata, claudeMetadata } = await readCollaborationNativeAccounts({
+        config, chatRoute: options.collaborationChatRoute,
+        codex: this.#nativeAccountMetadata, claude: this.#claudeAccountMetadata,
+      });
+      if (nativeCodexSubscription || nativeClaudeSubscription) {
+        try {
+          // Owner-paid native readiness is independent of Matrix funding and
+          // generic catalogs. This hot admission path must honor suppressed
+          // funded probes and project only canonical inventory + saved consent.
+          projected = await projectProviderSettings({
+            canonical,
+            config,
+            claudeNativeAccountMetadata: claudeMetadata,
+            codexNativeAccountMetadata: codexMetadata,
+            now: this.#now(),
+            supportedActions: [],
+          });
+        } catch (error: unknown) {
+          console.warn("[provider-settings] Native collaboration projection unavailable:",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("projection_unavailable", 503);
+        }
+      }
+      const codexQualified = qualifyNativeCodexCollaborationRoute(canonical, config, projected);
+      const qualified = qualifyNativeClaudeCollaborationRoute(codexQualified, config, projected, claudeMetadata);
+      const accepted = await this.#serialize(async () => {
+        options.signal?.throwIfAborted();
+        const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
+        return generation === this.#mutationGeneration && saved?.revision === config.revision;
+      });
+      if (accepted) {
+        return AiProviderSnapshotV3Schema.parse({
+          ...qualified,
+          revision: config.revision,
+          active: savedCollaborationRoute(qualified, config, projected, options.collaborationChatRoute),
+        });
+      }
+    }
+    throw new ProviderSettingsStoreError("projection_unavailable", 503);
+  }
+
   async setAccountSecret(accountId: string, value: string): Promise<void> {
     await this.#serialize(async () => {
       this.#mutationGeneration += 1;
@@ -694,6 +767,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         id: this.#id,
         now: this.#now(),
       });
+      if (providerSettingsMutationChangesExecutionAuthority(mutation)) {
+        try {
+          await this.#prepareSharedAiRouteChange?.();
+        } catch (error: unknown) {
+          console.warn("[provider-settings] shared AI route revocation failed",
+            error instanceof Error ? error.name : "UnknownError");
+          throw new ProviderSettingsStoreError("runtime_unavailable", 503);
+        }
+      }
       if (codexNativeCompletion) {
         const generation = codexMetadata && nativeAccountPrincipalFingerprint(codexMetadata);
         const target = config.harnesses.find(row => "harnessInstanceId" in mutation && row.id === mutation.harnessInstanceId);

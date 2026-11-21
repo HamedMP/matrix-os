@@ -833,6 +833,53 @@ describe("S05 direct sessions on the home", () => {
     await client.shutdown();
   });
 
+  it("keeps a failed membership drain pending and refuses later acknowledgements on that stream", async () => {
+    const revoked: string[] = [];
+    const sent: Array<Record<string, unknown>> = [];
+    let closes = 0;
+    const onMembershipEnded = vi.fn(async () => {
+      throw new Error("synthetic project drain failure");
+    });
+    const { client } = controlClient({
+      onMembershipEnded,
+      sessions: { revoke: (denial: { actorId?: string }) => { revoked.push(denial.actorId ?? ""); } } as never,
+      connect: () => ({
+        send: (value: string) => { sent.push(JSON.parse(value) as Record<string, unknown>); },
+        close: () => { closes += 1; },
+      }),
+    });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    const denial = (actorId: string, generation: number) => JSON.stringify({
+      protocolVersion: 2,
+      type: "denial",
+      denial: {
+        organizationId,
+        actorId,
+        generation,
+        fencedAt: clock.toISOString(),
+        ackDeadline: new Date(clock.getTime() + 25_000).toISOString(),
+        state: "pending",
+      },
+    });
+    const failed = stream.receive(denial(collaborationActors.editor, 2));
+    const laterDenial = stream.receive(denial(collaborationActors.viewer, 3));
+    const keepalive = stream.receive(JSON.stringify({
+      protocolVersion: 2,
+      type: "generation",
+      runtimeId: logicalRuntimeId,
+      authorityGeneration: 3,
+    }));
+
+    await expect(failed).rejects.toThrow("synthetic project drain failure");
+    await expect(laterDenial).rejects.toThrow(/terminated/i);
+    await expect(keepalive).rejects.toThrow(/terminated/i);
+    expect(onMembershipEnded).toHaveBeenCalledOnce();
+    expect(revoked).toEqual([collaborationActors.editor]);
+    expect(sent).toEqual([]);
+    expect(closes).toBeGreaterThan(0);
+    await client.shutdown();
+  });
+
   it("abandons in-flight acknowledgement work when it drains mid-cleanup", async () => {
     const sent: Array<Record<string, unknown>> = [];
     let closes = 0;

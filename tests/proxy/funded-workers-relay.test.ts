@@ -4,11 +4,13 @@ import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/prox
 import { createFundedRelayService } from "../../packages/proxy/src/funded-main-app.js";
 import type { FundedPlatformClient } from "../../packages/proxy/src/funded-relay-platform-client.js";
 
+const deepSeekV41 = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const models=[
  ['@cf/deepseek-ai/deepseek-v4-flash-0731',1718],['@cf/zai-org/glm-5.3',5686],
  ['@cf/moonshotai/kimi-k2.7-code',4874],['@cf/openai/gpt-oss-120b',1100],
  ['@cf/google/gemma-4-26b-a4b-it',395],['@cf/deepseek-ai/deepseek-v4-pro-0813',5153],
  ['@cf/qwen/qwen3.8-27b',3610],['@cf/openai/gpt-oss-20b',500],
+ [deepSeekV41,1471],
 ] as const;
 const now=new Date('2026-10-15T12:00:00.000Z');
 const identity={tokenId:'credential_123',ownerId:'owner_123',machineId:'machine_123',runtimeSlot:'preview',audience:'matrix-funded-relay',scope:'ai:invoke',expiresAt:'2026-10-15T12:15:00.000Z'};
@@ -16,6 +18,9 @@ const credential=`sk-matrix-funded-credential_123.${'s'.repeat(43)}`;
 function config(){return resolveFundedRelayConfig({
  MATRIX_FUNDED_AI_ENABLED:'true',MATRIX_FUNDED_AI_RESERVATION_MODE:'usage',CLOUDFLARE_AI_GATEWAY_URL:'https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/test/anthropic',CLOUDFLARE_AI_GATEWAY_TOKEN:'g'.repeat(32),CLOUDFLARE_WORKERS_AI_TOKEN:'w'.repeat(32),PLATFORM_INTERNAL_URL:'https://platform.example.test',AI_RELAY_CONTROL_TOKEN:'c'.repeat(32),AI_RELAY_METADATA_SECRET:'m'.repeat(32),
  MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:'cloudflare-2026-10-15-workers-eight',MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT:'2026-10-15T00:00:00.000Z',MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH:'2026-10-16T00:00:00.000Z',
+ MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEW_VERSION: 'cloudflare-2026-11-12-deepseek-v4.1-flash-1017',
+ MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_REVIEWED_AT: '2026-10-15T00:00:00.000Z',
+ MATRIX_FUNDED_DEEPSEEK_V41_FLASH_PRICING_VALID_THROUGH: '2026-10-16T00:00:00.000Z',
 })!;}
 function upstream(model:string,stream:boolean,missingUsage=false){
  const actual=model==='@cf/google/gemma-4-26b-a4b-it'?`${model}-external`:model;
@@ -28,6 +33,59 @@ function platform(){return{
  check:vi.fn(async()=>({identity})),authorize:vi.fn(async(input:{modelId:string,requestId:string,maxCostMicrousd:number})=>({identity,reservation:{reservationId:'reservation_test',requestId:input.requestId,modelId:input.modelId,reservedMicrousd:0,billingMode:'usage',billingPolicy:'postpaid',maxCostMicrousd:input.maxCostMicrousd}})),
  start:vi.fn(async(input: { executionId?: string })=>({ executionId: input.executionId,contractVersion:1,status:'in_flight',startedAt:now.toISOString(),expiresAt:'2026-10-15T12:10:00.000Z',reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),terminal:vi.fn(async()=>({})),finalize:vi.fn(async()=>({})),
 };}
+
+describe("DeepSeek V4.1 Flash inline images", () => {
+ const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQAAAABJRU5ErkJggg==";
+ const image = (url: string) => ({ type: "image_url", image_url: { url } });
+ async function send(model: string, role: string, urls: string[]) {
+  const control = platform();
+  const fetchFn = vi.fn<typeof fetch>(async () => upstream(model, true));
+  const relay = createFundedRelay({ ...config(), now: () => now, fetch: fetchFn,
+   platformClient: control as unknown as FundedPlatformClient, requestIdFactory: () => "request_test" });
+  const app = new Hono();
+  relay.register(app);
+  const content = [{ type: "text", text: "What is in the image?" }, ...urls.map(image)];
+  try {
+   const result = await app.request("/v1/chat/completions", { method: "POST",
+    headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+    body: JSON.stringify({ model, messages: [{ role, content }], max_tokens: 128, stream: true }),
+   });
+   await result.text();
+   return { status: result.status, content, control, fetchFn };
+  } finally { await relay.close(); }
+ }
+ it("forwards a valid inline user image unchanged and meters the final aggregate usage", async () => {
+  const { status, content, control, fetchFn } = await send(deepSeekV41, "user", [png]);
+  expect(status).toBe(200);
+  expect(fetchFn).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(fetchFn.mock.calls[0]![1]?.body))).toMatchObject({
+   model: deepSeekV41, messages: [{ role: "user", content }], max_completion_tokens: 128,
+  });
+  expect(control.finalize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+   mode: "exact", actualCostMicrousd: 1471,
+  }), expect.any(AbortSignal));
+ });
+ it.each([
+  ["remote URL", deepSeekV41, "user", "https://example.com/image.png"],
+  ["invalid MIME", deepSeekV41, "user", png.replace("image/png", "image/jpeg")],
+  ["wrong role", deepSeekV41, "system", png],
+  ["another model", "@cf/zai-org/glm-5.3", "user", png],
+ ])("rejects an image with %s before paid admission", async (_label, model, role, url) => {
+  const { status, control, fetchFn } = await send(model, role, [url]);
+  expect(status).toBe(400);
+  expect(control.check).not.toHaveBeenCalled();
+  expect(fetchFn).not.toHaveBeenCalled();
+ });
+ it("keeps image uploads within the existing funded aggregate limit", async () => {
+  const bytes = Buffer.alloc(512 * 1024 + 1);
+  Buffer.from("89504e470d0a1a0a", "hex").copy(bytes);
+  const data = "data:image/png;base64," + bytes.toString("base64");
+  const { status, control, fetchFn } = await send(deepSeekV41, "user", [data, data]);
+  expect(status).toBe(400);
+  expect(control.check).not.toHaveBeenCalled();
+  expect(fetchFn).not.toHaveBeenCalled();
+ });
+});
 
 describe('all approved Workers models through funded Relay',()=>{
  it.each(models)('uses the exact authenticated prepaid route and settles %s once',async(model,cost)=>{
@@ -50,6 +108,11 @@ describe('all approved Workers models through funded Relay',()=>{
    const response=await service.app.request(`/ready?model=${encodeURIComponent(model)}`,{headers:{authorization:`Bearer ${config().relayControlToken}`}});
    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ready:true,priceValidThrough:'2026-10-16T00:00:00.000Z'});
    expect(fetchFn).toHaveBeenCalledTimes(1);expect(String(fetchFn.mock.calls[0]![0])).toContain(`/ai/run/${model}`);
+   if (model === deepSeekV41) {
+    const body = JSON.parse(String(fetchFn.mock.calls[0]![1]?.body));
+    expect(body.max_completion_tokens).toBe(1);
+    expect(body.max_tokens).toBeUndefined();
+   }
   }finally{await service.close();}
  });
  it('leaves missing aggregate usage unresolved for an added model',async()=>{

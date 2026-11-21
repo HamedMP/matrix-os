@@ -228,7 +228,7 @@ export default function SystemSection() {
             <Row label="Installed version" value={installedVersion ?? "–"} />
             <Row label="Running version" value={runningVersion ?? "–"} />
             {versionMismatch ? (
-              <p role="status" className="text-sm" style={{ color: "var(--warning)" }}>
+              <p role="status" className="text-sm" style={{ color: "var(--warning-text)" }}>
                 The running services do not match the installed update. Restart Matrix services to finish applying it.
               </p>
             ) : null}

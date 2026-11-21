@@ -1,5 +1,5 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   MAX_MESSAGE_ATTACHMENTS,
@@ -12,7 +12,9 @@ import {
 } from "@/lib/chat-attachments";
 import { chatAttachmentSubmissionError } from "@/lib/chat-attachment-policy";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
+import { NewChatDeliveryUnconfirmedError } from "@/lib/queries/new-chat-admission-recovery";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
+import { useMatrixAttachmentRetention } from "@/lib/use-matrix-attachment-retention";
 
 // A failed send's request ids are kept until a send goes through; beyond this
 // many the oldest is dropped.
@@ -24,6 +26,12 @@ interface FailedSend {
   attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
+  /**
+   * The model and modes it was sent with. The computer may have it already,
+   * and answers a retry under its request ids only as the same request.
+   */
+  selection: CanonicalChatModelSelection;
+  turnModes: { interactionMode: string; permissionMode: string };
 }
 
 interface ProjectComposerOptions {
@@ -37,10 +45,12 @@ interface ProjectComposerOptions {
    * while one of another kind is waiting. Left out, nothing is held back.
    */
   attachmentKinds?: readonly ChatAttachmentKind[];
+  /** Owner, computer and project binding for Matrix file selections. */
+  matrixAttachmentScope?: string;
   /** Holds sends back, as while there is no model to send to yet. */
   disabled?: boolean;
-  /** Called once the new chat's first message is admitted, with the model it was started with. */
-  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection) => void;
+  /** Called once the new chat's first message is admitted, with the model and permission mode it was started with. */
+  onChatStarted: (chatId: string, selection: CanonicalChatModelSelection, permissionMode: string) => void;
 }
 
 /**
@@ -56,13 +66,27 @@ export function useProjectComposer({
   catalog,
   turnModes,
   attachmentKinds,
+  matrixAttachmentScope,
   disabled = false,
   onChatStarted,
 }: ProjectComposerOptions) {
   const sendMessage = useSendChatMessage();
   const isSending = sendMessage.isPending;
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>([]);
+  const [draft, setDraftValue] = useState("");
+  const [attachmentDraft, setAttachmentDraft] = useState<{
+    scope: string | undefined;
+    generation: number;
+    items: readonly ComposerAttachment[];
+  }>({ scope: matrixAttachmentScope, generation: 0, items: [] });
+  const currentDraft = attachmentDraft.scope === matrixAttachmentScope ? attachmentDraft : {
+    scope: matrixAttachmentScope,
+    generation: attachmentDraft.generation + 1,
+    items: attachmentDraft.items.filter(attachment => !attachment.matrixSource),
+  };
+  if (currentDraft !== attachmentDraft) setAttachmentDraft(currentDraft);
+  const { items: attachments, generation: matrixGeneration } = currentDraft;
+  const retainedMatrixUris = useMemo(() => attachments.filter((item) => item.matrixSource).map((item) => item.uri), [attachments]);
+  useMatrixAttachmentRetention(retainedMatrixUris);
   const failedSends = useRef<FailedSend[]>([]);
 
   const text = draft.trim();
@@ -73,11 +97,26 @@ export function useProjectComposer({
     && attachmentNotice === null
     && selection !== null && turnModes !== null && !isSending;
 
+  const clearSendError = () => {
+    // Reset only a settled error. Resetting a pending mutation would detach its
+    // observer and lose its retry bookkeeping while the person edits the draft.
+    if (sendMessage.isError) sendMessage.reset();
+  };
+  const setDraft = (value: string) => {
+    clearSendError();
+    setDraftValue(value);
+  };
   const addAttachments = (added: readonly ComposerAttachment[]) => {
-    setAttachments((current) => appendAttachments(current, added));
+    clearSendError();
+    setAttachmentDraft(current => ({
+      ...current,
+      items: appendAttachments(current.items, current.generation === matrixGeneration ? added
+        : added.filter(attachment => !attachment.matrixSource)),
+    }));
   };
   const removeAttachment = (id: string) => {
-    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+    clearSendError();
+    setAttachmentDraft(current => ({ ...current, items: current.items.filter(attachment => attachment.id !== id) }));
   };
 
   const send = () => {
@@ -87,16 +126,19 @@ export function useProjectComposer({
     // would create a second chat and run the prompt again.
     const attempt = failedSends.current.find((failed) => (
       failed.projectId === projectId && failed.text === text && sameAttachments(failed.attachments, attachments)
-    )) ?? { projectId, text, attachments, chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId() };
+    )) ?? {
+      projectId, text, attachments, selection, turnModes,
+      chatRequestId: canonicalChatRequestId(), turnRequestId: canonicalChatRequestId(),
+    };
 
     sendMessage.mutate({
       chatId: null,
       baseRevision: 0,
       text,
       attachments,
-      selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
+      selection: attempt.selection,
+      interactionMode: attempt.turnModes.interactionMode,
+      permissionMode: attempt.turnModes.permissionMode,
       projectId,
       chatRequestId: attempt.chatRequestId,
       turnRequestId: attempt.turnRequestId,
@@ -104,9 +146,12 @@ export function useProjectComposer({
         failedSends.current = [];
         // The box stays editable while the server answers, so it may hold
         // newer text and attachments by now. Only what was sent is cleared.
-        setDraft((current) => (current.trim() === text ? "" : current));
-        setAttachments((current) => current.filter((waiting) => !attachments.some((sent) => sent.id === waiting.id)));
-        onChatStarted(chatId, selection);
+        setDraftValue((current) => (current.trim() === text ? "" : current));
+        setAttachmentDraft(current => ({
+          ...current,
+          items: current.items.filter(waiting => !attachments.some(sent => sent.id === waiting.id)),
+        }));
+        onChatStarted(chatId, attempt.selection, attempt.turnModes.permissionMode);
       },
     }, {
       onError: () => {
@@ -135,6 +180,11 @@ export function useProjectComposer({
     /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
     unreadableAttachments: unreadable,
     attachmentNotice,
+    sendError: sendMessage.isError
+      ? sendMessage.error instanceof NewChatDeliveryUnconfirmedError
+        ? "Could not confirm delivery. Retry to check again."
+        : "Could not send message. Try again."
+      : null,
     canSend,
     send,
     isSending,
