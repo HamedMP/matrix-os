@@ -6,7 +6,9 @@
 [Unit]
 Description=Matrix host agent (hostd)
 After=network-online.target matrix-hostd-nft.service lvm2-monitor.service
-Wants=network-online.target matrix-hostd-nft.service
+# Ordering only: hostd never pulls the firewall in. The firewall starts at
+# boot only once confirmed (enabled by `matrix-hostd-nft confirm`).
+Wants=network-online.target
 RequiresMountsFor=/var/lib/matrix-hostd/snapshots
 
 [Service]

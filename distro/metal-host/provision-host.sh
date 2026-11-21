@@ -12,19 +12,21 @@
 #   --data-disks A,B        two whole disks whose free space becomes the RAID1
 #                           PV for vmvg (a new "vmdata" partition on each);
 #                           only used when vmvg does not exist yet
-#   --confirm-firewall      cancel the pending firewall revert (run from a NEW
-#                           SSH session after a firewall change) and exit
-#
-# hostd's nftables tables are the host firewall (see nftables.conf); SSH on
-# the public interface is always accepted and checked before loading.
-# Any firewall change arms a 10-minute revert (matrix-hostd-nft-revert.timer)
-# that disables hostd's tables again unless confirmed, so a rule that locks
-# out SSH heals itself.
-#   --pool-device DEV       PV for a new vmvg when the VG does not exist yet
+#   --confirm-firewall      keep a pending firewall change (run from a NEW SSH
+#                           session): cancels the revert and enables the unit
+#                           at boot; fails if the revert already happened
 #   --snapshots-size SIZE   virtual size of the snapshot LV (default 400G)
 #   --swap-size SIZE        host swap LV size (default 64G)
 #   --hostd-bundle PATH     hostd bundle (default packages/hostd/dist/hostd/main.mjs)
 #   --guest-agent PATH      guest agent bundle (default packages/hostd/dist/guest-agent/agent.mjs)
+#
+# hostd's nftables tables are the host firewall (see nftables.conf); SSH on
+# the public interface is always accepted and checked before loading. Any
+# firewall change (rules, helper, parameters, unit) is loaded unconfirmed by
+# `matrix-hostd-nft arm`: the unit runs but is not enabled, a marker records
+# when the window opened, and a 10-minute revert stops and disables it unless
+# confirmed. After the window the unit refuses to load (fails open), so a
+# reboot or restart can never bring back an unconfirmed firewall.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,9 +80,8 @@ has() { local pattern="$1" out; shift; out="$("$@" 2>/dev/null)" || true; grep -
 
 if [ "${1:-}" = --confirm-firewall ]; then
   [ "$(id -u)" = 0 ] || die "run as root"
-  systemctl stop matrix-hostd-nft-revert.timer 2>/dev/null || true
-  log "firewall confirmed; revert cancelled"
-  exit 0
+  # Fails (non-zero) when the revert already happened; see matrix-hostd-nft.
+  exec /usr/local/libexec/matrix-hostd-nft confirm
 fi
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || die "missing value for $1"
@@ -207,8 +208,9 @@ ln -sfn "node-$NODE_VERSION" "$OPT_DIR/node"
 
 hostd_changed="$(install_file "$hostd_bundle" "$OPT_DIR/hostd.mjs" 0644)"
 install_file "$guest_agent" "$OPT_DIR/guest-agent/agent.mjs" 0644 >/dev/null
-install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755 >/dev/null
-install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644 >/dev/null
+# A changed helper or template is a firewall change: it re-arms the revert.
+nft_changed="$(install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755)"
+nft_changed+="$(install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644)"
 
 # --- LVM: thin pool, snapshot filesystem, swap ---------------------------------
 # The data RAID1: a "vmdata" partition (type FD00) in the free space of each
@@ -356,7 +358,7 @@ has "${BRIDGE_CIDR%/*}/" ip -4 addr show dev "$BRIDGE" || die "bridge $BRIDGE di
 nft -c -f "$work/nftables.nft"
 log "firewall dry run: ruleset parses and accepts SSH on $wan"
 install -d -m 0755 "$ETC_DIR"
-nft_changed="$(write_file "$ETC_DIR/nft.env" 0644 <<EOF
+nft_changed+="$(write_file "$ETC_DIR/nft.env" 0644 <<EOF
 WAN=$wan
 INGRESS_PORT=$ingress_port
 API_PORT=$api_port
@@ -417,15 +419,13 @@ for unit in matrix-vm@.service matrix-vm-restore@.service matrix-hostd.service m
   units_changed+="$(install_file "$SCRIPT_DIR/systemd/$unit" "/etc/systemd/system/$unit" 0644)"
 done
 systemctl daemon-reload
-systemctl enable --quiet matrix-hostd-nft.service matrix-hostd.service
+# The firewall unit is enabled only by `--confirm-firewall`.
+systemctl enable --quiet matrix-hostd.service
 if [ -n "$nft_changed$units_changed" ] || ! systemctl is-active --quiet matrix-hostd-nft.service; then
-  # Dead-man switch: undone in 10 minutes unless confirmed from a new session.
-  systemctl stop matrix-hostd-nft-revert.timer 2>/dev/null || true
-  systemctl reset-failed matrix-hostd-nft-revert.service 2>/dev/null || true
-  systemd-run --quiet --unit matrix-hostd-nft-revert --on-active=600 \
-    /usr/bin/systemctl disable --now matrix-hostd-nft.service
+  # Dead-man switch: unenabled, marker written, undone in 10 minutes unless
+  # confirmed from a new session; a stale marker keeps it off after a reboot.
+  /usr/local/libexec/matrix-hostd-nft arm
   firewall_pending=1
-  systemctl restart matrix-hostd-nft.service
 else
   systemctl reload matrix-hostd-nft.service
 fi

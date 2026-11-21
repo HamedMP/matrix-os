@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // Static and render checks for the metal-host provisioning scripts. The live
 // proof is distro/metal-host/smoke-host.sh on a real host (docs/dev/metal-hosts.md);
@@ -97,13 +97,13 @@ describe("metal host scripts", () => {
 
   it("arms a revert on every firewall change and checks SSH before loading", async () => {
     const provision = await readFile(`${DIR}/provision-host.sh`, "utf8");
-    expect(provision).toMatch(/systemd-run[^\n]*--unit matrix-hostd-nft-revert --on-active=\d+/);
-    expect(provision).toContain("/usr/bin/systemctl disable --now matrix-hostd-nft.service");
-    expect(provision).toContain("--confirm-firewall");
-    // The dry run (render, SSH check, nft -c) comes before the unit loads anything.
-    const dryRun = provision.indexOf("matrix-hostd-nft check");
+    // Every firewall load from provisioning goes through arm (marker + revert timer;
+    // its behaviour is tested below), after the dry run (render, SSH check, nft -c).
+    expect(provision).not.toMatch(/systemctl (re)?start[^\n]*matrix-hostd-nft\.service/);
+    const dryRun = provision.indexOf("/usr/local/libexec/matrix-hostd-nft check");
     expect(dryRun).toBeGreaterThan(0);
-    expect(dryRun).toBeLessThan(provision.indexOf("systemctl restart matrix-hostd-nft.service"));
+    expect(dryRun).toBeLessThan(provision.indexOf("/usr/local/libexec/matrix-hostd-nft arm"));
+    expect(provision).toContain("--confirm-firewall");
     const helper = await readFile(`${DIR}/matrix-hostd-nft`, "utf8");
     const apply = helper.slice(helper.indexOf("  apply)"));
     expect(apply.indexOf("check_ssh")).toBeLessThan(apply.indexOf('nft -f "$RENDERED"'));
@@ -274,5 +274,143 @@ describe("metal host scripts", () => {
     expect(text).toContain("/opt/matrix/restore-complete");
     // hostd caps the whole JSON request at 64 KiB.
     expect(Buffer.byteLength(JSON.stringify({ userData: text }))).toBeLessThan(60 * 1024);
+  });
+});
+
+// The firewall dead-man switch, driven through matrix-hostd-nft's real
+// arm/guard/confirm commands against a fake systemd that keeps unit state in
+// files. Faults it catches: a firewall that comes back with no revert after a
+// reboot or a hostd restart (the unit enabled before confirmation, or a lost
+// transient timer), and a confirm that claims success after the revert fired.
+describe("metal host firewall revert", () => {
+  const NFT = "distro/metal-host/matrix-hostd-nft";
+  const FW = "matrix-hostd-nft.service";
+  const TIMER = "matrix-hostd-nft-revert.timer";
+  let dir: string;
+  let state: string;
+  let marker: string;
+  let env: NodeJS.ProcessEnv;
+
+  const FAKE_SYSTEMCTL = `#!/usr/bin/env bash
+printf 'systemctl %s\\n' "$*" >>"$FAKE_STATE/log"
+args=(); for a in "$@"; do case "$a" in --quiet|--no-block) ;; *) args+=("$a") ;; esac; done
+verb="\${args[0]}"; now=0
+case "$verb" in
+  is-active) [ -e "$FAKE_STATE/active-\${args[1]}" ]; exit ;;
+  is-enabled) [ -e "$FAKE_STATE/enabled-\${args[1]}" ]; exit ;;
+  disable) [ "\${args[1]}" = --now ] && { now=1; unset 'args[1]'; args=("\${args[@]}"); }
+    for u in "\${args[@]:1}"; do rm -f "$FAKE_STATE/enabled-$u"; [ "$now" = 1 ] && rm -f "$FAKE_STATE/active-$u"; done ;;
+  enable) for u in "\${args[@]:1}"; do : >"$FAKE_STATE/enabled-$u"; done ;;
+  stop) for u in "\${args[@]:1}"; do rm -f "$FAKE_STATE/active-$u"; done ;;
+  start|restart) for u in "\${args[@]:1}"; do : >"$FAKE_STATE/active-$u"; done ;;
+esac
+exit 0
+`;
+  const FAKE_SYSTEMD_RUN = `#!/usr/bin/env bash
+printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
+: >"$FAKE_STATE/active-${TIMER}"
+`;
+
+  const nft = (...args: string[]) =>
+    run("bash", [NFT, ...args], { env }).then(
+      (r) => ({ code: 0, out: r.stdout + r.stderr }),
+      (e: { code?: number; stdout?: string; stderr?: string }) => ({ code: e.code ?? 1, out: (e.stdout ?? "") + (e.stderr ?? "") }),
+    );
+  const has = (name: string) => existsSync(join(state, name));
+  const log = async () => (existsSync(join(state, "log")) ? readFile(join(state, "log"), "utf8") : "");
+  const setMarker = (ageSeconds: number) => writeFile(marker, `${Math.floor(Date.now() / 1000) - ageSeconds}\n`);
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "metal-fw-"));
+    const bin = join(dir, "bin");
+    await run("mkdir", ["-p", bin]);
+    await writeFile(join(bin, "systemctl"), FAKE_SYSTEMCTL, { mode: 0o755 });
+    await writeFile(join(bin, "systemd-run"), FAKE_SYSTEMD_RUN, { mode: 0o755 });
+    env = { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  beforeEach(async () => {
+    state = await mkdtemp(join(dir, "state-"));
+    marker = join(state, "firewall-unconfirmed");
+    env = { ...env, FAKE_STATE: state, MATRIX_HOSTD_FIREWALL_MARKER: marker };
+  });
+
+  it("arm starts the firewall unenabled, with a marker and a revert timer", async () => {
+    await writeFile(join(state, `enabled-${FW}`), "");
+    const result = await nft("arm");
+    expect(result.code, result.out).toBe(0);
+    expect(has(`active-${FW}`)).toBe(true);
+    // Never enabled before confirmation: a reboot must not bring it back.
+    expect(has(`enabled-${FW}`)).toBe(false);
+    expect(has(`active-${TIMER}`)).toBe(true);
+    expect(await log()).toMatch(/systemd-run .*--unit matrix-hostd-nft-revert --on-active=600 .*systemctl disable --now matrix-hostd-nft\.service/);
+    const stamp = Number((await readFile(marker, "utf8")).trim());
+    expect(Math.abs(stamp - Date.now() / 1000)).toBeLessThan(5);
+  });
+
+  it("guard lets a fresh or absent marker through and fails open on a stale one", async () => {
+    expect((await nft("guard")).code).toBe(0);
+    await setMarker(60);
+    expect((await nft("guard")).code).toBe(0);
+    // A revert timer lost on reboot: the unit must refuse to load the rules.
+    await setMarker(601);
+    const stale = await nft("guard");
+    expect(stale.code).not.toBe(0);
+    expect(stale.out).toMatch(/not confirmed/i);
+    await writeFile(marker, "garbage\n");
+    expect((await nft("guard")).code).not.toBe(0);
+  });
+
+  it("confirm enables the firewall, cancels the revert and clears the marker", async () => {
+    await nft("arm");
+    const result = await nft("confirm");
+    expect(result.code, result.out).toBe(0);
+    expect(result.out).toMatch(/confirmed/);
+    expect(has(`enabled-${FW}`)).toBe(true);
+    expect(has(`active-${TIMER}`)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("confirm fails loudly when the revert already happened", async () => {
+    await nft("arm");
+    // The timer fired: firewall stopped and disabled; the marker stays.
+    await rm(join(state, `active-${FW}`));
+    await rm(join(state, `active-${TIMER}`));
+    const fired = await nft("confirm");
+    expect(fired.code).not.toBe(0);
+    expect(fired.out).toMatch(/re-run provision/i);
+    expect(has(`enabled-${FW}`)).toBe(false);
+    // Stale marker with the unit somehow still running is also not confirmable.
+    await writeFile(join(state, `active-${FW}`), "");
+    await setMarker(900);
+    expect((await nft("confirm")).code).not.toBe(0);
+    expect(has(`enabled-${FW}`)).toBe(false);
+  });
+
+  it("confirm with nothing pending only succeeds for an already confirmed firewall", async () => {
+    expect((await nft("confirm")).code).not.toBe(0);
+    await writeFile(join(state, `active-${FW}`), "");
+    await writeFile(join(state, `enabled-${FW}`), "");
+    const confirmed = await nft("confirm");
+    expect(confirmed.code).toBe(0);
+    expect(confirmed.out).toMatch(/already confirmed/);
+  });
+
+  it("wires the units so only a confirmed firewall survives reboot or hostd restarts", async () => {
+    const hostd = await readFile("distro/metal-host/systemd/matrix-hostd.service", "utf8");
+    expect(hostd).not.toMatch(/^(Wants|Requires|BindsTo)=.*matrix-hostd-nft/m);
+    expect(hostd).toMatch(/^After=.*matrix-hostd-nft\.service/m);
+    const unit = await readFile("distro/metal-host/systemd/matrix-hostd-nft.service", "utf8");
+    expect(unit).toMatch(/^ExecStartPre=\/usr\/local\/libexec\/matrix-hostd-nft guard$/m);
+    const provision = await readFile("distro/metal-host/provision-host.sh", "utf8");
+    // provision never enables the firewall itself; only confirm does.
+    expect(provision).not.toMatch(/systemctl enable[^\n]*matrix-hostd-nft/);
+    expect(provision).toContain("matrix-hostd-nft confirm");
+    expect(provision).toContain("matrix-hostd-nft arm");
+    // A rules or helper change counts as a firewall change and re-arms.
+    expect(provision).toMatch(/nft_changed[^\n]*install_file "\$SCRIPT_DIR\/matrix-hostd-nft"/);
+    expect(provision).toMatch(/nft_changed[^\n]*install_file "\$SCRIPT_DIR\/nftables\.conf"/);
   });
 });

@@ -8,11 +8,27 @@
 #   matrix-hostd-nft check FILE --wan IF   # exit 0 only if SSH on IF is accepted
 #   matrix-hostd-nft apply                 # uses /etc/matrix-hostd/nft.env
 #   matrix-hostd-nft remove
+#   matrix-hostd-nft arm                   # load a changed firewall, unconfirmed
+#   matrix-hostd-nft guard                 # ExecStartPre: refuse a stale unconfirmed load
+#   matrix-hostd-nft confirm               # keep it: enable the unit, cancel the revert
+#
+# Dead-man switch. A changed firewall is loaded by `arm`, which writes the
+# marker (the time the unconfirmed window opened), starts the unit WITHOUT
+# enabling it, and arms a 10-minute transient revert timer that stops and
+# disables it. Only `confirm`, run from a new SSH session, enables the unit.
+# Every load goes through `guard`: if the marker is older than the window the
+# unit refuses to load and the host fails open. So a reboot (which loses the
+# transient timer, and the unit is not enabled anyway) or any later start of
+# the unit after the window can never bring back an unconfirmed firewall.
 set -euo pipefail
 
 readonly ENV_FILE=/etc/matrix-hostd/nft.env
 readonly TEMPLATE=/usr/local/share/matrix-hostd/nftables.conf
 readonly RENDERED=/etc/matrix-hostd/nftables.nft
+readonly MARKER="${MATRIX_HOSTD_FIREWALL_MARKER:-/var/lib/matrix-hostd/firewall-unconfirmed}"
+readonly WINDOW_S=600
+readonly UNIT=matrix-hostd-nft.service
+readonly REVERT=matrix-hostd-nft-revert
 
 die() { printf 'matrix-hostd-nft: %s\n' "$*" >&2; exit 1; }
 
@@ -52,6 +68,49 @@ sys.exit(1)
 PY
 }
 
+# Exit 0 when no unconfirmed window is open or it is still open; non-zero
+# (with a loud message) when it has expired or the marker is unreadable.
+guard() {
+  local stamp now
+  [ -e "$MARKER" ] || return 0
+  stamp="$(head -c 32 "$MARKER" | tr -d '[:space:]')"
+  now="$(date +%s)"
+  if [[ "$stamp" =~ ^[0-9]{1,12}$ ]] && [ $((now - stamp)) -le "$WINDOW_S" ]; then return 0; fi
+  printf 'matrix-hostd-nft: REFUSING to load: firewall change was not confirmed within %ss (marker %s); the host runs without the hostd firewall until provision-host.sh is re-run and confirmed\n' \
+    "$WINDOW_S" "$MARKER" >&2
+  return 1
+}
+
+arm() {
+  install -d -m 0755 "$(dirname "$MARKER")"
+  date +%s >"$MARKER.tmp"
+  mv -f "$MARKER.tmp" "$MARKER"
+  systemctl disable --quiet "$UNIT"
+  systemctl stop "$REVERT.timer" 2>/dev/null || true
+  systemctl reset-failed "$REVERT.service" 2>/dev/null || true
+  systemd-run --quiet --unit "$REVERT" --on-active="$WINDOW_S" /usr/bin/systemctl disable --now "$UNIT"
+  systemctl restart "$UNIT"
+}
+
+confirm() {
+  if [ ! -e "$MARKER" ]; then
+    if systemctl is-active --quiet "$UNIT" && systemctl is-enabled --quiet "$UNIT"; then
+      echo "matrix-hostd-nft: nothing pending; the firewall is already confirmed"
+      return 0
+    fi
+    die "no firewall change is pending and the hostd firewall is not running; re-run provision-host.sh"
+  fi
+  if ! guard 2>/dev/null || ! systemctl is-active --quiet "$UNIT"; then
+    die "the revert already happened (or the window expired): the hostd firewall is NOT in place; re-run provision-host.sh and confirm within 10 minutes"
+  fi
+  systemctl stop "$REVERT.timer"
+  # The timer could have fired between the checks and the stop.
+  systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
+  rm -f "$MARKER"
+  systemctl enable --quiet "$UNIT"
+  echo "matrix-hostd-nft: firewall confirmed; revert cancelled; enabled at boot"
+}
+
 load_env() {
   [ -f "$ENV_FILE" ] || die "missing $ENV_FILE"
   WAN="$(sed -n 's/^WAN=//p' "$ENV_FILE")"
@@ -82,6 +141,7 @@ case "$cmd" in
     check_ssh "$1" "$3"
     ;;
   apply)
+    guard || exit 1
     load_env
     umask 022
     render "$TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT" >"$RENDERED.tmp"
@@ -90,9 +150,12 @@ case "$cmd" in
     mv -f "$RENDERED.tmp" "$RENDERED"
     nft -f "$RENDERED"
     ;;
+  guard) guard ;;
+  arm) arm ;;
+  confirm) confirm ;;
   remove)
     if nft list table inet matrix_hostd >/dev/null 2>&1; then nft delete table inet matrix_hostd; fi
     if nft list table ip matrix_hostd_nat >/dev/null 2>&1; then nft delete table ip matrix_hostd_nat; fi
     ;;
-  *) die "usage: matrix-hostd-nft render|check|apply|remove" ;;
+  *) die "usage: matrix-hostd-nft render|check|apply|remove|arm|guard|confirm" ;;
 esac

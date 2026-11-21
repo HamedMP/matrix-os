@@ -2,7 +2,9 @@
 # firewall of a metal host, from /etc/matrix-hostd/nft.env after checking the
 # ruleset accepts SSH on the public interface. It never flushes the ruleset. A host-wide
 # nftables reload that does flush (nftables.service) is followed by a reload
-# of this unit, which puts hostd's tables back.
+# of this unit, which puts hostd's tables back. provision-host.sh starts it
+# through `matrix-hostd-nft arm` (unenabled, with a revert timer); only
+# `matrix-hostd-nft confirm` enables it.
 [Unit]
 Description=Matrix hostd firewall tables
 After=nftables.service network-pre.target
@@ -13,6 +15,9 @@ ReloadPropagatedFrom=nftables.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Refuses (fails open, logged) to load a change left unconfirmed past its
+# 10-minute window, e.g. after a reboot lost the transient revert timer.
+ExecStartPre=/usr/local/libexec/matrix-hostd-nft guard
 ExecStart=/usr/local/libexec/matrix-hostd-nft apply
 ExecReload=/usr/local/libexec/matrix-hostd-nft apply
 ExecStop=/usr/local/libexec/matrix-hostd-nft remove

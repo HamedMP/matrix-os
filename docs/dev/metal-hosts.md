@@ -54,9 +54,18 @@ internet (NAT, no SMTP, no private ranges) and `tailscale0` to `brmx`.
 check` requires SSH on the public interface to be accepted before any drop,
 then `nft -c`), and `matrix-hostd-nft apply` repeats the check before loading.
 
-Every firewall change arms `matrix-hostd-nft-revert.timer`: after 10 minutes
-it disables hostd's tables again. Open a **new** SSH session and run
-`sudo distro/metal-host/provision-host.sh --confirm-firewall` to keep them.
+Every firewall change (rules, helper, parameters or unit) is loaded
+unconfirmed by `matrix-hostd-nft arm`: `matrix-hostd-nft.service` runs but is
+**not enabled**, `/var/lib/matrix-hostd/firewall-unconfirmed` records when the
+window opened, and the transient `matrix-hostd-nft-revert.timer` stops and
+disables the unit after 10 minutes. The unit's `ExecStartPre` (`guard`)
+refuses to load once that marker is older than 10 minutes, so a reboot (which
+loses the transient timer) or any later start fails open instead of bringing
+back an unconfirmed firewall. hostd only orders itself after the firewall; it
+never pulls it in. Open a **new** SSH session and run
+`sudo distro/metal-host/provision-host.sh --confirm-firewall` to keep the
+change: it cancels the timer, removes the marker and enables the unit. It
+exits non-zero if the revert already happened; then re-run provisioning.
 
 Never run `nft flush ruleset` or reload another tool's ruleset to fix hostd's;
 `systemctl reload matrix-hostd-nft` replaces only hostd's tables.
@@ -93,14 +102,13 @@ checking no LV, record, snapshot, tap or active unit is left.
 
 ## Recovery
 
-- Locked out after a firewall change: wait for the revert timer. Otherwise,
-  from a path that still reaches the host (SSH over the tailnet to
-  `tailscale0`), run `systemctl disable --now matrix-hostd-nft.service` (its
-  stop removes hostd's tables) and fix
-  `/etc/matrix-hostd/nft.env`. Last resort: Scaleway rescue boot, mount the
-  root filesystem, delete
-  `etc/systemd/system/multi-user.target.wants/matrix-hostd-nft.service`, boot
-  normally, and restart any VMs the reboot stopped.
+- Locked out after a firewall change: wait out the 10-minute window. The
+  revert timer stops the firewall; if the host rebooted meanwhile, the unit
+  is not enabled and its guard refuses the stale change, so the host comes
+  up without hostd's firewall. Either way SSH returns; re-run
+  provision-host.sh, fix the cause and confirm. From a path that still
+  reaches the host you can also run `systemctl disable --now
+  matrix-hostd-nft.service` (its stop removes hostd's tables).
 - hostd will not start: `journalctl -u matrix-hostd`. Startup errors name the
   bad config keys, never values.
 - A VM failed: `GET /v1/vms/<id>` shows `failed`/`failedDuring`; the serial
