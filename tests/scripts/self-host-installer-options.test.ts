@@ -140,7 +140,10 @@ resolve_run_user`,
     const result = run(`MATRIX_SETFACL="${fake}" grant_run_user_access alice "${dir}/opt"`);
     expect(result.status, result.stderr).toBe(0);
     const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
-    expect(calls).toContain(`-m u:alice:rx ${dir}/opt`);
+    // A named-user entry wins over the matrix group, so it must match the
+    // group's rwx on /opt/matrix (found on a fresh VPS: the database gate could
+    // not write its marker file).
+    expect(calls).toContain(`-m u:alice:rwx ${dir}/opt`);
     expect(calls).toContain(`-R -m u:alice:rX ${dir}/opt/env ${dir}/opt/bin ${dir}/opt/tls`);
     expect(calls).toContain(`-d -m u:alice:rX ${dir}/opt/env ${dir}/opt/tls`);
   });

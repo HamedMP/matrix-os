@@ -1343,7 +1343,9 @@ configure_nginx() {
 grant_run_user_access() {
   local user="$1" root="${2:-/opt/matrix}" setfacl_bin="${MATRIX_SETFACL:-setfacl}"
   [ "$user" != "matrix" ] || return 0
-  run_required "granting ${user} access to ${root}" "$setfacl_bin" -m "u:${user}:rx" "$root"
+  # A named-user ACL entry is checked before any group, so it must carry the
+  # same rights the matrix group has here (rwx), or the run user loses write.
+  run_required "granting ${user} access to ${root}" "$setfacl_bin" -m "u:${user}:rwx" "$root"
   run_required "granting ${user} access to Matrix files" "$setfacl_bin" -R -m "u:${user}:rX" "$root/env" "$root/bin" "$root/tls"
   run_required "granting ${user} access to new Matrix files" "$setfacl_bin" -d -m "u:${user}:rX" "$root/env" "$root/tls"
 }
