@@ -1,0 +1,121 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { JoinCodeResponse, PairedMachinesResponse, PrivateNetworkClient } from "./client.js";
+import { MACHINES_POLL_MS, PRIVATE_NETWORK_ERRORS, logRequestFailure, minutesLeft } from "./presentation.js";
+
+export interface PairedMachinesModel {
+  list: PairedMachinesResponse | null;
+  loading: boolean;
+  error: string | null;
+  joinCode: JoinCodeResponse | null;
+  creatingJoinCode: boolean;
+  removingId: string | null;
+  now: number;
+  reload(): void;
+  createJoinCode(): Promise<void>;
+  removeMachine(id: string): Promise<boolean>;
+}
+
+/** Paired machines list, join-code creation, and removal for a connected computer. */
+export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesModel {
+  const [list, setList] = useState<PairedMachinesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [joinCode, setJoinCode] = useState<JoinCodeResponse | null>(null);
+  const [creatingJoinCode, setCreatingJoinCode] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [loadRevision, setLoadRevision] = useState(0);
+  const lifetime = useRef<AbortController | null>(null);
+  const listRef = useRef<PairedMachinesResponse | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
+
+  const applyList = useCallback((next: PairedMachinesResponse) => {
+    listRef.current = next;
+    setList(next);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    client
+      .machines(controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        applyList(next);
+        setError(null);
+      })
+      .catch((failure: unknown) => {
+        if (controller.signal.aborted) return;
+        logRequestFailure("machines", failure);
+        setError(PRIVATE_NETWORK_ERRORS.machines);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [client, loadRevision, applyList]);
+
+  const joinCodeActive = joinCode !== null && minutesLeft(joinCode.expiresAt, now) > 0;
+  useEffect(() => {
+    if (!joinCodeActive) return;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      setLoadRevision((revision) => revision + 1);
+    }, MACHINES_POLL_MS);
+    return () => clearInterval(timer);
+  }, [joinCodeActive]);
+
+  const reload = useCallback(() => {
+    setError(null);
+    setLoadRevision((revision) => revision + 1);
+  }, []);
+
+  const createJoinCode = useCallback(async () => {
+    const signal = lifetime.current?.signal;
+    if (!signal) return;
+    setCreatingJoinCode(true);
+    setError(null);
+    try {
+      const next = await client.createJoinCode(signal);
+      if (signal.aborted) return;
+      setNow(Date.now());
+      setJoinCode(next);
+    } catch (failure: unknown) {
+      if (signal.aborted) return;
+      logRequestFailure("join code", failure);
+      setError(PRIVATE_NETWORK_ERRORS.joinCode);
+    } finally {
+      if (!signal.aborted) setCreatingJoinCode(false);
+    }
+  }, [client]);
+
+  const removeMachine = useCallback(
+    async (id: string) => {
+      const signal = lifetime.current?.signal;
+      const current = listRef.current;
+      if (!signal || !current) return false;
+      setRemovingId(id);
+      setError(null);
+      try {
+        const next = await client.removeMachine(id, current.revision, signal);
+        if (signal.aborted) return false;
+        applyList(next);
+        return true;
+      } catch (failure: unknown) {
+        if (signal.aborted) return false;
+        logRequestFailure("remove machine", failure);
+        setError(PRIVATE_NETWORK_ERRORS.remove);
+        return false;
+      } finally {
+        if (!signal.aborted) setRemovingId(null);
+      }
+    },
+    [client, applyList],
+  );
+
+  return { list, loading, error, joinCode, creatingJoinCode, removingId, now, reload, createJoinCode, removeMachine };
+}
