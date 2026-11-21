@@ -44,8 +44,16 @@ export const HostdCreateVmResponseSchema = z.object({
 });
 export type HostdCreateVmResponse = z.infer<typeof HostdCreateVmResponseSchema>;
 
+/** The platform generation a resume or suspend is fenced to; hostd answers 409 on a mismatch. */
+export const HostdExpectedGenerationSchema = z.int().min(1);
+
 export const HostdResumeRequestSchema = z.strictObject({
   budgetMs: z.int().min(0).max(HOSTD_MAX_RESUME_BUDGET_MS),
+  expectedGeneration: HostdExpectedGenerationSchema.optional(),
+});
+
+export const HostdSuspendRequestSchema = z.strictObject({
+  expectedGeneration: HostdExpectedGenerationSchema.optional(),
 });
 
 export const HostdResumeResponseSchema = z.object({ state: z.enum(["running", "starting"]) });

@@ -95,7 +95,8 @@ export function withUpstreamHost(headers: DispatchHeaders): DispatchHeaders {
 // Insertion-ordered LRU of verified dispatchers keyed by server name and CA; evicted ones are closed.
 const verifiedDispatchers = new Map<string, Dispatcher>();
 
-function verifiedDispatcher(upstream: RuntimeUpstream): Dispatcher {
+/** The pooled dispatcher that verifies an upstream's TLS under its own server name and sets its Host. */
+export function verifiedDispatcher(upstream: RuntimeUpstream): Dispatcher {
   const key = `${upstream.tlsServerName ?? ''}\n${upstream.extraCaPem ?? ''}`;
   const existing = verifiedDispatchers.get(key);
   if (existing) {

@@ -191,14 +191,14 @@ describe('metal substrate wake and sleep through hostd', () => {
 
   const signal = () => AbortSignal.timeout(10_000);
 
-  it('ensureRunning resumes with an 8000 ms budget and maps running', async () => {
+  it('ensureRunning resumes with an 8000 ms budget fenced to the generation and maps running', async () => {
     hostdAnswers((res) => json(res, 200, { state: 'running' }));
 
     await expect(substrate().ensureRunning(REF, signal())).resolves.toEqual({ state: 'running' });
 
     const resume = hostd.requests.find((r) => r.path.endsWith('/resume'));
     expect(resume?.headers.authorization).toBe(`Bearer ${API_TOKEN}`);
-    expect(JSON.parse(resume!.body)).toEqual({ budgetMs: 8000 });
+    expect(JSON.parse(resume!.body)).toEqual({ budgetMs: 8000, expectedGeneration: REF.generation });
   });
 
   it('ensureRunning maps starting', async () => {
@@ -290,6 +290,14 @@ describe('metal substrate wake and sleep through hostd', () => {
       `GET /v1/vms/${VM_ID}`,
       `POST /v1/vms/${VM_ID}/suspend`,
     ]);
+    const suspend = hostd.requests.find((r) => r.path.endsWith('/suspend'));
+    expect(JSON.parse(suspend!.body)).toEqual({ expectedGeneration: REF.generation });
+  });
+
+  it('stop maps a hostd generation conflict (409) to needs_recovery', async () => {
+    hostd.handle((req, res) => (req.method === 'GET' ? json(res, 200, vmRecord({ state: 'running' })) : json(res, 409, { error: 'conflict' })));
+
+    await expect(substrate().stop(REF, signal())).resolves.toEqual({ state: 'failed', code: 'needs_recovery' });
   });
 
   it('stop refuses a stale generation', async () => {

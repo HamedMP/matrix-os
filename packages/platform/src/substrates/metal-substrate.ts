@@ -152,7 +152,7 @@ export interface MetalSubstrateDeps {
   caPem?: string;
   /** Shared TLS dispatcher for hostd calls; built from caPem when omitted. */
   dispatcher?: Dispatcher;
-  clientOptions?: Pick<HostdClientOptions, 'timeoutMs' | 'resumeGraceMs'>;
+  clientOptions?: Pick<HostdClientOptions, 'timeoutMs' | 'resumeGraceMs' | 'suspendTimeoutMs'>;
   /** How long a request waits for a resume before being answered "waking"; defaults to the resume budget plus grace. */
   requestWaitMs?: number;
   log?: Log;
@@ -246,7 +246,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
       try {
         const located = await locate(ref, signal);
         if (!located.ok) return { state: 'failed', code: located.code };
-        const { state } = await located.client.resume(located.vmId, METAL_RESUME_BUDGET_MS, signal);
+        const { state } = await located.client.resume(located.vmId, METAL_RESUME_BUDGET_MS, signal, { expectedGeneration: ref.generation });
         return { state };
       } catch (error: unknown) {
         if (signal.aborted) throw signal.reason;
@@ -262,7 +262,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
       try {
         const located = await locate(ref, signal);
         if (!located.ok) return { state: 'failed', code: located.code };
-        await located.client.suspend(located.vmId, signal);
+        await located.client.suspend(located.vmId, signal, { expectedGeneration: ref.generation });
         return { state: 'stopping' };
       } catch (error: unknown) {
         if (signal.aborted) throw signal.reason;

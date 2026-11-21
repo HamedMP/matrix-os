@@ -5,6 +5,7 @@ import {
   createHostdDispatcher,
   HostdError,
   HOSTD_RESPONSE_LIMIT_BYTES,
+  HOSTD_SUSPEND_TIMEOUT_MS,
 } from '../../packages/platform/src/substrates/hostd-client.js';
 import { json, startFakeHostd, type FakeHostd } from './fake-hostd-server.js';
 
@@ -71,6 +72,30 @@ describe('hostd client', () => {
 
     await expect(client().getVm(VM_ID)).resolves.toMatchObject({ id: VM_ID, generation: 3, state: 'suspended' });
     expect(hostd.requests[0]).toMatchObject({ method: 'GET', path: `/v1/vms/${VM_ID}` });
+  });
+
+  it('resume and suspend send expectedGeneration when fenced', async () => {
+    hostd.handle((req, res) => (req.path.endsWith('/resume') ? json(res, 200, { state: 'running' }) : json(res, 202, { state: 'suspending' })));
+
+    await client().resume(VM_ID, 8000, undefined, { expectedGeneration: 3 });
+    await client().suspend(VM_ID, undefined, { expectedGeneration: 3 });
+
+    expect(JSON.parse(hostd.requests[0]!.body)).toEqual({ budgetMs: 8000, expectedGeneration: 3 });
+    expect(JSON.parse(hostd.requests[1]!.body)).toEqual({ expectedGeneration: 3 });
+  });
+
+  it('a fenced suspend waits past the API timeout for hostd to queue it (at least 135 s)', async () => {
+    expect(HOSTD_SUSPEND_TIMEOUT_MS).toBeGreaterThanOrEqual(135_000);
+    hostd.handle((_req, res) => { setTimeout(() => json(res, 202, { state: 'suspending' }), 150); });
+
+    await expect(client({ timeoutMs: 50, suspendTimeoutMs: 1_000 }).suspend(VM_ID, undefined, { expectedGeneration: 3 }))
+      .resolves.toEqual({ state: 'suspending' });
+  });
+
+  it('a generation mismatch on suspend is a conflict', async () => {
+    hostd.handle((_req, res) => json(res, 409, { error: 'conflict' }));
+
+    expect((await rejection(client().suspend(VM_ID, undefined, { expectedGeneration: 3 }))).code).toBe('conflict');
   });
 
   it('suspend accepts the 202 answer', async () => {

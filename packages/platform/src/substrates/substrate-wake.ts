@@ -95,9 +95,17 @@ export function prefersJsonWakeResponse(acceptHeader: string | undefined, isData
 // ---------------------------------------------------------------------------
 // Single-flight wake per machine
 
-interface WakeResult {
+export interface WakeResult {
   result: EnsureRunningResult;
   machine?: UserMachineRecord;
+}
+
+export interface WakeOptions {
+  log?: Log;
+  /** Clock for the `awake_since` stamp. */
+  now?: () => Date;
+  /** Aborts the platform's wait (platform shutdown); the start itself may still finish on the host. */
+  signal?: AbortSignal;
 }
 
 // Insertion-ordered and capped; entries remove themselves when they settle.
@@ -106,13 +114,14 @@ const inFlightWakes = new Map<string, Promise<WakeResult>>();
 /**
  * Records `running` after the substrate reports it, with one compare-and-set
  * on the status and generation the wake started from, so a concurrent
- * replacement or deletion is never overwritten.
+ * replacement or deletion is never overwritten. The same write stamps
+ * `awake_since` (the idle sleeper's clock) and clears any scheduled wake.
  */
-async function markRunning(db: PlatformDB, machine: UserMachineRecord): Promise<WakeResult> {
+async function markRunning(db: PlatformDB, machine: UserMachineRecord, now: Date): Promise<WakeResult> {
   if (machine.status !== 'running') {
     await db.ready;
     const row = await db.executor.updateTable('user_machines')
-      .set({ status: 'running' })
+      .set({ status: 'running', awake_since: now, next_wake_at: null })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', machine.status)
@@ -130,9 +139,16 @@ async function markRunning(db: PlatformDB, machine: UserMachineRecord): Promise<
   return { result: { state: 'running' }, machine: current };
 }
 
-async function runWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: UserMachineRecord, log: Log): Promise<WakeResult> {
+async function runWake(
+  db: PlatformDB,
+  substrate: RuntimeSubstrate,
+  machine: UserMachineRecord,
+  log: Log,
+  options: WakeOptions,
+): Promise<WakeResult> {
   let result: EnsureRunningResult;
-  const signal = AbortSignal.timeout(WAKE_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(WAKE_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
   try {
     result = await substrate.ensureRunning({
       machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
@@ -146,7 +162,7 @@ async function runWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: Use
   }
   if (result.state !== 'running') return { result };
   try {
-    return await markRunning(db, machine);
+    return await markRunning(db, machine, (options.now ?? (() => new Date()))());
   } catch (error: unknown) {
     // A database failure is not "not found": answer unavailable and let the client retry.
     log('[substrate-wake] recording running failed', {
@@ -156,10 +172,16 @@ async function runWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: Use
   }
 }
 
-function sharedWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: UserMachineRecord, log: Log): Promise<WakeResult> {
+function sharedWake(
+  db: PlatformDB,
+  substrate: RuntimeSubstrate,
+  machine: UserMachineRecord,
+  log: Log,
+  options: WakeOptions = {},
+): Promise<WakeResult> {
   const pending = inFlightWakes.get(machine.machineId);
   if (pending) return pending;
-  const promise = runWake(db, substrate, machine, log).finally(() => {
+  const promise = runWake(db, substrate, machine, log, options).finally(() => {
     if (inFlightWakes.get(machine.machineId) === promise) inFlightWakes.delete(machine.machineId);
   });
   inFlightWakes.set(machine.machineId, promise);
@@ -170,6 +192,19 @@ function sharedWake(db: PlatformDB, substrate: RuntimeSubstrate, machine: UserMa
     inFlightWakes.delete(oldest);
   }
   return promise;
+}
+
+/**
+ * Starts an on-demand runtime outside a request (the idle sleeper's scheduled
+ * wake), sharing the single in-flight wake with any concurrent owner request.
+ */
+export function wakeOnDemandRuntime(
+  db: PlatformDB,
+  substrate: RuntimeSubstrate,
+  machine: UserMachineRecord,
+  options: WakeOptions = {},
+): Promise<WakeResult> {
+  return sharedWake(db, substrate, machine, options.log ?? defaultLog, options);
 }
 
 /**

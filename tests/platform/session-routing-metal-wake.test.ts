@@ -67,6 +67,18 @@ describe('waking a metal runtime from every entry point', () => {
     expect(proxied!.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
   });
 
+  it('an owner wake stamps awake_since, clears the scheduled wake, and fences the resume to the generation', async () => {
+    await setup({ nextWakeAt: '2026-11-21T13:00:00.000Z', awakeSince: null });
+    const before = Date.now();
+    const response = await platform.request('/api/projects', { headers: OWNER_SESSION });
+
+    expect(response.status).toBe(200);
+    const machine = await rig.machine();
+    expect(machine).toMatchObject({ status: 'running', nextWakeAt: null });
+    expect(Date.parse(machine?.awakeSince ?? '')).toBeGreaterThanOrEqual(before - 1_000);
+    expect(JSON.parse(rig.resumeCalls()[0]?.body ?? '{}')).toEqual({ budgetMs: 8000, expectedGeneration: 3 });
+  });
+
   it('concurrent owner requests share one resume', async () => {
     await setup();
     rig.resume = { kind: 'state', state: 'running', delayMs: 300 };

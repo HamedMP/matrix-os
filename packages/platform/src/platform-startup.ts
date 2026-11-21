@@ -1181,9 +1181,10 @@ async function startPlatformServerWithCleanup(
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const substrateRegistry = createPlatformSubstrateRegistry(db, appEnv);
-  // Metal provisioning (spec 2691): free signup's provisioner plus the stale-row and teardown maintenance pass.
+  // Metal provisioning (spec 2691): free signup's provisioner, the stale-row and teardown maintenance pass,
+  // and the idle sleeper (MATRIX_FREE_TIER_SLEEP_ENABLED) that suspends idle free runtimes and wakes them for scheduled work.
   const metalRuntime = createConfiguredMetalRuntime({
-    db, env: appEnv, backgroundWorkersEnabled,
+    db, env: appEnv, backgroundWorkersEnabled, substrates: substrateRegistry, platformSecret,
     customerVps: customerVpsDependencies
       ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
       : undefined,
@@ -1287,7 +1288,7 @@ async function startPlatformServerWithCleanup(
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
-        // Drain the metal maintenance pass (DB writes, hostd deletes) before the pool closes.
+        // Drain the metal maintenance pass (DB writes, hostd deletes) and sleeper tick before the pool closes.
         await metalShutdown;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),

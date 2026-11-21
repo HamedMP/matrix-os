@@ -12,6 +12,7 @@ import {
   HostdResumeRequestSchema,
   HostdResumeResponseSchema,
   HostdStopResponseSchema,
+  HostdSuspendRequestSchema,
   HostdSuspendResponseSchema,
   HostdVmIdSchema,
   HostdVmSchema,
@@ -37,6 +38,12 @@ import type { MetalHost } from './metal-hosts-repository.js';
 export const HOSTD_API_TIMEOUT_MS = 10_000;
 export const HOSTD_CREATE_TIMEOUT_MS = 120_000;
 export const HOSTD_RESUME_GRACE_MS = 2_000;
+/**
+ * A fenced suspend can wait in hostd's per-VM queue for up to 120 s behind a
+ * create (15 s behind a resume) before hostd answers 202, so the client waits
+ * longer than that.
+ */
+export const HOSTD_SUSPEND_TIMEOUT_MS = 140_000;
 export const HOSTD_RESPONSE_LIMIT_BYTES = 64 * 1024;
 const MIN_TOKEN_LENGTH = 32;
 
@@ -58,14 +65,20 @@ export interface HostdClientOptions {
   timeoutMs?: number;
   createTimeoutMs?: number;
   resumeGraceMs?: number;
+  suspendTimeoutMs?: number;
+}
+
+/** Fences a resume or suspend to the platform's generation of the VM; hostd answers 409 (`conflict`) on a mismatch. */
+export interface HostdFence {
+  expectedGeneration: number;
 }
 
 export interface HostdClient {
   createVm(spec: HostdCreateVmRequest, signal?: AbortSignal): Promise<HostdCreateVmResponse>;
   listVms(signal?: AbortSignal): Promise<HostdVm[]>;
   getVm(vmId: string, signal?: AbortSignal): Promise<HostdVm>;
-  resume(vmId: string, budgetMs: number, signal?: AbortSignal): Promise<HostdResumeResponse>;
-  suspend(vmId: string, signal?: AbortSignal): Promise<HostdSuspendResponse>;
+  resume(vmId: string, budgetMs: number, signal?: AbortSignal, fence?: HostdFence): Promise<HostdResumeResponse>;
+  suspend(vmId: string, signal?: AbortSignal, fence?: HostdFence): Promise<HostdSuspendResponse>;
   stop(vmId: string, signal?: AbortSignal): Promise<HostdStopResponse>;
   destroy(vmId: string, signal?: AbortSignal): Promise<void>;
   setPolicy(vmId: string, policy: HostdPolicyRequest, signal?: AbortSignal): Promise<HostdVm>;
@@ -133,6 +146,7 @@ export function createHostdClient(
   const timeoutMs = options.timeoutMs ?? HOSTD_API_TIMEOUT_MS;
   const createTimeoutMs = options.createTimeoutMs ?? HOSTD_CREATE_TIMEOUT_MS;
   const resumeGraceMs = options.resumeGraceMs ?? HOSTD_RESUME_GRACE_MS;
+  const suspendTimeoutMs = options.suspendTimeoutMs ?? HOSTD_SUSPEND_TIMEOUT_MS;
 
   async function call<T>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
@@ -189,9 +203,9 @@ export function createHostdClient(
     async getVm(vmId, signal) {
       return call('GET', vmPath(vmId), HostdVmSchema, { signal });
     },
-    async resume(vmId, budgetMs, signal) {
+    async resume(vmId, budgetMs, signal, fence) {
       const path = vmPath(vmId, '/resume');
-      const body = HostdResumeRequestSchema.safeParse({ budgetMs });
+      const body = HostdResumeRequestSchema.safeParse(fence ? { budgetMs, expectedGeneration: fence.expectedGeneration } : { budgetMs });
       if (!body.success) throw new HostdError('bad_request');
       return call('POST', path, HostdResumeResponseSchema, {
         body: body.data,
@@ -199,8 +213,12 @@ export function createHostdClient(
         signal,
       });
     },
-    async suspend(vmId, signal) {
-      return call('POST', vmPath(vmId, '/suspend'), HostdSuspendResponseSchema, { signal });
+    async suspend(vmId, signal, fence) {
+      const path = vmPath(vmId, '/suspend');
+      if (!fence) return call('POST', path, HostdSuspendResponseSchema, { signal, timeoutMs: suspendTimeoutMs });
+      const body = HostdSuspendRequestSchema.safeParse({ expectedGeneration: fence.expectedGeneration });
+      if (!body.success) throw new HostdError('bad_request');
+      return call('POST', path, HostdSuspendResponseSchema, { body: body.data, signal, timeoutMs: suspendTimeoutMs });
     },
     async stop(vmId, signal) {
       return call('POST', vmPath(vmId, '/stop'), HostdStopResponseSchema, { signal });
