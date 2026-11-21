@@ -90,8 +90,16 @@ unchanged.
   own reports (OSC 7501 is native there), so Herdr sessions get Herdr's five
   words without hooks, and feed the attention pop-up and later the 2697 inbox.
 - **Coexistence.** The Herdr app attaches to the same core concurrently.
-  Matrix uses observe leases by default and never resizes a terminal another
-  client is driving unless the person takes control.
+  Viewers observe by default (`lease=observe`); a pane that asks for and holds
+  the exclusive lease, under the same rules as `/ws/terminal/tab`, is the
+  writer: it types and sets the terminal's size. Only the writer resizes, so
+  Matrix never resizes a terminal while nobody in Matrix is typing in it.
+- **Writer size for verbs.** The adapter remembers the last size a Matrix
+  writer used per terminal (LRU, bounded). `send`/`keys` type through a short
+  attachment at that size (120×36 when none), so a verb does not fight the
+  open pane's size. `read` attaches as an observer and renders the core's paint
+  on a 300×100 grid (≤ 10,000 scrollback lines, ≤ 8 MiB) so the core's screen
+  is neither wrapped nor clipped.
 
 ### Layer 3 · Surfaces
 
