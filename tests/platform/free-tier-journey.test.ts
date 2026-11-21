@@ -213,6 +213,16 @@ describe('onboarding journey on the free plan', () => {
     expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
   });
 
+  it('keeps an invited owner with an older open paid checkout out of the free plan', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await insertCheckoutAttempt(db, { id: 'att-old', clerkUserId: OWNER, stripeSessionId: 'cs_open_old', createdAt: new Date(NOW.getTime() - 2 * 60 * 60_000).toISOString() });
+    const { app } = journeyApp();
+    expect((await journey(app)).phase).toBe('plan_required');
+    expect((await retry(app)).status).toBe(402);
+    expect(createVm).not.toHaveBeenCalled();
+    expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
+  });
+
   it('answers a pending account deletion during journey provisioning with its own code', async () => {
     const app = createJourneyRoutes({
       db, resolveUserId: async () => OWNER, appOrigin: APP_ORIGIN, env: {}, maxProvisionAttempts: 3, now: () => NOW,

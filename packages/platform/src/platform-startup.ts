@@ -1275,6 +1275,11 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        // Started first so a rejected step below cannot skip draining the metal maintenance pass.
+        const metalShutdown = metalRuntime?.shutdown().catch((metalErr: unknown) => {
+          exitCode = 1;
+          console.error('[platform] Metal runtime shutdown failed:', metalErr instanceof Error ? metalErr.name : 'unknown');
+        });
         await accountDeletion?.drain();
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
@@ -1283,7 +1288,7 @@ async function startPlatformServerWithCleanup(
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         // Drain the metal maintenance pass (DB writes, hostd deletes) before the pool closes.
-        await metalRuntime?.shutdown();
+        await metalShutdown;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),

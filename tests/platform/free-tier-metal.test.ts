@@ -316,6 +316,15 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(hostd.createVm).not.toHaveBeenCalled();
   });
 
+  it('gives no free admission while an older paid checkout session is still open', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    // Stripe sessions stay open for up to 24 hours, well past the settling screen's window.
+    await insertCheckoutAttempt(db, { id: 'att-old', clerkUserId: OWNER, stripeSessionId: 'cs_open_old', createdAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString() });
+    expect((await request(routesFor().routes)).status).toBe(402);
+    expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
+    expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
   it('gives an invited owner with an active prebilling intent no free admission', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     // The checkout attempt itself has expired; only the prebilling intent is still active.

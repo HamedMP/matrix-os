@@ -97,6 +97,12 @@ describe('/billing/status for the free plan on metal', () => {
     expect((await status()).access.runtimeProxyAllowed).toBe(false);
   });
 
+  it('does not report free access while an older paid checkout session is still open', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await insertCheckoutAttempt(db, { id: 'att-old', clerkUserId: OWNER, stripeSessionId: 'cs_open_old', createdAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString() });
+    expect((await status()).access.runtimeProxyAllowed).toBe(false);
+  });
+
   it('keeps an uninvited owner on billing required', async () => {
     expect((await status()).access).toMatchObject({ runtimeProxyAllowed: false, reason: 'no_entitlement' });
   });

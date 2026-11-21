@@ -18,8 +18,12 @@ describe('metal runtime shutdown wiring', () => {
     const closeIndex = shutdown.indexOf('(server as Server).close(');
     expect(stopIndex).toBeGreaterThan(0);
     expect(stopIndex).toBeLessThan(closeIndex);
-    const drainIndex = shutdown.indexOf('await metalRuntime?.shutdown()');
-    expect(drainIndex).toBeGreaterThan(closeIndex);
+    // The drain starts before any other awaited step, so an earlier rejection cannot skip it.
+    const startIndex = shutdown.indexOf('const metalShutdown = metalRuntime?.shutdown()');
+    expect(startIndex).toBeGreaterThan(closeIndex);
+    expect(startIndex).toBeLessThan(shutdown.indexOf('await accountDeletion?.drain()'));
+    const drainIndex = shutdown.indexOf('await metalShutdown;');
+    expect(drainIndex).toBeGreaterThan(startIndex);
     expect(drainIndex).toBeLessThan(shutdown.indexOf('await Promise.allSettled(['));
     expect(drainIndex).toBeLessThan(shutdown.indexOf('closePrimaryDb()'));
   });

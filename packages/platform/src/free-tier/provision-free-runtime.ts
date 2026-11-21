@@ -2,12 +2,10 @@ import { sql } from 'kysely';
 import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { toBillingEntitlementRow } from '../database/billing-records.js';
 import {
-  getActiveCheckoutAttempt,
   getActiveUserMachineByClerkId,
   getSettlingCheckoutAttempt,
   type PlatformDB,
 } from '../db.js';
-import { DEFAULT_SETTLING_WINDOW_MS } from '../journey.js';
 import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
 import type { MetalProvisioner } from '../substrates/metal-provisioner.js';
 import type { FreeTierConfig } from './config.js';
@@ -67,17 +65,14 @@ type Admission =
   | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' | 'checkout_pending' };
 
 /**
- * A paid checkout for the free slot is in flight: a confirmed (`paid`) attempt,
- * an `open`/`creating` one inside the journey's settling window, or an active
- * prebilling intent. The paid flow owns the slot then, exactly as the journey's
- * payment_settling phase does, so free admission must not race it.
+ * A paid checkout for the free slot is in flight: any `paid` or `open` attempt
+ * (whatever its age; a Stripe session stays open for up to 24 hours) or an
+ * active prebilling intent. This is exactly the journey's free-plan rule
+ * (`!checkoutAttempt`, from the same getSettlingCheckoutAttempt query), so
+ * billing status, provisioning, and the journey always agree.
  */
-async function paidCheckoutPending(db: PlatformDB, clerkUserId: string, now: Date): Promise<boolean> {
-  const withinWindow = (createdAt: string) => now.getTime() - Date.parse(createdAt) <= DEFAULT_SETTLING_WINDOW_MS;
-  const settling = await getSettlingCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT);
-  if (settling && (settling.status === 'paid' || withinWindow(settling.createdAt))) return true;
-  const active = await getActiveCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT);
-  if (active && withinWindow(active.createdAt)) return true;
+async function paidCheckoutPending(db: PlatformDB, clerkUserId: string): Promise<boolean> {
+  if (await getSettlingCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT)) return true;
   return Boolean(await getActivePrebillingIntent(db, clerkUserId, FREE_RUNTIME_SLOT));
 }
 
@@ -102,7 +97,7 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
         return entitlement ? { kind: 'existing', runtime: toRecord(current) } : { kind: 'runtime_exists' };
       }
       // Checked under the billing owner lock, which checkout creation also takes.
-      if (await paidCheckoutPending(trx, clerkUserId, now())) return { kind: 'checkout_pending' };
+      if (await paidCheckoutPending(trx, clerkUserId)) return { kind: 'checkout_pending' };
       // Already admitted: the invite was redeemed and the owner is counted.
       if (entitlement) return { kind: 'admitted' };
       if (config.inviteRequired) {
@@ -137,10 +132,10 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       const entitlement = await db.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
       if (entitlement && entitlement.source !== 'free') return false;
-      if (entitlement) return !(await paidCheckoutPending(db, clerkUserId, now()));
+      if (entitlement) return !(await paidCheckoutPending(db, clerkUserId));
       // A metal runtime without a free entitlement belongs to another plan.
       if (current && current.status !== 'failed') return false;
-      if (await paidCheckoutPending(db, clerkUserId, now())) return false;
+      if (await paidCheckoutPending(db, clerkUserId)) return false;
       if (!config.inviteRequired) return true;
       const invite = await getFreeTierInvite(db, clerkUserId);
       return Boolean(invite && !invite.consumedAt);
