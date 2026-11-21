@@ -217,6 +217,9 @@ export function registerHerdrTerminalWebSocket(options: {
             key, viewerId, exclusive: lease === "exclusive", observe: lease !== "exclusive",
             onRevoked: (epoch) => send({ type: "lease-revoked", terminalRef, epoch }),
           });
+          // Everyone but the writer attaches watch-only, so herdr-core never
+          // lets a Matrix observer resize the program the owner's Herdr app is using.
+          const writer = options.terminalLiveOwnership.role(key, viewerId) === "writer";
           const opened = await adapter.attach(id, { cols, rows }, {
             output: (data, consumed) => {
               if (attached) output(data, consumed);
@@ -231,7 +234,7 @@ export function registerHerdrTerminalWebSocket(options: {
               if (reason === "exited") ws.close(1000, "Terminal ended");
               else ws.close(CONNECTION_LOST_CLOSE, "Terminal connection lost");
             },
-          });
+          }, writer ? {} : { observe: true });
           if (closed) { opened.detach(); return; }
           attachment = opened;
           const role = options.terminalLiveOwnership.role(key, viewerId);
