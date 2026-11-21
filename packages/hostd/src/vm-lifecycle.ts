@@ -136,6 +136,13 @@ export class LifecycleError extends Error {
 }
 
 const MiB = 1024 * 1024;
+// Free-tier limits, enforced here as defense in depth (the platform enforces them too).
+export const FREE_BOOT_MIB = 2048;
+export const FREE_MAX_MIB = 8192;
+export const FREE_DISK_GIB = 20;
+// Host maximum for any VM.
+export const HOST_MAX_MIB = 131_072;
+const maxMiBFor = (tier: VmTier) => (tier === "free" ? FREE_MAX_MIB : HOST_MAX_MIB);
 const MAX_USER_DATA_BYTES = 64 * 1024;
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -168,7 +175,9 @@ function validateSpec(spec: CreateVmSpec): void {
     spec.diskGiB > 0 &&
     typeof spec.userData === "string" &&
     Buffer.byteLength(spec.userData) <= MAX_USER_DATA_BYTES &&
-    SAFE_VERSION.test(spec.goldenVersion);
+    SAFE_VERSION.test(spec.goldenVersion) &&
+    spec.maxMiB <= maxMiBFor(spec.tier) &&
+    (spec.tier !== "free" || (spec.bootMiB === FREE_BOOT_MIB && spec.diskGiB <= FREE_DISK_GIB));
   if (!ok) throw new LifecycleError("invalid", "invalid VM spec");
 }
 
@@ -217,7 +226,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function save(record: VmRecord, patch: Partial<VmRecord>): Promise<VmRecord> {
-    const next = { ...record, ...patch, updatedAt: new Date(clock.now()).toISOString() };
+    const next: VmRecord = { ...record, ...patch, updatedAt: new Date(clock.now()).toISOString() };
+    if (next.state !== "failed") delete next.failedDuring;
     await store.put(next);
     return next;
   }
@@ -317,13 +327,17 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     // Allocation is serialized host-wide so two creates never share an address or a machine.
     const claim = allocation.then(async () => {
       let existing = (await store.list()).find((r) => r.machineId === spec.machineId);
-      if (existing?.state === "failed" && existing.generation === spec.generation) {
-        // A failed attempt is not a VM: clear it and create afresh.
+      if (existing?.state === "failed" && existing.failedDuring === "create" && existing.generation === spec.generation) {
+        // A create that never finished holds no owner data: clear it and create afresh.
         const failedId = existing.id;
         await enqueue(failedId, "destroy", () => destroy(failedId));
         existing = undefined;
       }
       if (existing !== undefined) {
+        if (existing.state === "failed") {
+          // A VM that failed after creation has a real disk: never reprovision it here.
+          throw new LifecycleError("conflict", "machine has a failed VM that must be recovered");
+        }
         if (existing.generation === spec.generation) return { record: existing, fresh: false, address: 0 };
         throw new LifecycleError("conflict", "machine already has a VM with another generation");
       }
@@ -371,7 +385,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         return await save(record, { state: "running" });
       } catch (error: unknown) {
         log("vm_create_failed", { id: record.id, ...errorFields(error) });
-        await save(record, { state: "failed" });
+        await save(record, { state: "failed", failedDuring: "create" });
         throw new LifecycleError("failed", "VM creation failed", { cause: error });
       }
     });
@@ -564,7 +578,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       (tier === "free" || tier === "paid") &&
       Number.isSafeInteger(maxMiB) &&
       maxMiB > record.bootMiB &&
-      maxMiB % 128 === 0;
+      maxMiB % 128 === 0 &&
+      maxMiB <= maxMiBFor(tier);
     if (!valid) throw new LifecycleError("invalid", "invalid VM policy");
     if (record.state === "creating") throw new LifecycleError("conflict", "VM is still being created");
     const envPath = join(cfg.vmsDir, id, "unit.env");

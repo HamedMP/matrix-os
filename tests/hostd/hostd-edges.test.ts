@@ -66,6 +66,8 @@ describe("VM store edges", () => {
   it("rejects records that are not objects or carry an invalid snapshot", () => {
     expect(() => parseVmRecord(null)).toThrow("invalid VM record");
     expect(() => parseVmRecord({ ...record(), snapshot: "x" })).toThrow("invalid VM record");
+    expect(() => parseVmRecord({ ...record(), failedDuring: "later" })).toThrow("invalid VM record");
+    expect(parseVmRecord({ ...record(), state: "failed", failedDuring: "runtime" }).failedDuring).toBe("runtime");
   });
 
   it("removes the temp file when an atomic write fails", async () => {

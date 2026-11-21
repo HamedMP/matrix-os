@@ -72,14 +72,14 @@ const CreateVmRequest = z.strictObject({
   handle: z.string().regex(SAFE_HANDLE),
   tier: z.enum(["free", "paid"]),
   bootMiB: mib(65_536),
-  maxMiB: mib(262_144),
+  maxMiB: mib(131_072),
   diskGiB: z.int().min(1).max(1024),
   userData: z.string().refine((value) => Buffer.byteLength(value) <= MAX_BODY_BYTES),
   goldenVersion: z.string().regex(SAFE_VERSION),
 });
 
 const ResumeRequest = z.strictObject({ budgetMs: z.int().min(0) });
-const PolicyRequest = z.strictObject({ tier: z.enum(["free", "paid"]), maxMiB: mib(262_144) });
+const PolicyRequest = z.strictObject({ tier: z.enum(["free", "paid"]), maxMiB: mib(131_072) });
 const VmId = z.string().regex(VM_ID_PATTERN);
 
 // The client view of a record: host paths (the snapshot dir) stay on the host.
@@ -98,6 +98,7 @@ export function publicVm(record: VmRecord) {
     chVersion: record.chVersion,
     snapshot: record.snapshot === null ? null : { takenAt: record.snapshot.takenAt, chVersion: record.snapshot.chVersion },
     updatedAt: record.updatedAt,
+    ...(record.failedDuring === undefined ? {} : { failedDuring: record.failedDuring }),
   };
 }
 

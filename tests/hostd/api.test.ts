@@ -201,6 +201,28 @@ describe("hostd API", () => {
     }
   });
 
+  it("create answers 409 for a VM that failed after it was created, keeping its disk", async () => {
+    await store.put(record({ machineId: "machine-1", generation: 2, handle: "alice", state: "failed" }));
+    const res = await send(api(), "POST", "/v1/vms", { body, headers: auth });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "conflict" });
+    await expect(store.get(record().id)).resolves.toMatchObject({ state: "failed" });
+  });
+
+  it("enforces free-tier limits with bad_request", async () => {
+    const app = api();
+    for (const patch of [{ bootMiB: 4096 }, { maxMiB: 16384 }, { diskGiB: 40 }]) {
+      const res = await send(app, "POST", "/v1/vms", { body: { ...body, ...patch }, headers: auth });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "bad_request" });
+    }
+    const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
+    const raise = await send(app, "PUT", `/v1/vms/${created.id}/policy`, { body: { tier: "free", maxMiB: 16384 }, headers: auth });
+    expect(raise.status).toBe(400);
+    const huge = await send(app, "PUT", `/v1/vms/${created.id}/policy`, { body: { tier: "paid", maxMiB: 262144 }, headers: auth });
+    expect(huge.status).toBe(400);
+  });
+
   it("resume clamps budgetMs to 15000", async () => {
     await store.put(record());
     const resume = vi.fn(async () => "starting" as const);

@@ -11,6 +11,7 @@ import {
   type VmLifecycle,
   type VmLifecycleDeps,
 } from "../../packages/hostd/src/vm-lifecycle.js";
+import { reconcileVms } from "../../packages/hostd/src/reconcile.js";
 import { createVmStore, type VmRecord, type VmStore } from "../../packages/hostd/src/vm-store.js";
 
 // Failure and edge paths of the VM lifecycle: queue limits, restore retries,
@@ -322,5 +323,106 @@ describe("VM lifecycle edges", () => {
   it("destroy ignores an invalid id", async () => {
     await expect(make().destroy("../etc")).resolves.toBeUndefined();
     expect(execCalls).toEqual([]);
+  });
+});
+
+describe("repeated create never destroys a VM that has a real disk", () => {
+  const destroyed = () => execCalls.some((c) => c[0] === "lvremove" || (c[0] === "systemctl" && c[1] === "stop"));
+
+  async function expectKept(lifecycle: VmLifecycle, id: string) {
+    execCalls = [];
+    await expect(lifecycle.create(spec)).rejects.toMatchObject({ code: "conflict" });
+    expect(destroyed()).toBe(false);
+    await expect(store.get(id)).resolves.toMatchObject({ id, state: "failed" });
+  }
+
+  it("keeps a VM that failed during a resume whose cold boot failed", async () => {
+    const lifecycle = make({}, { restoreTimeoutMs: 200 });
+    const vm = await lifecycle.create(spec);
+    await lifecycle.suspend(vm.id);
+    chOverrides = { info: async () => Promise.reject(new ChError("unreachable", "down")) };
+    execFail = (argv) => (argv[1] === "start" && argv[2]!.startsWith("matrix-vm@") ? 1 : undefined);
+    await expect(lifecycle.resume(vm.id, 100)).rejects.toMatchObject({ code: "failed" });
+    execFail = () => undefined;
+    await expectKept(lifecycle, vm.id);
+  });
+
+  it("keeps a VM left paused by a failed snapshot", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chOverrides = {
+      snapshot: async () => Promise.reject(new ChError("rejected", "x")),
+      resume: async () => Promise.reject(new ChError("rejected", "x")),
+    };
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
+    chOverrides = {};
+    await expectKept(lifecycle, vm.id);
+  });
+
+  it("keeps a VM whose snapshot swap failed", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chOverrides = {
+      async snapshot(dir) {
+        await writeFile(join(dir, "memory-ranges"), "mem");
+        await chmod(snapshotsDir, 0o500);
+      },
+    };
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "failed" });
+    await chmod(snapshotsDir, 0o700);
+    chOverrides = {};
+    await expectKept(lifecycle, vm.id);
+  });
+
+  it("keeps a VM failed by reconcile after an interrupted suspend, but recreates one reconciled from creating", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    await store.put({ ...(await store.get(vm.id))!, state: "suspending" });
+    const inactive: Exec = async () => ({ code: 3, stdout: "", stderr: "" });
+    await reconcileVms({ store, exec: inactive, ch: () => ch(), snapshotsDir, log: () => undefined });
+    await expectKept(lifecycle, vm.id);
+
+    const other = { ...spec, machineId: "machine-2", handle: "bob" };
+    const second = await lifecycle.create(other);
+    await store.put({ ...(await store.get(second.id))!, state: "creating" });
+    await reconcileVms({ store, exec: inactive, ch: () => ch(), snapshotsDir, log: () => undefined });
+    await expect(store.get(second.id)).resolves.toMatchObject({ state: "failed", failedDuring: "create" });
+    const again = await lifecycle.create(other);
+    expect(again.id).not.toBe(second.id);
+    await expect(store.get(second.id)).resolves.toBeNull();
+  });
+
+  it("marks a failed create, and clears the marker once the VM runs", async () => {
+    execFail = (argv) => (argv[0] === "lvcreate" ? 5 : undefined);
+    const lifecycle = make();
+    await expect(lifecycle.create(spec)).rejects.toMatchObject({ code: "failed" });
+    const [failed] = await store.list();
+    expect(failed).toMatchObject({ state: "failed", failedDuring: "create" });
+    execFail = () => undefined;
+    const started = await lifecycle.start(failed!.id);
+    expect(started.failedDuring).toBeUndefined();
+  });
+});
+
+describe("free-tier limits", () => {
+  it("rejects a free VM that is not booted at 2048 MiB, exceeds 8192 MiB, or exceeds 20 GiB", async () => {
+    const lifecycle = make();
+    for (const patch of [{ bootMiB: 1024 }, { bootMiB: 4096 }, { maxMiB: 8320 }, { diskGiB: 21 }]) {
+      await expect(lifecycle.create({ ...spec, ...patch })).rejects.toMatchObject({ code: "invalid" });
+    }
+    await expect(lifecycle.create({ ...spec, tier: "paid", bootMiB: 4096, maxMiB: 131072, diskGiB: 200 })).resolves.toMatchObject({
+      state: "running",
+    });
+    await expect(
+      lifecycle.create({ ...spec, machineId: "m-big", handle: "big", tier: "paid", maxMiB: 131200 }),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("refuses to raise a free VM above 8192 MiB and a paid VM above 128 GiB", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    await expect(lifecycle.setPolicy(vm.id, { tier: "free", maxMiB: 8320 })).rejects.toMatchObject({ code: "invalid" });
+    await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 131200 })).rejects.toMatchObject({ code: "invalid" });
+    await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 131072 })).resolves.toMatchObject({ maxMiB: 131072 });
   });
 });

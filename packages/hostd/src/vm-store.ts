@@ -30,7 +30,13 @@ export interface VmRecord {
   chVersion: string;
   snapshot: VmSnapshotRef | null;
   updatedAt: string;
+  // Set with state "failed": "create" means the VM never finished creating
+  // (no owner data), so a repeated create may destroy and recreate it.
+  // Absent on any other failure: that VM has a real disk and must be recovered.
+  failedDuring?: VmFailedDuring;
 }
+
+export type VmFailedDuring = "create" | "runtime";
 
 export interface VmStore {
   get(id: string): Promise<VmRecord | null>;
@@ -117,7 +123,8 @@ export function parseVmRecord(value: unknown): VmRecord {
     isCount(r.diskGiB) &&
     isString(r.chVersion) &&
     (r.snapshot === null || isSnapshot(r.snapshot)) &&
-    isString(r.updatedAt);
+    isString(r.updatedAt) &&
+    (r.failedDuring === undefined || r.failedDuring === "create" || r.failedDuring === "runtime");
   if (!valid) throw new VmStoreError("invalid VM record");
   const snapshot = r.snapshot as VmSnapshotRef | null;
   return {
@@ -135,6 +142,7 @@ export function parseVmRecord(value: unknown): VmRecord {
     chVersion: r.chVersion as string,
     snapshot: snapshot === null ? null : { dir: snapshot.dir, takenAt: snapshot.takenAt, chVersion: snapshot.chVersion },
     updatedAt: r.updatedAt as string,
+    ...(r.failedDuring === undefined ? {} : { failedDuring: r.failedDuring as VmFailedDuring }),
   };
 }
 

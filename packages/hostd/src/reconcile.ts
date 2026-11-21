@@ -82,7 +82,12 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
         snapshot: { dir: join(deps.snapshotsDir, id), takenAt: new Date(takenAt).toISOString(), chVersion: record.chVersion },
       };
     }
-    return { state: "failed" };
+    return failed(record);
+  }
+
+  // Only a record that never finished creating holds no owner data.
+  function failed(record: VmRecord): Partial<VmRecord> {
+    return record.state === "creating" ? { state: "failed", failedDuring: "create" } : { state: "failed" };
   }
 
   for (const record of await deps.store.list()) {
@@ -92,7 +97,7 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
       patch = await settle(record);
     } catch (error: unknown) {
       log("reconcile.query_failed", { id: record.id, ...errorFields(error) });
-      patch = { state: "failed" };
+      patch = failed(record);
     }
     await deps.store.put({ ...record, ...patch, updatedAt: new Date(now()).toISOString() });
     log("reconcile.settled", { id: record.id, from: record.state, to: patch.state });
