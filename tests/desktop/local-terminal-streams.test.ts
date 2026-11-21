@@ -131,7 +131,8 @@ describe("local terminal streams", () => {
   it("sends the window only the output's own bytes, not the socket read around them", async () => {
     ports.streams.open(3);
     const view = window(3);
-    const read = new Uint8Array(64 * 1024).fill(0x61);
+    // Socket reads arrive as Node Buffers, whose slice() is a view, not a copy.
+    const read = Buffer.alloc(64 * 1024, 0x61);
     ports.output(3, read.subarray(100, 116));
     await vi.waitFor(() => expect(view.output).toHaveLength(1));
     expect(view.output[0]!.byteLength).toBe(16);

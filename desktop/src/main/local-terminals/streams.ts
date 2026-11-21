@@ -106,7 +106,8 @@ export function createLocalTerminalStreams<WindowPort>(options: {
       if (!port) { host?.acknowledge(attachId, 1); return; }
       // Structured clone copies a view's whole backing buffer, which for a
       // frame inside a socket read is the entire read: post only these bytes.
-      port.postMessage(data.byteOffset === 0 && data.byteLength === data.buffer.byteLength ? data : data.slice());
+      // An explicit copy, because a Node Buffer's slice() is another view.
+      port.postMessage(data.byteOffset === 0 && data.byteLength === data.buffer.byteLength ? data : Uint8Array.from(data));
     },
     closed(attachId) {
       if (!ports.has(attachId)) open(attachId);
