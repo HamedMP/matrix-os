@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { TerminalRefSchema } from "@matrix-os/contracts";
+import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { z } from "zod/v4";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -62,10 +63,13 @@ export function createTerminalAgentRoutes(options: {
   app.use("/workspaces/:workspaceId/tabs/:tabId", ownerGate);
 
   async function ownerGate(c: Context, next: () => Promise<void>) {
+    // Herdr terminals (spec 2701) are the owner's personal shells: preview
+    // delegation never reaches them, only the owner's own principal does.
+    const herdr = isHerdrTerminalRef({ workspaceId: c.req.param("workspaceId") ?? "" });
     const access = terminalRuntimeOwnerAccess(
       options.getPrincipal(c),
       options.terminalOwnerIds,
-      options.getPreviewTerminalOwner?.(c),
+      herdr ? undefined : options.getPreviewTerminalOwner?.(c),
     );
     if (access === "unavailable") return c.json({ error: "Terminal operation unavailable" }, 503);
     if (access === "not_found") return c.json({ error: "Terminal operation failed" }, 404);

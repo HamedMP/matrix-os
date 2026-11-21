@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
 import { describe, expect, it, vi } from "vitest";
 import { createTerminalAgentRoutes } from "../../packages/gateway/src/terminal-agent/routes.js";
 import { TerminalAgentVerbError, type TerminalAgentVerbs } from "../../packages/gateway/src/terminal-agent/verbs.js";
@@ -10,6 +11,7 @@ const base = `/api/terminal/workspaces/${workspaceId}/tabs/${tabId}`;
 function app(options: {
   verbs?: Partial<TerminalAgentVerbs>;
   userId?: string;
+  previewOwner?: string;
   withWorkspace?: ReturnType<typeof vi.fn>;
   waiter?: { wait: ReturnType<typeof vi.fn>; shutdown: () => void };
 } = {}) {
@@ -28,6 +30,7 @@ function app(options: {
     verbs,
     ...(options.waiter ? { waiter: options.waiter as never } : {}),
     getPrincipal: () => ({ userId: options.userId ?? "user_owner", source: "jwt" as const }),
+    ...(options.previewOwner ? { getPreviewTerminalOwner: () => options.previewOwner } : {}),
     terminalOwnerIds: ["user_owner"],
     projectAdmission: { withWorkspace, withProject: vi.fn() } as never,
   }));
@@ -56,6 +59,33 @@ describe("terminal agent routes", () => {
     }
     expect(verbs.read).not.toHaveBeenCalled();
     expect(verbs.send).not.toHaveBeenCalled();
+  });
+
+  // Fault detected: a preview collaborator reads or types into the owner's personal Herdr shells.
+  it("keeps Herdr terminals to the real owner, even for a delegated preview collaborator", async () => {
+    const herdrBase = `/api/terminal/workspaces/${HERDR_TERMINAL_WORKSPACE_ID}/tabs/${tabId}`;
+    const collaborator = app({ userId: "user_collaborator", previewOwner: "user_owner" });
+    for (const [path, init] of [
+      [`${herdrBase}`, undefined],
+      [`${herdrBase}/read?lines=10`, undefined],
+      [`${herdrBase}/send`, post({ text: "hi" })],
+      [`${herdrBase}/keys`, post({ keys: ["enter"] })],
+      [`${herdrBase}/interrupt`, post({})],
+      [`${herdrBase}/wait`, post({ timeoutMs: 0 })],
+    ] as const) {
+      const response = await collaborator.hono.request(path, init);
+      expect(response.status, path).toBe(404);
+    }
+    expect(collaborator.verbs.get).not.toHaveBeenCalled();
+    expect(collaborator.verbs.read).not.toHaveBeenCalled();
+    expect(collaborator.verbs.send).not.toHaveBeenCalled();
+    expect(collaborator.verbs.keys).not.toHaveBeenCalled();
+    expect(collaborator.verbs.interrupt).not.toHaveBeenCalled();
+    // The same delegation still reaches the owner's Matrix tabs.
+    expect((await collaborator.hono.request(`${base}/read`)).status).toBe(200);
+    // And the owner still reaches Herdr terminals.
+    const owner = app();
+    expect((await owner.hono.request(`${herdrBase}/read`)).status).toBe(200);
   });
 
   it("reads with a validated line count", async () => {
