@@ -238,6 +238,26 @@ OPT_ACCESS=tailscale OPT_LOGIN_SERVER="" MATRIX_INSTALL_LOG="${join(dir, "instal
     expect(existsSync(key)).toBe(false);
   });
 
+  it("prints the Tailscale login link while the login is still waiting, without a terminal", () => {
+    // Found while testing on a live VPS: grep buffered the link until tailscale
+    // gave up, so an unattended install showed it only after it had expired.
+    const bin = join(dir, "bin");
+    spawnSync("mkdir", ["-p", bin]);
+    const marker = join(dir, "link-seen-while-waiting");
+    writeFileSync(join(bin, "tailscale"), `#!/bin/sh
+case "$1" in
+  up) echo "To authenticate, visit:"; echo "  https://login.tailscale.com/a/abc123"; sleep 4; [ -f "${marker}" ] && echo done >> "${marker}"; exit 1 ;;
+  status) exit 1 ;;
+esac
+`);
+    chmodSync(join(bin, "tailscale"), 0o755);
+    const watcher = `( for i in 1 2 3 4 5 6; do grep -q 'Login: https://login.tailscale.com/a/abc123' "${join(dir, "out")}" 2>/dev/null && { : > "${marker}"; break; }; sleep 0.5; done ) &`;
+    const result = run(`${watcher}\nOPT_ACCESS=tailscale MATRIX_TAILSCALE_LOGIN_WAIT=3 tailscale_login > "${join(dir, "out")}" 2>&1; wait`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(dir, "out"), "utf8")).toContain("Login: https://login.tailscale.com/a/abc123");
+    expect(readFileSync(marker, "utf8")).toContain("done");
+  });
+
   it("records only the chosen options in telemetry", () => {
     const result = run(
       `curl() { for arg; do case "$arg" in {*) printf '%s\\n' "$arg" >"${join(dir, "payload.json")}";; esac; done; }

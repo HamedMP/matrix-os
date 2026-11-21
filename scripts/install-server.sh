@@ -785,6 +785,17 @@ tailscale_wait_running() {
   return 1
 }
 
+print_first_login_link() {
+  local line url shown=""
+  while IFS= read -r line; do
+    [ -z "$shown" ] || continue
+    url="$(printf '%s\n' "$line" | grep -Eo 'https://[A-Za-z0-9./?=_%:-]+' | head -n1 || true)"
+    [ -n "$url" ] || continue
+    printf 'Login: %s\n' "$url"
+    shown=1
+  done
+}
+
 tailscale_login() {
   local line wait login_args
   line="$(tailscale_status_line)"
@@ -808,7 +819,9 @@ tailscale_login() {
     wait="${MATRIX_TAILSCALE_LOGIN_WAIT:-120}"
     log "No terminal attached: waiting up to ${wait}s for the login below"
     # shellcheck disable=SC2086 -- login_args is a single validated flag or empty.
-    timeout "$((wait + 10))" tailscale up "--timeout=${wait}s" $login_args 2>&1 | grep -Eo 'https://[A-Za-z0-9./?=_%:-]+' | head -n1 | sed 's/^/Login: /' || true
+    # Print the link the moment it appears and keep reading, so tailscale is
+    # never cut off mid-login by a closed pipe.
+    timeout "$((wait + 10))" tailscale up "--timeout=${wait}s" $login_args 2>&1 | print_first_login_link || true
   fi
   if tailscale_wait_running 5; then
     ok "This machine joined your private network"
