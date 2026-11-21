@@ -4,7 +4,7 @@
  * adds `Tailscale-User-Login`; nginx forwards it to the gateway. The gateway
  * accepts it only from a loopback peer and only when it equals the owner login
  * recorded at install (or, failing that, the login this machine itself was
- * signed in with, recorded once). Any other value is rejected before routing.
+ * signed in with, learned on the first loopback request and recorded once). Any other value is rejected before routing.
  */
 import { link, lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
@@ -45,6 +45,11 @@ export function readPrivateNetworkIdentity(c: Context): boolean {
 export interface PrivateNetworkIdentityOptions {
   accessMode: PrivateNetworkAccessMode | null;
   ownerLogin(): Promise<string | null>;
+  /**
+   * Called when no owner is recorded yet (Tailscale signed in after install):
+   * records this machine's own login once and returns the recorded owner.
+   */
+  learnOwnerLogin?(): Promise<string | null>;
   remoteAddress?(c: Context): string | undefined;
 }
 
@@ -59,6 +64,11 @@ export function privateNetworkIdentityMiddleware(options: PrivateNetworkIdentity
     let ownerLogin: string | null;
     try {
       ownerLogin = await options.ownerLogin();
+      // Only a loopback peer presenting a well-formed login may trigger learning; the
+      // learned value comes from this machine's own Tailscale status, never the header.
+      if (!ownerLogin && options.learnOwnerLogin && LOOPBACK.has(remote(c) ?? "") && OWNER_LOGIN_PATTERN.test(headerLogin)) {
+        ownerLogin = await options.learnOwnerLogin();
+      }
     } catch (error: unknown) {
       console.error("[private-network] Owner login unavailable:", error instanceof Error ? error.name : "unknown");
       return c.json({ error: "Forbidden" }, 403);
@@ -67,6 +77,31 @@ export function privateNetworkIdentityMiddleware(options: PrivateNetworkIdentity
     if (result === "rejected") return c.json({ error: "Forbidden" }, 403);
     c.set(PRIVATE_NETWORK_IDENTITY_KEY as never, (result === "owner") as never);
     return next();
+  };
+}
+
+/**
+ * Learns the owner from this machine's own trusted `tailscale status` login
+ * (only root, the operator or the owner's UI can sign this machine in) and
+ * records it once. Concurrent callers share one status read.
+ */
+export function createOwnerLoginLearner(input: {
+  ownerLogins: OwnerLoginStore;
+  status(): Promise<{ state: string; ownerLogin: string | null }>;
+}): () => Promise<string | null> {
+  let inFlight: Promise<string | null> | null = null;
+  const learn = async (): Promise<string | null> => {
+    const existing = await input.ownerLogins.get();
+    if (existing) return existing;
+    const snapshot = await input.status();
+    if (snapshot.state !== "connected" || !snapshot.ownerLogin || !OWNER_LOGIN_PATTERN.test(snapshot.ownerLogin)) return null;
+    return input.ownerLogins.recordIfMissing(snapshot.ownerLogin);
+  };
+  return () => {
+    inFlight ??= learn().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
   };
 }
 

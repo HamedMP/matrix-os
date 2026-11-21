@@ -7,7 +7,7 @@
 import type { Hono, MiddlewareHandler } from "hono";
 import type { Kysely } from "kysely";
 import { readPrivateNetworkConfig } from "../private-network/config.js";
-import { OwnerLoginStore, privateNetworkIdentityMiddleware } from "../private-network/identity.js";
+import { OwnerLoginStore, createOwnerLoginLearner, privateNetworkIdentityMiddleware } from "../private-network/identity.js";
 import { JoinCodeRegistry } from "../private-network/join-codes.js";
 import { PairingStore, bootstrapPrivateNetworkDatabase, type PrivateNetworkDatabase } from "../private-network/pairing-store.js";
 import { createPrivateNetworkRoutes } from "../private-network/routes.js";
@@ -45,7 +45,11 @@ export async function createPrivateNetworkRuntime(input: {
     }
   }
   return {
-    identity: privateNetworkIdentityMiddleware({ accessMode: config.accessMode, ownerLogin: () => ownerLogins.get() }),
+    identity: privateNetworkIdentityMiddleware({
+      accessMode: config.accessMode,
+      ownerLogin: () => ownerLogins.get(),
+      learnOwnerLogin: createOwnerLoginLearner({ ownerLogins, status: () => tailscale.status() }),
+    }),
     routes: createPrivateNetworkRoutes({ config, tailscale, ownerLogins, joinCodes, store }),
     close() {
       tailscale.close();
