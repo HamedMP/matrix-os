@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import React, { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { ChatMacTerminalProbe } from "@desktop/renderer/src/features/chat/ChatMacTerminalProbe";
+import { useChatMacTerminalProbe } from "@desktop/renderer/src/features/chat/ChatMacTerminalProbe";
 import { MAC_TERMINAL_PROBE_MAX_AGE_MS, MAC_TERMINAL_PROBE_PREFIX } from "@desktop/shared/mac-terminal-probe";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
@@ -13,8 +13,16 @@ const { project, providerBinding, ...chat } = snapshot.chat;
 const worktree = { kind: "worktree", projectId: project!.projectId, worktreeId: "wt_00000000000a" } as const;
 const targetId = "32f5b7fd-1d7d-4672-9636-f0033c5e1a68";
 const marker = MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "uname" });
+const batch = MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "system-checks" });
 const props = { active: true, actorId: chat.ownerScope.ownerId };
 const ready = () => ({ status: "ready", targetId, terminalId: "t7", expiresAt: Date.now() + 60_000 });
+
+function ChatMacTerminalProbe(props: Parameters<typeof useChatMacTerminalProbe>[0]) {
+  const { actions, feedback } = useChatMacTerminalProbe(props);
+  return <>{feedback}{actions.map(action => (
+    <button type="button" key={action.label} onClick={() => action.select("@mac")}>{action.label}</button>
+  ))}</>;
+}
 
 function detail(): CanonicalChatDetailResponse {
   const run = { ...snapshot.runs[0]!, executionRoot: worktree, completedAt: new Date().toISOString() };
@@ -45,6 +53,7 @@ function bridge(
   const invoke = vi.fn(async (channel: string, _args: unknown) => {
     switch (channel) {
       case "chat:mac-terminal-available": return { available: true };
+      case "chat:electron-preview-available": return { available: true };
       case "chat:mac-terminal-prepare": return prepare();
       case "chat:mac-terminal-run": return run();
       case "chat:mac-terminal-background-status": return backgroundStatus();
@@ -105,9 +114,21 @@ describe("Mac terminal check", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Draft another Mac check" }));
     expect(onDraft).toHaveBeenCalledOnce();
-    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(marker), worktree, expiresAt, targetId);
+    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(batch), worktree, "@mac", expiresAt, targetId);
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run"
       || channel === "chat:mac-terminal-background-start")).toBe(false);
+  });
+
+  it("stages an exact worktree preview request from the live grant without executing it in the renderer", async () => {
+    const expiresAt = Date.now() + 60_000;
+    const invoke = bridge(undefined, undefined, async () => ({ active: true, expiresAt, targetId, remaining: 2, phase: "waiting" }));
+    const onDraft = vi.fn(() => true);
+    render(<ChatMacTerminalProbe {...props} detail={detail()} onDraft={onDraft} previewAvailable />);
+    fireEvent.click(await screen.findByRole("button", { name: "Draft background Electron preview" }));
+    expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(
+      `"operation":"verify-sign-in-recovery","backgroundTargetId":"${targetId}"`,
+    ), worktree, "@mac", expiresAt, targetId);
+    expect(invoke).not.toHaveBeenCalledWith("chat:electron-preview-run", expect.anything());
   });
 
   it.each(["owner", "incomplete", "expired", "non-agent", "other-worktree"] as const)(

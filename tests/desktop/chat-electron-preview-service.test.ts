@@ -57,7 +57,10 @@ describe("one-time Electron Desktop preview", () => {
     expect(deps.claim).not.toHaveBeenCalled();
   });
 
-  it.each([null, { ...request, sourceSha256: "d".repeat(64) }, { ...request, worktreeId: "wt_other" }])(
+  it.each([
+    null, { ...request, sourceSha256: "d".repeat(64) }, { ...request, worktreeId: "wt_other" },
+    { ...request, operation: "verify-sign-in-recovery" },
+  ])(
     "refuses to build a source or worktree which changed while consent was open",
     async refreshed => {
       const { deps, service } = setup();
@@ -93,5 +96,28 @@ describe("one-time Electron Desktop preview", () => {
     expect(await service.run(identity)).toEqual({ status: "failed" });
     expect(deps.returnResult).toHaveBeenCalledWith(request, { error: "build-failed" });
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
+  });
+
+  it("cancels a background preview and skips return if its grant stops", async () => {
+    const { deps, service } = setup();
+    const grant = new AbortController();
+    let canStop = () => {};
+    const started = new Promise<void>(resolve => { canStop = resolve; });
+    deps.execute.mockImplementation(async (_request, signal: AbortSignal) => {
+      canStop();
+      await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      return preview;
+    });
+    const outcome = service.run(identity, {
+      signal: grant.signal,
+      grant: { targetId: "d5739cf6-cb60-4b79-99a1-d95c23949a5c", approvedAt: Date.now() },
+      context: request,
+    });
+    await started;
+    grant.abort();
+
+    expect(await outcome).toEqual({ status: "unavailable" });
+    expect(deps.approve).toHaveBeenCalledOnce();
+    expect(deps.returnResult).not.toHaveBeenCalled();
   });
 });
