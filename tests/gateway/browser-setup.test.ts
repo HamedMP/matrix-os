@@ -70,6 +70,15 @@ describe("setup composition identity", () => {
     expect(resolveBrowserSetupOwner({ ...env, MATRIX_USER_ID: undefined })).toBe("user_owner");
     for (const overrides of [{ MATRIX_RUNTIME_SLOT: "preview" }, { MATRIX_HANDLE: "pv-2526-test" }, { MATRIX_MACHINE_ID: undefined }, { MATRIX_USER_ID: "other" }, { MATRIX_CLERK_USER_ID: undefined }]) expect(resolveBrowserSetupOwner({ ...env, ...overrides })).toBeUndefined();
   });
+  it("admits the self-host owner only on a self-hosted computer (spec 2701)", async () => {
+    const { resolveBrowserSetupOwner } = await import("../../packages/gateway/src/browser-lab/setup.js");
+    const selfHost = { MATRIX_SELF_HOSTED: "1", MATRIX_RUNTIME_SLOT: "primary", MATRIX_HANDLE: "matrix", MATRIX_MACHINE_ID: "self-host-matrix",
+      MATRIX_CLERK_USER_ID: "self-host-matrix", MATRIX_USER_ID: "self-host-matrix" };
+    expect(resolveBrowserSetupOwner(selfHost)).toBe("self-host-matrix");
+    for (const overrides of [{ MATRIX_SELF_HOSTED: undefined }, { MATRIX_SELF_HOSTED: "true" }, { MATRIX_USER_ID: "self-host-other" },
+      { MATRIX_CLERK_USER_ID: "user_owner" }, { MATRIX_MACHINE_ID: "self-host-../x" }, { MATRIX_RUNTIME_SLOT: "dev" }])
+      expect(resolveBrowserSetupOwner({ ...selfHost, ...overrides })).toBeUndefined();
+  });
   it("admits only literal opt-in with the exact Dev slot and an owner-bound customer identity", async () => {
     const { resolveBrowserSetupOwner } = await import("../../packages/gateway/src/browser-lab/setup.js");
     const dev = { MATRIX_RUNTIME_SLOT: "dev", MATRIX_HANDLE: "dev-computer", MATRIX_MACHINE_ID: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",

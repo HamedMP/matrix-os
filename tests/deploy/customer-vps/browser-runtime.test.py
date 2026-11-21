@@ -437,6 +437,27 @@ class BrowserRuntimeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.environment()
 
+    def test_self_hosted_identity_is_admitted_only_with_the_self_host_flag(self):
+        # Spec 2701: the self-host installer writes self-host-<handle> ids, never Clerk ids.
+        self_host = 'MATRIX_SELF_HOSTED=1\nMATRIX_MACHINE_ID=self-host-matrix\nMATRIX_HANDLE=matrix\nMATRIX_RUNTIME_SLOT=primary\nMATRIX_CLERK_USER_ID=self-host-matrix\nMATRIX_USER_ID=self-host-matrix\n'
+        self.env.write_text(self_host)
+        _, values = self.runtime.environment()
+        self.assertEqual(values['MATRIX_CLERK_USER_ID'], 'self-host-matrix')
+        self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix-self-host')
+        for old, new in [('MATRIX_SELF_HOSTED=1\n', ''), ('MATRIX_SELF_HOSTED=1', 'MATRIX_SELF_HOSTED=true'),
+                         ('MATRIX_USER_ID=self-host-matrix', 'MATRIX_USER_ID=self-host-other'),
+                         ('MATRIX_CLERK_USER_ID=self-host-matrix', 'MATRIX_CLERK_USER_ID=user_owner'),
+                         ('MATRIX_MACHINE_ID=self-host-matrix', 'MATRIX_MACHINE_ID=self-host-../x')]:
+            self.env.write_text(self_host.replace(old, new))
+            with self.assertRaises(ValueError):
+                self.runtime.environment()
+
+    def test_managed_hosts_keep_the_managed_nginx_site(self):
+        self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix')
+        self.env.write_text(self.env.read_text() + 'MATRIX_SELF_HOSTED=1\n')
+        with self.assertRaises(ValueError):
+            self.runtime.environment()  # Clerk-bound managed identity never doubles as self-host.
+
     def test_customer_local_alias_retains_existing_profile_during_reconciliation(self):
         self.runtime.prepare()
         self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')

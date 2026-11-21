@@ -32,8 +32,9 @@ instead of a password page.
    path. nginx Basic Auth remains only as an explicit, warned fallback.
 5. **Browser use is in the installer**, offered as a prompt.
 6. **Later, not in this stack:** Matrix AI gateway login and billing for
-   self-host; pairing more machines from Settings; self-host updates (design
-   notes below so this stack does not block them).
+   self-host; showing paired machines' sessions; self-host updates (design
+   notes below so this stack does not block them). Pairing itself is in
+   layer 5 (see "Private network and pairing").
 
 ## Today (main @ `b37f50a08`)
 
@@ -107,41 +108,115 @@ unchanged.
 
 ### Layer 4 · Installer
 
-`install-server.sh` gains questions, each with a flag for non-interactive use.
-With no TTY, defaults apply and nothing blocks.
+`install-server.sh` asks each question once, with a flag for non-interactive
+use. Prompts read `/dev/tty`, so `curl … | sudo bash` still asks; with no
+terminal (or `MATRIX_INSTALL_NONINTERACTIVE=1`) the defaults apply and nothing
+waits for input.
 
 | Question | Flag | Default |
 | --- | --- | --- |
-| Run Matrix as which account? | `--user <name>` | `$SUDO_USER`, refuse `root` |
-| Show existing Herdr sessions? (asked only if `herdr-core` is on that user's PATH) | `--herdr` / `--no-herdr` | yes when found |
+| Run Matrix as which account? | `--user <name>` | `$SUDO_USER`; `matrix` when there is none; `root` refused |
+| Show existing Herdr sessions? (asked only if `herdr-core` is on that user's login PATH) | `--herdr` / `--no-herdr` | yes when found |
 | Enable browser use? | `--browser` / `--no-browser` | yes |
 | How will you reach Matrix? | `--access tailscale\|headscale\|public` | `tailscale` |
-| Headscale server | `--login-server <url>` | — |
+| Headscale server | `--login-server <https-url>` (implies headscale) | — |
+| Auth key | `--authkey-file <path>` | interactive login link |
+| Pair with a first computer | `--join <url> --join-code <code>` | — |
 
-- **Own account (spike S1 first).** Today many paths assume user `matrix` and
-  `/home/matrix`. S1 lists every assumption in `install-server.sh`, systemd
-  units and `distro/customer-vps/host-bin`, and picks one of:
-  (a) parametrise the run user (`MATRIX_RUN_USER`, `MATRIX_HOME` under that
-  user's home, e.g. `~/matrix`), or (b) keep the `matrix` system user and add
-  a tiny per-user `matrix-herdr-bridge.service` running as the person that
-  exposes `herdr-core connect` on a socket only the gateway's group can open.
-  (a) is the decision; (b) is the fallback if S1 shows (a) would fork the
-  managed VPS layout. Either way, owner data rules (AGENTS.md "user data
-  invariant") hold.
-- **Browser use.** Runs the existing `matrix-install-browser` and enables
-  `matrix-browser-runtime.service` for the run user; verification step waits
-  for its health check. Failure warns and continues (core readiness must not
-  depend on it).
-- **Tailscale / Headscale.** Install Tailscale from its signed apt repo, run
-  `tailscale up` (with `--login-server` for Headscale; the auth URL is printed,
-  or `--authkey` is read from a file, never argv). Serve Matrix with
-  `tailscale serve` over HTTPS on the tailnet only; nginx listens on loopback.
-  The gateway trusts the `Tailscale-User-Login` header only from the local
-  `tailscale serve` proxy and only when it matches the owner login recorded at
-  install. `public` keeps today's nginx Basic Auth with a printed warning and
-  docs pointing to the private options.
-- Telemetry stays opt-out as today and records only the chosen options, never
-  hostnames, logins or keys.
+- **Own account ([S1](./s1-run-user.md), decision (a)).** The shipped units
+  keep their managed defaults; the installer adds drop-ins
+  (`/etc/systemd/system/matrix-{gateway,shell,code,terminal-runtime}.service.d/10-self-host-run-user.conf`
+  with `User=`, `Group=`, `SupplementaryGroups=matrix docker`) and a
+  `matrix-zellij@` user-unit drop-in for `MATRIX_HOME`. `host.env` carries
+  `MATRIX_RUNTIME_USER`, `MATRIX_RUNTIME_GROUP`, `MATRIX_HOME=~/matrix` and
+  `MATRIX_SKIP_LEGACY_HOME_MIGRATION=1`, so the launchers never fold the
+  person's own `~/.config` into the Matrix home. The gateway binds
+  `MATRIX_BIND_HOST=127.0.0.1`. Existing installs keep their account; asking
+  to switch fails instead of moving owner data.
+- **Herdr.** `MATRIX_HERDR=on|off` and `MATRIX_HERDR_CORE_BIN=<absolute path>`
+  (resolved from the person's login shell) are written for layer 2.
+- **Browser use.** Installs the root lifecycle to `/usr/local/libexec`, the
+  `matrix-browser-runtime` unit, and a sudoers file allowing the run user only
+  `matrix-browser-runtime.py --status` and `--retry`. Runs
+  `matrix-install-browser`, then `--health-check`; failure warns and the core
+  install continues (the unit retries at boot). Chrome runs as the `matrix`
+  service account, a sidecar reached over loopback. Self-host identity
+  (`MATRIX_SELF_HOSTED=1`, `self-host-<handle>` ids) is admitted by both the
+  lifecycle and the gateway setup route.
+- **Tailscale / Headscale.** Tailscale from its signed apt repository
+  (`pkgs.tailscale.com`, keyring-pinned list). `tailscale set
+  --operator=<run user>` lets the gateway drive it without root. Login: an
+  auth key read by tailscale itself from `--auth-key=file:<path>` (root-owned,
+  mode 600/400, deleted after use; never argv, logs or telemetry), else
+  `tailscale up --qr` on the terminal, else a 120 s bounded wait that prints
+  the link. The owner login (`Tailscale-User-Login` of this machine's own
+  account) is recorded as `MATRIX_TAILSCALE_OWNER_LOGIN`. Matrix is served with
+  `tailscale serve --https=443` (Headscale: `--http=80`) to nginx, which listens
+  on `127.0.0.1:80` only; verification fails if port 80, 3000, 4000 or 8788
+  listens on a public address.
+- **Public.** `--access public` keeps nginx Basic Auth on port 80 and prints a
+  warning pointing to the private options.
+- **Telemetry** stays opt-out and adds only `accessMode`, `browser` and
+  `herdr`, never accounts, hostnames, logins or keys.
+- **Testing a branch bundle.** `MATRIX_HOST_BUNDLE_URL=https://…/matrix-host-bundle.tar.gz`
+  (with its `.sha256` beside it) installs any published bundle instead of the
+  channel one.
+
+### Private network and pairing
+
+Settings → System → **Private network**, one shared `packages/ui` panel on
+Web Desktop, Web Canvas and Electron Desktop. Hidden on managed computers
+(`supported: false`) and on older gateways (404).
+
+- **States.** Not installed · logged out · needs login (opens the
+  Tailscale/Headscale login page) · stopped · connected (tailnet, this machine's
+  name and tailnet URL) · unavailable. **Connect** runs
+  `tailscale up --operator=<run user> [--login-server] --timeout=600s` as the
+  operator, returns the login URL only if it is on `login.tailscale.com` or the
+  configured Headscale origin, and the panel polls every 3 s for up to 10 min.
+  **Disconnect** (`tailscale down`) needs confirmation and warns when the page
+  itself arrived over the private network.
+- **Identity trust.** nginx sends every request except `/health` and `/cli/`
+  through `auth_request` to `GET /api/system/private-network/identity`. A
+  gateway middleware, before bearer auth, rejects any `Tailscale-User-Login`
+  that does not come from loopback or does not equal the recorded owner login
+  (host.env value, else this machine's own login, recorded once with an
+  exclusive create in `~/matrix/system/private-network/owner.json`). Public
+  installs never grant anything from the header.
+- **Add a machine.** `POST …/join-codes` returns a single-use code
+  (`mxj_` + 24 random bytes, SHA-256 kept in memory only, 15 min TTL, at most
+  8 live) and the command
+  `curl -fsSL https://matrix-os.com/install-server.sh | sudo MATRIX_CHANNEL=<channel> bash -s -- --access tailscale --join https://<first>.ts.net --join-code mxj_…`.
+  The second server installs normally, joins the same tailnet (the owner opens
+  its login link with the same account, or `--authkey-file`), then its
+  installer runs a small Node client as the run user: it creates an Ed25519 key
+  in `~/matrix/system/machine-identity/` (0600, exclusive create), asks
+  `…/pairing/challenge` (2 min challenge bound to the code and the pairing
+  revision), signs
+  `matrix-machine-pair-v1 · primary machine id · owner id · challenge id · nonce · revision · public key · name · dnsName`
+  and posts `…/pairing/complete`. The first computer consumes the code, checks
+  the signature and that the name is a current tailnet peer, and records the
+  machine in owner Postgres (`private_network_machines`,
+  `private_network_pairing_state`) with compare-and-set on the revision in the
+  `UPDATE`, `ON CONFLICT` re-pairing by key, replacement of a reinstalled
+  machine with the same tailnet name, and a cap of 32. The second server keeps
+  `paired-primary.json`. Requests from the second server reach the first over
+  `tailscale serve`, so they pass the same owner identity check; plain HTTP is
+  accepted only to a loopback or tailnet (100.64/10, fd7a:115c:a1e0::/48)
+  address, for Headscale.
+- **List and remove.** `GET …/machines` lists paired machines with online
+  state from `tailscale status`; **Remove** sends the revision it saw.
+- **Not yet.** Showing a paired machine's terminals and Herdr sessions in the
+  Terminal app (needs a machine-to-machine credential; the recorded key is the
+  anchor), QR codes in the panel (no new dependency added), and rotating a
+  machine key.
+
+| Route (`/api/system/private-network`) | Principal | Checks |
+| --- | --- | --- |
+| `GET /`, `GET /machines` | owner bearer | self-host only; coarse states |
+| `POST /connect`, `POST /disconnect`, `POST /join-codes`, `DELETE /machines/:id` | owner bearer | `bodyLimit` 4 KB, JSON only, strict Zod; `disconnect` needs `{confirm:true}`; delete needs `{revision}` |
+| `GET /identity` | nginx subrequest with bearer | 204 only for the owner identity |
+| `POST /pairing/challenge`, `POST /pairing/complete` | the owner's own tailnet node via nginx | single-use code, Ed25519 proof, tailnet peer, revision CAS |
 
 ### Layer 5 · Electron terminal performance
 
@@ -160,12 +235,9 @@ switch time across 10 tabs, frame time under heavy output, memory):
 
 ## Later (designed for, not built here)
 
-- **Pairing more machines.** Settings → Computers → "Add a machine" prints a
-  one-line install with a short-lived join code; the new machine joins the same
-  tailnet (Tailscale or Headscale) and registers with the first computer over
-  it. Reuse 2698's device identity (Ed25519, challenge, revision) rather than a
-  new scheme. Each machine's Matrix and Herdr sessions appear as their own
-  section, like Herdr's machine list.
+- **Paired machines in Terminal.** Pairing is recorded and listed (above);
+  each machine's Matrix and Herdr sessions as their own section, like Herdr's
+  machine list, is the follow-up.
 - **Self-host updates.** We cannot push to these computers. Plan: a systemd
   timer runs `matrix-update check` daily against the public channel feed,
   Settings → System → Updates shows it (already exists), the owner clicks
@@ -265,7 +337,7 @@ Needs reviewer approval.
 | 2 | Shared `packages/herdr-core-client`, Electron re-exports | packages, desktop |
 | 3 | Gateway Herdr adapter, routes, verbs and status | gateway |
 | 4 | "Herdr sessions" group on three surfaces, `matrix shell list` | packages/ui, shell, desktop, sync-client |
-| 5 | Installer: own account (after S1), Herdr, browser use, Tailscale/Headscale | scripts, distro, docs |
+| 5 | Installer: own account (S1), Herdr, browser use, Tailscale/Headscale; Private network panel and machine pairing | scripts, distro, gateway, packages/ui, shell, desktop |
 | 6 | Electron terminal performance from herdr-app findings | desktop |
 
 ## Risks and open questions
