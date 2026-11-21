@@ -2,7 +2,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, usageWindow } from "../../packages/ui/src/organization-mcp/client.js";
+import { callsByConnectionHost, createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, usageKeyForHost, usageWindow } from "../../packages/ui/src/organization-mcp/client.js";
 import { OrganizationConnectionsPanel, type WithOrganizationMcpClient } from "../../packages/ui/src/organization-mcp/OrganizationConnectionsPanel.js";
 
 afterEach(cleanup);
@@ -136,5 +136,32 @@ describe("Organization → Connections panel", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ error: "pg: connection refused" }), { status: 503, headers: { "content-type": "application/json" } }));
     await expect(api.get("/api/orgs/org_acme1/mcp/connections")).rejects.toThrow(/^OrganizationConnectionsUnavailable$/);
+  });
+  it("counts calls for hosts whose usage key kept a trailing dot or was cut to 128 characters", () => {
+    // Fault: usage is keyed by the raw URL hostname cut to 128 characters, the card by the normalized host, so valid connections showed 0 calls.
+    const long = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(20)}.example.test`;
+    const calls = callsByConnectionHost([
+      { day: today, actorId: "user_mo", serverKey: "mcp.linear.app.", toolName: "t", calls: 4, failures: 0 },
+      { day: today, actorId: "user_mo", serverKey: long.slice(0, 128), toolName: "t", calls: 5, failures: 0 },
+      { day: today, actorId: "user_other", serverKey: "mcp.linear.app", toolName: "t", calls: 9, failures: 0 },
+    ], "user_mo");
+    expect(calls.get(usageKeyForHost("mcp.linear.app"))).toBe(4);
+    expect(calls.get(usageKeyForHost(long))).toBe(5);
+  });
+
+  it("cancels a response body as soon as it passes the size limit", async () => {
+    // Fault: the whole body was buffered by response.text() before the limit was checked.
+    let pulled = 0;
+    let cancelled = false;
+    const chunk = new TextEncoder().encode("x".repeat(256 * 1024));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += 1; controller.enqueue(chunk); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    const api = createOrganizationMcpHttpApi({ baseUrl: "https://app.matrix-os.test", fetchImpl: fetchImpl as unknown as typeof fetch });
+    await expect(api.get("/api/orgs/org_1/mcp/servers")).rejects.toThrow("OrganizationConnectionsUnavailable");
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(16);
   });
 });

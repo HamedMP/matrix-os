@@ -12,6 +12,7 @@ import {
   ORG_MCP_USAGE_WINDOW_DAYS,
   ORG_MCP_VISIBILITY_NOTICE,
   callsByConnectionHost,
+  usageKeyForHost,
   loadOrganizationMcpSnapshot,
   serverModeFor,
   type OrganizationMcpAdminClient,
@@ -122,7 +123,7 @@ function MemberCard({ member, snapshot, busy, mutate }: { member: OrgMcpMember; 
               <div className="min-w-0">
                 <p className="truncate text-sm">{connection.name} <span style={muted}>· {connection.host}</span></p>
                 <p className="text-xs" style={muted}>
-                  {STATUS_LABELS[connection.status] ?? "Unknown"} · {lastUsedLabel(connection.lastUsedAt)} · {calls.get(connection.host) ?? 0} calls in {ORG_MCP_USAGE_WINDOW_DAYS} days
+                  {STATUS_LABELS[connection.status] ?? "Unknown"} · {lastUsedLabel(connection.lastUsedAt)} · {calls.get(usageKeyForHost(connection.host)) ?? 0} calls in {ORG_MCP_USAGE_WINDOW_DAYS} days
                 </p>
               </div>
               <div className="flex items-center gap-2">

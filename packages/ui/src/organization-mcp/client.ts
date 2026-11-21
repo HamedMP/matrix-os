@@ -24,6 +24,23 @@ const ORG_MCP_PATH = /^\/api\/orgs\/[A-Za-z0-9_]+\/mcp\/[A-Za-z0-9_.:%/-]+(?:\?[
 
 export type OrganizationMcpHttpApi = Pick<CollaborationApi, "get" | "put" | "delete">;
 
+/** Reads the body in chunks and cancels it as soon as it passes the limit, so an oversized response is never buffered. */
+async function boundedText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    text += decoder.decode(value, { stream: true });
+    if (text.length > MAX_RESPONSE_CHARS) {
+      await reader.cancel();
+      throw new Error("OrganizationConnectionsUnavailable");
+    }
+  }
+}
+
 /**
  * Same-origin platform transport for the admin routes only: a fixed path
  * shape, no redirects, a 10 s deadline, a bounded JSON body, and one generic
@@ -48,9 +65,7 @@ export function createOrganizationMcpHttpApi(options: { baseUrl: string; fetchIm
         await response.body?.cancel();
         throw new Error("OrganizationConnectionsUnavailable");
       }
-      const text = await response.text();
-      if (text.length > MAX_RESPONSE_CHARS) throw new Error("OrganizationConnectionsUnavailable");
-      return JSON.parse(text) as unknown;
+      return JSON.parse(await boundedText(response)) as unknown;
     } catch (error: unknown) {
       if (!(error instanceof Error && error.message === "OrganizationConnectionsUnavailable")) {
         console.warn("[org-mcp] request failed", error instanceof Error ? error.name : "UnknownError");
@@ -130,11 +145,22 @@ export async function loadOrganizationMcpSnapshot(client: OrganizationMcpAdminCl
   return { members, servers: first.servers, usage: usage.rows, usageTruncated: usage.truncated, usageUpdatedAt: usage.updatedAt, membersTruncated: Boolean(cursor) };
 }
 
+/**
+ * The one key a usage row and a connection host are matched on. Usage is
+ * recorded under the URL hostname cut to 128 characters, which can keep a
+ * trailing dot; a connection carries the full normalized host.
+ */
+export function usageKeyForHost(host: string): string {
+  return host.toLowerCase().slice(0, 128).replace(/\.+$/, "");
+}
+
+/** Call totals for one member, keyed by `usageKeyForHost`. */
 export function callsByConnectionHost(usage: readonly OrgMcpUsageRow[], actorId: string): Map<string, number> {
   const totals = new Map<string, number>();
   for (const row of usage) {
     if (row.actorId !== actorId) continue;
-    totals.set(row.serverKey, (totals.get(row.serverKey) ?? 0) + row.calls);
+    const key = usageKeyForHost(row.serverKey);
+    totals.set(key, (totals.get(key) ?? 0) + row.calls);
   }
   return totals;
 }
