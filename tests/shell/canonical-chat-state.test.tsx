@@ -38,6 +38,22 @@ beforeEach(() => {
 });
 
 describe("canonical shell Chat state", () => {
+  it.each(["running", "completed"] as const)("projects the %s canonical run's worktree into Web file scope", async stage => {
+    const { snapshot } = createCanonicalChatFixture(stage);
+    const { project: _project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const current = { chat, projectId: "project_test", ...(activeRun ? { activeRun } : {}) };
+    const details = { record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities,
+      runs: snapshot.runs.map(run => ({ ...run, executionRoot: { kind: "worktree", projectId: "project_test", worktreeId: "wt_branch" } })) };
+    stubLegacyChatFetch(vi.fn(async (url: string) => {
+      if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+      if (url.includes(`/api/chats/${chat.id}?`)) return Response.json(details);
+      throw new Error("Unexpected file-scope fixture request");
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    expect(result.current.chatFileScope).toEqual({ kind: "project", projectId: "project_test", worktreeId: "wt_branch" });
+  });
+
   it("submits the digest from the displayed active approval in Web Chat", async () => {
     const actionDigest = "e".repeat(64);
     const { snapshot } = createCanonicalChatFixture("approval_required");
@@ -827,4 +843,20 @@ it("cleans an attachment uploaded before a project Skill's Chat moved", async ()
   expect(fetchFn.mock.calls.some(([url]) => url.includes("/turns"))).toBe(false);
   const deletion = fetchFn.mock.calls.find(([, init]) => init?.method === "DELETE");
   expect(deletion?.[0] && new URL(deletion[0]).searchParams.get("path")).toBe(uploadedPath);
+});
+
+it("publishes successful versioned read updates for older paged chats outside navigation", async () => {
+  const selected = record("chat_selected", "Selected");
+  const old = { ...record("chat_older", "Older"), readState: { unread: true, markedUnread: true, version: 2, readThroughSeq: 0, latestIncomingSeq: 1 } };
+  stubLegacyChatFetch(vi.fn(async (url: string) => {
+    if (url.includes("/read-state")) return Response.json(old);
+    if (url.includes("/api/chats?")) return Response.json({items:[selected]});
+    if (url.includes("/api/chats/chat_selected?")) return Response.json(detail("chat_selected","Selected"));
+    throw new Error("Unexpected read-state fixture request");
+  }));
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(()=>expect(result.current.messages).toHaveLength(1));
+  await act(async()=>{ expect(await result.current.updateReadState?.("chat_older",{type:"mark_unread"})).toBe(true); });
+  expect(result.current.conversations.map(chat=>chat.id)).toEqual(["chat_selected"]);
+  expect(result.current.chatReadStateUpdates).toEqual([old]);
 });

@@ -765,3 +765,23 @@ it("leaves the archive when a project is selected from Search", async()=>{
  fireEvent.click(screen.getByRole("option",{name:/Local project/}));
  expect(screen.queryByRole("region",{name:"Archived chats"})).toBeNull();
 });
+
+it("updates read marks on retained project pages without refetching or losing the next cursor", async () => {
+  const item = (id: string, version = 1, unread = false) => ({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
+    createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
+    readState: { unread, markedUnread: unread, version, readThroughSeq: unread ? 0 : 1, latestIncomingSeq: 1 } });
+  const load = vi.fn(async (query: {cursor?: string}) => ({items:[item(query.cursor ? "chat_older" : "chat_first")],totalCount:3,nextCursor:query.cursor ? "navcur_third" : "navcur_second"}));
+  const project = {id:"proj_one",slug:"proj_one",name:"One"};
+  const {result,rerender} = renderHook(({updates}: {updates: ReturnType<typeof item>[]}) =>
+    usePagedProjectChats(project,"https://example.test",false,true,load as never,0,"",updates as never),{initialProps:{updates:[]}});
+  await waitFor(()=>expect(result.current.fetched).toHaveLength(1));
+  act(()=>result.current.loadMore());
+  await waitFor(()=>expect(result.current.fetched).toHaveLength(2));
+  rerender({updates:[item("chat_older",2,true)]});
+  expect(result.current.fetched[1]?.canonicalRecord?.readState).toMatchObject({unread:true,version:2});
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(result.current.fetched.map(chat=>chat.id)).toEqual(["chat_first","chat_older"]);
+  expect(result.current.hasMore).toBe(true);
+  act(()=>result.current.loadMore());
+  await waitFor(()=>expect(load).toHaveBeenCalledWith(expect.objectContaining({cursor:"navcur_third"})));
+});

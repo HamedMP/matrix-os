@@ -14,7 +14,7 @@ import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageRespo
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
 export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle, renamedTitles = {},
-  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion = 0 }: {
+  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion = 0, chatReadStateUpdates }: {
   project: WebProject;
   gatewayUrl: string;
   /** The project's chats from navigation, pinned ones included. */
@@ -35,8 +35,9 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
   refreshVersion?: number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
-  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"));
+  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"), chatReadStateUpdates);
   const [olderExpanded, setOlderExpanded] = useState(true);
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();

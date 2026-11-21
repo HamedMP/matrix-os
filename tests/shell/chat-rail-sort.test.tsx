@@ -244,3 +244,32 @@ it.each(['keyboard','drag'])('reorders independently paged status and project ro
  await waitFor(()=>expect(ids(done)).toEqual(['b','a']));
  expect(ids(projects)).toEqual(['b','a']);
 });
+
+it.each(["Chats", "All"])("finds restored chats in %s first and subsequent search pages without reopening", async scope => {
+  const archived = { chat: { id: "chat_restored", title: "Restored answer", revision: 1, lifecycle: "archived" as const,
+    attention: "none" as const, messageCount: 1, createdAt: "2026-11-17T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" } };
+  const active = { ...archived, chat: { ...archived.chat, revision: 2, lifecycle: "active" as const } };
+  const other = { ...active, chat: { ...active.chat, id: "chat_other", title: "Other result" } };
+  const api = { list: vi.fn(async () => ({ items: [archived], nextCursor: "cursor_archived" })),
+    updateLifecycle: vi.fn(async () => active), delete: vi.fn() };
+  const search = vi.fn(async (_query: string, input?: {cursor?: string}) => input?.cursor
+    ? {items:[active]} : {items:[other, active],nextCursor:"cursor_search"});
+  render(<WebChatSearchDialog client={api as never} search={search} recent={[]} projects={[]}
+    onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
+  fireEvent.click(await screen.findByRole("button",{name:"Restore Restored answer"}));
+  await waitFor(()=>expect(screen.queryByRole("button",{name:"Restore Restored answer"})).toBeNull());
+  fireEvent.click(screen.getByRole("button",{name:"Show more"}));
+  await waitFor(()=>expect(api.list).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Restored answer")).toBeNull();
+  fireEvent.click(screen.getByRole("tab",{name:scope,exact:true}));
+  fireEvent.change(screen.getByRole("combobox",{name:"Search chats"}),{target:{value:"answer"}});
+  expect(await screen.findByText("Restored answer")).toBeTruthy();
+  // A new query with the restored Chat only on its second page must also find it.
+  search.mockImplementation(async (_query, input) => input?.cursor ? {items:[active]} : {items:[other],nextCursor:"cursor_search"});
+  fireEvent.change(screen.getByRole("combobox",{name:"Search chats"}),{target:{value:"second query"}});
+  await waitFor(()=>expect(search).toHaveBeenLastCalledWith("second query",expect.anything()));
+  await waitFor(()=>expect(screen.queryByText("Restored answer")).toBeNull());
+  fireEvent.click(screen.getByRole("button",{name:"Show more"}));
+  expect(await screen.findByText("Restored answer")).toBeTruthy();
+});
