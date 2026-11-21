@@ -983,7 +983,7 @@ install_packages() {
     log "Writing apt output to ${MATRIX_INSTALL_LOG}"
     apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
     enable_ubuntu_universe
-    apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    apt-get install -y acl bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || fail "apt-get install failed"
     configure_bwrap_apparmor
     ok "OS packages installed"
@@ -1154,7 +1154,9 @@ install_bundle() {
 
   ok "Host bundle checksum verified"
   section "Extracting Matrix OS"
-  tar -xzf "$tmp_bundle" -C /opt/matrix
+  # As root, tar keeps the build machine's numeric owner; the terminal runtime and
+  # other integrity checks trust only root-owned (or run-user) files.
+  tar --no-same-owner --no-same-permissions -xzf "$tmp_bundle" -C /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
   if [ -f /opt/matrix/bin/matrix-claude-native-recovery.py ] && [ ! -L /opt/matrix/bin/matrix-claude-native-recovery.py ]; then
     install -d -o root -g root -m 0755 /usr/local/libexec/matrix-claude-native-recovery
@@ -1163,6 +1165,17 @@ install_bundle() {
   cleanup_install_tmp
   INSTALL_TMP_BUNDLE=""
   INSTALL_TMP_SUM=""
+}
+
+# Managed computers write app/BUNDLE_VERSION at first boot (cloud-init); browser
+# use and Settings > Updates read it. release.json stays the root-owned record.
+write_bundle_version() {
+  local root="${1:-/opt/matrix}" owner="${2:-$MATRIX_RUN_USER}" version
+  version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\{1,128\}\)".*/\1/p' "$root/release.json" | head -n 1)"
+  [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || fail "the host bundle has no valid version"
+  printf '%s\n' "$version" >"$root/app/BUNDLE_VERSION"
+  chown "$owner:" "$root/app/BUNDLE_VERSION"
+  chmod 0644 "$root/app/BUNDLE_VERSION"
 }
 
 prepare_runtime_permissions() {
@@ -1301,6 +1314,19 @@ configure_nginx() {
   run_required "testing nginx configuration" nginx -t
   run_required "enabling nginx" systemctl enable nginx
   ok "nginx configured"
+}
+
+# The person is usually logged in while installing. Their systemd --user
+# manager (which also runs their Herdr core) keeps the groups it started with,
+# so the new matrix group cannot open /opt/matrix until it restarts, and
+# restarting it would end their Herdr terminals. ACL entries for the run user
+# take effect at once. Default entries let files written later inherit them.
+grant_run_user_access() {
+  local user="$1" root="${2:-/opt/matrix}" setfacl_bin="${MATRIX_SETFACL:-setfacl}"
+  [ "$user" != "matrix" ] || return 0
+  run_required "granting ${user} access to ${root}" "$setfacl_bin" -m "u:${user}:rx" "$root"
+  run_required "granting ${user} access to Matrix files" "$setfacl_bin" -R -m "u:${user}:rX" "$root/env" "$root/bin" "$root/tls"
+  run_required "granting ${user} access to new Matrix files" "$setfacl_bin" -d -m "u:${user}:rX" "$root/env" "$root/tls"
 }
 
 start_services() {
@@ -1544,6 +1570,7 @@ main() {
   INSTALL_PHASE="bundle"
   install_bundle
   INSTALL_PHASE="runtime_permissions"
+  write_bundle_version /opt/matrix "$MATRIX_RUN_USER"
   prepare_runtime_permissions
   INSTALL_PHASE="systemd"
   install_systemd_units
@@ -1552,6 +1579,7 @@ main() {
   write_env
   INSTALL_PHASE="nginx"
   configure_nginx
+  grant_run_user_access "$MATRIX_RUN_USER"
   INSTALL_PHASE="services"
   start_services
   [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
