@@ -9,6 +9,7 @@ import {
   type HcTerminal as LocalTerminal,
 } from "#terminal";
 import type { HcConnection, HcStream } from "#client";
+import type { HcDisplayFacts } from "#protocol";
 
 const DEFAULT_MAX_ATTACHMENTS = 8;
 // Terminal creation is rate-limited, never count-capped.
@@ -252,6 +253,18 @@ export function createHcSessions(options: {
     input(attachId: number, data: string, binary: boolean): boolean {
       const stream = attachments.get(attachId)?.stream;
       stream?.write(Buffer.from(data, binary ? "latin1" : "utf8"));
+      return stream != null;
+    },
+
+    focus(attachId: number, focused: boolean): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.focus(focused);
+      return stream != null;
+    },
+
+    facts(attachId: number, display: HcDisplayFacts): boolean {
+      const stream = attachments.get(attachId)?.stream;
+      stream?.facts(display);
       return stream != null;
     },
 

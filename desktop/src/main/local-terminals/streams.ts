@@ -3,9 +3,10 @@
 // with no text decoding and no event routed through every listener in the
 // window. The window acknowledges and types over the same port; whatever it
 // sends is validated here again, as every IPC request is.
+import type { HcDisplayFacts } from "@matrix-os/herdr-core-client/protocol";
 import type { HcSessionSink } from "@matrix-os/herdr-core-client/sessions";
 import {
-  LOCAL_TERMINAL_PORT_CHANNEL, LOCAL_TERMINAL_STREAM_CLOSED, LocalTerminalStreamRequestSchema,
+  LOCAL_TERMINAL_PORT_CHANNEL, LOCAL_TERMINAL_STREAM_CLOSED, LocalTerminalStreamRequestSchema, type LocalTerminalStreamRequest,
 } from "../../shared/local-terminals";
 
 /** The trusted core's end of a port: Electron's MessagePortMain. */
@@ -24,6 +25,20 @@ export interface LocalTerminalPortTarget<Port> {
 export interface LocalTerminalStreamHost {
   acknowledge(attachId: number, count: number): boolean;
   input(attachId: number, data: string, binary: boolean): boolean;
+  focus(attachId: number, focused: boolean): boolean;
+  facts(attachId: number, display: HcDisplayFacts): boolean;
+}
+
+function forward(host: LocalTerminalStreamHost, attachId: number, request: LocalTerminalStreamRequest): boolean {
+  switch (request.type) {
+    case "ack": return host.acknowledge(attachId, request.count);
+    case "input": return host.input(attachId, request.data, request.binary === true);
+    case "focus": return host.focus(attachId, request.focused);
+    case "facts": {
+      const { type: _type, ...display } = request;
+      return host.facts(attachId, display);
+    }
+  }
 }
 
 /** A window's webContents while it can still take a port, else null. */
@@ -58,9 +73,7 @@ export function createLocalTerminalStreams<WindowPort>(options: {
     const request = LocalTerminalStreamRequestSchema.safeParse(data);
     if (!request.success || !host) return;
     try {
-      const live = request.data.type === "ack"
-        ? host.acknowledge(attachId, request.data.count)
-        : host.input(attachId, request.data.data, request.data.binary === true);
+      const live = forward(host, attachId, request.data);
       // The core no longer holds it: the window stops typing into nothing.
       if (!live) close(attachId, true);
     } catch (error: unknown) {

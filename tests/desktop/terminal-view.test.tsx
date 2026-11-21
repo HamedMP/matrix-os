@@ -208,6 +208,8 @@ describe("TerminalView session switching", () => {
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
       release: attachmentRelease,
+      focus: vi.fn(),
+      facts: vi.fn(),
       live: () => true,
     }));
     attachmentResize.mockReset();
@@ -370,7 +372,7 @@ describe("TerminalView session switching", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
     vi.stubGlobal("cancelAnimationFrame", clearTimeout);
     let live = true;
-    attachMock.mockImplementation(() => ({ resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, live: () => live }));
+    attachMock.mockImplementation(() => ({ resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, focus: vi.fn(), facts: vi.fn(), live: () => live }));
     const { rerender } = render(<TerminalView sessionName="alpha" active />);
     rerender(<TerminalView sessionName="alpha" active visible={false} />);
     live = false; // evicted by a newer attachment

@@ -195,6 +195,8 @@ describe("Electron Terminal protected file drag", () => {
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
       release: attachmentRelease,
+      focus: vi.fn(),
+      facts: vi.fn(),
       live: () => true,
     }));
     attachmentResize.mockReset();
@@ -378,7 +380,7 @@ describe("Electron Terminal protected file drag", () => {
   it("uploads selected files from the attachment action using the same terminal path flow", async () => {
     attachMock.mockImplementation((_name: string, events: ShellSocketEvents) => {
       events.onState("attached");
-      return { resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, live: () => true };
+      return { resize: attachmentResize, write: attachmentWrite, writeBinary: attachmentWriteBinary, release: attachmentRelease, focus: vi.fn(), facts: vi.fn(), live: () => true };
     });
     const post = vi.fn(async () => ({ assets: [{ terminalPath: "/home/matrix/home/temporary/terminal-pastes/selected.pdf" }] }));
     useConnection.setState({ api: { post } as never });

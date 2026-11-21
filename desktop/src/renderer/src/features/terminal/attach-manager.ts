@@ -18,9 +18,16 @@ export interface SocketControl {
   sendBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  /** The view gained or lost focus (herdr-core passes it to programs that ask). */
+  focus?(focused: boolean): void;
+  /** The view's colours and cell size, for the program's queries. */
+  facts?(display: TerminalDisplayFacts): void;
   detach(): void;
   dispose(): void;
 }
+
+/** A terminal view's default colours (`#rrggbb`) and cell size in pixels. */
+export interface TerminalDisplayFacts { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }
 
 export interface TerminalDimensions {
   cols: number;
@@ -46,6 +53,8 @@ export interface ActiveAttachment {
   writeBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  focus(focused: boolean): void;
+  facts(display: TerminalDisplayFacts): void;
   /** Detaches this attachment, if it is still the live one for its session. */
   release(): void;
   /** Whether this is still the live attachment of its session. */
@@ -159,6 +168,8 @@ export class AttachManager {
       resize: (cols: number, rows: number) => {
         if (isLive()) socket.resize(cols, rows);
       },
+      focus: (focused) => { if (isLive()) socket.focus?.(focused); },
+      facts: (display) => { if (isLive()) socket.facts?.(display); },
       release: () => {
         if (isLive()) this.detachSession(sessionName);
       },

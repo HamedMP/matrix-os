@@ -37,6 +37,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { terminalDisplayFacts } from "./terminal-display-facts";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
@@ -178,6 +179,18 @@ export default function TerminalView({
   const gridWriterRef = useRef(false);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  // The display facts the attachment was last told, so only changes are sent.
+  const sentFactsRef = useRef("");
+  const sendDisplayFacts = useCallback(() => {
+    const terminal = termRef.current;
+    const attachment = attachmentRef.current;
+    if (!terminal || !attachment) return;
+    const facts = terminalDisplayFacts(terminal, getDesktopTerminalXtermTheme(latestTerminalThemeIdRef.current));
+    const key = JSON.stringify(facts);
+    if (key === sentFactsRef.current) return;
+    sentFactsRef.current = key;
+    attachment.facts(facts);
+  }, []);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const fileSelectionRef = useRef<(files: File[]) => void>(() => undefined);
   const selectFiles = useCallback((files: File[]) => fileSelectionRef.current(files), []);
@@ -464,6 +477,11 @@ export default function TerminalView({
     host.addEventListener("mouseup", onTerminalPointer, true);
     host.addEventListener("mouseup", onLinkMouseUp, true);
     host.addEventListener("contextmenu", onTerminalContextMenu, true);
+    // Programs that asked for focus reports learn when this terminal gains or loses focus.
+    const onTextareaFocus = () => attachmentRef.current?.focus(true);
+    const onTextareaBlur = () => attachmentRef.current?.focus(false);
+    terminal.textarea?.addEventListener("focus", onTextareaFocus);
+    terminal.textarea?.addEventListener("blur", onTextareaBlur);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
@@ -502,6 +520,7 @@ export default function TerminalView({
         const proposed = proposedTerminalDimensions(fit, terminal, host);
         attachmentRef.current?.resize(proposed.cols, proposed.rows);
         presentation.schedule();
+        sendDisplayFacts();
       });
     });
     observer.observe(host);
@@ -520,6 +539,8 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
+      terminal.textarea?.removeEventListener("focus", onTextareaFocus);
+      terminal.textarea?.removeEventListener("blur", onTextareaBlur);
       host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
       selectionDisposable.dispose();
@@ -542,7 +563,7 @@ export default function TerminalView({
       terminal.dispose();
       termRef.current = null;
     };
-  }, [copyTerminalTextWithFeedback, sessionName]);
+  }, [copyTerminalTextWithFeedback, sendDisplayFacts, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -551,7 +572,8 @@ export default function TerminalView({
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
     gridPresentationRef.current?.schedule();
-  }, [terminalThemeId]);
+    sendDisplayFacts();
+  }, [sendDisplayFacts, terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -570,7 +592,11 @@ export default function TerminalView({
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
-        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+        if (state !== "attached") { nativeHistoryRef.current?.attach(false); return; }
+        // Attached: the program's colour and size queries are answered from this view.
+        sentFactsRef.current = "";
+        sendDisplayFacts();
+        if (terminal.textarea && terminal.textarea.ownerDocument.activeElement === terminal.textarea) attachmentRef.current?.focus(true);
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
@@ -619,7 +645,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       attachment.release();
     };
-  }, [sessionName, chatId, active, leaseAttempt]);
+  }, [sessionName, chatId, active, leaseAttempt, sendDisplayFacts]);
 
   // Hidden and shown again while attached: catch up on what changed meanwhile.
   useEffect(() => {

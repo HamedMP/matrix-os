@@ -1,7 +1,8 @@
 // herdr-core's framed wire format (schema/README.md at the pinned version):
 // [channel u32 LE][kind u8][len u32 LE][payload], payload at most 16 MiB.
 // Channel 0 carries JSON-RPC; other channels carry terminal stream bytes.
-export const HC_FRAME = { DATA: 0, CREDIT: 1, CLOSE: 2, RESIZE: 3, FOCUS: 4 } as const;
+// FOCUS (1 gained, 0 lost) and FACTS (JSON display facts) go viewer → core.
+export const HC_FRAME = { DATA: 0, CREDIT: 1, CLOSE: 2, RESIZE: 3, FOCUS: 4, FACTS: 5 } as const;
 export const HC_MAX_PAYLOAD = 16 * 1024 * 1024;
 const HEADER = 9;
 
@@ -27,6 +28,21 @@ export function encodeResize(channel: number, cols: number, rows: number): Buffe
   payload.writeUInt16LE(cols, 0);
   payload.writeUInt16LE(rows, 2);
   return encodeFrame(channel, HC_FRAME.RESIZE, payload);
+}
+
+export function encodeFocus(channel: number, focused: boolean): Buffer {
+  return encodeFrame(channel, HC_FRAME.FOCUS, Buffer.from([focused ? 1 : 0]));
+}
+
+/**
+ * What the viewer's terminal looks like, as herdr-core's `Display`: default
+ * colours as `#rrggbb` and the cell size in pixels. The core answers the
+ * program's colour and size queries from it and passes theme changes on.
+ */
+export interface HcDisplayFacts { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }
+
+export function encodeFacts(channel: number, facts: HcDisplayFacts): Buffer {
+  return encodeFrame(channel, HC_FRAME.FACTS, Buffer.from(JSON.stringify(facts)));
 }
 
 /**

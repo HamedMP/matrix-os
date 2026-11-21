@@ -49,6 +49,42 @@ describe("local terminal streams", () => {
     connection.close();
   });
 
+  // herdr-core passes focus to programs that asked for focus reports, and
+  // answers colour and cell-size queries from the viewer's display facts.
+  it("sends the core FOCUS and FACTS frames for the attachment", async () => {
+    const core = fakeCore();
+    core.onCall((call) => { if (call.method === "terminal.attach") core.reply(call.id, { result: { channel: 5 } }); });
+    const connection = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" });
+    const sessions = createHcSessions({ ensure: async () => connection }, ports.streams.sink);
+    ports.streams.bind(sessions);
+    const attachId = await sessions.attach("t1", { cols: 80, rows: 24 });
+    ports.streams.open(attachId);
+    const view = window(attachId);
+    view.stream.focus(true);
+    view.stream.facts({ fg: "#eeeeee", bg: "#123456", cursor: "#ff0000", cell: [9, 18] });
+    view.stream.focus(false);
+    const sent = () => core.sent.frames.filter((frame) => frame.channel === 5 && (frame.kind === HC_FRAME.FOCUS || frame.kind === HC_FRAME.FACTS));
+    await vi.waitFor(() => expect(sent()).toHaveLength(3));
+    expect(sent().map((frame) => [frame.kind, frame.kind === HC_FRAME.FOCUS ? frame.payload[0] : JSON.parse(frame.payload.toString())])).toEqual([
+      [HC_FRAME.FOCUS, 1],
+      [HC_FRAME.FACTS, { fg: "#eeeeee", bg: "#123456", cursor: "#ff0000", cell: [9, 18] }],
+      [HC_FRAME.FOCUS, 0],
+    ]);
+    connection.close();
+  });
+
+  it("drops display facts that are not plain colours and sizes", async () => {
+    ports.streams.open(4);
+    for (const message of [
+      { type: "facts", bg: "red" }, { type: "facts", fg: "#12345" }, { type: "facts", cell: [0, 18] },
+      { type: "facts", cell: [9, 18, 1] }, { type: "facts", bg: "#000000", argv: ["x"] }, { type: "focus", focused: "yes" },
+    ]) ports.raw(4, message);
+    ports.raw(4, { type: "facts", bg: "#000000" });
+    await vi.waitFor(() => expect(ports.host.facts).toHaveBeenCalledWith(4, { bg: "#000000" }));
+    expect(ports.host.facts).toHaveBeenCalledTimes(1);
+    expect(ports.host.focus).not.toHaveBeenCalled();
+  });
+
   it("validates what the window sends before it reaches the core", async () => {
     ports.streams.open(4);
     const view = window(4);

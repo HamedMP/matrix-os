@@ -16,6 +16,8 @@ export function localTerminalPorts() {
   const host = {
     acknowledge: vi.fn((_attachId: number, _count: number) => true),
     input: vi.fn((_attachId: number, _data: string, _binary: boolean) => true),
+    focus: vi.fn((_attachId: number, _focused: boolean) => true),
+    facts: vi.fn((_attachId: number, _display: { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }) => true),
   };
   let windowOpen = true;
   const streams = createLocalTerminalStreams<MessagePort>({

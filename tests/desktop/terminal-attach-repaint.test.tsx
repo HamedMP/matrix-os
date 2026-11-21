@@ -159,4 +159,19 @@ describe("herdr-core attach repaint", () => {
     await drawn(terminal);
     expect(bufferLines(terminal).filter((line) => line === "kept history")).toHaveLength(1);
   });
+
+  it("tells the core this terminal's colours and cell size, and when it gains or loses focus", async () => {
+    installOperator();
+    render(<TerminalView sessionName="local:t5" active />);
+    await flush();
+    await vi.waitFor(() => expect(ports.host.facts).toHaveBeenCalled());
+    const [, facts] = ports.host.facts.mock.calls.at(-1)!;
+    // The default dark theme, as #rrggbb.
+    expect(facts.bg).toMatch(/^#[0-9a-f]{6}$/);
+    expect(facts.fg).toMatch(/^#[0-9a-f]{6}$/);
+    const terminal = terminals.at(-1)!;
+    act(() => { terminal.textarea!.dispatchEvent(new FocusEvent("blur")); });
+    act(() => { terminal.textarea!.dispatchEvent(new FocusEvent("focus")); });
+    await vi.waitFor(() => expect(ports.host.focus.mock.calls.map(([, focused]) => focused).slice(-2)).toEqual([false, true]));
+  });
 });
