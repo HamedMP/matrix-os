@@ -1,6 +1,8 @@
 /** Mount integration/app runtime routes and metrics after gateway auth. */
 import type { Kysely } from "kysely";
 import { registerSiteRuntime, type SitePublicDataWiring } from "../sites/wiring.js";
+import { createSitePublicAppResolver } from "../sites/public-app-resolver.js";
+import type { SitePublicAppRecord } from "../sites/public-data-repository.js";
 import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
@@ -20,7 +22,12 @@ export interface DeferredRuntimeRouteOptions {
   app: Hono;
   homePath: string;
   ownerDatabase: Kysely<any> | null;
-  sitePublicData?: SitePublicDataWiring;
+  /** Public site visitors reach only the published app's registry record (2694). */
+  sitePublicApps?: {
+    ensureProvisioned(appSlug: string): Promise<void>;
+    getRecord(appSlug: string): Promise<SitePublicAppRecord | null>;
+    onChange: SitePublicDataWiring["onChange"];
+  };
   upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   isAllowedBrowserLabOrigin?: (origin: string) => boolean;
   sharedBrowser?: { broker: SharedBrowserBroker; ownerId: string };
@@ -47,7 +54,10 @@ export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRout
     proxyIntegrationRequest, posthogErrorTracker, ownerTelemetryDistinctId } = options;
   const APP_AUTH_DEV_BYPASS = options.devAppAuthBypass;
   await registerSiteRuntime(app, { homePath, db: options.ownerDatabase, platformUrl: internalPlatformUrl, handle: internalHandle,
-    ...(options.sitePublicData ? { publicData: options.sitePublicData } : {}) });
+    ...(options.sitePublicApps ? { publicData: {
+      resolveApp: createSitePublicAppResolver(options.sitePublicApps),
+      onChange: options.sitePublicApps.onChange,
+    } } : {}) });
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
