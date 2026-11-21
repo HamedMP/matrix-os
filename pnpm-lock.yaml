@@ -870,6 +870,19 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/hostd:
+    dependencies:
+      undici:
+        specifier: 7.30.1
+        version: 7.30.1
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.5.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/integrations-mcp:
     dependencies:
       '@matrix-os/contracts':
@@ -25497,7 +25510,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
+      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
