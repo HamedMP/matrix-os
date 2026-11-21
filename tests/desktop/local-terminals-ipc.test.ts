@@ -38,9 +38,10 @@ function setup(authorized = true) {
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
-  registerLocalTerminalIpc({ handle: (channel, listener) => { handlers.set(channel, listener); } }, host as unknown as LocalTerminalHost, authorize);
+  const streams = { open: vi.fn((_attachId: number) => true), release: vi.fn() };
+  registerLocalTerminalIpc({ handle: (channel, listener) => { handlers.set(channel, listener); } }, host as unknown as LocalTerminalHost, authorize, streams);
   const invoke = (channel: string, payload: unknown) => Promise.resolve(handlers.get(channel)!({ sender: "window" }, payload));
-  return { host, handlers, authorize, invoke, setStatus: (next: LocalTerminalHostStatus) => { status = next; } };
+  return { host, handlers, authorize, invoke, streams, setStatus: (next: LocalTerminalHostStatus) => { status = next; } };
 }
 
 describe("local terminal IPC", () => {
@@ -54,8 +55,8 @@ describe("local terminal IPC", () => {
     const { host, invoke, authorize } = setup(false);
     const valid: Record<string, unknown> = {
       "local-terminal:list": {}, "local-terminal:create": { cols: 80, rows: 24 }, "local-terminal:kill": { id: "t1" },
-      "local-terminal:attach": { id: "t1", cols: 80, rows: 24 }, "local-terminal:input": { attachId: 1, data: "rm -rf ~\r" },
-      "local-terminal:resize": { attachId: 1, cols: 80, rows: 24 }, "local-terminal:ack": { attachId: 1, count: 1 },
+      "local-terminal:attach": { id: "t1", cols: 80, rows: 24 },
+      "local-terminal:resize": { attachId: 1, cols: 80, rows: 24 },
       "local-terminal:detach": { attachId: 1 },
       "local-terminal:rename": { id: "t1", name: "review" },
       "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
@@ -70,7 +71,7 @@ describe("local terminal IPC", () => {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
       expect(authorize).toHaveBeenLastCalledWith({ sender: "window" }, channel);
     }
-    for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach, host.watch, host.seen, host.addMachine, host.sshLogin]) {
+    for (const method of [host.list, host.create, host.kill, host.attach, host.resize, host.detach, host.watch, host.seen, host.addMachine, host.sshLogin]) {
       expect(method).not.toHaveBeenCalled();
     }
   });
@@ -156,18 +157,23 @@ describe("local terminal IPC", () => {
     const { host, invoke } = setup();
     await expect(invoke("local-terminal:kill", { id: "../../etc/passwd" })).rejects.toThrow("invalid request");
     await expect(invoke("local-terminal:attach", { id: "t1", cols: 100_000, rows: 24 })).rejects.toThrow("invalid request");
-    await expect(invoke("local-terminal:input", { attachId: 1, data: "x".repeat(70_000) })).rejects.toThrow("invalid request");
-    await expect(invoke("local-terminal:input", { attachId: 1, data: "\u20ac", binary: true })).rejects.toThrow("invalid request");
     await expect(invoke("local-terminal:list", { extra: true })).rejects.toThrow("invalid request");
     expect(host.kill).not.toHaveBeenCalled();
     expect(host.attach).not.toHaveBeenCalled();
-    expect(host.input).not.toHaveBeenCalled();
   });
 
-  it("passes binary input through byte for byte", async () => {
-    const { host, invoke } = setup();
-    await expect(invoke("local-terminal:input", { attachId: 5, data: "\u0000\u00ff", binary: true })).resolves.toEqual({ ok: true });
-    expect(host.input).toHaveBeenCalledWith(5, "\u0000\u00ff", true);
+  it("hands the window the attachment's port before replying, and takes it back on detach", async () => {
+    const { host, invoke, streams } = setup();
+    await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: true, attachId: 5 });
+    expect(streams.open).toHaveBeenCalledWith(5);
+    await expect(invoke("local-terminal:detach", { attachId: 5 })).resolves.toEqual({ ok: true });
+    expect(streams.release).toHaveBeenCalledWith(5);
+    expect(host.detach).toHaveBeenCalledWith(5);
+    // No window to take the port: the attachment is not left held.
+    streams.open.mockReturnValueOnce(false);
+    host.detach.mockClear();
+    await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: false });
+    expect(host.detach).toHaveBeenCalledWith(5);
   });
 
   it("turns every failure into a fixed outcome that says why local terminals are missing", async () => {
@@ -206,14 +212,12 @@ describe("local terminal IPC", () => {
     expect(warn).toHaveBeenCalledWith("[local-terminals] local-terminal:attach failed:", "HcCallError (not_found): local terminal call failed");
   });
 
-  it("reports a start that came too fast, a failed end, and typing into a released attachment", async () => {
+  it("reports a start that came too fast and a failed end", async () => {
     const { host, invoke } = setup();
     host.create.mockResolvedValueOnce(null);
     await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "rate-limited" });
     host.kill.mockRejectedValueOnce(new Error("gone"));
     await expect(invoke("local-terminal:kill", { id: "t1" })).resolves.toEqual({ ok: false });
-    host.input.mockReturnValueOnce(false);
-    await expect(invoke("local-terminal:input", { attachId: 9, data: "ls" })).resolves.toEqual({ ok: false });
     await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: true, attachId: 5 });
   });
 

@@ -10,11 +10,12 @@
 // Prints the median of each measurement. Nothing here touches the network or
 // the user's own herdr-core.
 import { EventEmitter } from "node:events";
-import { MessageChannel } from "node:worker_threads";
+import { MessageChannel, type MessagePort } from "node:worker_threads";
 import { performance } from "node:perf_hooks";
 import { connectHc, type HcSocket } from "../../packages/herdr-core-client/src/client";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "../../packages/herdr-core-client/src/protocol";
 import { createHcSessions } from "../../packages/herdr-core-client/src/sessions";
+import { createLocalTerminalStreams } from "../../desktop/src/main/local-terminals/streams";
 
 const CORE_WINDOW = 256 * 1024; // herdr-core's initial credit per stream
 const CORE_CHUNK = 16 * 1024; // herdr-core's output chunk
@@ -92,36 +93,76 @@ function scriptedCore(output: () => Buffer) {
 
 interface RunResult { firstWriteMs: number; paintMs: number; bytes: number; events: number; totalMs: number }
 
-async function run(output: () => Buffer): Promise<RunResult> {
+// "text": output decoded to strings in main and sent as text slices, as the
+// Terminal window received it before layer 6 (and as text sinks still do).
+// "bytes": the Terminal window's path now, through the real streams module:
+// the core's bytes over the attachment's port, acknowledged over it.
+type Mode = "text" | "bytes";
+
+async function run(output: () => Buffer, mode: Mode): Promise<RunResult> {
   const core = scriptedCore(output);
   const connection = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" });
-  const { port1: mainPort, port2: windowPort } = new MessageChannel();
   const total = output().length;
   let received = 0;
   let events = 0;
   let firstAt = 0;
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-  const sessions = createHcSessions({ ensure: async () => connection }, {
-    // Main → window: the event as Electron would carry it.
-    output: (attachId, data) => mainPort.postMessage({ attachId, data }),
-    closed: () => undefined,
-  });
-  // The window: count what arrived, then acknowledge it as the renderer does.
-  windowPort.on("message", (event: { attachId: number; data: string | Uint8Array }) => {
+  const count = (size: number) => {
     if (firstAt === 0) firstAt = performance.now();
-    received += typeof event.data === "string" ? Buffer.byteLength(event.data) : event.data.byteLength;
+    received += size;
     events += 1;
-    windowPort.postMessage({ attachId: event.attachId, count: 1 });
     if (received >= total) resolveDone();
-  });
-  mainPort.on("message", (ack: { attachId: number; count: number }) => { sessions.acknowledge(ack.attachId, ack.count); });
+  };
+  const opened: MessagePort[] = [];
+  let sessions: ReturnType<typeof createHcSessions>;
+  if (mode === "text") {
+    // Main → window: one event per decoded slice, acknowledged back.
+    const { port1: mainPort, port2: windowPort } = new MessageChannel();
+    opened.push(mainPort, windowPort);
+    sessions = createHcSessions({ ensure: async () => connection }, {
+      output: (attachId, data) => mainPort.postMessage({ attachId, data }),
+      closed: () => undefined,
+    });
+    windowPort.on("message", (event: { attachId: number; data: string }) => {
+      windowPort.postMessage({ attachId: event.attachId, count: 1 });
+      count(Buffer.byteLength(event.data));
+    });
+    mainPort.on("message", (ack: { attachId: number; count: number }) => { sessions.acknowledge(ack.attachId, ack.count); });
+  } else {
+    // The production main-process streams module, with Node ports for Electron's.
+    const streams = createLocalTerminalStreams<MessagePort>({
+      target: () => ({
+        postMessage: (_channel, _message, [windowPort]) => {
+          windowPort!.on("message", (data: unknown) => {
+            if (!(data instanceof Uint8Array)) return;
+            windowPort!.postMessage({ type: "ack", count: 1 });
+            count(data.byteLength);
+          });
+        },
+      }),
+      createChannel: () => {
+        const { port1, port2 } = new MessageChannel();
+        opened.push(port1, port2);
+        return {
+          port1: {
+            postMessage: (message: unknown) => port1.postMessage(message),
+            on: (_event: "message", listener: (event: { data: unknown }) => void) => port1.on("message", (data: unknown) => listener({ data })),
+            start: () => port1.start(),
+            close: () => port1.close(),
+          },
+          port2,
+        };
+      },
+    });
+    sessions = createHcSessions({ ensure: async () => connection }, streams.sink);
+    streams.bind(sessions);
+  }
   const started = performance.now();
   await sessions.attach("t1", { cols: 120, rows: 30 });
   await done;
   const finished = performance.now();
-  mainPort.close();
-  windowPort.close();
+  for (const port of opened) port.close();
   connection.close();
   return { firstWriteMs: firstAt - started, paintMs: finished - started, bytes: received, events, totalMs: finished - started };
 }
@@ -134,28 +175,27 @@ async function main(): Promise<void> {
   const paint = firstPaint();
   // Typical program output: printable text with colour, as `yes`-style floods produce.
   const flood = Buffer.from(`\x1b[33mwarn\x1b[0m ${"0123456789abcdef".repeat(4)}\r\n`.repeat(Math.ceil((mib * 1024 * 1024) / 80))).subarray(0, mib * 1024 * 1024);
-  await run(() => paint); // warm-up
-  const attach: RunResult[] = [];
-  const throughput: RunResult[] = [];
-  for (let index = 0; index < runs; index += 1) {
-    attach.push(await run(() => paint));
-    throughput.push(await run(() => flood));
+  const report: Record<string, unknown> = { runs };
+  for (const mode of ["text", "bytes"] as const) {
+    await run(() => paint, mode); // warm-up
+    const attach: RunResult[] = [];
+    const throughput: RunResult[] = [];
+    for (let index = 0; index < runs; index += 1) {
+      attach.push(await run(() => paint, mode));
+      throughput.push(await run(() => flood, mode));
+    }
+    const mibPerSecond = throughput.map((result) => result.bytes / (1024 * 1024) / (result.totalMs / 1000));
+    report[mode] = {
+      attach: {
+        paintBytes: paint.length,
+        firstWriteMs: Number(median(attach.map((result) => result.firstWriteMs)).toFixed(2)),
+        fullPaintMs: Number(median(attach.map((result) => result.paintMs)).toFixed(2)),
+        events: median(attach.map((result) => result.events)),
+      },
+      throughput: { mib, mibPerSecond: Number(median(mibPerSecond).toFixed(1)), events: median(throughput.map((result) => result.events)) },
+    };
   }
-  const mibPerSecond = throughput.map((result) => result.bytes / (1024 * 1024) / (result.totalMs / 1000));
-  console.log(JSON.stringify({
-    runs,
-    attach: {
-      paintBytes: paint.length,
-      firstWriteMs: Number(median(attach.map((result) => result.firstWriteMs)).toFixed(2)),
-      fullPaintMs: Number(median(attach.map((result) => result.paintMs)).toFixed(2)),
-      events: median(attach.map((result) => result.events)),
-    },
-    throughput: {
-      mib,
-      mibPerSecond: Number(median(mibPerSecond).toFixed(1)),
-      events: median(throughput.map((result) => result.events)),
-    },
-  }, null, 2));
+  console.log(JSON.stringify(report, null, 2));
 }
 
 await main();

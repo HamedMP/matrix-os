@@ -32,7 +32,7 @@ export interface ShellSocketEvents {
    * `written`, when a source passes it, must be called once the output has
    * been drawn (or dropped), so the source can let more through.
    */
-  onOutput(data: string, seq: number, written?: () => void): void;
+  onOutput(data: string | Uint8Array, seq: number, written?: () => void): void;
   /**
    * The source is about to paint the whole terminal again (screen and
    * history), as herdr-core does on every attach: whatever is shown must go,

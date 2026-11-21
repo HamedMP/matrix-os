@@ -15,6 +15,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { createLocalTerminalSocket, inputChunkEnd } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
+import { localTerminalPorts } from "./fixtures/local-terminal-ports";
 
 beforeAll(() => {
   // jsdom has no modal dialogs.
@@ -481,15 +482,25 @@ describe("Terminal window shortcuts", () => {
 });
 
 describe("local terminal socket", () => {
-  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
-  afterEach(() => { vi.restoreAllMocks(); });
+  let ports: ReturnType<typeof localTerminalPorts>;
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); ports = localTerminalPorts(); });
+  afterEach(() => { ports.dispose(); vi.restoreAllMocks(); });
   // The view draws output and then says so, as xterm's write callback does.
-  const events = () => ({ onState: vi.fn(), onOutput: vi.fn((_data: string, _seq: number, written?: () => void) => { written?.(); }),
-    onGap: vi.fn(), onExit: vi.fn(), onOwnershipChange: vi.fn() });
+  const events = () => ({ onState: vi.fn(), onOutput: vi.fn((_data: string | Uint8Array, _seq: number, written?: () => void) => { written?.(); }),
+    onGap: vi.fn(), onExit: vi.fn(), onOwnershipChange: vi.fn(), onRepaint: vi.fn() });
+  const text = (data: unknown) => (typeof data === "string" ? data : new TextDecoder().decode(data as Uint8Array));
+  const shown = (handlers: { onOutput: { mock: { calls: unknown[][] } } }) => handlers.onOutput.mock.calls.map(([data, seq]) => [text(data), seq]);
+  // The trusted core hands the window the attachment's port before it replies with the id.
+  const attached = (attachId: number) => () => { ports.streams.open(attachId); return { ok: true, attachId }; };
+  const operatorWithPorts = (local: Record<string, (payload: never) => unknown>) => {
+    const operator = installOperator(local);
+    window.operator.localTerminalStream = ports.bridge as typeof window.operator.localTerminalStream;
+    return operator;
+  };
+  const ackTotal = () => ports.host.acknowledge.mock.calls.reduce((sum, [, count]) => sum + count, 0);
 
-  it("attaches at the requested size, relays output in order and forwards input and resize", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 5 }), "local-terminal:ack": () => ({ ok: true }),
-      "local-terminal:input": () => ({ ok: true }), "local-terminal:resize": () => ({ ok: true }), "local-terminal:detach": () => ({ ok: true }) });
+  it("attaches at the requested size, relays output as bytes in order and forwards input and resize", async () => {
+    const operator = operatorWithPorts({ "local-terminal:attach": attached(5), "local-terminal:resize": () => ({ ok: true }), "local-terminal:detach": () => ({ ok: true }) });
     const handlers = { ...events(), onCanonicalSize: vi.fn() };
     const socket = createLocalTerminalSocket("local:t3", handlers);
     socket.resize(132, 43);
@@ -498,140 +509,146 @@ describe("local terminal socket", () => {
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:attach", { id: "t3", cols: 132, rows: 43 });
     // Fault detected (Mac, 2026-11-22): a local pane never took a new grid after a split, only scaled.
     expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 132, rows: 43 });
+    // The core repaints the whole terminal on attach, so the view starts empty.
+    expect(handlers.onRepaint).toHaveBeenCalledTimes(1);
 
-    operator.emit("local-terminal:output", { attachId: 9, data: "someone else" });
-    operator.emit("local-terminal:output", { attachId: 5, data: "one" });
-    operator.emit("local-terminal:output", { attachId: 5, data: "two" });
-    expect(handlers.onOutput.mock.calls.map(([data, seq]) => [data, seq])).toEqual([["one", 1], ["two", 2]]);
-    // One acknowledgement for the burst, counting only this terminal's output.
-    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 5, count: 2 }));
-    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack")).toHaveLength(1);
+    ports.output(9, "someone else");
+    ports.output(5, "one");
+    ports.output(5, "two");
+    await waitFor(() => expect(shown(handlers)).toEqual([["one", 1], ["two", 2]]));
+    expect(Object.prototype.toString.call(handlers.onOutput.mock.calls[0]![0])).toBe("[object Uint8Array]");
+    // Credit for this terminal's output only.
+    await waitFor(() => expect(ackTotal()).toBe(2));
+    expect(ports.host.acknowledge.mock.calls.every(([attachId]) => attachId === 5)).toBe(true);
 
     socket.sendInput("ls\r");
     socket.sendBinary("\x1b[M");
     socket.resize(80, 24);
-    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "ls\r" });
-    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "\x1b[M", binary: true });
+    await waitFor(() => expect(ports.host.input).toHaveBeenCalledTimes(2));
+    expect(ports.host.input.mock.calls).toEqual([[5, "ls\r", false], [5, "\x1b[M", true]]);
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:resize", { attachId: 5, cols: 80, rows: 24 });
     await waitFor(() => expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 80, rows: 24 }));
 
     socket.detach();
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:detach", { attachId: 5 });
-    expect(operator.listening("local-terminal:output")).toBe(0);
     socket.sendInput("ignored");
-    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input")).toHaveLength(2);
+    ports.output(5, "after detach");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ports.host.input).toHaveBeenCalledTimes(2);
+    expect(handlers.onOutput).toHaveBeenCalledTimes(2);
   });
 
-  it("reports ended when the terminal closes or cannot be attached, and releases its listeners", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 2 }), "local-terminal:detach": () => ({ ok: true }) });
+  it("sends everything typed in one turn as one message", async () => {
+    operatorWithPorts({ "local-terminal:attach": attached(5) });
+    const handlers = events();
+    const socket = createLocalTerminalSocket("local:t3", handlers);
+    socket.connect();
+    await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
+    for (const key of ["g", "i", "t", " ", "s", "\r"]) socket.sendInput(key);
+    await waitFor(() => expect(ports.host.input).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ports.host.input.mock.calls).toEqual([[5, "git s\r", false]]);
+  });
+
+  it("reports ended when the terminal closes or cannot be attached", async () => {
+    const operator = operatorWithPorts({ "local-terminal:attach": attached(2), "local-terminal:detach": () => ({ ok: true }) });
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
-    operator.emit("local-terminal:closed", { attachId: 2 });
-    expect(handlers.onState).toHaveBeenLastCalledWith("ended");
-    expect(operator.listening("local-terminal:closed")).toBe(0);
+    ports.closed(2);
+    await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:detach", expect.anything());
 
-    const refused = installOperator({ "local-terminal:attach": () => ({ ok: false }) });
+    operatorWithPorts({ "local-terminal:attach": () => ({ ok: false }) });
     const refusedHandlers = events();
     createLocalTerminalSocket("local:t1", refusedHandlers).connect();
     await waitFor(() => expect(refusedHandlers.onState).toHaveBeenLastCalledWith("ended"));
-    expect(refused.listening("local-terminal:output")).toBe(0);
   });
 
-  it("shows the history that arrived before the attach call returned, in order", async () => {
+  it("shows the history that arrived before the attach call returned, in order and in full", async () => {
     let resolveAttach!: (value: unknown) => void;
-    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
-      "local-terminal:ack": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }) });
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
-    operator.emit("local-terminal:output", { attachId: 4, data: "another terminal" });
-    operator.emit("local-terminal:output", { attachId: 6, data: "history " });
-    operator.emit("local-terminal:output", { attachId: 6, data: "prompt$ " });
+    ports.output(4, "another terminal");
+    ports.output(6, "history ");
+    for (let index = 0; index < 299; index += 1) ports.output(6, "h");
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(handlers.onOutput).not.toHaveBeenCalled();
     resolveAttach({ ok: true, attachId: 6 });
-    await waitFor(() => expect(handlers.onOutput.mock.calls.map(([data, seq]) => [data, seq])).toEqual([["history ", 1], ["prompt$ ", 2]]));
-    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 6, count: 2 }));
+    await waitFor(() => expect(handlers.onOutput).toHaveBeenCalledTimes(300));
+    expect(text(handlers.onOutput.mock.calls[0]![0])).toBe("history ");
+    // The repaint comes first, then the core's paint.
+    expect(handlers.onRepaint.mock.invocationCallOrder[0]!).toBeLessThan(handlers.onOutput.mock.invocationCallOrder[0]!);
+    await waitFor(() => expect(ackTotal()).toBe(300));
   });
 
   it("returns output credit only after the view has drawn the output", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": attached(7) });
     const drawn: Array<() => void> = [];
-    const handlers = { ...events(), onOutput: vi.fn((_data: string, _seq: number, written?: () => void) => { if (written) drawn.push(written); }) };
+    const handlers = { ...events(), onOutput: vi.fn((_data: string | Uint8Array, _seq: number, written?: () => void) => { if (written) drawn.push(written); }) };
     createLocalTerminalSocket("local:t1", handlers).connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
-    operator.emit("local-terminal:output", { attachId: 7, data: "a flood of output" });
-    await Promise.resolve();
-    await Promise.resolve();
-    const acks = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack");
-    expect(acks()).toEqual([]);
+    ports.output(7, "a flood of output");
+    await waitFor(() => expect(drawn).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ports.host.acknowledge).not.toHaveBeenCalled();
     drawn[0]!();
     drawn[0]!();
-    await waitFor(() => expect(acks()).toEqual([["local-terminal:ack", { attachId: 7, count: 1 }]]));
+    await waitFor(() => expect(ports.host.acknowledge.mock.calls).toEqual([[7, 1]]));
   });
 
   it("splits a very large burst of acknowledgements instead of losing it", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": attached(7) });
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
     // A hidden window draws thousands of queued chunks in one slice.
-    for (let index = 0; index < 5_000; index += 1) operator.emit("local-terminal:output", { attachId: 7, data: "x" });
-    const acks = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack").map(([, payload]) => (payload as { count: number }).count);
-    await waitFor(() => expect(acks().reduce((sum, count) => sum + count, 0)).toBe(5_000));
-    expect(Math.max(...acks())).toBeLessThanOrEqual(4_096);
+    const drawn: Array<() => void> = [];
+    handlers.onOutput.mockImplementation((_data, _seq, written) => { if (written) drawn.push(written); });
+    for (let index = 0; index < 5_000; index += 1) ports.output(7, "x");
+    await waitFor(() => expect(drawn).toHaveLength(5_000));
+    for (const written of drawn) written();
+    await waitFor(() => expect(ackTotal()).toBe(5_000));
+    expect(Math.max(...ports.host.acknowledge.mock.calls.map(([, count]) => count))).toBeLessThanOrEqual(4_096);
   });
 
   it("acknowledges output on arrival while the window is hidden, so a background program is not slowed", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 7 }), "local-terminal:ack": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": attached(7) });
     // The view never reports drawing: a throttled, hidden page.
     const handlers = { ...events(), onOutput: vi.fn() };
     const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     createLocalTerminalSocket("local:t1", handlers).connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
-    operator.emit("local-terminal:output", { attachId: 7, data: "build output" });
-    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:ack", { attachId: 7, count: 1 }));
+    ports.output(7, "build output");
+    await waitFor(() => expect(ports.host.acknowledge).toHaveBeenCalledWith(7, 1));
     expect(handlers.onOutput).toHaveBeenCalledTimes(1);
     visibility.mockRestore();
   });
 
-  it("returns credit for early output it had no room to keep", async () => {
-    let resolveAttach!: (value: unknown) => void;
-    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
-      "local-terminal:ack": () => ({ ok: true }) });
-    const handlers = events();
-    createLocalTerminalSocket("local:t1", handlers).connect();
-    for (let index = 0; index < 300; index += 1) operator.emit("local-terminal:output", { attachId: 6, data: "h" });
-    resolveAttach({ ok: true, attachId: 6 });
-    const acked = () => operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:ack")
-      .reduce((sum, [, payload]) => sum + (payload as { count: number }).count, 0);
-    await waitFor(() => expect(acked()).toBe(300));
-    expect(handlers.onOutput).toHaveBeenCalledTimes(256);
-  });
-
   it("never cuts a pasted character in half when splitting long input", async () => {
     const emoji = "\u{1F600}";
-    const text = `${"a".repeat(32_767)}${emoji}${"b".repeat(10)}`;
-    expect(inputChunkEnd(text, 0)).toBe(32_767);
-    expect(inputChunkEnd(text, 32_767)).toBe(text.length);
+    const pasted = `${"a".repeat(32_767)}${emoji}${"b".repeat(10)}`;
+    expect(inputChunkEnd(pasted, 0)).toBe(32_767);
+    expect(inputChunkEnd(pasted, 32_767)).toBe(pasted.length);
     expect(inputChunkEnd("short", 0)).toBe(5);
 
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 3 }), "local-terminal:input": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": attached(3) });
     const handlers = events();
     const socket = createLocalTerminalSocket("local:t1", handlers);
     socket.connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
-    socket.sendInput(text);
-    const sent = operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input").map(([, payload]) => (payload as { data: string }).data);
-    expect(sent.join("")).toBe(text);
+    socket.sendInput(pasted);
+    await waitFor(() => expect(ports.host.input).toHaveBeenCalledTimes(2));
+    const sent = ports.host.input.mock.calls.map(([, data]) => data);
+    expect(sent.join("")).toBe(pasted);
     // Each piece is well-formed on its own, so encoding it cannot corrupt the character.
     for (const piece of sent) expect(piece.isWellFormed()).toBe(true);
-    expect(sent).toHaveLength(2);
   });
 
   it("stops accepting typing once the trusted core no longer holds the attachment", async () => {
-    const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 3 }), "local-terminal:input": () => ({ ok: false }),
-      "local-terminal:detach": () => ({ ok: true }) });
+    operatorWithPorts({ "local-terminal:attach": attached(3), "local-terminal:detach": () => ({ ok: true }) });
+    ports.host.input.mockReturnValue(false);
     const handlers = events();
     const socket = createLocalTerminalSocket("local:t1", handlers);
     socket.connect();
@@ -639,29 +656,28 @@ describe("local terminal socket", () => {
     socket.sendInput("ls\r");
     await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
     socket.sendInput("more");
-    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input")).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(ports.host.input).toHaveBeenCalledTimes(1);
   });
 
   it("shows a shell that ended while it was attaching as ended, after its last output", async () => {
     let resolveAttach!: (value: unknown) => void;
-    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
-      "local-terminal:ack": () => ({ ok: true }) });
+    const operator = operatorWithPorts({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }) });
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
-    operator.emit("local-terminal:output", { attachId: 6, data: "exit\r\n" });
-    operator.emit("local-terminal:closed", { attachId: 6 });
-    operator.emit("local-terminal:closed", { attachId: 9 });
+    ports.output(6, "exit\r\n");
+    ports.closed(6);
+    ports.closed(9);
     resolveAttach({ ok: true, attachId: 6 });
     await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
-    expect(handlers.onOutput.mock.calls.map(([data]) => data)).toEqual(["exit\r\n"]);
-    // Nothing is left to detach, and typing goes nowhere.
+    expect(handlers.onOutput.mock.calls.map(([data]) => text(data))).toEqual(["exit\r\n"]);
+    // Nothing is left to detach.
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:detach", expect.anything());
-    expect(operator.listening("local-terminal:closed")).toBe(0);
   });
 
   it("sends the pane's size to the shell when it was resized while attaching", async () => {
     let resolveAttach!: (value: unknown) => void;
-    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
+    const operator = operatorWithPorts({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
       "local-terminal:resize": () => ({ ok: true }) });
     const handlers = events();
     const socket = createLocalTerminalSocket("local:t1", handlers);
@@ -669,6 +685,7 @@ describe("local terminal socket", () => {
     socket.connect();
     socket.resize(140, 50);
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:resize", expect.anything());
+    ports.streams.open(4);
     resolveAttach({ ok: true, attachId: 4 });
     await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:resize", { attachId: 4, cols: 140, rows: 50 }));
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:attach", { id: "t1", cols: 100, rows: 30 });
@@ -676,7 +693,7 @@ describe("local terminal socket", () => {
 
   it("detaches an attachment that completes after the view already left", async () => {
     let resolveAttach!: (value: unknown) => void;
-    const operator = installOperator({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
+    const operator = operatorWithPorts({ "local-terminal:attach": () => new Promise((resolve) => { resolveAttach = resolve; }),
       "local-terminal:detach": () => ({ ok: true }) });
     const handlers = events();
     const socket = createLocalTerminalSocket("local:t1", handlers);

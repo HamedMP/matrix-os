@@ -7,6 +7,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Terminal as XTerminal } from "@xterm/xterm";
 import { corePaint } from "./fixtures/fake-herdr-core";
+import { localTerminalPorts } from "./fixtures/local-terminal-ports";
 
 const { terminals } = vi.hoisted(() => ({ terminals: [] as XTerminal[] }));
 // The real xterm parser and buffer; only the instances are recorded.
@@ -31,6 +32,7 @@ import { LOCAL_TERMINAL_SOCKETS } from "@desktop/renderer/src/features/terminal-
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 type Listener = (payload: unknown) => void;
+let ports: ReturnType<typeof localTerminalPorts>;
 function installOperator(options: { attachReply?: Promise<void> } = {}) {
   const listeners = new Map<string, Listener[]>();
   let nextAttach = 1;
@@ -38,6 +40,7 @@ function installOperator(options: { attachReply?: Promise<void> } = {}) {
     if (channel === "local-terminal:attach") {
       const attachId = nextAttach++;
       await options.attachReply;
+      ports.streams.open(attachId);
       return { ok: true, attachId };
     }
     if (channel.startsWith("local-terminal:")) return { ok: true };
@@ -45,6 +48,7 @@ function installOperator(options: { attachReply?: Promise<void> } = {}) {
     throw new Error(`unexpected channel ${channel}`);
   });
   window.operator = {
+    localTerminalStream: ports.bridge,
     invoke,
     on: (channel, callback) => {
       listeners.set(channel, [...(listeners.get(channel) ?? []), callback]);
@@ -66,11 +70,16 @@ function bufferLines(terminal: XTerminal): string[] {
 }
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-const drawn = (terminal: XTerminal) => act(() => new Promise<void>((resolve) => terminal.write("", resolve)));
+// Port messages arrive as tasks; then xterm parses what it was given.
+const drawn = (terminal: XTerminal) => act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise<void>((resolve) => terminal.write("", resolve));
+});
 
 describe("herdr-core attach repaint", () => {
   beforeEach(() => {
     terminals.length = 0;
+    ports = localTerminalPorts();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     useConnection.setState({ status: "signed-out", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", api: null } as never);
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -79,6 +88,7 @@ describe("herdr-core attach repaint", () => {
   });
   afterEach(() => {
     cleanup();
+    ports.dispose();
     setAlternateTerminalSockets(null);
     resetAttachManager();
     vi.unstubAllGlobals();
@@ -93,7 +103,7 @@ describe("herdr-core attach repaint", () => {
     const first = render(<TerminalView sessionName="local:t1" active />);
     await flush();
     const firstTerminal = terminals.at(-1)!;
-    operator.emit("local-terminal:output", { attachId: operator.lastAttachId(), data: paint(firstTerminal.rows) });
+    ports.output(operator.lastAttachId(), paint(firstTerminal.rows));
     await drawn(firstTerminal);
     expect(bufferLines(firstTerminal).filter((line) => line === "history line 7")).toHaveLength(1);
     first.unmount();
@@ -106,7 +116,7 @@ describe("herdr-core attach repaint", () => {
     // Nothing of the last visit is drawn under the core's paint.
     await drawn(reopened);
     expect(bufferLines(reopened).some((line) => line.startsWith("history line"))).toBe(false);
-    operator.emit("local-terminal:output", { attachId: operator.lastAttachId(), data: paint(reopened.rows) });
+    ports.output(operator.lastAttachId(), paint(reopened.rows));
     await drawn(reopened);
 
     const lines = bufferLines(reopened);
@@ -121,7 +131,7 @@ describe("herdr-core attach repaint", () => {
     await flush();
     const terminal = terminals.at(-1)!;
     // The core's paint can share a read with its answer to the attach.
-    operator.emit("local-terminal:output", { attachId: 1, data: corePaint({ history: ["early history"], screen: ["$ "], rows: terminal.rows }) });
+    ports.output(1, corePaint({ history: ["early history"], screen: ["$ "], rows: terminal.rows }));
     await act(async () => { reply(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await drawn(terminal);
     expect(bufferLines(terminal).filter((line) => line === "early history")).toHaveLength(1);
