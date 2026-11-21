@@ -177,7 +177,17 @@ is orthogonal to platform connectivity.
 - Tunnel ingress: `hostname → http://127.0.0.1:<nginx loopback port>`, then
   `http_status:404`. nginx on the machine listens on loopback only.
 - Session routing, `/vm/<handle>`, WebSocket upgrades and the runtime
-  selection cookie stay unchanged; they go through `substrates.resolveUpstream`.
+  selection cookie keep their shape and go through `substrates.resolveUpstream`.
+- **Free access in routing.** Today the middleware calls
+  `getRuntimeEntitlementDecisionForUser()` before `resolveUpstream()`, and
+  without a paid entitlement ordinary requests get 402. Owned rows carry
+  `provisioning_class='owned'`, and the decision receives the machine's
+  substrate and class. After the existing account-deletion check (unchanged,
+  including grace rules), an `owned` machine is allowed when the owner's free
+  owned entitlement holds: account not suspended, machine not revoked, and
+  the machine within the 3-machine cap. Paid VPS, preview and private-preview
+  rules are unchanged. A free owner never sees checkout for an owned machine;
+  a revoked or over-cap machine gets a generic "computer unavailable" state.
 
 ### Enrollment
 
@@ -300,7 +310,7 @@ Security implications:
   reach the machine directly. Repeat abuse suspends the owner's sharing
   entitlement without touching their local data.
 - **Revocation on unpair.** Unpair, in the same transaction that revokes the
-  credential, disables the machine's share links, unpublishes its sites (the
+  credential (before any Cloudflare call), disables the machine's share links, unpublishes its sites (the
   bucket objects are deleted by the existing site lifecycle) and ends its
   collaboration sessions with an "owner computer removed" reason. Account
   deletion follows the existing deletion guarantees.
@@ -320,8 +330,9 @@ lid close or accept going offline (installer warns).
 - **FR-3** No platform-wide secret is ever sent to an owned machine.
 - **FR-4** Every machine-to-platform route authenticates the machine
   credential and derives the handle from it.
-- **FR-5** Unpair revokes the credential, deletes the tunnel and its DNS
-  record, and makes the machine unroutable in one user action.
+- **FR-5** Unpair revokes the credential and makes the machine unroutable in
+  one platform transaction, effective immediately and independent of
+  Cloudflare. Tunnel and DNS deletion follow asynchronously with retries.
 - **FR-6** Offline machines get the offline response on every path, never a
   raw 502.
 - **FR-7** Owned capability states come from the runtime capability
@@ -402,7 +413,8 @@ platform-rendered shares and bucket-served sites (see Sharing).
 | Machine offline | Offline response; no compute started; tunnel reclaimed after 14 days |
 | Credential file deleted on the machine | `matrix connect` re-enrolls; old machine row offered for replacement on `/connect` (same handle) |
 | Rotation interrupted | Old credential valid during 24 h overlap; CAS prevents double rotation |
-| Unpair while machine is online | Tunnel deleted first (cuts traffic), then credential revoked; machine sees 401 and stops `cloudflared` |
+| Unpair while machine is online | One transaction sets `revoked_at`, bumps the credential epoch, clears the routable tunnel hostname and disables shares, sites and sessions. Every machine route and every proxy path rejects from that commit. Tunnel and DNS deletion are then queued; the machine sees 401 and stops `cloudflared` |
+| Unpair during a Cloudflare outage | Access is already cut by the transaction (routing reads `revoked_at`, not tunnel state). The deletion job retries with backoff; the reconciler deletes any tunnel without a live link row |
 | Tunnel limit reached | New enrollments get a "temporarily unavailable" state; existing machines keep working; alert |
 | Platform deploy | Machines keep running; heartbeats retry with backoff; no state lost |
 | Update fails signature or health check | Not applied, or rolled back to previous `/opt/matrix/app` |
@@ -434,6 +446,19 @@ heartbeat 10 s; enrollment poll interval 5 s.
 
 Plus one PR in `FinnaAI/matrix-os-site` (`content/docs`): install guide,
 requirements, what works, offline, removal (FR-10).
+
+Test checkpoints (each PR is red/green first, per
+`docs/dev/testing-effectiveness.md`; Cloudflare is faked at the HTTP
+boundary in automated lanes, never in the real-deployment check):
+
+| PR | Automated integration test | Real deployment check |
+| --- | --- | --- |
+| 1 | Migration up on a copy of the platform schema; existing rows stay `vps`; constraint rejects unknown substrates | Migration on a preview platform database |
+| 2 | Enrollment end to end: start, approve with a Clerk test session, poll, single delivery, code reuse rejected, CLI-grant code rejected; Cloudflare 5xx and timeout at approval leave a retrying job and no orphan; rotation CAS and overlap; unpair during a Cloudflare outage cuts credential access at commit | Enroll a disposable Ubuntu VM against a preview platform with a test Cloudflare account |
+| 3 | Routing through a fake tunnel origin: free owner gets 200 not 402; revoked, over-cap and stale-heartbeat machines get the offline or unavailable response on HTTP, API and WS; share, site-submission and collaboration callers use the registry; paid VPS routing unchanged | Chat, Terminal, Files, a share link, a site form and a collaborator session through the preview platform to the VM |
+| 4 | Installer option tests (existing harness): non-TTY defaults, credential file mode 0600, no secret in argv or logs, signed update rejected when the signature is bad | Fresh Ubuntu 24.04 laptop or VM, one-liner to connected |
+| 5 | Shared component tests for list, rename, remove and offline states | Live captures on Web Desktop, Web Canvas and Electron Desktop |
+| 6 | Docs parity contracts | — |
 
 Spike before PR 2 (throwaway, outside the repo): confirm the token-retrieval
 and secret-rotation endpoints, Access service-token policy on tunnel
