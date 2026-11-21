@@ -31,6 +31,7 @@ import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
 import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { WebProjectHome } from "./chat/WebProjectHome";
+import { useProjectHomeView } from "./chat/project-home-view";
 import { readWebProjectAgentContext } from "./chat/WebProjectAgentContext";
 import { projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -262,6 +263,9 @@ function ChatAppContent({
     : undefined;
   const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
     && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
+  const [projectHomeView, setProjectHomeView] = useProjectHomeView(projectHome?.id);
+  // Bumped when the board starts a chat server-side, so the focused rail reloads its project chats.
+  const [projectChatsRevision, setProjectChatsRevision] = useState(0);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -313,9 +317,18 @@ function ChatAppContent({
     setAgentDraftRequest({ id: agentDraftSequence.current, text, resources, ownerIdentity: draftIdentity });
     if (mobile) setSidebarOpen(false);
   };
-  const activeDraftRequest = !sessionId && agentDraftRequest?.ownerIdentity === draftIdentity ? agentDraftRequest : composerDraftRequest;
+  // A chat started from a board task opens with the task text in its composer until it is sent or replaced.
+  const [taskChatDraft, setTaskChatDraft] = useState<(ChatAgentDraftRequest & { chatId: string; ownerIdentity: unknown }) | null>(null);
+  const openTaskChat = (chatId: string, text: string) => {
+    agentDraftSequence.current += 1;
+    setTaskChatDraft({ id: agentDraftSequence.current, text, chatId, ownerIdentity: draftIdentity });
+    onSwitchConversation(chatId);
+  };
+  const activeDraftRequest = sessionId && taskChatDraft?.chatId === sessionId && taskChatDraft.ownerIdentity === draftIdentity ? taskChatDraft
+    : !sessionId && agentDraftRequest?.ownerIdentity === draftIdentity ? agentDraftRequest : composerDraftRequest;
   const consumeDraftRequest = (id: number) => {
-    if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
+    if (taskChatDraft?.id === id) setTaskChatDraft(null);
+    else if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
     else onComposerDraftConsumed?.(id);
   };
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
@@ -634,7 +647,7 @@ function ChatAppContent({
         {/* Conversation list */}
 
           <div className="px-2 pb-3">
-            {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
+            {focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}/${projectChatsRevision}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
               unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
@@ -762,7 +775,9 @@ function ChatAppContent({
             projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
-              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
+              onSelectChat={onSwitchConversation} active={active !== false} view={projectHomeView} onViewChange={setProjectHomeView}
+              onProjectChatsChanged={() => setProjectChatsRevision((revision) => revision + 1)} onTaskChatStarted={openTaskChat} /> : undefined}
+            projectHomeFullBleed={projectHome !== undefined && projectHomeView === "board"}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -929,6 +944,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
   projectHome,
+  projectHomeFullBleed = false,
 }: {
   composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "projectSlash" | "isCurrentAuthority" | "attachmentPolicy" | "matrixGatewayUrl">;
   composerKey: string;
@@ -940,6 +956,8 @@ function EmptyState({
   providerReady: boolean;
   attachmentsEnabled: boolean;
   projectHome?: React.ReactNode;
+  /** The project page fills the pane on its own (the Board view): no composer below it. */
+  projectHomeFullBleed?: boolean;
 }) {
   const layout = mobile ? "narrow" : "wide";
   const input = (
@@ -956,6 +974,7 @@ function EmptyState({
       attachmentsEnabled={attachmentsEnabled}
     />
   );
+  if (projectHome && projectHomeFullBleed) return <div className="flex min-h-0 flex-1 flex-col">{projectHome}</div>;
   if (projectHome) {
     return <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       {projectHome}

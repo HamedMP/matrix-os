@@ -10,7 +10,7 @@ import { boardFilterIsActive, matchesBoardFilter, groupTasksByStatus, type Board
 import { readBoardPreferences, writeBoardPreferences, type BoardPreferences, type PreferenceStorage } from "./board-preferences.js";
 import { focusRing, tone } from "./board-style.js";
 import { BoardToolbar } from "./BoardToolbar.js";
-import type { ProjectBoardClient } from "./client.js";
+import type { ProjectBoardClient , StartedTaskSession } from "./client.js";
 import { TaskDetail } from "./TaskDetail.js";
 import { BOARD_COLUMN_STATUSES, TASK_STATUS_LABEL, type ProjectTask, type TaskSession, type TaskStatus } from "./types.js";
 import { useProjectBoard } from "./use-project-board.js";
@@ -28,13 +28,15 @@ export interface ProjectBoardProps {
   onImportLinear?: () => void;
   /** Opens a task's chat or terminal in the surface's own Chat or Terminal; omitted, the open buttons are disabled. */
   onOpenSession?: (session: TaskSession) => void;
+  /** A task started a chat or terminal; the surface refreshes its chat or terminal lists. */
+  onSessionStarted?: (session: StartedTaskSession) => void;
   active?: boolean;
 }
 
 interface PendingClose { taskId: string; status: TaskStatus; index: number }
 
 /** A project's task board: kanban or list, filters, quick create, and the task detail sheet. */
-export function ProjectBoard({ client, preferencesKey, storage, accessory, onImportLinear, onOpenSession, active = true }: ProjectBoardProps) {
+export function ProjectBoard({ client, preferencesKey, storage, accessory, onImportLinear, onOpenSession, onSessionStarted, active = true }: ProjectBoardProps) {
   const board = useProjectBoard(client, { includeArchived: true });
   const nowMs = useMinuteClock(active);
   const [preferences, setPreferences] = useState<BoardPreferences>(() => readBoardPreferences(preferencesKey ? storage : undefined, preferencesKey ?? ""));
@@ -114,7 +116,7 @@ export function ProjectBoard({ client, preferencesKey, storage, accessory, onImp
 
     {openTask ? <TaskDetail client={client} task={openTask} allTasks={board.tasks} members={board.members} settings={board.settings}
       boardLabels={labels} nowMs={nowMs} onClose={() => setOpenTaskId(null)} onOpenTask={(task: ProjectTask) => setOpenTaskId(task.id)}
-      onUpdate={board.updateTask} onStatusChange={(task, status) => void requestMove(task.id, status, 0)} run={board.run} onOpenSession={onOpenSession} /> : null}
+      onUpdate={board.updateTask} onStatusChange={(task, status) => void requestMove(task.id, status, 0)} run={board.run} onOpenSession={onOpenSession} onSessionStarted={onSessionStarted} /> : null}
 
     {notice ? <div role="alert" className="absolute bottom-4 left-1/2 flex max-w-[min(480px,calc(100%-32px))] -translate-x-1/2 items-center gap-3 rounded-[14px] border px-3.5 py-2.5 text-[13px] shadow-lg"
       style={{ zIndex: 2, borderColor: "var(--border-default, var(--border))", background: "var(--bg-overlay, var(--popover, var(--card)))", ...tone.primary }}>

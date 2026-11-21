@@ -4,7 +4,7 @@ import { FocusScope } from "@radix-ui/react-focus-scope";
 import { Archive, ArchiveRestore, Link2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { chipButtonClass, focusRing, tone } from "./board-style.js";
-import type { ProjectBoardClient, UpdateTaskInput } from "./client.js";
+import type { ProjectBoardClient, UpdateTaskInput , StartedTaskSession } from "./client.js";
 import { DescriptionEditor, TitleEditor } from "./TaskTextEditors.js";
 import { TaskDetailRail } from "./TaskDetailRail.js";
 import { TaskSessionPane, TaskSessionTabs, type TaskDetailTab } from "./TaskSessions.js";
@@ -27,6 +27,8 @@ export interface TaskDetailProps {
   onStatusChange(task: ProjectTask, status: TaskStatus): void;
   run<T>(action: () => Promise<T>, failure: string): Promise<T | null>;
   onOpenSession?: (session: TaskSession) => void;
+  /** A chat or terminal was created for the task, so surfaces can refresh their own lists. */
+  onSessionStarted?: (session: StartedTaskSession) => void;
 }
 
 /**
@@ -35,7 +37,7 @@ export interface TaskDetailProps {
  * stays in the sheet while it is open and goes back to the opener on close; the
  * sheet's portalled pickers run their own Radix focus scopes, which pause this one.
  */
-export function TaskDetail({ client, task, allTasks, members, settings, boardLabels, nowMs, onClose, onOpenTask, onUpdate, onStatusChange, run, onOpenSession }: TaskDetailProps) {
+export function TaskDetail({ client, task, allTasks, members, settings, boardLabels, nowMs, onClose, onOpenTask, onUpdate, onStatusChange, run, onOpenSession, onSessionStarted }: TaskDetailProps) {
   const sheet = useRef<HTMLDivElement>(null);
   const focusedTaskId = useRef(task.id);
   const [tab, setTab] = useState<TaskDetailTab>("details");
@@ -69,7 +71,10 @@ export function TaskDetail({ client, task, allTasks, members, settings, boardLab
   };
   const start = async (kind: "chat" | "terminal") => {
     const started = await withBusy(() => client.startSession(task.id, { kind }), `Couldn't start the ${kind}. Try again.`);
-    if (started) setTab(started.ref);
+    if (started) {
+      setTab(started.ref);
+      onSessionStarted?.(started);
+    }
   };
   const attach = async (attachable: AttachableSession) => {
     const attached = await withBusy(() => client.attachSession(task.id, attachable), "Couldn't attach it. Try again.");
