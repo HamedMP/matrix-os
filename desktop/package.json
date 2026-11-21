@@ -34,6 +34,7 @@
     "@lexical/react": "^0.41.0",
     "@lezer/highlight": "^1.2.3",
     "@matrix-os/brand": "workspace:*",
+    "@matrix-os/herdr-core-client": "workspace:*",
     "@matrix-os/ui": "workspace:*",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
