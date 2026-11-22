@@ -83,14 +83,17 @@ function Pane({ leaf, props, drag, setDrag }: {
     setDrag({ source: null, target: null });
   };
   const dropEdge = drag.target?.id === leaf.id ? drag.target.edge : null;
+  const zoom = props.tab.zoom;
+  const zoomed = zoom === leaf.id;
   return (
-    <section aria-label={title} data-pane={leaf.id} data-focused={focused || undefined}
+    <section aria-label={title} data-pane={leaf.id} data-focused={focused || undefined} data-zoomed={zoomed || undefined}
+      aria-hidden={zoom && !zoomed ? true : undefined} inert={zoom && !zoomed ? true : undefined}
       onDragOver={onDragOver} onDrop={onDrop}
       onDragLeave={(event) => {
         if (dropEdge && !event.currentTarget.contains(event.relatedTarget as Node | null)) setDrag({ ...drag, target: null });
       }}
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-      style={{ boxShadow: focused ? "inset 0 0 0 1px var(--accent, var(--border-default))" : undefined }}>
+      className={`${zoomed ? "absolute inset-0 z-10" : "relative"} flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}
+      style={{ boxShadow: focused ? "inset 0 0 0 1px var(--accent, var(--border-default))" : undefined, background: zoomed ? "var(--bg-surface)" : undefined }}>
       <button type="button" draggable aria-label={`Move ${title}`} tabIndex={-1}
         onDragStart={(event) => {
           event.dataTransfer?.setData("text/plain", leaf.id);
@@ -129,17 +132,14 @@ function Node({ node, props, drag, setDrag }: { node: PaneNode; props: TerminalP
   );
 }
 
-function findLeaf(node: PaneNode, id: string): PaneLeaf | null {
-  if (node.type === "leaf") return node.id === id ? node : null;
-  return findLeaf(node.first, id) ?? findLeaf(node.second, id);
-}
 
 export function TerminalPaneTree(props: TerminalPaneTreeProps) {
   const [drag, setDrag] = useState<DragState>({ source: null, target: null });
-  const zoomed = props.tab.zoom ? findLeaf(props.tab.root, props.tab.zoom) : null;
+  // Zoom lays the zoomed pane over the others instead of unmounting them, so
+  // every pane keeps its terminal and screen.
   return (
     <main aria-label="Terminal" className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      {zoomed ? <Pane leaf={zoomed} props={props} drag={drag} setDrag={setDrag} /> : <Node node={props.tab.root} props={props} drag={drag} setDrag={setDrag} />}
+      <Node node={props.tab.root} props={props} drag={drag} setDrag={setDrag} />
     </main>
   );
 }

@@ -30,9 +30,8 @@ export function useTerminalPanes(options: {
   const { layouts, saveTab } = usePaneLayouts();
   const [notice, setNotice] = useState<PaneNotice>(null);
   const { selectedKey, rows, select, createBeside, listed } = options;
-  // The latest layouts and selection, for a split that finishes after an await.
+  // The latest layouts as shown (missing panes dropped) and selection, for a split that finishes after an await.
   const latest = useRef({ layouts, selectedKey });
-  useEffect(() => { latest.current = { layouts, selectedKey }; }, [layouts, selectedKey]);
   // Terminals a split just started: their facts can arrive after the pane does. Bounded by the tab cap.
   const starting = useRef(new Set<string>());
 
@@ -57,6 +56,8 @@ export function useTerminalPanes(options: {
     }
     return out;
   }, [layouts, listed, rows]);
+
+  useEffect(() => { latest.current = { layouts: effective, selectedKey }; }, [effective, selectedKey]);
 
   /**
    * The tab on screen: the one holding the selected terminal, focused on it.

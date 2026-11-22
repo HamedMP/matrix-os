@@ -97,8 +97,11 @@ describe("Terminal window panes", () => {
     expect(paneNames()).toEqual(["shell t10", "editor"]);
     expect(focusedPane()).toBe("editor");
     operator.command({ command: "zoom-pane" });
-    expect(paneNames()).toEqual(["editor"]);
+    // Fault detected (Greptile, #3569): zoom unmounted the other panes, losing their screens.
+    expect(panes().filter((pane) => pane.hasAttribute("data-zoomed")).map((pane) => pane.getAttribute("aria-label"))).toEqual(["editor"]);
+    expect(screen.getAllByTestId("terminal-view", { hidden: true })).toHaveLength(2);
     operator.command({ command: "zoom-pane" });
+    expect(panes().some((pane) => pane.hasAttribute("data-zoomed"))).toBe(false);
     operator.command({ command: "close-pane" });
     await waitFor(() => expect(panes()).toHaveLength(0));
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t10");
@@ -160,6 +163,14 @@ describe("Terminal window panes", () => {
     operator.command({ command: "split-right" });
     expect(await screen.findByText("A tab holds at most 16 panes.")).toBeTruthy();
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(15);
+    // Fault detected (Greptile, #3569): with a pane's terminal gone, the split was refused against the stale tree.
+    operator.command({ command: "select", index: 1 });
+    const gone = paneNames().find((name) => name !== focusedPane() && name !== "editor")!;
+    operator.push(panes().map((pane) => pane.getAttribute("aria-label")!).filter((name) => name !== gone)
+      .map((name) => fact(name === "editor" ? "t1" : name.replace("shell ", ""), name)));
+    await waitFor(() => expect(paneNames()).toHaveLength(15));
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(paneNames()).toHaveLength(16));
   });
 
   // Fault detected (Greptile, #3569): a split that finished after another pane change replaced it.
