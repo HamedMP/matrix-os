@@ -962,6 +962,8 @@ async function startPlatformServerWithCleanup(
     options: { properties: Record<string, string | number | boolean | undefined> },
   ) => void) | undefined;
   let ownedMachines: OwnedMachinesRuntime | null = null;
+  // Hosted-VPS settings enrich owned machines when present; owned machines do not require them.
+  let ownedBase: Parameters<typeof createOwnedMachinesRuntime>[0]['base'] | undefined;
   if (runtimeConfig.customerVpsEnabled) {
     const [
       { createCustomerVpsService },
@@ -975,22 +977,14 @@ async function startPlatformServerWithCleanup(
       import('./customer-vps-cloud-init.js'),
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
-    ownedMachines = createOwnedMachinesRuntime({
-      db, env: process.env, clerkAuth, platformJwtSecret: process.env.PLATFORM_JWT_SECRET ?? '',
-      base: {
-        publicUrl: appOrigin(),
-        platformInternalUrl: new URL(customerVpsConfig.platformRegisterUrl).origin,
-        platformSecret: customerVpsConfig.platformSecret,
-        fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
-        fundedAiRelayUrl: customerVpsConfig.fundedAiRelayUrl,
-        platformSpeechEnabled: customerVpsConfig.platformSpeechEnabled,
-      },
-      backgroundWorkersEnabled,
-      resolveHandle: async (clerkUserId) =>
-        (await selectProvisionIdentityForClerkUser(db, clerkUserId, process.env))?.handle ?? null,
-      log: logPlatformRouteError,
-    });
-    registerCustomMcpStartupCleanup(async () => { await ownedMachines?.shutdown(); });
+    ownedBase = {
+      publicUrl: appOrigin(),
+      platformInternalUrl: new URL(customerVpsConfig.platformRegisterUrl).origin,
+      platformSecret: customerVpsConfig.platformSecret,
+      fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      fundedAiRelayUrl: customerVpsConfig.fundedAiRelayUrl,
+      platformSpeechEnabled: customerVpsConfig.platformSpeechEnabled,
+    };
     const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
     const baseHetzner = createHetznerClient(customerVpsConfig);
     const hetzner = createStorageGatedHetznerClient(baseHetzner, async () => {
@@ -1249,6 +1243,18 @@ async function startPlatformServerWithCleanup(
   });
   registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
   const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
+  ownedMachines = createOwnedMachinesRuntime({
+    db, env: process.env, clerkAuth, platformJwtSecret: process.env.PLATFORM_JWT_SECRET ?? '',
+    base: ownedBase ?? {
+      publicUrl: appOrigin(), platformInternalUrl: appOrigin(), platformSecret,
+      fundedAiEnabled: false, fundedAiRelayUrl: '', platformSpeechEnabled: false,
+    },
+    backgroundWorkersEnabled,
+    resolveHandle: async (clerkUserId) =>
+      (await selectProvisionIdentityForClerkUser(db, clerkUserId, process.env))?.handle ?? null,
+    log: logPlatformRouteError,
+  });
+  registerCustomMcpStartupCleanup(async () => { await ownedMachines?.shutdown(); });
   const app = createPlatformApp({
     accountDeletion,
     db,
