@@ -1,7 +1,9 @@
 import { SHARED_BROWSER_ACTION_DEADLINE_MS } from "@matrix-os/contracts";
 import { expect,it } from "vitest";
-import { lstat, readFile } from "node:fs/promises";
-import { createCodexBrowserBootstrap,codexBrowserThreadConfig,codexBrowserChildEnvironment,createCodexBrowserTokenFile,canRenewCodexBrowserInPlace } from "../../packages/gateway/src/coding-agents/codex-browser-bootstrap.mjs";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { createCodexBrowserBootstrap,codexBrowserThreadConfig,codexBrowserChildEnvironment,createCodexBrowserTokenFile,canRenewCodexBrowserInPlace,sweepCodexBrowserTokenDirs } from "../../packages/gateway/src/coding-agents/codex-browser-bootstrap.mjs";
 const lease={attemptId:"123e4567-e89b-42d3-a456-426614174000",token:"a".repeat(43),gatewayPort:4000};
 it("does not admit inference until the exact private lease is ready and explicitly released",async()=>{
  const gate=createCodexBrowserBootstrap(lease.attemptId);let bound=false;const binding=gate.bind(lease).then(value=>{bound=value;});
@@ -52,4 +54,24 @@ it("renews the run bearer through a private token file named only by path",async
   expect(canRenewCodexBrowserInPlace(lease,next,undefined)).toBe(false);
  }finally{await file.close();}
  await expect(lstat(file.path)).rejects.toThrow();
+});
+it("names the bearer directory by runner pid and sweeps only dead runners' leftovers",async()=>{
+ const file=(await createCodexBrowserTokenFile(true))!;
+ try{expect(basename(file.path.replace(/\/token$/,''))).toMatch(new RegExp(`^matrix-codex-browser-${process.pid}-[A-Za-z0-9]{6}$`));}finally{await file.close();}
+ const root=await mkdtemp(join(tmpdir(),'browser-sweep-'));
+ try{
+  const old=new Date(Date.now()-10*60_000);
+  const make=async(name:string,age=old)=>{const path=join(root,name);await mkdir(path);await writeFile(join(path,'token'),'a'.repeat(43),{mode:0o600});await utimes(path,age,age);return path;};
+  const dead=await make('matrix-codex-browser-999991-AbCdEf');
+  const live=await make(`matrix-codex-browser-${process.pid}-AbCdEf`);
+  const fresh=await make('matrix-codex-browser-999992-AbCdEf',new Date());
+  const target=await make('unrelated-dir');
+  await symlink(target,join(root,'matrix-codex-browser-999993-AbCdEf'));
+  await writeFile(join(root,'matrix-codex-browser-999994-AbCdEf'),'not a dir');
+  const removed=await sweepCodexBrowserTokenDirs({root,isAlive:(pid:number)=>pid===process.pid});
+  expect(removed).toBe(1);
+  await expect(lstat(dead)).rejects.toThrow();
+  for(const kept of [live,fresh,target,join(root,'matrix-codex-browser-999993-AbCdEf'),join(root,'matrix-codex-browser-999994-AbCdEf')])expect(await lstat(kept)).toBeTruthy();
+  expect(await readFile(join(target,'token'),'utf8')).toBe('a'.repeat(43));
+ }finally{await rm(root,{recursive:true,force:true});}
 });

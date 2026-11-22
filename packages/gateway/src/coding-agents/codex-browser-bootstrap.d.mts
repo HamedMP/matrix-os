@@ -20,3 +20,4 @@ export function createCodexBrowserBootstrap(attemptId?: string): {
   bind(raw: unknown): Promise<boolean>; waitLease(signal: AbortSignal): Promise<CodexBrowserLease | undefined>;
   markReady(): void; release(id: string): boolean; waitRelease(signal: AbortSignal): Promise<void>; fail(): void;
 };
+export function sweepCodexBrowserTokenDirs(options?: { root?: string; now?: number; minAgeMs?: number; isAlive?: (pid: number) => boolean }): Promise<number>;

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { constants } from "node:fs";
 import { withBackgroundRuntimeLock } from "./background-runtime-lock.js";
+import { sweepCodexBrowserTokenDirs } from "./coding-agents/codex-browser-bootstrap.mjs";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
 
 export const BackgroundAgentRefSchema = z.object({ id: z.string().regex(/^bg_[a-f0-9]{32}$/) }).strict();
@@ -39,6 +40,8 @@ export function createBackgroundAgentRuntime(options: {
   maxJobs?: number;
   spawnPrivate?: PrivateLaunchSpawn;
   withLock?: typeof withBackgroundRuntimeLock;
+  /** Removes dead Codex runners' Browser bearer temp directories (startup + hourly). */
+  sweepBrowserTokens?: () => Promise<number>;
 }): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void> } {
   const home = resolve(options.homePath);
   const root = join(home, "system", "background-agents");
@@ -151,11 +154,21 @@ export function createBackgroundAgentRuntime(options: {
       if (!live.get(unit(ref))) await rm(dir, { recursive: true });
     }
   });
+  const sweepBrowserTokens = options.sweepBrowserTokens ?? (() => sweepCodexBrowserTokenDirs());
+  function sweepBrowserTokenDirs() {
+    void sweepBrowserTokens().catch((error: unknown) => {
+      console.warn("[background-agent] Browser bearer sweep deferred", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
   function scheduleSweep() {
     if (sweepTimer || closed) return;
-    sweepTimer = setInterval(() => { void sweep().catch((error: unknown) => {
-      console.warn("[background-agent] retention sweep deferred", error instanceof Error ? error.name : "UnknownError");
-    }); }, 60 * 60_000);
+    sweepBrowserTokenDirs();
+    sweepTimer = setInterval(() => {
+      void sweep().catch((error: unknown) => {
+        console.warn("[background-agent] retention sweep deferred", error instanceof Error ? error.name : "UnknownError");
+      });
+      sweepBrowserTokenDirs();
+    }, 60 * 60_000);
     sweepTimer.unref();
   }
   scheduleSweep();

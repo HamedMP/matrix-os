@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, opendir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,7 +58,8 @@ export function codexBrowserChildEnvironment(environment, lease, tokenFilePath) 
  */
 export async function createCodexBrowserTokenFile(enabled) {
   if (!enabled) return undefined;
-  const dir = await mkdtemp(join(tmpdir(), "matrix-codex-browser-")); // created 0700
+  // Created 0700. The runner pid lets the gateway sweep a SIGKILLed runner's leftovers.
+  const dir = await mkdtemp(join(tmpdir(), `matrix-codex-browser-${process.pid}-`));
   const path = join(dir, "token");
   let sequence = 0;
   return {
@@ -144,4 +145,51 @@ export function createCodexBrowserBootstrap(attemptId) {
       released.resolve(false);
     },
   };
+}
+
+const TOKEN_DIR_PATTERN = /^matrix-codex-browser-(\d{1,10})-[A-Za-z0-9]{6}$/;
+const MAX_SWEEP_ENTRIES = 10_000;
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: a live process of another user. Only ESRCH proves it is gone.
+    return !(error && typeof error === "object" && "code" in error && error.code === "ESRCH");
+  }
+}
+
+/**
+ * Remove Browser bearer directories left by runners that died without their
+ * own cleanup (SIGKILL). Only this user's real directories (lstat, never a
+ * symlink) older than minAgeMs whose runner pid is gone. Their bearers were
+ * already revoked by the broker when the run's lease closed.
+ */
+export async function sweepCodexBrowserTokenDirs(options = {}) {
+  const root = options.root ?? tmpdir();
+  const now = options.now ?? Date.now();
+  const minAgeMs = options.minAgeMs ?? 60_000;
+  const isAlive = options.isAlive ?? processAlive;
+  const uid = process.getuid?.();
+  if (uid === undefined) return 0;
+  let removed = 0;
+  let scanned = 0;
+  const directory = await opendir(root);
+  for await (const entry of directory) {
+    if (++scanned > MAX_SWEEP_ENTRIES) break;
+    const match = TOKEN_DIR_PATTERN.exec(entry.name);
+    if (!match) continue;
+    const path = join(root, entry.name);
+    let info;
+    try { info = await lstat(path); } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid || now - info.mtimeMs < minAgeMs) continue;
+    if (isAlive(Number(match[1]))) continue;
+    await rm(path, { recursive: true, force: true });
+    removed += 1;
+  }
+  return removed;
 }
