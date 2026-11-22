@@ -196,7 +196,7 @@ function Pane({ leaf, rect, props, drag, setDrag }: {
   const zoomed = zoom === leaf.id;
   const dragging = drag.source === leaf.id;
   return (
-    <section aria-label={info.title} data-pane={leaf.id} data-focused={focused || undefined} data-zoomed={zoomed || undefined}
+    <section aria-label={info.title} data-pane={leaf.id} data-terminal={leaf.terminal} data-focused={focused || undefined} data-zoomed={zoomed || undefined}
       aria-hidden={zoom && !zoomed ? true : undefined} inert={zoom && !zoomed ? true : undefined}
       onDragOver={onDragOver} onDrop={onDrop}
       onDragLeave={(event) => {
