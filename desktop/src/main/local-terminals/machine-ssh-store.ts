@@ -71,7 +71,8 @@ export function createMachineSshStore(dataDir: string) {
         await rm(temporary, { force: true });
       }
     });
-    writes = next.catch(() => undefined);
+    // The caller gets the error; the queue only notes it and moves on to the next write.
+    writes = next.catch((error: unknown) => { console.warn("[local-terminals] machine ssh not saved:", describeError(error)); });
     return next;
   }
 
