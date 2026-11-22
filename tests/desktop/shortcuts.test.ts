@@ -10,7 +10,6 @@ import {
   handleNewContextShortcut,
   handleNewAgentRunShortcut,
   handleNewTopLevelTabShortcut,
-  handleTerminalFocusShortcut,
   runShortcutAction,
   useGlobalShortcuts,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
@@ -18,7 +17,7 @@ import { useClosedApps } from "@desktop/renderer/src/stores/closed-apps";
 import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
-import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { isDesktopSurfaceVisible, useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { useHermesChat } from "@desktop/renderer/src/stores/hermes-chat";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-workspaces";
@@ -424,47 +423,122 @@ describe("handleNewContextShortcut", () => {
 
 });
 
-describe("handleTerminalFocusShortcut", () => {
-  it("prevents default and focuses an existing terminal tab", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-    const openTab = vi.fn();
+describe("shortcuts that open or focus an app", () => {
+  const VIEWPORT = { width: 1280, height: 720 };
 
-    handleTerminalFocusShortcut(
-      { preventDefault },
-      {
-        tabs: [
-          { id: "home", kind: "home" },
-          { id: "term", kind: "terminal" },
-        ],
-        focusTab,
-        openTab,
-      },
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("term");
-    expect(openTab).not.toHaveBeenCalled();
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
+    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
+    useProjectChatLauncher.setState({ composerRequest: null });
+    useCodingAgentWorkspace.setState({ summary: null, composerFocusRequestId: 0 });
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    });
   });
 
-  it("opens the terminal workspace when no terminal tab exists", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-    const openTab = vi.fn();
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-    handleTerminalFocusShortcut(
-      { preventDefault },
-      {
-        tabs: [{ id: "home", kind: "home" }],
-        focusTab,
-        openTab,
-      },
+  function reconcile() {
+    useDesktopSurfaces.getState().reconcileTabs(useTabs.getState().tabs.map((tab) => tab.id), VIEWPORT);
+  }
+
+  /** Files is open and selected; `appId` exists in the given state. */
+  function withApp(open: () => string, state: "closed" | "minimized" | "behind" | "tabs-view"): string {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const appId = open();
+    reconcile();
+    const surfaces = useDesktopSurfaces.getState();
+    if (state === "closed") surfaces.closeSurface(appId);
+    if (state === "minimized") surfaces.minimizeSurface(appId);
+    if (state === "tabs-view") surfaces.maximizeToTab(filesId);
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    expect(isDesktopSurfaceVisible(appId, useDesktopSurfaces.getState()) && useTabs.getState().activeTabId === appId).toBe(false);
+    return appId;
+  }
+
+  function expectShownAndActive(appId: string) {
+    expect(useTabs.getState().activeTabId).toBe(appId);
+    expect(isDesktopSurfaceVisible(appId, useDesktopSurfaces.getState())).toBe(true);
+    const surfaces = useDesktopSurfaces.getState().surfaces;
+    const topZ = Math.max(...Object.values(surfaces).filter((surface) => surface.mode !== "closed").map((surface) => surface.zIndex));
+    if (surfaces[appId]?.mode === "window") expect(surfaces[appId]?.zIndex).toBe(topZ);
+  }
+
+  const openTerminal = () => useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+
+  it("terminal.focus opens and shows the Terminal when none exists", () => {
+    useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    reconcile();
+
+    runShortcutAction("terminal.focus");
+
+    const terminal = useTabs.getState().tabs.find((tab) => tab.kind === "terminals");
+    expect(terminal).toBeDefined();
+    reconcile();
+    expectShownAndActive(terminal!.id);
+  });
+
+  it.each(["closed", "minimized", "behind", "tabs-view"] as const)(
+    "terminal.focus shows a Terminal that is %s",
+    (state) => {
+      const terminalId = withApp(openTerminal, state);
+
+      runShortcutAction("terminal.focus");
+
+      expectShownAndActive(terminalId);
+      expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminals")).toHaveLength(1);
+    },
+  );
+
+  it("chat.open shows a Chat whose window was closed", () => {
+    const chatId = withApp(() => useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }), "closed");
+
+    runShortcutAction("chat.open");
+
+    expectShownAndActive(chatId);
+  });
+
+  it("nav.settings shows Settings whose window was closed", () => {
+    const settingsId = withApp(() => useTabs.getState().openTab({ kind: "settings", title: "Settings", closable: false }), "closed");
+
+    runShortcutAction("nav.settings");
+
+    expectShownAndActive(settingsId);
+  });
+
+  it("chat.new-thread shows the project's Chat whose window was closed", () => {
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }], activeProjectSlug: "matrix-os" });
+    const projectId = withApp(
+      () => useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" }),
+      "closed",
     );
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).not.toHaveBeenCalled();
-    expect(openTab).toHaveBeenCalledWith({ kind: "terminals", title: "Terminal" });
+    runShortcutAction("chat.new-thread");
+
+    expectShownAndActive(projectId);
   });
+
+  it.each(["tabs.new", "tabs.new-context", "app.close", "tabs.close"] as const)(
+    "%s acts on the selected visible app, so it leaves a closed app closed",
+    (id) => {
+      const chatId = withApp(() => useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }), "closed");
+      useTabs.getState().focusTab(chatId);
+      const tabsBefore = useTabs.getState().tabs;
+
+      runShortcutAction(id);
+
+      expect(useTabs.getState().tabs).toBe(tabsBefore);
+      expect(useDesktopSurfaces.getState().surfaces[chatId]?.mode).toBe("closed");
+    },
+  );
 });
 
 describe("handleNewAgentRunShortcut", () => {

@@ -18,7 +18,9 @@ import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import {
   closeApp,
   cycleApp,
+  focusApp,
   minimizeActiveApp,
+  openAndFocusApp,
   openFilesApp,
   reopenClosedApp,
   switchToApp,
@@ -26,12 +28,6 @@ import {
   toggleAppLauncher,
   toggleShowDesktop,
 } from "../desktop-shell/app-switching";
-
-interface TerminalFocusShortcutState {
-  tabs: Array<{ id: string; kind: string }>;
-  focusTab(id: string): void;
-  openTab(spec: { kind: "terminals"; title: string }): void;
-}
 
 interface NewAgentRunShortcutUiState {
   composerOpen: boolean;
@@ -43,33 +39,34 @@ interface NewAgentRunShortcutWorkspaceState {
   requestComposerFocus(): void;
 }
 
+type OpenTabSpec = Parameters<ReturnType<typeof useTabs.getState>["openTab"]>[0];
+
+/** Opens or reuses the app's tab and shows it, even if its window was closed or minimized. */
+function showApp(spec: OpenTabSpec): void {
+  openAndFocusApp(() => useTabs.getState().openTab(spec));
+}
+
 export function handleMenuNavigate(kind: string): void {
   if (kind === "settings") {
-    useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+    showApp({ kind: "settings", title: "Settings" });
     return;
   }
   if (kind === "terminals") {
-    handleTerminalFocusShortcut({ preventDefault: () => undefined }, useTabs.getState());
+    handleTerminalFocusShortcut({ preventDefault: () => undefined });
     return;
   }
   if (kind === "board" || kind === "project") {
     const { activeProjectSlug, projects } = useBoard.getState();
     const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
-    if (project) {
-      useTabs.getState().openTab({
-        kind: "project",
-        projectSlug: project.slug,
-        title: project.name || project.slug,
-      });
-      return;
-    }
-    useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
+    showApp(project
+      ? { kind: "project", projectSlug: project.slug, title: project.name || project.slug }
+      : HOSTED_SHELL_TAB_SPEC);
     return;
   }
   if (kind !== "home") {
     console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
   }
-  useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
+  showApp(HOSTED_SHELL_TAB_SPEC);
 }
 
 export function handleCloseSelectedAppShortcut(
@@ -163,17 +160,14 @@ export function handleNewContextShortcut(
   }, "source");
 }
 
-export function handleTerminalFocusShortcut(
-  event: Pick<KeyboardEvent, "preventDefault">,
-  tabs: TerminalFocusShortcutState,
-): void {
+export function handleTerminalFocusShortcut(event: Pick<KeyboardEvent, "preventDefault">): void {
   event.preventDefault();
-  const existing = tabs.tabs.find((tab) => tab.kind === "terminal" || tab.kind === "terminals");
+  const existing = useTabs.getState().tabs.find((tab) => tab.kind === "terminal" || tab.kind === "terminals");
   if (existing) {
-    tabs.focusTab(existing.id);
+    focusApp(existing.id);
     return;
   }
-  tabs.openTab({ kind: "terminals", title: "Terminal" });
+  showApp({ kind: "terminals", title: "Terminal" });
 }
 
 function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState["summary"]): boolean {
@@ -201,7 +195,11 @@ export function handleNewAgentRunShortcut(
   // project's Chats view still opens either way.
   const canCompose = canRequestAgentComposerFocus(workspace.summary);
   if (canCompose) workspace.requestComposerFocus();
-  void openProjectChat(projectId, { compose: canCompose });
+  openAndFocusApp(() => {
+    // openProjectChat selects the project's tab before its first await.
+    void openProjectChat(projectId, { compose: canCompose });
+    return useTabs.getState().activeTabId ?? "";
+  });
 }
 
 function openChatSearchOrPalette(): void {
@@ -246,8 +244,8 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
   "tabs.new": () => { handleNewTopLevelTabShortcut(noEvent); },
   "tabs.close": () => handleCloseTopLevelTabShortcut(noEvent),
   "chat.new-thread": () => handleNewAgentRunShortcut(noEvent, useUi.getState(), useCodingAgentWorkspace.getState()),
-  "chat.open": () => { useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }); },
-  "terminal.focus": () => handleTerminalFocusShortcut(noEvent, useTabs.getState()),
+  "chat.open": () => showApp({ kind: "chat", title: "Chat", closable: false }),
+  "terminal.focus": () => handleTerminalFocusShortcut(noEvent),
   "terminal.window": () => {
     void invoke("terminal-window:open", {}).catch((error: unknown) => {
       console.warn("[shortcuts] could not open the Terminal window:", error);
