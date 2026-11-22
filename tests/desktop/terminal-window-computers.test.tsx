@@ -323,6 +323,22 @@ describe("Terminal window computers", () => {
     await waitFor(() => expect(requests()).toContain(`DELETE ${HOST}/api/terminal/workspaces/${WS}/tabs/${TAB_2}`));
   });
 
+  // Fault detected (Greptile, #3569): a split put the new terminal in main at home instead of beside the source.
+  it("splits a computer terminal with a new tab in the same workspace and folder", async () => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => (init?.method === "POST"
+      ? json({ tab: { id: TAB_2, name: "Terminal" } }, 201)
+      : json(workspace([{ id: TAB_1, name: "build" }, { id: TAB_2, name: "Terminal" }]))));
+    window.localStorage.clear();
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build", { cwd: "projects/app" })]);
+    fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
+    act(() => emit("terminal-window:command", { command: "split-right" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WS}/tabs`));
+    expect(requests()).not.toContain(`POST ${HOST}/api/terminal/workspaces/ensure`);
+    const create = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST")!;
+    expect(JSON.parse(String((create[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "projects/app" });
+  });
+
   it("refreshes a newly committed listing when focus arrives before passive effects", async () => {
     let tabs = [{ id: TAB_1, name: "build" }];
     let focused = false;

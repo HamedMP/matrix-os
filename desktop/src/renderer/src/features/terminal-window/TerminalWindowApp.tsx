@@ -180,7 +180,7 @@ function SplitPanes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         // Only the focused pane holds the live attachment; the others keep their last screen.
         return sessionName
           ? <TerminalView key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} active={focused}
-              findRequest={focused ? view.findRequest : 0} />
+              findRequest={view.findRequestFor(leaf.terminal)} />
           : null;
       }} />
   );
@@ -192,10 +192,10 @@ function ActivePane({ view }: { view: TerminalWindowView }) {
   // local pane so it attaches again instead of staying on a disposed attachment.
   if (view.localTerminal) {
     return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)}
-      findRequest={view.findRequest} ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
+      findRequest={view.findRequestFor(view.selectedKey)} ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
   }
   const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequest} />;
+  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequestFor(view.selectedKey)} />;
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 

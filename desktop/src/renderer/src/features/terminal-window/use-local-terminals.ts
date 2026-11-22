@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
 import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
@@ -25,6 +25,8 @@ export const localSessionName = (id: string) => `${LOCAL_TERMINAL_SESSION_PREFIX
 export function useLocalTerminals() {
   const { state: facts, retry } = useLocalTerminalFacts();
   const [creating, setCreating] = useState(false);
+  // One start at a time, read at call time: a shortcut can fire before the render that cleared it.
+  const starting = useRef(false);
   const [notice, setNotice] = useState<LocalTerminalsNotice>(null);
 
   const state = useMemo<LocalTerminalsState>(() => {
@@ -42,7 +44,8 @@ export function useLocalTerminals() {
 
   /** Starts a login shell, or a known agent in one, and returns its id, or null when it could not start. */
   const create = useCallback(async (launch: { agent?: LocalTerminalAgent } = {}): Promise<string | null> => {
-    if (creating) return null;
+    if (starting.current) return null;
+    starting.current = true;
     setCreating(true);
     try {
       const result = await invoke("local-terminal:create", { cols: 100, rows: 30, ...(launch.agent ? { agent: launch.agent } : {}) });
@@ -57,11 +60,12 @@ export function useLocalTerminals() {
     } catch (error: unknown) {
       console.warn("[local-terminal] create failed:", error instanceof Error ? error.name : "UnknownError");
     } finally {
+      starting.current = false;
       setCreating(false);
     }
     setNotice("create-failed");
     return null;
-  }, [creating]);
+  }, []);
 
   /** Ends a terminal. Resolves true only once the trusted core confirmed it. */
   const end = useCallback(async (id: string): Promise<boolean> => {

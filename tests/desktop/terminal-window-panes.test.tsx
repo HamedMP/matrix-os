@@ -5,8 +5,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName, active }: { sessionName: string; active?: boolean }) => (
-    <div data-testid="terminal-view" data-active={active === false ? "false" : "true"}>{sessionName}</div>
+  default: ({ sessionName, active, findRequest }: { sessionName: string; active?: boolean; findRequest?: number }) => (
+    <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-find={findRequest ?? 0}>{sessionName}</div>
   ),
 }));
 
@@ -19,7 +19,7 @@ import { nearestEdge } from "@desktop/renderer/src/features/terminal-window/Term
 type Fact = { id: string; title: string; status: null; statusAt: number; turn: number; seenTurn: null; finished: boolean };
 const fact = (id: string, title: string): Fact => ({ id, title, status: null, statusAt: Date.now(), turn: 0, seenTurn: null, finished: false });
 
-function installOperator(initial: Fact[]) {
+function installOperator(initial: Fact[], options: { hold?: () => Promise<void> } = {}) {
   const listeners = new Map<string, Array<(payload: unknown) => void>>();
   let facts = [...initial];
   let next = 10;
@@ -29,6 +29,7 @@ function installOperator(initial: Fact[]) {
     if (channel === "app:get-zoom") return { factor: 1 };
     if (channel === "local-terminal:watch") return { status: "ready", terminals: facts };
     if (channel === "local-terminal:create") {
+      await options.hold?.();
       const id = `t${next++}`;
       facts = [...facts, fact(id, `shell ${id}`)];
       queueMicrotask(() => emit("local-terminal:facts", { terminals: facts }));
@@ -159,6 +160,54 @@ describe("Terminal window panes", () => {
     operator.command({ command: "split-right" });
     expect(await screen.findByText("A tab holds at most 16 panes.")).toBeTruthy();
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(15);
+  });
+
+  // Fault detected (Greptile, #3569): a split that finished after another pane change replaced it.
+  it("applies a slow split to the layout as it is when the terminal is ready", async () => {
+    let release: () => void = () => undefined;
+    let holding = false;
+    const operator = installOperator([fact("t1", "editor")], { hold: () => (holding ? new Promise<void>((resolve) => { release = resolve; }) : Promise.resolve()) });
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
+    operator.command({ command: "focus-pane", direction: "left" });
+    holding = true;
+    operator.command({ command: "split-down" });
+    await waitFor(() => expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(2));
+    // While the terminal starts, the person swaps the two panes.
+    operator.command({ command: "swap-pane", direction: "right" });
+    expect(paneNames()).toEqual(["shell t10", "editor"]);
+    await act(async () => { release(); });
+    await waitFor(() => expect(paneNames()).toEqual(["shell t10", "editor", "shell t11"]));
+  });
+
+  // Fault detected (Greptile, #3569): removing the selected terminal hid the rest of its tab.
+  it("keeps a tab's other panes and selects one when the selected terminal goes away", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(paneNames()).toHaveLength(2));
+    operator.command({ command: "split-down" });
+    await waitFor(() => expect(paneNames()).toHaveLength(3));
+    operator.push([fact("t1", "editor"), fact("t10", "shell t10")]);
+    await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
+    expect(focusedPane()).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3569): focusing another pane after Cmd+F opened Find there.
+  it("keeps a find request with the pane it was made on", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(paneNames()).toHaveLength(2));
+    operator.command({ command: "find" });
+    const finds = () => screen.getAllByTestId("terminal-view").map((view) => [view.textContent, view.getAttribute("data-find")]);
+    expect(finds()).toEqual([["local:t1", "0"], ["local:t10", "1"]]);
+    operator.command({ command: "focus-pane", direction: "left" });
+    expect(finds()).toEqual([["local:t1", "0"], ["local:t10", "1"]]);
   });
 
   it("picks the drop edge nearest the pointer", () => {

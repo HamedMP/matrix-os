@@ -45,7 +45,8 @@ export function useTerminalWindow() {
   // A local terminal and a cloud terminal are never attached at once. The
   // title is kept so the pane can stay, labelled, after its program exits.
   const [localOpen, setLocalOpen] = useState<{ id: string; title: string } | null>(null);
-  const [findRequest, setFindRequest] = useState(0);
+  // Each Cmd+F belongs to the terminal it was pressed on.
+  const [find, setFind] = useState<{ request: number; key: string | null }>({ request: 0, key: null });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
   const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
@@ -191,25 +192,29 @@ export function useTerminalWindow() {
     select(order[next]!.key);
   }, [order, select, selectedKey]);
 
-  const createOn = useCallback(async (machineId: string): Promise<string | null> => {
+  const createBeside = useCallback(async (key: string): Promise<string | null> => {
+    const machineId = key.slice(0, Math.max(0, key.indexOf("|")));
     if (machineId === here.id) {
       const id = await local.create({});
       return id ? `${here.id}|${id}` : null;
     }
-    if (!machineId.startsWith("computer:")) return null;
-    const api = cloud.api(machineId.slice("computer:".length));
+    const target = terminalRowTarget(key);
+    if (target?.kind !== "computer") return null;
+    const api = cloud.api(target.slot);
     if (!api) return null;
+    // In the same workspace and folder; a folder the stream had to shorten is not guessed at.
+    const cwd = status.states[target.slot]?.tabs[terminalRefKey(target.ref)]?.cwd ?? "";
     try {
-      return `${machineId}|${await createComputerTab(api, "Terminal")}`;
+      return `${machineId}|${await createComputerTab(api, "Terminal", { workspaceId: target.ref.workspaceId, cwd: cwd.length < 256 ? cwd : "" })}`;
     } catch (error: unknown) {
       console.warn("[terminal-window] pane terminal failed:", error instanceof Error ? error.name : "UnknownError");
       return null;
     }
-  }, [cloud, here.id, local]);
+  }, [cloud, here.id, local, status.states]);
   const listed = useCallback((machineId: string) => (machineId === here.id
     ? local.state.status === "ready"
     : status.states[machineId.slice("computer:".length)]?.connected === true), [here.id, local.state.status, status.states]);
-  const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createOn, listed });
+  const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createBeside, listed });
 
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
@@ -247,14 +252,16 @@ export function useTerminalWindow() {
         return;
       case "toggle-sidebar": sidebar.toggleRail(); return;
       case "picker": setPickerOpen(true); return;
-      case "find": setFindRequest((request) => request + 1); return;
+      case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
   }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
   useEffect(() => onEvent("terminal-window:command", run), [run]);
 
   return {
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes,
-    localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
+    localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
+    /** The find request for this terminal: only the one it was made on sees it. */
+    findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
     select, createLocal, createCloud, rename, close, requestClose, openInTab,

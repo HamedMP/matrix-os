@@ -51,13 +51,17 @@ export async function listComputerTabs(api: ApiClient): Promise<ComputerTerminal
   }))).slice(0, MAX_TABS_SHOWN);
 }
 
-/** Creates a tab in the computer's unscoped `main` workspace and returns its key. */
-export async function createComputerTab(api: ApiClient, name: string): Promise<string> {
-  const { workspace } = EnsuredSchema.parse(await api.post("/api/terminal/workspaces/ensure", {}));
+/**
+ * Creates a tab and returns its key: in the computer's unscoped `main`
+ * workspace, or beside another tab (its workspace and folder) for a split.
+ */
+export async function createComputerTab(api: ApiClient, name: string, beside?: { workspaceId: string; cwd: string }): Promise<string> {
+  const workspaceId = beside?.workspaceId
+    ?? EnsuredSchema.parse(await api.post("/api/terminal/workspaces/ensure", {})).workspace.id;
   const { tab } = CreatedSchema.parse(
-    await api.post(`/api/terminal/workspaces/${encodeURIComponent(workspace.id)}/tabs`, { name, cwd: "" }),
+    await api.post(`/api/terminal/workspaces/${encodeURIComponent(workspaceId)}/tabs`, { name, cwd: beside?.cwd ?? "" }),
   );
-  return terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
+  return terminalRefKey({ workspaceId, tabId: tab.id });
 }
 
 const RevisionListingSchema = z.object({
