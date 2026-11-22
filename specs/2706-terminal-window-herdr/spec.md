@@ -94,6 +94,14 @@ bottom status bar.
   close buttons). Panes have gaps and rounded borders; the focused pane has a
   blue outline. Every visible pane streams live on an attachment of its own;
   only the focused one takes the keyboard.
+- **Overview**: an entry in the tab bar (and **Cmd+Shift+O**) shows every
+  terminal of the active space (All: every terminal) as a card in place of the
+  panes: its icon and name (renamed in place with the pencil), status, machine
+  and folder, time since it changed, and a live preview of the last lines on
+  its screen, read every 3 s while the overview is open (at most 24 terminals,
+  8 lines of 160 characters each; local and ssh-machine terminals through the
+  app's core, `terminal.read`; Matrix computers through the gateway's
+  `GET …/tabs/:tab/read`). A click opens the terminal and leaves the overview.
 - **Status bar**: the machine on screen, its project and branch or folder, the
   agent count with how many work or need you, and "⌘⇧P commands".
 - **Active space**: choosing a space filters the tab bar and the Agents list
