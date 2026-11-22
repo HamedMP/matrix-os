@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FundedAiRouteReadinessReceiptSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_CATALOG, FundedAiRouteReadinessReceiptSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "../../packages/proxy/src/funded-relay-openai-request.js";
 import { mapFundedModel, estimateWorstCaseMicrousd, maximumFundedInputTokens, priceActualUsageMicrousd } from "../../packages/proxy/src/funded-relay-model.js";
 import { readFundedPricingReviews } from "../../packages/proxy/src/funded-pricing-review.js";
@@ -114,12 +114,19 @@ describe("reviewed Workers AI additions",()=>{
   expect(()=>readFundedPricingReviews({MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION:env.MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION})).toThrow();
   expect(()=>readFundedPricingReviews({...env,MATRIX_FUNDED_GLM_FULL_PRICING_REVIEW_VERSION:additions[1]!.version,MATRIX_FUNDED_GLM_FULL_PRICING_REVIEWED_AT:env.MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT,MATRIX_FUNDED_GLM_FULL_PRICING_VALID_THROUGH:env.MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH})).toThrow();
  });
- it("fits all eleven distinct funded readiness IDs without extending evidence lifetime",()=>{
+ it("fits the Cloudflare and Bedrock catalogs without extending evidence lifetime",()=>{
   const receipt={contractVersion:1,globalRevision:1,runtimeRevision:1,checkedAt:now.toISOString(),staleAfter:'2026-10-15T12:00:30.000Z',readyModelIds:['anthropic/claude-sonnet-5','@cf/zai-org/glm-5.3-flash',...additions.map(m=>m.id),deepSeekV41]};
   expect(MANAGED_WORKERS_AI_MODEL_IDS).toContain(deepSeekV41);
+  expect(receipt.readyModelIds).toHaveLength(FUNDED_AI_READINESS_CATALOG.maxModels);
   expect(FundedAiRouteReadinessReceiptSchema.safeParse(receipt).success).toBe(true);
-  expect(FundedAiRouteReadinessReceiptSchema.safeParse({...receipt,readyModelIds:[...receipt.readyModelIds,"@cf/unreviewed/overflow"]}).success).toBe(false);
-  expect(FundedAiRouteReadinessReceiptSchema.safeParse({...receipt,staleAfter:'2026-10-15T12:00:31.000Z'}).success).toBe(false);
+  const bedrockModelIds = Array.from({ length: FUNDED_AI_READINESS_CATALOG.maxBedrockModels }, (_, index) =>
+    `anthropic/bedrock-fixture-${index + 1}`);
+  const expanded = { ...receipt, readyModelIds: [...receipt.readyModelIds, ...bedrockModelIds] };
+  expect(FundedAiRouteReadinessReceiptSchema.safeParse(expanded).success).toBe(true);
+  expect(FundedAiRouteReadinessReceiptSchema.safeParse({
+    ...expanded, readyModelIds: [...expanded.readyModelIds, "anthropic/overflow"],
+  }).success).toBe(false);
+  expect(FundedAiRouteReadinessReceiptSchema.safeParse({...expanded,staleAfter:'2026-10-15T12:00:31.000Z'}).success).toBe(false);
   expect(FundedAiRouteReadinessReceiptSchema.safeParse({...receipt,readyModelIds:[...receipt.readyModelIds,receipt.readyModelIds[0]]}).success).toBe(false);
  });
 });
