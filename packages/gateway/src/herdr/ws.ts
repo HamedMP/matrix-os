@@ -105,8 +105,14 @@ export function registerHerdrTerminalWebSocket(options: {
   // gateway restarts (clients drop a canonical-size older than the last one).
   let sizeRevision = Date.now();
 
+  // The size a Matrix writer holds each terminal at, while that writer is
+  // attached: what a new observer is told to draw at. One entry per writer,
+  // so bounded by maxViewers; an entry leaves with its writer.
+  const writerSizes = new Map<string, { viewerId: string; size: { cols: number; rows: number } }>();
+
   /** Every Matrix viewer of the terminal draws on the size the writer put into effect. */
-  function announceSize(sessionId: string, size: { cols: number; rows: number }): void {
+  function announceSize(sessionId: string, viewerId: string, size: { cols: number; rows: number }): void {
+    writerSizes.set(sessionId, { viewerId, size });
     for (const viewer of viewers.values()) if (viewer.sessionId === sessionId) viewer.sized(size);
   }
 
@@ -205,6 +211,8 @@ export function registerHerdrTerminalWebSocket(options: {
       if (replayTimer) clearTimeout(replayTimer);
       replayTimer = null;
       viewers.delete(viewerId);
+      // Without its writer the core falls back to another viewer's size, which Matrix does not know.
+      if (sessionId && writerSizes.get(sessionId)?.viewerId === viewerId) writerSizes.delete(sessionId);
       if (drainTimer) clearInterval(drainTimer);
       drainTimer = null;
       credits.length = 0;
@@ -277,13 +285,17 @@ export function registerHerdrTerminalWebSocket(options: {
           const role = options.terminalLiveOwnership.role(key, viewerId);
           const leaseEpoch = options.terminalLiveOwnership.leaseEpoch(key, viewerId);
           // A writer's resize that arrived mid-attach applies now; an observer's never does.
-          const size = role === "writer" && earlySize ? earlySize : { cols, rows };
+          // A watch-only attach never sizes the program, so an observer draws at
+          // the size a Matrix writer holds, or its own request when none does.
+          const size = role === "writer"
+            ? earlySize ?? { cols, rows }
+            : writerSizes.get(id)?.size ?? { cols, rows };
           earlySize = null;
           if (role === "writer") {
             if (size.cols !== cols || size.rows !== rows) opened.resize(size.cols, size.rows);
             adapter.rememberSize(id, size);
             // A writer's attach sizes the terminal too; the other Matrix viewers redraw at it.
-            announceSize(id, size);
+            announceSize(id, viewerId, size);
           }
           send({
             type: "attached", terminalRef, revision: 0, canonicalSize: size, nextSeq: seq, ownership: role,
@@ -348,7 +360,7 @@ export function registerHerdrTerminalWebSocket(options: {
               const applied = attachment.resize(frame.size.cols, frame.size.rows);
               if (applied && sessionId) {
                 options.adapter?.rememberSize(sessionId, frame.size);
-                announceSize(sessionId, frame.size);
+                announceSize(sessionId, viewerId, frame.size);
               }
             }
             return;
