@@ -116,6 +116,14 @@ describe("shortcut recorder", () => {
     expect(onRecordingChange).toHaveBeenLastCalledWith(false);
   });
 
+  it("cancels when the window loses focus, so it stops together with the main-process guard", () => {
+    const { startRecording, recordingChip, onRecordingChange } = setup();
+    startRecording();
+    fireEvent.blur(window);
+    expect(recordingChip()).toBeNull();
+    expect(onRecordingChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("toggles off when Add shortcut is pressed again", () => {
     const { startRecording, recordingChip, showDesktop, onRecordingChange } = setup();
     startRecording();

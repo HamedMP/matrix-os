@@ -97,6 +97,8 @@ export function useShortcutRecorder<T>({
   });
 
   const handleTimeout = useEffectEvent(() => finish(true));
+  // Leaving the app ends the main-process recording guard, so stop here too.
+  const handleWindowBlur = useEffectEvent(() => finish(false));
 
   const recording = target !== null;
   useEffect(() => {
@@ -106,7 +108,10 @@ export function useShortcutRecorder<T>({
     const onKeyUp = (event: KeyboardEvent) => handleKeyUp(event);
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    const onWindowBlur = () => handleWindowBlur();
+    window.addEventListener("blur", onWindowBlur);
     return () => {
+      window.removeEventListener("blur", onWindowBlur);
       window.clearTimeout(timeout);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
