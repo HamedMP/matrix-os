@@ -180,10 +180,15 @@ How a key press reaches an action:
 3. **Renderer `keydown` listener.** Simplest, and what Ctrl+Tab uses today.
    Rejected: it does not fire while an embedded app has focus.
 
-Approach 1 is chosen because it is proven in this codebase and gives native
-menu labels. **Spike first**: confirm hidden-item accelerators fire on Windows
-and Linux. If they do not, use approach 2 for those bindings on those platforms
-only.
+**Outcome after the spike (`research.md`): approaches 1 and 2 together.** On
+Linux a page that swallows a key (the terminal does) stops the menu accelerator,
+so the menu alone breaks the "works with focus in the terminal" requirement. A
+`before-input-event` matcher on every web contents is the dispatcher: it runs
+before the page and cancels the event, which also stops the menu accelerator,
+so an action runs once. The menu still shows each action's first binding and
+handles the key when no web contents has focus. Hidden menu items are not used.
+Still to confirm on macOS: that cancelling in `before-input-event` prevents the
+menu accelerator there too.
 
 ## Architecture
 

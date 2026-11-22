@@ -194,8 +194,11 @@ export const RECORDING_GUARD_MS = 30_000;
 ### Task 4: App menu built from bindings
 
 **Files:**
+- Create: `desktop/src/main/shortcuts/input-matcher.ts`
 - Modify: `desktop/src/main/platform/menu-template.ts`, `desktop/src/main/platform/menu.ts`, `desktop/src/main/platform/menu-routing.ts`, `desktop/src/main/index.ts`
-- Test: `tests/desktop/menu-template.test.ts`, `tests/desktop/menu-routing.test.ts`
+- Test: `tests/desktop/menu-template.test.ts`, `tests/desktop/menu-routing.test.ts`, `tests/desktop/shortcut-input-matcher.test.ts`
+
+**Spike result (see `research.md`):** on Linux a page that calls `preventDefault()` on a keydown (xterm does) stops the menu accelerator. So the menu alone cannot deliver shortcuts everywhere. The dispatcher is a `before-input-event` matcher on every web contents; it runs before the page and, by calling `event.preventDefault()`, also stops the menu accelerator, so an action runs once. Menu accelerators stay for display and for the case where no web contents has focus. There are no hidden menu items.
 
 **Interfaces — Consumes:** `EffectiveShortcuts`, `ShortcutService`. **Produces:**
 
@@ -207,10 +210,23 @@ runShortcut(id: ShortcutActionId): void;
 
 // menu.ts
 export function installAppMenu(options: ExistingOptions & { shortcuts: ShortcutService }): void; // builds now and again on shortcuts.onChange
+
+// input-matcher.ts
+export interface ShortcutInput { type: string; key: string; code: string; meta: boolean; control: boolean; alt: boolean; shift: boolean }
+export function createShortcutInputMatcher(deps: {
+  effective(): EffectiveShortcuts;
+  platform: ShortcutPlatform;
+  isRecording(): boolean;
+  run(id: ShortcutActionId): void;
+}): (event: { preventDefault(): void }, input: ShortcutInput) => void;
 ```
 
+- The matcher acts only on `type === "keyDown"`. It builds the binding with `bindingFromKeyEvent` (same function the recorder uses, so a recorded key matches the pressed key on any layout), looks it up across all bindings of all actions, and on a match calls `event.preventDefault()` then `run(id)`. While `isRecording()` is true it does nothing.
+- `index.ts` attaches it in `app.on("web-contents-created", (_e, contents) => contents.on("before-input-event", matcher))`, which covers the main window, the Terminal window and every embedded app. `run` is the same function the menu items call.
+- `ShortcutService` gains `isRecording(): boolean` (true between `setRecording(_, true)` and the matching stop or the 30 s guard); add it in this task with a test.
+
 - Every registry action is a visible menu item whose `accelerator` is its first binding (omitted when unbound). Placement: `nav.settings`, `app.close` in the app menu (mac) / File (other), as today; `tabs.*`, `chat.new-thread`, `chat.open` in File; `nav.palette`, `nav.quick-open`, `terminal.focus`, `terminal.window` in View; all other `app.*` in a new top-level **Apps** menu placed before Window, with the nine switch items in a "Switch to App" submenu.
-- Bindings 2–4 of an action are extra items `{ visible: false, acceleratorWorksWhenHidden: true, accelerator, click }` appended to the same submenu (or the Task 2 fallback where the spike says so).
+- Bindings 2–4 of an action are not in the menu; the matcher handles them.
 - `terminal.window` click calls `openTerminalWindow` directly, as today. Every other registry item calls `runShortcut(id)`, which the router delivers as `shortcut:action { id }`.
 - The Window menu no longer uses `role: "windowMenu"`: build it explicitly with `minimize` (no accelerator), `zoom`, and on mac `front`, so `Cmd+M` is free for `app.minimize`.
 - `menu-routing.ts`: `isCloseTab` also matches `shortcut:action` with id `tabs.close`, so the focused Terminal window still closes on it. All other routing is unchanged.
@@ -218,7 +234,8 @@ export function installAppMenu(options: ExistingOptions & { shortcuts: ShortcutS
 
 - [ ] **Step 1: Update and add failing tests:**
   - Default shortcuts on `darwin`: item "Close Selected App" has accelerator `Cmd+Q`; Apps menu has "Next App" with `Ctrl+Tab`, "Open App Launcher" with `Alt+Space`, "Show Desktop" with no accelerator.
-  - With `shortcuts["app.close"] = ["Cmd+Shift+W", "F6"]`: visible item has `Cmd+Shift+W`; a hidden item in the same submenu has `F6`; no item anywhere has `Cmd+Q`.
+  - With `shortcuts["app.close"] = ["Cmd+Shift+W", "F6"]`: the item has `Cmd+Shift+W`; no item anywhere has `Cmd+Q` or `F6`.
+  - Matcher, default mac shortcuts: `{ type: "keyDown", key: "Tab", code: "Tab", control: true, meta: false, alt: false, shift: false }` calls `preventDefault` and `run("app.next")` once; the same input with `type: "keyUp"` does neither; `Cmd+C` and plain `a` do neither; with `effective()["app.close"] = ["Cmd+Shift+W", "F6"]` an `F6` keyDown runs `app.close`; with `isRecording()` true nothing runs and `preventDefault` is not called; `{ key: "ض", code: "KeyQ", meta: true }` runs `app.close`.
   - No two items in the whole template share an accelerator, for default shortcuts on `darwin`, `linux` and `win32` (walk the tree; ignore role items without an explicit accelerator).
   - Clicking "Next App" calls `runShortcut("app.next")`.
   - `win32` template has no "Terminal Window" item.
