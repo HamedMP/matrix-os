@@ -124,6 +124,9 @@ jobs:
       PREVIEW_METAL_GOLDEN_VERSION: ${{ vars.PREVIEW_METAL_GOLDEN_VERSION }}
       PREVIEW_FREE_TIER_MAX_RUNTIMES: ${{ vars.PREVIEW_FREE_TIER_MAX_RUNTIMES || '10' }}
       PREVIEW_FREE_TIER_INVITE_REQUIRED: ${{ vars.PREVIEW_FREE_TIER_INVITE_REQUIRED || 'true' }}
+      PREVIEW_FREE_TIER_SLEEP_ENABLED: ${{ vars.PREVIEW_FREE_TIER_SLEEP_ENABLED || '1' }}
+      # Daily funded AI spend across all free owners on preview, in micro-USD ($20/day by default).
+      PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: ${{ vars.PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD || '20000000' }}
       CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
       CONNECT_SLACK_PILOT: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_slack_pilot && 'true' || 'false' }}
       CONNECT_SHARE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && 'true' || 'false' }}
@@ -227,6 +230,17 @@ jobs:
                   exit 1
                   ;;
               esac
+              case "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" in
+                0|1) ;;
+                *)
+                  echo "PREVIEW_FREE_TIER_SLEEP_ENABLED must be 0 or 1." >&2
+                  exit 1
+                  ;;
+              esac
+              if ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
+                echo "PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD must be a positive integer of at most 12 digits (micro-USD)." >&2
+                exit 1
+              fi
             fi
           fi
           if ! [[ "${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID:-}" =~ ^[A-Za-z0-9_.-]{1,80}$ ]]; then
@@ -560,12 +574,15 @@ jobs:
             # Rechecked here: these values are spliced into a '|'-delimited binding list.
             if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
                ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]] ||
-               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]]; then
+               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" =~ ^[01]$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
               echo "Preview metal settings are invalid; refusing to deploy." >&2
               exit 1
             fi
             metal_env_bindings="|METAL_HOSTS_ENABLED=1|METAL_GOLDEN_VERSION=${PREVIEW_METAL_GOLDEN_VERSION}"
             metal_env_bindings="${metal_env_bindings}|MATRIX_FREE_TIER_ENABLED=1|MATRIX_FREE_TIER_MAX_RUNTIMES=${PREVIEW_FREE_TIER_MAX_RUNTIMES}|MATRIX_FREE_TIER_INVITE_REQUIRED=${PREVIEW_FREE_TIER_INVITE_REQUIRED}"
+            metal_env_bindings="${metal_env_bindings}|MATRIX_FREE_TIER_SLEEP_ENABLED=${PREVIEW_FREE_TIER_SLEEP_ENABLED}|MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD}"
             # hostd credentials are Secret Manager bindings only, never plain env vars.
             metal_secret_bindings=",METAL_HOSTD_API_TOKEN=metal-hostd-api-token-preview:latest,METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token-preview:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem-preview:latest"
           fi
@@ -885,6 +902,9 @@ jobs:
       PREVIEW_METAL_GOLDEN_VERSION: ${{ vars.PREVIEW_METAL_GOLDEN_VERSION }}
       PREVIEW_FREE_TIER_MAX_RUNTIMES: ${{ vars.PREVIEW_FREE_TIER_MAX_RUNTIMES || '10' }}
       PREVIEW_FREE_TIER_INVITE_REQUIRED: ${{ vars.PREVIEW_FREE_TIER_INVITE_REQUIRED || 'true' }}
+      PREVIEW_FREE_TIER_SLEEP_ENABLED: ${{ vars.PREVIEW_FREE_TIER_SLEEP_ENABLED || '1' }}
+      # Daily funded AI spend across all free owners on preview, in micro-USD ($20/day by default).
+      PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: ${{ vars.PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD || '20000000' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
@@ -1062,15 +1082,18 @@ jobs:
           if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && [ "$PREVIEW_METAL_PR_NUMBER" = "$PR_NUMBER" ]; then
             if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
                ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]] ||
-               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]]; then
+               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" =~ ^[01]$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
               echo "Preview metal settings are invalid; refusing to deploy." >&2
               exit 1
             fi
             metal_env_updates="@METAL_HOSTS_ENABLED=1@METAL_GOLDEN_VERSION=${PREVIEW_METAL_GOLDEN_VERSION}"
             metal_env_updates="${metal_env_updates}@MATRIX_FREE_TIER_ENABLED=1@MATRIX_FREE_TIER_MAX_RUNTIMES=${PREVIEW_FREE_TIER_MAX_RUNTIMES}@MATRIX_FREE_TIER_INVITE_REQUIRED=${PREVIEW_FREE_TIER_INVITE_REQUIRED}"
+            metal_env_updates="${metal_env_updates}@MATRIX_FREE_TIER_SLEEP_ENABLED=${PREVIEW_FREE_TIER_SLEEP_ENABLED}@MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD}"
             secret_updates="${secret_updates:+${secret_updates},}METAL_HOSTD_API_TOKEN=metal-hostd-api-token-preview:latest,METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token-preview:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem-preview:latest"
           else
-            metal_args+=(--remove-env-vars "METAL_HOSTS_ENABLED,METAL_GOLDEN_VERSION,MATRIX_FREE_TIER_ENABLED,MATRIX_FREE_TIER_MAX_RUNTIMES,MATRIX_FREE_TIER_INVITE_REQUIRED")
+            metal_args+=(--remove-env-vars "METAL_HOSTS_ENABLED,METAL_GOLDEN_VERSION,MATRIX_FREE_TIER_ENABLED,MATRIX_FREE_TIER_MAX_RUNTIMES,MATRIX_FREE_TIER_INVITE_REQUIRED,MATRIX_FREE_TIER_SLEEP_ENABLED,MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD")
             metal_args+=(--remove-secrets "METAL_HOSTD_API_TOKEN,METAL_HOSTD_INGRESS_TOKEN,METAL_HOSTD_CA_PEM")
           fi
           secret_args=()
