@@ -152,14 +152,24 @@ export function parseEnvFile(text) {
   return out;
 }
 
-/** Replaces owned-machine keys in host.env and keeps every other line. */
+/**
+ * Replaces owned-machine keys in host.env and keeps every other line. The
+ * gateway's owner (MATRIX_USER_ID) becomes the enrolled account, replacing the
+ * installer's standalone self-host id, so platform-routed requests from the
+ * owner reach Terminal and other owner-only routes.
+ */
 export function mergeHostEnv(existing, env) {
+  const replaced = [...OWNED_MACHINE_ENV_KEYS, 'MATRIX_USER_ID'];
   const keep = existing.split('\n').filter((line) => {
     const match = /^([A-Z][A-Z0-9_]*)=/.exec(line);
-    return !(match && OWNED_MACHINE_ENV_KEYS.includes(match[1]));
+    return !(match && replaced.includes(match[1]));
   });
   while (keep.length && keep.at(-1) === '') keep.pop();
-  return `${[...keep, ...OWNED_MACHINE_ENV_KEYS.map((key) => `${key}=${env[key]}`)].join('\n')}\n`;
+  return `${[
+    ...keep,
+    ...OWNED_MACHINE_ENV_KEYS.map((key) => `${key}=${env[key]}`),
+    `MATRIX_USER_ID=${env.MATRIX_CLERK_USER_ID}`,
+  ].join('\n')}\n`;
 }
 
 async function readText(path) {

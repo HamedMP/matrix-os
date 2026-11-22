@@ -98,8 +98,11 @@ describe("matrix-connect", () => {
   afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
   it("merges owned keys into host.env and keeps every other line", () => {
-    const merged = mergeHostEnv("DATABASE_URL=postgres://x\nUPGRADE_TOKEN=old\nMATRIX_SELF_HOSTED=1\n", machineEnv());
+    const merged = mergeHostEnv("DATABASE_URL=postgres://x\nUPGRADE_TOKEN=old\nMATRIX_SELF_HOSTED=1\nMATRIX_USER_ID=self-host-lab\n", machineEnv());
     expect(merged).toContain("DATABASE_URL=postgres://x\n");
+    // The gateway owner becomes the enrolled account so Terminal accepts it.
+    expect(merged).not.toContain("self-host-lab");
+    expect(merged).toContain(`MATRIX_USER_ID=${machineEnv().MATRIX_CLERK_USER_ID}\n`);
     expect(merged).toContain("MATRIX_SELF_HOSTED=1\n");
     expect(merged).not.toContain("UPGRADE_TOKEN=old");
     expect(merged.match(/^UPGRADE_TOKEN=/gm)).toHaveLength(1);
