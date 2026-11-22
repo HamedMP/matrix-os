@@ -14,11 +14,12 @@ Developer tooling only: `packages/pr-evidence-worker/` (Cloudflare Worker at
 `evidence.matrix-os.com`) and `scripts/pr-evidence` (Node CLI). No Matrix OS
 user surface changes.
 
-## Public docs
+## Documentation deliverables
 
-N/A: internal developer tooling for repo contributors, with no Matrix OS
-user-facing behavior, so no `matrix-os-site` docs PR. The package README is
-the contributor documentation.
+- Contributor guide in this repo: `docs/dev/pr-evidence.md` (linked from `AGENTS.md`).
+- Public docs: a separate `FinnaAI/matrix-os-site` PR adds a "PR evidence"
+  section to `content/docs/developer/contributing.mdx` pointing to the CLI and
+  the in-repo guide. No Matrix OS end-user behavior changes, so no user docs.
 
 ## Journey
 

@@ -74,9 +74,14 @@ function altText(name) {
   return name.replace(/[[\]()<>`*_\\!\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'evidence';
 }
 
+/** Headings cannot break link syntax, so keep punctuation such as parentheses; drop HTML/backticks. */
+function headingText(title) {
+  return title.replace(/[<>`\\\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 /** Images render inline; videos stay as bare links because GitHub only inlines its own uploads. */
 export function buildCommentMarkdown({ title, commit, files }) {
-  const lines = [title ? `### PR evidence: ${altText(title)}` : '### PR evidence', '', `Commit: \`${commit.slice(0, 12)}\``, ''];
+  const lines = [title ? `### PR evidence: ${headingText(title)}` : '### PR evidence', '', `Commit: \`${commit.slice(0, 12)}\``, ''];
   for (const file of files) {
     if (file.contentType.startsWith('image/')) lines.push(`![${altText(file.name)}](${file.url})`, '');
     else lines.push(`**${altText(file.name)}**`, '', file.url, '');

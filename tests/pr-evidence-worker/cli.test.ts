@@ -58,14 +58,14 @@ describe("pr-evidence argument parsing", () => {
 describe("comment markdown", () => {
   it("inlines images and leaves videos as bare links on their own line", () => {
     const markdown = buildCommentMarkdown({
-      title: "Web Desktop + Web Canvas",
+      title: "Web Desktop + Web Canvas (build b714b18) <img>",
       commit: COMMIT,
       files: [
         { name: "desk](javascript:x).png", contentType: "image/png", url: "https://evidence.matrix-os.com/pr-1/0123456/a.png" },
         { name: "flow.mp4", contentType: "video/mp4", url: "https://evidence.matrix-os.com/pr-1/0123456/b.mp4" },
       ],
     });
-    expect(markdown).toContain("### PR evidence: Web Desktop + Web Canvas");
+    expect(markdown).toContain("### PR evidence: Web Desktop + Web Canvas (build b714b18) img");
     expect(markdown).toContain("Commit: `0123456789ab`");
     expect(markdown).toContain("![desk javascript:x .png](https://evidence.matrix-os.com/pr-1/0123456/a.png)");
     expect(markdown).toMatch(/\nhttps:\/\/evidence\.matrix-os\.com\/pr-1\/0123456\/b\.mp4\n/);
