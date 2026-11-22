@@ -1,4 +1,4 @@
-import type { CanonicalChatDetailResponse, ProjectSetupDraft } from "@matrix-os/contracts";
+import { canonicalAssistantOutputMessages, type CanonicalChatDetailResponse, type ProjectSetupDraft } from "@matrix-os/contracts";
 
 /** Present only this setup's structured generation result as a normal Chat reply. */
 export function projectSetupGenerationText(
@@ -20,7 +20,7 @@ export function projectSetupGenerationResultId(
 ): string | null {
   const runId = draft?.generation?.runId;
   return runId
-    ? (messages.findLast(
+    ? ([...messages].reverse().find(
         (message) => message.role === "assistant" && !message.tool && message.runId === runId,
       )?.id ?? null)
     : null;
@@ -30,12 +30,23 @@ export function projectSetupDetailPresentation(
   detail: CanonicalChatDetailResponse,
   draft: ProjectSetupDraft | null,
 ): CanonicalChatDetailResponse {
-  if (draft?.chatId !== detail.record.chat.id || !draft.generation?.runId) return detail;
-  const resultId = projectSetupGenerationResultId(draft, detail.messages);
-  const messages = detail.messages.map((message) => {
-    if (message.id !== resultId) return message;
-    const text = projectSetupGenerationText(draft, message.runId);
-    return text ? { ...message, parts: [{ type: "text" as const, text }] } : message;
+  const runs = detail.runs.filter(run => run.context?.projectSetupDraft);
+  const current = draft?.chatId === detail.record?.chat.id ? draft : null;
+  const runIds = [...runs.map(run => run.id), ...(current?.generation?.runId ? [current.generation.runId] : [])];
+  if (runIds.length === 0) return detail;
+  const combined = canonicalAssistantOutputMessages(detail.messages);
+  const resultIds = runIds.flatMap(runId => {
+    const result = [...combined].reverse().find(message => message.role === "assistant" && message.runId === runId);
+    return result ? [result.id] : [];
+  });
+  const messages = combined.map(message => {
+    if (!resultIds.includes(message.id)) return message;
+    const run = runs.find(candidate => candidate.id === message.runId);
+    const text = projectSetupGenerationText(current, message.runId)
+      ?? (run?.status === "completed" ? "I drafted your project files for review."
+        : run?.status === "failed" || run?.status === "aborted" ? "I couldn’t finish the draft. Your answers are kept."
+          : "I’m drafting your project files for review.");
+    return { ...message, parts: [{ type: "text" as const, text }] };
   });
   return { ...detail, messages };
 }

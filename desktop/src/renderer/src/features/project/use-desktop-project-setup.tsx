@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useProjectSetup,
   useProjectSetupLaunch,
   ProjectSetupControls,
   ProjectSetupIntroduction,
   type ProjectSetupTransport,
+  type ProjectSetupMarkdownState,
 } from "@matrix-os/ui";
 import { PROJECT_SKILL_FILE_MAX_BYTES, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import {
@@ -43,6 +44,15 @@ export function useDesktopProjectSetup({
   const authGeneration = useConnection((state) => state.authGeneration);
   const launch = useProjectSetupLaunch();
   const scope = JSON.stringify([api?.baseUrl, runtimeSlot, authGeneration]);
+  const editorScope = JSON.stringify([scope, projectId, chatId]);
+  // Tabs stay mounted during Settings. Keep only this checkout/Chat's three review editors.
+  const [editors, setEditors] = useState<{
+    scope: string;
+    files: Record<string, ProjectSetupMarkdownState>;
+  }>({ scope: editorScope, files: {} });
+  useLayoutEffect(() => {
+    setEditors({ scope: editorScope, files: {} });
+  }, [editorScope]);
   const project = useBoard((state) => state.projects.find((item) => item.id === projectId));
   const transport = useMemo<ProjectSetupTransport | null>(() => {
     if (!api || typeof api.forRuntime !== "function") return null;
@@ -111,11 +121,23 @@ export function useDesktopProjectSetup({
     },
     onChanged: refresh,
   });
+  const markdownEdits = {
+    files: editors.scope === editorScope ? editors.files : {},
+    onChange: (path: string, state: ProjectSetupMarkdownState) => setEditors(previous => {
+      const paths = setup.draft?.proposals.map(file => file.path) ?? [];
+      if (previous.scope !== editorScope || !paths.includes(path)) return previous;
+      // A regenerated skill may replace its old path; retain only this review's bounded files.
+      const files = Object.fromEntries(Object.entries(previous.files).filter(([key]) => paths.includes(key)));
+      if (!files[path] && Object.keys(files).length >= 3) return previous;
+      return { scope: editorScope, files: { ...files, [path]: state } };
+    }),
+  };
   const seenRequest = useRef(0);
+  const startSetup = useEffectEvent(() => setup.start());
   useEffect(() => {
     if (!launch?.requested || launch.sequence === seenRequest.current) return;
     seenRequest.current = launch.sequence;
-    void setup.start();
+    void startSetup();
   }, [launch?.requested, launch?.sequence, eligible, transport]);
   const view = {
     ...setup,
@@ -183,6 +205,7 @@ export function useDesktopProjectSetup({
         transport={transport}
         selection={selection}
         onOpenMcpSettings={openMcpSettings}
+        markdownEdits={markdownEdits}
         onOpenFile={openFile}
         {...sources}
       />

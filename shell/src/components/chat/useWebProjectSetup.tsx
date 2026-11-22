@@ -11,7 +11,6 @@ import { PROJECT_SKILL_FILE_MAX_BYTES } from "@matrix-os/contracts";
 import {
   parseProjectInstalledSkills,
   PROJECT_INSTALLED_SKILLS_PATH,
-  PROJECT_INSTALLED_SKILLS_RESPONSE_LIMIT,
   projectInstalledSkillFilePath,
   projectAgentContextFileLocationRequest,
   projectAgentContextFilesPath,
@@ -72,6 +71,8 @@ export function useWebProjectSetup({
       post: (path, body, signal) => send(path, signal, "POST", body),
       patch: (path, body, signal) => send(path, signal, "PATCH", body),
     };
+    // A new authority scope must replace the transport and cancel old requests.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gatewayUrl, scope]);
   const setup = useProjectSetup({
     client: transport,
@@ -141,6 +142,7 @@ export function useWebProjectSetup({
             transport={transport}
             selection={selection}
             onOpenMcpSettings={() => navigation?.openMcpSettings()}
+            mcpSettingsOpen={navigation?.mcpSettingsOpen}
             onOpenFile={(path) => openFile(path, authority)}
             {...sources}
           />

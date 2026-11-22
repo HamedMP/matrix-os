@@ -134,3 +134,48 @@ it("projects one final result and preserves earlier assistant commentary and too
   ];
   expect(projectSetupGenerationResultId(draft, messages)).toBe("msg_result");
 });
+
+it("offers a safe reload after a stale or failed mutation while preserving local Markdown edits", async () => {
+  const setup = controller();
+  setup.error = "Project setup could not be updated. Your answers are kept. Try again.";
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Markdown" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Markdown for AGENTS.md" }), { target: { value: "# My unsaved change" } });
+  fireEvent.click(screen.getByRole("button", { name: "Reload setup" }));
+  await waitFor(() => expect(setup.reload).toHaveBeenCalledOnce());
+  expect(screen.getByRole("textbox", { name: "Markdown for AGENTS.md" })).toHaveProperty("value", "# My unsaved change");
+});
+
+it("refreshes authoritative MCP status when the in-app Settings overlay closes", async () => {
+  const current = { ...draft, mcp: { state: "pending" as const, service: "Linear" } };
+  const setup = controller(undefined, current);
+  const get = vi.fn(async () => [{ id: "mcp_linear", name: "Linear", status: "auth_required", enabled: true }]);
+  const transport = { get, post: vi.fn(), patch: vi.fn() };
+  const view = render(<ProjectSetupControls setup={setup} transport={transport} onOpenMcpSettings={vi.fn()} mcpSettingsOpen={false} />);
+  await waitFor(() => expect(get).toHaveBeenCalledOnce());
+  view.rerender(<ProjectSetupControls setup={setup} transport={transport} onOpenMcpSettings={vi.fn()} mcpSettingsOpen />);
+  get.mockResolvedValue([{ id: "mcp_linear", name: "Linear", status: "ready", enabled: true }]);
+  view.rerender(<ProjectSetupControls setup={setup} transport={transport} onOpenMcpSettings={vi.fn()} mcpSettingsOpen={false} />);
+  expect(await screen.findByText("Linear is connected on this computer.")).toBeTruthy();
+  expect(get).toHaveBeenCalledTimes(2);
+});
+
+it.each(["pending", "conflict", "failed"] as const)("keeps oversized %s guidance reviewable and blocks Save until it is revised", (status) => {
+  const oversized = { ...draft, proposals: [{ path: "AGENTS.md" as const, content: "g".repeat(8193), status }] };
+  render(<ProjectSetupControls setup={controller(undefined, oversized)} transport={null} onOpenMcpSettings={vi.fn()} />);
+  expect(screen.getByText("8193 / 8192 characters. Shorten this draft before saving.")).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Edit Markdown" }));
+  expect(screen.getByRole("textbox", { name: "Markdown for AGENTS.md" })).toHaveProperty("value", "g".repeat(8193));
+  fireEvent.change(screen.getByRole("textbox", { name: "Markdown for AGENTS.md" }), { target: { value: "# Shortened guidance" } });
+  expect(screen.queryByText(/Shorten this draft before saving/)).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Apply draft changes" }).disabled).toBe(false);
+});
+
+it.each(["saved", "already_present"] as const)("allows a preserved %s guidance file beyond the new-file creation limit", (status) => {
+  const existing = { ...draft, proposals: [{ path: "AGENTS.md" as const, content: "g".repeat(8193), status }] };
+  render(<ProjectSetupControls setup={controller(undefined, existing)} transport={null} onOpenMcpSettings={vi.fn()} />);
+  expect(screen.queryByText(/Shorten this draft before saving/)).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
+});

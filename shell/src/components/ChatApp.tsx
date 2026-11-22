@@ -1,6 +1,5 @@
-import { useWebProjectSetup } from "./chat/useWebProjectSetup";
-import { projectSetupGenerationText, projectSetupGenerationResultId } from "@matrix-os/ui";
 "use client";
+import { useWebProjectSetup } from "./chat/useWebProjectSetup";
 import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -466,11 +465,7 @@ function ChatAppContent({
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
-  const setupGenerationResultId = projectSetupGenerationResultId(projectSetup.draft, messages.map(message => ({ ...message, runId: message.requestId })));
-  const grouped = groupMessages(messages.map(message => {
-    const content = message.id === setupGenerationResultId ? projectSetupGenerationText(projectSetup.draft, message.requestId) : null;
-    return content ? { ...message, content } : message;
-  }));
+  const grouped = groupMessages(messages);
   const botTranscript = botTranscriptPlacement(grouped);
   const waitingTool = grouped.flatMap((group) => {
     if (group.type !== "message") return [];

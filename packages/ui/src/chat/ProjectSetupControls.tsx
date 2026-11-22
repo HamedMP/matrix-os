@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatModelSelection, ProjectSetupDraft } from "@matrix-os/contracts";
 import { Button } from "../Button.js";
 import {
@@ -10,7 +10,7 @@ import { copyProjectSkill, importProjectSkill } from "./project-skill-file.js";
 import type { ProjectSetupController, ProjectSetupTransport } from "./use-project-setup.js";
 
 import { ProjectSetupActionButton as Action, mutedStyle } from "./ProjectSetupAction.js";
-import { ProjectSetupMarkdown } from "./ProjectSetupMarkdown.js";
+import { ProjectSetupMarkdown, type ProjectSetupMarkdownState } from "./ProjectSetupMarkdown.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction } from "./ProjectSetupEntry.js";
 
 interface Props extends ProjectSkillSourceActions {
@@ -18,7 +18,16 @@ interface Props extends ProjectSkillSourceActions {
   transport: ProjectSetupTransport | null;
   selection?: CanonicalChatModelSelection | null;
   onOpenMcpSettings: () => void;
+  mcpSettingsOpen?: boolean;
+  markdownEdits?: {
+    files: Readonly<Record<string, ProjectSetupMarkdownState>>;
+    onChange: (path: string, state: ProjectSetupMarkdownState) => void;
+  };
   onOpenFile?: (path: string) => void | Promise<boolean>;
+}
+
+function guidanceLimit(file: ProjectSetupDraft["proposals"][number]): number | undefined {
+  return !file.path.endsWith("/SKILL.md") && !["saved", "already_present"].includes(file.status) ? 8192 : undefined;
 }
 
 /** Actions follow the canonical assistant message; the transcript stays in Chat. */
@@ -36,6 +45,8 @@ function ProjectSetupControlsScoped({
   transport,
   selection,
   onOpenMcpSettings,
+  mcpSettingsOpen = false,
+  markdownEdits,
   onOpenFile,
   loadInstalledSkills,
   readInstalledSkill,
@@ -44,7 +55,11 @@ function ProjectSetupControlsScoped({
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [dirtyFiles, setDirtyFiles] = useState<string[]>([]);
+  const [dirtyFiles, setDirtyFiles] = useState<string[]>(() =>
+    Object.entries(markdownEdits?.files ?? {})
+      .filter(([path, edit]) => draft.proposals.some(file => file.path === path) && edit.value !== edit.baseline)
+      .map(([path]) => path),
+  );
   const sourceRequest = useRef<AbortController | null>(null);
   const connectionRequest = useRef<AbortController | null>(null);
   const [revisionField, setRevisionField] = useState<"purpose" | "guidance" | "skillInstructions" | null>(
@@ -74,7 +89,7 @@ function ProjectSetupControlsScoped({
     void setup.dispatch(action);
   };
 
-  const checkConnection = async () => {
+  const checkConnection = useCallback(async () => {
     if (!transport || draft.mcp.state !== "pending" || !draft.mcp.service || connectionRequest.current)
       return;
     const controller = new AbortController();
@@ -108,15 +123,23 @@ function ProjectSetupControlsScoped({
     } finally {
       if (connectionRequest.current === controller) connectionRequest.current = null;
     }
-  };
+  }, [transport, draft.mcp.state, draft.mcp.service]);
   useEffect(() => {
     const check = () => {
       void checkConnection();
     };
+    if (mcpSettingsOpen) {
+      setConnected(false);
+      return;
+    }
     if (draft.mcp.state === "pending") check();
     window.addEventListener("focus", check);
-    return () => window.removeEventListener("focus", check);
-  }, [draft.mcp.state, draft.mcp.service, transport]);
+    return () => {
+      window.removeEventListener("focus", check);
+      connectionRequest.current?.abort();
+      connectionRequest.current = null;
+    };
+  }, [checkConnection, draft.mcp.state, mcpSettingsOpen]);
 
   const syncGeneration = useEffectEvent(() => {
     if (!setup.pending) dispatch({ type: "sync_generation" });
@@ -315,7 +338,7 @@ function ProjectSetupControlsScoped({
               disabled={busy || !selection}
               onClick={() => selection && dispatch({ type: "generate", selection })}
             >
-              {draft.proposals.length ? "Regenerate drafts" : "Draft project files"}
+              {draft.generation?.runId ? "Regenerate drafts" : "Draft project files"}
             </Action>
           )}
           {draft.generation?.status === "unavailable" || draft.generation?.status === "failed" ? (
@@ -336,6 +359,9 @@ function ProjectSetupControlsScoped({
               key={`${draft.chatId}:${file.path}`}
               path={file.path}
               content={file.content}
+              maximumCharacters={guidanceLimit(file)}
+              initialState={markdownEdits?.files[file.path]}
+              onStateChange={markdownEdits ? (state) => markdownEdits.onChange(file.path, state) : undefined}
               editable={file.path !== "CLAUDE.md" && !file.expectedHash}
               busy={busy}
               onDirtyChange={(dirty) =>
@@ -353,7 +379,9 @@ function ProjectSetupControlsScoped({
           {draft.proposals.length ? (
             <Action
               disabled={
-                busy || needsSkillDraft || dirtyFiles.length > 0 || draft.generation?.status === "running"
+                busy || needsSkillDraft
+                || draft.proposals.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
+                || draft.generation?.status === "running"
               }
               onClick={() => dispatch({ type: "save" })}
             >
@@ -428,11 +456,13 @@ function ProjectSetupControlsScoped({
         </ul>
       ) : null}
       {sourceError || setup.error ? (
-        <p role="alert" className="text-xs">
-          {sourceError ?? setup.error}
-        </p>
+        <div className="space-y-2">
+          <p role="alert" className="text-xs">
+            {sourceError ?? setup.error}
+          </p>
+          {setup.error ? <Action disabled={busy} onClick={() => { void setup.reload(); }}>Reload setup</Action> : null}
+        </div>
       ) : null}
     </div>
   );
 }
-

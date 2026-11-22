@@ -24,6 +24,7 @@ export const WebProjectAgentContextNavigation = createContext<{
   openFiles: () => void;
   openPreview?: () => void;
   openMcpSettings: () => void;
+  mcpSettingsOpen?: boolean;
 } | null>(null);
 
 async function readText(response: Response, maxBytes: number, preserveBom = false): Promise<string> {

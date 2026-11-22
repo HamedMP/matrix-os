@@ -841,7 +841,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     openFiles: () => openAppOrFocus("__file-browser__", "Files"),
     openPreview: () => openAppOrFocus("__preview-window__", "Preview"),
     openMcpSettings: () => openWebSettings("integrations"),
-  }), [openAppOrFocus, openWebSettings]);
+    mcpSettingsOpen: settingsOpen,
+  }), [openAppOrFocus, openWebSettings, settingsOpen]);
   const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 
   const canvasToolbarChild = desktopMode === "canvas" ? (

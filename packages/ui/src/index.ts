@@ -428,3 +428,5 @@ export { useProjectSetup, type ProjectSetupController, type ProjectSetupTranspor
 export { ProjectSetupEntry, ProjectSetupIntroduction, ProjectSetupControls } from "./chat/ProjectSetupControls.js";
 export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/ProjectSetupLaunch.js";
 export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";
+
+export type { ProjectSetupMarkdownState } from "./chat/ProjectSetupMarkdown.js";
