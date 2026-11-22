@@ -6,7 +6,9 @@
 // menu, so apps inside Matrix can still claim keys such as Cmd+N.
 import {
   bindingFromKeyEvent,
+  characterBindingFromKeyEvent,
   SHORTCUT_ACTIONS,
+  validateBinding,
   type EffectiveShortcuts,
   type ShortcutActionId,
   type ShortcutPlatform,
@@ -88,15 +90,23 @@ export function createShortcutInputMatcher(deps: {
   return (event, input) => {
     if (input.type !== "keyDown" || deps.isRecording()) return;
     // The same function the recorder uses, so a recorded key matches on any layout.
-    const binding = bindingFromKeyEvent({
+    const keyEvent = {
       key: input.key,
       code: input.code,
       metaKey: input.meta,
       ctrlKey: input.control,
       altKey: input.alt,
       shiftKey: input.shift,
-    }, deps.platform);
+    };
+    const binding = bindingFromKeyEvent(keyEvent, deps.platform);
     if (binding === null) return;
+    // A digit-row key that types a native menu key (AZERTY: Cmd+- on the 6 key
+    // zooms out) belongs to the menu, not to the digit's shortcut.
+    const typed = characterBindingFromKeyEvent(keyEvent, deps.platform);
+    if (typed !== null && typed !== binding) {
+      const check = validateBinding(typed, deps.platform);
+      if (!check.ok && (check.reason === "reserved-menu" || check.reason === "reserved-system")) return;
+    }
     const id = lookup(binding);
     if (id === undefined) return;
     // A held key still must not reach the page as a stream of shortcut keys.

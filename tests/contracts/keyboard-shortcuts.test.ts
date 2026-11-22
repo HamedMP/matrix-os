@@ -7,6 +7,7 @@ import {
   ShortcutOverridesSchema,
   addBinding,
   bindingFromKeyEvent,
+  characterBindingFromKeyEvent,
   findConflict,
   formatBinding,
   heldModifiers,
@@ -90,6 +91,12 @@ describe("bindingFromKeyEvent", () => {
     expect(bindingFromKeyEvent(keyEvent({ key: "'", code: "Digit4", metaKey: true }), "mac")).toBe("Cmd+4");
     expect(bindingFromKeyEvent(keyEvent({ key: "-", code: "Digit6", ctrlKey: true }), "other")).toBe("Ctrl+6");
     expect(bindingFromKeyEvent(keyEvent({ key: "-", code: "Minus", metaKey: true }), "mac")).toBe("Cmd+-");
+  });
+
+  it("reports the typed character separately so native menu keys can win on the digit row", () => {
+    expect(characterBindingFromKeyEvent(keyEvent({ key: "-", code: "Digit6", metaKey: true }), "mac")).toBe("Cmd+-");
+    expect(characterBindingFromKeyEvent(keyEvent({ key: "6", code: "Digit6", metaKey: true }), "mac")).toBe("Cmd+6");
+    expect(characterBindingFromKeyEvent(keyEvent({ key: "Escape", code: "Escape", metaKey: true }), "mac")).toBeNull();
   });
 
   it("maps named keys", () => {

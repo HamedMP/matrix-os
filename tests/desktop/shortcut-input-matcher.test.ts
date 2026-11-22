@@ -52,6 +52,18 @@ describe("shortcut input matcher", () => {
     expect(run).toHaveBeenCalledWith("app.next");
   });
 
+  it("switches apps from the digit row on a layout that types punctuation there (AZERTY)", () => {
+    const { run, press } = setup();
+    expect(press({ key: "'", code: "Digit4", meta: true })).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.switch-4");
+  });
+
+  it("leaves a digit-row key to the menu when its character is a native menu key (AZERTY Cmd+- zooms out)", () => {
+    const { run, press } = setup();
+    expect(press({ key: "-", code: "Digit6", meta: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("ignores key-up events", () => {
     const { run, press } = setup();
     expect(press({ ...CTRL_TAB, type: "keyUp" })).not.toHaveBeenCalled();
