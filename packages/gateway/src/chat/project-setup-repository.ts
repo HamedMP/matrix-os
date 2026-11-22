@@ -60,9 +60,13 @@ export class ProjectSetupRepository {
     generation: NonNullable<ProjectSetupDraft["generation"]>): Promise<ProjectSetupDraft> {
     return this.chats.withTransaction(async repository => {
       const db = repository.kysely;
+      const chat = await db.selectFrom("chats").selectAll().where("id", "=", chatId)
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
+      if (!chat || owner.type !== "personal" || chat.lifecycle !== "active" || chat.collaboration !== null) throw new ProjectSetupError("not_found");
       const row = await db.selectFrom("chat_project_setups").selectAll().where("owner_id", "=", owner.ownerId).where("chat_id", "=", chatId)
         .where("root_fingerprint", "=", fingerprint).forUpdate().executeTakeFirst();
-      if (!row || row.last_request_id !== requestId) throw new ProjectSetupError("conflict");
+      if (!row || row.project_id !== chat.project_id) throw new ProjectSetupError("not_found");
+      if (row.last_request_id !== requestId) throw new ProjectSetupError("conflict");
       const draft = ProjectSetupDraftSchema.parse(parseJson(row.draft));
       if (draft.generation?.status !== "pending") return draft;
       const next = ProjectSetupDraftSchema.parse({ ...draft, generation });

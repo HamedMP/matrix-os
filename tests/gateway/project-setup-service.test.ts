@@ -56,6 +56,18 @@ describe("project setup service integration", () => {
     expect(transcript?.turns.length).toBe(5); expect(transcript?.runs).toHaveLength(0);
     expect(transcript?.messages.every(message => Boolean(message.turnId))).toBe(true);
   });
+  it.each(["AGENTS.md", "CLAUDE.md"])("preserves an existing empty %s through full review and save", async path => {
+    files.set(`project_a/${path}`, "");
+    let current = await service.start(owner, "project_a", { clientRequestId: "req_start", answer: "A portfolio website" });
+    current = await next(current, { type: "answer", text: "Run checks" });
+    current = await next(current, { type: "choose_skill", choice: "skip" });
+    current = await next(current, { type: "choose_mcp", choice: "skip" });
+    expect(current.draft?.proposals.find(file => file.path === path)).toMatchObject({ content: "", status: "already_present" });
+    current = await next(current, { type: "save" });
+    expect(current.draft?.step).toBe("saved");
+    expect(files.get(`project_a/${path}`)).toBe("");
+    expect(create.mock.calls.map(call => call[1])).not.toContain(path);
+  });
   it("rejects a stale checkout confirmation before any file write", async () => {
     let current = await service.start(owner, "project_a", { clientRequestId: "req_start", answer: "Project A" });
     current = await next(current, { type: "answer", text: "Use concise instructions" });

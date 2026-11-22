@@ -30,10 +30,37 @@ describe("project setup transitions", () => {
     expect(changed.draft.generation).toBeUndefined();
     expect(changed.draft.proposals.every(p => p.status === "pending")).toBe(true);
   });
+  it("requires a newly drafted skill after revising its accepted instructions", () => {
+    let draft = transitionProjectSetup(initial(), { type: "answer", text: "Review each diff" }).draft;
+    draft = transitionProjectSetup(draft, { type: "choose_skill", choice: "create" }).draft;
+    draft = transitionProjectSetup(draft, { type: "answer", text: "Check the release notes" }).draft;
+    draft = transitionProjectSetup(draft, { type: "choose_mcp", choice: "skip" }).draft;
+    draft = applyProjectSetupGeneration(draft, JSON.stringify({ guidance: "# Guidance", skill: {
+      name: "release-check", description: "Check a release", instructions: "Read the old release notes.",
+    } }));
+    const revised = transitionProjectSetup(draft, { type: "revise", field: "skillInstructions", text: "Run tests and verify migrations" }).draft;
+    expect(revised.answers.skillInstructions).toBe("Run tests and verify migrations");
+    expect(revised.skill).toBeUndefined();
+    expect(revised.proposals.some(file => file.path.endsWith("/SKILL.md"))).toBe(false);
+  });
+  it("retains oversized generated guidance for review and a later bounded revision", () => {
+    const text = "# Guidance\n\n" + "x".repeat(8200);
+    const draft = applyProjectSetupGeneration({ ...initial(), step: "review" }, JSON.stringify({ guidance: text }));
+    expect(draft.generation?.status).toBe("completed");
+    expect(draft.proposals[0]?.content).toBe(text);
+    const intermediate = transitionProjectSetup(draft, { type: "review_file", path: "AGENTS.md", content: "x".repeat(8193) }).draft;
+    expect(intermediate.proposals[0]?.content).toHaveLength(8193);
+    const revised = transitionProjectSetup(intermediate, { type: "review_file", path: "AGENTS.md", content: "# Guidance\n\nKeep edits small." }).draft;
+    expect(revised.proposals[0]?.content).toBe("# Guidance\n\nKeep edits small.");
+  });
+  it("retains the existing UTF-8 and total model response bounds", () => {
+    expect(() => applyProjectSetupGeneration(initial(), JSON.stringify({ guidance: "界".repeat(22_000) }))).toThrow();
+    expect(() => applyProjectSetupGeneration(initial(), " ".repeat(96 * 1024) + JSON.stringify({ guidance: "# Guidance" }))).toThrow();
+  });
   it("accepts bounded model Markdown without granting tools", () => {
     const draft = applyProjectSetupGeneration(initial(), JSON.stringify({ guidance: "# Working preferences\n\nKeep edits small." }));
     expect(draft.proposals[0]?.content).toContain("Keep edits small");
     expect(draft.mcp.state).toBe("not_requested");
-    expect(() => applyProjectSetupGeneration(initial(), JSON.stringify({ guidance: "x".repeat(8193) }))).toThrow();
+    expect(() => applyProjectSetupGeneration(initial(), JSON.stringify({ guidance: "x".repeat(65_537) }))).toThrow();
   });
 });

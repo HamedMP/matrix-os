@@ -30,6 +30,10 @@ async function readManifest(directory: PinnedDirectory, path: string): Promise<s
   }
 }
 
+export function projectSetupWorkspaceFingerprint(rootFingerprint: string, identity: { dev: number; ino: number }): string {
+  return createHash("sha256").update(`${rootFingerprint}:${identity.dev}:${identity.ino}`).digest("hex");
+}
+
 export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver, homePath: string, owner: ChatOwner, projectId: string): Promise<ProjectSetupWorkspace> {
   if (owner.type !== "personal") throw new ProjectSetupError("not_found");
   const resolved = await roots.resolve(owner, { kind: "project", projectId });
@@ -38,7 +42,7 @@ export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver
   const directory = await pinDirectory(resolved.primaryWorkspaceRoot);
   try {
     const identity = await directory.identity();
-    const fingerprint = createHash("sha256").update(`${resolved.fingerprint}:${identity.dev}:${identity.ino}`).digest("hex");
+    const fingerprint = projectSetupWorkspaceFingerprint(resolved.fingerprint, identity);
     const revalidate = async () => {
       const current = await roots.revalidate(owner, resolved);
       const stat = await lstat(current.primaryWorkspaceRoot);

@@ -18,7 +18,8 @@ describe("admitted project setup generation", () => {
     await repository.create(owner, { id: "chat_setup", clientRequestId: "req_create", title: "Project setup", projectId: "project_a" });
     const start = vi.fn(async function* () {
       yield { type: "state.updated" as const, state: { sessionId: "native_session" } };
-      yield { type: "assistant.delta" as const, delta: JSON.stringify({ guidance: "# Project guidance\n\nRun the relevant checks." }) };
+      yield { type: "assistant.delta" as const, messageId: "process", delta: "I will draft your project guidance for review." };
+      yield { type: "assistant.delta" as const, messageId: "result", delta: JSON.stringify({ guidance: "# Project guidance\n\nRun the relevant checks." }) };
       yield { type: "run.completed" as const, outcome: "completed" as const };
     });
     const resume = vi.fn(async function* () { yield { type: "run.completed" as const, outcome: "completed" as const }; });

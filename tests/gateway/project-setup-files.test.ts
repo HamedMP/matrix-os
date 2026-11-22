@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { initialProjectSetup, transitionProjectSetup } from "../../packages/gateway/src/chat/project-setup-state.js";
+import { initialProjectSetup, transitionProjectSetup, applyProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-state.js";
 import { inspectProjectSetupFiles, saveProjectSetupFiles } from "../../packages/gateway/src/chat/project-setup-files.js";
 import type { ProjectSetupWorkspace } from "../../packages/gateway/src/chat/project-setup-workspace.js";
 
@@ -57,6 +57,22 @@ describe("reviewed setup file creation", () => {
     expect(partial.proposals.map(p => p.status)).toEqual(["saved", "failed"]);
     const retry = await saveProjectSetupFiles(ws, partial);
     expect(retry.step).toBe("saved"); expect(retry.proposals[0]?.status).toBe("already_present");
+  });
+  it("keeps an oversized new proposal reviewable and refuses its create until revised", async () => {
+    const ws = workspace();
+    const generated = applyProjectSetupGeneration(draft(), JSON.stringify({ guidance: "x".repeat(8193) }));
+    const reviewed = await inspectProjectSetupFiles(ws, generated);
+    expect(reviewed.proposals[0]?.content).toHaveLength(8193);
+    expect(ws.create).not.toHaveBeenCalled();
+    const attempted = await saveProjectSetupFiles(ws, reviewed);
+    expect(attempted.step).toBe("review");
+    expect(attempted.proposals[0]?.status).toBe("failed");
+    expect(attempted.proposals[0]?.content).toHaveLength(8193);
+    expect(ws.create).not.toHaveBeenCalled();
+    const revised = transitionProjectSetup(attempted, { type: "review_file", path: "AGENTS.md", content: "x".repeat(8192) }).draft;
+    const saved = await saveProjectSetupFiles(ws, await inspectProjectSetupFiles(ws, revised));
+    expect(saved.step).toBe("saved");
+    expect(ws.files.get("AGENTS.md")).toHaveLength(8192);
   });
   it("rejects unsafe proposal substitution even when the broad file contract recognizes it", async () => {
     const ws = workspace(); const changed = draft(); changed.proposals[0] = { path: ".mcp.json", content: "{}", status: "pending" };

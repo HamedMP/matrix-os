@@ -3,6 +3,8 @@ import type { KyselyPGlite } from "kysely-pglite";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { ProjectSetupRepository } from "../../packages/gateway/src/chat/project-setup-repository.js";
+import { Kysely } from "kysely";
+import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { jsonb } from "../../packages/gateway/src/chat/records.js";
 import { transitionProjectSetup } from "../../packages/gateway/src/chat/project-setup-state.js";
 
@@ -12,7 +14,15 @@ describe("Chat-owned project setup draft", () => {
   let pg: InstanceType<typeof KyselyPGlite>;
   let chats: ChatRepository;
   let setup: ProjectSetupRepository;
-  beforeEach(async () => { pg = await createTestPGlite(); chats = new ChatRepository(pg.dialect); await chats.bootstrap(); setup = new ProjectSetupRepository(chats); });
+  let locks: string[];
+  beforeEach(async () => {
+    locks = [];
+    pg = await createTestPGlite();
+    const db = new Kysely<ChatDatabase>({ dialect: pg.dialect, log: event => {
+      if (event.level === "query" && event.query.sql.endsWith("for update") && locks.length < 32) locks.push(event.query.sql);
+    } });
+    chats = new ChatRepository(db); await chats.bootstrap(); setup = new ProjectSetupRepository(chats);
+  });
   afterEach(async () => { await chats.kysely.destroy(); });
   it("creates one scoped Chat and durable ordinary transcript on the first answer", async () => {
     const first = await setup.start(owner, "project_a", root, { clientRequestId: "req_first", answer: "A portfolio" });
@@ -22,6 +32,23 @@ describe("Chat-owned project setup draft", () => {
     expect(page?.messages.map(m => m.role)).toEqual(["user", "assistant"]);
     expect(page?.messages[0]?.parts).toEqual([{ type: "text", text: "A portfolio" }]);
     expect((await chats.kysely.selectFrom("chats").select("id").execute()).length).toBe(1);
+  });
+  it("links generation with the same Chat-before-draft lock order as mutations", async () => {
+    let response = await setup.start(owner, "project_a", root, { clientRequestId: "req_first", answer: "Portfolio" });
+    const actions = [
+      { type: "answer", text: "Run checks" },
+      { type: "choose_skill", choice: "skip" },
+      { type: "choose_mcp", choice: "skip" },
+      { type: "generate", selection: { instanceId: "codex_default", model: "test-model" } },
+    ] as const;
+    for (const [index, action] of actions.entries()) {
+      const request = { baseRevision: response.draft!.revision, clientRequestId: `req_action_${index}`, action };
+      response = await setup.mutate(owner, response.draft!.chatId, root, request, draft => transitionProjectSetup(draft, action));
+    }
+    locks.length = 0;
+    await setup.linkGeneration(owner, response.draft!.chatId, root, "req_action_3", { status: "unavailable" });
+    expect(locks[0]).toContain('from "chats"');
+    expect(locks[1]).toContain('from "chat_project_setups"');
   });
   it("enforces owner/root authority and independent project draft state", async () => {
     const a = await setup.start(owner, "project_a", root, { clientRequestId: "req_a", answer: "Project A" });

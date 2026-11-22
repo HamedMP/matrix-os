@@ -79,6 +79,7 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
       break;
     case "revise":
       draft.answers[action.field] = action.text;
+      if (action.field === "skillInstructions") delete draft.skill;
       userText = `Update ${action.field === "skillInstructions" ? "skill instructions" : action.field}: ${action.text}`;
       delete draft.generation;
       draft.proposals = [];
@@ -88,7 +89,6 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
       if (draft.step !== "review") throw new ProjectSetupError("invalid");
       const file = draft.proposals.find(item => item.path === action.path);
       if (!file || file.status === "saved" || file.status === "already_present" || (action.path !== "AGENTS.md" && !action.path.endsWith("/SKILL.md"))) throw new ProjectSetupError("invalid");
-      if (action.path === "AGENTS.md" && action.content.length > 8192) throw new ProjectSetupError("invalid");
       if (action.path.endsWith("/SKILL.md")) {
         const skill = projectSetupSkill(action.content);
         if (skill.path !== action.path) { file.path = skill.path; delete file.expectedHash; }
@@ -118,7 +118,7 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
 }
 
 const GeneratedSetupSchema = z.object({
-  guidance: z.string().trim().min(1).max(8192),
+  guidance: z.string().trim().min(1).max(64 * 1024),
   skill: z.object({ name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), description: z.string().trim().min(1).max(1024), instructions: z.string().trim().min(1).max(48_000) }).strict().optional(),
 }).strict();
 

@@ -31,3 +31,13 @@ existing file retains its filesystem access mode. On Web, a failed read blocks e
 file can be reopened, and a failed write keeps the draft available for retry.
 
 See [the project context spec](../../specs/2691-project-agent-context/spec.md) and the [Codex 0.162.1 instruction loader](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/core/src/agents_md.rs).
+
+## Guided project setup in Chat
+
+The project overview offers a skippable setup conversation. Its questions, accepted answers, and revision-bound proposal use canonical Chat storage. The first explicit answer creates the Chat. Markdown remains staged until the owner reviews and saves the proposed files. Existing instruction files and independent Claude guidance remain preserved and accessible through exact file actions. Skill import and installed copy stage a Markdown manifest only.
+
+The owner-only setup API reuses project-root admission and pinned Files creation. New root instruction files retain the 8,192-character create limit, with bounded oversized proposals available for revision. Skill manifests retain the 64 KiB UTF-8 budget. File conflicts and partial results retain the draft for reread and safe retry.
+
+AI drafting uses a fresh restricted canonical run. Codex uses a read-only sandbox and discovery-only Core MCP; Claude uses plan and discovery scope. Matrix AI managed Pi uses its existing worker and broker with no capabilities, a read-only workspace, and a fresh ephemeral drafting session. It cannot load or overwrite ordinary managed session history. These restrictions apply to setup drafting. Subsequent ordinary project runs retain their existing policy, including the instruction-discovery behavior above.
+
+MCP authorization remains in the current computer’s existing Settings flow. Returning from Settings rereads connection status. Saving project files grants no connection or tool authority. See the [guided setup specification](../../specs/2709-project-chat-setup/spec.md) and its [technical plan](../../specs/2709-project-chat-setup/plan.md).

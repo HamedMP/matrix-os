@@ -11,7 +11,6 @@ function validateProposals(draft: ProjectSetupDraft): void {
   for (const file of draft.proposals) {
     if (!paths.includes(file.path) || (file.path.endsWith("/SKILL.md") && projectSetupSkill(file.content).path !== file.path)) throw new ProjectSetupError("invalid");
     const preserved = file.status === "already_present" || file.status === "saved";
-    if (!preserved && !file.path.endsWith("/SKILL.md") && file.content.length > 8192) throw new ProjectSetupError("invalid");
     if (!preserved && file.path === "CLAUDE.md" && file.content !== "@AGENTS.md\n") throw new ProjectSetupError("invalid");
   }
   if (new Set(draft.proposals.map(file => file.path)).size !== draft.proposals.length) throw new ProjectSetupError("invalid");
@@ -43,6 +42,8 @@ export async function saveProjectSetupFiles(workspace: ProjectSetupWorkspace, cu
       // Matching content makes an uncertain create retry safe without overwriting.
       if (existing === file.content) { file.status = "already_present"; continue; }
       if (file.expectedHash === undefined || hash(existing) !== file.expectedHash || existing !== null) { file.status = "conflict"; continue; }
+      // Staging preserves bounded Markdown for review; new root files keep the Files create limit.
+      if (!file.path.endsWith("/SKILL.md") && file.content.length > 8192) { file.status = "failed"; continue; }
       if (file.path === "CLAUDE.md" && !draft.proposals.some(p => p.path === "AGENTS.md" && ["saved", "already_present"].includes(p.status))) {
         file.status = "conflict";
         continue;

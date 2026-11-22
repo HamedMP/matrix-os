@@ -11,10 +11,13 @@ const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 export const ProjectSetupFileSchema = z.object({
   path: ProjectAgentConfigFileSchema,
-  content: markdown,
+  content: markdown.or(z.literal("")),
   status: z.enum(["pending", "saved", "already_present", "conflict", "failed"]),
   expectedHash: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
-}).strict();
+}).strict().refine(file => file.content.length > 0
+  || (["AGENTS.md", "CLAUDE.md"].includes(file.path) && file.status === "already_present"), {
+  message: "Only a preserved existing instruction file may be empty",
+});
 export type ProjectSetupFile = z.infer<typeof ProjectSetupFileSchema>;
 
 export const ProjectSetupDraftSchema = z.object({
