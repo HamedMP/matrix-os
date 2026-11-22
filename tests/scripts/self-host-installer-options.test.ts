@@ -208,16 +208,26 @@ prepare_scope_runtime_roots "${home}" ${owner}`,
       ));
     });
 
-    it("moves only an existing owner root itself into setgid group matrix, never its contents", () => {
+    it("moves only an existing owner root itself into private setgid group matrix, never its contents", () => {
       const { result, home, calls } = prepare("alice", { projects: "alice", "agent-workspaces": "alice", bots: "root" }, ["worktrees"]);
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toEqual([
         `chgrp matrix ${home}/agent-workspaces`,
-        `chmod g+s ${home}/agent-workspaces`,
+        `chmod g+s,o-rwx ${home}/agent-workspaces`,
         `chgrp matrix ${home}/projects`,
-        `chmod g+s ${home}/projects`,
+        `chmod g+s,o-rwx ${home}/projects`,
       ]);
       expect(calls.join("\n")).not.toMatch(/-R|owner-data/);
+    });
+
+    it("leaves projects to this step on self-host, so it is never created world-readable", () => {
+      // Nothing outside the owner and the matrix group reads projects: nginx only
+      // proxies to loopback services, code-server and the gateway run as the
+      // owner, and scope workloads get their one workspace by bind mount.
+      const ensure = readFileSync(script, "utf8").split("\nensure_matrix_user() {")[1]!.split("\n}\n")[0]!;
+      const worldReadable = ensure.split("\n").filter((line) => line.includes("-m 0755") && line.includes("/projects"));
+      expect(worldReadable).toHaveLength(1);
+      expect(ensure).toMatch(/if \[ "\$MATRIX_RUN_USER" = "matrix" \]; then\n\s+install -d [^\n]*-m 0755 "\$MATRIX_HOME_DIR\/projects"/);
     });
 
     it("keeps the legacy matrix layout exactly as before", () => {

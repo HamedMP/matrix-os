@@ -518,8 +518,11 @@ render_scope_runtime_home_dropin() {
 # supervisor reads them through group matrix, and the gateway later creates 0750
 # children as the owner (agent-workspaces/<owner>/<chat>), so the roots are setgid:
 # those children inherit group matrix instead of the owner's own group. An existing
-# root the owner holds gets the same group and setgid on the directory itself only;
-# its contents, other owners' roots and symlinks are never touched. The legacy
+# root the owner holds gets the same group, setgid and no access for other accounts
+# on the directory itself only; its contents, other owners' roots and symlinks are
+# never touched. Nothing else reads these roots: nginx only proxies to loopback,
+# code-server and the gateway run as the owner, and scope workloads get their one
+# workspace by bind mount. The legacy
 # matrix account's primary group is already matrix, so its layout stays as it was.
 prepare_scope_runtime_roots() {
   local root path
@@ -531,7 +534,7 @@ prepare_scope_runtime_roots() {
       install -d -o "$2" -g matrix -m 2750 "$path"
     elif [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %U -- "$path")" = "$2" ]; then
       chgrp matrix "$path"
-      chmod g+s "$path"
+      chmod g+s,o-rwx "$path"
     fi
   done
 }
@@ -1174,7 +1177,12 @@ ensure_matrix_user() {
   install -d -o root -g matrix -m 0770 /opt/matrix
   install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
   install -d -o matrix -g matrix -m 0755 /home/matrix
-  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR" "$MATRIX_HOME_DIR/projects"
+  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR"
+  # A separate owner's projects are private to them and the matrix group;
+  # prepare_scope_runtime_roots creates them 2750 before any service starts.
+  if [ "$MATRIX_RUN_USER" = "matrix" ]; then
+    install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/projects"
+  fi
   install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/.local" "$MATRIX_HOME_DIR/.local/bin" "$MATRIX_HOME_DIR/.local/share"
   install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/.cache" "$MATRIX_HOME_DIR/.config"
   if [ "$MATRIX_RUN_USER" = "matrix" ]; then
