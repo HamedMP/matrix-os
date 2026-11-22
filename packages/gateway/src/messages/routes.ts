@@ -8,30 +8,28 @@ import {
 import {
   AppserviceEventsRequestSchema,
   ApproveDraftRequestSchema,
-  AccountSetupRequestSchema,
   AutomationRuleCreateRequestSchema,
   AutomationRuleIdSchema,
   CancelDraftRequestSchema,
-  CompleteSetupRequestSchema,
   DraftsQuerySchema,
-  DisconnectAccountRequestSchema,
   ListQuerySchema,
   MessagingAccountIdSchema,
   MessagingNetworkSlugSchema,
   MessagingReplyIdSchema,
-  MessagingSetupIdSchema,
   MatrixRoomIdSchema,
   PermissionUpdateRequestSchema,
   RecoveryRequestSchema,
   ReplyRequestSchema,
 } from "./schemas.js";
 import { mapMessagingError, MessagingError, redactMessagingErrorDetail } from "./errors.js";
-import type { MessagingRepository } from "./repository.js";
+import type { MessagingRepository, ReplySendResult } from "./repository.js";
 import { HERMES_REPLY_SCOPE, constantTimeEqual, createHermesCapabilityReplayCache, verifyHermesCapabilityToken } from "./hermes-capability.js";
 import { MESSAGING_APP_SERVICE_BODY_LIMIT } from "./constants.js";
 import { createAutomationActionRunner } from "./automation-actions.js";
 import { evaluateAutomationRules } from "./automation-evaluator.js";
 import { createMessagingBridgeHealthService, type MessagingBridgeHealthService } from "./bridge-health.js";
+import { createMessagingBridgeRoutes } from "./bridge-routes.js";
+import type { MessagingBridgeService } from "./bridge-service.js";
 
 export interface MessagingRouteDeps {
   repository: MessagingRepository;
@@ -41,6 +39,8 @@ export interface MessagingRouteDeps {
   hermesCapabilitySecret?: string;
   getHealth?: MessagingBridgeHealthService["getHealth"];
   startRecovery?: MessagingBridgeHealthService["startRecovery"];
+  /** Shared bridge data plane; null when its dependencies are missing. */
+  bridge?: MessagingBridgeService | null;
 }
 
 function bodyTooLarge(c: Context) {
@@ -62,16 +62,6 @@ function automationDraftClientTxnId(eventId: string, ruleId: string): string {
   return `auto_${createHash("sha256").update(`${eventId}:${ruleId}`).digest("hex")}`;
 }
 
-async function optionalJsonBody(c: Context): Promise<unknown> {
-  try {
-    return await c.req.json();
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError) return undefined;
-    if (err instanceof TypeError) return undefined;
-    throw err;
-  }
-}
-
 function handleMessagingRouteError(c: Context, err: unknown) {
   const mapped = mapMessagingError(err);
   if (mapped.log) {
@@ -80,8 +70,28 @@ function handleMessagingRouteError(c: Context, err: unknown) {
   return c.json(mapped.body, mapped.status);
 }
 
+/** Sends an approved reply through the bridge when this owner has one; otherwise it stays `sending`. */
+async function deliverApprovedReply(deps: MessagingRouteDeps, ownerId: string, approved: ReplySendResult): Promise<ReplySendResult> {
+  const bridge = deps.bridge;
+  if (approved.status !== "sending" || !bridge || bridge.ownerId !== ownerId) return approved;
+  const reply = await deps.repository.getReply({ ownerId, replyId: approved.replyId });
+  if (!reply) return approved;
+  try {
+    const message = await bridge.deliver(ownerId, reply.roomId, { body: reply.body, clientTxnId: reply.id });
+    if (message.delivery === "sent" && message.eventId) {
+      const sent = await deps.repository.markReplySent({ ownerId, replyId: reply.id, matrixEventId: message.eventId });
+      return { replyId: sent.id, status: sent.status, matrixEventId: sent.matrixEventId };
+    }
+  } catch (err: unknown) {
+    console.warn("[messages/routes] approved reply delivery failed", redactMessagingErrorDetail(err));
+  }
+  const failed = await deps.repository.markReplyFailed({ ownerId, replyId: reply.id, failureCode: "send_failed" });
+  return { replyId: failed.id, status: failed.status };
+}
+
 export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
   const app = new Hono();
+  app.route("/bridge", createMessagingBridgeRoutes({ getOwnerId: deps.getOwnerId, service: deps.bridge ?? null }));
   const healthService = createMessagingBridgeHealthService(deps.repository);
   const routeBodyLimit = bodyLimit({ maxSize: MESSAGING_ROUTE_BODY_LIMIT, onError: bodyTooLarge });
   const deleteBodyLimit = bodyLimit({ maxSize: MESSAGING_DELETE_BODY_LIMIT, onError: bodyTooLarge });
@@ -112,39 +122,6 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
     try {
       const ownerId = getOwnerIdOrThrow(deps, c);
       return c.json({ accounts: await deps.repository.listAccounts({ ownerId }) });
-    } catch (err: unknown) {
-      return handleMessagingRouteError(c, err);
-    }
-  });
-
-  app.post("/accounts/setup", routeBodyLimit, async (c) => {
-    try {
-      const ownerId = getOwnerIdOrThrow(deps, c);
-      const parsed = AccountSetupRequestSchema.parse(await c.req.json());
-      return c.json(await deps.repository.createSetupSession({ ownerId, ...parsed }), 201);
-    } catch (err: unknown) {
-      return handleMessagingRouteError(c, err);
-    }
-  });
-
-  app.post("/accounts/setup/:setupId/complete", routeBodyLimit, async (c) => {
-    try {
-      const ownerId = getOwnerIdOrThrow(deps, c);
-      const setupId = MessagingSetupIdSchema.parse(c.req.param("setupId"));
-      const parsed = CompleteSetupRequestSchema.parse(await c.req.json());
-      return c.json(await deps.repository.completeSetupSession({ ownerId, setupId, ...parsed }));
-    } catch (err: unknown) {
-      return handleMessagingRouteError(c, err);
-    }
-  });
-
-  app.delete("/accounts/:accountId", deleteBodyLimit, async (c) => {
-    try {
-      const ownerId = getOwnerIdOrThrow(deps, c);
-      const accountId = MessagingAccountIdSchema.parse(c.req.param("accountId"));
-      const body = await optionalJsonBody(c);
-      const parsed = DisconnectAccountRequestSchema.parse(body);
-      return c.json(await deps.repository.disconnectAccount({ ownerId, accountId, ...parsed }));
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
     }
@@ -343,7 +320,8 @@ export function createMessagingRoutes(deps: MessagingRouteDeps): Hono {
       const ownerId = getOwnerIdOrThrow(deps, c);
       const replyId = MessagingReplyIdSchema.parse(c.req.param("replyId"));
       const parsed = ApproveDraftRequestSchema.parse(await c.req.json());
-      return c.json(await deps.repository.approveReply({ ownerId, replyId, ...parsed }), 202);
+      const approved = await deps.repository.approveReply({ ownerId, replyId, ...parsed });
+      return c.json(await deliverApprovedReply(deps, ownerId, approved), 202);
     } catch (err: unknown) {
       return handleMessagingRouteError(c, err);
     }

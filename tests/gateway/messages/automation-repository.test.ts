@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import type { Kysely } from "kysely";
 import { MessagingKyselyRepository, type MessagingDatabase } from "../../../packages/gateway/src/messages/repository.js";
+import { linkTestAccount } from "./helpers.js";
 
 const ownerId = "user_a";
 const roomId = "!room:matrixos.local";
@@ -14,13 +15,7 @@ describe("messaging automation repository behavior", () => {
     pglite = await KyselyPGlite.create();
     repository = new MessagingKyselyRepository(pglite.dialect);
     await repository.bootstrap();
-    const setup = await repository.createSetupSession({ ownerId, networkSlug: "whatsapp" });
-    const account = await repository.completeSetupSession({
-      ownerId,
-      setupId: setup.id,
-      externalAccountId: "wa_1",
-      displayName: "WhatsApp",
-    });
+    const account = await linkTestAccount(repository, { ownerId, loginId: "wa_1", displayName: "WhatsApp" });
     await repository.upsertConversation({
       ownerId,
       roomId,

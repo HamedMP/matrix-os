@@ -15,7 +15,6 @@ export const MessagingNetworkSlugSchema = z.enum(["telegram", "whatsapp", "linke
 export type MessagingNetworkSlug = z.infer<typeof MessagingNetworkSlugSchema>;
 
 export const MessagingAccountIdSchema = z.string().trim().regex(/^acct_[A-Za-z0-9_-]{12,96}$/);
-export const MessagingSetupIdSchema = z.string().trim().regex(/^setup_[A-Za-z0-9_-]{12,96}$/);
 export const MessagingConversationIdSchema = z.string().trim().regex(/^conv_[A-Za-z0-9_-]{12,96}$/);
 export const MessagingMappingIdSchema = z.string().trim().regex(/^map_[A-Za-z0-9_-]{12,96}$/);
 export const MessagingEventIdSchema = z.string().trim().min(1).max(512);
@@ -130,24 +129,6 @@ export const MessagingAccountSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 export type MessagingAccount = z.infer<typeof MessagingAccountSchema>;
-
-export const SetupSessionStatusSchema = z.enum(["pending", "complete", "expired", "cancelled"]);
-export type SetupSessionStatus = z.infer<typeof SetupSessionStatusSchema>;
-
-export const SetupSessionSchema = z.object({
-  id: MessagingSetupIdSchema,
-  ownerId: z.string().trim().min(1).max(256),
-  networkSlug: MessagingNetworkSlugSchema,
-  accountId: MessagingAccountIdSchema.optional(),
-  status: SetupSessionStatusSchema,
-  setupUrl: z.string().url().optional(),
-  qrCode: z.string().trim().min(1).max(8192).optional(),
-  pairingCode: z.string().trim().min(1).max(128).optional(),
-  expiresAt: z.string().datetime(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-export type SetupSession = z.infer<typeof SetupSessionSchema>;
 
 export const MatrixConversationSchema = z.object({
   id: MessagingConversationIdSchema,
@@ -327,22 +308,6 @@ export const RecoveryRequestSchema = z.object({
   action: z.enum(["recheck", "restart_bridge", "relink"]),
 });
 export type RecoveryRequest = z.infer<typeof RecoveryRequestSchema>;
-
-export const AccountSetupRequestSchema = z.object({
-  networkSlug: MessagingNetworkSlugSchema,
-});
-export type AccountSetupRequest = z.infer<typeof AccountSetupRequestSchema>;
-
-export const CompleteSetupRequestSchema = z.object({
-  externalAccountId: z.string().trim().min(1).max(256).optional(),
-  displayName: z.string().trim().min(1).max(160).optional(),
-});
-export type CompleteSetupRequest = z.infer<typeof CompleteSetupRequestSchema>;
-
-export const DisconnectAccountRequestSchema = z.object({
-  retention: z.enum(["keep_history", "delete_local_mapping"]).default("keep_history"),
-}).default({ retention: "keep_history" });
-export type DisconnectAccountRequest = z.infer<typeof DisconnectAccountRequestSchema>;
 
 export const MessagingLimitsSchema = z.object({
   setupSessionTtlMs: z.literal(MESSAGING_SETUP_SESSION_TTL_MS),

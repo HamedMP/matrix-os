@@ -951,7 +951,6 @@ export async function createGateway(config: GatewayConfig) {
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
       : process.env.GEMINI_API_KEY ?? "";
 
-
   const homeMirrorLifecycle = createGatewayHomeMirrorLifecycle({
     enabled: process.env.MATRIX_HOME_MIRROR === "true",
     homeRoot: homePath,
@@ -1830,7 +1829,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   app.route("/api/hermes", createHermesRoutes({ client: hermesClient }));
 
-  registerGatewayMessagingRoutes(app, messagingRepository);
+  const messagingBridge = registerGatewayMessagingRoutes(app, messagingRepository, { homePath, runtimeOwnerId: terminalRuntimeOwnerId, store: ownerDatabaseServices?.messagingBridgeStore ?? null, broadcast: broadcastToOwner });
 
   registerCanvasGatewayRoutes({
     app, upgradeWebSocket, canvasService, canvasSubscriptionHub,
@@ -1933,6 +1932,7 @@ export async function createGateway(config: GatewayConfig) {
       await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await slackRuntime?.close();
+      await messagingBridge?.close(); // bridge sync stops before the owner database closes
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
