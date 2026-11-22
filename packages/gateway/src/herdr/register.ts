@@ -2,6 +2,7 @@
 // `MATRIX_HERDR=on`, which it does only when Matrix runs as the account that
 // owns the herdr-core (self-host decision 3).
 import type { Context, Hono } from "hono";
+import type { TerminalRef } from "@matrix-os/contracts";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
@@ -29,6 +30,17 @@ export function createHerdrSessionsFromEnv(env: NodeJS.ProcessEnv = process.env)
       transport.close();
     },
   });
+}
+
+/** Whether a Matrix terminal ref names a Herdr terminal the owner's core lists now. */
+export function herdrTerminalLookup(adapter: HerdrAdapter): { listed(ref: TerminalRef): Promise<boolean> } {
+  return {
+    async listed(ref) {
+      const id = adapter.resolve(ref);
+      if (id === undefined) return false;
+      return (await adapter.list()).sessions.some((session) => session.id === id);
+    },
+  };
 }
 
 /** `/api/terminal/herdr` and `/ws/terminal/herdr`. Registered even when off, so clients see `available: false`. */

@@ -200,6 +200,8 @@ export function createTerminalWorkspaceRoutes(options: {
   getPreviewTerminalOwner?: (context: Context) => string | undefined;
   terminalOwnerIds: readonly string[];
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  /** The owner's Herdr terminals (spec 2701): whether a ref is one listed now. Absent when Herdr sessions are off. */
+  herdrTerminals?: { listed(ref: TerminalRef): Promise<boolean> };
   chatTerminals?: {
     prepare(principal: RequestPrincipal, chatId: string): Promise<{ runId?: string; cwd?: string }>;
     bind(principal: RequestPrincipal, input: {
@@ -396,23 +398,20 @@ export function createTerminalWorkspaceRoutes(options: {
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const input = PasteAssetsSchema.parse(await c.req.json());
       const principal = options.getPrincipal(c);
+      if (isHerdrTerminalRef(ref)) {
+        // Herdr terminals run as the owner on this machine, so a pasted file under
+        // the Matrix home is readable there. Owner only: never preview delegation.
+        const herdr = options.herdrTerminals;
+        if (!herdr || terminalRuntimeOwnerAccess(principal, options.terminalOwnerIds) !== "allowed" || !(await herdr.listed(ref))) {
+          return c.json({ error: "Terminal operation failed" }, 404);
+        }
+        return c.json({ assets: await savePasteAssets(options.homePath, input, "") });
+      }
       return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "write", async () => {
         const workspace = (await options.runtime.listWorkspaces()).find((candidate) => candidate.id === ref.workspaceId);
         const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
         if (!tab) return c.json({ error: "Terminal operation failed" }, 404);
-        const assets = [];
-        for (const asset of input.assets) {
-          const bytes = input.kind === "file" && asset.dataBase64 === "" ? new Uint8Array() : decodeBase64(asset.dataBase64);
-          assets.push(await saveTerminalPasteAsset({
-            homePath: options.homePath!,
-            cwd: tab.cwd,
-            bytes,
-            contentType: asset.mimeType,
-            filename: asset.name,
-            kind: input.kind,
-          }));
-        }
-        return c.json({ assets });
+        return c.json({ assets: await savePasteAssets(options.homePath!, input, tab.cwd) });
       });
     } catch (error) { return requestFailure(c, error); }
   });
@@ -442,6 +441,15 @@ export function createTerminalWorkspaceRoutes(options: {
   });
 
   return app;
+}
+
+async function savePasteAssets(homePath: string, input: z.infer<typeof PasteAssetsSchema>, cwd: string) {
+  const assets = [];
+  for (const asset of input.assets) {
+    const bytes = input.kind === "file" && asset.dataBase64 === "" ? new Uint8Array() : decodeBase64(asset.dataBase64);
+    assets.push(await saveTerminalPasteAsset({ homePath, cwd, bytes, contentType: asset.mimeType, filename: asset.name, kind: input.kind }));
+  }
+  return assets;
 }
 
 function decodeBase64(value: string): Uint8Array {
