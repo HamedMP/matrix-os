@@ -223,6 +223,7 @@ describe("ChatRepository", () => {
       "chat_messages",
       "chat_migrations",
       "chat_outbox",
+      "chat_project_setups",
       "chat_queued_turns",
       "chat_run_adapter_state",
       "chat_run_events",
@@ -236,6 +237,14 @@ describe("ChatRepository", () => {
       "chat_user_state",
       "chats",
     ]);
+    const setupIndexes = await sql<{ indexname: string; indexdef: string }>`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'chat_project_setups'
+    `.execute(repository.kysely);
+    expect(setupIndexes.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ indexname: "chat_project_setups_pkey", indexdef: expect.stringMatching(/UNIQUE INDEX.*\(owner_id, project_id, root_fingerprint\)/i) }),
+      expect.objectContaining({ indexname: "chat_project_setups_chat_id_key", indexdef: expect.stringMatching(/UNIQUE INDEX.*\(chat_id\)/i) }),
+    ]));
     const activityIndex = await sql<{ indexname: string }>`
       SELECT indexname FROM pg_indexes
       WHERE schemaname = 'public' AND indexname = 'idx_chat_run_events_run_occurred'
