@@ -5,6 +5,8 @@ import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-
 import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/customer-vps-cloud-init.js';
 import type { CustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import {
+  completeUserMachineRegistration,
+  getActiveUserMachineByClerkId,
   getBillingEntitlement,
   insertCheckoutAttempt,
   insertUserMachine,
@@ -24,7 +26,9 @@ import { AccountDeletionAdmissionError } from '../../packages/platform/src/accou
 import { resolveEffectiveBillingEntitlement } from '../../packages/platform/src/runtime-entitlement.js';
 import type { HostdClient } from '../../packages/platform/src/substrates/hostd-client.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
+import { HostdError } from '../../packages/platform/src/substrates/hostd-client.js';
 import { createMetalProvisioner } from '../../packages/platform/src/substrates/metal-provisioner.js';
+import { createMetalVmDeletionDrainer } from '../../packages/platform/src/substrates/metal-vm-deletions.js';
 import { createTestConfig } from './customer-vps-service-test-helper.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
@@ -85,9 +89,15 @@ describe('onboarding journey on the free plan', () => {
   let template: string;
   let createVm: ReturnType<typeof vi.fn>;
   let capacity: ReturnType<typeof vi.fn>;
+  let destroy: ReturnType<typeof vi.fn>;
+  let clock: Date;
+  let machineIds: string[];
 
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb({ serializeTransactions: true }));
+    clock = NOW;
+    machineIds = ['6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f', '0f1e2d3c-4b5a-4968-8776-655443322110'];
+    destroy = vi.fn(async () => undefined);
     await upsertHostBundleRelease(db, {
       version: BUNDLE_VERSION, gitCommit: '1234567', buildTime: NOW.toISOString(),
       bundleKey: `system-bundles/${BUNDLE_VERSION}/matrix-host-bundle.tar.gz`, checksumKey: null,
@@ -109,13 +119,18 @@ describe('onboarding journey on the free plan', () => {
   function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null> } = {}) {
     const unused = async () => { throw new Error('unexpected hostd call'); };
     const client = {
-      capacity, createVm, listVms: unused, destroy: unused, getVm: unused,
+      capacity, createVm, listVms: async () => [], destroy, getVm: unused,
       resume: unused, suspend: unused, stop: unused, setPolicy: unused,
     } as unknown as HostdClient;
+    // Wired as metal-runtime does, with no maintenance worker (Cloud Run).
+    const drainer = createMetalVmDeletionDrainer({
+      db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => client, now: () => clock, log: () => {},
+    });
     const metal = createMetalProvisioner({
       db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => client,
       goldenVersion: BUNDLE_VERSION, config: createTestConfig(), cloudInitTemplate: template,
-      now: () => NOW, sleep: async () => undefined, machineIdFactory: () => '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f',
+      drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
+      now: () => clock, sleep: async () => undefined, machineIdFactory: () => machineIds.shift() ?? 'unexpected-machine',
       tokenFactory: () => ({ token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2026-11-21T13:00:00.000Z' }),
       postgresPasswordFactory: () => 'postgres-secret', log: () => {},
     });
@@ -139,10 +154,11 @@ describe('onboarding journey on the free plan', () => {
       resolveUserId: async () => OWNER,
       provisionRuntime,
       resolveFreePlanEligibility: freeTier?.provisioner?.isEligible,
+      reconcileStaleRuntime: freeTier?.provisioner?.reconcileStaleRuntime,
       appOrigin: APP_ORIGIN,
       env: {},
       maxProvisionAttempts: 3,
-      now: () => NOW,
+      now: () => clock,
     });
     return { app, provision };
   }
@@ -174,6 +190,159 @@ describe('onboarding journey on the free plan', () => {
     // The guest registers: the journey moves on to the normal first-run state.
     await db.executor.updateTable('user_machines').set({ status: 'running' }).where('clerk_user_id', '=', OWNER).execute();
     expect((await journey(app)).phase).toBe('first_run');
+  });
+
+  it('a first build whose guest never registers turns retryable on the journey, with no maintenance worker', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+    expect((await journey(app)).phase).toBe('provisioning');
+
+    // The registration window (1 h) closes with the guest never registered.
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'retry_provision' } });
+    expect(await getActiveUserMachineByClerkId(db, OWNER, 'primary'))
+      .toMatchObject({ status: 'failed', failureCode: 'registration_timeout' });
+    await vi.waitFor(() => expect(destroy).toHaveBeenCalledWith('vm_0123456789abcdef01234567', expect.any(AbortSignal)));
+
+    // Try again builds a fresh VM.
+    const again = await retry(app);
+    expect(await again.json()).toMatchObject({ status: 'started', journey: { phase: 'provisioning' } });
+    expect(createVm).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers the journey without waiting for the stuck VM\'s teardown', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    let release!: () => void;
+    destroy.mockImplementation(() => new Promise<void>((resolve) => { release = resolve; }));
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    // The destroy is still pending, yet the journey has already answered.
+    expect((await journey(app)).phase).toBe('provisioning_failed');
+    await vi.waitFor(() => expect(destroy).toHaveBeenCalledTimes(1));
+    release();
+    await vi.waitFor(async () => expect(await db.executor.selectFrom('metal_vm_deletions')
+      .select('completed_at').executeTakeFirst()).toMatchObject({ completed_at: expect.anything() }));
+  });
+
+  it('concurrent journey reads after expiry fail the build once and destroy its VM once', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    const answers = await Promise.all([journey(app), journey(app), journey(app)]);
+
+    expect(answers.map((answer) => answer.phase)).toEqual(['provisioning_failed', 'provisioning_failed', 'provisioning_failed']);
+    await vi.waitFor(() => expect(destroy).toHaveBeenCalledTimes(1));
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('machine_id').execute()).toHaveLength(1);
+  });
+
+  it('a registration that commits just before the read-path check keeps the runtime', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+    const row = await getActiveUserMachineByClerkId(db, OWNER, 'primary');
+
+    // /vps/register commits inside the window (its own guards: valid token, provisioning).
+    const registered = await completeUserMachineRegistration(db, row!.machineId, 'metal',
+      row!.registrationTokenHash!, '2026-11-21T12:30:00.000Z',
+      { status: 'running', lastSeenAt: '2026-11-21T12:30:00.000Z', registrationTokenHash: null, registrationTokenExpiresAt: null });
+    expect(registered?.status).toBe('running');
+
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    expect((await journey(app)).phase).not.toBe('provisioning_failed');
+    expect(await getActiveUserMachineByClerkId(db, OWNER, 'primary')).toMatchObject({ status: 'running' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('machine_id').execute()).toEqual([]);
+    expect(destroy).not.toHaveBeenCalled();
+  });
+
+  it('a registration attempted after the read path failed the build is refused', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+    const row = await getActiveUserMachineByClerkId(db, OWNER, 'primary');
+
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    expect((await journey(app)).phase).toBe('provisioning_failed');
+    expect(await completeUserMachineRegistration(db, row!.machineId, 'metal',
+      row!.registrationTokenHash!, clock.toISOString(), { status: 'running' })).toBeUndefined();
+    expect(await getActiveUserMachineByClerkId(db, OWNER, 'primary')).toMatchObject({ status: 'failed' });
+  });
+
+  it('the retry route also fails an expired build instead of reporting it in progress', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp();
+    expect((await retry(app)).status).toBe(200);
+
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    const again = await retry(app);
+    expect(await again.json()).toMatchObject({ status: 'started' });
+    expect(createVm).toHaveBeenCalledTimes(2);
+  });
+
+  it('never offers a retry that would retire a paid computer which ran and then failed recovery', async () => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    await insertUserMachine(db, {
+      machineId: 'vps-1', clerkUserId: OWNER, handle: 'freeowner', status: 'failed', failureCode: 'provider_unavailable',
+      hetznerServerId: 4343, publicIPv4: null, recoveryOldServerId: 4242, recoveryOldPublicIPv4: '203.0.113.50',
+      imageVersion: BUNDLE_VERSION, provisionedAt: NOW.toISOString(),
+    });
+    const { app, provision } = journeyApp({ resolveEntitlement: async () => paidEntitlement() });
+
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'contact_support' } });
+    const refused = await retry(app);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'support_required' });
+    expect(provision).not.toHaveBeenCalled();
+    expect(await getActiveUserMachineByClerkId(db, OWNER, 'primary')).toMatchObject({ machineId: 'vps-1', status: 'failed' });
+  });
+
+  it('stops offering free metal retries after the attempt ceiling and throttles rapid retries', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    machineIds = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000004'];
+    createVm.mockRejectedValue(new HostdError('internal'));
+    const { app } = journeyApp();
+
+    // Each build fails at hostd create; the route answers 503 and the row is failed.
+    expect((await retry(app)).status).toBe(503);
+    expect((await getActiveUserMachineByClerkId(db, OWNER, 'primary'))?.attempt).toBe(1);
+    // A second click inside the throttle window does not reach hostd.
+    const throttled = await retry(app);
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toEqual({ error: 'retry_throttled' });
+    expect(createVm).toHaveBeenCalledTimes(1);
+
+    for (const minute of [1, 2]) {
+      clock = new Date(NOW.getTime() + minute * 60_000);
+      expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'retry_provision' } });
+      expect((await retry(app)).status).toBe(503);
+    }
+    expect((await getActiveUserMachineByClerkId(db, OWNER, 'primary'))?.attempt).toBe(3);
+
+    clock = new Date(NOW.getTime() + 3 * 60_000);
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'contact_support' } });
+    const exhausted = await retry(app);
+    expect(exhausted.status).toBe(409);
+    expect(await exhausted.json()).toEqual({ error: 'retry_exhausted' });
+    expect(createVm).toHaveBeenCalledTimes(3);
+  });
+
+  it('an owner who bought a paid plan after three failed free builds can still build', async () => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    await insertUserMachine(db, {
+      machineId: 'metal-failed', clerkUserId: OWNER, handle: 'freeowner', status: 'failed', failureCode: 'registration_timeout',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 3, imageVersion: BUNDLE_VERSION,
+      provisionedAt: NOW.toISOString(),
+    });
+    const { app, provision } = journeyApp({ resolveEntitlement: async () => paidEntitlement() });
+
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'retry_provision' } });
+    expect((await retry(app)).status).toBe(200);
+    expect(provision).toHaveBeenCalledTimes(1);
   });
 
   it('an uninvited owner still sees plan_required and cannot start provisioning', async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   getActiveUserMachineByClerkId,
   getUserMachine,
+  insertUserMachine,
   listAllUserMachines,
   listUserMachines,
   listPendingProviderDeletions,
@@ -17,6 +18,7 @@ import { CustomerVpsError } from '../../packages/platform/src/customer-vps-error
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
 
 // Phase A (spec 092): provisioning reliability — stuck rows fail automatically,
 // failed rows never block retries, retries are bounded, retired rows cannot register.
@@ -260,6 +262,27 @@ describe('platform/customer-vps reliability', () => {
     await expect(
       service.provision({ clerkUserId: 'user_123', handle: 'alice' }),
     ).rejects.toMatchObject({ code: 'retry_exhausted' });
+  });
+
+  it('a paid build after three failed free metal builds does not inherit the metal attempt count', async () => {
+    const { service } = createHarness();
+    await createMetalHostsRepository(db.kysely).upsert({
+      id: 'host-a', name: 'host-a', apiUrl: 'https://host-a.metal.example.test:8443', ingressHost: 'host-a.metal.example.test',
+      status: 'active', memoryCapacityMib: 131072, admissionCeilingMib: 114688,
+    });
+    await insertUserMachine(db, {
+      machineId: '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f', clerkUserId: 'user_123', handle: 'alice', status: 'failed',
+      failureCode: 'registration_timeout', substrate: 'metal', metalHostId: 'host-a', metalVmId: 'vm_0123456789abcdef01234567',
+      hetznerServerId: null, publicIPv4: null, attempt: 3, imageVersion: 'stable', provisionedAt: '2026-04-26T11:00:00.000Z',
+    });
+
+    const paid = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    expect(paid.machineId).not.toBe('6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f');
+    expect(await getActiveUserMachineByClerkId(db, 'user_123', 'primary')).toMatchObject({ substrate: 'vps', attempt: 1 });
+    // The retired metal VM is queued for teardown, not leaked.
+    expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
+      .toEqual([{ machine_id: '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f', metal_vm_id: 'vm_0123456789abcdef01234567' }]);
   });
 
   it('rejects registration for a retired machine', async () => {

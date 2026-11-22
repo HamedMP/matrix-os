@@ -149,7 +149,7 @@ export function createConfiguredMetalRuntime(input: {
       return closing ??= (async () => {
         worker?.stop();
         sleeper?.stop();
-        await Promise.all([worker?.drain(), sleeper?.drain()]);
+        await Promise.all([worker?.drain(), sleeper?.drain(), provisioner.drain()]);
         await dispatcher.close();
       })();
     },

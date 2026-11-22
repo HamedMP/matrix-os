@@ -12,6 +12,7 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
+import { neverRegistered } from './substrates/metal-registration-window.js';
 
 export interface JourneyClerkAuth {
   extractToken: (authorization?: string, cookie?: string) => string | null;
@@ -117,6 +118,12 @@ export interface JourneyRoutesOptions {
   resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;
   /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
   resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
+  /**
+   * Fails a runtime whose first boot never registered within its window
+   * (spec 2691 metal), before the journey is derived, so the owner sees
+   * provisioning_failed and can retry where no maintenance worker runs.
+   */
+  reconcileStaleRuntime?: (clerkUserId: string, runtimeSlot: string) => Promise<unknown>;
 }
 
 function applyNoStore(c: Context): void {
@@ -124,10 +131,45 @@ function applyNoStore(c: Context): void {
 }
 
 const LIVE_MACHINE_STATUSES = new Set(['provisioning', 'recovering', 'running']);
+/** One started build per owner in this window; extra clicks or a looping client get 429. */
+export const RETRY_PROVISION_MIN_INTERVAL_MS = 30_000;
+const RETRY_THROTTLE_MAX_ENTRIES = 10_000;
 
 export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+  // Per-owner start times; entries expire after the window and the map is capped.
+  const lastRetryStart = new Map<string, number>();
+
+  /** Admits one build start per owner per window. Returns false when throttled. */
+  function admitRetryStart(clerkUserId: string): boolean {
+    const at = now().getTime();
+    const previous = lastRetryStart.get(clerkUserId);
+    if (previous !== undefined && at - previous < RETRY_PROVISION_MIN_INTERVAL_MS && at >= previous) return false;
+    lastRetryStart.delete(clerkUserId);
+    if (lastRetryStart.size >= RETRY_THROTTLE_MAX_ENTRIES) {
+      for (const [owner, startedAt] of lastRetryStart) {
+        if (at - startedAt >= RETRY_PROVISION_MIN_INTERVAL_MS) lastRetryStart.delete(owner);
+      }
+      // Still full: drop the oldest insertion (Map preserves insertion order).
+      if (lastRetryStart.size >= RETRY_THROTTLE_MAX_ENTRIES) {
+        const oldest = lastRetryStart.keys().next().value;
+        if (oldest !== undefined) lastRetryStart.delete(oldest);
+      }
+    }
+    lastRetryStart.set(clerkUserId, at);
+    return true;
+  }
+
+  async function reconcileStale(clerkUserId: string, runtimeSlot: string): Promise<void> {
+    if (!options.reconcileStaleRuntime) return;
+    try {
+      await options.reconcileStaleRuntime(clerkUserId, runtimeSlot);
+    } catch (err: unknown) {
+      // The journey still answers from current state; the next read retries.
+      console.error('[journey] stale runtime reconciliation failed:', err instanceof Error ? err.name : typeof err);
+    }
+  }
 
   async function buildJourney(clerkUserId: string, runtimeSlot?: string) {
     const readiness = options.resolveReadiness ? await options.resolveReadiness(clerkUserId) : undefined;
@@ -151,6 +193,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     const parsedQuery = JourneyQuerySchema.safeParse(c.req.query());
     if (!parsedQuery.success) return c.json({ error: 'Invalid request' }, 400);
     try {
+      await reconcileStale(clerkUserId, parsedQuery.data.runtimeSlot ?? 'primary');
       return c.json(await buildJourney(clerkUserId, parsedQuery.data.runtimeSlot), 200);
     } catch (err: unknown) {
       console.error('[journey] state derivation failed:', err instanceof Error ? err.message : String(err));
@@ -183,10 +226,17 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     }
 
     try {
+      await reconcileStale(clerkUserId, runtimeSlot);
       // Converge on an in-flight attempt rather than starting a duplicate (FR-028).
       const existing = await getActiveUserMachineByClerkId(options.db, clerkUserId, runtimeSlot);
       if (existing && LIVE_MACHINE_STATUSES.has(existing.status)) {
         return c.json({ status: 'in_progress', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
+      }
+      if (existing?.status === 'failed') {
+        // Retrying retires the failed row and its server: never for a computer that ran.
+        if (!neverRegistered(existing)) return c.json({ error: 'support_required' }, 409);
+        // The attempt ceiling is the provisioner's: a free metal row's count does
+        // not bind a paid build that replaces it.
       }
       const prebillingIntent = await getActivePrebillingIntent(options.db, clerkUserId, runtimeSlot);
       if (prebillingIntent) {
@@ -203,6 +253,10 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       if (!options.provisionRuntime) {
         return c.json({ error: 'provisioning_unavailable' }, 503);
       }
+      if (!admitRetryStart(clerkUserId)) {
+        c.header('Retry-After', String(Math.ceil(RETRY_PROVISION_MIN_INTERVAL_MS / 1000)));
+        return c.json({ error: 'retry_throttled' }, 429);
+      }
       await options.provisionRuntime(clerkUserId, runtimeSlot);
       return c.json({ status: 'started', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
     } catch (err: unknown) {
@@ -210,6 +264,8 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       if (err instanceof CustomerVpsError) {
         if (err.code === 'billing_required') return c.json({ error: 'billing_required' }, 402);
         if (err.code === 'retry_exhausted') return c.json({ error: 'retry_exhausted' }, 409);
+        if (err.code === 'support_required') return c.json({ error: 'support_required' }, 409);
+        if (err.code === 'retry_throttled') return c.json({ error: 'retry_throttled' }, 429);
       }
       console.error('[journey] retry-provision failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'provisioning_unavailable' }, 503);

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fundedHostActivationRevisionInput } from '@matrix-os/contracts';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { FREE_MANAGED_MODEL_ID } from '../../packages/platform/src/free-tier/funded-policy.js';
+import { fundedPlatformOrigin } from '../../packages/platform/src/funded-host-activation.js';
 import {
   createManagedFeatureActivator,
   createManagedFeatureResumeTrigger,
@@ -117,6 +119,88 @@ describe('managed feature activation for metal runtimes', () => {
     });
     expect(await unrouted({})).toMatchObject({ activated: 0, failed: 1 });
     expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('activates a realistic free metal runtime (no public IPv4, epoch 1, free GLM policy) through the ingress', async () => {
+    await rig.close();
+    await destroyTestPlatformDb(db);
+    ({ db } = await createTestPlatformDb());
+    await db.executor.updateTable('ai_funded_global_policy')
+      .set({ enabled: true, allowed_model_ids: JSON.stringify([FREE_MANAGED_MODEL_ID]) }).execute();
+    rig = await createMetalWakeRig(db, {
+      status: 'running', activationState: 'authorized', runtimeSlot: 'primary', runtimeTokenEpoch: 1, publicIPv4: null,
+    }, { onResumed: () => {} });
+    await db.executor.insertInto('ai_funded_runtime_policies').values({
+      machine_id: rig.machineId, owner_id: OWNER, runtime_slot: 'primary', enabled: true,
+      allowed_model_ids: JSON.stringify([FREE_MANAGED_MODEL_ID]), monthly_budget_microusd: 0,
+      expires_at: null, next_issue_at: at, revision: 1, created_at: at, updated_at: at,
+    }).execute();
+    rig.ingress.respond = configuringVm().respond;
+
+    expect(await activator()({ handle: HANDLE })).toEqual({ activated: 1, failed: 0, complete: true, nextCursor: null });
+    const posted = rig.ingress.requests.find((request) => request.path === CONFIG_PATH && request.method === 'POST');
+    expect(JSON.parse(posted!.body)).toMatchObject({ identity: { machineId: rig.machineId, runtimeTokenEpoch: 1 } });
+  });
+
+  it('activates a free metal VM on a preview platform with the reviewed preview pair, through the ingress', async () => {
+    const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+    const previewPlatform = fundedPlatformOrigin({
+      PLATFORM_PREVIEW: 'true', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com', PLATFORM_PUBLIC_URL: 'https://metal-preview.matrix-os.com',
+    });
+    expect(previewPlatform).toBe('https://metal-preview.matrix-os.com');
+    rig.ingress.respond = configuringVm().respond;
+
+    const activate = createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin: previewRelay, platformOrigin: previewPlatform, fundedAiEnabled: true,
+      speechEnabled: false, activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates: rig.substrates,
+      now: () => new Date(at), wait: async () => {},
+    });
+
+    expect(await activate({ handle: HANDLE })).toEqual({ activated: 1, failed: 0, complete: true, nextCursor: null });
+    const posted = rig.ingress.requests.find((request) => request.path === CONFIG_PATH && request.method === 'POST');
+    expect(JSON.parse(posted!.body)).toMatchObject({
+      configuration: { platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: previewRelay },
+    });
+  });
+
+  it('a production platform keeps the production origin and rejects the preview relay', async () => {
+    expect(fundedPlatformOrigin({ MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' })).toBe('https://app.matrix-os.com');
+    // A preview that can provision Hetzner VPSes is production-gated too.
+    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', HETZNER_API_TOKEN: 'token', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' }))
+      .toBe('https://app.matrix-os.com');
+  });
+
+  it('never sends a relay origin outside the reviewed pin, and says so once instead of a ZodError per pass', async () => {
+    // The live preview platform's relay: a real Cloud Run origin the contract does not admit.
+    const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+    rig.ingress.respond = configuringVm().respond;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const activate = createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin: previewRelay, fundedAiEnabled: true, speechEnabled: false,
+      activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates: rig.substrates,
+      now: () => new Date(at), wait: async () => {},
+    });
+    expect(await activate({})).toEqual({ activated: 0, failed: 0, complete: true, nextCursor: null });
+    expect(await activate({ handle: HANDLE })).toEqual({ activated: 0, failed: 0, complete: true, nextCursor: null });
+
+    expect(rig.ingress.requests.filter((request) => request.path === CONFIG_PATH)).toEqual([]);
+    expect(warn.mock.calls.flat().map(String)).not.toContain('ZodError');
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0]![0])).toContain('relay and platform origins');
+    expect(JSON.stringify(error.mock.calls)).not.toContain(previewRelay);
+  });
+
+  it('logs only the failing schema paths when funded configuration does not parse', async () => {
+    await db.executor.updateTable('ai_funded_runtime_policies')
+      .set({ allowed_model_ids: JSON.stringify(['anthropic/claude-sonnet-5', `secret-${'x'.repeat(130)}`]) }).execute();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await activator()({})).toMatchObject({ activated: 0, failed: 1 });
+
+    expect(warn).toHaveBeenCalledWith('[managed-features] funded activation deferred', 'ZodError', { paths: ['1'] });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-');
   });
 
   it('metal runtime_asleep answer is skipped, not failed', async () => {

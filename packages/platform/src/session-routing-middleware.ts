@@ -120,6 +120,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { isFailedRuntimeBuild } from './substrates/metal-registration-window.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -1139,6 +1140,16 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           error: 'VPS provisioning',
           status: activeMachine.status,
         }, 503);
+      }
+      // A failed build never boots: the onboarding shell shows provisioning_failed
+      // with its retry, which the boot page would make unreachable forever.
+      // Primary only: the onboarding shell reads and retries the primary journey.
+      if (
+        activeMachine.runtimeSlot === 'primary' &&
+        isFailedRuntimeBuild(activeMachine, new Date()) &&
+        shouldProxyAuthShellForUnroutedUser({ isAppDomain, method: c.req.method, path })
+      ) {
+        return proxyAuthShell(c, host);
       }
       applyNoStoreHeaders(c);
       return c.html(getVpsBootPage({ status: activeMachine.status }), 503);

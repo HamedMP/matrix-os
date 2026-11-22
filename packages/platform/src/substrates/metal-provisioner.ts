@@ -20,6 +20,7 @@ import {
 import { HOSTD_CREATE_TIMEOUT_MS, HostdError, type HostdClient } from './hostd-client.js';
 import type { MetalHost, MetalHostsRepository } from './metal-hosts-repository.js';
 import { enqueueMetalVmDeletion } from './metal-vm-deletions.js';
+import { isMetalRegistrationExpired, neverRegistered } from './metal-registration-window.js';
 
 /**
  * Provisions owner runtimes as VMs on Matrix-operated metal hosts (spec 2691,
@@ -48,6 +49,11 @@ const AMBIGUOUS_CREATE_ERRORS = new Set(['timeout', 'unreachable', 'invalid_resp
 const STALE_BATCH_SIZE = 50;
 /** Bound on the inline teardown of a stuck VM during a provision request. */
 export const METAL_INLINE_DESTROY_TIMEOUT_MS = 15_000;
+/** One rebuild (after a failure) per owner in this window, whichever route asked (journey, provision API). */
+export const METAL_PROVISION_MIN_INTERVAL_MS = 30_000;
+const PROVISION_THROTTLE_MAX_ENTRIES = 10_000;
+/** Background teardowns in flight; one per failed-row transition, capped for shutdown drains. */
+const BACKGROUND_DESTROY_MAX = 256;
 
 /**
  * Free VM limits from the metal design. Paid sizing on metal is not decided;
@@ -60,7 +66,8 @@ export const METAL_VM_SHAPES = {
 } as const;
 
 export type MetalTier = keyof typeof METAL_VM_SHAPES;
-export type MetalProvisionResult = { machineId: string } | { error: 'busy' | 'unavailable' };
+export type MetalProvisionResult = { machineId: string }
+  | { error: 'busy' | 'unavailable' | 'throttled' | 'retry_exhausted' | 'support_required' };
 
 const ProvisionInputSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -144,6 +151,40 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
+  const maxAttempts = config.maxProvisionAttempts;
+  // Per-instance; the DB attempt ceiling is the bound across instances.
+  const lastBuildStart = new Map<string, number>();
+  const backgroundDestroys = new Set<Promise<void>>();
+
+  /** Admits one build start per owner per window. */
+  function admitBuildStart(clerkUserId: string): boolean {
+    const at = now().getTime();
+    const previous = lastBuildStart.get(clerkUserId);
+    if (previous !== undefined && at >= previous && at - previous < METAL_PROVISION_MIN_INTERVAL_MS) return false;
+    lastBuildStart.delete(clerkUserId);
+    if (lastBuildStart.size >= PROVISION_THROTTLE_MAX_ENTRIES) {
+      for (const [owner, startedAt] of lastBuildStart) {
+        if (at - startedAt >= METAL_PROVISION_MIN_INTERVAL_MS) lastBuildStart.delete(owner);
+      }
+      if (lastBuildStart.size >= PROVISION_THROTTLE_MAX_ENTRIES) {
+        const oldest = lastBuildStart.keys().next().value;
+        if (oldest !== undefined) lastBuildStart.delete(oldest);
+      }
+    }
+    lastBuildStart.set(clerkUserId, at);
+    return true;
+  }
+
+  /**
+   * Whether a failed row may be replaced by a fresh build: only a first build
+   * that never registered (a computer that ran needs support, not a rebuild),
+   * and only below the attempt ceiling.
+   */
+  function rebuildRefusal(failed: { attempt: number; lastSeenAt: string | null; recoveryOldServerId: number | null }):
+    'support_required' | 'retry_exhausted' | null {
+    if (!neverRegistered(failed)) return 'support_required';
+    return failed.attempt >= maxAttempts ? 'retry_exhausted' : null;
+  }
 
   type Placement = { host: MetalHost } | { error: 'busy' | 'unavailable' };
 
@@ -243,7 +284,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     }
   }
 
-  type Claim = { created: true } | { existing: string } | { error: 'unavailable' };
+  type Claim = { created: true } | { existing: string } | { error: 'unavailable' | 'support_required' | 'retry_exhausted' };
 
   /** Inserts the provisioning row under the owner's provisioning lock, or reports the runtime already in the slot. */
   async function claimSlot(row: {
@@ -261,9 +302,14 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       return await withAccountDeletionAdmission(db, row.clerkUserId, async (trx): Promise<Claim> => {
         await lockUserMachineProvisioning(trx, row.clerkUserId);
         const current = await getActiveUserMachineByClerkId(trx, row.clerkUserId, row.runtimeSlot);
+        // A rebuild after a failure counts toward the owner's attempt ceiling.
+        let attempt = 1;
         if (current) {
           if (current.substrate !== 'metal') return { error: 'unavailable' };
           if (current.status !== 'failed') return { existing: current.machineId };
+          const refusal = rebuildRefusal(current);
+          if (refusal) return { error: refusal };
+          attempt = current.attempt + 1;
           await retireUserMachine(trx, current.machineId, row.at.toISOString());
           // A stale row failed by this request already had its teardown queued
           // (and maybe completed inline); never queue the same generation twice.
@@ -296,6 +342,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
             metalHostId: row.host.id,
             provisioningClass: 'customer',
             status: 'provisioning',
+            attempt,
             imageVersion: row.imageVersion,
             targetBundleVersion: row.imageVersion,
             targetBundleSha256: row.bundleSha256,
@@ -450,6 +497,44 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     });
   }
 
+  /**
+   * Fails an expired metal provisioning row (failStale's SQL guards keep a late
+   * /vps/register safe) and, after the commit, destroys its VM inline as a best
+   * effort; the queued teardown stays the durable fallback.
+   */
+  async function failExpired(
+    row: { machineId: string; metalHostId: string | null; generation: number; metalVmId: string | null },
+    teardown: 'await' | 'background' = 'await',
+  ): Promise<'failed' | 'unchanged' | 'error'> {
+    const at = now();
+    let failed: boolean;
+    try {
+      failed = await failStale(row, at);
+    } catch (error: unknown) {
+      log('stale_fail_failed', { machineId: row.machineId, code: errorCode(error) });
+      return 'error';
+    }
+    if (failed && deps.drainMachineDeletions) {
+      const drain = deps.drainMachineDeletions;
+      const destroy = (async () => {
+        try {
+          await drain(row.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
+        } catch (error: unknown) {
+          log('stale_inline_destroy_failed', { machineId: row.machineId, code: errorCode(error) });
+        }
+      })();
+      // Read paths answer first; the bounded destroy logs its own failure and
+      // the queued deletion stays the durable fallback. Tracked for drain().
+      if (teardown === 'await') {
+        await destroy;
+      } else if (backgroundDestroys.size < BACKGROUND_DESTROY_MAX) {
+        backgroundDestroys.add(destroy);
+        void destroy.finally(() => { backgroundDestroys.delete(destroy); });
+      }
+    }
+    return failed ? 'failed' : 'unchanged';
+  }
+
   return {
     async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
@@ -460,30 +545,19 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       // A guest that never registered (its first boot failed) would otherwise be
       // returned forever wherever no maintenance worker runs reconcileStale.
-      const startedAt = now();
-      if (existing?.substrate === 'metal' && existing.status === 'provisioning'
-        && existing.registrationTokenExpiresAt !== null
-        && Date.parse(existing.registrationTokenExpiresAt) < startedAt.getTime()) {
-        let failed: boolean;
-        try {
-          failed = await failStale(existing, startedAt);
-        } catch (error: unknown) {
-          log('stale_fail_failed', { machineId: existing.machineId, code: errorCode(error) });
-          return { error: 'unavailable' };
-        }
-        // Best effort after the commit: the queued teardown stays the durable fallback.
-        if (failed && deps.drainMachineDeletions) {
-          try {
-            await deps.drainMachineDeletions(existing.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
-          } catch (error: unknown) {
-            log('stale_inline_destroy_failed', { machineId: existing.machineId, code: errorCode(error) });
-          }
-        }
+      if (existing && isMetalRegistrationExpired(existing, now())) {
+        if (await failExpired(existing) === 'error') return { error: 'unavailable' };
         existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       }
       if (existing && (existing.substrate !== 'metal' || existing.status !== 'failed')) {
         return existing.substrate === 'metal' ? { machineId: existing.machineId } : { error: 'unavailable' };
       }
+      // Checked here for every route (claimSlot re-checks under the lock).
+      const refusal = existing ? rebuildRefusal(existing) : null;
+      if (refusal) return { error: refusal };
+      // Throttle rebuilds only: a first build is idempotent (later calls return
+      // its row), so only a failing build can drive a create loop.
+      if (existing && !admitBuildStart(clerkUserId)) return { error: 'throttled' };
 
       const shape = METAL_VM_SHAPES[tier];
       const placement = await place(shape.bootMiB);
@@ -519,6 +593,24 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         return failCreate(machineId, host, error);
       }
       return recordCreated(machineId, host, vm);
+    },
+
+    /**
+     * Read-path reconciliation for one owner slot: fails the active metal row
+     * if its registration window closed with the guest never registered, so
+     * the journey shows provisioning_failed and its retry instead of waiting
+     * forever where no maintenance worker runs.
+     */
+    /** Resolves once every background teardown started by a read path has settled (shutdown). */
+    async drain(): Promise<void> {
+      await Promise.allSettled([...backgroundDestroys]);
+    },
+
+    async failExpiredProvisioning(clerkUserId: string, runtimeSlot: string): Promise<'failed' | 'unchanged' | 'error'> {
+      const row = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      if (!row || !isMetalRegistrationExpired(row, now())) return 'unchanged';
+      // A read path must stay under the shell's journey timeout: destroy after answering.
+      return failExpired(row, 'background');
     },
 
     /**

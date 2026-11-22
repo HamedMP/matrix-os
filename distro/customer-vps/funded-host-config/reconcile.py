@@ -20,6 +20,23 @@ RESTORE_TIMEOUT = 1600
 STOP_TIMEOUT = 120
 
 
+# Reviewed funded AI origin pairs (spec 2691, ENG-520); must match
+# packages/contracts/src/funded-host-activation.ts. The preview relay is valid
+# only together with a preview platform origin, never mixed with production.
+PRODUCTION_FUNDED_PLATFORM = 'https://app.matrix-os.com'
+PRODUCTION_FUNDED_RELAY = r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app'
+PREVIEW_FUNDED_RELAY = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'
+PREVIEW_FUNDED_PLATFORMS = ('https://preview.matrix-os.com', 'https://metal-preview.matrix-os.com', 'https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app')
+
+
+def reviewed_funded_pair(platform, relay):
+    if not isinstance(platform, str) or not isinstance(relay, str) or len(relay) > 256:
+        return False
+    if platform == PRODUCTION_FUNDED_PLATFORM and re.fullmatch(PRODUCTION_FUNDED_RELAY, relay):
+        return True
+    return platform in PREVIEW_FUNDED_PLATFORMS and relay == PREVIEW_FUNDED_RELAY
+
+
 def timestamp(value):
     require(isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z', value))
     return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
@@ -37,11 +54,10 @@ def validate_response(value, identity, source, now):
     config = value['configuration']
     require(isinstance(config, dict) and set(config) == {'MATRIX_FUNDED_AI_ENABLED', 'MATRIX_FUNDED_AI_RELAY_URL',
             'MATRIX_FUNDED_AI_RUNTIME_TOKEN', 'MATRIX_FUNDED_AI_PLATFORM_URL'}
-            and config['MATRIX_FUNDED_AI_ENABLED'] == 'true' and config['MATRIX_FUNDED_AI_PLATFORM_URL'] == 'https://app.matrix-os.com'
+            and config['MATRIX_FUNDED_AI_ENABLED'] == 'true'
             and isinstance(config['MATRIX_FUNDED_AI_RUNTIME_TOKEN'], str)
             and re.fullmatch(r'[a-f0-9]{64}', config['MATRIX_FUNDED_AI_RUNTIME_TOKEN'])
-            and isinstance(config['MATRIX_FUNDED_AI_RELAY_URL'], str)
-            and re.fullmatch(r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app', config['MATRIX_FUNDED_AI_RELAY_URL']))
+            and reviewed_funded_pair(config['MATRIX_FUNDED_AI_PLATFORM_URL'], config['MATRIX_FUNDED_AI_RELAY_URL']))
     return config
 
 
@@ -172,9 +188,11 @@ def run(action='apply', attempt=None):
         if action in ('apply', 'admit', 'admit-stopped'):
             # Existing nonproduction managed routing is an intentional override.
             current_relay = values.get('MATRIX_FUNDED_AI_RELAY_URL', '')
-            require(not current_relay or re.fullmatch(r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app', current_relay))
             current_platform = values.get('MATRIX_FUNDED_AI_PLATFORM_URL', '')
-            require(current_platform in ('', 'https://app.matrix-os.com'))
+            # Present values must already form a reviewed pair, never a mixed one.
+            require((not current_relay and current_platform in ('', PRODUCTION_FUNDED_PLATFORM))
+                    or (bool(current_relay)
+                        and reviewed_funded_pair(current_platform or PRODUCTION_FUNDED_PLATFORM, current_relay)))
             response = json_bytes(get('/internal/containers/' + identity['handle'] + '/funded-host-config', {
                 'Authorization': 'Bearer ' + sync_tokens[0].decode(),
                 'x-matrix-machine-id': identity['machineId'], 'x-matrix-runtime-slot': 'primary',

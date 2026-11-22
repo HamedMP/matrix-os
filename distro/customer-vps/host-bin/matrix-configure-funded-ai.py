@@ -24,6 +24,23 @@ KEYS = ('MATRIX_FUNDED_AI_ENABLED', 'MATRIX_FUNDED_AI_PLATFORM_URL', 'MATRIX_FUN
 IDENTITY_KEYS = ('MATRIX_HANDLE', 'MATRIX_MACHINE_ID', 'MATRIX_CLERK_USER_ID', 'MATRIX_RUNTIME_SLOT')
 
 
+# Reviewed funded AI origin pairs (spec 2691, ENG-520); must match
+# packages/contracts/src/funded-host-activation.ts. The preview relay is valid
+# only together with a preview platform origin, never mixed with production.
+PRODUCTION_FUNDED_PLATFORM = 'https://app.matrix-os.com'
+PRODUCTION_FUNDED_RELAY = r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app'
+PREVIEW_FUNDED_RELAY = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'
+PREVIEW_FUNDED_PLATFORMS = ('https://preview.matrix-os.com', 'https://metal-preview.matrix-os.com', 'https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app')
+
+
+def reviewed_funded_pair(platform, relay):
+    if not isinstance(platform, str) or not isinstance(relay, str) or len(relay) > 256:
+        return False
+    if platform == PRODUCTION_FUNDED_PLATFORM and re.fullmatch(PRODUCTION_FUNDED_RELAY, relay):
+        return True
+    return platform in PREVIEW_FUNDED_PLATFORMS and relay == PREVIEW_FUNDED_RELAY
+
+
 def require(condition):
     if not condition:
         raise ValueError('Invalid or unavailable host configuration')
@@ -47,9 +64,7 @@ def validate_config(value):
             and len(identity['runtimeSlot']) <= 32 and type(identity['runtimeTokenEpoch']) is int
             and 1 <= identity['runtimeTokenEpoch'] <= 2147483647)
     require(isinstance(config, dict) and set(config) == {'enabled', 'platformOrigin', 'relayOrigin', 'runtimeToken'}
-            and config['enabled'] is True and config['platformOrigin'] == 'https://app.matrix-os.com'
-            and isinstance(config['relayOrigin'], str) and len(config['relayOrigin']) <= 256
-            and re.fullmatch(r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app', config['relayOrigin'])
+            and config['enabled'] is True and reviewed_funded_pair(config['platformOrigin'], config['relayOrigin'])
             and isinstance(config['runtimeToken'], str) and re.fullmatch(r'[a-f0-9]{64}', config['runtimeToken']))
     issued, expires = timestamp(value['issuedAt']), timestamp(value['expiresAt'])
     require(issued <= time.time() < expires and 0 < expires - issued <= 30)

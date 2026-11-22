@@ -1,3 +1,4 @@
+import { METAL_PROVISION_MIN_INTERVAL_MS } from '../substrates/metal-provisioner.js';
 import type { Context } from 'hono';
 import type { PlatformDB } from '../db.js';
 import type { FreeProvisionOutcome, FreeRuntimeProvisioner } from './provision-free-runtime.js';
@@ -48,6 +49,13 @@ function respond(c: Context, clerkUserId: string, outcome: FreeProvisionOutcome)
       return c.json({ error: 'Account deletion is pending', code: 'account_deletion_pending' }, 409);
     case 'checkout_pending':
       return c.json({ error: 'A paid checkout is in progress', code: 'checkout_pending' }, 409);
+    case 'throttled':
+      c.header('Retry-After', String(METAL_PROVISION_MIN_INTERVAL_MS / 1000));
+      return c.json({ error: 'Retry later', code: 'retry_throttled' }, 429);
+    case 'retry_exhausted':
+      return c.json({ error: 'Provisioning retry limit reached', code: 'retry_exhausted' }, 409);
+    case 'support_required':
+      return c.json({ error: 'Contact support', code: 'support_required' }, 409);
     case 'provisioning_unavailable':
       c.header('Retry-After', SETUP_RETRY_AFTER_SECONDS);
       return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);

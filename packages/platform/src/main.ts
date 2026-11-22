@@ -621,6 +621,7 @@ export function createApp(deps: {
     resolveUserId: resolveJourneyUser,
     provisionRuntime: provisionRuntimeForJourney,
     resolveFreePlanEligibility: deps.freeTier?.provisioner?.isEligible,
+    reconcileStaleRuntime: deps.freeTier?.provisioner?.reconcileStaleRuntime,
     resumePrebillingPreparation: prebilling
       ? (input) => prebilling.resumePreparation(input)
       : undefined,
