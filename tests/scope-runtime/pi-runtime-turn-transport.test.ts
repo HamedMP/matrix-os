@@ -69,7 +69,7 @@ describe("Pi busy-turn transport through real Unix sockets", () => {
     const pending = test.client.runBot({ ...test.identity, command: { version: 1, kind: "bot.run", runId: "run_lost" } });
     await test.enteredRun;
     await vi.advanceTimersByTimeAsync(900_000);
-    expect(test.stop).toHaveBeenCalledExactlyOnceWith(handle);
+    expect(test.stop).toHaveBeenCalledExactlyOnceWith(handle, "4");
     await expect(pending).resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
     await expect(test.client.renewRuntime(test.identity)).rejects.toMatchObject({ code: "runtime_unavailable" });
   });

@@ -48,7 +48,7 @@ describe("active Pi runtime leases", () => {
     await vi.advanceTimersByTimeAsync(leaseMs - 1);
     expect(native.stop).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle);
+    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle, "4");
     await expect(controller.handle(renew())).resolves.toMatchObject({ ok: false });
     await expect(controller.handle(run)).resolves.toMatchObject({ ok: false, error: "runtime_not_found" });
   });
@@ -64,7 +64,7 @@ describe("active Pi runtime leases", () => {
     const { controller, native } = await fixture();
     vi.setSystemTime(Date.now() - 3_600_000);
     await vi.advanceTimersByTimeAsync(leaseMs);
-    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle);
+    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle, "4");
     await expect(controller.handle(renew())).resolves.toMatchObject({ ok: false });
   });
   it("does not expire a live runtime when the wall clock jumps forward", async () => {
@@ -81,7 +81,7 @@ describe("active Pi runtime leases", () => {
     await vi.advanceTimersByTimeAsync(leaseMs - 30_000);
     await expect(controller.handle(renew("3"))).resolves.toMatchObject({ ok: false });
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle);
+    expect(native.stop).toHaveBeenCalledExactlyOnceWith(handle, "4");
   });
   it("does not restore an orphaned Pi runtime during supervisor startup", async () => {
     const native = launcher({ list: vi.fn(async () => [{ runtimeHandle: handle, executionGeneration: "3", profileId: SCOPE_RUNTIME_BOT_PROFILE.profileId }]) });
