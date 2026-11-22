@@ -58,6 +58,14 @@ interface Viewer {
   close(code: number, reason: string): void;
 }
 
+function parseClientFrame(raw: string): z.infer<typeof TerminalTabClientFrameSchema> | null {
+  try { return TerminalTabClientFrameSchema.safeParse(JSON.parse(raw)).data ?? null; }
+  catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return null;
+  }
+}
+
 function sameRef(a: TerminalRef, b: TerminalRef): boolean {
   return a.workspaceId === b.workspaceId && a.tabId === b.tabId;
 }
@@ -128,6 +136,13 @@ export function registerHerdrTerminalWebSocket(options: {
     const credits: Array<() => void> = [];
     let drainTimer: ReturnType<typeof setInterval> | null = null;
     let socket: WSContext | null = null;
+    // The terminal the client named, known before the core answers: a client
+    // sends its real size right after opening, often before the attach is done.
+    const namedRef: TerminalRef | null = !query.success ? null
+      : query.data.id !== undefined ? herdrTerminalRef(query.data.id)
+        : { workspaceId: query.data.workspaceId!, tabId: query.data.tabId! };
+    // The latest size a client asked for before the attachment existed.
+    let earlySize: { cols: number; rows: number } | null = null;
 
     const backlog = () => {
       const raw = socket?.raw as { bufferedAmount?: unknown } | undefined;
@@ -239,9 +254,15 @@ export function registerHerdrTerminalWebSocket(options: {
           attachment = opened;
           const role = options.terminalLiveOwnership.role(key, viewerId);
           const leaseEpoch = options.terminalLiveOwnership.leaseEpoch(key, viewerId);
-          if (role === "writer") adapter.rememberSize(id, { cols, rows });
+          // A writer's resize that arrived mid-attach applies now; an observer's never does.
+          const size = role === "writer" && earlySize ? earlySize : { cols, rows };
+          earlySize = null;
+          if (role === "writer") {
+            if (size.cols !== cols || size.rows !== rows) opened.resize(size.cols, size.rows);
+            adapter.rememberSize(id, size);
+          }
           send({
-            type: "attached", terminalRef, revision: 0, canonicalSize: { cols, rows }, nextSeq: seq, ownership: role,
+            type: "attached", terminalRef, revision: 0, canonicalSize: size, nextSeq: seq, ownership: role,
             capabilities: ["binary-input-v1"],
             ...(leaseEpoch === null ? {} : { leaseEpoch }),
           });
@@ -274,14 +295,14 @@ export function registerHerdrTerminalWebSocket(options: {
 
       onMessage(event, ws) {
         const raw = shellWsMessageDataToString(event.data);
-        if (raw === null || closed || !ref || !ownershipKey) return;
-        let parsed: z.infer<typeof TerminalTabClientFrameSchema> | null = null;
-        if (raw.length <= MAX_CLIENT_FRAME_CHARS) {
-          try { parsed = TerminalTabClientFrameSchema.safeParse(JSON.parse(raw)).data ?? null; }
-          catch (error: unknown) {
-            if (!(error instanceof SyntaxError)) throw error;
-          }
+        if (raw === null || closed) return;
+        if (!attachment || !ref || !ownershipKey) {
+          // Not attached yet: keep only the latest size; every other frame waits for `attached`.
+          const early = raw.length <= MAX_CLIENT_FRAME_CHARS ? parseClientFrame(raw) : null;
+          if (early?.type === "resize" && namedRef && sameRef(early.terminalRef, namedRef)) earlySize = early.size;
+          return;
         }
+        const parsed = raw.length <= MAX_CLIENT_FRAME_CHARS ? parseClientFrame(raw) : null;
         if (!parsed || !sameRef(parsed.terminalRef, ref)) { fail("invalid_message", "Invalid message", 1003); release(); return; }
         const viewer = viewers.get(viewerId);
         if (viewer) viewer.lastTouched = now();

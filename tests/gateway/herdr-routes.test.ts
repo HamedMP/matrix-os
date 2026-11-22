@@ -19,11 +19,18 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 
 const principalOf = (c: Context) => ({ userId: c.req.header("x-test-user") ?? new URL(c.req.url).searchParams.get("user") ?? "", source: "test" as never });
 
-async function gateway(options: { adapter?: HerdrAdapter | null; maxViewersPerSession?: number } = {}) {
+async function gateway(options: { adapter?: HerdrAdapter | null; maxViewersPerSession?: number; attachDelayMs?: number } = {}) {
   const core = createFakeHerdrCore();
-  const adapter = options.adapter === undefined
+  const real = options.adapter === undefined
     ? createHerdrAdapter({ open: async () => core.connect(), captureQuietMs: 5, captureMaxMs: 100 })
     : options.adapter;
+  // A slow core answer, so frames a client sends right after opening arrive mid-attach.
+  const adapter: HerdrAdapter | null = real && options.attachDelayMs
+    ? { ...real, attach: async (...args: Parameters<HerdrAdapter["attach"]>) => {
+      await new Promise((resolve) => setTimeout(resolve, options.attachDelayMs));
+      return real.attach(...args);
+    } }
+    : real;
   if (adapter) cleanup.push(() => adapter.close());
   const app = new Hono();
   const ws = createNodeWebSocket({ app });
@@ -151,6 +158,33 @@ describe("WS /ws/terminal/herdr", () => {
     const attaches = core.calls.filter((call) => call.method === "terminal.attach");
     expect(attaches[0]!.params).toMatchObject({ observe: true, cols: 400, rows: 150 });
     expect(attaches[1]!.params).not.toHaveProperty("observe");
+  });
+
+  it("applies a writer's resize that arrives while the core attach is still pending", async () => {
+    // Found live: the shell sends its real size right after the socket opens.
+    // It reached the gateway mid-attach and was dropped, so the terminal kept
+    // the attach-time size until the next resize or keystroke.
+    const { core, connect } = await gateway({ attachDelayMs: 60 });
+    core.add("t1");
+    const client = connect(`id=t1&user=${OWNER}&lease=exclusive&cols=95&rows=31`);
+    await new Promise<void>((resolve) => { client.socket.once("open", () => resolve()); });
+    client.send({ type: "resize", terminalRef: ref("t1"), mode: "hard", size: { cols: 97, rows: 31 } });
+    await client.until(() => client.frames.some((frame) => frame.type === "attached"));
+    await client.until(() => core.terminals.get("t1")!.resizes.length > 0);
+    const attach = core.calls.find((call) => call.method === "terminal.attach")!;
+    expect(attach.params).toMatchObject({ cols: 95, rows: 31 });
+    expect(core.terminals.get("t1")!.resizes).toEqual([{ cols: 97, rows: 31 }]);
+  });
+
+  it("never resizes for an observer's early resize", async () => {
+    const { core, connect } = await gateway({ attachDelayMs: 60 });
+    core.add("t1");
+    const client = connect(`id=t1&user=${OWNER}&cols=95&rows=31`);
+    await new Promise<void>((resolve) => { client.socket.once("open", () => resolve()); });
+    client.send({ type: "resize", terminalRef: ref("t1"), mode: "hard", size: { cols: 97, rows: 31 } });
+    await client.until(() => client.frames.some((frame) => frame.type === "replay-end"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(core.terminals.get("t1")!.resizes).toEqual([]);
   });
 
   it("brackets the core's first paint in a replay, so a browser pane reveals the terminal", async () => {
