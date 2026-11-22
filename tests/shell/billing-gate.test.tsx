@@ -162,6 +162,37 @@ describe("BillingGate", () => {
     expect(addComputerRender).toHaveBeenCalledTimes(1);
   });
 
+  it("sends an owner whose first build failed back to its retry instead of the add-computer flow", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=add-computer");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.startsWith("/api/journey")
+        ? {
+            phase: "provisioning_failed",
+            detail: "Setting up your computer ran into a problem.",
+            nextAction: { kind: "retry_provision" },
+            failure: { retryable: true, attempt: 1 },
+          }
+        : { access: { runtimeProxyAllowed: true, reason: "active" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <BillingGate platformSessionActive>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(navigationState.replace).toHaveBeenCalledWith("/"));
+    expect(screen.queryByTestId("add-computer-onboarding")).toBeNull();
+    expect(addComputerRender).not.toHaveBeenCalled();
+  });
+
   it("keeps the full signup handoff visible while marked billing status resolves", async () => {
     window.history.replaceState({}, "", "/?billing=setup&handoff=signup");
     clerkState.isLoaded = true;

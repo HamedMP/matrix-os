@@ -3,11 +3,12 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
+import { useJourney } from "@/hooks/useJourney";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -267,7 +268,7 @@ function BillingGateRoute({
   const isAddComputerHandoff = searchParams.get("handoff") === "add-computer";
 
   if (isAddComputerHandoff) {
-    return <AddComputerOnboarding />;
+    return <AddComputerHandoff />;
   }
   if (platformSessionActive) {
     return <>{children}</>;
@@ -280,6 +281,26 @@ function BillingGateRoute({
       {children}
     </BillingGateInner>
   );
+}
+
+/**
+ * The add-computer flow names and builds another computer. An owner whose
+ * first build failed has no computer to add to: send them to the onboarding
+ * root, where the journey shows provisioning_failed and its retry. If the
+ * journey is unavailable, the add-computer flow still renders.
+ */
+function AddComputerHandoff() {
+  const router = useRouter();
+  const { isLoaded, isSignedIn } = useAuth();
+  const { state, status } = useJourney();
+  const firstBuildFailed = status === "ready" && state?.phase === "provisioning_failed";
+  useEffect(() => {
+    if (firstBuildFailed) router.replace("/");
+  }, [firstBuildFailed, router]);
+  // Signed-out owners get the add-computer flow's own sign-in redirect.
+  if (isLoaded && !isSignedIn) return <AddComputerOnboarding />;
+  if (!isLoaded || status === "loading" || firstBuildFailed) return <BillingStatusLoading />;
+  return <AddComputerOnboarding />;
 }
 
 function BillingGateInner({
