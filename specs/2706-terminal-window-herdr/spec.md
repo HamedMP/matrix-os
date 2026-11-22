@@ -159,6 +159,14 @@ Added 2026-11-22 (Hamed):
     install directory is touched;
   - each machine row shows its core version and update state, with a clear
     error when install fails.
+  - Bounds and failures: the upload of the binary (scp over the same ssh
+    options) times out after 2 minutes and the whole install after 3; one
+    install or upgrade runs per machine at a time (a second request waits for
+    it, then sees the result); an interrupted upload leaves only
+    `~/.local/bin/.herdr-core.<random>.tmp`, which the next attempt removes
+    before writing, and the installed binary changes only by the final
+    rename. A failed install leaves the machine added and listed with the
+    error and a Retry.
 
 ### Remote speed
 
@@ -281,18 +289,27 @@ event stream. Each layer's own tests do not replace this one.
     stay in `~/.ssh`, the ssh agent or the macOS keychain, and the core keeps
     only the target and name in its own data directory (the app's userData).
   - Host keys are verified by OpenSSH against `~/.ssh/known_hosts`; the app
-    never passes `StrictHostKeyChecking=no` or any other `-o` option. An
+    never passes `StrictHostKeyChecking=no` or any option that weakens host
+    key checks. The only `-o` option it ever passes is `BatchMode=yes`. An
     unknown or changed key fails the dial, and the person accepts a new key
-    only in a real terminal running `ssh <target>`, where OpenSSH shows the
-    fingerprint.
+    only in a real terminal running ssh (same port, identity and jump host),
+    where OpenSSH shows the fingerprint.
   - The target is validated in the main process (letters, digits, `.`, `-`,
     `_`, optional `user@` and `:port`, at most 255 characters, never starting
-    with `-`), the name with herdr-core's terminal-name rules. Only `target`
-    and `name` reach `machine.add`; `via` (an arbitrary command) is never
-    offered.
+    with `-`), the name with herdr-core's terminal-name rules. A plain target
+    reaches `machine.add` as `target` and `name` only.
+  - With custom ssh fields or a Tailscale SSH peer, `machine.add` also gets a
+    `via` line, built only by the main process from fixed parts: `ssh -o
+    BatchMode=yes [-p <port>] [-i '<path>'] [-J '<jump>'] -- '<user@host>'`,
+    or `tailscale ssh -- '<user@host>'`. Each value is checked against its own
+    strict pattern (port 1-65535; a path of letters, digits, `.`, `_`, `-`,
+    `/` and a leading `~/`; a jump host as a target) and single-quoted. The
+    renderer sends only these fields, never a command; any other `via` is
+    refused.
   - New IPC: `local-terminal:machines`, `:machine-add`, `:machine-remove`,
-    `:machine-connect`, Terminal window only, each with a strict Zod schema.
-    Errors reach the window as herdr-core's stable kinds, never messages.
+    `:machine-connect`, `:ssh-login`, `:tailscale-peers`, Terminal window
+    only, each with a strict Zod schema. Errors reach the window as
+    herdr-core's stable kinds, never messages.
 - The exit record is written by the tab's launcher inside the owner's runtime
   directory (0700), named by tab id (validated), never by user input.
 - Shortcuts run only in the trusted Terminal window renderer; no new IPC
