@@ -50,3 +50,20 @@ describe("machine core", () => {
     expect(compareCoreVersions("dev", "0.1.19")).toBeNull();
   });
 });
+
+// Fault detected (Greptile, #3579): a second install for the same name but another host got the first one's result.
+describe("conflicting requests for one machine", () => {
+  it("shares only an identical running job and refuses a different one", async () => {
+    let finish!: () => void;
+    const run = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const core = createMachineCore({ cli, run });
+    const first = core.install({ name: "box", target: "me@one" });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(await core.install({ name: "box", target: "me@two" })).toEqual({ ok: false, reason: "busy" });
+    const same = core.install({ name: "box", target: "me@one" });
+    finish();
+    expect(await first).toEqual({ ok: true });
+    expect(await same).toEqual({ ok: true });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});

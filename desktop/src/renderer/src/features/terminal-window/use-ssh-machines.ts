@@ -117,7 +117,7 @@ export function useSshMachines() {
 
   // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
   const [coreBusy, setCoreBusy] = useState<string[]>([]);
-  const [coreFailed, setCoreFailed] = useState<string | null>(null);
+  const [coreFailed, setCoreFailed] = useState<string[]>([]);
   const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean }>): Promise<boolean> => {
     setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
     let ok = false;
@@ -127,7 +127,8 @@ export function useSshMachines() {
       console.warn("[terminal-window] machine core failed:", error instanceof Error ? error.name : "UnknownError");
     }
     setCoreBusy((current) => current.filter((entry) => entry !== name));
-    setCoreFailed(ok ? null : name);
+    // Each machine keeps its own failure until its own job succeeds.
+    setCoreFailed((current) => (ok ? current.filter((entry) => entry !== name) : [...current.filter((entry) => entry !== name), name]));
     await refresh();
     return ok;
   }, [refresh]);

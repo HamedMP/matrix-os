@@ -24,7 +24,7 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 
 function installOperator(options: {
   peers?: unknown;
-  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean;
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[];
 } = {}) {
   let machines = options.machines ?? [];
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
@@ -49,7 +49,7 @@ function installOperator(options: {
         machines = [...machines, { name, target, state: "connected", temporary: false }];
         return { ok: true };
       }
-      case "local-terminal:machine-update": return { ok: true };
+      case "local-terminal:machine-update": return options.failUpdate?.includes((payload as { name: string }).name) ? { ok: false, reason: "failed" } : { ok: true };
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -272,6 +272,25 @@ describe("Terminal window ssh machines", () => {
     expect(await within(machines).findByText("can@10.0.0.7 · Connected · core 0.1.14")).toBeTruthy();
     fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps" }));
+  });
+
+  // Fault detected (Greptile, #3579): one machine's success cleared another's update error, and a dropped line hid it.
+  it("keeps each machine's core update error, also while its line is down", async () => {
+    installOperator({
+      failUpdate: ["one"],
+      machines: [
+        { name: "one", target: "me@one", state: "unreachable", temporary: false, version: "0.1.14" },
+        { name: "two", target: "me@two", state: "connected", temporary: false, version: "0.1.14" },
+      ] as never,
+    });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    const updates = await within(machines).findAllByRole("button", { name: "Update core" });
+    fireEvent.click(updates[0]!);
+    expect(await within(machines).findByText("Couldn't update its core.")).toBeTruthy();
+    fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
+    await waitFor(() => expect(within(machines).getAllByText("Couldn't update its core.")).toHaveLength(1));
+    expect(within(machines).getByRole("button", { name: "Open in terminal" })).toBeTruthy();
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

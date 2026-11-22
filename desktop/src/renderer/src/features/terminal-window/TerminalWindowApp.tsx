@@ -141,7 +141,7 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 /** The machine's core is older than the app's: offer to bring it up to date (spec 2706 layer 8). */
 function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
   const busy = view.ssh.coreBusy.includes(machine.name);
-  const failed = view.ssh.coreFailed === machine.name;
+  const failed = view.ssh.coreFailed.includes(machine.name);
   const older = machine.version ? (compareCoreVersions(machine.version, LOCAL_TERMINAL_VERSION) ?? 0) < 0 : false;
   if (!busy && !failed && !older) return null;
   return (
@@ -160,12 +160,16 @@ function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: Ter
 
 function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
   if (machine.state === "connected" || machine.state === "connecting") return <MachineCoreStatus machine={machine} view={view} />;
+  // A failed core update stays visible next to the connection actions.
   return (
+    <>
+    <MachineCoreStatus machine={machine} view={view} />
     <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9">
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.openMachineLogin(machine.name); }}>Open in terminal</button>
       {view.sshLoginFailed === machine.name ? <span role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</span> : null}
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.connect(machine.name); }}>Retry</button>
     </div>
+    </>
   );
 }
 

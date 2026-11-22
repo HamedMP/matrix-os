@@ -33,11 +33,12 @@ export function createMachineCore(options: {
 }) {
   const run = options.run ?? runCoreCli;
   // One install or update per machine; bounded by the machines a core keeps.
-  const running = new Map<string, Promise<MachineCoreResult>>();
+  const running = new Map<string, { args: string; job: Promise<MachineCoreResult> }>();
 
   const once = async (name: string, args: string[]): Promise<MachineCoreResult> => {
     const existing = running.get(name);
-    if (existing) return existing;
+    // Only the same request shares a running job; a different one for that machine waits its turn.
+    if (existing) return existing.args === JSON.stringify(args) ? existing.job : { ok: false, reason: "busy" };
     if (running.size >= MAX_RUNNING) return { ok: false, reason: "busy" };
     const job = (async (): Promise<MachineCoreResult> => {
       const cli = await options.cli();
@@ -51,7 +52,7 @@ export function createMachineCore(options: {
         return { ok: false, reason: "failed" };
       }
     })().finally(() => running.delete(name));
-    running.set(name, job);
+    running.set(name, { args: JSON.stringify(args), job });
     return job;
   };
 
