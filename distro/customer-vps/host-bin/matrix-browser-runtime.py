@@ -54,15 +54,26 @@ MIN_MEMORY_KB = 1792 * 1024
 SAFE_REASON = re.compile(r'[A-Z][A-Za-z0-9 ;,()/.-]{0,160}')
 
 
+def program_name(command):
+    """The program's basename only: arguments (URLs, tokens) are never logged."""
+    if isinstance(command, (list, tuple)):
+        command = command[0] if command else ''
+    if isinstance(command, bytes):
+        command = command.decode('utf-8', 'replace')
+    if not isinstance(command, str):
+        return ''
+    words = command.split()
+    name = PurePosixPath(words[0]).name if words else ''
+    return name if re.fullmatch(r'[A-Za-z0-9._+-]{1,64}', name) else ''
+
+
 def failure_reason(error):
     """A specific reason for the journal that never includes user data, paths or secrets."""
     name = type(error).__name__
     if isinstance(error, subprocess.CalledProcessError):
-        command = error.cmd[0] if isinstance(error.cmd, (list, tuple)) and error.cmd else ''
-        return f'{name} {PurePosixPath(str(command)).name} exit {error.returncode}'
+        return ' '.join(part for part in (name, program_name(error.cmd), f'exit {error.returncode}') if part)
     if isinstance(error, subprocess.TimeoutExpired):
-        command = error.cmd[0] if isinstance(error.cmd, (list, tuple)) and error.cmd else ''
-        return f'{name} {PurePosixPath(str(command)).name}'
+        return ' '.join(part for part in (name, program_name(error.cmd)) if part)
     if isinstance(error, OSError):
         return f'{name} {errno.errorcode.get(error.errno, "")}'.strip()
     if type(error) is ValueError and len(error.args) == 1 and isinstance(error.args[0], str) \
@@ -701,9 +712,15 @@ def main(arguments):
         os.close(lock)
 
 
-if __name__ == '__main__':
+def run_main(arguments, entry=None):
+    """Every failure logs one safe line: no traceback, whose frames and messages
+    (KeyError, JSON decoding) can carry configuration values."""
     try:
-        main(sys.argv[1:])
-    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        (entry or main)(arguments)
+    except Exception as error:  # noqa: BLE001 - reduced to a safe reason, then exit 1
         print('Customer Browser setup failed: ' + failure_reason(error), file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None
+
+
+if __name__ == '__main__':
+    run_main(sys.argv[1:])

@@ -564,6 +564,28 @@ class BrowserRuntimeTest(unittest.TestCase):
                          'CalledProcessError apt-get exit 100')
         self.assertEqual(reason(subprocess.TimeoutExpired(['/usr/bin/curl', 'https://x.test/?token=abc'], 60)),
                          'TimeoutExpired curl')
+        # A shell-string command names only its program, never its arguments.
+        self.assertEqual(reason(subprocess.CalledProcessError(1, '/usr/bin/systemctl restart x --token=abc')),
+                         'CalledProcessError systemctl exit 1')
+        self.assertEqual(reason(subprocess.CalledProcessError(1, '')), 'CalledProcessError exit 1')
+        self.assertEqual(reason(subprocess.TimeoutExpired(None, 5)), 'TimeoutExpired')
+
+    def test_main_logs_only_a_safe_line_for_unexpected_errors(self):
+        import subprocess
+        import sys
+        script = SOURCE.resolve()
+        program = (
+            "import runpy, sys\n"
+            "module = runpy.run_path(sys.argv[1], run_name='browser_runtime_entry')\n"
+            "def boom(arguments):\n"
+            "    raise KeyError('user_secret_value')\n"
+            "module['run_main'](['--status'], boom)\n"
+        )
+        result = subprocess.run([sys.executable, '-I', '-c', program, str(script)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), 'Customer Browser setup failed: KeyError')
+        self.assertNotIn('user_secret_value', result.stderr + result.stdout)
+        self.assertNotIn('Traceback', result.stderr)
 
     def test_archive_checksum_must_match_protected_digest(self):
         self.runtime.prepare()
