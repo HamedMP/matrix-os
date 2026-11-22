@@ -293,7 +293,8 @@ const SYNC_STORAGE_UNAVAILABLE = { error: "Sync storage unavailable" } as const;
  * They are mounted whenever runtime credentials can be verified: an unmounted
  * route falls through to session routing, which refuses the guest's machine
  * credential with a misleading 401 and aborts its restore gate. Without
- * storage, a preview platform answers that no backup exists (it holds none);
+ * storage, a preview platform that cannot provision Hetzner VPSes answers that
+ * no backup exists (it holds none);
  * any other deployment fails closed with 503 so a misconfigured production
  * platform can never tell an owner with backups to start empty.
  */
@@ -305,9 +306,14 @@ export function createConfiguredInternalSyncRoutes(opts: {
   env: NodeJS.ProcessEnv;
 }): Hono<any> | undefined {
   if (!opts.platformSecret) return undefined;
-  const absentStorage = opts.env.PLATFORM_PREVIEW === "true" ? "empty" : "unavailable";
+  // The same waiver as checkCustomerVpsPrimaryStorageEnv: only a preview that
+  // cannot provision Hetzner VPSes may run without owner sync storage.
+  const preview = opts.env.PLATFORM_PREVIEW === "true";
+  const hetzner = Boolean(opts.env.HETZNER_API_TOKEN?.trim());
+  const absentStorage = preview && !hetzner ? "empty" : "unavailable";
   if (!opts.r2) {
-    console.warn(`[internal-sync] owner sync storage is not configured; sync routes answer as ${absentStorage}`);
+    const log = preview && !hetzner ? console.warn : console.error;
+    log(`[internal-sync] owner sync storage is not configured; sync routes answer as ${absentStorage}`);
   }
   return createInternalSyncRoutes({
     db: opts.db, r2: opts.r2, platformSecret: opts.platformSecret, r2PrefixRoot: opts.r2PrefixRoot, absentStorage,

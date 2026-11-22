@@ -184,6 +184,15 @@ describe('metal VM first boot', () => {
       expect((await probe('system/db/latest')).status).toBe(401);
     });
 
+    it('fails closed on a preview that can provision Hetzner VPSes, whose owners may have backups elsewhere', async () => {
+      const config = await provision();
+      const probe = await restoreProbe(config, { PLATFORM_PREVIEW: 'true', HETZNER_API_TOKEN: 'hetzner-token' });
+
+      const res = await probe('system/vps-meta.json');
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'Sync storage unavailable' });
+    });
+
     it('fails closed with a storage error, not an auth error, outside previews', async () => {
       const config = await provision();
       const probe = await restoreProbe(config, {});
