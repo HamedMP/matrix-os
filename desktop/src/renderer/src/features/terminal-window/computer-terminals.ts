@@ -10,6 +10,8 @@ import { herdrSessionRefKey, loadHerdrSessions, shouldShowHerdrSessions } from "
 import { herdrSessionsRequest } from "../terminal/herdr-desktop-session";
 
 const MAX_TABS_SHOWN = 200;
+// Herdr sessions have their own budget so Matrix tab history cannot hide the group.
+const MAX_HERDR_SESSIONS_SHOWN = 100;
 
 // Only the fields the sidebar shows are read; the gateway owns the full shape.
 const ListingSchema = z.object({
@@ -92,10 +94,10 @@ export async function listComputerTabs(api: ApiClient): Promise<ComputerTerminal
     group: workspace.scope === "project" ? workspace.projectId ?? "project" : "main",
     ended: tab.status === "exited" || tab.status === "failed",
   })));
-  const herdrTabs = shouldShowHerdrSessions(herdr) ? herdr!.sessions.map((session) => ({
+  const herdrTabs = shouldShowHerdrSessions(herdr) ? herdr!.sessions.slice(0, MAX_HERDR_SESSIONS_SHOWN).map((session) => ({
     refKey: herdrSessionRefKey(session), name: session.title, group: "herdr", ended: false,
   })) : [];
-  return [...tabs, ...herdrTabs].slice(0, MAX_TABS_SHOWN);
+  return [...tabs.slice(0, MAX_TABS_SHOWN), ...herdrTabs];
 }
 
 /**
