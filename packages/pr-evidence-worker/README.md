@@ -4,7 +4,7 @@ Cloudflare Worker at `evidence.matrix-os.com` that stores PR screenshots and
 recordings in R2, so captures can be attached to PRs without committing them.
 Uploads are authorized with the caller's existing GitHub token: anyone with
 write access to `HamedMP/matrix-os` can upload; nobody else can. Spec:
-[`specs/2701-pr-evidence-uploads/spec.md`](../../specs/2701-pr-evidence-uploads/spec.md).
+[`specs/2708-pr-evidence-uploads/spec.md`](../../specs/2708-pr-evidence-uploads/spec.md).
 
 ## Usage
 
