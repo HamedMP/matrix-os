@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
+import { FundedHostActivationRequestSchema, fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
+import { ZodError } from 'zod/v4';
 import type { Dispatcher } from 'undici';
 import { iterateRunningUserMachinePages, type PlatformDB, type UserMachineRecord } from './db.js';
 import { readFundedHostActivation } from './funded-host-activation.js';
@@ -11,6 +12,12 @@ import { readRuntimeAsleep } from './substrates/runtime-asleep.js';
 import { applyUpstreamCredentials, needsVerifiedTransport, verifiedDispatcher } from './substrates/upstream-transport.js';
 
 const FUNDED_CONFIG_PATH = '/api/internal/platform-funded-ai/config';
+
+/** Issue paths only: a Zod message or input can carry configuration values. */
+function deferredDetail(error: unknown): [string] | [string, { paths: string[] }] {
+  if (error instanceof ZodError) return ['ZodError', { paths: error.issues.slice(0, 8).map(issue => issue.path.join('.')) }];
+  return [error instanceof Error ? error.name : 'UnknownError'];
+}
 
 export interface ManagedFeatureActivationTarget {
   handle?: string; afterMachineId?: string;
@@ -29,6 +36,14 @@ export function createManagedFeatureActivator(options: {
   fetchImpl?: typeof fetch; fetchDispatcher?: Dispatcher; now?: () => Date; wait?: (ms: number) => Promise<void>; pageTimeoutMs?: number;
 }): ManagedFeatureActivator {
   const fetchImpl = options.fetchImpl ?? fetch;
+  // Guests accept only the reviewed relay pin (contracts and the guest's
+  // configure script). A deployment configured with another relay can never
+  // activate; say so once instead of failing every runtime on every pass.
+  const relayAdmitted = !options.fundedAiEnabled
+    || FundedHostActivationRequestSchema.shape.configuration.shape.relayOrigin.safeParse(options.relayOrigin).success;
+  if (!relayAdmitted) {
+    console.error('[managed-features] funded activation disabled: the configured relay origin is outside the reviewed relay pin');
+  }
   const pageTimeoutMs = options.pageTimeoutMs ?? 110_000;
   if (!Number.isInteger(pageTimeoutMs) || pageTimeoutMs < 1 || pageTimeoutMs > 110_000) throw new RangeError('Invalid activation page timeout');
   const wait = (ms: number, signal: AbortSignal) => options.wait ? options.wait(ms) : delay(ms, undefined, { signal });
@@ -76,7 +91,7 @@ export function createManagedFeatureActivator(options: {
   }
   async function activateFunded(machine: UserMachineRecord, signal: AbortSignal): Promise<'ready' | 'skipped' | 'failed'> {
     signal.throwIfAborted();
-    if (!options.fundedAiEnabled || machine.runtimeSlot !== 'primary') return 'skipped';
+    if (!options.fundedAiEnabled || !relayAdmitted || machine.runtimeSlot !== 'primary') return 'skipped';
     const token = buildPlatformRuntimeVerificationToken({ handle: machine.handle, machineId: machine.machineId,
       runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch);
     const eligibility = await readFundedHostActivation({ db: options.db, platformSecret: options.platformSecret,
@@ -140,7 +155,7 @@ export function createManagedFeatureActivator(options: {
           if (signal.aborted) { results[index] = { activated: false, failed: true }; continue; }
           const [funded, speechReady] = await Promise.all([
             activateFunded(machine, signal).catch((error: unknown) => {
-              console.warn('[managed-features] funded activation deferred', error instanceof Error ? error.name : 'UnknownError');
+              console.warn('[managed-features] funded activation deferred', ...deferredDetail(error));
               return 'failed' as const;
             }),
             (async () => {
