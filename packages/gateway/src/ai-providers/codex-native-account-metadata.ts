@@ -1,6 +1,8 @@
 import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
 
@@ -62,6 +64,24 @@ export interface CodexNativeAccountMetadataReader {
   observeIdentity?: () => Promise<CodexNativeAccountObservation>;
   /** Private outcome of the final proof; unavailable by default, never authority. */
   identityFailureState?: (metadata: CodexNativeAccountMetadata) => CodexNativeObservationState;
+  /** Drop any reusable admission identity (login, logout, executable change). */
+  invalidateIdentity?: () => void;
+}
+
+/** Upper bound for admission identity reuse; metadata freshness (30 s) bounds it further. */
+export const CODEX_IDENTITY_REUSE_MAX_MS = 60_000;
+
+async function defaultExecutableFingerprint(executable: string): Promise<string | null> {
+  // A bare command name has no stable file to compare; treat it as one fixed identity.
+  if (!isAbsolute(executable)) return `command:${executable}`;
+  try {
+    const info = await stat(executable);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch (error: unknown) {
+    if (!(error instanceof Error && "code" in error)) throw error;
+    console.warn("[provider-settings] Codex executable fingerprint unavailable:", error.name);
+    return null;
+  }
 }
 
 type SpawnProcess = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
@@ -71,6 +91,15 @@ export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
   readCredentialFileProof?: () => Promise<string | null>;
+  /**
+   * Opt-in, owner-reviewed: reuse one file-backed private identity proof for up
+   * to this long (capped at CODEX_IDENTITY_REUSE_MAX_MS and by metadata
+   * freshness) instead of spawning an app-server per observe/verify. Reuse
+   * requires the same credential file proof and executable fingerprint. Off (0)
+   * by default. Runner-side native account proofs remain the execution authority.
+   */
+  identityReuseMs?: number;
+  readExecutableFingerprint?: () => Promise<string | null>;
 }): CodexNativeAccountMetadataReader {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
   const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true });
@@ -84,6 +113,29 @@ export function createCodexNativeAccountMetadataReader(input: {
   const principals = new WeakMap<CodexNativeAccountMetadata, string>();
   const identityFailures = new WeakMap<CodexNativeAccountMetadata, CodexNativeObservationState>();
   const verificationObservations = new WeakMap<Promise<CodexNativeAccountMetadata | null>, { state: CodexNativeObservationState }>();
+  const reuseMs = Math.max(0, Math.min(input.identityReuseMs ?? 0, CODEX_IDENTITY_REUSE_MAX_MS));
+  const readExecutableFingerprint = input.readExecutableFingerprint ?? (() => defaultExecutableFingerprint(input.executable));
+  const clock = () => (input.now ?? (() => new Date()))().getTime();
+  // Single entry: at most one reusable identity per reader (one per runtime owner).
+  let recentIdentity: { value: CodexNativeAccountMetadata; credentialProof: string; executable: string; provenAt: number } | null = null;
+  let identityEpoch = 0;
+  const reusableIdentity = async (): Promise<CodexNativeAccountMetadata | null> => {
+    const recent = recentIdentity;
+    if (!recent || reuseMs === 0) return null;
+    const time = clock();
+    if (time < recent.provenAt || time - recent.provenAt >= reuseMs || !freshAt(recent.value, time)) {
+      if (recentIdentity === recent) recentIdentity = null;
+      return null;
+    }
+    const epoch = identityEpoch;
+    const [credentialProof, executable] = await Promise.all([readCredentialFileProof(), readExecutableFingerprint()]);
+    if (epoch !== identityEpoch || recentIdentity !== recent) return null;
+    if (credentialProof !== recent.credentialProof || executable !== recent.executable) {
+      recentIdentity = null;
+      return null;
+    }
+    return freshAt(recent.value, clock()) ? recent.value : null;
+  };
   const freshAt = (value: CodexNativeAccountMetadata, time: number): boolean =>
     Date.parse(value.checkedAt) <= time && Date.parse(value.staleAfter) > time
     && (!value.usage?.resetsAt || Date.parse(value.usage.resetsAt) > time);
@@ -103,6 +155,10 @@ export function createCodexNativeAccountMetadataReader(input: {
       : verificationObservations.get(task)?.state ?? "unavailable");
   };
   const verifyProof = async (proof: string, value?: CodexNativeAccountMetadata): Promise<boolean> => {
+    if (reuseMs > 0) {
+      const reused = await reusableIdentity();
+      if (reused && principals.get(reused) === proof) return true;
+    }
     const task = verification ?? startVerification();
     const current = await task;
     const valid = current !== null && principals.get(current) === proof;
@@ -115,6 +171,8 @@ export function createCodexNativeAccountMetadataReader(input: {
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
     if (!identityOnly && waitMs > 0) return null;
     if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    const readEpoch = identityEpoch;
+    const executableAtStart = reuseMs > 0 ? await readExecutableFingerprint() : null;
     // Tentative evidence precedes process startup: the app-server can cache
     // account state at spawn. It becomes usable only after effective file authority.
     const tentativeCredentialProof = await readCredentialFileProof();
@@ -242,6 +300,11 @@ export function createCodexNativeAccountMetadataReader(input: {
               if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
                 const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
                 principals.set(value, proof);
+                // Only file-backed proofs can be cheaply rechecked; an invalidation
+                // after this read started must not repopulate reuse.
+                if (reuseMs > 0 && fileBackend && credentialProof && executableAtStart && readEpoch === identityEpoch) {
+                  recentIdentity = { value, credentialProof, executable: executableAtStart, provenAt: finalAccountObservedAt.getTime() };
+                }
                 bindNativeAccountMetadata(value, async () => {
                   identityFailures.delete(value);
                   const requestedAt = (input.now ?? (() => new Date()))().getTime();
@@ -306,6 +369,11 @@ export function createCodexNativeAccountMetadataReader(input: {
       const result = (async (): Promise<CodexNativeAccountObservation> => {
         if (preceding) await preceding;
         if (verification) await verification;
+        const reused = reuseMs > 0 ? await reusableIdentity() : null;
+        if (reused) {
+          cached = reused;
+          return { metadata: reused, state: "observed" };
+        }
         const metadata = await read(true, observation);
         cached = metadata && principals.has(metadata) ? metadata : null;
         return { metadata, state: metadata ? "observed" : observation.state };
@@ -375,5 +443,6 @@ export function createCodexNativeAccountMetadataReader(input: {
   };
   source.observeIdentity = observeIdentity;
   source.identityFailureState = value => identityFailures.get(value) ?? "unavailable";
+  source.invalidateIdentity = () => { identityEpoch += 1; recentIdentity = null; };
   return source;
 }

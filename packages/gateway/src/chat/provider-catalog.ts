@@ -597,6 +597,8 @@ export function createChatProviderCatalogService(options: {
         ...(nativeCodexIdentityRequired ? {
           includeNativeAccountMetadata: true,
           includeNativeAccountUsage: false,
+          // A Codex send needs no Claude/Hermes identity probes.
+          ...(selection && scope.coding.length === 1 && scope.systems.length === 0 ? { nativeAccountHarnesses: ["codex"] as const } : {}),
           ...(options.canRecoverNativeConnection?.(principal) === true ? { recoverNativeConnection: true } : {}),
         } : {}),
       })),

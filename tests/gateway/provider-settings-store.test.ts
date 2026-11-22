@@ -205,6 +205,16 @@ describe("ProviderSettingsStore", () => {
     });
   }
 
+  it("observes only the requested native harness identities for a scoped admission read", async () => {
+    const claudeReader = Object.assign(vi.fn(async () => null), { readSignedOut: vi.fn(async () => null) });
+    const store = createStore({ claudeNativeAccountMetadataReader: claudeReader as unknown as ClaudeNativeAccountMetadataReader });
+    await store.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false, nativeAccountHarnesses: ["codex"] });
+    expect(claudeReader).not.toHaveBeenCalled();
+    expect(claudeReader.readSignedOut).not.toHaveBeenCalled();
+    await store.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+    expect(claudeReader).toHaveBeenCalledTimes(1);
+  });
+
   it("drains shared project AI before persisting a route-authority mutation", async () => {
     const prepareSharedAiRouteChange = vi.fn(async () => undefined);
     const store = createStore({ prepareSharedAiRouteChange });

@@ -381,7 +381,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
       let nativeObservationState: CodexNativeObservationState | undefined;
       if (options.includeNativeAccountMetadata && attempt === 0) {
-        const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
+        const installed = (id: "codex" | "hermes" | "claude_code") => (!options.nativeAccountHarnesses || options.nativeAccountHarnesses.includes(id))
+          && captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
         const [codex, hermes, claude] = await Promise.all([
           installed("codex") ? timeChatSendStage("codex_identity_observe", () => observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false)) : undefined,
           installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
@@ -404,6 +405,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       }
       retryMetadata = metadata;
       if (options.includeNativeAccountMetadata && attempt === 0 && !claudeMetadata
+        && (!options.nativeAccountHarnesses || options.nativeAccountHarnesses.includes("claude_code"))
         && captured.canonical.drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed")) {
         claudeSignedOut = await timeChatSendStage("claude_identity", () => readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut));
       }
