@@ -46,6 +46,8 @@ const VM_RECORD_BACKOFF_MS = 200;
  */
 const AMBIGUOUS_CREATE_ERRORS = new Set(['timeout', 'unreachable', 'invalid_response']);
 const STALE_BATCH_SIZE = 50;
+/** Bound on the inline teardown of a stuck VM during a provision request. */
+export const METAL_INLINE_DESTROY_TIMEOUT_MS = 15_000;
 
 /**
  * Free VM limits from the metal design. Paid sizing on metal is not decided;
@@ -86,6 +88,12 @@ export interface MetalProvisionerDeps {
   machineIdFactory?: () => string;
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
   postgresPasswordFactory?: () => string;
+  /**
+   * Destroys a machine's queued VM teardowns now (the deletion drainer's
+   * drainMachine). Used after a late retry fails a stuck row, so its VM does
+   * not keep holding host memory where no maintenance worker drains the queue.
+   */
+  drainMachineDeletions?: (machineId: string, signal: AbortSignal) => Promise<unknown>;
   log?: Log;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -257,7 +265,13 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
           if (current.substrate !== 'metal') return { error: 'unavailable' };
           if (current.status !== 'failed') return { existing: current.machineId };
           await retireUserMachine(trx, current.machineId, row.at.toISOString());
-          if (current.metalHostId) {
+          // A stale row failed by this request already had its teardown queued
+          // (and maybe completed inline); never queue the same generation twice.
+          const queued = await trx.executor.selectFrom('metal_vm_deletions').select('id')
+            .where('machine_id', '=', current.machineId)
+            .where('generation', '=', current.generation)
+            .executeTakeFirst();
+          if (current.metalHostId && !queued) {
             await enqueueMetalVmDeletion(trx, {
               metalHostId: current.metalHostId,
               machineId: current.machineId,
@@ -417,7 +431,9 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const updated = await trx.executor.updateTable('user_machines')
         .set({ status: 'failed', failure_code: 'registration_timeout', failure_at: at.toISOString() })
         .where('machine_id', '=', row.machineId)
+        .where('generation', '=', row.generation)
         .where('status', '=', 'provisioning')
+        .where('registration_token_expires_at', '<', at.toISOString())
         .where('deleted_at', 'is', null)
         .returning('machine_id')
         .executeTakeFirst();
@@ -448,11 +464,20 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       if (existing?.substrate === 'metal' && existing.status === 'provisioning'
         && existing.registrationTokenExpiresAt !== null
         && Date.parse(existing.registrationTokenExpiresAt) < startedAt.getTime()) {
+        let failed: boolean;
         try {
-          await failStale(existing, startedAt);
+          failed = await failStale(existing, startedAt);
         } catch (error: unknown) {
           log('stale_fail_failed', { machineId: existing.machineId, code: errorCode(error) });
           return { error: 'unavailable' };
+        }
+        // Best effort after the commit: the queued teardown stays the durable fallback.
+        if (failed && deps.drainMachineDeletions) {
+          try {
+            await deps.drainMachineDeletions(existing.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
+          } catch (error: unknown) {
+            log('stale_inline_destroy_failed', { machineId: existing.machineId, code: errorCode(error) });
+          }
         }
         existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       }
