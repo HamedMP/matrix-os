@@ -100,6 +100,18 @@ describe('public site frame data bridge', () => {
     } finally { dom.window.close(); }
   });
 
+  it('surfaces the read-only denial to the app without emitting a local change', async () => {
+    const { dom, os } = frameWithParent(site, () => ({ error: 'Public app data is read-only' }));
+    try {
+      const change = vi.fn();
+      os.onDataChange(change);
+      await expect(os.db.insert('tasks', { title: 'Ship' })).rejects.toThrow('Public app data is read-only');
+      await expect(os.writeData('theme', 'dark')).rejects.toThrow('Public app data is read-only');
+      await expect(os.collaboration.mutate({ action: 'delete', table: 'tasks', id: 'row' }, '0')).rejects.toThrow('Public app data is read-only');
+      expect(change).not.toHaveBeenCalled();
+    } finally { dom.window.close(); }
+  });
+
   it('keeps unshared-owner collaboration semantics and coarse errors', async () => {
     const { dom, requests, os } = frameWithParent(site, (request) => request.action.action === 'delete'
       ? { error: 'duplicate key value violates unique constraint' }
@@ -154,6 +166,15 @@ describe('public site page data relay', () => {
       expect(url).toBe(`/${site.id}/data`);
       expect(init).toMatchObject({ method: 'POST', redirect: 'error', credentials: 'omit' });
       expect(JSON.parse(String(init.body))).toEqual(request);
+      expect(port.close).toHaveBeenCalledOnce();
+    } finally { dom.window.close(); }
+  });
+
+  it('relays the read-only denial from the platform', async () => {
+    const { dom, send } = page(site, async () => Response.json({ error: 'Public app data is read-only' }, { status: 403 }));
+    try {
+      const port = send({ type: 'matrix-site-data', request: { kind: 'kvWrite', key: 'theme', value: 'dark' } });
+      await vi.waitFor(() => expect(port.postMessage).toHaveBeenCalledWith({ error: 'Public app data is read-only' }));
       expect(port.close).toHaveBeenCalledOnce();
     } finally { dom.window.close(); }
   });

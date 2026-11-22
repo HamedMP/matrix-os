@@ -1,3 +1,4 @@
+import * as contracts from '@matrix-os/contracts';
 import { createHmac } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -29,7 +30,15 @@ beforeAll(async () => {
   await db.executor.updateTable('public_sites').set({ access_mode: 'private_link' }).where('id', '=', privateSite.id).execute();
 });
 afterAll(async () => { await destroyTestPlatformDb(db); });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+// Exercise the retained write limits with admission simulated for those cases only.
+function allowWritesForTest() {
+  vi.spyOn(contracts, 'publicSiteDataWritesEnabled').mockReturnValue(true);
+}
 
 function routes(env: NodeJS.ProcessEnv = {}) {
   return createSitePublicRoutes({ service, edgeSecret: edge, submit: createSiteSubmissionTransport({ platformSecret: secret }),
@@ -66,14 +75,14 @@ describe('platform public site data route', () => {
     expect(transport.visitorHash(privateSite.id, '203.0.113.9')).not.toBe(capability.visitor);
   });
 
-  it('forwards writes inside the publication admission and maps gateway faults to generic errors', async () => {
+  it('maps gateway faults to generic errors', async () => {
     const forward = vi.fn(async () => Response.json({ error: 'duplicate key value violates unique constraint "tasks_pkey"' }, { status: 400 }));
     vi.stubGlobal('fetch', forward);
-    const invalid = await post(routes(), `/${publicSite.id}/data`, insert);
+    const invalid = await post(routes(), `/${publicSite.id}/data`, find);
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ error: 'Invalid change' });
     forward.mockImplementation(async () => new Response('Postgres is down at /var/run', { status: 500 }));
-    const down = await post(routes(), `/${publicSite.id}/data`, insert);
+    const down = await post(routes(), `/${publicSite.id}/data`, find);
     expect(down.status).toBe(503);
     expect(await down.json()).toEqual({ error: 'Shared data is unavailable' });
     forward.mockImplementation(async () => new Response('x'.repeat(1024 * 1024 + 4096)));
@@ -81,6 +90,7 @@ describe('platform public site data route', () => {
   });
 
   it('runs one owner\'s visitor writes concurrently instead of through the single publish admission', async () => {
+    allowWritesForTest();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const forward = vi.fn(async () => { await gate; return Response.json({ result: { id: 'row' } }); });
@@ -95,6 +105,7 @@ describe('platform public site data route', () => {
   });
 
   it('caps locked writes so slow gateways cannot hold the shared platform pool, while reads continue', async () => {
+    allowWritesForTest();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const forward = vi.fn(async () => { await gate; return Response.json({ result: { id: 'row' } }); });
@@ -161,6 +172,7 @@ describe('platform public site data route', () => {
   });
 
   it('keeps a visitor\'s budget for one site separate from another site', async () => {
+    allowWritesForTest();
     const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
     vi.stubGlobal('fetch', forward);
     const other = await service.deploy({ ownerId: 'user_tasks_host', machineId: identity.machineId, appSlug: 'second-app' }, { title: 'Second', config: {}, files });
@@ -171,6 +183,7 @@ describe('platform public site data route', () => {
   });
 
   it('rate-limits each visitor source, with a stricter write window', async () => {
+    allowWritesForTest();
     const forward = vi.fn(async () => Response.json({ result: { id: 'row' } }));
     vi.stubGlobal('fetch', forward);
     const app = routes();

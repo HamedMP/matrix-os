@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SitePublicDataCapabilitySchema } from "@matrix-os/contracts";
+import { SITE_PUBLIC_DATA_READ_ONLY, SitePublicDataCapabilitySchema, isSitePublicDataWrite, publicSiteDataWritesEnabled } from "@matrix-os/contracts";
 import { SitePublicDataError, type SitePublicDataRepository } from "./public-data-repository.js";
 import { verifySiteSignature } from "./submission-validation.js";
 
@@ -53,6 +53,9 @@ export function createSitePublicDataRoutes(options: {
       throw error;
     }
     if (!parsed.success || parsed.data.siteId !== siteId.data) return c.json({ error: "Invalid change" }, 400);
+    if (isSitePublicDataWrite(parsed.data.request) && !publicSiteDataWritesEnabled()) {
+      return c.json({ error: SITE_PUBLIC_DATA_READ_ONLY }, 403);
+    }
     if (!limiter.check(siteId.data)) return c.json({ error: "Try again later" }, 429);
     if (!options.repository) return c.json({ error: UNAVAILABLE }, 503);
     try {

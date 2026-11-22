@@ -1,4 +1,7 @@
-import { APP_BRIDGE_STORED_VALUE_PREFIX, SITE_PUBLIC_DATA_REQUEST_MAX_BYTES, type SiteRecord } from '@matrix-os/contracts';
+import {
+    APP_BRIDGE_STORED_VALUE_PREFIX, SITE_PUBLIC_DATA_READ_ONLY, SITE_PUBLIC_DATA_REQUEST_MAX_BYTES,
+    SITE_PUBLIC_DATA_SAFE_ERRORS, type SiteRecord,
+} from '@matrix-os/contracts';
 
 /**
  * 2694: public-site visitors get the owner app bridge shape (`db.*`, `readData`/`writeData`,
@@ -11,7 +14,8 @@ export function frameDataBridge(site: SiteRecord): string {
     return `,...(()=>{
 const appName=${JSON.stringify(site.appSlug)};const prefix=${JSON.stringify(APP_BRIDGE_STORED_VALUE_PREFIX)};
 const listeners=[];let flights=0;
-const coarse=error=>['Try again later','Invalid change'].includes(error)?error:'Shared data is unavailable';
+const readOnly=${JSON.stringify(SITE_PUBLIC_DATA_READ_ONLY)};
+const coarse=error=>${JSON.stringify(SITE_PUBLIC_DATA_SAFE_ERRORS)}.includes(error)?error:'Shared data is unavailable';
 const request=body=>new Promise((resolve,reject)=>{
  if(flights>=8){reject(Error('Try again later'));return}
  flights++;const channel=new MessageChannel();let timeout;
@@ -42,7 +46,11 @@ const collaborate=(action,write)=>{
  const {app:ignored,...rest}=action;void ignored;
  if(write!==writes.includes(rest.action))return Promise.reject(Error('Collaboration unavailable'));
  const pending=db(rest).then(result=>rest.action==='count'&&result?result.count:result);
- return (write?wrote(rest.table,pending):pending).catch(error=>{console.warn('[MatrixOS site] collaboration request failed',error instanceof Error?error.message:'UnknownError');throw Error('Collaboration unavailable')});
+ return (write?wrote(rest.table,pending):pending).catch(error=>{
+  if(error instanceof Error&&error.message===readOnly)throw error;
+  console.warn('[MatrixOS site] collaboration request failed',error instanceof Error?error.message:'UnknownError');
+  throw Error('Collaboration unavailable');
+ });
 };
 // One save per key in flight, like the owner bridge: queued saves collapse to the newest
 // value so an older request can never land last, and reads wait for the key's saves.
@@ -102,7 +110,8 @@ const relayData=async(port,request)=>{
  const response=await fetch('/${site.id}/data',{method:'POST',headers:{'Content-Type':'application/json'},body,credentials:'omit',redirect:'error',signal:AbortSignal.timeout(10000)});
  let reply=null;try{reply=await response.json()}catch(parseError){console.warn('[sites] data reply unreadable',parseError instanceof Error?parseError.name:'UnknownError')}
  port.postMessage(response.ok&&reply&&Object.prototype.hasOwnProperty.call(reply,'result')?{ok:true,result:reply.result}
-  :{error:response.status===429?'Try again later':response.status===400||response.status===413?'Invalid change':'Shared data is unavailable'});
+  :{error:response.status===403&&reply?.error===${JSON.stringify(SITE_PUBLIC_DATA_READ_ONLY)}?reply.error
+  :response.status===429?'Try again later':response.status===400||response.status===413?'Invalid change':'Shared data is unavailable'});
  }catch(error){console.warn('[sites] data request failed',error instanceof TypeError?'TypeError':error instanceof Error?'Error':'UnknownError');port.postMessage({error:'Shared data is unavailable'})}
  finally{dataFlights--;port.close()}
 };`;

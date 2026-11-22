@@ -1,13 +1,15 @@
 # 2694: Public visitor viewing and editing (v1)
 
-Status: approved scope (requester decision, v1 final). Linear: [ENG-490](https://linear.app/matrix-os/issue/ENG-490/redesign-share-app-popover-private-organization-public)
+Status: public rollout is read-only while visitor permissions are designed. Linear: [ENG-490](https://linear.app/matrix-os/issue/ENG-490/redesign-share-app-popover-private-organization-public)
 Builds on: [551 Public app sites](../551-public-app-sites/spec.md) (R4–R8), [2693 Share popover redesign](../2693-share-popover-redesign/spec.md)
 
 ## Goal
 
-An anonymous visitor of an app's **public** matrix.page link sees all of the app's data and uses the app fully: read, create, update and delete. The app behaves for the visitor exactly as it does for its owner through the `window.MatrixOS` bridge (`db.*`, `readData`/`writeData`, and the unshared-owner `collaboration.query`/`mutate`). Today the public frame only injects `MatrixOS.site { data, submit }`, so data-backed apps such as "Shared Tasks Lab" show an unavailable state.
+An anonymous visitor with a public matrix.page link can read the published app’s data through the app bridge. The Share popover says **“Anyone with the link can view.”**
 
-Publishing to Public is the owner's consent. The Public tab copy becomes **"Anyone with the link can view and edit"**.
+The platform checks that the site is published and public before returning `403 Public app data is read-only` for a visitor mutation. The owner gateway independently denies signed visitor mutations before calling its repository. Only `kvRead` and the database reads `find`, `findOne`, `count`, `schema` and `appInfo` pass this policy. Both checks apply to existing public links and previously loaded pages. Owner editing, organization sharing and declared site form submissions use their existing routes.
+
+The write pipeline below describes the implementation retained for a future permissions design. Re-enabling writes requires a permission check in code.
 
 ## Scope
 
@@ -15,7 +17,7 @@ In v1:
 
 - Public sites only (`accessMode = 'public'`). Private-link visitors keep 551 behaviour.
 - All tables the app registered in the owner's app registry, and the app's own key-value namespace.
-- A hidden owner-side write log of every visitor write, written in the same transaction as the write.
+- Retained write infrastructure includes an owner-side log that would record each allowed write in the same transaction.
 
 Not in v1 (explicit product decision):
 
@@ -31,8 +33,8 @@ app frame (opaque origin, sandboxed, connect-src 'none')
   └─ MatrixOS.db / readData / writeData / collaboration ── postMessage + MessagePort ─▶ matrix.page parent page (Matrix-rendered)
        └─ fetch same-origin POST /<ref>/data
             └─ Cloudflare Worker (path allowlist, Origin check, 64 KiB cap, edge proof)
-                 └─ platform POST /public/sites/:ref/data (kill switch, Zod, rate limits, public-site check)
-                      └─ HMAC capability ─▶ owner gateway POST /api/internal/sites/:siteId/data (Zod, registry scope)
+                 └─ platform POST /public/sites/:ref/data (kill switch, Zod, rate limits, public-site check, read-only policy)
+                      └─ HMAC capability ─▶ owner gateway POST /api/internal/sites/:siteId/data (Zod, read-only policy, registry scope)
                            └─ owner Postgres: the app's schema tables, public._kv for this app, public._site_visitor_writes
 ```
 
@@ -45,8 +47,8 @@ app frame (opaque origin, sandboxed, connect-src 'none')
 | Route | Auth | Public |
 | --- | --- | --- |
 | Worker `POST matrix.page/:ref/data` | Path allowlist regex. `Origin` must equal `url.origin`. No query string. Body streamed ≤ 64 KiB. Sets the edge proof, `x-matrix-sites-origin: same-origin` and `x-matrix-sites-source` (`cf-connecting-ip`). Only the target site's viewer cookie passes, as today | Yes |
-| Platform `POST /public/sites/:ref/data` | Edge proof (timing-safe, current or previous secret), `x-matrix-sites-origin: same-origin`, operator kill switch, published site in `accessMode = 'public'` with an active version, rate limits. Writes re-check the publication under a `FOR SHARE` row lock held through forwarding (not the single-flight owner publish admission, so one owner's visitors write concurrently) | Yes |
-| Gateway `POST /api/internal/sites/:siteId/data` | HMAC over `timestamp.body` with the runtime token (`verifySiteSignature`, ±30 s), same as `/submit`. Bearer auth is bypassed only for this exact path with both signature headers, behind the existing webhook rate limiter | No |
+| Platform `POST /public/sites/:ref/data` | Edge proof (timing-safe, current or previous secret), `x-matrix-sites-origin: same-origin`, operator kill switch, published site in `accessMode = 'public'` with an active version, read-only policy, rate limits. The retained write path re-checks the publication under a `FOR SHARE` row lock held through forwarding (not the single-flight owner publish admission, so one owner's visitors write concurrently) | Yes |
+| Gateway `POST /api/internal/sites/:siteId/data` | HMAC over `timestamp.body` with the runtime token (`verifySiteSignature`, ±30 s), same as `/submit`, plus the independent read-only policy. Bearer auth is bypassed only for this exact path with both signature headers, behind the existing webhook rate limiter | No |
 
 ## Input validation
 
@@ -62,7 +64,7 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 - **Postgres**: one transaction per request with `SET LOCAL statement_timeout = '5s'` and `lock_timeout = '2s'`.
 - **Responses**: the gateway rejects a serialized result over 1 MiB with `Shared data is unavailable` instead of truncating. The platform reads at most 1 MiB + 1 byte from the gateway.
 
-## Write log (owner-only)
+## Retained write log (owner-only)
 
 `public._site_visitor_writes(id bigint identity PK, site_id uuid, app_slug text, table_name text, row_id text, op text, before jsonb, after jsonb, visitor_hash text, created_at timestamptz)` in owner Postgres, index `(site_id, id)`: both retention deletes filter by `site_id` and walk entries in `id` order (identity order is insertion order, so the oldest ids are the oldest entries).
 
@@ -80,18 +82,20 @@ Shared Zod 4 schemas in `@matrix-os/contracts` (`SitePublicDataRequestSchema`, `
 | Global | 30,000/min, 32 in-flight forwards, at most 3 in-flight locked writes (each holds a platform DB connection) | Platform |
 | Requests per site at the owner | 3,000/min | Gateway, bounded map (1,000 sites) |
 
-Exceeding a limit returns `429 Try again later`.
+Exceeding a limit returns `429 Try again later`. Write-specific limits apply to the retained write pipeline.
 
 - **Operator kill switch**: platform `SITES_PUBLIC_DATA=off` (read per request; changing it needs only a Cloud Run env update, no code deploy) and gateway `MATRIX_SITES_PUBLIC_DATA=off` return a generic `503 Shared data is unavailable`. Pages and forms keep working.
-- **Per site**: switching to Private link or unpublishing stops data access through the existing 551 resolution; a write already holding the row share lock finishes first (551 R7 boundary).
+- **Per site**: switching to Private link or unpublishing stops data access through the existing 551 resolution; in the retained write pipeline, a write already holding the row share lock finishes first (551 R7 boundary).
 - **Fail closed**: any missing dependency (owner database, registry, secret, running machine) returns 503.
 
 ## Errors and SSRF
 
-- Clients see only `Shared data is unavailable`, `Try again later` or `Invalid change`. A `compareAndSwap` miss returns `{ ok: false }` like the owner bridge. Logs record error class names only, never Postgres text, paths or provider names.
+- Clients see only `Public app data is read-only`, `Shared data is unavailable`, `Try again later` or `Invalid change`. A `compareAndSwap` miss returns `{ ok: false }` like the owner bridge. Logs record error class names only, never Postgres text, paths or provider names.
 - No visitor-influenced upstream: the gateway URL comes from the machine registry (`buildCustomerVpsProxyUrl`); platform → gateway uses `redirect: 'error'` and `AbortSignal.timeout(10000)`. The Worker keeps `redirect: 'manual'` and rejects every redirect except the canonical GET site redirect.
 
 ## Failure modes
+
+The timeout-after-commit, concurrent-edit and unpublish-race cases describe the retained write pipeline.
 
 - **Owner VPS stopped or unhealthy**: 503, the frame bridge rejects and the app shows its own unavailable state. Writes are never queued (551 R8).
 - **Timeout after commit**: the visitor sees an error although the write landed; there is no idempotent replay in v1 (apps reread, as on the owner path).
@@ -115,7 +119,7 @@ Rollout order is host bundle (gateway) → platform → Worker. Each layer fails
 
 | Surface | Scope |
 | --- | --- |
-| matrix.page public runtime (desktop and phone browsers) | Visitor view and edit |
+| matrix.page public runtime (desktop and phone browsers) | Visitors can view app data. Mutation calls return a read-only error. |
 | Web Canvas, Web Desktop, Electron Desktop | Public tab copy only (shared component); live evidence per surface |
 | Web Mobile / Native Mobile owner controls | N/A: no owner publishing controls there (551 V1 limitation, 2693) |
 
@@ -125,26 +129,25 @@ Rollout order is host bundle (gateway) → platform → Worker. Each layer fails
 2. `feat(gateway): serve public site data with an owner write log`: contracts, gateway route, adapter, write log, auth exemption, wiring.
 3. `feat(sites): route public visitor data through platform and Worker`: platform route, transport, kill switch, rate limits, Worker allowlist.
 4. `feat(sites): give public visitors the app data bridge`: frame bridge, parent handler, Public tab copy.
+5. `fix(sites): keep public app data read-only`: visitor write denial at the platform and gateway and Share copy for the current rollout.
 
-Follow-up outside this stack (same ticket): a `FinnaAI/matrix-os-site` PR under `content/docs/` that explains publishing to Public lets anyone with the link view and edit the app's data, how to stop it (Private link, Unpublish), and that visitor text is untrusted; plus builder skill/knowledge notes (`skills/matrix/app-builder`, `home/agents/knowledge/app-generation.md`).
+Follow-up outside this stack (same ticket): a `FinnaAI/matrix-os-site` PR under `content/docs/` that explains publishing to Public lets anyone with the link view the app's data and how to stop public access (Private link, Unpublish); plus builder skill/knowledge notes (`skills/matrix/app-builder`, `home/agents/knowledge/app-generation.md`).
 
 ## Acceptance checks
 
-- A published public Shared Tasks Lab shows the owner's tasks to an anonymous visitor; the visitor adds, edits and deletes a task, and the owner's open app shows the change. The frame CSP still has `connect-src 'none'` and the frame makes no network requests.
-- A forged request naming another app, a table outside the app's registry, `listApps`, or an unknown action is rejected at the gateway; a private-link site's data route returns 404.
-- Every visitor write leaves exactly one log entry per row with before/after and a visitor hash and no raw IP; a failed log insert rolls the write back.
+- A published public Shared Tasks Lab shows the owner’s tasks and key-value data to an anonymous visitor. Adding, editing or deleting a task or writing a key returns a read-only error. The owner’s tasks and keys stay intact. The frame CSP still has `connect-src 'none'`.
+- The platform rejects visitor requests naming another app, `listApps`, or an unknown action. The gateway rejects reads of tables outside the app’s registry; a private-link site's data route returns 404.
+- A denied mutation leaves no write-log entry or change notification. The retained write path still has transaction, rollback and log coverage with admission simulated in tests.
 - `SITES_PUBLIC_DATA=off` returns 503 for data while the page still renders.
 - Rate-limit breaches return 429 and the maps stay at their caps. Errors never include Postgres, path or provider text.
 
 ## Integration test checkpoint
 
-- Full path (layer 3): the real Worker handler → platform public routes → HMAC capability → gateway route → owner Postgres (PGlite) with a registered app. A visitor insert lands in the app table with one write-log entry; a forced write-log failure rolls the row back and returns `Shared data is unavailable`; another app's table stays unreachable.
+- Full path (layer 3): the real Worker handler → platform public routes → HMAC capability → gateway route → owner Postgres (PGlite) with a registered app. Visitors read data from the published app only. The platform denies writes before forwarding. Separate gateway tests verify that signed writes are also denied.
 - Bridge (layer 4): the rendered frame bridge and parent relay exercised in JSDOM against the same request contract.
-- Runtime: on a disposable test VPS, publish a data-backed app to Public, then add, edit and delete a row from a signed-out browser and see it in the owner's open app (requester-captured evidence).
+- Runtime: on a disposable test VPS, publish a data-backed app to Public, then verify that a signed-out visitor sees the owner’s rows and receives an error on edit. Confirm the owner still sees the original row and can edit it in Matrix OS.
 
 ## Risks
 
-- **Vandalism**: anyone with the link can change or delete all app data. Accepted by product for v1; mitigated by rate limits, the kill switch, Private link/unpublish and the owner write log for manual recovery.
-- **Stored XSS into the owner's privileged app**: visitor text is rendered by the owner's app, which holds the full bridge. Apps built with React render text safely by default; builder guidance and a publish preflight are follow-ups.
-- **Privacy**: visitors see every row, including other visitors' entries and any personal data the owner stored. The Public tab copy states it plainly.
+- **Privacy**: public site visitors can read every row in the published app, including any personal data the owner stored.
 - **Owner database load**: bounded by rate limits, statement timeouts and paging caps.

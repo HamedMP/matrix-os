@@ -21,7 +21,7 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
 
-it('carries a visitor write from the Worker through platform and gateway into owner Postgres with its log entry', async () => {
+it('reads owner data through the Worker and blocks visitor edits before forwarding', async () => {
   const identity = { handle: 'tasks-owner', machineId: 'd3346b7a-3c41-47d5-b0c1-4209aef7b00c', runtimeSlot: 'primary' };
   const platformSecret = 'sites-scoped-platform-secret-123456789';
   const edgeSecret = 'e'.repeat(40);
@@ -40,6 +40,8 @@ it('carries a visitor write from the Worker through platform and gateway into ow
   await registry.register({ slug: 'tasks-lab', name: 'Tasks', tables: { tasks: { columns: { title: 'text' } } } });
   await registry.register({ slug: 'private-notes', name: 'Notes', tables: { notes: { columns: { body: 'text' } } } });
   await SitePublicDataRepository.bootstrap(ownerDb.kysely);
+  await sql`INSERT INTO "tasks-lab".tasks (title) VALUES ('Owner task')`.execute(ownerDb.kysely);
+  await sql`INSERT INTO public._kv (app, key, value) VALUES ('tasks-lab', 'theme', 'light')`.execute(ownerDb.kysely);
   const gateway = new Hono();
   gateway.route('/', createSitePublicDataRoutes({
     serviceSecret: buildPlatformSyncVerificationToken(identity, platformSecret, 4),
@@ -50,11 +52,12 @@ it('carries a visitor write from the Worker through platform and gateway into ow
   platform.route('/public/sites', createSitePublicRoutes({ service, edgeSecret, submit: createSiteSubmissionTransport({ platformSecret }),
     data: { transport: createSiteDataTransport({ db, platformSecret }), env: {} } }));
 
+  const forwardToGateway = vi.fn((request: Request) => gateway.request(new URL(request.url).pathname, request));
   vi.stubGlobal('fetch', async (input: Request | string, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = new URL(request.url);
     if (url.origin === 'https://platform.example.com') return platform.request(url.pathname, { method: request.method, headers: request.headers, body: await request.arrayBuffer() });
-    if (url.origin === 'https://93.184.216.34:443' || url.hostname === '93.184.216.34') return gateway.request(url.pathname, { method: request.method, headers: request.headers, body: await request.text() });
+    if (url.origin === 'https://93.184.216.34:443' || url.hostname === '93.184.216.34') return forwardToGateway(request);
     throw new TypeError('unexpected upstream');
   });
   const env = { SITES_PLATFORM_ORIGIN: 'https://platform.example.com', SITES_EDGE_SECRET: edgeSecret };
@@ -62,21 +65,24 @@ it('carries a visitor write from the Worker through platform and gateway into ow
     method: 'POST', headers: { origin: 'https://matrix.page', 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.50' }, body: JSON.stringify(body),
   }), env);
 
-  const inserted = await visit({ kind: 'db', action: { action: 'insert', table: 'tasks', data: { title: 'From a visitor' } } });
-  expect(inserted.status).toBe(200);
-  const { result } = await inserted.json() as { result: { id: string } };
-  expect((await ownerDb.db.raw('SELECT title FROM "tasks-lab".tasks WHERE id = $1', [result.id])).rows).toEqual([{ title: 'From a visitor' }]);
-  const log = (await sql<any>`SELECT app_slug, table_name, row_id, op, visitor_hash FROM public._site_visitor_writes`.execute(ownerDb.kysely)).rows;
-  expect(log).toEqual([{ app_slug: 'tasks-lab', table_name: 'tasks', row_id: result.id, op: 'insert', visitor_hash: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
-  expect(JSON.stringify(log)).not.toContain('203.0.113.50');
-
   const listed = await visit({ kind: 'db', action: { action: 'find', table: 'tasks' } });
-  expect((await listed.json() as { result: unknown[] }).result).toHaveLength(1);
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({ result: [expect.objectContaining({ title: 'Owner task' })] });
+  const key = await visit({ kind: 'kvRead', key: 'theme' });
+  expect(await key.json()).toEqual({ result: { value: 'light' } });
   expect((await visit({ kind: 'db', action: { action: 'find', table: 'notes' } })).status).toBe(400);
 
-  await sql`ALTER TABLE public._site_visitor_writes ADD CONSTRAINT reject_all CHECK (false) NOT VALID`.execute(ownerDb.kysely);
-  const failed = await visit({ kind: 'db', action: { action: 'insert', table: 'tasks', data: { title: 'Rolled back' } } });
-  expect(failed.status).toBe(503);
-  expect(await failed.json()).toEqual({ error: 'Shared data is unavailable' });
-  expect((await ownerDb.db.raw('SELECT count(*)::int AS count FROM "tasks-lab".tasks')).rows).toEqual([{ count: 1 }]);
+  forwardToGateway.mockClear();
+  for (const write of [
+    { kind: 'db', action: { action: 'insert', table: 'tasks', data: { title: 'From a visitor' } } },
+    { kind: 'kvWrite', key: 'theme', value: 'dark' },
+  ]) {
+    const denied = await visit(write);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: 'Public app data is read-only' });
+  }
+  expect(forwardToGateway).not.toHaveBeenCalled();
+  expect((await sql`SELECT title FROM "tasks-lab".tasks`.execute(ownerDb.kysely)).rows).toEqual([{ title: 'Owner task' }]);
+  expect((await sql`SELECT value FROM public._kv WHERE app = 'tasks-lab' AND key = 'theme'`.execute(ownerDb.kysely)).rows).toEqual([{ value: 'light' }]);
+  expect((await sql`SELECT id FROM public._site_visitor_writes`.execute(ownerDb.kysely)).rows).toEqual([]);
 });
