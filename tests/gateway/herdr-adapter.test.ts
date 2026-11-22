@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspaceSchema } from "@matrix-os/contracts";
 import { HERDR_TERMINAL_WORKSPACE_ID, HerdrSessionListSchema } from "@matrix-os/contracts/herdr-terminals";
 import { HerdrTransportError } from "@matrix-os/herdr-core-client/session-host";
@@ -125,6 +125,30 @@ describe("herdr adapter discovery", () => {
     down = false;
     advance(31_000);
     expect((await adapter.list()).status).toBe("ready");
+  });
+
+  it("logs a listing failure's safe kind once while it keeps failing, and again after a recovery", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { core, adapter, advance } = setup();
+      core.add("t1");
+      core.failList("busy /home/secret");
+      const failures = () => warn.mock.calls.filter((call) => call[0] === "[herdr] terminal listing failed");
+      expect((await adapter.list()).available).toBe(false);
+      advance(2_001);
+      await adapter.list();
+      expect(failures()).toEqual([["[herdr] terminal listing failed", "call_error"]]);
+      core.failList(null);
+      advance(2_001);
+      expect((await adapter.list()).available).toBe(true);
+      core.failList("busy");
+      advance(2_001);
+      await adapter.list();
+      expect(failures()).toHaveLength(2);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("retries a missing core on refresh", async () => {

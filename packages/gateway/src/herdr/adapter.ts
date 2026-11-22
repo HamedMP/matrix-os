@@ -9,7 +9,8 @@ import {
   HERDR_SESSION_LIST_MAX, HERDR_TERMINAL_WORKSPACE_ID,
   type HerdrAvailability, type HerdrSession, type HerdrSessionList,
 } from "@matrix-os/contracts/herdr-terminals";
-import { HcCallError, type HcSocket } from "@matrix-os/herdr-core-client/client";
+import { HcCallError, HcProtocolError, type HcSocket } from "@matrix-os/herdr-core-client/client";
+import { ZodError } from "zod/v4";
 import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
 import { createHerdrSessionHost, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
@@ -74,6 +75,19 @@ function displayName(title: string): string {
   return SafeDisplayStringSchema.safeParse(name).success ? name : "Herdr terminal";
 }
 
+/**
+ * A fixed word for why listing failed. What a core says (its error kind or
+ * message) is untrusted and never logged.
+ */
+function listingFailureKind(error: unknown): string {
+  if (error instanceof HcCallError) return "call_error";
+  if (error instanceof HcProtocolError) return "protocol_error";
+  if (error instanceof ZodError) return "invalid_reply";
+  if (error instanceof Error && error.message === "local terminal call timed out") return "timeout";
+  if (error instanceof Error && error.message === "herdr sessions are not reachable yet") return "backing_off";
+  return "unavailable";
+}
+
 /** The last `lines` rows of history; none for 0. */
 function trimHistory(rows: string[], lines: number): string[] {
   return lines > 0 ? rows.slice(-lines) : [];
@@ -108,6 +122,8 @@ export function createHerdrAdapter(options: {
   // One entry per terminal: the deepest recent read, trimmed for shallower ones.
   const captures = new Map<string, { at: number; lines: number; screen: Promise<HerdrScreen> }>();
   let cache: { at: number; value: HerdrSessionList } | null = null;
+  // The last listing failure logged; logged again only when it changes or after a success.
+  let loggedFailure: string | null = null;
   let listing: Promise<HerdrSessionList> | null = null;
   let closed = false;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -191,10 +207,15 @@ export function createHerdrAdapter(options: {
         };
       });
       for (const id of [...reported.keys()]) if (!live.has(id)) reported.delete(id);
+      loggedFailure = null;
       return { available: true, status: "ready", sessions };
     } catch (error: unknown) {
-      // The host logs the failure's kind; the reason never reaches clients.
-      void error;
+      // A fixed kind, once per run of the same failure; the reason never reaches clients.
+      const kind = listingFailureKind(error);
+      if (kind !== loggedFailure) {
+        loggedFailure = kind;
+        console.warn("[herdr] terminal listing failed", kind);
+      }
       return unavailable(coarse(host.status()));
     }
   }
