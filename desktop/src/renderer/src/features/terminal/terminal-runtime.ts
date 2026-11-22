@@ -32,14 +32,21 @@ export function getAttachManager(): AttachManager {
   return manager;
 }
 
+// The panes' saved screens, kept past each pane so a finished terminal (which
+// cannot be attached again) still shows its output when its tab comes back.
+// Least recently used first out.
+const PANE_SCREENS_CAP = 16;
+const paneScreens = new Map<string, string>();
+
 /**
  * A manager of its own for one pane of the Terminal window (spec 2706), so
  * every visible pane streams live. The window bounds how many exist (one per
  * pane, at most 16 per tab) and disposes each with its pane.
  */
 export function createPaneAttachManager(): AttachManager {
-  return new AttachManager({ createSocket, bufferCacheCap: 1 });
+  return new AttachManager({ createSocket, sharedBuffers: paneScreens, bufferCacheCap: PANE_SCREENS_CAP });
 }
+
 
 export function resetAttachManager(): void {
   manager?.dispose();
