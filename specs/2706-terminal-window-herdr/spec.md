@@ -81,31 +81,48 @@ bottom status bar.
 
 ### Sidebar
 
-- Top: machines (This Mac, ssh machines, then Matrix computers), each
-  foldable, with a `+` for a new terminal there. Fold state persists per
-  machine. **Add machine…** sits at the foot beside Settings (see Ssh machines).
-- Below: terminals by status, in this order: **Needs you** (blocked or error),
-  **Done** (finished and not yet seen), **Working**, **Idle**. Every section
-  folds and shows a count when folded. A second view groups by machine.
+- **Spaces** (top), as Herdr's: an **All** row (every terminal; the state with
+  no filter), then each machine (This Mac, ssh machines, then Matrix computers)
+  as a compact muted header: icon, name, what it is and whether it can be used
+  now, then `+`, a status dot and a fold chevron. Under it, that machine's
+  spaces (projects or workspaces) as compact rows with a colored rounded letter
+  avatar, the name and a terminal count. Fold state persists per machine.
+  Unavailable machines fold into **Unavailable (n)** at the end; the list
+  scrolls on its own past 40% of the window. **Add machine…** sits at the foot
+  beside Settings (see Ssh machines).
+- Choosing a machine or a space filters the Agents list and the tab bar (and
+  Ctrl+Tab) to it; the chosen row is highlighted, and **All** clears it.
+- A space's menu (hover `…` or right-click) renames it, picks one of eight
+  colors, picks an icon in place of the letter, moves it up or down, or resets
+  its look; spaces also reorder by drag. This dressing is kept per viewer and
+  never renames the project.
+- **Agents** (below): **Pinned** first, then **Needs you** (blocked or error),
+  **Done** (finished and not yet seen), **Working**, **Idle**, each foldable
+  with a count (needs-you and working in amber, done green, idle grey). A
+  second view groups by machine; there, and under a machine filter, rows are
+  inset and do not repeat the machine's name. Agents is the only list of
+  terminals: Spaces shows machines and their spaces, never terminals again.
 - Done means finished since the person last looked. Opening the terminal marks
   it seen; seen is shared across the person's windows and devices.
-- A row shows the agent icon, name (tab name or agent title), machine tag for
-  remote terminals, time since the last change, and a status mark (spinner,
-  "Needs you" pill, filled dot, ring). A parent agent folds its sub-agents and
-  takes the most urgent status among them.
+- A row shows the agent icon, the project in bold then " · title" muted, the
+  time since the last change right-aligned in a fixed column, and a status mark
+  (spinner, amber dot for needs you, filled dot, ring) in a fixed last column,
+  so times and marks line up; long names truncate before the time. The second
+  line names the machine (only where machines mix), what runs there, and a
+  "Needs you" pill. Hover gives the row a rounded tint and shows pin and close
+  in place of the time. Sub-agents hang from their parent on connector lines,
+  folded with a chevron; the parent takes their most urgent status. Child
+  processes and a muted mark follow once herdr-core reports them.
 - Below 160 px the sidebar becomes a numbered rail; Cmd+B toggles it.
-- Each machine's fold lists that machine's terminals (same rows, marks and
-  times). A computer row leads with its name (handle), the kind below it.
-  Unavailable machines fold into **Unavailable (n)** at the end. The machines
-  list scrolls on its own past a third of the window, and machines other than
-  this Mac and the one on screen start folded, so the status list stays in view.
 
 ### Shortcuts (macOS)
 
-Cmd+N (and Cmd+T) new terminal, Cmd+W close the focused pane (it ends that
-pane's terminal, asking first while a program runs, and the pane beside it
-takes focus), Cmd+1..9 select, Cmd+] / Cmd+[ next and
-previous terminal in sidebar order, Ctrl+Tab and Ctrl+Shift+Tab cycle,
+Cmd+N (and Cmd+T) new terminal, Cmd+W close only the focused pane (it ends
+that pane's terminal, asking first while a program runs; the tab and its other
+panes stay and the pane beside it takes focus; closing the last pane closes the
+tab), Cmd+1..9 select, Cmd+] / Cmd+[ next and
+previous terminal in sidebar order, Ctrl+Tab and Ctrl+Shift+Tab cycle the tab
+bar's open tabs (in bar order, wrapping),
 Cmd+D split right, Cmd+Shift+D split down, Cmd+Shift+W hide pane (its terminal
 keeps running),
 Cmd+Shift+Enter zoom pane, Cmd+Alt+arrows focus pane, Cmd+Alt+Shift+arrows swap
