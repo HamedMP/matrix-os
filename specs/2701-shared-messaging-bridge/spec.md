@@ -283,14 +283,17 @@ login field values or message data are stored on the platform.
 - Sync: one loop per owner, one request in flight, timeline limit 50 events per room per
   batch, limited-timeline backfill capped at 10 pages of 100 events per room, bodies
   truncated to the contract maximum.
-- Platform pending logins: Postgres rows, cap 16 per owner, 10-minute expiry, expired rows
-  deleted on each start; login starts are rate limited per owner from the same table.
+- Platform pending logins: Postgres rows, cap 16 per owner, 10-minute expiry; expired rows
+  are claimed when read and by a 60-second sweep on every instance, and cancelled at the
+  bridge once. Login starts are rate limited per owner from `messaging_bridge_login_starts`.
 - Message retention in owner Postgres: unlimited in phase 0; measured and reported.
 - Bridge host: homeserver retention purge after 7 days; media cache capped; nightly database
   backup with 7-day rotation.
 - Rate limits: link start 5 per owner per 10 minutes; send 30 per owner per minute.
 
 ## Phase 0 measurements to record (`spike-results.md`)
+
+Live verification so far: [spike-results.md](spike-results.md).
 
 1. Bridge host memory and disk with 1 owner and 3 linked accounts, idle and after 24 hours.
 2. Time from scan or code entry to Connected, per network.
