@@ -171,3 +171,16 @@ it("scopes a new-chat request to its project and ends it on explicit Board navig
   act(() => { openProjectBoard("beta", "Beta"); });
   expect(screen.queryByRole("textbox", { name: "Project draft" })).toBeNull();
 });
+
+it("keeps the composer open when the same project is refreshed, for example after saving its description", async () => {
+  const { useProjectChatLauncher } = await import("@desktop/renderer/src/lib/project-chat");
+  connect();
+  useProjectView.getState().setView("alpha", "board");
+  const view = renderLanding();
+  act(() => { useProjectChatLauncher.getState().requestComposer("alpha"); });
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  view.rerender(<ProjectLanding project={{ ...project, description: "Updated" }}><textarea aria-label="Project draft" /></ProjectLanding>);
+  expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
+  expect(useProjectChatLauncher.getState().composerRequest).not.toBeNull();
+  act(() => { useProjectChatLauncher.getState().consumeComposer("alpha"); });
+});

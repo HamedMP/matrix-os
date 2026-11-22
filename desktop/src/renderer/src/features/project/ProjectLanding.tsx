@@ -37,7 +37,10 @@ export function ProjectLanding({ project, children, showMetadata = true, records
     endComposerRequest(project);
     useProjectView.getState().setView(project.slug, next);
   };
-  useEffect(() => () => endComposerRequest(project), [project]);
+  // Keyed to the project's identity: a refreshed project object (say, after saving its description) is not leaving it.
+  const projectSlug = project.slug;
+  const projectId = project.id;
+  useEffect(() => () => endComposerRequest({ slug: projectSlug, id: projectId }), [projectSlug, projectId]);
   const board = showMetadata && view === "board";
   const list = conversationListState(records, useProjectLandingChats(project, client, eventSource, active && !board));
   const actions = useProjectActions(project);
