@@ -221,7 +221,10 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     case 'failed': {
       // A computer that once ran is not retried from onboarding: the retry
       // would retire its server. Only a first build that never registered is.
-      const retryable = liveMachine.attempt < maxProvisionAttempts && neverRegistered(liveMachine);
+      // A failed free metal row's attempt count binds only the next free build;
+      // an owner now on a paid plan rebuilds on the paid path with its own count.
+      const paidRebuild = liveMachine.substrate === 'metal' && entitlement?.source !== 'free' && access.runtimeProxyAllowed;
+      const retryable = (paidRebuild || liveMachine.attempt < maxProvisionAttempts) && neverRegistered(liveMachine);
       return {
         phase: 'provisioning_failed',
         detail: retryable
