@@ -3,6 +3,7 @@ import {
   chatAccountLabel,
   deriveChatAppsSection,
   deriveThreadEntries,
+  mergeRefreshedConversations,
   mergeRefreshedMessages,
   filterConversations,
   linkFailureMessage,
@@ -126,6 +127,19 @@ describe("thread helpers", () => {
     expect(mergeRefreshedMessages(loaded, { items: [m2, m3], nextCursor: "c-page" })).toEqual({ items: [m1, m2, m3], nextCursor: "c-old" });
     // A page that reaches the start of history has no cursor and still merges.
     expect(mergeRefreshedMessages(loaded, { items: [m3] }).items).toEqual([m1, m2, m3]);
+  });
+
+  it("replaces loaded conversations and their cursor when a refreshed page one does not reach them", () => {
+    const old = Array.from({ length: 3 }, (_unused, index) => conversation({ roomId: `!old${index}:x`, lastEventAt: `2026-11-22T09:0${index}:00.000Z` }));
+    const fresh = Array.from({ length: 2 }, (_unused, index) => conversation({ roomId: `!new${index}:x`, lastEventAt: `2026-11-22T11:0${index}:00.000Z` }));
+    // More conversations became active than page one holds: reset, then page again from its cursor.
+    expect(mergeRefreshedConversations({ items: old, nextCursor: "3" }, { items: fresh, nextCursor: "2" })).toEqual({ items: fresh, nextCursor: "2" });
+    // A fully loaded list (no cursor) gets its cursor back instead of losing the gap.
+    expect(mergeRefreshedConversations({ items: old }, { items: fresh, nextCursor: "2" })).toEqual({ items: fresh, nextCursor: "2" });
+    // Overlapping page one: merged, and the cursor of later loaded pages is kept.
+    const overlapping = mergeRefreshedConversations({ items: old, nextCursor: "3" }, { items: [fresh[0]!, old[2]!] });
+    expect(overlapping.items.map((item) => item.roomId)).toEqual(["!new0:x", "!old2:x", "!old1:x", "!old0:x"]);
+    expect(overlapping.nextCursor).toBe("3");
   });
 
   it("offers retry only for outgoing Matrix sends the server recorded as failed", () => {

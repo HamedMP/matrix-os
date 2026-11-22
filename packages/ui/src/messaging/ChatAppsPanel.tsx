@@ -163,37 +163,37 @@ function ChatAppsContent({
         </div>
       ) : null}
       {view.kind === "unavailable" ? (
-        <>
-          <div role="alert" style={s.alert}>
-            <span>Chat apps are unavailable right now. Your saved messages are safe.</span>
-            <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
-          </div>
-          {/* Saved conversations stay readable while the bridge is down. */}
-          <ChatInbox client={client} networks={[...MESSAGING_BRIDGE_NETWORKS]} subscribe={subscribe} connected={connected} />
-        </>
+        <div role="alert" style={s.alert}>
+          <span>Chat apps are unavailable right now. Your saved messages are safe.</span>
+          <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
+        </div>
       ) : null}
       {view.kind === "ready" ? (
-        <>
-          <ul aria-label="Chat apps" style={{ ...s.card, listStyle: "none", margin: 0, padding: 0 }}>
-            {view.rows.map((row, index) => (
-              <NetworkRow
-                key={row.network}
-                row={row}
-                first={index === 0}
-                onLink={() => setLinking((prev) => ({ network: row.network, attempt: (prev?.attempt ?? 0) + 1 }))}
-                onRemove={(account) => setRemoving({ network: row.network, account, busy: false, error: null })}
-              />
-            ))}
-          </ul>
-          {/* Conversations stay readable after their account is removed. */}
-          <ChatInbox
-            client={client}
-            networks={view.rows.map((row) => row.network)}
-            subscribe={subscribe}
-            connected={connected}
-            hasAccounts={view.hasAccounts}
-          />
-        </>
+        <ul aria-label="Chat apps" style={{ ...s.card, listStyle: "none", margin: 0, padding: 0 }}>
+          {view.rows.map((row, index) => (
+            <NetworkRow
+              key={row.network}
+              row={row}
+              first={index === 0}
+              onLink={() => setLinking((prev) => ({ network: row.network, attempt: (prev?.attempt ?? 0) + 1 }))}
+              onRemove={(account) => setRemoving({ network: row.network, account, busy: false, error: null })}
+            />
+          ))}
+        </ul>
+      ) : null}
+      {/*
+        One inbox stays mounted across ready, outage and failed-refresh states, so an open
+        conversation, drafts and failed sends survive a status change. Saved conversations
+        stay readable after their account is removed and while the bridge is down.
+      */}
+      {view.kind === "ready" || view.kind === "unavailable" || view.kind === "error" ? (
+        <ChatInbox
+          client={client}
+          networks={view.kind === "ready" ? view.rows.map((row) => row.network) : [...MESSAGING_BRIDGE_NETWORKS]}
+          subscribe={subscribe}
+          connected={connected}
+          hasAccounts={view.kind === "ready" ? view.hasAccounts : true}
+        />
       ) : null}
       {linking ? (
         <LinkAccountDialog

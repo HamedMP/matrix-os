@@ -119,6 +119,26 @@ export function mergeConversations(
   );
 }
 
+export interface ConversationPage {
+  items: MessagingBridgeConversation[];
+  nextCursor?: string;
+}
+
+/**
+ * Merges a refreshed page one into loaded conversations. When page one does
+ * not reach the loaded conversations (more became active than one page
+ * holds), keeping the old cursor would hide the ones in between, so the list
+ * and its cursor are replaced together and later pages load again from there.
+ */
+export function mergeRefreshedConversations(loaded: ConversationPage, page: ConversationPage): ConversationPage {
+  if (loaded.items.length === 0) return page;
+  const loadedRooms = new Set(loaded.items.map((item) => item.roomId));
+  if (page.nextCursor && !page.items.some((item) => loadedRooms.has(item.roomId))) return page;
+  const items = mergeConversations(loaded.items, page.items);
+  const nextCursor = loaded.items.length > page.items.length ? loaded.nextCursor : page.nextCursor;
+  return { items, ...(nextCursor ? { nextCursor } : {}) };
+}
+
 /**
  * Stable identity of a server message. Messages sent from Matrix carry a
  * `clientTxnId` through every delivery state (the `eventId` only arrives once

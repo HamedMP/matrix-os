@@ -11,6 +11,7 @@ import {
   deriveThreadEntries,
   mergeConversations,
   mergeMessages,
+  mergeRefreshedConversations,
   mergeRefreshedMessages,
   type ConversationFilter,
   type PendingSend,
@@ -75,14 +76,14 @@ export function ChatInbox({ client, networks, subscribe, connected = true, hasAc
         controller.signal,
       );
       if (listRequest.current.generation !== generation) return;
-      setList((prev) => ({
-        items: mode === "replace" ? page.items : mergeConversations(prev.items, page.items),
-        // A refresh re-reads page one only; keep the cursor of pages already loaded beyond it.
-        nextCursor: mode === "refresh" && prev.items.length > page.items.length ? prev.nextCursor : page.nextCursor,
-        loading: false,
-        loadingMore: false,
-        error: null,
-      }));
+      setList((prev) => {
+        const merged = mode === "replace"
+          ? page
+          : mode === "refresh"
+            ? mergeRefreshedConversations(prev, page)
+            : { items: mergeConversations(prev.items, page.items), nextCursor: page.nextCursor };
+        return { items: merged.items, nextCursor: merged.nextCursor, loading: false, loadingMore: false, error: null };
+      });
     } catch (error: unknown) {
       if (isBridgeAbort(error) || listRequest.current.generation !== generation) return;
       setList((prev) => ({ ...prev, loading: false, loadingMore: false, error: bridgeErrorText(error) }));

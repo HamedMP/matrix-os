@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChatAppsPanel } from "../../../packages/ui/src/messaging/ChatAppsPanel";
 import type { MessagingBridgeSubscribe } from "../../../packages/ui/src/messaging/use-bridge-changes";
-import { conversation, conversations, deferred, fakeGateway, readyNoAccounts, readyWithAccounts, status } from "./fixtures";
+import { conversation, conversations, deferred, fakeGateway, messages, readyNoAccounts, readyWithAccounts, status } from "./fixtures";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
@@ -174,6 +174,31 @@ describe("chat apps panel", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(statusCalls).toBe(3);
     expect(listCalls).toBe(3);
+  });
+
+  it("keeps the open conversation and its draft when the bridge goes down and comes back", async () => {
+    let current = readyWithAccounts();
+    const room = "!saved:bridge.example";
+    const gateway = fakeGateway({
+      [STATUS]: () => ({ body: current }),
+      [CONVERSATIONS]: () => ({ body: conversations([conversation({ roomId: room, displayName: "Saved chat" })]) }),
+      [`GET ${CONVERSATIONS.slice(4)}/${encodeURIComponent(room)}/messages`]: () => ({ body: messages([]) }),
+    });
+    const ws = socket();
+    render(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Saved chat/ }));
+    const composer = (await screen.findByLabelText("Message Saved chat")) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "half-written reply" } });
+
+    current = status({ availability: "unavailable", networks: [] });
+    ws.emit({ type: "messages:changed", scope: "accounts", updatedAt: "2026-11-22T10:00:00.000Z" });
+    expect(await screen.findByText(/Chat apps are unavailable right now/)).toBeTruthy();
+    expect((screen.getByLabelText("Message Saved chat") as HTMLTextAreaElement).value).toBe("half-written reply");
+
+    current = readyWithAccounts();
+    ws.emit({ type: "messages:changed", scope: "accounts", updatedAt: "2026-11-22T10:01:00.000Z" });
+    await waitFor(() => expect(screen.queryByText(/Chat apps are unavailable right now/)).toBeNull());
+    expect((screen.getByLabelText("Message Saved chat") as HTMLTextAreaElement).value).toBe("half-written reply");
   });
 
   it("asks for a computer connection when the surface has no transport", () => {
