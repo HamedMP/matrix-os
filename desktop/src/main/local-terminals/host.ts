@@ -4,11 +4,12 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import type { LocalTerminalAgent, LocalTerminalFact } from "../../shared/local-terminals";
+import type { LocalMachine, LocalTerminalAgent, LocalTerminalFact } from "../../shared/local-terminals";
+import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import { createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
@@ -214,8 +215,13 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      */
     async create(
       size: { cols: number; rows: number },
-      launch: { agent?: LocalTerminalAgent; folder?: string } = {},
+      launch: { agent?: LocalTerminalAgent; folder?: string; machine?: string } = {},
     ): Promise<string | null> {
+      if (launch.machine) {
+        // That machine's own shell, in its home (spec 2706 layer 7). Its address is `machine/t7`.
+        const id = await sessions.run({ on: launch.machine, size, no_parent: true, no_notify: true, wait: false });
+        return id && !id.includes("/") ? `${launch.machine}/${id}` : id;
+      }
       const cwd = launch.folder ? await folderUnderHome(launch.folder) : options.home;
       const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
       return sessions.run({
@@ -262,6 +268,41 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       const labels = fact.finished ? { [FINISHED_SEEN_LABEL]: "1" } : { [HERDR_SEEN_LABEL]: String(fact.turn) };
       const core = await ensure();
       await core.call("terminal.label", { terminal: id, labels });
+    },
+
+    /**
+     * A terminal on this device running `ssh <target>`: where the person checks
+     * a host key they have not accepted yet, or types a password, themselves.
+     * The target was validated (never an option); `--` ends ssh's options anyway.
+     */
+    sshLogin(target: string, size: { cols: number; rows: number }): Promise<string | null> {
+      const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
+      return sessions.run({
+        argv: ["/usr/bin/env", ...unset, "ssh", "--", target],
+        cwd: options.home,
+        env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
+        labels: { [TERMINAL_TITLE_LABEL]: `ssh ${target}`.slice(0, 64) },
+        size, no_parent: true, no_notify: true, wait: false,
+      });
+    },
+
+    /** Machines this core reaches over ssh, with their line state now. */
+    async machines(): Promise<LocalMachine[]> {
+      return listMachines(await ensure());
+    },
+
+    async addMachine(input: { target: string; name?: string }): Promise<AddMachineResult> {
+      return addMachine(await ensure(), input);
+    },
+
+    /** Forgets a machine; its terminals keep running there. */
+    async removeMachine(name: string): Promise<void> {
+      await (await ensure()).call("machine.rm", { machine: name });
+    },
+
+    /** Dials a machine now (after a login in a terminal) instead of at its next retry. */
+    async connectMachine(name: string): Promise<void> {
+      await (await ensure()).call("machine.connect", { machine: name }, 30_000);
     },
 
     /** Removes a finished terminal from the list; the core refuses a live one. */

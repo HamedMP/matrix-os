@@ -19,7 +19,7 @@ const iconButton = "no-drag flex size-6 shrink-0 items-center justify-center rou
 export interface SidebarMachine {
   id: string;
   name: string;
-  kind: "local" | "computer";
+  kind: "local" | "ssh" | "computer";
   detail: string;
   dotColor?: string;
   /** Terminals can be listed and started there now. */
@@ -31,6 +31,8 @@ export interface SidebarMachine {
   creating?: boolean;
   /** Shown under the machine: a failure, a retry or a sign-in hand-off. */
   status?: ReactNode;
+  /** An ssh machine can be forgotten; its terminals keep running there. */
+  onRemove?(): void;
 }
 
 /** Agents shown only for one machine, or one space on it (Herdr's spaces; a computer opened as its own tab). */
@@ -80,6 +82,8 @@ export interface TerminalWindowSidebarProps {
   onTogglePin(key: string): void;
   /** A row's close: ends the terminal, asking first while a program runs. */
   onCloseTerminal(key: string): void;
+  /** Opens Add machine… (an ssh machine for this device's core). */
+  onAddMachine?(): void;
 }
 
 /** A machine's projects (spaces under it) with how many terminals each has, the most used first. */
@@ -106,6 +110,13 @@ export function filterRows(rows: readonly TerminalSidebarRow[], filter: SidebarF
 function machineEntry(machine: SidebarMachine, props: TerminalWindowSidebarProps, local?: ReactNode): SpaceEntry {
   const { filter, onFilter } = props;
   const projects = machine.available ? orderedSpaces(machineSpaces(props.rows, machine.id), machine.id, props.spaceOrder[machine.id]) : [];
+  const remove = machine.onRemove ? (
+    <button type="button" aria-label={`Remove ${machine.name}`} title="Remove machine" onClick={machine.onRemove}
+      className="no-drag flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100"
+      style={secondaryText}>
+      <X size={11} aria-hidden="true" />
+    </button>
+  ) : null;
   const add = local ?? (machine.onCreate && machine.available ? (
     <button type="button" aria-label={`New terminal on ${machine.name}`} title="New terminal" disabled={machine.creating}
       onClick={machine.onCreate} className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
@@ -138,7 +149,7 @@ function machineEntry(machine: SidebarMachine, props: TerminalWindowSidebarProps
     count: props.rows.filter((row) => row.machine.id === machine.id).length,
     detail: machine.detail,
     ...(machine.dotColor ? { dotColor: machine.dotColor } : {}),
-    actions: add,
+    actions: <>{remove}{add}</>,
     selected: filter?.machineId === machine.id && !filter.space,
     available: machine.available,
     onSelect: () => onFilter({ machineId: machine.id }),
@@ -224,6 +235,16 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
       <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
       {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
+      {props.onAddMachine ? (
+        <ul aria-label="Add machine"><li>
+          <button type="button" onClick={props.onAddMachine}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
+            style={secondaryText}>
+            <Plus size={12} aria-hidden="true" className="shrink-0" />
+            Add machine…
+          </button>
+        </li></ul>
+      ) : null}
     </div>
   );
 }

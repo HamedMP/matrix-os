@@ -243,6 +243,21 @@ describe("local terminal host against a scripted core", () => {
     await expect(host.seen("t9")).rejects.toThrow("not listed");
   });
 
+  // Spec 2706 layer 7.
+  it("starts a shell on an added machine and an ssh login terminal with a fixed argv", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    let next = 3;
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.run") { runs.push(call.params); core.reply(call.id, { result: { address: runs.length === 1 ? `t${next++}` : `t${next++}` } }); }
+    });
+    expect(await host.create({ cols: 80, rows: 24 }, { machine: "vps" })).toBe("vps/t3");
+    expect(runs[0]).toEqual({ on: "vps", size: { cols: 80, rows: 24 }, no_parent: true, no_notify: true, wait: false });
+    expect(await host.sshLogin("can@10.0.0.7:2222", { cols: 80, rows: 24 })).toBe("t4");
+    expect(runs[1]).toMatchObject({ argv: expect.arrayContaining(["ssh", "--", "can@10.0.0.7:2222"]), labels: { "matrix.title": "ssh can@10.0.0.7:2222" } });
+    const argv = runs[1]!.argv as string[];
+    expect(argv.slice(argv.indexOf("ssh"))).toEqual(["ssh", "--", "can@10.0.0.7:2222"]);
+  });
+
   it("removes a finished terminal with herdr-core's terminal.rm", async () => {
     const calls: unknown[] = [];
     const { host } = start((core, call) => {

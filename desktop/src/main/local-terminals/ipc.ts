@@ -39,15 +39,37 @@ export function registerLocalTerminalIpc(
       try { return { status: "ready", terminals: await host.list() }; }
       catch (error: unknown) { logFailure("local-terminal:list", error); return unavailable(); }
     },
-    "local-terminal:create": async ({ cols, rows, agent, folder }) => {
+    "local-terminal:create": async ({ cols, rows, agent, folder, machine }) => {
       try {
-        const id = await host.create({ cols, rows }, { ...(agent ? { agent } : {}), ...(folder ? { folder } : {}) });
+        const id = await host.create({ cols, rows }, { ...(agent ? { agent } : {}), ...(folder ? { folder } : {}), ...(machine ? { machine } : {}) });
         return id ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:create", error); return unavailable(); }
     },
     "local-terminal:kill": async ({ id }) => {
       try { await host.kill(id); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:kill", error); return { ok: false }; }
+    },
+    "local-terminal:machines": async () => {
+      try { return { status: "ready", machines: await host.machines() }; }
+      catch (error: unknown) { logFailure("local-terminal:machines", error); return unavailable(); }
+    },
+    "local-terminal:machine-add": async ({ target, name }) => {
+      try { return await host.addMachine({ target, ...(name ? { name } : {}) }); }
+      catch (error: unknown) { logFailure("local-terminal:machine-add", error); return { ok: false, reason: "unavailable" }; }
+    },
+    "local-terminal:machine-remove": async ({ name }) => {
+      try { await host.removeMachine(name); return { ok: true }; }
+      catch (error: unknown) { logFailure("local-terminal:machine-remove", error); return { ok: false }; }
+    },
+    "local-terminal:machine-connect": async ({ name }) => {
+      try { await host.connectMachine(name); return { ok: true }; }
+      catch (error: unknown) { logFailure("local-terminal:machine-connect", error); return { ok: false }; }
+    },
+    "local-terminal:ssh-login": async ({ target, cols, rows }) => {
+      try {
+        const id = await host.sshLogin(target, { cols, rows });
+        return id && !id.includes("/") ? { status: "ready", id } : { status: "rate-limited" };
+      } catch (error: unknown) { logFailure("local-terminal:ssh-login", error); return unavailable(); }
     },
     "local-terminal:remove": async ({ id }) => {
       try { await host.remove(id); return { ok: true }; }

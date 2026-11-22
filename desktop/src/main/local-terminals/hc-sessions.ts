@@ -4,7 +4,7 @@
 // Herdr session host are both built on this (spec 651 FR-016).
 import { z } from "zod/v4";
 import {
-  LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
+  LOCAL_TERMINAL_ADDRESS_PATTERN, LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
 } from "../../shared/local-terminals";
 import type { HcConnection, HcStream } from "./hc-client";
 
@@ -31,7 +31,8 @@ const ListedTerminalSchema = z.object({
 /** The label a rename sets; it wins over the program's own title. */
 export const TERMINAL_TITLE_LABEL = "matrix.title";
 const PutResultSchema = z.object({ path: z.string().min(1).max(4096) });
-const RanSchema = z.object({ address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN) });
+// A terminal started on an added machine has that machine's address (`vps/t7`).
+const RanSchema = z.object({ address: z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN) });
 // Control characters and bidirectional overrides can disguise a title.
 const UNSAFE_TITLE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
