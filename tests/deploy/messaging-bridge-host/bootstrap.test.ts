@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -377,5 +378,141 @@ describe("bootstrap.sh secret handling", () => {
     expect(script).toContain("umask 077");
     expect(script).not.toMatch(/set -[a-z]*x/);
     expect(statSync(BOOTSTRAP).mode & 0o111).not.toBe(0);
+  });
+});
+
+describe("bootstrap.sh Telegram credential replacement", () => {
+  const NEW_ID = "7654321";
+  const NEW_HASH = "fedcba9876543210fedcba9876543210";
+
+  it("refuses Telegram credentials that differ from the saved pair and changes nothing", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      const before = readFileSync(join(state, "bridges/telegram/config.yaml"), "utf8");
+      for (const input of [{ MBH_TELEGRAM_API_ID: NEW_ID }, { MBH_TELEGRAM_API_HASH: NEW_HASH }]) {
+        const run = runBootstrap(state, input);
+        expect(run.status, JSON.stringify(input)).not.toBe(0);
+        expect(run.stderr).toContain("secrets/telegram-api-id");
+        expect(run.stderr).not.toContain(NEW_HASH);
+      }
+      expect(readSecret(state, "telegram-api-id")).toBe(TEST_INPUTS.MBH_TELEGRAM_API_ID);
+      expect(readSecret(state, "telegram-api-hash")).toBe(TEST_INPUTS.MBH_TELEGRAM_API_HASH);
+      expect(readFileSync(join(state, "bridges/telegram/config.yaml"), "utf8")).toBe(before);
+    } finally {
+      removeDir(state);
+    }
+  });
+
+  it("replaces both credentials after both secrets are deleted and marks only the Telegram bridge for restart", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      // Simulate a host whose services already applied the first render.
+      rmSync(join(state, "pending-restart"), { recursive: true, force: true });
+      const others = Object.fromEntries(
+        readdirSync(join(state, "secrets"))
+          .filter((name) => !name.startsWith("telegram-api-"))
+          .map((name) => [name, readSecret(state, name)]),
+      );
+      unlinkSync(join(state, "secrets", "telegram-api-id"));
+      unlinkSync(join(state, "secrets", "telegram-api-hash"));
+
+      const run = runBootstrap(state, { MBH_TELEGRAM_API_ID: NEW_ID, MBH_TELEGRAM_API_HASH: NEW_HASH });
+      expect(run.status).toBe(0);
+      expect(run.stdout).not.toContain(NEW_HASH);
+
+      const telegram = readYaml<BridgeConfig>(join(state, "bridges/telegram/config.yaml"));
+      expect(telegram.network.api_id).toBe(Number(NEW_ID));
+      expect(telegram.network.api_hash).toBe(NEW_HASH);
+      expect(readSecret(state, "telegram-api-id")).toBe(NEW_ID);
+      expect(readSecret(state, "telegram-api-hash")).toBe(NEW_HASH);
+      for (const [name, value] of Object.entries(others)) expect(readSecret(state, name), name).toBe(value);
+      expect(readdirSync(join(state, "pending-restart"))).toEqual(["mautrix-telegram"]);
+
+      // A later run without inputs keeps the replaced pair.
+      const rerun = runBootstrap(state, { MBH_TELEGRAM_API_ID: undefined, MBH_TELEGRAM_API_HASH: undefined });
+      expect(rerun.status).toBe(0);
+      expect(readYaml<BridgeConfig>(join(state, "bridges/telegram/config.yaml")).network.api_hash).toBe(NEW_HASH);
+    } finally {
+      removeDir(state);
+    }
+  });
+});
+
+describe("bootstrap.sh pending restarts", () => {
+  function fakeDocker(dir: string): string {
+    const bin = join(dir, "fake-bin");
+    mkdirSync(bin);
+    const script = [
+      "#!/usr/bin/env bash",
+      'printf \'%s\\n\' "$*" >> "$FAKE_DOCKER_LOG"',
+      'case "$*" in',
+      '  *" ps -q "*) [ -n "${FAKE_DOCKER_EXISTING:-}" ] && printf \'cid\\n\' ;;',
+      '  inspect*) printf \'running\\n\' ;;',
+      '  *" restart "*) [ -z "${FAKE_DOCKER_FAIL_RESTART:-}" ] || exit 1 ;;',
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n");
+    writeFileSync(join(bin, "docker"), script);
+    chmodSync(join(bin, "docker"), 0o755);
+    return bin;
+  }
+
+  function startService(state: string, service: string, env: Record<string, string>) {
+    const bin = fakeDocker(state);
+    const log = join(state, "docker.log");
+    const result = spawnSync("bash", ["-c", `. "$1"; start_service "$2"`, "bash", BOOTSTRAP, service], {
+      env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MBH_STATE_DIR: state, FAKE_DOCKER_LOG: log, ...env },
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    rmSync(bin, { recursive: true, force: true });
+    return { status: result.status, calls: existsSync(log) ? readFileSync(log, "utf8") : "" };
+  }
+
+  it("restarts an existing service whose config change is still pending from an earlier run, then clears the marker", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      expect(existsSync(join(state, "pending-restart", "mautrix-telegram"))).toBe(true);
+      const run = startService(state, "mautrix-telegram", { FAKE_DOCKER_EXISTING: "1" });
+      expect(run.status).toBe(0);
+      expect(run.calls).toMatch(/ restart mautrix-telegram/);
+      expect(existsSync(join(state, "pending-restart", "mautrix-telegram"))).toBe(false);
+
+      const again = startService(state, "mautrix-telegram", { FAKE_DOCKER_EXISTING: "1" });
+      expect(again.status).toBe(0);
+      expect(again.calls.split("\n").filter((line) => line.includes(" restart ")).length).toBe(1);
+    } finally {
+      removeDir(state);
+    }
+  });
+
+  it("keeps the marker when the restart fails so the next run retries it", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      const run = startService(state, "synapse", { FAKE_DOCKER_EXISTING: "1", FAKE_DOCKER_FAIL_RESTART: "1" });
+      expect(run.status).not.toBe(0);
+      expect(existsSync(join(state, "pending-restart", "synapse"))).toBe(true);
+    } finally {
+      removeDir(state);
+    }
+  });
+
+  it("does not restart a newly created container and clears its marker", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      const run = startService(state, "caddy", {});
+      expect(run.status).toBe(0);
+      expect(run.calls).toMatch(/ up -d caddy/);
+      expect(run.calls).not.toMatch(/ restart /);
+      expect(existsSync(join(state, "pending-restart", "caddy"))).toBe(false);
+    } finally {
+      removeDir(state);
+    }
   });
 });

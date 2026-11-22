@@ -14,6 +14,10 @@
 #   MBH_ACME_EMAIL          Let's Encrypt account email
 #   MBH_TELEGRAM_API_ID     from https://my.telegram.org/apps
 #   MBH_TELEGRAM_API_HASH   from https://my.telegram.org/apps
+#                           To replace saved Telegram credentials, delete
+#                           secrets/telegram-api-id and secrets/telegram-api-hash
+#                           and re-run with both new values; the Telegram bridge
+#                           is restarted with them.
 # Optional:
 #   MBH_STATE_DIR           default /var/lib/matrix-bridge-host
 #   MBH_BUNDLE_DIR          default: the directory holding this script
@@ -23,11 +27,16 @@ set -eu
 set -o pipefail
 umask 077
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="${MBH_BUNDLE_DIR:-$SCRIPT_DIR}"
 STATE_DIR="${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}"
 RENDER_ONLY="${MBH_RENDER_ONLY:-0}"
 SECRETS_DIR="$STATE_DIR/secrets"
+# One marker per service whose rendered config changed but has not been
+# applied yet. Markers survive failed and render-only runs, so a later run
+# still restarts the service; they are removed only after the restart.
+PENDING_DIR="$STATE_DIR/pending-restart"
+COMPOSE_SERVICES="postgres synapse mautrix-whatsapp mautrix-telegram mautrix-linkedin caddy"
 
 NETWORKS="whatsapp telegram linkedin"
 DATABASES="synapse whatsapp telegram linkedin"
@@ -37,8 +46,6 @@ ADMIN_LOCALPART="mxadmin"
 SYNAPSE_UID=991
 BRIDGE_UID=1337
 POSTGRES_UID=70
-
-CHANGED=""
 
 die() {
   printf 'bootstrap: error: %s\n' "$*" >&2
@@ -107,10 +114,20 @@ resolve_inputs() {
   SERVER_NAME="${SERVER_NAME:-$PUBLIC_HOSTNAME}"
   ACME_EMAIL="${MBH_ACME_EMAIL:-$(saved_value MBH_ACME_EMAIL)}"
   [ -n "$ACME_EMAIL" ] || die "MBH_ACME_EMAIL is required on the first run"
-  TELEGRAM_API_ID="${MBH_TELEGRAM_API_ID:-$(saved_secret telegram-api-id)}"
+  local saved_id saved_hash
+  saved_id="$(saved_secret telegram-api-id)"
+  saved_hash="$(saved_secret telegram-api-hash)"
+  TELEGRAM_API_ID="${MBH_TELEGRAM_API_ID:-$saved_id}"
   [ -n "$TELEGRAM_API_ID" ] || die "MBH_TELEGRAM_API_ID is required on the first run"
-  TELEGRAM_API_HASH="${MBH_TELEGRAM_API_HASH:-$(saved_secret telegram-api-hash)}"
+  TELEGRAM_API_HASH="${MBH_TELEGRAM_API_HASH:-$saved_hash}"
   [ -n "$TELEGRAM_API_HASH" ] || die "MBH_TELEGRAM_API_HASH is required on the first run"
+  # The id and hash belong to one Telegram application and are always
+  # replaced together. A saved value always wins, so refuse a different
+  # input instead of silently pairing it with the other saved value.
+  if { [ -n "$saved_id" ] && [ "$TELEGRAM_API_ID" != "$saved_id" ]; } \
+    || { [ -n "$saved_hash" ] && [ "$TELEGRAM_API_HASH" != "$saved_hash" ]; }; then
+    die "Telegram credentials differ from the saved ones; to replace them, delete secrets/telegram-api-id and secrets/telegram-api-hash and re-run with both new values"
+  fi
 
   [ "${#PUBLIC_HOSTNAME}" -le 253 ] && [[ "$PUBLIC_HOSTNAME" =~ $HOSTNAME_RE ]] \
     || die "MBH_PUBLIC_HOSTNAME must be a lowercase DNS name"
@@ -184,10 +201,25 @@ install_rendered() {
     return 0
   fi
   mv -f "$tmp" "$dest"
-  case " $CHANGED " in
-    *" $service "*) ;;
-    *) CHANGED="$CHANGED $service" ;;
+  mark_pending "$service"
+}
+
+mark_pending() {
+  case " $COMPOSE_SERVICES " in
+    *" $1 "*) ;;
+    *) return 0 ;;
   esac
+  ensure_dir "$PENDING_DIR"
+  [ -L "$PENDING_DIR/$1" ] && die "refusing symlinked marker: $1"
+  : > "$PENDING_DIR/$1"
+}
+
+is_pending() {
+  [ -f "$PENDING_DIR/$1" ] && [ ! -L "$PENDING_DIR/$1" ]
+}
+
+clear_pending() {
+  rm -f "$PENDING_DIR/$1"
 }
 
 render_to() {
@@ -308,20 +340,19 @@ wait_healthy() {
 }
 
 start_service() {
-  # start_service SERVICE: create or update the container. A container that
-  # was already running before this run is restarted when its rendered
-  # config changed; a new container is never restarted mid-initialization.
+  # start_service SERVICE: create or update the container. An existing
+  # container is restarted while its config change is pending, including a
+  # change rendered by an earlier failed or render-only run; a new container
+  # already starts with the current config and is never restarted
+  # mid-initialization.
   local before
   before="$(container_health "$1")"
   compose up -d "$1" > /dev/null
-  case " $CHANGED " in
-    *" $1 "*)
-      if [ "$before" != "missing" ]; then
-        log "configuration for $1 changed; restarting it"
-        compose restart "$1" > /dev/null
-      fi
-      ;;
-  esac
+  if is_pending "$1" && [ "$before" != "missing" ]; then
+    log "configuration for $1 changed; restarting it"
+    compose restart "$1" > /dev/null
+  fi
+  clear_pending "$1"
 }
 
 ensure_databases() {
@@ -405,4 +436,7 @@ main() {
   log "done"
 }
 
-main "$@"
+# Sourcing the script (tests) loads the functions without running main.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

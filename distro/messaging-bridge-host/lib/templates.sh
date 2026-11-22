@@ -251,7 +251,7 @@ EOF
 render_network_telegram() {
   cat <<EOF
 network:
-  api_id: $TELEGRAM_API_ID
+  api_id: $(secret telegram-api-id)
   api_hash: "$(secret telegram-api-hash)"
   device_info:
     device_model: Matrix OS
