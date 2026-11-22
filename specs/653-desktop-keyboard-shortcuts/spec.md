@@ -452,6 +452,27 @@ Ctrl+Alt, because Ctrl+Shift+arrow selects text by word there.
   them. Some Linux desktops use Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
   Settings → Shortcuts.
 
+## Onboarding
+
+- The Getting started checklist (the Setup pill in the Electron Desktop title
+  bar) ends with a **Learn keyboard shortcuts** step. It shows Next app and
+  Open App Launcher with their current keys from the shortcuts store, so a
+  changed key or the Windows and Linux default shows as it is, then "Change
+  them in Settings". A shortcut with no key is left out. Clicking the step
+  opens Settings → Shortcuts and leaves the checklist open.
+- **Done rule**: the step is done once Settings → Shortcuts has been opened on
+  this computer, from the step or any other way. Bindings are saved per
+  computer, so this is too: a renderer `localStorage` flag
+  (`matrix:getting-started:shortcuts-seen`). Nothing is stored on the Matrix
+  computer, and no gateway or schema change is needed.
+- **A tip, not setup**: when every other row is done and this one is not, the
+  step is left out. It never keeps the checklist open by itself, and an owner
+  who already finished Getting started does not see the Setup pill come back.
+  Owners still working through setup see it as one more row ("3 of 6").
+- **Electron Desktop only**: the shared rows (`gettingStartedRows`) do not
+  include it. Electron Desktop adds it with `withKeyboardShortcutsStep`, so
+  Web Desktop and Web Canvas, which have no shortcut system, never show it.
+
 ## Left to the Builder
 
 - File layout inside `packages/ui/src/shortcuts/` and the split into one or two
