@@ -184,7 +184,17 @@ describe("Launchpad (macos-glass launcher)", () => {
     const response = new Promise<Response>((resolve) => {
       resolveResponse = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(() => response));
+    // The launcher also loads shared organization apps on open. Hand only the
+    // installed-apps request the deferred response; every other request gets
+    // its own fresh body so no two readers race for one Response stream.
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url, "http://localhost").pathname === "/api/apps") return response;
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }));
 
     const { queryClient } = await renderLauncher();
 

@@ -106,7 +106,20 @@ type CachedInventory = {
   expiresAt: number;
   staleAt: number;
   retainOnRefresh: boolean;
+  /** When discovery last succeeded for this entry; carried over by last-seen fallbacks. */
+  verifiedAt?: number;
 };
+
+/**
+ * How long after it was last verified an inventory may still be served
+ * while one background read refreshes it. Every Chat send waits for catalog
+ * admission, and a subscription (profile) login caches the inventory for only
+ * 5 s because its credential generation cannot be checked, so without this
+ * nearly every send waited for a full `claude` CLI start just to list models.
+ * The entry is only reused under the same credential context key, an explicit
+ * Refresh still drops it, and after this window a read blocks as before.
+ */
+export const CLAUDE_CATALOG_STALE_WINDOW_MS = 5 * 60_000;
 
 export function createClaudeModelCatalogSource(options: {
   discover?: Discovery;
@@ -121,6 +134,8 @@ export function createClaudeModelCatalogSource(options: {
   // Each map is capped at 32 owner contexts; settled reads leave pending and
   // insertion-order eviction bounds retained metadata, including failed reads.
   const pending = new Map<string, { request: Promise<CodingModelCatalogProjection | null>; invalidated: boolean }>();
+  // Background reads started for an entry served past its cache age, one per owner.
+  const refreshing = new Map<string, { invalidated: boolean }>();
   const source = async (provider: AgentProviderSummary, principal: RequestPrincipal): Promise<CodingModelCatalogProjection | null> => {
     if ((provider.kind !== "claude" && provider.id !== "claude")
       || provider.availability !== "available") return null;
@@ -135,7 +150,8 @@ export function createClaudeModelCatalogSource(options: {
     const state = { request: Promise.resolve<CodingModelCatalogProjection | null>(null), invalidated: false };
     const save = (entry: CachedInventory) => {
       if (state.invalidated && !entry.retainOnRefresh) return;
-      if (state.invalidated) entry.expiresAt = 0;
+      // A read that finished after a Refresh is never served as recently verified.
+      if (state.invalidated) { entry.expiresAt = 0; delete entry.verifiedAt; }
       if (cached.size >= 32 && !cached.has(principal.userId)) cached.delete(cached.keys().next().value!);
       cached.set(principal.userId, entry);
     };
@@ -158,12 +174,16 @@ export function createClaudeModelCatalogSource(options: {
       const candidate = cached.get(principal.userId);
       hit = candidate?.contextKey === contextKey ? candidate : undefined;
       if (hit && hit.expiresAt > Date.now()) return hit.value;
+      if (hit?.value && hit.verifiedAt !== undefined && Date.now() - hit.verifiedAt < CLAUDE_CATALOG_STALE_WINDOW_MS) {
+        refreshInBackground(principal.userId, contextKey, context);
+        return hit.value;
+      }
       const value = projectModels(await context.discover(controller.signal));
       controller.signal.throwIfAborted();
       const age = Math.max(1, Math.min(context.maxAgeMs ?? ttl, ttl));
       const retainOnRefresh = context.retainOnRefresh !== false;
       save({ contextKey, value, expiresAt: Date.now() + age,
-        staleAt: Date.now() + (retainOnRefresh ? 300_000 : age), retainOnRefresh });
+        staleAt: Date.now() + (retainOnRefresh ? 300_000 : age), retainOnRefresh, verifiedAt: Date.now() });
       return value;
     };
     const request = Promise.race([Promise.resolve().then(load), deadline])
@@ -186,7 +206,8 @@ export function createClaudeModelCatalogSource(options: {
         const value = hit && hit.staleAt > Date.now() && hit.value ? markLastSeen(hit.value) : null;
         if (contextKey) save({ contextKey, value,
           expiresAt: value ? Math.min(Date.now() + 5_000, hit!.staleAt) : Date.now() + 5_000,
-          staleAt: hit?.staleAt ?? 0, retainOnRefresh: hit?.retainOnRefresh ?? false });
+          staleAt: hit?.staleAt ?? 0, retainOnRefresh: hit?.retainOnRefresh ?? false,
+          ...(value && hit?.verifiedAt !== undefined ? { verifiedAt: hit.verifiedAt } : {}) });
         return value;
       }).finally(() => {
         clearTimeout(timer);
@@ -197,8 +218,41 @@ export function createClaudeModelCatalogSource(options: {
     pending.set(principal.userId, state);
     return request;
   };
+  function refreshInBackground(userId: string, contextKey: string, context: DiscoveryContext): void {
+    if (refreshing.has(userId) || refreshing.size >= 32) return;
+    const state = { invalidated: false };
+    refreshing.set(userId, state);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    void (async () => {
+      try {
+        const value = projectModels(await context.discover(controller.signal));
+        controller.signal.throwIfAborted();
+        // A Refresh or credential change during the read wins over its result.
+        if (state.invalidated || cached.get(userId)?.contextKey !== contextKey) return;
+        const age = Math.max(1, Math.min(context.maxAgeMs ?? ttl, ttl));
+        const retainOnRefresh = context.retainOnRefresh !== false;
+        if (cached.size >= 32 && !cached.has(userId)) cached.delete(cached.keys().next().value!);
+        cached.set(userId, { contextKey, value, expiresAt: Date.now() + age,
+          staleAt: Date.now() + (retainOnRefresh ? 300_000 : age), retainOnRefresh, verifiedAt: Date.now() });
+      } catch (error: unknown) {
+        // The served entry stays until the stale window ends; log the category only.
+        const category = controller.signal.aborted ? "timeout" : error instanceof Error ? error.name : "non_error_throw";
+        console.warn("[chat-providers] Claude model background refresh unavailable", { category });
+      } finally {
+        clearTimeout(timer);
+        controller.abort();
+        refreshing.delete(userId);
+      }
+    })();
+  }
+
   source.invalidate = (principal: RequestPrincipal) => {
+    const background = refreshing.get(principal.userId);
+    if (background) background.invalidated = true;
     const hit = cached.get(principal.userId);
+    // An explicit Refresh always waits for a fresh read: it is never served stale.
+    if (hit) delete hit.verifiedAt;
     if (hit?.retainOnRefresh) hit.expiresAt = 0;
     else cached.delete(principal.userId);
     const existing = pending.get(principal.userId);

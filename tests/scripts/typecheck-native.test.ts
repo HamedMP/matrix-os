@@ -11,11 +11,12 @@ const configs = [
   'packages/observability/tsconfig.json', 'packages/integrations-mcp/tsconfig.json',
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
   'packages/proxy/tsconfig.json', 'packages/hostd/tsconfig.json', 'packages/edge-router/tsconfig.json',
+  'packages/pr-evidence-worker/tsconfig.json',
   'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
 ];
 
 describe('native standalone typecheck', () => {
-  it('checks every Node, browser, and Cloudflare project with the pinned native entry point', async () => {
+  it('checks every standalone project with the pinned native entry point', async () => {
     const { runTypechecks } = await load();
     const calls: { binary: string; args: string[]; options: { cwd: string; timeout: number } }[] = [];
     const status = runTypechecks({ root, nativeEntry: '/compiler/bin/tsc', run: (binary: string, args: string[], options: typeof calls[number]['options']) => {
@@ -39,6 +40,7 @@ describe('native standalone typecheck', () => {
     expect(argsByProject.every(args => args.includes('--noUncheckedSideEffectImports') && args[args.indexOf('--noUncheckedSideEffectImports') + 1] === 'false')).toBe(true);
     expect(JSON.parse(readFileSync(join(root, 'desktop/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual([]);
     expect(JSON.parse(readFileSync(join(root, 'packages/edge-router/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
+    expect(JSON.parse(readFileSync(join(root, 'packages/pr-evidence-worker/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
   });
 
   it('offers the same projects through each package’s legacy compiler for parity checks', async () => {
