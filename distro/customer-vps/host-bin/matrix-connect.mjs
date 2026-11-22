@@ -323,6 +323,33 @@ async function activateOrExplain(p, env) {
 
 // ---------------------------------------------------------------- http
 
+/**
+ * Reads at most `max` bytes, cancelling the stream as soon as it grows past
+ * the cap, so a response without Content-Length cannot be buffered whole.
+ * The request's AbortSignal still bounds the time spent reading.
+ */
+async function readBoundedBody(response, max) {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > max) {
+        await reader.cancel();
+        throw new Error('response too large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function requestJson(url, { method = 'POST', body, headers = {}, timeoutMs = API_TIMEOUT_MS } = {}) {
   const response = await fetch(url, {
     method,
@@ -336,8 +363,7 @@ async function requestJson(url, { method = 'POST', body, headers = {}, timeoutMs
     await response.body?.cancel();
     throw new Error('response too large');
   }
-  const text = await response.text();
-  if (text.length > MAX_JSON_BYTES) throw new Error('response too large');
+  const text = await readBoundedBody(response, MAX_JSON_BYTES);
   let json = null;
   if (text) {
     try { json = JSON.parse(text); } catch (err) {

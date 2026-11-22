@@ -165,6 +165,37 @@ describe("matrix-connect", () => {
     }
   });
 
+  it("stops reading an oversized response without Content-Length and reports the platform unavailable", async () => {
+    // The fake platform streams forever. A connector that buffers the whole
+    // body keeps reading until its request timeout; a capped reader cancels
+    // after 64 KiB, so the stream stops early and the command returns quickly.
+    let written = 0;
+    let stopped = false;
+    const { server, url } = await startServer((_req, _body, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const chunk = Buffer.alloc(16 * 1024, 0x61);
+      const pump = () => {
+        while (!stopped) {
+          written += chunk.length;
+          if (!res.write(chunk)) { res.once("drain", pump); return; }
+        }
+      };
+      res.on("close", () => { stopped = true; });
+      pump();
+    });
+    try {
+      const started = Date.now();
+      const result = await run(["enroll", "--platform", url], env);
+      expect(result.code).toBe(3);
+      expect(result.stderr).toContain("platform unavailable");
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(written).toBeLessThan(16 * 1024 * 1024);
+    } finally {
+      stopped = true;
+      server.close();
+    }
+  });
+
   it.each([["expired"], ["denied"]])("exits 2 when the code is %s", async (status) => {
     const { server, url } = await startServer((req, _body, res) => {
       if (req.url === "/api/machines/enroll/start") {
