@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createApp } from '../../packages/platform/src/main.js';
-import { appDomainPathClass } from '../../packages/platform/src/session-routing-middleware.js';
+import { appDomainPathClass } from '../../packages/platform/src/app-domain-shell-routing.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
