@@ -1,3 +1,4 @@
+import { z } from "zod/v4";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
@@ -117,4 +118,18 @@ describe("AI provider routes", () => {
       getPrincipal: () => ({ userId: "owner_123" }),
     })).toThrow("AI provider service is required");
   });
+});
+
+it("negotiates owner OpenAI metadata without breaking strict legacy provider clients", async () => {
+ const connection = { connectionId: "matrix_openai_api" as const, providerId: "openai" as const, executionKind: "direct_pi" as const, billingKind: "api_key" as const,
+ revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null, state: "disconnected" as const,
+ models: [], actions: ["connect" as const], checkedAt: null, staleAfter: null, supports: { rootChat: true, recipeBots: true } };
+ const app = createAiProviderRoutes({ service: { getSnapshot: async () => ({ ...emptySnapshot, matrixOpenAiConnection: connection }) }, getPrincipal: () => ({ userId: "owner" }), canReadMatrixConnections: () => true });
+ const legacy = await (await app.request("/providers")).json();
+ expect(legacy).not.toHaveProperty("matrixOpenAiConnection");
+ expect(z.object(Object.fromEntries(Object.entries(AiProviderSnapshotV3Schema.shape).filter(([key]) => key !== "matrixOpenAiConnection"))).strict().safeParse(legacy).success).toBe(true);
+ expect((await (await app.request("/providers?includeMatrixOpenAiConnection=true")).json()).matrixOpenAiConnection).toEqual(connection);
+ expect((await app.request("/providers?includeMatrixOpenAiConnection=invalid")).status).toBe(400);
+ const unauthorized = createAiProviderRoutes({ service: { getSnapshot: async () => ({ ...emptySnapshot, matrixOpenAiConnection: connection }) }, getPrincipal: () => ({ userId: "other" }), canReadMatrixConnections: () => false });
+ expect(await (await unauthorized.request("/providers?includeMatrixOpenAiConnection=true")).json()).not.toHaveProperty("matrixOpenAiConnection");
 });
