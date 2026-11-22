@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JoinCodeResponse, PairedMachinesResponse, PrivateNetworkClient } from "./client.js";
-import { MACHINES_POLL_MS, PRIVATE_NETWORK_ERRORS, logRequestFailure, minutesLeft, requestErrorStatus } from "./presentation.js";
+import { MACHINES_IDLE_POLL_MS, MACHINES_POLL_MS, PRIVATE_NETWORK_ERRORS, logRequestFailure, minutesLeft, requestErrorStatus } from "./presentation.js";
 
 export interface PairedMachinesModel {
   list: PairedMachinesResponse | null;
@@ -72,12 +72,13 @@ export function usePairedMachines(client: PrivateNetworkClient): PairedMachinesM
   const loadSettled = settledRevision === loadRevision;
   useEffect(() => {
     // Chain polls: a read can take up to the gateway's `tailscale status` wait,
-    // so the next one starts only after the current read settles.
-    if (!joinCodeActive || !loadSettled) return;
+    // so the next one starts only after the current read settles. Polls run
+    // while Machines is shown, faster while a join code waits for a new machine.
+    if (!loadSettled) return;
     const timer = setTimeout(() => {
       setNow(Date.now());
       setLoadRevision((revision) => revision + 1);
-    }, MACHINES_POLL_MS);
+    }, joinCodeActive ? MACHINES_POLL_MS : MACHINES_IDLE_POLL_MS);
     return () => clearTimeout(timer);
   }, [joinCodeActive, loadSettled]);
 

@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrivateNetworkPanel } from "../../packages/ui/src/private-network/PrivateNetworkPanel";
+import { MACHINES_IDLE_POLL_MS } from "../../packages/ui/src/private-network/presentation";
 import type {
   PairedMachinesResponse,
   PrivateNetworkClient,
@@ -181,6 +182,23 @@ describe("PrivateNetworkPanel", () => {
     expect(await screen.findByText("Could not disconnect. Try again.")).toBeTruthy();
     expect(screen.getByText("alice@example.com")).toBeTruthy();
     expect(document.body.textContent).not.toContain("secret-path");
+  });
+
+  it("keeps paired machines' online state current without a join code", async () => {
+    // Found in review: the list refreshed only while a join code was active,
+    // so a machine that went offline kept showing Online.
+    vi.useFakeTimers();
+    const offline = { ...machineList, machines: machineList.machines.map((machine) => ({ ...machine, online: false })) };
+    const machines = vi
+      .fn<PrivateNetworkClient["machines"]>()
+      .mockResolvedValueOnce(machineList)
+      .mockResolvedValue(offline);
+    render(<PrivateNetworkPanel client={fakeClient({ status: vi.fn(async () => connected), machines })} />);
+    await flush();
+    expect(screen.getByText("Online")).toBeTruthy();
+    await flush(MACHINES_IDLE_POLL_MS);
+    expect(machines).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Online")).toBeNull();
   });
 
   it("adds a machine with a copyable command and expiry, then lists the paired machine", async () => {

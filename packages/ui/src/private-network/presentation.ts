@@ -8,6 +8,8 @@ export const linkStyle: CSSProperties = { color: "var(--matrix-primary)", textDe
 export const STATUS_POLL_MS = 3_000;
 export const LOGIN_POLL_LIMIT_MS = 10 * 60_000;
 export const MACHINES_POLL_MS = 5_000;
+/** While Machines is open without a join code: slow, but a machine going offline still shows. */
+export const MACHINES_IDLE_POLL_MS = 30_000;
 
 /** Fixed client copy. Server error strings are never shown. */
 export const PRIVATE_NETWORK_ERRORS = {
