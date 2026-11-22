@@ -43,6 +43,9 @@ export interface LifecycleConfig {
   // above these percentages: a full thin pool hangs every guest writing to it.
   poolMaxDataPercent: number;
   poolMaxMetadataPercent: number;
+  // Bound on one thin pool read: create holds the host-wide allocation chain
+  // while it runs, so an LVM lock must not stall every create for execTimeoutMs.
+  poolQueryTimeoutMs: number;
   kernelPath: string;
   initramfsPath: string;
   kernelCmdline: string;
@@ -72,6 +75,7 @@ export const DEFAULT_LIFECYCLE_CONFIG: LifecycleConfig = {
   thinPool: "pool",
   poolMaxDataPercent: 85,
   poolMaxMetadataPercent: 80,
+  poolQueryTimeoutMs: 5_000,
   kernelPath: "/var/lib/matrix-hostd/kernel/vmlinuz",
   initramfsPath: "/var/lib/matrix-hostd/kernel/initrd.img",
   kernelCmdline:
@@ -128,8 +132,9 @@ export interface ThinPoolUsage {
 
 export interface VmLifecycle {
   create(spec: CreateVmSpec): Promise<VmRecord>;
-  // The thin pool's data and metadata use; rejects with capacity when unreadable.
-  thinPoolUsage(): Promise<ThinPoolUsage>;
+  // The thin pool's data and metadata use; rejects with capacity when unreadable
+  // or when it takes longer than poolQueryTimeoutMs or the caller's signal allows.
+  thinPoolUsage(signal?: AbortSignal): Promise<ThinPoolUsage>;
   start(id: string): Promise<VmRecord>;
   suspend(id: string, options?: SuspendOptions): Promise<VmRecord>;
   resume(id: string, budgetMs: number, options?: GenerationFence): Promise<ResumeResult>;
@@ -399,13 +404,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return bytes;
   }
 
-  async function thinPoolUsage(): Promise<ThinPoolUsage> {
+  async function thinPoolUsage(signal?: AbortSignal): Promise<ThinPoolUsage> {
     const pool = `${cfg.volumeGroup}/${cfg.thinPool}`;
+    const timeout = AbortSignal.timeout(cfg.poolQueryTimeoutMs);
     let result: { code: number; stdout: string };
     try {
-      result = await exec(["lvs", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", pool], {
-        signal: AbortSignal.timeout(cfg.execTimeoutMs),
-      });
+      // --readonly reads metadata without taking the LVM lock lvcreate/lvextend hold.
+      result = await exec(
+        ["lvs", "--readonly", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", pool],
+        { signal: signal ? AbortSignal.any([timeout, signal]) : timeout },
+      );
     } catch (error: unknown) {
       log("vm_thin_pool_unreadable", { pool, ...errorFields(error) });
       throw new LifecycleError("capacity", "thin pool usage unreadable", { cause: error });

@@ -168,6 +168,7 @@ beforeEach(async () => {
     runDir: join(root, "run"),
     poolMaxDataPercent: 85,
     poolMaxMetadataPercent: 80,
+    poolQueryTimeoutMs: 5_000,
   };
   events = [];
   trimGate = null;

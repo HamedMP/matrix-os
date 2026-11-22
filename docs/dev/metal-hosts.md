@@ -49,8 +49,10 @@ VM disks are thin clones that grow to the requested size, so the pool is
 overcommitted. hostd refuses a new VM with `503 {"error":"capacity"}` while
 the pool's Data% is above `HOSTD_POOL_MAX_DATA_PERCENT` (default 85) or its
 Metadata% is above `HOSTD_POOL_MAX_METADATA_PERCENT` (default 80), or when it
-cannot read them. `GET /v1/capacity` reports both as `thinPool` (`null` when
-unreadable) so placement can prefer hosts with room.
+cannot read them within `HOSTD_POOL_QUERY_TIMEOUT_MS` (default 5000; the read
+uses `lvs --readonly`, so it does not wait on the LVM lock). `GET /v1/capacity`
+reports both as `thinPool`, which is `null` when unreadable or slower than the
+endpoint's 2 s probe bound, so placement can prefer hosts with room.
 
 The firewall (`nftables.conf`) owns the host: input default deny except
 established traffic, SSH on the public interface (key-only sshd, never

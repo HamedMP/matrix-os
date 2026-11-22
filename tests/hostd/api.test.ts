@@ -441,6 +441,26 @@ describe("hostd API", () => {
     });
   });
 
+  it("GET /v1/capacity answers thinPool null quickly when the pool read hangs", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const app = api({
+      capacityTimeoutMs: 50,
+      lifecycle: {
+        ...lifecycle,
+        thinPoolUsage: (signal?: AbortSignal) => {
+          seenSignal = signal;
+          return new Promise(() => undefined);
+        },
+      },
+    });
+    const started = Date.now();
+    const res = await send(app, "GET", "/v1/capacity", { headers: auth });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ thinPool: null, memoryAvailableMiB: 100_000 });
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
   it("GET /v1/capacity reports thinPool null when the pool usage is unreadable", async () => {
     const app = api({ lifecycle: { ...lifecycle, thinPoolUsage: async () => Promise.reject(new LifecycleError("capacity", "x")) } });
     const res = await send(app, "GET", "/v1/capacity", { headers: auth });

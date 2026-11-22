@@ -21,6 +21,8 @@ export interface HostdConfig {
   // Thin pool admission thresholds (percent) for new VMs.
   poolMaxDataPercent: number;
   poolMaxMetadataPercent: number;
+  // Bound on one thin pool read (ms).
+  poolQueryTimeoutMs: number;
 }
 
 export class ConfigError extends Error {
@@ -49,6 +51,7 @@ const Env = z.object({
   HOSTD_RUN_DIR: absolutePath.default("/run/matrix-vm"),
   HOSTD_POOL_MAX_DATA_PERCENT: percent.default(85),
   HOSTD_POOL_MAX_METADATA_PERCENT: percent.default(80),
+  HOSTD_POOL_QUERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(5_000),
 });
 
 export function loadConfig(env: Record<string, string | undefined>): HostdConfig {
@@ -72,5 +75,6 @@ export function loadConfig(env: Record<string, string | undefined>): HostdConfig
     runDir: e.HOSTD_RUN_DIR,
     poolMaxDataPercent: e.HOSTD_POOL_MAX_DATA_PERCENT,
     poolMaxMetadataPercent: e.HOSTD_POOL_MAX_METADATA_PERCENT,
+    poolQueryTimeoutMs: e.HOSTD_POOL_QUERY_TIMEOUT_MS,
   };
 }

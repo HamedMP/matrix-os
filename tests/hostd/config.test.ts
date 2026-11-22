@@ -25,7 +25,14 @@ describe("hostd config", () => {
       runDir: "/run/matrix-vm",
       poolMaxDataPercent: 85,
       poolMaxMetadataPercent: 80,
+      poolQueryTimeoutMs: 5_000,
     });
+  });
+
+  it("reads the thin pool query timeout within 100..60000 ms", () => {
+    expect(loadConfig({ ...base, HOSTD_POOL_QUERY_TIMEOUT_MS: "2500" }).poolQueryTimeoutMs).toBe(2_500);
+    expect(() => loadConfig({ ...base, HOSTD_POOL_QUERY_TIMEOUT_MS: "50" })).toThrow(/HOSTD_POOL_QUERY_TIMEOUT_MS/);
+    expect(() => loadConfig({ ...base, HOSTD_POOL_QUERY_TIMEOUT_MS: "60001" })).toThrow(/HOSTD_POOL_QUERY_TIMEOUT_MS/);
   });
 
   it("reads thin pool admission thresholds and refuses ones outside 1..100", () => {

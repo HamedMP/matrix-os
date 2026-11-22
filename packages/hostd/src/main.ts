@@ -115,6 +115,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     config: {
       poolMaxDataPercent: config.poolMaxDataPercent,
       poolMaxMetadataPercent: config.poolMaxMetadataPercent,
+      poolQueryTimeoutMs: config.poolQueryTimeoutMs,
       ...overrides.lifecycleConfig,
       vmsDir,
       snapshotsDir,

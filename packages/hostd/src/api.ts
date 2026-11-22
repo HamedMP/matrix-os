@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { LifecycleError, type VmLifecycle } from "./vm-lifecycle.js";
+import { LifecycleError, type ThinPoolUsage, type VmLifecycle } from "./vm-lifecycle.js";
 import { VM_ID_PATTERN, type VmRecord, type VmStore } from "./vm-store.js";
 
 // The authenticated host API the platform calls (TLS port 8443). Every route
@@ -32,6 +32,8 @@ export interface HostApiDeps {
   pool: { freeBytes(): Promise<number> };
   hostAvailableMiB: (signal: AbortSignal) => Promise<number>;
   apiToken: string;
+  // Bound on each capacity probe; defaults to CAPACITY_TIMEOUT_MS.
+  capacityTimeoutMs?: number;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }
 
@@ -240,16 +242,35 @@ export function createHostApi(deps: HostApiDeps): Hono {
     return c.json(publicVm(await lifecycle.setPolicy(id, policy)));
   });
 
+  async function thinPoolWithin(ms: number): Promise<ThinPoolUsage | null> {
+    const controller = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve(null);
+      }, ms);
+    });
+    const read = lifecycle.thinPoolUsage(controller.signal).catch((error: unknown) => {
+      if (!(error instanceof LifecycleError)) throw error;
+      return null;
+    });
+    try {
+      return await Promise.race([read, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   app.get("/v1/capacity", async (c) => {
+    const probeMs = deps.capacityTimeoutMs ?? CAPACITY_TIMEOUT_MS;
     const [memoryAvailableMiB, poolFreeBytes, records, thinPool] = await Promise.all([
-      deps.hostAvailableMiB(AbortSignal.timeout(CAPACITY_TIMEOUT_MS)),
+      deps.hostAvailableMiB(AbortSignal.timeout(probeMs)),
       deps.pool.freeBytes(),
       store.list(),
-      // Unknown pool use is reported as null (the lifecycle logs why); placement treats it as no room.
-      lifecycle.thinPoolUsage().catch((error: unknown) => {
-        if (!(error instanceof LifecycleError)) throw error;
-        return null;
-      }),
+      // Unknown or slow pool use is reported as null (placement treats it as no
+      // room), so an LVM lock never makes the host look unreachable.
+      thinPoolWithin(probeMs),
     ]);
     return c.json({
       memoryAvailableMiB,
