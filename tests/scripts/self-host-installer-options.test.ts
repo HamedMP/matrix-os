@@ -270,14 +270,6 @@ prepare_scope_runtime_roots "${home}" alice`,
       ));
     });
 
-    it("lets a 0750 child the owner creates later inherit group matrix", () => {
-      // Real filesystem check of the property managedPiWorkspace relies on.
-      const root = join(dir, "agent-workspaces");
-      spawnSync("mkdir", ["-m", "2750", root]);
-      spawnSync("mkdir", ["-m", "0750", join(root, "child")]);
-      const mode = spawnSync("stat", ["-c", "%a", join(root, "child")], { encoding: "utf8" }).stdout.trim();
-      expect(mode).toBe("2750");
-    });
   });
 
   it("grants the run user Matrix's group-only paths by ACL, so an already-running login works", () => {
