@@ -14,6 +14,7 @@ import {
   useGlobalShortcuts,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
 import { useClosedApps } from "@desktop/renderer/src/stores/closed-apps";
+import { holdGetStartedBlocking } from "@desktop/renderer/src/features/get-started/get-started-blocking";
 import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -787,6 +788,18 @@ describe("runShortcutAction", () => {
   it("opens Settings", () => {
     runShortcutAction("nav.settings");
     expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)?.kind).toBe("settings");
+  });
+
+  it("does nothing while the Getting Started wizard is open, and runs again once it closes", () => {
+    const [filesId, terminalId] = openTwoWindows();
+    const release = holdGetStartedBlocking();
+
+    runShortcutAction("app.next");
+    expect(useTabs.getState().activeTabId).toBe(filesId);
+
+    release();
+    runShortcutAction("app.next");
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
   });
 
   it("dispatches shortcut:action events from main", () => {

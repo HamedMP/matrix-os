@@ -15,6 +15,7 @@ import {
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
+import { isGetStartedBlocking } from "../get-started/get-started-blocking";
 import {
   closeApp,
   cycleApp,
@@ -254,6 +255,8 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
 };
 
 export function runShortcutAction(id: ShortcutActionId): void {
+  // The Getting Started wizard covers the desktop; nothing behind it may act.
+  if (isGetStartedBlocking()) return;
   SHORTCUT_HANDLERS[id]();
 }
 

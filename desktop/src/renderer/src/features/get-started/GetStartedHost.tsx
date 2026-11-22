@@ -1,17 +1,22 @@
 import { GetStartedGate } from "@matrix-os/ui";
-import { useMemo, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from "./desktop-get-started-port";
 import { useOnboardingOverlayLease } from "../onboarding-widget/use-onboarding-overlay-lease";
+import { holdGetStartedBlocking } from "./get-started-blocking";
 import { DesktopGetStartedAgentLogin } from "./DesktopGetStartedAgentLogin";
 import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
 import { createDesktopFeatureFlagSource } from "../support/desktop-feature-flags";
 
-/** Native app views paint above the renderer, so the open wizard holds the overlay lease like the widget does. */
+/**
+ * Rendered only while the wizard is open. Native app views paint above the renderer, so it holds
+ * the overlay lease like the widget does, and it stops main-dispatched shortcuts from acting behind it.
+ */
 function GetStartedOverlayLease() {
   useOnboardingOverlayLease(true);
+  useLayoutEffect(() => holdGetStartedBlocking(), []);
   return null;
 }
 
