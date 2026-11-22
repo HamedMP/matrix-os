@@ -2,6 +2,7 @@
 import React from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { ProjectSetupStartRequestSchema, ProjectSetupUpdateRequestSchema } from "@matrix-os/contracts";
 import { useProjectSetup, type ProjectSetupTransport } from "../../packages/ui/src/chat/use-project-setup";
 
 afterEach(cleanup);
@@ -18,9 +19,9 @@ const draft = {
 };
 function transport() {
   return {
-    get: vi.fn(async () => ({ draft: null })),
-    post: vi.fn(async () => ({ draft })),
-    patch: vi.fn(async () => ({ draft: { ...draft, revision: 2, step: "skill" } })),
+    get: vi.fn<ProjectSetupTransport["get"]>(async () => ({ draft: null })),
+    post: vi.fn<ProjectSetupTransport["post"]>(async () => ({ draft })),
+    patch: vi.fn<ProjectSetupTransport["patch"]>(async () => ({ draft: { ...draft, revision: 2, step: "skill" } })),
   } satisfies ProjectSetupTransport;
 }
 
@@ -138,4 +139,34 @@ it("leaves an ordinary existing Chat outside setup when it has no setup draft", 
   });
   expect(client.post).not.toHaveBeenCalled();
   expect(client.patch).not.toHaveBeenCalled();
+});
+
+
+it("encodes the native composer's extended selection as a strict canonical start request", async () => {
+  const client = transport();
+  const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }], interactionMode: "default", permissionMode: "supervised" };
+  const open = vi.fn();
+  const { result } = renderHook(() => useProjectSetup({ client, scope: "owner:computer", projectId: "project_a", eligible: true, selection, onOpenChat: open }));
+  await act(async () => result.current.start());
+  await act(async () => result.current.answer("Portfolio website"));
+  const body = ProjectSetupStartRequestSchema.parse(client.post.mock.calls[0]?.[1]);
+  expect(body.currentSelection).toEqual({ instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }] });
+  expect(body.clientRequestId).toMatch(/^req_setup_/);
+  expect(open).toHaveBeenCalledWith("chat_setup");
+});
+
+it("encodes generation through the strict PATCH schema and preserves its canonical retry identity", async () => {
+  const client = transport();
+  client.get.mockResolvedValue({ draft: { ...draft, step: "review" } });
+  client.patch.mockRejectedValueOnce(new Error("uncertain response"));
+  const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }], interactionMode: "review", permissionMode: "supervised" };
+  const { result } = renderHook(() => useProjectSetup({ client, scope: "owner:computer", projectId: "project_a", eligible: true }));
+  await act(async () => result.current.start());
+  await act(async () => result.current.dispatch({ type: "generate", selection }));
+  const retrySelection = { ...selection, permissionMode: "full_access" };
+  await act(async () => result.current.dispatch({ type: "generate", selection: retrySelection }));
+  const first = ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[0]?.[1]);
+  const retry = ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[1]?.[1]);
+  expect(first).toEqual(retry);
+  expect(first.action).toEqual({ type: "generate", selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }] } });
 });

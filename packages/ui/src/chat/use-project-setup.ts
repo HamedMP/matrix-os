@@ -24,6 +24,14 @@ interface Options {
   onChanged?: () => void;
 }
 
+function canonicalSetupSelection(selection: CanonicalChatModelSelection): CanonicalChatModelSelection {
+  return {
+    instanceId: selection.instanceId,
+    model: selection.model,
+    ...(selection.options ? { options: selection.options.map(({ id, value }) => ({ id, value })) } : {}),
+  };
+}
+
 /** Chat owns accepted setup state. This hook holds only the currently scoped view. */
 export function useProjectSetup(options: Options) {
   const { client, scope, projectId, chatId, eligible, selection } = options;
@@ -112,7 +120,7 @@ export function useProjectSetup(options: Options) {
 
   const requestId = (key: string) => {
     if (attempt.current?.identity !== identity || attempt.current.key !== key) {
-      attempt.current = { identity, key, requestId: `setup_${crypto.randomUUID()}` };
+      attempt.current = { identity, key, requestId: `req_setup_${crypto.randomUUID()}` };
     }
     return attempt.current.requestId;
   };
@@ -123,10 +131,13 @@ export function useProjectSetup(options: Options) {
   const dispatch = async (action: ProjectSetupAction): Promise<boolean> => {
     const draft = stateRef.current.draft;
     if (!client || !draft || draft.projectId !== projectId) return false;
+    const canonicalAction = action.type === "generate"
+      ? { ...action, selection: canonicalSetupSelection(action.selection) }
+      : action;
     const body = {
       baseRevision: draft.revision,
-      clientRequestId: requestId(JSON.stringify([draft.revision, action])),
-      action,
+      clientRequestId: requestId(JSON.stringify([draft.revision, canonicalAction])),
+      action: canonicalAction,
     };
     const accepted = await run((signal) =>
       client.patch(`/api/chats/${encodeURIComponent(draft.chatId)}/project-setup`, body, signal),
@@ -140,10 +151,13 @@ export function useProjectSetup(options: Options) {
       return dispatch({ type: "revise", field: "guidance", text: text.trim() });
     if (stateRef.current.draft) return dispatch({ type: "answer", text: text.trim() });
     if (!stateRef.current.introduction) return false;
-    const body = {
-      clientRequestId: requestId(JSON.stringify(["start", text.trim(), selection])),
+    const payload = {
       answer: text.trim(),
-      ...(selection ? { currentSelection: selection } : {}),
+      ...(selection ? { currentSelection: canonicalSetupSelection(selection) } : {}),
+    };
+    const body = {
+      clientRequestId: requestId(JSON.stringify(["start", payload])),
+      ...payload,
     };
     const accepted = await run(
       (signal) => client.post(`/api/projects/${encodeURIComponent(projectId)}/setup`, body, signal),
