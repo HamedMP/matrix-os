@@ -1,4 +1,8 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import type { NextConfig } from "next";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
@@ -7,6 +11,7 @@ import { createApp } from "../../packages/platform/src/main.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 import { cookieHeaderFromSetCookie, stubOrchestrator } from "./proxy-routing-test-utils.js";
 
+const nextWebpack = (createRequire(import.meta.url)("next/dist/compiled/webpack/bundle5") as () => { webpack: typeof import("webpack") })().webpack;
 const previewHandle = "pv-3303-abcd1234";
 const previewPage = `/vm/${previewHandle}`;
 const chunk = "/_next/static/chunks/app/page-078ba9c537f00511.js";
@@ -48,11 +53,11 @@ it("keeps the platform auth-shell prefix authoritative", async () => {
 });
 
 it.each([
-  { dev: false, isServer: false, platform: undefined, expected: "auto" },
-  { dev: true, isServer: false, platform: undefined, expected: "built" },
-  { dev: false, isServer: true, platform: undefined, expected: "built" },
-  { dev: false, isServer: false, platform: "1", expected: "built" },
-])("derives the public path only for the customer production browser compiler %#", async input => {
+  { dev: false, isServer: false, platform: undefined, relativeCss: true },
+  { dev: true, isServer: false, platform: undefined, relativeCss: false },
+  { dev: false, isServer: true, platform: undefined, relativeCss: false },
+  { dev: false, isServer: false, platform: "1", relativeCss: false },
+])("keeps the built public path and derives CSS assets only for the customer production browser compiler %#", async input => {
   const config = await readShellConfig({ platform: input.platform });
   const configureWebpack = config.webpack!;
   const extractionLoader = createRequire(import.meta.url).resolve("next/dist/compiled/mini-css-extract-plugin/loader");
@@ -64,12 +69,77 @@ it.each([
     output: { publicPath: "built" },
     module: { rules: [{ oneOf: [{ rules: [{ use: [cssAssets, customAssets, unrelated] }] }] }] },
   } as Parameters<NonNullable<NextConfig["webpack"]>>[0];
-  const context = { dev: input.dev, isServer: input.isServer } as Parameters<typeof configureWebpack>[1];
-  expect(configureWebpack(webpackConfig, context).output.publicPath).toBe(input.expected);
-  expect(cssAssets.options.publicPath).toBe(input.expected === "auto" ? "auto" : "/_next/");
+  const context = { dev: input.dev, isServer: input.isServer, webpack: nextWebpack } as Parameters<typeof configureWebpack>[1];
+  // Next copies output.publicPath into every client reference manifest as the
+  // prefix for server-rendered chunk script tags, so it must stay the built
+  // absolute path: "auto" rendered "autostatic/chunks/..." (404) in host bundles.
+  expect(configureWebpack(webpackConfig, context).output.publicPath).toBe("built");
+  expect(cssAssets.options.publicPath).toBe(input.relativeCss ? "auto" : "/_next/");
   expect(customAssets.options.publicPath).toBe("/custom/");
   expect(unrelated.options.publicPath).toBe("/_next/");
 });
+
+async function compileLazyChunkFixture(configureWebpack: NonNullable<NextConfig["webpack"]>) {
+  const dir = await mkdtemp(join(tmpdir(), "matrix-shell-public-path-"));
+  await writeFile(join(dir, "entry.js"), "import(/* webpackChunkName: \"lazy\" */ \"./lazy.js\");\n");
+  await writeFile(join(dir, "lazy.js"), "export const value = 1;\n");
+  const webpackConfig = configureWebpack({
+    mode: "production",
+    target: "web",
+    context: dir,
+    entry: { main: "./entry.js" },
+    resolve: {},
+    module: { rules: [] },
+    output: {
+      path: join(dir, "out"),
+      publicPath: "/_next/",
+      filename: "static/chunks/[name].js",
+      chunkFilename: "static/chunks/[name].js",
+    },
+    optimization: { minimize: false, runtimeChunk: { name: "webpack" } },
+  } as Parameters<NonNullable<NextConfig["webpack"]>>[0], { dev: false, isServer: false, webpack: nextWebpack } as Parameters<NonNullable<NextConfig["webpack"]>>[1]);
+  const stats = await new Promise<import("webpack").Stats>((resolvePromise, reject) => {
+    nextWebpack(webpackConfig, (error, result) => error || !result ? reject(error) : resolvePromise(result));
+  });
+  try {
+    expect(stats.hasErrors()).toBe(false);
+    return {
+      publicPath: stats.compilation.outputOptions.publicPath,
+      runtime: await readFile(join(dir, "out/static/chunks/webpack.js"), "utf8"),
+      main: await readFile(join(dir, "out/static/chunks/main.js"), "utf8"),
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+function lazyChunkUrlFor(bundle: { runtime: string; main: string }, runtimeScriptSrc: string): string | undefined {
+  const requested: string[] = [];
+  const document = {
+    currentScript: null as null | { tagName: string; src: string },
+    getElementsByTagName: () => [],
+    createElement: () => ({ setAttribute() {}, parentNode: null }),
+    head: { appendChild: (script: { src: string }) => { requested.push(script.src); } },
+  };
+  const context: Record<string, unknown> = { document, setTimeout, clearTimeout };
+  context.self = context;
+  context.window = context;
+  document.currentScript = { tagName: "SCRIPT", src: runtimeScriptSrc };
+  runInNewContext(bundle.runtime, context);
+  document.currentScript = { tagName: "SCRIPT", src: runtimeScriptSrc.replace("webpack.js", "main.js") };
+  runInNewContext(bundle.main, context);
+  return requested[0];
+}
+
+it("loads lazy chunks from the served runtime script while server-rendered chunk tags keep the absolute Next path", async () => {
+  const config = await readShellConfig({});
+  const bundle = await compileLazyChunkFixture(config.webpack!);
+  expect(bundle.publicPath).toBe("/_next/");
+  expect(lazyChunkUrlFor(bundle, `${appOrigin}${previewPage}/_next/static/chunks/webpack.js`))
+    .toBe(`${appOrigin}${previewPage}/_next/static/chunks/lazy.js`);
+  expect(lazyChunkUrlFor(bundle, "https://owner.example/_next/static/chunks/webpack.js"))
+    .toBe("https://owner.example/_next/static/chunks/lazy.js");
+}, 30_000);
 
 it("loads the Preview document's own Next chunk after another tab changes the shell route cookies", async () => {
   vi.stubEnv("MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED", "false");
