@@ -35,12 +35,9 @@ const subscribeKernelState = (onChange: () => void) => {
 };
 const kernelConnected = () => getKernelSocket()?.state === "connected";
 
-// Kernel socket opens, counted from the reconnect event the kernel wiring emits for every
-// socket instance, so a reconnect too short to render as disconnected still refreshes.
+// Kernel socket opens (any instance), so a reconnect too short to render as disconnected still refreshes.
 let kernelOpens = 0;
-if (typeof window !== "undefined") {
-  window.addEventListener(RUNTIME_RECONNECTED_EVENT, () => { kernelOpens += 1; });
-}
+if (typeof window !== "undefined") window.addEventListener(RUNTIME_RECONNECTED_EVENT, () => { kernelOpens += 1; });
 const subscribeKernelOpens = (onChange: () => void) => {
   window.addEventListener(RUNTIME_RECONNECTED_EVENT, onChange);
   return () => window.removeEventListener(RUNTIME_RECONNECTED_EVENT, onChange);

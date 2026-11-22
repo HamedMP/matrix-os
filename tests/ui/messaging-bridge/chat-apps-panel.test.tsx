@@ -205,14 +205,8 @@ describe("chat apps panel", () => {
     let statusCalls = 0;
     let listCalls = 0;
     const gateway = fakeGateway({
-      [STATUS]: () => {
-        statusCalls += 1;
-        return { body: readyWithAccounts() };
-      },
-      [CONVERSATIONS]: () => {
-        listCalls += 1;
-        return { body: conversations([]) };
-      },
+      [STATUS]: () => ({ body: (statusCalls += 1, readyWithAccounts()) }),
+      [CONVERSATIONS]: () => ({ body: (listCalls += 1, conversations([])) }),
     });
     const ws = socket();
     // A short reconnect inside the surface's grace window never reports `connected={false}`.

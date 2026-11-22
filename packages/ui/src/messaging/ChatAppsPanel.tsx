@@ -163,20 +163,11 @@ function ChatAppsContent({
           ))}
         </ul>
       ) : null}
-      {/*
-        One inbox stays mounted across ready, outage and failed-refresh states, so an open
-        conversation, drafts and failed sends survive a status change. Saved conversations
-        stay readable after their account is removed and while the bridge is down.
-      */}
+      {/* One inbox across ready, outage and error states keeps the open thread, drafts and failed sends. */}
       {view.kind === "ready" || view.kind === "unavailable" || view.kind === "error" ? (
-        <ChatInbox
-          client={client}
+        <ChatInbox client={client} subscribe={subscribe} connected={connected} connectionEpoch={connectionEpoch}
           networks={view.kind === "ready" ? view.rows.map((row) => row.network) : [...MESSAGING_BRIDGE_NETWORKS]}
-          subscribe={subscribe}
-          connected={connected}
-          connectionEpoch={connectionEpoch}
-          hasAccounts={view.kind === "ready" ? view.hasAccounts : true}
-        />
+          hasAccounts={view.kind === "ready" ? view.hasAccounts : true} />
       ) : null}
       {linking ? (
         <LinkAccountDialog
@@ -251,11 +242,7 @@ function NetworkRow({
 /** The loading, error, early-access and outage notices above the account rows. */
 function StatusNotice({ view, onRetry }: { view: ChatAppsSectionState; onRetry: () => void }) {
   if (view.kind === "loading") {
-    return (
-      <div aria-busy="true" style={{ ...s.card, padding: 16, minHeight: 120 }}>
-        <p role="status" style={s.muted}>Checking your chat apps…</p>
-      </div>
-    );
+    return <div aria-busy="true" style={{ ...s.card, padding: 16, minHeight: 120 }}><p role="status" style={s.muted}>Checking your chat apps…</p></div>;
   }
   if (view.kind === "not_enabled") {
     return (

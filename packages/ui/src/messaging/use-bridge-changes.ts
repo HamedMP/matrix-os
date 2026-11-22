@@ -25,10 +25,9 @@ export function parseBridgeChange(frame: unknown): MessagingBridgeChangedEvent |
  * Calls `onChange` for each valid `messages:changed` event, or with `null`
  * (refresh everything) every 10 s while the tab is visible when no socket is
  * available or the surface reports it disconnected (`connected === false`).
- * Change events sent during a disconnect are lost, so reconnecting refreshes
- * everything once: after `connected` returns to true, or when `connectionEpoch`
- * (bumped on every socket open) changes, which also catches a reconnect too
- * short for the surface to report as disconnected.
+ * Events sent during a disconnect are lost, so a reconnect refreshes once: when
+ * `connected` returns to true or `connectionEpoch` (bumped on every socket open,
+ * so it also catches reconnects too short to report) changes.
  */
 export function useMessagingBridgeChanges(
   subscribe: MessagingBridgeSubscribe | undefined,

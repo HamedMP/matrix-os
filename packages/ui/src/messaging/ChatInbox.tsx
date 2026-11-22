@@ -77,9 +77,8 @@ export function ChatInbox({ client, networks, subscribe, connected = true, conne
     try {
       let page = await client.conversations(query(cursor), controller.signal);
       if (mode === "refresh") {
-        // Cursors are offsets, which shift whenever conversations arrive anywhere in the list, so
-        // merging page one into older pages can skip some. Re-read from the top as deep as is
-        // already loaded (bounded) and replace the list and its cursor together.
+        // Offset cursors shift when conversations arrive anywhere, so merging page one can skip
+        // some: re-read from the top as deep as loaded (bounded) and replace list and cursor.
         let items = page.items;
         for (let pages = 1; page.nextCursor && items.length < list.items.length && pages < REFRESH_MAX_PAGES; pages += 1) {
           page = await client.conversations(query(page.nextCursor), controller.signal);
