@@ -1,6 +1,6 @@
 # Guided project setup in Chat
 
-Created November 22, 2026. Status is draft for product and engineering review.
+Created November 22, 2026. The requester approved this specification for implementation on November 22, 2026.
 Branch `codex/project-chat-setup-spec`.
 
 ## Goal and design authority
@@ -11,7 +11,7 @@ The baseline is the guided Project Chat design reviewed on November 12, includin
 
 Design references are the [guided setup board](https://www.figma.com/design/USFVlYYFZ3WKJBAzFZSceC/Desktop-app?node-id=2471-15695), [clickable flow](https://www.figma.com/proto/USFVlYYFZ3WKJBAzFZSceC/Desktop-app?page-id=1164%3A20441&node-id=2471-15699&scaling=scale-down), [Skill conversation](https://www.figma.com/design/USFVlYYFZ3WKJBAzFZSceC/Desktop-app?node-id=2471-16373), and [MCP conversation](https://www.figma.com/design/USFVlYYFZ3WKJBAzFZSceC/Desktop-app?node-id=2471-16813). The connector denied file access and Desktop Bridge was disconnected on November 22. This draft uses the previously reviewed design and retained design notes. Reopen the board before visual implementation to identify subsequent changes.
 
-[Hamed’s feedback](https://matrixos.slack.com/archives/C0C459830FJ/p1794470298427819) asks for plain-language project guidance, Chat authoring, Markdown review, skippable onboarding, and visible saved skills. The existing [project context feature](../2691-project-agent-context/spec.md) and [instruction discovery evidence](../../docs/dev/project-agent-context.md) are the implementation baseline. Existing feature tracking is [ENG-442](https://linear.app/matrix-os/issue/ENG-442/add-project-agent-configuration-to-desktop-and-web) and [PR #3244](https://github.com/HamedMP/matrix-os/pull/3244). A follow-up implementation PR needs its own verified issue linked to this spec.
+[Hamed’s feedback](https://matrixos.slack.com/archives/C0C459830FJ/p1794470298427819) asks for plain-language project guidance, Chat authoring, Markdown review, skippable onboarding, and visible saved skills. The existing [project context feature](../2691-project-agent-context/spec.md) and [instruction discovery evidence](../../docs/dev/project-agent-context.md) are the implementation baseline. Existing feature tracking is [ENG-442](https://linear.app/matrix-os/issue/ENG-442/add-project-agent-configuration-to-desktop-and-web) and [PR #3244](https://github.com/HamedMP/matrix-os/pull/3244). Implementation tracking is [ENG-538](https://linear.app/matrix-os/issue/ENG-538/guide-personal-project-setup-through-project-chat). Draft PR #3572 now carries the approved specification and its implementation.
 
 Source inspection was refreshed against `main` at `68ad9d637e1` on November 22. General computer onboarding in [spec 635](../635-guided-onboarding/spec.md) has a separate entry and purpose. This feature starts from a project. Reuse shared Chat and connection surfaces where their existing contracts apply.
 
@@ -19,7 +19,7 @@ Source inspection was refreshed against `main` at `68ad9d637e1` on November 22. 
 
 The first delivery includes personal-project setup on Electron Desktop, Web Desktop, and Web Canvas. The primary checkout owns the generated files. Electron Desktop also offers setup after successful project creation. The project overview on all three surfaces exposes an entry to start or resume setup.
 
-Shared-project setup writes, worktree-specific setup, direct skills.sh installation, multi-file skill packages, automatic project-only MCP grants, and a new cross-runtime instruction injection policy require follow-up designs. Native Mobile and Web Mobile are outside this delivery’s acceptance scope, as requested. Files inline naming and rename remain a separate recorded follow-up.
+Setup writes through shared/collaboration contexts, worktree-specific setup, direct skills.sh installation, multi-file skill packages, automatic project-only MCP grants, and a new cross-runtime instruction injection policy require follow-up designs. Native Mobile and Web Mobile are outside this delivery’s acceptance scope, as requested. Files inline naming and rename remain a separate recorded follow-up.
 
 ## User scenarios and acceptance
 
@@ -125,7 +125,7 @@ The November 22 baseline documents native Codex project instruction discovery, s
 
 ## Authorization and API reuse
 
-All operations remain private. Existing authentication, owner/project admission, immutable identity, and Files permissions apply at the server boundary. A model-generated project ID, path, or connection state grants no authority.
+All operations remain private. Existing authentication, owner/project admission, immutable identity, and Files permissions apply at the server boundary. A personal owner keeps existing authority over their own primary checkout when files are shared externally. Shared/collaboration Chat contexts and members receive no setup write entry or authority. A model-generated project ID, path, or connection state grants no authority.
 
 | Operation or existing route | Authentication and authority | Setup use |
 | --- | --- | --- |
@@ -138,7 +138,7 @@ All operations remain private. Existing authentication, owner/project admission,
 | Existing Custom MCP Settings, OAuth, and connection reads | Existing authenticated Settings ownership and explicit connection consent | Connect and observe state on the current computer |
 | Existing runtime MCP discovery/call broker | Existing runtime/run authority, connection ownership, and tool approvals | Subsequent real tool usage |
 
-The implementation must map these operations to the current concrete APIs before coding. Prefer existing APIs. If durable draft storage needs a new operation, add its exact route or IPC contract, auth matrix, bounded payload, and conflict semantics to this spec before implementing it.
+The focused setup API below supplies the durable draft extension missing from existing strict Chat metadata. Existing Chat creation, transcript storage, admission, Files, Skills and Settings remain the reused operations. The [technical plan](plan.md) records the wiring and write boundaries.
 
 Boundary checks include owner/project admission after archive/delete, root movement or replacement, symlink and nonregular file rejection, allowlisted relative paths, actual byte limits, malformed frontmatter, and body limits on mutations. Reads and requests are bounded and cancellable. Revalidate late results before applying them. Long-lived draft caches and connection polling require a cap, expiry or eviction, and cleanup on navigation and shutdown.
 
@@ -174,3 +174,20 @@ Acceptance requires all scoped branches to reach an accurate review and saved st
 6. Keep implementation and documentation PRs reviewable with test/Preview evidence. Merge and production rollout follow separate explicit authorization.
 
 Product and security boundaries recorded for review are computer-scoped MCP through existing Settings, manifest-only Skill import, owner-primary-checkout setup writes, and preservation of current instruction-loading policy. Direct skills.sh installation, bundled assets, project-only tool grants, and automatic injection need separately reviewed contracts. Files inline creation naming and click-to-rename remain a separate follow-up from Hamed’s Figma comment and the November 12 request.
+
+## Concrete setup API contract
+
+| Private operation | Request and response | Authority and consistency |
+| --- | --- | --- |
+| `GET /api/projects/:projectId/setup` | Return `{ draft }`, where an unfinished matching setup may be null | Existing authenticated personal owner and revalidated active primary project/root, private no-store |
+| `POST /api/projects/:projectId/setup` | First explicit purpose answer with `clientRequestId`, `answer`, and optional canonical `currentSelection`; return `{ draft, record }` | Same owner/root authority, bounded body, server-side singleton and request idempotency. Create the draft, canonical Chat and known transcript messages in one transaction |
+| `GET /api/chats/:chatId/project-setup` | Return the currently authorized `{ draft }` | Existing owned canonical Chat plus the matching active primary project/root. Shared or moved contexts fail closed |
+| `PATCH /api/chats/:chatId/project-setup` | `baseRevision`, `clientRequestId`, and one validated action; return the current draft and canonical record as needed | Same owner/root admission, bodyLimit, typed per-action validation, revision CAS in the write statement, transcript/outbox and draft writes in one transaction |
+
+The draft identifies its Chat, immutable project, server-resolved primary root, revision, current question message, accepted answers, staged Skill, proposed files and per-file results, MCP request/skip choice, generation state, and update time. Computer scope derives from the routed runtime. Keep it in a Chat-owned PostgreSQL row with a foreign key to the canonical Chat. Final project files remain configuration authority. Never repurpose the strict public userState or shellState fields.
+
+The discriminated action set covers an answer, create-or-skip Skill choice, staged Skill Markdown, connect-or-skip MCP choice, answer revision, reviewed file content, review preparation, generation, generation synchronization, and explicit save. Known questions and accepted answers enter the ordinary canonical transcript through server-validated transitions. The API exposes no arbitrary assistant-message append. MCP connected status comes from an existing authoritative Settings read.
+
+Draft generation uses the existing canonical model admission with an enforced supported read-only review/plan mode. A model receives only the accepted answers and requested proposal format. Its bounded result is validated before becoming a proposed file. Imported Markdown remains untrusted content. A provider or runtime without a qualified safe drafting mode shows unavailable drafting with the accepted answers preserved. A prompt asking the model to avoid writes is insufficient enforcement. The normal user-selected permissions continue to govern subsequent ordinary project work.
+
+Conflicts return a safe conflict state and require a reload/review. Missing or inaccessible resources share existing not-found behavior. Missing dependencies and unavailable drafting return safe unavailable errors. Retries with the same request identity recover the accepted outcome and cannot duplicate canonical Chats or transcript messages. Persistence, request history, and generated content are bounded.

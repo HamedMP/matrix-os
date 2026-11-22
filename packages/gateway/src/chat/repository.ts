@@ -1,3 +1,4 @@
+import { appendProjectSetupTranscript, type SetupTranscriptMessage } from "./project-setup-transcript.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
@@ -529,6 +530,12 @@ export class ChatRepository {
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
+  }
+
+  /** Known setup transitions append within the same owner-database transaction. */
+  async appendProjectSetupMessages(owner: ChatOwner, chatId: string, entries: SetupTranscriptMessage[]): Promise<string | undefined> {
+    return this.transact(trx => appendProjectSetupTranscript(trx, owner, chatId, entries,
+      revision => this.appendOutbox(trx, owner, chatId, revision, "chat.updated")));
   }
 
   /** Server-only source projection, committed independently of canonical target work. */

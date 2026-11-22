@@ -14,7 +14,7 @@ Reviewed November 22, 2026 against the [spec](../spec.md), retained November 12 
 - [x] Electron Desktop, Web Desktop, and Web Canvas acceptance and memory observation are specified.
 - [x] Documentation PR, test-first implementation, CI, Preview evidence, and separate rename follow-up are recorded.
 - [ ] Refresh the Figma board live before visual implementation. Official connector access was denied and Desktop Bridge was disconnected during this spec pass.
-- [ ] Resolve the durable draft operation against existing Chat storage in the technical plan and add a concrete contract if a new API is required.
-- [ ] Verify and link the follow-up ENG issue before opening the implementation PR.
+- [x] Resolve the durable draft operation against existing Chat storage and record the concrete authenticated API in spec.md and plan.md.
+- [x] Verify and link follow-up ENG-538 to the implementation in PR #3572.
 
-The unchecked items are implementation-planning prerequisites. This checklist records specification review and carries no claim that product tests or Preview acceptance have run.
+The remaining unchecked item records unavailable live design context. The requester approved implementation from the previously reviewed design. This checklist records specification review and carries no claim that product tests or Preview acceptance have run.
