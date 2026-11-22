@@ -150,17 +150,21 @@ export async function listStaleResizingUserMachines(
 export async function completeUserMachineRegistration(
   db: PlatformDB,
   machineId: string,
-  hetznerServerId: number,
+  /** The Hetzner server id the guest reported, or 'metal' for a metal-substrate machine. */
+  server: number | 'metal',
   expectedRegistrationTokenHash: string,
   expiresAfterIso: string,
   values: Partial<NewUserMachine>,
 ): Promise<UserMachineRecord | undefined> {
   await db.ready;
-  const row = await db.executor
+  let query = db.executor
     .updateTable('user_machines')
     .set(toUserMachineUpdate(values))
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
+    .where('machine_id', '=', machineId);
+  query = server === 'metal'
+    ? query.where('substrate', '=', 'metal').where('hetzner_server_id', 'is', null).where('metal_vm_id', 'is not', null)
+    : query.where('hetzner_server_id', '=', server);
+  const row = await query
     .where('registration_token_hash', '=', expectedRegistrationTokenHash)
     .where('registration_token_expires_at', '>=', expiresAfterIso)
     .where('status', 'in', ['provisioning', 'recovering'])

@@ -5,6 +5,7 @@ import { StartupLoading } from "@/components/StartupScreen";
 import {
   PROVISIONING_STAGE_LABEL,
   type JourneyFetchResult,
+  type MobileJourneyState,
 } from "@/lib/journey";
 import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
@@ -149,6 +150,8 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
           ) : null}
         </Centered>
       );
+    case "install_choices_required":
+      return <InstallChoices journey={journey} working={working} onStart={onRetry} />;
     case "provisioning":
       return (
         <Centered>
@@ -174,13 +177,30 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
       );
     default:
       // first_run / ready — the caller redirects.
-      return (
-        <Centered>
-          <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
-          <Body>Opening your Matrix computer…</Body>
-        </Centered>
-      );
+      return <HandOff />;
   }
+}
+
+/** The platform offers a direct start (free plan): no plans and no install choices. */
+function InstallChoices({ journey, working, onStart }: { journey: MobileJourneyState; working: boolean; onStart: () => void }) {
+  if (journey.nextAction.kind !== "start_provision") return <HandOff />;
+  return (
+    <Centered>
+      <Title>Set up your Matrix computer</Title>
+      <Body>{journey.detail}</Body>
+      <PrimaryButton label={working ? "Starting…" : "Set up"} testID="journey-start" onPress={onStart} />
+    </Centered>
+  );
+}
+
+function HandOff() {
+  const { theme } = useUnistyles();
+  return (
+    <Centered>
+      <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
+      <Body>Opening your Matrix computer…</Body>
+    </Centered>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

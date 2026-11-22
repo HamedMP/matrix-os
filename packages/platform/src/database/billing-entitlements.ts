@@ -12,6 +12,7 @@ import type {
   NewBillingWebhookEvent,
   PlatformDB,
 } from '../db.js';
+import { grantsNoPaidRights } from '../free-tier/free-entitlement.js';
 import {
   mapBillingEntitlement,
   mapBillingOverride,
@@ -23,10 +24,17 @@ import {
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing entitlement, override and webhook event queries. */
 
+/**
+ * A Stripe projection replaces the stored entitlement when it is not older,
+ * except that one granting no paid rights never replaces a stored free
+ * entitlement: a former paid owner on the free plan keeps it while their
+ * ended subscription keeps sending updates. A live subscription still wins.
+ */
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
   return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
     if (!admission.newWorkAllowed) return;
     const row = toBillingEntitlementRow(record);
+    const keepsFree = record.source === 'stripe' && grantsNoPaidRights(record, new Date(record.updatedAt));
     await trx.executor
       .insertInto('billing_entitlements')
       .values(row)
@@ -50,7 +58,10 @@ export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillin
         effective_from: row.effective_from,
         effective_until: row.effective_until,
         updated_at: row.updated_at,
-      }).where('billing_entitlements.updated_at', '<=', row.updated_at))
+      }).where((eb) => eb.and([
+        eb('billing_entitlements.updated_at', '<=', row.updated_at),
+        ...(keepsFree ? [eb('billing_entitlements.source', '!=', 'free')] : []),
+      ])))
       .execute();
   });
 }

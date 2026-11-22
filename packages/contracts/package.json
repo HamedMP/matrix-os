@@ -159,7 +159,8 @@
     "#routine-chat-origin": "./src/routine-chat-origin.ts",
     "#routine-chat-receipt": "./src/routine-chat-receipt.ts",
     "#routine-origin-proof": "./src/routine-origin-proof.ts",
-    "#runtime-substrate": "./src/runtime-substrate.ts"
+    "#runtime-substrate": "./src/runtime-substrate.ts",
+    "#hostd-api": "./src/hostd-api.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

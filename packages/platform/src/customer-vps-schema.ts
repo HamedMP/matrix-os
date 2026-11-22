@@ -75,15 +75,33 @@ export const PreviewProvisionRequestSchema = z.object({
     message: 'Specify either a test snapshot or a bundle version',
   });
 
-export const RegisterRequestSchema = z.object({
+const RegisterCommonFields = {
   machineId: z.uuid(),
-  hetznerServerId: z.number().int().positive(),
-  publicIPv4: PublicIPv4Schema,
-  publicIPv6: z.ipv6().optional(),
   imageVersion: z.string().min(1).max(128),
   bundleSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   healthy: z.boolean().optional(),
+};
+
+/** Hetzner guests. `provider` is optional because already-shipped bundles never send it. */
+export const HetznerRegisterRequestSchema = z.object({
+  provider: z.literal('hetzner').optional(),
+  ...RegisterCommonFields,
+  hetznerServerId: z.number().int().positive(),
+  publicIPv4: PublicIPv4Schema,
+  publicIPv6: z.ipv6().optional(),
 }).strict();
+
+/**
+ * Metal guests (spec 2691, ENG-520) have no provider server id or public
+ * address. `serverRef` is the platform machine id rendered into host.env.
+ */
+export const MetalRegisterRequestSchema = z.object({
+  provider: z.literal('metal'),
+  ...RegisterCommonFields,
+  serverRef: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+}).strict();
+
+export const RegisterRequestSchema = z.union([HetznerRegisterRequestSchema, MetalRegisterRequestSchema]);
 
 export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,

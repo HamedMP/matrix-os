@@ -53,6 +53,10 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { createConfiguredMetalRuntime } from './substrates/metal-runtime.js';
+import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -91,7 +95,7 @@ import {
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
 import { createFundedHostActivationRoutes } from './funded-host-activation.js';
-import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, createManagedFeatureResumeTrigger, type ManagedFeatureActivator, type ManagedFeatureResumeTrigger } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -289,6 +293,7 @@ type CreatePlatformApp = (deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -401,6 +406,8 @@ async function startPlatformServerWithCleanup(
       ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
       service: speechService })
     : undefined;
+  // Read once at startup: free signup and free funded admission share it.
+  const freeTierConfig = loadConfiguredFreeTier(process.env);
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
   let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
@@ -420,6 +427,8 @@ async function startPlatformServerWithCleanup(
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      freeFunding: freeTierConfig?.dailyFundedSpendMicrousd === undefined
+        ? {} : { dailyFundedSpendMicrousd: freeTierConfig.dailyFundedSpendMicrousd },
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -896,6 +905,14 @@ async function startPlatformServerWithCleanup(
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
+  // Bound below when the activator is built, before any wake source starts (the HTTP server
+  // and the metal sleeper both start later). With customer VPS off there is no activator and
+  // the hook stays a no-op.
+  let activateResumedRuntime: ManagedFeatureResumeTrigger | undefined;
+  // Built before the activator, which reaches metal runtimes through their host ingress.
+  const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
+    onMetalResumed: (ref) => activateResumedRuntime?.(ref),
+  });
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
@@ -907,6 +924,7 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => [
     customerVpsReconciliationWorker,
     managedFeatureReconciliationWorker,
+    activateResumedRuntime,
     {
       stop() { goldenSnapshotStopped = true; if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval); },
       drain: () => goldenSnapshotPromise ?? Promise.resolve(),
@@ -967,7 +985,8 @@ async function startPlatformServerWithCleanup(
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
-      fetchDispatcher: customerVpsProxyDispatcher });
+      fetchDispatcher: customerVpsProxyDispatcher, substrates: substrateRegistry });
+    activateResumedRuntime = createManagedFeatureResumeTrigger(activateManagedFeatures);
     if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret,
@@ -1172,6 +1191,16 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
+  // Metal provisioning (spec 2691): free signup's provisioner, the stale-row and teardown maintenance pass,
+  // and the idle sleeper (MATRIX_FREE_TIER_SLEEP_ENABLED) that suspends idle free runtimes and wakes them for scheduled work.
+  const metalRuntime = createConfiguredMetalRuntime({
+    db, env: appEnv, backgroundWorkersEnabled, substrates: substrateRegistry, platformSecret,
+    customerVps: customerVpsDependencies
+      ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
+      : undefined,
+  });
+  registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
+  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1210,7 +1239,8 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db),
+    substrateRegistry,
+    freeTier,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
@@ -1239,6 +1269,8 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
+    activateResumedRuntime?.stop();
+    metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
@@ -1255,13 +1287,21 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        // Started first so a rejected step below cannot skip draining the metal maintenance pass.
+        const metalShutdown = metalRuntime?.shutdown().catch((metalErr: unknown) => {
+          exitCode = 1;
+          console.error('[platform] Metal runtime shutdown failed:', metalErr instanceof Error ? metalErr.name : 'unknown');
+        });
         await accountDeletion?.drain();
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
+        await activateResumedRuntime?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
+        // Drain the metal maintenance pass (DB writes, hostd deletes) and sleeper tick before the pool closes.
+        await metalShutdown;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
@@ -1272,6 +1312,7 @@ async function startPlatformServerWithCleanup(
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
+          closeUpstreamDispatchers(),
           customMcpShutdown?.(),
           coreRepo.shutdown(),
         ]);
@@ -1311,6 +1352,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    substrates: substrateRegistry,
   });
 }
 
