@@ -122,6 +122,24 @@ import {
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 import { isFailedRuntimeBuild } from './substrates/metal-registration-window.js';
 
+/**
+ * A 5xx an upstream answered on the app domain is passed through to the
+ * browser; log which upstream, the method, the path (never the query, which
+ * can carry tokens) and whether it was a Next server action, so a bare 500
+ * can be traced. No headers, bodies or identities beyond the runtime handle.
+ */
+function logAppDomainUpstreamFailure(
+  upstream: 'auth-shell' | 'runtime',
+  c: Context,
+  status: number,
+  handle?: string,
+): void {
+  const path = c.req.path.length > 256 ? `${c.req.path.slice(0, 256)}...` : c.req.path;
+  const serverAction = c.req.header('next-action') !== undefined;
+  console.error(`[platform] app-domain ${upstream} upstream status=${status} method=${c.req.method} path=${path}`
+    + ` server_action=${serverAction}${handle ? ` handle=${handle}` : ''}`);
+}
+
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
 }
@@ -311,6 +329,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirect: 'manual',
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
+      if (response.status >= 500) logAppDomainUpstreamFailure('auth-shell', c, response.status);
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
       if (!proxyOpts.preserveUpstreamCacheHeaders) {
         applyNoStoreResponseHeaders(responseHeaders);
@@ -1042,6 +1061,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, sessionWakeJson, applyNoStoreHeaders);
         const upstream = sent.response;
         noteOwnerReachedRuntime(db, runningMachine, identity);
+        if (isAppDomain && upstream.status >= 500) {
+          logAppDomainUpstreamFailure('runtime', c, upstream.status, runningMachine.handle);
+        }
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
