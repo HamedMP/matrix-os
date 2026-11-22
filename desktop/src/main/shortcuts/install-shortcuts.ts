@@ -6,6 +6,7 @@ import type { ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
 import type { LocalStore } from "../persistence/local-store";
 import { SHORTCUT_EVENTS, type ShortcutSnapshot } from "../../shared/shortcuts-ipc";
 import { createShortcutInputMatcher, type ShortcutInput } from "./input-matcher";
+import { isShortcutActionAvailable } from "./shortcut-availability";
 import { createShortcutService, toShortcutPlatform, type RecordingTarget, type ShortcutService } from "./shortcut-service";
 
 // Windows plus embedded app views; past this, new ones go without shortcuts.
@@ -19,6 +20,7 @@ type InputListener = (event: { preventDefault(): void }, input: ShortcutInput) =
 type NavigationListener = (details: NavigationDetails) => void;
 
 export interface ShortcutContents {
+  getType(): string;
   on(event: "before-input-event", listener: InputListener): unknown;
   on(event: "destroyed", listener: () => void): unknown;
   removeListener(event: "before-input-event", listener: InputListener): unknown;
@@ -123,9 +125,12 @@ export async function installShortcuts(deps: {
     effective: () => effective,
     platform: toShortcutPlatform(deps.platform),
     isRecording: () => service.isRecording(),
+    isAvailable: (id) => isShortcutActionAvailable(id, deps.platform),
     run: deps.run,
   });
   const watchContents: ContentsCreatedListener = (_event, contents) => {
+    // DevTools keeps its own keys.
+    if (contents.getType() === "devtools") return;
     // Destroyed web contents are forgotten the same way as closed windows.
     const onDestroyed = () => { detachers.delete(contents); };
     const attached = watch(contents, () => {

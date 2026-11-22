@@ -3,6 +3,7 @@
 // actions show their current shortcut bindings (specs/653).
 import { app, Menu, shell, type BrowserWindow } from "electron";
 import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ShortcutService } from "../shortcuts/shortcut-service";
 import { createMenuRouter } from "./menu-routing";
 import { createAppMenuTemplate } from "./menu-template";
@@ -17,7 +18,11 @@ let stopFollowingShortcuts: (() => void) | null = null;
  * installAppMenu has run. The before-input-event matcher calls this.
  */
 export function runShortcut(id: ShortcutActionId): void {
-  installedRunner?.(id);
+  if (!installedRunner) {
+    console.warn("[menu] shortcut ignored: the application menu is not installed yet");
+    return;
+  }
+  installedRunner(id);
 }
 
 export function installAppMenu(options: {
@@ -34,8 +39,7 @@ export function installAppMenu(options: {
   const router = createMenuRouter(options);
   const run = (id: ShortcutActionId): void => {
     if (id === "terminal.window") {
-      // Windows has no Terminal window (spec 651).
-      if (process.platform !== "win32") options.openTerminalWindow();
+      if (isShortcutActionAvailable(id, process.platform)) options.openTerminalWindow();
       return;
     }
     router.send("shortcut:action", { id });

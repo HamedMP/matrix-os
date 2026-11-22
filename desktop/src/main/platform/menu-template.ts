@@ -1,41 +1,50 @@
 import type { MenuItemConstructorOptions } from "electron";
 import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isTerminalControlChord } from "../shortcuts/input-matcher";
+import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ZoomAction } from "./zoom";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
-type ShortcutItemFactory = (id: ShortcutActionId, label: string) => MenuItemConstructorOptions;
+type ShortcutItemFactory = (id: ShortcutActionId, label: string) => MenuItemConstructorOptions[];
 
 const SWITCH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
-/** Bindings 2-4 stay out of the menu; the before-input-event matcher handles them. */
-function createShortcutItem(
+/**
+ * The visible item carries the first binding. The before-input-event matcher
+ * handles bindings 2-4, except terminal control chords, which it leaves to the
+ * page; those get hidden items so their accelerators still work.
+ */
+function createShortcutItems(
   shortcuts: EffectiveShortcuts,
-  runShortcut: (id: ShortcutActionId) => void,
+  click: () => void,
   id: ShortcutActionId,
   label: string,
-): MenuItemConstructorOptions {
-  const accelerator = shortcuts[id]?.[0];
-  return { label, ...(accelerator ? { accelerator } : {}), click: () => runShortcut(id) };
+): MenuItemConstructorOptions[] {
+  const [first, ...rest] = shortcuts[id] ?? [];
+  const hidden = rest
+    .filter(isTerminalControlChord)
+    .map((accelerator): MenuItemConstructorOptions => ({ label, accelerator, visible: false, click }));
+  return [{ label, ...(first ? { accelerator: first } : {}), click }, ...hidden];
 }
 
 function createAppsMenu(item: ShortcutItemFactory): MenuItemConstructorOptions {
   return {
     label: "Apps",
     submenu: [
-      item("app.next", "Next App"),
-      item("app.previous", "Previous App"),
+      ...item("app.next", "Next App"),
+      ...item("app.previous", "Previous App"),
       { type: "separator" },
-      item("app.launcher", "Open App Launcher"),
-      item("app.open-files", "Open Files"),
+      ...item("app.launcher", "Open App Launcher"),
+      ...item("app.open-files", "Open Files"),
       { type: "separator" },
-      item("app.minimize", "Minimize App"),
-      item("app.toggle-full-size", "Toggle App Full Size"),
-      item("app.show-desktop", "Show Desktop"),
-      item("app.reopen", "Reopen Closed App"),
+      ...item("app.minimize", "Minimize App"),
+      ...item("app.toggle-full-size", "Toggle App Full Size"),
+      ...item("app.show-desktop", "Show Desktop"),
+      ...item("app.reopen", "Reopen Closed App"),
       { type: "separator" },
       {
         label: "Switch to App",
-        submenu: SWITCH_NUMBERS.map((n) => item(`app.switch-${n}`, `App ${n}`)),
+        submenu: SWITCH_NUMBERS.flatMap((n) => item(`app.switch-${n}`, `App ${n}`)),
       },
     ],
   };
@@ -76,13 +85,13 @@ export function createAppMenuTemplate({
   runShortcut,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
-  const item = (id: ShortcutActionId, label: string) => createShortcutItem(shortcuts, runShortcut, id, label);
+  const item: ShortcutItemFactory = (id, label) => createShortcutItems(shortcuts, () => runShortcut(id), id, label);
   const viewSubmenu: MenuItemConstructorOptions[] = [
-    item("nav.palette", "Command Palette"),
-    item("nav.quick-open", "Go to File"),
-    item("terminal.focus", "Terminal"),
-    ...(openTerminalWindow && platform !== "win32"
-      ? [{ ...item("terminal.window", "Terminal Window"), click: () => openTerminalWindow() }]
+    ...item("nav.palette", "Command Palette"),
+    ...item("nav.quick-open", "Go to File"),
+    ...item("terminal.focus", "Terminal"),
+    ...(openTerminalWindow && isShortcutActionAvailable("terminal.window", platform)
+      ? createShortcutItems(shortcuts, () => openTerminalWindow(), "terminal.window", "Terminal Window")
       : []),
     {
       label: "Reload",
@@ -119,15 +128,15 @@ export function createAppMenuTemplate({
       checkForUpdates();
     },
   };
-  const settingsItem = item("nav.settings", "Settings…");
-  const closeAppItem = item("app.close", "Close Selected App");
+  const settingsItems = item("nav.settings", "Settings…");
+  const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = [
-    item("tabs.new-context", "New"),
-    item("chat.new-thread", "New Agent Thread"),
-    item("chat.open", "Open Chat"),
+    ...item("tabs.new-context", "New"),
+    ...item("chat.new-thread", "New Agent Thread"),
+    ...item("chat.open", "Open Chat"),
     { type: "separator" },
-    item("tabs.new", "New Tab"),
-    item("tabs.close", "Close Tab"),
+    ...item("tabs.new", "New Tab"),
+    ...item("tabs.close", "Close Tab"),
   ];
 
   const platformMenus: MenuItemConstructorOptions[] = isMac
@@ -138,7 +147,7 @@ export function createAppMenuTemplate({
             { role: "about" },
             updateItem,
             { type: "separator" },
-            settingsItem,
+            ...settingsItems,
             { type: "separator" },
             { role: "services" },
             { type: "separator" },
@@ -146,7 +155,7 @@ export function createAppMenuTemplate({
             { role: "hideOthers" },
             { role: "unhide" },
             { type: "separator" },
-            closeAppItem,
+            ...closeAppItems,
             { label: `Quit ${appName}`, click: quitApp },
           ],
         },
@@ -158,10 +167,10 @@ export function createAppMenuTemplate({
           submenu: [
             ...newItems,
             { type: "separator" },
-            settingsItem,
+            ...settingsItems,
             updateItem,
             { type: "separator" },
-            closeAppItem,
+            ...closeAppItems,
             { label: "Exit", click: quitApp },
           ],
         },

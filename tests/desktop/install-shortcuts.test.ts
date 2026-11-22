@@ -19,9 +19,10 @@ function emitter() {
   };
 }
 
-function fakeContents() {
+function fakeContents(type = "window") {
   const events = emitter();
   return {
+    getType: vi.fn(() => type),
     send: vi.fn(),
     isDestroyed: vi.fn(() => false),
     on: events.on,
@@ -62,7 +63,9 @@ function fakeStore(initial: unknown = null) {
   return { get: vi.fn(async () => initial), set: vi.fn(async () => undefined) };
 }
 
-async function setup(options: { main?: FakeWindow | null; terminal?: FakeWindow | null; stored?: unknown } = {}) {
+async function setup(options: {
+  main?: FakeWindow | null; terminal?: FakeWindow | null; stored?: unknown; platform?: NodeJS.Platform;
+} = {}) {
   const app = fakeApp();
   const store = fakeStore(options.stored ?? null);
   let main = options.main === undefined ? fakeWindow() : options.main;
@@ -71,7 +74,7 @@ async function setup(options: { main?: FakeWindow | null; terminal?: FakeWindow 
   const installed = await installShortcuts({
     app: app as never,
     store: store as never,
-    platform: "darwin",
+    platform: options.platform ?? "darwin",
     mainWindow: () => main as never,
     terminalWindow: () => terminal as never,
     run,
@@ -80,8 +83,10 @@ async function setup(options: { main?: FakeWindow | null; terminal?: FakeWindow 
 }
 
 const MAIN_FRAME_NAVIGATION = { isMainFrame: true, isSameDocument: false };
-const CTRL_TAB = { type: "keyDown", key: "Tab", code: "Tab", meta: false, control: true, alt: false, shift: false };
-const F6 = { type: "keyDown", key: "F6", code: "F6", meta: false, control: false, alt: false, shift: false };
+const CTRL_TAB = {
+  type: "keyDown", key: "Tab", code: "Tab", meta: false, control: true, alt: false, shift: false, isAutoRepeat: false,
+};
+const F6 = { ...CTRL_TAB, key: "F6", code: "F6", control: false };
 
 function press(contents: FakeContents, input: typeof CTRL_TAB) {
   const event = { preventDefault: vi.fn() };
@@ -200,6 +205,30 @@ describe("installShortcuts", () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith("app.next");
     expect(press(contents, F6)).not.toHaveBeenCalled();
+  });
+
+  it("does not watch DevTools web contents", async () => {
+    const { app, run } = await setup();
+    const devtools = fakeContents("devtools");
+    app.createContents(devtools);
+    expect(devtools.events.count("before-input-event")).toBe(0);
+    press(devtools, CTRL_TAB);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not run the Terminal window shortcut on Windows", async () => {
+    const terminalWindowKey = { ...CTRL_TAB, key: "T", code: "KeyT", alt: true, shift: true };
+    const windows = await setup({ platform: "win32" });
+    const contents = fakeContents();
+    windows.app.createContents(contents);
+    expect(press(contents, terminalWindowKey)).not.toHaveBeenCalled();
+    expect(windows.run).not.toHaveBeenCalled();
+
+    const linux = await setup({ platform: "linux" });
+    const linuxContents = fakeContents();
+    linux.app.createContents(linuxContents);
+    expect(press(linuxContents, terminalWindowKey)).toHaveBeenCalledTimes(1);
+    expect(linux.run).toHaveBeenCalledWith("terminal.window");
   });
 
   it("matches the bindings saved after install", async () => {

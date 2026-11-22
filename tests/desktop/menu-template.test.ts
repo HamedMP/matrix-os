@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
+import { isShortcutActionAvailable } from "../../desktop/src/main/shortcuts/shortcut-availability";
 
 type Platform = "darwin" | "linux" | "win32";
 
@@ -150,6 +151,17 @@ describe("createAppMenuTemplate", () => {
     expect(all).not.toContain("F6");
   });
 
+  it("adds hidden items for later bindings that are terminal control chords", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "other"), "app.close": ["Ctrl+Q", "Ctrl+E", "F6"] };
+    const opts = options({ platform: "linux", shortcuts });
+    const template = createAppMenuTemplate(opts);
+    const closeItems = submenu(template, "File").filter((item) => item.label === "Close Selected App");
+    expect(closeItems.map((item) => [item.accelerator, item.visible])).toEqual([["Ctrl+Q", undefined], ["Ctrl+E", false]]);
+    click(closeItems[1]);
+    expect(opts.runShortcut).toHaveBeenCalledWith("app.close");
+    expect(accelerators(template, "linux")).not.toContain("F6");
+  });
+
   it("omits the accelerator of an unbound action", () => {
     const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "tabs.close": [] };
     const item = find(submenu(createAppMenuTemplate(options({ shortcuts })), "File"), "Close Tab");
@@ -246,6 +258,15 @@ describe("createAppMenuTemplate", () => {
 
     click(find(fileItems, "Exit"));
     expect(opts.quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("shows exactly the actions available on the platform", () => {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      const template = createAppMenuTemplate(options({ platform, openTerminalWindow: vi.fn() }));
+      const hasTerminalWindow = walk(template).some((item) => item.label === "Terminal Window");
+      expect(hasTerminalWindow, platform).toBe(isShortcutActionAvailable("terminal.window", platform));
+      expect(isShortcutActionAvailable("app.next", platform)).toBe(true);
+    }
   });
 
   it("lists third-party notices under Help only when the build ships them", () => {

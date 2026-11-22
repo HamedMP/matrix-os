@@ -1,19 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
-import { createShortcutInputMatcher, type ShortcutInput } from "@desktop/main/shortcuts/input-matcher";
+import {
+  createShortcutInputMatcher,
+  isTerminalControlChord,
+  type ShortcutInput,
+} from "@desktop/main/shortcuts/input-matcher";
+import type { ShortcutActionId, ShortcutPlatform } from "@matrix-os/contracts/keyboard-shortcuts";
 
 const MAC_DEFAULTS = resolveShortcuts(null, "mac");
+const OTHER_DEFAULTS = resolveShortcuts(null, "other");
 
 function input(overrides: Partial<ShortcutInput>): ShortcutInput {
-  return { type: "keyDown", key: "a", code: "KeyA", meta: false, control: false, alt: false, shift: false, ...overrides };
+  return {
+    type: "keyDown", key: "a", code: "KeyA", meta: false, control: false, alt: false, shift: false, isAutoRepeat: false,
+    ...overrides,
+  };
 }
 
-function setup(options: { effective?: EffectiveShortcuts; recording?: boolean } = {}) {
+function setup(options: {
+  effective?: EffectiveShortcuts;
+  recording?: boolean;
+  platform?: ShortcutPlatform;
+  isAvailable?: (id: ShortcutActionId) => boolean;
+} = {}) {
   const run = vi.fn();
+  const platform = options.platform ?? "mac";
   const matcher = createShortcutInputMatcher({
-    effective: () => options.effective ?? MAC_DEFAULTS,
-    platform: "mac",
+    effective: () => options.effective ?? (platform === "mac" ? MAC_DEFAULTS : OTHER_DEFAULTS),
+    platform,
     isRecording: () => options.recording ?? false,
+    isAvailable: options.isAvailable ?? (() => true),
     run,
   });
   const press = (value: Partial<ShortcutInput>) => {
@@ -69,10 +85,60 @@ describe("shortcut input matcher", () => {
   it("follows changes to the effective bindings", () => {
     let effective: EffectiveShortcuts = MAC_DEFAULTS;
     const run = vi.fn();
-    const matcher = createShortcutInputMatcher({ effective: () => effective, platform: "mac", isRecording: () => false, run });
+    const matcher = createShortcutInputMatcher({
+      effective: () => effective, platform: "mac", isRecording: () => false, isAvailable: () => true, run,
+    });
     effective = { ...MAC_DEFAULTS, "app.next": ["F8"] };
     matcher({ preventDefault: vi.fn() }, input({ key: "F8", code: "F8" }));
     matcher({ preventDefault: vi.fn() }, input(CTRL_TAB));
     expect(run.mock.calls).toEqual([["app.next"]]);
+  });
+
+  it("leaves terminal control chords to the page", () => {
+    const { run, press } = setup({ platform: "other" });
+    expect(press({ key: "w", code: "KeyW", control: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(press(CTRL_TAB)).toHaveBeenCalledTimes(1);
+    expect(press({ key: "T", code: "KeyT", control: true, shift: true })).toHaveBeenCalledTimes(1);
+    expect(press({ key: "1", code: "Digit1", control: true })).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["app.next"], ["app.reopen"], ["app.switch-1"]]);
+  });
+
+  it("skips a control-chord binding on mac but matches the Cmd one", () => {
+    const { run, press } = setup({ effective: { ...MAC_DEFAULTS, "nav.palette": ["Cmd+K", "Ctrl+K"] } });
+    expect(press({ key: "k", code: "KeyK", control: true })).not.toHaveBeenCalled();
+    expect(press({ key: "k", code: "KeyK", meta: true })).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["nav.palette"]]);
+  });
+
+  it("never matches an action that is unavailable on this platform", () => {
+    const { run, press } = setup({ platform: "other", isAvailable: (id) => id !== "terminal.window" });
+    expect(press({ key: "T", code: "KeyT", control: true, alt: true, shift: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("repeats Next app and Previous app while the key is held", () => {
+    const { run, press } = setup();
+    expect(press({ ...CTRL_TAB, isAutoRepeat: true })).toHaveBeenCalledTimes(1);
+    expect(press({ ...CTRL_TAB, shift: true, isAutoRepeat: true })).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["app.next"], ["app.previous"]]);
+  });
+
+  it("swallows auto-repeat of other bound keys without running them again", () => {
+    const { run, press } = setup();
+    expect(press({ key: "w", code: "KeyW", meta: true, isAutoRepeat: true })).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(press({ key: "a", code: "KeyA", isAutoRepeat: true })).not.toHaveBeenCalled();
+  });
+});
+
+describe("isTerminalControlChord", () => {
+  it("is Ctrl alone plus a letter or one of [ \\ ]", () => {
+    for (const binding of ["Ctrl+W", "Ctrl+A", "Ctrl+Z", "Ctrl+[", "Ctrl+\\", "Ctrl+]"]) {
+      expect(isTerminalControlChord(binding), binding).toBe(true);
+    }
+    for (const binding of ["Ctrl+Tab", "Ctrl+1", "Ctrl+Shift+T", "Ctrl+Alt+T", "Cmd+W", "Cmd+Ctrl+W", "W", "Ctrl+,", "Ctrl+F1", "Ctrl+Space"]) {
+      expect(isTerminalControlChord(binding), binding).toBe(false);
+    }
   });
 });

@@ -188,6 +188,17 @@ function lastTemplate(): BuiltItem[] {
   return calls[calls.length - 1]![0] as BuiltItem[];
 }
 
+describe("runShortcut before the menu is installed", () => {
+  it("warns instead of silently dropping the action", async () => {
+    vi.resetModules();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fresh = await import("@desktop/main/platform/menu");
+    fresh.runShortcut("app.next");
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
 describe("installAppMenu", () => {
   beforeEach(() => {
     electron.setApplicationMenu.mockClear();
