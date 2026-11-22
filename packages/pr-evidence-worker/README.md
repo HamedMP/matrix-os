@@ -21,7 +21,10 @@ scripts/pr-evidence upload 1234 web-desktop.png electron-desktop.png journey.mp4
   uploads, so external videos show as a link that opens in the browser.
 - Types: png, jpg/jpeg, webp, gif, mp4, webm, mov. Max 10 files per call, 50 MB each,
   60 files per GitHub login per hour.
-- `MATRIX_PR_EVIDENCE_URL=http://localhost:8787` points the CLI at `wrangler dev`.
+- `MATRIX_PR_EVIDENCE_URL` points the CLI at a local Worker (see Development).
+  `MATRIX_PR_EVIDENCE_REPO` must match the Worker's `GITHUB_REPO` (default `HamedMP/matrix-os`);
+  both `gh pr` calls use it so the authorized PR is the PR that gets the comment.
+- Each file gets its own ticket right before its upload, so slow multi-file runs never hit ticket expiry.
 
 ## API
 
@@ -87,6 +90,20 @@ the `matrix-os.com` zone and is pinned in `wrangler.toml`.
    `scripts/pr-evidence upload <pr> shot.png --no-comment` prints a working URL.
 
 ## Development
+
+Run the Worker locally (workerd with a local R2 simulation, no Cloudflare
+credentials). The local `PUBLIC_ORIGIN` override matters: the Worker builds
+`uploadUrl` from it, and the CLI refuses upload URLs on a different origin.
+
+```bash
+cd packages/pr-evidence-worker
+printf 'UPLOAD_TICKET_SECRET=%s\nPUBLIC_ORIGIN=http://localhost:8787\n' "$(openssl rand -hex 32)" > .dev.vars
+pnpm exec wrangler dev --local --port 8787
+# other shell, repo root:
+MATRIX_PR_EVIDENCE_URL=http://localhost:8787 scripts/pr-evidence upload <pr> shot.png --no-comment
+```
+
+`.dev.vars` is gitignored.
 
 ```bash
 pnpm exec vitest run tests/pr-evidence-worker   # from the repo root

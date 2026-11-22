@@ -113,10 +113,28 @@ describe("pr-evidence upload against the Worker", () => {
     const keys = [...ctx.worker.bucket.objects.keys()];
     expect(keys.every((key) => key.startsWith("pr-532/0123456/"))).toBe(true);
     const commentCall = ctx.exec.mock.calls.find(([, args]) => args[1] === "comment")!;
-    expect(commentCall[1]).toEqual(["pr", "comment", "532", "--body-file", "-"]);
+    expect(commentCall[1]).toEqual(["pr", "comment", "532", "--repo", "HamedMP/matrix-os", "--body-file", "-"]);
+    const viewCall = ctx.exec.mock.calls.find(([, args]) => args[1] === "view")!;
+    expect(viewCall[1]).toContain("--repo");
+    expect(viewCall[1][viewCall[1].indexOf("--repo") + 1]).toBe("HamedMP/matrix-os");
     const body = commentCall[2]!.input!;
     expect(body).toContain("![web-desktop.png](https://evidence.matrix-os.com/pr-532/0123456/");
     expect(body).toMatch(/\nhttps:\/\/evidence\.matrix-os\.com\/pr-532\/0123456\/[a-z2-7]{26}\.webm\n/);
+  });
+
+  it("requests each file's ticket right before uploading it so later files cannot expire", async () => {
+    const ctx = setup();
+    await main(["upload", "532", "shots/web-desktop.png", "shots/journey.webm"], ctx.deps);
+    const sequence = ctx.fetchImpl.mock.calls.map(([, init]) => init.method);
+    expect(sequence).toEqual(["POST", "PUT", "POST", "PUT"]);
+  });
+
+  it("refuses an upload URL that points away from the configured endpoint", async () => {
+    const ctx = setup();
+    ctx.worker.env.PUBLIC_ORIGIN = "https://elsewhere.example";
+    const code = await main(["upload", "532", "shots/web-desktop.png"], ctx.deps);
+    expect(code).toBe(1);
+    expect(ctx.logs.join("\n")).toContain("unexpected upload URL");
   });
 
   it("prints markdown instead of commenting with --no-comment and honors --commit", async () => {

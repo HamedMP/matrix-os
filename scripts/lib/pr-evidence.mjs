@@ -6,6 +6,7 @@ import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 
 export const DEFAULT_ENDPOINT = 'https://evidence.matrix-os.com';
+export const DEFAULT_REPO = 'HamedMP/matrix-os';
 export const MAX_FILES = 10;
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const API_TIMEOUT_MS = 10_000;
@@ -28,7 +29,7 @@ export const USAGE = `Usage: pr-evidence upload <pr> <files...> [--commit <sha>]
 Uploads screenshots/recordings to the Matrix PR evidence store and comments on the PR.
 Auth uses your GitHub CLI login (gh auth token); you need write access to the repo.
 Types: png, jpg, webp, gif, mp4, webm, mov. Max ${MAX_FILES} files, 50 MB each.
-Env: MATRIX_PR_EVIDENCE_URL overrides the endpoint (local dev).`;
+Env: MATRIX_PR_EVIDENCE_URL overrides the endpoint (local dev); MATRIX_PR_EVIDENCE_REPO\noverrides the repo (default ${DEFAULT_REPO}; must match the Worker's GITHUB_REPO).`;
 
 export class UsageError extends Error {}
 
@@ -103,6 +104,13 @@ export function runCommand(command, args, { input, timeoutMs = GH_TIMEOUT_MS } =
   });
 }
 
+/** Must match the Worker's GITHUB_REPO so the PR that is authorized is the PR that gets the comment. */
+export function resolveRepo(env) {
+  const repo = env.MATRIX_PR_EVIDENCE_REPO?.trim() || DEFAULT_REPO;
+  if (!/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(repo)) throw new UsageError('MATRIX_PR_EVIDENCE_REPO must be owner/name');
+  return repo;
+}
+
 export function resolveEndpoint(env) {
   const raw = env.MATRIX_PR_EVIDENCE_URL?.trim() || DEFAULT_ENDPOINT;
   const url = new URL(raw);
@@ -147,26 +155,25 @@ export async function runUpload(parsed, deps = {}) {
 
   const token = (await exec('gh', ['auth', 'token'])).stdout.trim();
   if (!token) throw new Error('gh auth token returned nothing; run `gh auth login` first');
+  const repo = resolveRepo(env);
   const commit = parsed.commit
-    ?? (await exec('gh', ['pr', 'view', String(parsed.pr), '--json', 'headRefOid', '--jq', '.headRefOid'])).stdout.trim();
+    ?? (await exec('gh', ['pr', 'view', String(parsed.pr), '--repo', repo, '--json', 'headRefOid', '--jq', '.headRefOid'])).stdout.trim();
   if (!/^[0-9a-fA-F]{7,40}$/.test(commit)) throw new Error('Could not resolve the PR head commit');
 
-  const response = await fetchImpl(`${endpoint}/uploads`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pr: parsed.pr, commit, files: files.map(({ name, contentType, size }) => ({ name, contentType, size })) }),
-    redirect: 'error',
-    signal: AbortSignal.timeout(API_TIMEOUT_MS),
-  });
-  if (!response.ok) throw new Error(`Evidence upload was refused: ${await errorCode(response)}`);
-  const issued = (await response.json()).files;
-  if (!Array.isArray(issued) || issued.length !== files.length) throw new Error('Evidence service returned an unexpected response');
-
+  // Tickets last five minutes, so request each file's ticket right before its upload.
   const uploaded = [];
-  for (let i = 0; i < files.length; i += 1) {
-    const file = files[i];
-    const slot = issued[i];
-    if (typeof slot?.uploadUrl !== 'string' || new URL(slot.uploadUrl).origin !== endpoint) {
+  for (const file of files) {
+    const response = await fetchImpl(`${endpoint}/uploads`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pr: parsed.pr, commit, files: [{ name: file.name, contentType: file.contentType, size: file.size }] }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Evidence upload was refused: ${await errorCode(response)}`);
+    const issued = (await response.json()).files;
+    const slot = Array.isArray(issued) && issued.length === 1 ? issued[0] : null;
+    if (typeof slot?.uploadUrl !== 'string' || typeof slot?.url !== 'string' || new URL(slot.uploadUrl).origin !== endpoint) {
       throw new Error('Evidence service returned an unexpected upload URL');
     }
     const bytes = await readFile(file.path);
@@ -186,7 +193,7 @@ export async function runUpload(parsed, deps = {}) {
 
   const markdown = buildCommentMarkdown({ title: parsed.title, commit, files: uploaded });
   if (parsed.comment) {
-    await exec('gh', ['pr', 'comment', String(parsed.pr), '--body-file', '-'], { input: markdown });
+    await exec('gh', ['pr', 'comment', String(parsed.pr), '--repo', repo, '--body-file', '-'], { input: markdown });
     log(`commented on PR #${parsed.pr}`);
   } else {
     out(markdown);

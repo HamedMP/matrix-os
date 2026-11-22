@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { base32, EVIDENCE_KEY_PATTERN, createEvidenceKey } from "../../packages/pr-evidence-worker/src/keys.js";
-import { TICKET_TTL_MS, MAX_FILE_BYTES, SERVED_CSP } from "../../packages/pr-evidence-worker/src/index.js";
+import { TICKET_TTL_MS, MAX_FILE_BYTES, SERVED_CSP } from "../../packages/pr-evidence-worker/src/worker.js";
 import { signUploadTicket, verifyUploadTicket } from "../../packages/pr-evidence-worker/src/ticket.js";
 import { UploadRateLimiter, BoundedTtlMap } from "../../packages/pr-evidence-worker/src/bounded.js";
 import { makeWorker, PNG_FILE, SECRET, TOKEN, uploadRequest, validBody } from "./helpers.js";
@@ -68,12 +68,12 @@ describe("POST /uploads authorization", () => {
     expect(body).toEqual({ error: "authorization_unavailable" });
   });
 
-  it("sends GitHub calls with a timeout signal, generic user agent, and no redirects", async () => {
+  it("sends GitHub calls with a timeout signal, generic user agent, and redirects left unfollowed", async () => {
     const worker = makeWorker();
     await issue(worker);
     const init = worker.fetchImpl.mock.calls[0]![1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     expect(new Headers(init.headers).get("user-agent")).toBe("matrix-pr-evidence");
   });
 
@@ -300,7 +300,7 @@ describe("PUT /uploads/<key>", () => {
 
 describe("enforceExactSize", () => {
   it("errors when the stream is longer or shorter than declared", async () => {
-    const { enforceExactSize } = await import("../../packages/pr-evidence-worker/src/index.js");
+    const { enforceExactSize } = await import("../../packages/pr-evidence-worker/src/worker.js");
     const long = enforceExactSize(new Response(new Uint8Array(6)).body!, 5);
     await expect(new Response(long.stream).arrayBuffer()).rejects.toThrow();
     expect(long.mismatch()).toBe(true);
@@ -331,6 +331,13 @@ describe("GET /<key>", () => {
     expect(response.headers.get("content-disposition")).toBe("inline");
     expect(response.headers.get("content-security-policy")).toBe(SERVED_CSP);
     expect(SERVED_CSP).toContain("default-src 'none'");
+  });
+
+  it("returns 503, not 404, for a valid key when the bucket binding is missing", async () => {
+    const { worker, key } = await stored();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const response = await worker.handle(new Request(`https://evidence.matrix-os.com/${key}`), { ...worker.env, EVIDENCE: undefined });
+    expect(response.status).toBe(503);
   });
 
   it("supports byte ranges for video seeking", async () => {

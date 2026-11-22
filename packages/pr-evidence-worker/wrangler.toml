@@ -1,6 +1,7 @@
 name = "matrix-pr-evidence"
 main = "src/index.ts"
-compatibility_date = "2026-06-06"
+# Matches the newest date the pinned wrangler's local workerd supports, so `wrangler dev` runs.
+compatibility_date = "2026-06-02"
 account_id = "63a1787d41e5df7aee344eab876fffe8"
 
 # Custom domain: Cloudflare creates the DNS record and certificate on deploy.

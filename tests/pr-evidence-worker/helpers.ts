@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import { UploadRateLimiter } from "../../packages/pr-evidence-worker/src/bounded.js";
 import { GitHubAuthorizer } from "../../packages/pr-evidence-worker/src/github.js";
-import { createEvidenceWorker, type EvidenceEnv } from "../../packages/pr-evidence-worker/src/index.js";
+import { createEvidenceWorker, type EvidenceEnv } from "../../packages/pr-evidence-worker/src/worker.js";
 
 export const TOKEN = "gho_" + "a".repeat(36);
 export const SECRET = "s".repeat(48);

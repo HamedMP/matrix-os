@@ -14,11 +14,18 @@ Developer tooling only: `packages/pr-evidence-worker/` (Cloudflare Worker at
 `evidence.matrix-os.com`) and `scripts/pr-evidence` (Node CLI). No Matrix OS
 user surface changes.
 
+## Public docs
+
+N/A: internal developer tooling for repo contributors, with no Matrix OS
+user-facing behavior, so no `matrix-os-site` docs PR. The package README is
+the contributor documentation.
+
 ## Journey
 
 1. `scripts/pr-evidence upload <pr> <files...> [--title ...]`.
-2. CLI reads `gh auth token` and the PR head SHA, asks the Worker for upload
-   slots, PUTs each file with its ticket, and comments on the PR.
+2. CLI reads `gh auth token` and the PR head SHA (`gh --repo` pinned to the
+   Worker's repo), and for each file asks for a ticket and immediately PUTs
+   it, then comments on the PR.
 3. Reviewers see images inline and videos as links.
 
 ## Security architecture
@@ -66,8 +73,8 @@ sandbox`, `Cache-Control: public, max-age=31536000, immutable`. No listing.
 
 - Worker bindings: R2 `EVIDENCE` -> `matrix-pr-evidence`; vars `GITHUB_REPO`,
   `PUBLIC_ORIGIN`; secret `UPLOAD_TICKET_SECRET`.
-- Missing secret or bucket -> uploads 503; reads keep working when the bucket
-  exists.
+- Missing secret or bucket -> uploads 503; missing bucket -> valid-key reads
+  503 (never a misleading 404).
 - Typecheck: `scripts/typecheck.mjs`. Tests: root Vitest under
   `tests/pr-evidence-worker/`. CI does not deploy; the owner deploys with
   Wrangler (see the package README).

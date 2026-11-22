@@ -107,7 +107,8 @@ export class GitHubAuthorizer {
           "User-Agent": USER_AGENT,
           "X-GitHub-Api-Version": "2022-11-28",
         },
-        redirect: "error",
+        // workerd rejects redirect: "error"; manual leaves 3xx as a non-200 that maps to unavailable.
+        redirect: "manual",
         signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
       });
     } catch (error) {
