@@ -140,7 +140,8 @@ describe("Terminal window panes", () => {
     operator.command({ command: "split-right" });
     await waitFor(() => expect(paneNames()).toHaveLength(2));
     operator.command({ command: "split-down" });
-    await waitFor(() => expect(paneNames()).toHaveLength(3));
+    // Settled: the third pane is in and has taken focus.
+    await waitFor(() => expect(focusedPane()).toBe("shell t11"));
     const [editor, , bottom] = panes();
     vi.spyOn(editor!, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 400, height: 300, right: 400, bottom: 300, x: 0, y: 0, toJSON: () => ({}) });
 
