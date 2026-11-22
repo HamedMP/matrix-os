@@ -174,6 +174,41 @@ describe("Terminal window computers", () => {
     expect(within(sidebar()).getByRole("button", { name: /site/ }).getAttribute("aria-current")).toBe("true");
   });
 
+  // Hamed, 2026-11-22 (navigation model): the top bar shows the active space as a chip and only its
+  // tabs; Cmd+1…9 pick among them; Cmd+T starts a terminal in that space.
+  it("keeps tabs, Cmd+digits and new terminals inside the active space", async () => {
+    const WEB_WS = `tws_${"b".repeat(32)}`;
+    const TAB_3 = `tt_${"3".repeat(32)}`;
+    const TAB_4 = `tt_${"4".repeat(32)}`;
+    const NEW_TAB = `tt_${"5".repeat(32)}`;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).endsWith("/tabs")) return json({ tab: { id: NEW_TAB, name: "Terminal" } }, 201);
+      return json(workspace([]));
+    });
+    render(<TerminalWindowApp />);
+    await stream("primary", [
+      tabFacts(TAB_1, "build"),
+      { ...tabFacts(TAB_3, "site"), ref: { workspaceId: WEB_WS, tabId: TAB_3 }, projectId: "web", cwd: "/srv/web" },
+      { ...tabFacts(TAB_4, "docs"), ref: { workspaceId: WEB_WS, tabId: TAB_4 }, projectId: "web", cwd: "/srv/web" },
+    ]);
+    for (const name of [/build/, /site/, /docs/]) fireEvent.click(await within(sidebar()).findByRole("button", { name }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site", "docs"]));
+    expect(screen.getByRole("status", { name: "All spaces" })).toBeTruthy();
+    // Space 3: This Computer's home, neo's main, then neo's web.
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    await waitFor(() => expect(tabNames()).toEqual(["site", "docs"]));
+    expect(screen.getByRole("status", { name: "Space web on neo" })).toBeTruthy();
+    act(() => emit("terminal-window:command", { command: "select", index: 2 }));
+    await waitFor(() => expect(within(sidebar()).getByRole("button", { name: /docs/ }).getAttribute("aria-current")).toBe("true"));
+    act(() => emit("terminal-window:command", { command: "select", index: 1 }));
+    await waitFor(() => expect(within(sidebar()).getByRole("button", { name: /site/ }).getAttribute("aria-current")).toBe("true"));
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WEB_WS}/tabs`));
+    const createCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/tabs") && (init as RequestInit).method === "POST")!;
+    expect(JSON.parse(String((createCall[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "/srv/web" });
+  });
+
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
     render(<TerminalWindowApp />);
     await stream("primary", []);

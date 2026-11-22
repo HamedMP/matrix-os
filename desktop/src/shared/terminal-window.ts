@@ -57,12 +57,14 @@ const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
  * terminal leaves these to the menu instead of sending them to its program or
  * its own pane bindings, so every shortcut works while a terminal has focus.
  * Cmd (Super off macOS) is the menu's modifier; Ctrl stays with the shell
- * except for Ctrl+Tab. Cmd+C/V/A stay with the terminal's clipboard.
+ * except for Ctrl+Tab and Ctrl+0…9 (spaces). Cmd+C/V/A stay with the terminal's clipboard.
  */
 export function isTerminalWindowShortcut(event: ShortcutKeyEvent): boolean {
   const key = event.key.toLowerCase();
   if (key === "f2" && !event.metaKey && !event.ctrlKey && !event.altKey) return true;
   if (key === "tab" && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  // Ctrl+0…9 switch space.
+  if (/^[0-9]$/.test(key) && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) return true;
   if (!event.metaKey || event.ctrlKey) return false;
   if (event.altKey) return ARROWS.has(key) || (key === "w" && !event.shiftKey);
   return PRIMARY_KEYS.has(key);

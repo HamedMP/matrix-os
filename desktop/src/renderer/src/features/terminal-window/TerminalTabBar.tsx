@@ -8,7 +8,32 @@ import type { OpenTab } from "./use-open-tabs";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 
+/** The active space, shown as a chip before its tabs; null is All. */
+export interface ActiveSpaceChip {
+  label: string;
+  machine: string;
+  color: string;
+  icon?: string;
+}
+
+function SpaceChip({ space }: { space: ActiveSpaceChip | null }) {
+  const label = space ? space.label : "All";
+  return (
+    <span role="status" aria-label={space ? `Space ${space.label} on ${space.machine}` : "All spaces"} title={space ? `${space.label} · ${space.machine} (Ctrl+0 shows all)` : "All spaces (Ctrl+1…9 picks one)"}
+      className="mb-1 flex h-6 max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-[12px] font-medium"
+      style={{ borderColor: space ? space.color : "var(--border-default)", background: space ? `color-mix(in srgb, ${space.color} 14%, transparent)` : undefined }}>
+      <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center rounded-[4px] text-[9px] font-bold text-white"
+        style={{ background: space && !space.icon ? space.color : "transparent", color: space ? undefined : secondaryText.color, fontSize: space?.icon ? 12 : undefined }}>
+        {space ? space.icon ?? (space.label.trim()[0] ?? "?").toUpperCase() : "∗"}
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+    </span>
+  );
+}
+
 export interface TerminalTabBarProps {
+  /** The active space; its tabs are the ones listed. */
+  space: ActiveSpaceChip | null;
   tabs: readonly OpenTab[];
   /** The tab on screen: the one holding the selected terminal. */
   selectedKey: string | null;
@@ -19,10 +44,11 @@ export interface TerminalTabBarProps {
   onNew(): void;
 }
 
-export function TerminalTabBar({ tabs, selectedKey, row, icon, onSelect, onClose, onNew }: TerminalTabBarProps) {
+export function TerminalTabBar({ space, tabs, selectedKey, row, icon, onSelect, onClose, onNew }: TerminalTabBarProps) {
   return (
     <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-1.5 pt-1.5"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
+      <SpaceChip space={space} />
       <div role="tablist" aria-label="Open terminals" className="flex min-w-0 items-end gap-1">
         {tabs.map((tab) => {
           const shown = row(tab.key);

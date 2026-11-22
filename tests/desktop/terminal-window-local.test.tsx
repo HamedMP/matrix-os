@@ -351,18 +351,24 @@ describe("Terminal window shortcuts", () => {
 
   const three = [fact("t1", "alpha", { statusAt: 3_000 }), fact("t2", "beta", { statusAt: 2_000 }), fact("t3", "gamma", { statusAt: 1_000 })];
 
-  it("selects by number and steps through terminals in sidebar order", async () => {
+  // Cmd+] / Cmd+[ step through the sidebar; Cmd+1…9 pick a tab of the active space (navigation model).
+  it("steps through terminals in sidebar order and selects tabs by number", async () => {
     const operator = installOperator({ "local-terminal:watch": watching(three) });
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
-    operator.command({ command: "select", index: 2 });
-    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t2");
+    operator.command({ command: "next" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
+    operator.command({ command: "next" });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2");
     operator.command({ command: "next" });
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
-    operator.command({ command: "next" });
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
     operator.command({ command: "previous" });
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2");
+    // The tab bar now holds t1, t2, t3 in the order they were opened.
+    operator.command({ command: "select", index: 1 });
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1"));
+    operator.command({ command: "select", index: 3 });
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3"));
     operator.command({ command: "select", index: 9 });
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
   });

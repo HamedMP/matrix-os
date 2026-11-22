@@ -210,6 +210,11 @@ export function useTerminalWindow() {
     return openTabs.tabs.filter((tab) => tab.terminals.some((key) => shown.has(key)));
   }, [openTabs.tabs, sidebar.prefs.filter, visibleRows]);
 
+  /** A new terminal beside one of the active space's (same machine, workspace and folder), then shown. */
+  const createInSpace = useCallback((neighbour: string) => {
+    void createBeside(neighbour).then((created) => { if (created) select(created); });
+  }, [createBeside, select]);
+
   /** Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab in the tab bar, wrapping around. */
   const stepTab = useCallback((offset: number) => {
     const tabs = shownTabs;
@@ -293,6 +298,15 @@ export function useTerminalWindow() {
         panes.run({ command: command.command, direction: command.direction });
         return;
       case "new-terminal": {
+        // Cmd+T / Cmd+N start the terminal in the active space, beside one of its terminals when it has any.
+        const space = sidebar.prefs.filter;
+        if (space) {
+          const neighbour = visibleRows[0];
+          if (neighbour) { createInSpace(neighbour.key); return; }
+          if (space.machineId.startsWith("computer:")) { createCloud(space.machineId.slice("computer:".length)); return; }
+          createLocal({});
+          return;
+        }
         const target = selectedKey ? terminalRowTarget(selectedKey) : null;
         if (target?.kind === "computer") createCloud(target.slot);
         else createLocal({});
@@ -310,8 +324,9 @@ export function useTerminalWindow() {
         return;
       }
       case "select": {
-        const entry = order[command.index - 1];
-        if (entry) select(entry.key);
+        // Cmd+1…9: that tab of the active space, in tab-bar order.
+        const tab = shownTabs[command.index - 1];
+        if (tab) select(tab.key);
         return;
       }
       case "next": step(1); return;
@@ -325,7 +340,7 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
-  }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step, stepTab]);
+  }, [createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
   // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
   // right after a selection change must act on the new selection, not wait for a passive effect.
   const latestRun = useRef(run);

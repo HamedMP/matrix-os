@@ -22,7 +22,8 @@ import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-windo
 import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
-import { TerminalTabBar } from "./TerminalTabBar";
+import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
+import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
@@ -272,6 +273,18 @@ export default function TerminalWindowApp() {
   const machines = useMemo(() => sidebarMachines(view), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
+  const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
+    const filter = prefs.filter;
+    if (!filter?.space) return null;
+    const style = prefs.spaceStyles[spaceId(filter.machineId, filter.space)];
+    const label = style?.name ?? filter.space;
+    return {
+      label,
+      machine: machines.find((machine) => machine.id === filter.machineId)?.name ?? "",
+      color: style?.color ?? defaultSpaceColor(label),
+      ...(style?.icon ? { icon: style.icon } : {}),
+    };
+  }, [machines, prefs.filter, prefs.spaceStyles]);
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
@@ -326,7 +339,7 @@ export default function TerminalWindowApp() {
           notices={notice}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TerminalTabBar tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+          <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
             icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
           <ActivePane view={view} />
         </div>

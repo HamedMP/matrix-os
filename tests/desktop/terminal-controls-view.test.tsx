@@ -128,6 +128,9 @@ describe("TerminalView keyboard control wiring", () => {
     { key: "3", metaKey: true },
     { key: "F2" },
     { key: "Tab", ctrlKey: true },
+    { key: "Tab", ctrlKey: true, shiftKey: true },
+    { key: "1", ctrlKey: true },
+    { key: "0", ctrlKey: true },
   ])("leaves the Terminal window's shortcut %j to its menu", (options) => {
     render(<TerminalView sessionName="session-one" reservedKeys={isTerminalWindowShortcut} />);
     act(() => events.onState("attached"));
