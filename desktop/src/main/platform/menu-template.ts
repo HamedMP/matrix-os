@@ -128,6 +128,10 @@ export function createAppMenuTemplate({
       checkForUpdates();
     },
   };
+  // Quit takes the platform's quit key back once no action claims it.
+  const quitKey = isMac ? "Cmd+Q" : "Ctrl+Q";
+  const quitKeyFree = !Object.values(shortcuts).some((bindings) => bindings?.includes(quitKey));
+  const quitAccelerator = quitKeyFree ? { accelerator: quitKey } : {};
   const settingsItems = item("nav.settings", "Settings…");
   const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = [
@@ -156,7 +160,7 @@ export function createAppMenuTemplate({
             { role: "unhide" },
             { type: "separator" },
             ...closeAppItems,
-            { label: `Quit ${appName}`, click: quitApp },
+            { label: `Quit ${appName}`, ...quitAccelerator, click: quitApp },
           ],
         },
         { label: "File", submenu: newItems },
@@ -171,7 +175,7 @@ export function createAppMenuTemplate({
             updateItem,
             { type: "separator" },
             ...closeAppItems,
-            { label: "Exit", click: quitApp },
+            { label: "Exit", ...quitAccelerator, click: quitApp },
           ],
         },
       ];
