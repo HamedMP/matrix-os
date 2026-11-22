@@ -1,3 +1,5 @@
+import { projectSetupDetailPresentation } from "@matrix-os/ui";
+import { useDesktopProjectSetup } from "../project/use-desktop-project-setup";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
@@ -463,7 +465,11 @@ function CanonicalChatWorkspaceContent({
     projectLabel,
   );
   const activeRun = controller.detail?.record.activeRun;
-  const nativeChatChecksActive = active && !inspectorExclusive && !botIdentityUnknown && !directBotId
+  const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
+  const projectSetup = useDesktopProjectSetup({ api, projectId: slashProjectId ?? null, chatId: routedComposerChatId,
+    eligible: Boolean(live && slashProjectId && !directBotId && !explicitSharedRoute && !projectedSharedChat && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project")),
+    selection, openChat: id => selectChat(id), refresh: () => { void controller.refresh(); } });
+  const nativeChatChecksActive = active && !inspectorExclusive && !projectSetup.active && !botIdentityUnknown && !directBotId
     && authStatus === "signed-in" && routedComposerChatId === controller.detail?.record.chat.id;
   const activeRunRecord = activeRun
     ? controller.detail?.runs.find((run) => run.id === activeRun.runId)
@@ -497,11 +503,11 @@ function CanonicalChatWorkspaceContent({
   };
   const shownTranscript = controller.displayTranscript;
   const transcript = shownTranscript ? canonicalChatPresentation({
-    ...(shownTranscript.kind === "detail" ? shownTranscript.detail : shownTranscript.transcript),
+    ...(shownTranscript.kind === "detail"
+      ? projectSetupDetailPresentation(shownTranscript.detail, projectSetup.draft) : shownTranscript.transcript),
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const pendingTool = pendingSupervisedTool(transcript);
-  const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
   const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
   const draftAttachmentProject = !routedComposerChatId
@@ -626,6 +632,10 @@ function CanonicalChatWorkspaceContent({
   };
 
   const submit = async (submission: SharedChatComposerSubmission, verification?: MacVerificationDraft) => {
+    if (projectSetup.active) {
+      if (await projectSetup.answer(submission.text)) updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+      return;
+    }
     if (
       !selection
       || (!directBotId && providerCatalogLoading)
@@ -1043,6 +1053,10 @@ function CanonicalChatWorkspaceContent({
         onAgentMention={botMention.select}
         mentionActions={mentionActions}
         onSubmit={(submission) => {
+          if (projectSetup.active) {
+            void submit(submission);
+            return;
+          }
           if (!editingQueuedTurn && activeRun && pendingChatReply()) {
             setSubmissionError("Wait for the active run before retrying this message.");
             return;
@@ -1052,10 +1066,10 @@ function CanonicalChatWorkspaceContent({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments}
-        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
+        disabled={controller.status === "loading" || uploadingAttachments || projectSetup.pending}
+        canSubmit={Boolean((selectionAvailable || projectSetup.active) && !projectSetup.pending && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
         catalog={providerCatalog}
-        attachmentsEnabled={attachmentPolicy.enabled}
+        attachmentsEnabled={attachmentPolicy.enabled && !projectSetup.active}
         automaticRouting={botPresentation?.kind === "recipe"}
         botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
@@ -1266,6 +1280,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
+              afterTranscript={projectSetup.controls}
               ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
               identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,
@@ -1345,7 +1360,7 @@ function CanonicalChatWorkspaceContent({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft}
+          <CanonicalNewChatContent introduction={projectSetup.introductionContent} projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft}
             pending={shownTranscript?.kind === "draft" ? { turns: transcript, copyText } : undefined} />
         )}
         </>}

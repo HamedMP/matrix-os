@@ -12,7 +12,8 @@ import type { ConversationTurnPresentation } from "../../components/conversation
  * orchestration. Once the first message is sent it shows as the transcript
  * (`pending`) while the Chat is created and its turn admitted.
  */
-export function CanonicalNewChatContent({ projectId, showWelcome = projectId === null, workspaceLayout, composer, onSelect, pending }: {
+export function CanonicalNewChatContent({ projectId, showWelcome = projectId === null, workspaceLayout, composer, onSelect, pending, introduction }: {
+  introduction?: ReactNode;
   projectId: string | null;
   showWelcome?: boolean;
   workspaceLayout: "narrow" | "wide";
@@ -20,6 +21,10 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
   onSelect: (prompt: string) => void;
   pending?: { turns: ConversationTurnPresentation[]; copyText: (text: string) => Promise<void> };
 }) {
+  if (introduction) return <div className="flex min-h-0 flex-1 flex-col">
+    <div className="min-h-0 flex-1 overflow-y-auto">{introduction}</div>
+    <div className={cn("mx-auto w-full shrink-0 px-6 pb-5", PROJECT_LANDING_CONTENT_CLASS)}>{composer}</div>
+  </div>;
   // The pending transcript replaces only the area above the composer, so the
   // composer keeps its draft state (selected skills) if the send fails.
   const transcript = pending?.turns.length

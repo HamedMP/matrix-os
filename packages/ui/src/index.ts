@@ -423,3 +423,8 @@ export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
 export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
+
+export { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "./chat/use-project-setup.js";
+export { ProjectSetupEntry, ProjectSetupIntroduction, ProjectSetupControls } from "./chat/ProjectSetupControls.js";
+export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/ProjectSetupLaunch.js";
+export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";

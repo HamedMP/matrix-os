@@ -24,9 +24,10 @@ interface ProjectAgentContextPanelProps extends ProjectSkillSourceActions {
   filesPending?: boolean;
   filesError?: string | null;
   onOpenMcpSettings?: () => void;
+  onSetupWithChat?: () => void;
 }
 
-type ConfigurationActions = Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings">;
+type ConfigurationActions = Pick<ProjectAgentContextPanelProps, "onOpenFile" | "onOpenFiles" | "filesPending" | "onOpenMcpSettings" | "onSetupWithChat">;
 
 const disclosureClass = "flex min-h-10 w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)]";
 const actionClass = "min-h-8 max-w-full rounded-md border px-2.5 py-1 text-left text-xs font-medium hover:bg-[var(--bg-hover,var(--accent))] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:opacity-50";
@@ -168,7 +169,7 @@ function ProjectConfigurationSection({ open, onToggle, ...props }: Configuration
 }
 
 function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, filesPending, onOpenMcpSettings, onCreate,
-  skillActions }: ConfigurationSectionProps) {
+  skillActions, onSetupWithChat }: ConfigurationSectionProps) {
   const { id, title, description, rows, partial, emptyMessage, setupHint, browseLabel, createFiles } = section;
   const [createError, setCreateError] = useState<string | null>(null);
   const showBrowse = onOpenFiles && (id === "config" || !onCreate || partial);
@@ -178,7 +179,7 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
     if (!await onCreate?.(template)) setCreateError(PROJECT_AGENT_CONFIG_CREATE_ERROR);
   };
 
-  return (
+  const content = (
     <>
       <div className="space-y-2 px-3 py-2.5">
         <p className="text-xs leading-relaxed" style={secondaryStyle}>{description}</p>
@@ -225,4 +226,17 @@ function ProjectConfigurationSectionContent({ section, onOpenFile, onOpenFiles, 
       </div> : null}
     </>
   );
+  if (id !== "config") return content;
+  const guidance = rows.find(row => row.path === "AGENTS.md") ?? rows.find(row => row.path === "CLAUDE.md");
+  return <>
+    <div className="space-y-2 px-3 py-3">
+      <p className="text-sm font-medium">Guidance for AI in your project</p>
+      <p className="text-xs leading-relaxed" style={secondaryStyle}>Tell the AI how to work in this project. New setup creates AGENTS.md and a CLAUDE.md companion.</p>
+      <div className="flex flex-wrap gap-2">
+        {guidance && onOpenFile ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending} onClick={() => onOpenFile(guidance.path)}>Open guidance</button> : null}
+        {onSetupWithChat ? <button type="button" className={actionClass} style={borderStyle} disabled={filesPending} onClick={onSetupWithChat}>Set up with Chat</button> : null}
+      </div>
+    </div>
+    <details className="border-t" style={borderStyle}><summary className={`${disclosureClass} cursor-pointer`}>Advanced</summary>{content}</details>
+  </>;
 }

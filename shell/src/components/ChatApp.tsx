@@ -1,3 +1,5 @@
+import { useWebProjectSetup } from "./chat/useWebProjectSetup";
+import { projectSetupGenerationText, projectSetupGenerationResultId } from "@matrix-os/ui";
 "use client";
 import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
@@ -456,10 +458,19 @@ function ChatAppContent({
       ? (path, signal) => readWebProjectAgentContext(projectGatewayUrl, path, signal, isCurrentAuthority)
       : null,
   } : undefined;
+  const setupProject = focusedProject && (!chatProjectId || chatProjectId === focusedProject.id) ? focusedProject : webProjects.projects.find(project => project.id === chatProjectId);
+  const setupSelection = providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, ...(providerSelection?.options ? { options: providerSelection.options } : {}) } : undefined;
+  const projectSetup = useWebProjectSetup({ project: setupProject, chatId: sessionId, scope: webProjects.identity,
+    gatewayUrl: projectGatewayUrl, eligible: Boolean(visible && !mobile && !collaborationView && !directBotId && setupProject && projectSkillRootAvailable !== false),
+    selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation });
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
-  const grouped = groupMessages(messages);
+  const setupGenerationResultId = projectSetupGenerationResultId(projectSetup.draft, messages.map(message => ({ ...message, runId: message.requestId })));
+  const grouped = groupMessages(messages.map(message => {
+    const content = message.id === setupGenerationResultId ? projectSetupGenerationText(projectSetup.draft, message.requestId) : null;
+    return content ? { ...message, content } : message;
+  }));
   const botTranscript = botTranscriptPlacement(grouped);
   const waitingTool = grouped.flatMap((group) => {
     if (group.type !== "message") return [];
@@ -495,6 +506,7 @@ function ChatAppContent({
     if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
       return Promise.resolve(false);
     }
+    if (projectSetup.active) return projectSetup.answer(text);
     if (directBotId && !botPresentation?.available) return Promise.resolve(false);
     const callbacks = {
       ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
@@ -867,12 +879,13 @@ function ChatAppContent({
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            providerReady={providerReady}
-            attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
-            projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
+            providerReady={providerReady || projectSetup.active}
+            attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled && !projectSetup.active}
+            projectHome={projectSetup.introductionContent ?? (projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
-              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
+              onStartSetup={() => { void projectSetup.start(); }} setupPending={projectSetup.pending} setupError={projectSetup.error}
+              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined)}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
@@ -945,6 +958,7 @@ function ChatAppContent({
                   );
                 }}</BotTranscriptMessages>
 
+                {projectSetup.controls}
                 <BotTranscriptFallback placement={botTranscript}/>
                 {busy && (
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground py-1">
@@ -995,8 +1009,8 @@ function ChatAppContent({
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
                 key={composerKey} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
-                connected={connected && providerReady}
-                busy={busy}
+                connected={connected && (providerReady || projectSetup.active)}
+                busy={busy || projectSetup.pending}
                 activeRunId={activeRunId}
                 onAbortCurrent={onAbortCurrent}
                 onSubmit={submitWithHermesSetup}
@@ -1005,7 +1019,7 @@ function ChatAppContent({
                 unavailablePlaceholder={!providerState.loading && !providerReady
                   ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
-                attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
+                attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled && !projectSetup.active}
               />
             </div>
           </div>

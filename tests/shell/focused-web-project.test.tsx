@@ -84,6 +84,7 @@ it("opens a cold Files window at the project folder", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open MCP settings" }));
   expect(openMcpSettings).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
   await waitFor(() => expect(useFileBrowser.getState().currentPath).toBe("Projects/france"));
   expect(await screen.findByText("project-notes.md")).toBeTruthy();
@@ -140,6 +141,7 @@ it("hands keyboard focus to the requested Preview tab each time a project file i
   render(<ShellFixture />);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const open = await screen.findByRole("button", { name: "Open AGENTS.md" });
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -185,6 +187,7 @@ it.each(["Files", "Agent configuration"] as const)("keeps one draft when a proje
   render(<ShellFixture />);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const openProjectFile = await screen.findByRole("button", { name: "Open AGENTS.md" });
   fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
   const file = await screen.findByRole("gridcell", { name: "AGENTS.md" });
@@ -291,6 +294,7 @@ it.each([false, true])("drops a file action when the project changes before reso
   const { rerender } = render(renderProject("proj_france", "france"));
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   fireEvent.click(await screen.findByRole("button", { name: create ? "Create AGENTS.md" : "Open AGENTS.md" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   rerender(renderProject("proj_japan", "japan"));

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import {
   RoutineOriginApprovals, routineApprovalPlacement, routineOriginChatEligible, useRoutineOrigin, type ChatAgentClient,
 } from "@matrix-os/ui";
@@ -18,12 +18,13 @@ async function openDesktopRoutineApproval(chatId: string, interactionId: string,
 }
 
 /** Place source approvals beside their turns. Native review still uses the owner browser. */
-export function SourceChatRoutines({ client, chat, ordinary, revision, identity, turns, callbacks }: {
+export function SourceChatRoutines({ client, chat, ordinary, revision, identity, turns, callbacks, afterTranscript }: {
   client?: ChatAgentClient;
   chat: CanonicalChatSummary;
   ordinary: boolean;
   revision: number;
   identity?: unknown;
+  afterTranscript?: ReactNode;
 } & Pick<ComponentProps<typeof ConversationTranscript>, "turns" | "callbacks">) {
   const eligible = routineOriginChatEligible({ chat, ordinary, fresh: true });
   const scope = useMemo(() => ({ client, chatId: chat.id, eligible, identity }), [client, chat.id, eligible, identity]);
@@ -65,6 +66,7 @@ export function SourceChatRoutines({ client, chat, ordinary, revision, identity,
     }}
     afterTurns={<>
       <RoutineOriginApprovals state={state} items={placement.currentChanges} onReviewInBrowser={reviewInBrowser} />
+      {afterTranscript}
       {eligible && notice?.scope === scope ? <p role="status" className="text-xs">{notice.text}</p> : null}
     </>} />;
 }
