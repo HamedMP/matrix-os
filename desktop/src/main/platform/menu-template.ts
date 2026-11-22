@@ -42,6 +42,12 @@ function createAppsMenu(item: ShortcutItemFactory): MenuItemConstructorOptions {
       ...item("app.show-desktop", "Show Desktop"),
       ...item("app.reopen", "Reopen Closed App"),
       { type: "separator" },
+      ...item("app.tile-left", "Move App to Left Half"),
+      ...item("app.tile-right", "Move App to Right Half"),
+      ...item("app.tile-top", "Move App to Top Half"),
+      ...item("app.tile-bottom", "Move App to Bottom Half"),
+      ...item("app.restore-size", "Restore App Size"),
+      { type: "separator" },
       {
         label: "Switch to App",
         submenu: SWITCH_NUMBERS.flatMap((n) => item(`app.switch-${n}`, `App ${n}`)),

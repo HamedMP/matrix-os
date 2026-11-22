@@ -174,6 +174,28 @@ describe("resolveShortcuts", () => {
     expect(resolveShortcuts(EMPTY_SHORTCUT_OVERRIDES, "other")["nav.settings"]).toEqual(["Ctrl+,"]);
   });
 
+  it.each(PLATFORMS)("ships Rectangle's window arrangement keys on %s", (platform) => {
+    const effective = resolveShortcuts(null, platform);
+    expect({
+      left: effective["app.tile-left"],
+      right: effective["app.tile-right"],
+      top: effective["app.tile-top"],
+      bottom: effective["app.tile-bottom"],
+      fullSize: effective["app.toggle-full-size"],
+      restore: effective["app.restore-size"],
+    }).toEqual({
+      left: ["Ctrl+Alt+Left"],
+      right: ["Ctrl+Alt+Right"],
+      top: ["Ctrl+Alt+Up"],
+      bottom: ["Ctrl+Alt+Down"],
+      fullSize: ["Ctrl+Alt+Enter"],
+      restore: ["Ctrl+Alt+Backspace"],
+    });
+    for (const id of ["app.tile-left", "app.tile-right", "app.tile-top", "app.tile-bottom", "app.restore-size"] as const) {
+      expect(SHORTCUT_ACTIONS.find((action) => action.id === id)?.group).toBe("apps");
+    }
+  });
+
   it.each(PLATFORMS)("has no binding on two actions by default on %s", (platform) => {
     const all = Object.values(resolveShortcuts(null, platform)).flat();
     expect(new Set(all).size).toBe(all.length);

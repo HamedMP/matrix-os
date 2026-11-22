@@ -27,6 +27,7 @@ import {
   toggleAppLauncher,
   toggleShowDesktop,
 } from "../desktop-shell/app-switching";
+import { restoreActiveAppSize, tileActiveApp } from "../desktop-shell/window-tiling";
 
 interface NewAgentRunShortcutUiState {
   composerOpen: boolean;
@@ -210,6 +211,11 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
   "app.show-desktop": toggleShowDesktop,
   "app.toggle-full-size": toggleActiveAppFullSize,
   "app.open-files": openFilesApp,
+  "app.tile-left": () => tileActiveApp("left"),
+  "app.tile-right": () => tileActiveApp("right"),
+  "app.tile-top": () => tileActiveApp("top"),
+  "app.tile-bottom": () => tileActiveApp("bottom"),
+  "app.restore-size": restoreActiveAppSize,
   "nav.palette": openChatSearchOrPalette,
   "nav.quick-open": () => {
     const ui = useUi.getState();

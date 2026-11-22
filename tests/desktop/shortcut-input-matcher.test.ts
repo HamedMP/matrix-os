@@ -185,9 +185,37 @@ describe("isMainProcessShortcut", () => {
     expect(isMainProcessShortcut("app.next")).toBe(true);
     expect(isMainProcessShortcut("app.switch-9")).toBe(true);
     expect(isMainProcessShortcut("app.open-files")).toBe(true);
+    expect(isMainProcessShortcut("app.tile-left")).toBe(true);
+    expect(isMainProcessShortcut("app.restore-size")).toBe(true);
     for (const id of ["nav.palette", "tabs.new-context", "chat.new-thread", "terminal.focus", "terminal.window"] as const) {
       expect(isMainProcessShortcut(id), id).toBe(false);
     }
+  });
+});
+
+describe("window arrangement keys", () => {
+  it.each(["mac", "other"] as const)("arranges the selected app from any focus on %s", (platform) => {
+    const { run, press } = setup({ platform });
+    const keys: Array<[Partial<ShortcutInput>, ShortcutActionId]> = [
+      [{ key: "ArrowLeft", code: "ArrowLeft" }, "app.tile-left"],
+      [{ key: "ArrowRight", code: "ArrowRight" }, "app.tile-right"],
+      [{ key: "ArrowUp", code: "ArrowUp" }, "app.tile-top"],
+      [{ key: "ArrowDown", code: "ArrowDown" }, "app.tile-bottom"],
+      [{ key: "Enter", code: "Enter" }, "app.toggle-full-size"],
+      [{ key: "Backspace", code: "Backspace" }, "app.restore-size"],
+    ];
+    for (const [key, id] of keys) {
+      expect(press({ ...key, control: true, alt: true }), id).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenLastCalledWith(id);
+    }
+    expect(run).toHaveBeenCalledTimes(keys.length);
+  });
+
+  it("does not repeat a tile while the key is held", () => {
+    const { run, press } = setup();
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, alt: true });
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, alt: true, isAutoRepeat: true });
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });
 

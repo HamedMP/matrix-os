@@ -11,6 +11,7 @@ export const SHORTCUT_ACTION_IDS = [
   "app.switch-1", "app.switch-2", "app.switch-3", "app.switch-4", "app.switch-5",
   "app.switch-6", "app.switch-7", "app.switch-8", "app.switch-9",
   "app.show-desktop", "app.toggle-full-size", "app.open-files",
+  "app.tile-left", "app.tile-right", "app.tile-top", "app.tile-bottom", "app.restore-size",
   "nav.palette", "nav.quick-open", "nav.settings",
   "tabs.new-context", "tabs.new", "tabs.close",
   "chat.new-thread", "chat.open",
@@ -41,6 +42,11 @@ function action(
   return { id, group, label, description, defaults: { mac, other } };
 }
 
+// Same keys on every platform, as in Rectangle.
+function everywhere(binding: string): [readonly string[], readonly string[]] {
+  return [[binding], [binding]];
+}
+
 // "Mod" binding: Cmd on mac, Ctrl elsewhere.
 function mod(rest: string): [readonly string[], readonly string[]] {
   return [[`Cmd+${rest}`], [`Ctrl+${rest}`]];
@@ -59,8 +65,13 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   action("app.reopen", "apps", "Reopen closed app", "Reopen the app you closed most recently.", ...mod("Shift+T")),
   ...SWITCH_ACTIONS,
   action("app.show-desktop", "apps", "Show desktop", "Minimize every open app.", [], []),
-  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", [], []),
+  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", ...everywhere("Ctrl+Alt+Enter")),
   action("app.open-files", "apps", "Open Files", "Open the Files app.", [], []),
+  action("app.tile-left", "apps", "Move app to left half", "Place the selected app on the left half of the desktop.", ...everywhere("Ctrl+Alt+Left")),
+  action("app.tile-right", "apps", "Move app to right half", "Place the selected app on the right half of the desktop.", ...everywhere("Ctrl+Alt+Right")),
+  action("app.tile-top", "apps", "Move app to top half", "Place the selected app on the top half of the desktop.", ...everywhere("Ctrl+Alt+Up")),
+  action("app.tile-bottom", "apps", "Move app to bottom half", "Place the selected app on the bottom half of the desktop.", ...everywhere("Ctrl+Alt+Down")),
+  action("app.restore-size", "apps", "Restore app size", "Return the selected app to its size before it was moved to a half or made full size.", ...everywhere("Ctrl+Alt+Backspace")),
   action("nav.palette", "navigation", "Command palette", "Search commands and apps.", ...mod("K")),
   action("nav.quick-open", "navigation", "Go to file", "Find and open a file by name.", ...mod("P")),
   action("nav.settings", "navigation", "Settings", "Open Settings.", ...mod(",")),

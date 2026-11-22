@@ -121,7 +121,12 @@ describe("createAppMenuTemplate", () => {
       ["Apps", "Minimize App", "Cmd+M"],
       ["Apps", "Reopen Closed App", "Cmd+Shift+T"],
       ["Apps", "Show Desktop", undefined],
-      ["Apps", "Toggle App Full Size", undefined],
+      ["Apps", "Toggle App Full Size", "Ctrl+Alt+Enter"],
+      ["Apps", "Move App to Left Half", "Ctrl+Alt+Left"],
+      ["Apps", "Move App to Right Half", "Ctrl+Alt+Right"],
+      ["Apps", "Move App to Top Half", "Ctrl+Alt+Up"],
+      ["Apps", "Move App to Bottom Half", "Ctrl+Alt+Down"],
+      ["Apps", "Restore App Size", "Ctrl+Alt+Backspace"],
       ["Apps", "Open Files", undefined],
     ];
     for (const [menu, label, accelerator] of expected) {
@@ -212,6 +217,11 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate(opts);
     const cases: Array<[string, string, string]> = [
       ["Apps", "Next App", "app.next"],
+      ["Apps", "Move App to Left Half", "app.tile-left"],
+      ["Apps", "Move App to Right Half", "app.tile-right"],
+      ["Apps", "Move App to Top Half", "app.tile-top"],
+      ["Apps", "Move App to Bottom Half", "app.tile-bottom"],
+      ["Apps", "Restore App Size", "app.restore-size"],
       ["Matrix OS", "Close Selected App", "app.close"],
       ["Matrix OS", "Settings…", "nav.settings"],
       ["File", "New Agent Thread", "chat.new-thread"],
@@ -303,6 +313,8 @@ describe("createAppMenuTemplate", () => {
     expect(find(submenu(template, "View"), "Terminal")?.accelerator).toBe("Ctrl+Alt+T");
     expect(find(submenu(template, "View"), "Terminal Window")).toBeUndefined();
     expect(find(submenu(template, "Apps"), "Open App Launcher")?.accelerator).toBe("Ctrl+Space");
+    expect(find(submenu(template, "Apps"), "Move App to Left Half")?.accelerator).toBe("Ctrl+Alt+Left");
+    expect(find(submenu(template, "Apps"), "Restore App Size")?.accelerator).toBe("Ctrl+Alt+Backspace");
 
     click(find(fileItems, "Exit"));
     expect(opts.quitApp).toHaveBeenCalledOnce();

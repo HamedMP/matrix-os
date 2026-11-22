@@ -12,6 +12,8 @@ import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
   type DesktopSurface,
+  type DesktopSurfaceBounds,
+  type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
@@ -23,9 +25,18 @@ export interface DesktopShellEffects {
   schedulePersist(): void;
   /** Runs `open`, then places and focuses the newly active app's window. */
   openRoot(open: () => void): void;
+  /** The desktop area windows are constrained to (below the header, above the taskbar). */
+  viewport(): DesktopViewport;
+  /** Sets an app window's bounds and saves them, as the end of a drag does. */
+  applyWindowBounds(tabId: string, bounds: DesktopSurfaceBounds): void;
 }
 
 let shellEffects: DesktopShellEffects | null = null;
+
+/** The mounted shell's effects, or null when no shell is mounted. */
+export function desktopShellEffects(): DesktopShellEffects | null {
+  return shellEffects;
+}
 
 /** Called by the mounted shell; returns the matching unregister function. */
 export function registerDesktopShellEffects(effects: DesktopShellEffects): () => void {
