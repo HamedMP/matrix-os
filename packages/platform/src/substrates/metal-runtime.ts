@@ -118,15 +118,16 @@ export function createConfiguredMetalRuntime(input: {
   const dispatcher = createHostdDispatcher(metal.caPem);
   const hosts = createMetalHostsRepository(input.db.kysely);
   const clientFor = (host: Parameters<typeof createHostdClient>[0]) => createHostdClient(host, metal.apiToken, { dispatcher });
+  const drainer = createMetalVmDeletionDrainer({ db: input.db, hosts, clientFor });
   const provisioner = createMetalProvisioner({
     db: input.db,
     hosts,
     clientFor,
     goldenVersion: metal.goldenVersion,
     config: input.customerVps.config,
+    drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
     ...(input.customerVps.cloudInitTemplate ? { cloudInitTemplate: input.customerVps.cloudInitTemplate } : {}),
   });
-  const drainer = createMetalVmDeletionDrainer({ db: input.db, hosts, clientFor });
   const worker = input.backgroundWorkersEnabled
     ? startMetalMaintenanceWorker({
       reconcileStale: () => provisioner.reconcileStale(),

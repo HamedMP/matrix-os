@@ -199,6 +199,26 @@ describe('metal provisioner', () => {
     });
   }
 
+  /** A provisioner two hours later, wired like metal-runtime: inline teardown through the real drainer, no worker. */
+  function lateProvisioner(host: FakeHost, machineId: string) {
+    const at = new Date('2026-11-21T14:00:00.000Z');
+    const drainer = createMetalVmDeletionDrainer({
+      db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => host.client, now: () => at, log: () => undefined,
+    });
+    return createMetalProvisioner({
+      db,
+      hosts: createMetalHostsRepository(db.kysely),
+      clientFor: () => host.client,
+      goldenVersion: GOLDEN,
+      config: createTestConfig(),
+      cloudInitTemplate: template,
+      now: () => at,
+      machineIdFactory: () => machineId,
+      drainMachineDeletions: (id, signal) => drainer.drainMachine(id, signal),
+      log: () => undefined,
+    });
+  }
+
   it('places on the host with the most headroom', async () => {
     const tight = await addHost('host-a', { memoryAvailableMiB: 40_000 });
     const roomy = await addHost('host-b', { memoryAvailableMiB: 60_000 });
@@ -454,23 +474,29 @@ describe('metal provisioner', () => {
     const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
     const second = '0f1e2d3c-4b5a-4968-8776-655443322110';
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
-    const later = createMetalProvisioner({
-      db,
-      hosts: createMetalHostsRepository(db.kysely),
-      clientFor: () => host.client,
-      goldenVersion: GOLDEN,
-      config: createTestConfig(),
-      cloudInitTemplate: template,
-      now: () => new Date('2026-11-21T14:00:00.000Z'),
-      machineIdFactory: () => second,
-      log: () => undefined,
-    });
+    const later = lateProvisioner(host, second);
 
     expect(await later.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: second });
     expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'failed', failureCode: 'registration_timeout' });
-    expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
-      .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
     expect(host.createVm).toHaveBeenCalledTimes(2);
+    // No maintenance worker drains the queue here, so the stuck VM is destroyed inline.
+    expect(host.destroy).toHaveBeenCalledWith('vm_0123456789abcdef01234567', expect.any(AbortSignal));
+    const deletions = await db.executor.selectFrom('metal_vm_deletions')
+      .select(['machine_id', 'metal_vm_id', 'completed_at']).execute();
+    expect(deletions).toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567', completed_at: expect.anything() }]);
+  });
+
+  it('a failed inline destroy of the stuck VM leaves its queued teardown for the drainer', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    const second = '0f1e2d3c-4b5a-4968-8776-655443322110';
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    host.destroy.mockRejectedValueOnce(new HostdError('unreachable'));
+
+    expect(await lateProvisioner(host, second).provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: second });
+    expect(await db.executor.selectFrom('metal_vm_deletions')
+      .select(['machine_id', 'metal_vm_id', 'completed_at', 'last_error']).execute())
+      .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567', completed_at: null, last_error: 'unreachable' }]);
   });
 
   it('a retry inside the registration window returns the provisioning runtime', async () => {

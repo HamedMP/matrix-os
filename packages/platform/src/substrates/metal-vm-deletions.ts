@@ -94,13 +94,13 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
   /** Destroys the entry's VM. 'pending' means hostd listed nothing yet for an id-less entry inside the grace period. */
   async function destroy(entry: {
     metal_host_id: string; machine_id: string; generation: number; metal_vm_id: string | null; created_at: Date;
-  }): Promise<'done' | 'pending'> {
+  }, signal?: AbortSignal): Promise<'done' | 'pending'> {
     const host = await deps.hosts.get(entry.metal_host_id);
     if (!host) throw new Error('metal host is not registered');
     const client = deps.clientFor(host);
     const vmIds = new Set<string>();
     if (entry.metal_vm_id) vmIds.add(entry.metal_vm_id);
-    for (const vm of await client.listVms()) {
+    for (const vm of await (signal ? client.listVms(signal) : client.listVms())) {
       if (vm.machineId === entry.machine_id && vm.generation === entry.generation) vmIds.add(vm.id);
     }
     if (vmIds.size === 0 && now().getTime() - new Date(entry.created_at).getTime() < METAL_UNLISTED_GRACE_MS) {
@@ -108,7 +108,7 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
     }
     for (const vmId of vmIds) {
       try {
-        await client.destroy(vmId);
+        await (signal ? client.destroy(vmId, signal) : client.destroy(vmId));
       } catch (error: unknown) {
         if (error instanceof HostdError && error.code === 'not_found') continue;
         throw error;
@@ -117,44 +117,79 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
     return 'done';
   }
 
+  type Entry = {
+    id: string; metal_host_id: string; machine_id: string; generation: number;
+    metal_vm_id: string | null; attempts: number; created_at: Date;
+  };
+
+  /** Destroys one entry's VM and completes it, or records the failure and backs it off. */
+  async function processEntry(entry: Entry, signal?: AbortSignal): Promise<'completed' | 'retried'> {
+    try {
+      if (await destroy(entry, signal) === 'pending') throw new MetalVmNotListedError();
+      await deps.db.executor.updateTable('metal_vm_deletions')
+        .set({ completed_at: now().toISOString(), last_error: null })
+        .where('id', '=', entry.id)
+        .where('completed_at', 'is', null)
+        .execute();
+      return 'completed';
+    } catch (error: unknown) {
+      const code = errorCode(error);
+      const backoff = Math.min(BASE_BACKOFF_MS * 2 ** Math.min(entry.attempts, 20), MAX_BACKOFF_MS);
+      log('metal_vm_destroy_failed', { machineId: entry.machine_id, hostId: entry.metal_host_id, code });
+      await deps.db.executor.updateTable('metal_vm_deletions')
+        .set({
+          attempts: sql`attempts + 1`,
+          last_error: code,
+          next_attempt_at: new Date(now().getTime() + backoff).toISOString(),
+        })
+        .where('id', '=', entry.id)
+        .where('completed_at', 'is', null)
+        .execute();
+      return 'retried';
+    }
+  }
+
+  async function run(entries: Entry[], signal?: AbortSignal): Promise<MetalVmDeletionDrainResult> {
+    let completed = 0;
+    let retried = 0;
+    for (const entry of entries) {
+      if (await processEntry(entry, signal) === 'completed') completed += 1;
+      else retried += 1;
+    }
+    return { completed, retried };
+  }
+
+  const ENTRY_COLUMNS = ['id', 'metal_host_id', 'machine_id', 'generation', 'metal_vm_id', 'attempts', 'created_at'] as const;
+
   return {
     async drainOnce(): Promise<MetalVmDeletionDrainResult> {
       await deps.db.ready;
       const due = await deps.db.executor.selectFrom('metal_vm_deletions')
-        .select(['id', 'metal_host_id', 'machine_id', 'generation', 'metal_vm_id', 'attempts', 'created_at'])
+        .select([...ENTRY_COLUMNS])
         .where('completed_at', 'is', null)
         .where('next_attempt_at', '<=', now())
         .orderBy('next_attempt_at')
         .limit(batchSize)
         .execute();
-      let completed = 0;
-      let retried = 0;
-      for (const entry of due) {
-        try {
-          if (await destroy(entry) === 'pending') throw new MetalVmNotListedError();
-          await deps.db.executor.updateTable('metal_vm_deletions')
-            .set({ completed_at: now().toISOString(), last_error: null })
-            .where('id', '=', entry.id)
-            .where('completed_at', 'is', null)
-            .execute();
-          completed += 1;
-        } catch (error: unknown) {
-          const code = errorCode(error);
-          const backoff = Math.min(BASE_BACKOFF_MS * 2 ** Math.min(entry.attempts, 20), MAX_BACKOFF_MS);
-          log('metal_vm_destroy_failed', { machineId: entry.machine_id, hostId: entry.metal_host_id, code });
-          await deps.db.executor.updateTable('metal_vm_deletions')
-            .set({
-              attempts: sql`attempts + 1`,
-              last_error: code,
-              next_attempt_at: new Date(now().getTime() + backoff).toISOString(),
-            })
-            .where('id', '=', entry.id)
-            .where('completed_at', 'is', null)
-            .execute();
-          retried += 1;
-        }
-      }
-      return { completed, retried };
+      return run(due);
+    },
+
+    /**
+     * Drains one machine's open teardowns now, whatever their schedule, for
+     * callers that cannot wait for a maintenance worker (one may not run). Each
+     * entry stays generation-fenced; a failure is recorded and left for the
+     * drainer exactly as in drainOnce.
+     */
+    async drainMachine(machineId: string, signal?: AbortSignal): Promise<MetalVmDeletionDrainResult> {
+      await deps.db.ready;
+      const open = await deps.db.executor.selectFrom('metal_vm_deletions')
+        .select([...ENTRY_COLUMNS])
+        .where('machine_id', '=', machineId)
+        .where('completed_at', 'is', null)
+        .orderBy('created_at')
+        .limit(batchSize)
+        .execute();
+      return run(open, signal);
     },
   };
 }
