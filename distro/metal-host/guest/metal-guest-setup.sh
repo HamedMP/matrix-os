@@ -52,6 +52,17 @@ decode '@@PHC2SYS_UNIT_B64@@' /etc/systemd/system/phc2sys-kvm.service 0644
 # connected, and sshd -t fails without that directory. Create it at boot.
 printf 'd /run/sshd 0755 root root -\n' >/etc/tmpfiles.d/matrix-sshd-privsep.conf
 
+# hostd clones this disk and lvextends the clone to the VM's disk size, so
+# every boot must grow the root partition and filesystem into the new space.
+# Ubuntu enables both by default; pin them so an image change cannot drop it.
+install -d -m 0755 /etc/cloud/cloud.cfg.d
+cat >/etc/cloud/cloud.cfg.d/90-matrix-grow-root.cfg <<'CFG'
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
+CFG
+
 printf 'ptp_kvm\n' >/etc/modules-load.d/ptp_kvm.conf
 modprobe ptp_kvm
 # phc2sys owns the clock; a network time daemon would fight it after a restore.

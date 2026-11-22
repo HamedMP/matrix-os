@@ -148,6 +148,7 @@ export class LifecycleError extends Error {
 }
 
 const MiB = 1024 * 1024;
+const GiB = 1024 * MiB;
 // Free-tier limits, enforced here as defense in depth (the platform enforces them too).
 export const FREE_BOOT_MIB = 2048;
 export const FREE_MAX_MIB = 8192;
@@ -207,6 +208,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const vmUnit = (id: string) => `matrix-vm@${id}.service`;
   const restoreUnit = (id: string) => `matrix-vm-restore@${id}.service`;
   const lvName = (id: string) => `${cfg.volumeGroup}/mx-${id}`;
+  const goldenName = (version: string) => `${cfg.volumeGroup}/golden-${version}`;
   const snapshotDir = (id: string) => join(cfg.snapshotsDir, id);
   const sh = (argv: readonly [string, ...string[]]) => run(exec, argv, AbortSignal.timeout(cfg.execTimeoutMs));
   const chSignal = () => AbortSignal.timeout(cfg.chTimeoutMs);
@@ -364,6 +366,22 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     }
   }
 
+  // The golden LV's size in bytes. A clone starts at this size; a VM disk can
+  // grow past it (lvextend, then cloud-init growpart in the guest) but never shrink.
+  async function goldenBytes(version: string): Promise<number> {
+    const result = await exec(
+      ["lvs", "--noheadings", "--nosuffix", "--units", "b", "-o", "lv_size", goldenName(version)],
+      { signal: AbortSignal.timeout(cfg.execTimeoutMs) },
+    );
+    if (result.code === 5) throw new LifecycleError("invalid", "golden image not found");
+    const bytes = Number(result.stdout.trim());
+    if (result.code !== 0 || !Number.isSafeInteger(bytes) || bytes <= 0) {
+      log("vm_golden_size_unreadable", { version, exitCode: result.code });
+      throw new LifecycleError("failed", "golden image size unreadable");
+    }
+    return bytes;
+  }
+
   async function create(spec: CreateVmSpec): Promise<VmRecord> {
     validateSpec(spec);
     // Allocation is serialized host-wide so two creates never share an address or a machine.
@@ -381,8 +399,12 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
           // A VM that failed after creation has a real disk: never reprovision it here.
           throw new LifecycleError("conflict", "machine has a failed VM that must be recovered");
         }
-        if (existing.generation === spec.generation) return { record: existing, fresh: false, address: 0 };
+        if (existing.generation === spec.generation) return { record: existing, fresh: false, address: 0, extend: false };
         throw new LifecycleError("conflict", "machine already has a VM with another generation");
+      }
+      const golden = await goldenBytes(spec.goldenVersion);
+      if (spec.diskGiB * GiB < golden) {
+        throw new LifecycleError("invalid", "requested disk is smaller than the golden image");
       }
       const address = await allocateAddress();
       const record: VmRecord = {
@@ -407,22 +429,25 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       // the handle to the better VM, so this is a warning, not a refusal.
       const others = records.filter((r) => r.handle === spec.handle && r.machineId !== spec.machineId).map((r) => r.id);
       if (others.length > 0) log("vm_create_handle_shared", { id: record.id, machineId: spec.machineId, others });
-      return { record, fresh: true, address };
+      return { record, fresh: true, address, extend: spec.diskGiB * GiB > golden };
     });
     // The caller receives claim's rejection; the chain only needs to keep moving.
     allocation = claim.then(
       () => undefined,
       (error: unknown) => error,
     );
-    const { record, fresh, address } = await claim;
+    const { record, fresh, address, extend } = await claim;
     if (!fresh) return record;
 
     return enqueue(record.id, "create", async () => {
       try {
         await sh([
           "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
-          "--name", `mx-${record.id}`, `${cfg.volumeGroup}/golden-${spec.goldenVersion}`,
+          "--name", `mx-${record.id}`, goldenName(spec.goldenVersion),
         ]);
+        // The clone has the golden's size; grow it to the requested disk before
+        // the first boot, where cloud-init growpart/resizefs grow the root fs.
+        if (extend) await sh(["lvextend", "--size", `${spec.diskGiB}G`, lvName(record.id)]);
         // The VMM (vmGroup) must traverse the directory to open seed.img; record.json stays 0600.
         const vmDir = join(cfg.vmsDir, record.id);
         await sh(["chgrp", cfg.vmGroup, vmDir]);

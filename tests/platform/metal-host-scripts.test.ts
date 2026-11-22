@@ -229,6 +229,10 @@ describe("metal host scripts", () => {
     expect(stdout).toContain('"linux-modules-extra-${kernel}"');
     expect(stdout).toContain("linuxptp");
     expect(stdout).toContain("ptp_kvm");
+    // hostd lvextends a clone past the golden size; every boot of the clone must
+    // grow the root partition and filesystem into it.
+    expect(stdout).toContain("/etc/cloud/cloud.cfg.d/90-matrix-grow-root.cfg");
+    expect(stdout).toMatch(/growpart:\n {2}mode: auto\n {2}devices: \['\/'\]\nresize_rootfs: true/);
     // The customer cloud-init runs `sshd -t` before sshd's socket ever fired.
     expect(stdout).toContain("d /run/sshd 0755 root root -");
     // Files the guest part installs, decoded the way the guest decodes them.

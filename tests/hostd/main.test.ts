@@ -48,6 +48,7 @@ let t: number;
 
 const exec: Exec = async (argv) => {
   events.push(`exec:${argv.join(" ")}`);
+  if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (argv[1] === "is-active") return { code: active.has(argv[2]!) ? 0 : 3, stdout: "", stderr: "" };
   return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
 };

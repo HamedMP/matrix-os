@@ -19,6 +19,7 @@ let logs: Array<{ event: string; fields: Record<string, unknown> }>;
 
 const exec: Exec = async (argv) => {
   if (argv[0] === "lvcreate" && gate) await gate;
+  if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
 };
 

@@ -133,6 +133,8 @@ lv="vmvg/mx-$vm_id"
 lvs "$lv" >/dev/null 2>&1 || die "no LV $lv"
 has "golden-$golden" lvs --noheadings -o origin "$lv" || die "$lv is not a clone of golden-$golden"
 [ "$(stat -L -c %U "/dev/$lv")" = matrix-vm ] || die "/dev/$lv is not owned by matrix-vm"
+lv_bytes="$(lvs --noheadings --nosuffix --units b -o lv_size "$lv" | tr -d ' ')"
+[ "$lv_bytes" = "$((40 * 1024 * 1024 * 1024))" ] || die "$lv is $lv_bytes bytes, not the requested 40 GiB"
 pass "disk $lv is a thin clone of golden-$golden owned by matrix-vm"
 
 # --- boot -------------------------------------------------------------------------
