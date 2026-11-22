@@ -161,4 +161,6 @@ it("mounts the narrow route using trusted runtime owner authority, ignoring spoo
   expect(f.getFundingSummary).toHaveBeenCalledTimes(1);
   const mount = await readFile(new URL("../../packages/gateway/src/server/collaboration-chat-routes.ts", import.meta.url), "utf8");
   expect(mount).toContain("canReadManagedCredit: createManagedCreditOwnerAuthorization(options.runtimeOwnerId, requireRequestPrincipal)");
+  expect(mount.match(/canAccessUpstreamPreference: \(c\) => Boolean\(options\.runtimeOwnerId\)/g))
+    .toHaveLength(2);
 });

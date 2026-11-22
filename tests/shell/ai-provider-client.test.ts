@@ -45,7 +45,7 @@ describe("shell AI provider client", () => {
     await expect(loadAiProviderSnapshot({ fetcher, refresh: true })).resolves
       .toMatchObject({ contractVersion: 3 });
     expect(fetcher).toHaveBeenCalledWith(
-      expect.stringContaining("/api/ai/providers?refresh=true"),
+      expect.stringContaining("/api/ai/providers?includeUpstreamPreference=true&refresh=true"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(timeout).toHaveBeenCalledWith(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs);

@@ -11,8 +11,14 @@ function snapshot(overrides: {
   sources?: Array<{ id: string; state?: string; staleAfter?: string | null; models: string[] }>;
   models?: Array<{ id: string; vendor: string; capabilities?: string[]; status?: string; sources: string[] }>;
   instances?: Array<{ accessSourceId: string; defaultModelId: string | null; state?: string }>;
+  bedrockModels?: string[];
 } = {}): AiProviderSnapshotV3 {
   return {
+    ...(overrides.bedrockModels ? { upstreamPreference: {
+      selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: overrides.bedrockModels, revision: 1,
+      updatedAt: "2026-09-28T11:59:00.000Z", validThrough: "2026-10-01T00:00:00.000Z",
+    } } : {}),
     active: { providerInstanceId: null, ...(overrides.active ?? { accessSourceId: null, modelId: null }) },
     accessSources: (overrides.sources ?? []).map((source) => ({
       ...ready, id: source.id, state: source.state ?? "ready", staleAfter: source.staleAfter ?? null, eligibleModelIds: source.models,
@@ -32,6 +38,17 @@ const GLM = "@cf/zai-org/glm-5.3-flash";
 const SONNET = "claude-sonnet-5";
 
 describe("bot route resolver", () => {
+  it("chooses a qualified Bedrock model without a Claude kernel instance", () => {
+    const resolved = resolveBotRoute(snapshot({
+      bedrockModels: [`anthropic/${SONNET}`],
+      sources: [{ id: "matrix_included", models: [SONNET] }],
+      models: [{ id: SONNET, vendor: "anthropic", capabilities: ["tools", "vision"], sources: ["matrix_included"] }],
+    }), NOW);
+    expect(resolved).toEqual({ accessSourceId: "matrix_included", route: {
+      api: "openai-completions", modelId: SONNET, input: ["text"],
+      contextWindow: 32_768, maxOutputTokens: 8_192,
+    } });
+  });
   it("uses the ready managed GLM source without a kernel harness instance", () => {
     const value = snapshot({
       sources: [{ id: "matrix_cloudflare", models: [GLM] }],
@@ -120,6 +137,17 @@ describe("explicit managed Pi route", () => {
     expect(resolveManagedPiRoute(value(), { instanceId: "matrix_pi_default", model: SONNET }, NOW)).toMatchObject({
       accessSourceId: "matrix_included", route: { api: "anthropic-messages", modelId: SONNET },
     });
+  });
+  it("uses OpenAI chat completions for the exact platform-resolved Bedrock model", () => {
+    const bedrock = snapshot({
+      bedrockModels: [SONNET],
+      sources: [{ id: "matrix_included", models: [SONNET] }],
+      models: [{ id: SONNET, vendor: "anthropic", capabilities: ["tools", "vision"], sources: ["matrix_included"] }],
+    });
+    expect(resolveManagedPiRoute(bedrock, { instanceId: "matrix_pi_default", model: SONNET }, NOW))
+      .toMatchObject({ accessSourceId: "matrix_included", route: {
+        api: "openai-completions", modelId: SONNET, input: ["text"], contextWindow: 32_768,
+      } });
   });
   it("refuses stale, forged, and revoked explicit routes without falling back", () => {
     const revoked = value(); revoked.accessSources[1]!.state = "disabled";

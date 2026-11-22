@@ -17,6 +17,7 @@ import type { NativeProviderProfileGuard } from "../ai-providers/native-provider
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
 import { generateClaudeProfileAppText } from "./claude-profile-completion.js";
 import { generateApiAppText } from "./api-completion.js";
+import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 import type { createHermesAppCompletion } from "./hermes-completion.js";
 import type { createPiSdkAppCompletion } from "./pi-sdk-completion.js";
 import type { ChatGptPlanAuthority } from "../bots/chatgpt-plan.js";
@@ -125,7 +126,11 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 continue;
             if (route.accessSourceId === CHATGPT_PLAN_SOURCE) continue;
             if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included") {
-                if (!options.fundedCredentialProvider?.enabled || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
+                // App AI currently consumes non-streaming JSON; the Bedrock relay
+                // deliberately accepts only bounded streaming chat completions.
+                if ((canonical && isEffectiveBedrockModel(canonical, route.accessSourceId, route.modelId))
+                    || !options.fundedCredentialProvider?.enabled
+                    || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
                     route.availability = "unavailable";
                     route.readiness = "unavailable";
                     route.reason = "completion_unavailable";

@@ -48,7 +48,9 @@ export type ProviderSettingsMutationIntent =
       dependencyGuard: ProviderDependencyCounts;
     }
   | { type: "set_gateway_budget"; monthlyBudgetMicrousd: number | null }
-  | { type: "set_gateway_allowlist"; allowedModelIds: string[] };
+  | { type: "set_gateway_allowlist"; allowedModelIds: string[] }
+  | { type: "set_gateway_upstream"; expectedUpstreamRevision: number;
+      selectedUpstream: import("@matrix-os/contracts").FundedAiUpstreamPreferenceValue };
 
 export interface AgentsProvidersViewProps {
   snapshot: ProviderSettingsSnapshot;

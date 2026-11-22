@@ -9,12 +9,14 @@ const ProviderQuerySchema = z.object({
   includeFundingState: z.enum(["true", "false"]).optional(),
   includeChatFunding: z.enum(["true", "false"]).optional(),
   includeMatrixAnthropicConnection: z.enum(["true", "false"]).optional(),
+  includeUpstreamPreference: z.enum(["true", "false"]).optional(),
 }).strict();
 
 export function createAiProviderRoutes(options: {
   service: AiProviderSnapshotReader;
   getPrincipal: (context: Context) => unknown;
   canReadMatrixConnections?: (context: Context) => boolean;
+  canAccessUpstreamPreference?: (context: Context) => boolean;
 }) {
   if (!options.service) throw new Error("AI provider service is required");
   if (!options.getPrincipal) throw new Error("AI provider principal resolver is required");
@@ -34,10 +36,13 @@ export function createAiProviderRoutes(options: {
           ? { ...readiness, safeReason: "policy" }
           : readiness.safeReason === "credit_reserved" && query.data.includeFundingState !== "true"
             ? { ...readiness, safeReason: "credit_required" } : readiness;
-      const { matrixAnthropicConnection, ...baseSnapshot } = internalSnapshot;
+      const { matrixAnthropicConnection, upstreamPreference, ...baseSnapshot } = internalSnapshot;
       const snapshot = {
         ...baseSnapshot,
         ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
+        ...(query.data.includeUpstreamPreference === "true"
+          && options.canAccessUpstreamPreference?.(context) === true
+          && upstreamPreference ? { upstreamPreference } : {}),
         // Internal policy inventory is projected through the canonical Chat
         // catalog. Historical V3 clients reject unknown source fields.
         accessSources: internalSnapshot.accessSources.map(({ discoverableModelIds: _discovery, ...source }) => legacyReadiness(source)),

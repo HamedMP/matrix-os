@@ -26,6 +26,7 @@ import { bindOwnerRouteToChatModel, resolveCurrentOwnerRoute } from "../../packa
 import { claudeFallbackCatalog } from "../../packages/gateway/src/chat/claude-model-catalog.js";
 import { OWNER_OPENAI_MODEL_IDS } from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import type { GenericHarnessModelCatalog } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
+import { FundedAiFundingSummaryClientError } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import {
   PROVIDER_SETTINGS_NOW as NOW,
   providerReady as ready,
@@ -168,6 +169,8 @@ describe("ProviderSettingsStore", () => {
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
     onFundingSummaryRead?: () => void;
+    upstreamPreference?: import("@matrix-os/contracts").FundedAiUpstreamPreferenceView;
+    setUpstreamPreference?: ReturnType<typeof vi.fn>;
     genericModelCatalog?: GenericHarnessModelCatalog | Error;
     prepareSharedAiRouteChange?: () => Promise<void>;
     claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
@@ -191,8 +194,11 @@ describe("ProviderSettingsStore", () => {
         getFundingSummary: vi.fn(async () => {
           options.onFundingSummaryRead?.();
           if (options.fundingSummary instanceof Error) throw options.fundingSummary;
-          return options.fundingSummary!;
+          return { ...options.fundingSummary!, ...(options.upstreamPreference
+            ? { upstreamPreference: options.upstreamPreference }
+            : {}) };
         }),
+        ...(options.setUpstreamPreference ? { setUpstreamPreference: options.setUpstreamPreference } : {}),
       },
       genericModelCatalogReader: options.genericModelCatalog === undefined ? undefined : {
         getCatalog: vi.fn(async () => {
@@ -540,6 +546,40 @@ describe("ProviderSettingsStore", () => {
         expect.objectContaining({ id: "kernel_owner", readiness: expect.objectContaining({ state: "expired" }) }),
       ]),
     });
+  it("delegates entitled upstream preference writes to platform truth without changing owner-file revision", async () => {
+    const preference = { selectedUpstream: "cloudflare" as const, effectiveUpstream: "cloudflare" as const,
+      revision: 4, updatedAt: NOW.toISOString(), validThrough: "2026-09-30T00:00:00.000Z" };
+    const setUpstreamPreference = vi.fn(async () => ({ ...preference, selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "aws_bedrock" as const, revision: 5 }));
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding(), upstreamPreference: preference,
+      setUpstreamPreference });
+    const before = await store.getSnapshot();
+    expect(before.supportedActions).toContain("set_gateway_upstream");
+    expect(before.upstreamPreference).toEqual(preference);
+    const response = await store.mutate({ type: "set_gateway_upstream", expectedRevision: before.revision,
+      idempotencyKey: "upstream_1", expectedUpstreamRevision: 4, selectedUpstream: "aws_bedrock" });
+    expect(setUpstreamPreference).toHaveBeenCalledWith({ idempotencyKey: "upstream_1",
+      expectedRevision: 4, selectedUpstream: "aws_bedrock" });
+    expect(response.snapshot).toMatchObject({ revision: before.revision,
+      upstreamPreference: { selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock", revision: 5 } });
+    await expect(store.mutate({ type: "set_gateway_upstream", expectedRevision: before.revision,
+      idempotencyKey: "upstream_1", expectedUpstreamRevision: 4, selectedUpstream: "aws_bedrock" }))
+      .resolves.toMatchObject({ snapshot: { upstreamPreference: { revision: 5 } } });
+    expect(setUpstreamPreference).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves platform preference revision conflicts for controller recovery", async () => {
+    const preference = { selectedUpstream: "cloudflare" as const, effectiveUpstream: "cloudflare" as const,
+      revision: 4, updatedAt: NOW.toISOString(), validThrough: "2026-09-30T00:00:00.000Z" };
+    const setUpstreamPreference = vi.fn(async () => {
+      throw new FundedAiFundingSummaryClientError("revision_conflict");
+    });
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding(), upstreamPreference: preference,
+      setUpstreamPreference });
+    const before = await store.getSnapshot();
+    await expect(store.mutate({ type: "set_gateway_upstream", expectedRevision: before.revision,
+      idempotencyKey: "upstream_conflict", expectedUpstreamRevision: 4,
+      selectedUpstream: "aws_bedrock" })).rejects.toMatchObject({ code: "revision_conflict", status: 409 });
   });
 
   it("projects fresh V3 truth and persists owner configuration without readiness or usage copies", async () => {

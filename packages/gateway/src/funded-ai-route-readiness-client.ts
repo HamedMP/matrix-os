@@ -34,7 +34,10 @@ export function createFundedAiRouteReadinessClient(
       const response = await fetchFn(config.routeReadinessUrl, {
         method: "POST", redirect: "error", signal,
         headers: { authorization: `Bearer ${config.runtimeAuthToken}`, "content-type": "application/json", accept: "application/json",
-          ...(options.modelId === undefined ? { [FUNDED_AI_READINESS_CATALOG.header]: FUNDED_AI_READINESS_CATALOG.version } : {}),
+          ...(options.modelId === undefined ? {
+            [FUNDED_AI_READINESS_CATALOG.header]: FUNDED_AI_READINESS_CATALOG.version,
+            [FUNDED_AI_READINESS_CATALOG.bedrockHeader]: FUNDED_AI_READINESS_CATALOG.bedrockVersion,
+          } : {}),
           ...(bound ? { "x-matrix-isolated-chat-phase": phase!.phaseId,
             ...(scoped.canonical ? { "x-matrix-isolated-chat-config": scoped.digest! } : {}) } : {}) },
         body: JSON.stringify(FundedAiRouteReadinessRequestSchema.parse({ modelId: options.modelId })),
