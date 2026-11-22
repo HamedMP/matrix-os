@@ -72,7 +72,7 @@ import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
-import { createShortcutService, type ShortcutService } from "./shortcuts/shortcut-service";
+import { installShortcuts } from "./shortcuts/install-shortcuts";
 import { installAppMenu } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
@@ -148,7 +148,7 @@ let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWin
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
-let shortcutService: ShortcutService | null = null;
+let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -285,9 +285,6 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
 
   win.on("focus", () => sendEvent("window:focus-changed", { focused: true }));
   win.on("blur", () => sendEvent("window:focus-changed", { focused: false }));
-  // A shortcut recorder that loses focus or navigates away must not leave menu shortcuts paused.
-  win.on("blur", () => shortcutService?.setRecording(win.webContents, false));
-  win.webContents.on("did-start-navigation", () => shortcutService?.setRecording(win.webContents, false));
 
   if (desktopRendererUrl) {
     void win.loadURL(desktopRendererUrl).catch((err: unknown) => {
@@ -364,13 +361,9 @@ if (!gotLock) {
 
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
-      const shortcuts = createShortcutService({ store, platform: process.platform });
-      await shortcuts.load();
-      shortcuts.onChange((snapshot) => {
-        sendEvent("shortcuts:changed", snapshot);
-        sendTerminalWindowEvent("shortcuts:changed", snapshot);
-      });
-      shortcutService = shortcuts;
+      const shortcuts = await installShortcuts({ app, store, platform: process.platform,
+        mainWindow: () => mainWindow, terminalWindow: () => terminalWindows?.current() ?? null });
+      shortcutWiring = shortcuts;
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
@@ -742,7 +735,7 @@ if (!gotLock) {
         cancelOrganizationDriveTransfer: () => { driveTransfers.cancelAll(); return { ok: true }; },
         auth,
         store,
-        shortcuts,
+        shortcuts: shortcuts.service,
         embeds,
         openExternal: openExternalHttpUrl,
         setBadgeCount: (count) => {
@@ -995,8 +988,8 @@ if (!gotLock) {
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
     terminalWindows = null;
-    shortcutService?.dispose();
-    shortcutService = null;
+    shortcutWiring?.dispose();
+    shortcutWiring = null;
     computerCredentials?.clear();
     computerCredentials = null;
     // Detach only: the local core and its terminals outlive the app.

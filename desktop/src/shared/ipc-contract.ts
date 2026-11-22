@@ -145,7 +145,7 @@ const STATE_KEYS = [
   "recents",
   "projectViews",
   "providerPreferences",
-  "keyboardShortcuts",
+  // keyboardShortcuts is deliberately absent: only shortcuts:set may write it.
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;

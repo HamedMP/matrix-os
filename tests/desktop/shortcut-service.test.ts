@@ -50,12 +50,55 @@ describe("shortcut service", () => {
     expect(console.warn).toHaveBeenCalled();
   });
 
-  it("falls back to defaults when stored overrides fail validation", async () => {
-    const service = makeService(fakeStore({ version: 1, overrides: { "app.close": ["Cmd+C"] } }));
+  it("falls back to defaults when the stored value is not an overrides document", async () => {
+    const store = fakeStore({ version: 2, overrides: { "app.close": ["F6"] } });
+    const service = makeService(store);
     await service.load();
     expect(service.snapshot().overrides).toEqual({ version: 1, overrides: {} });
     expect(service.snapshot().effective["app.close"]).toEqual(["Cmd+Q"]);
-    expect(console.warn).toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("keeps the valid parts of stale stored overrides without writing them back", async () => {
+    const store = fakeStore({
+      version: 1,
+      overrides: {
+        "app.close": ["F6"],
+        "app.minimize": ["Cmd+C"],
+        "nav.settings": ["F7"],
+        "app.next": ["F7"],
+        "app.reopen": [],
+        "app.nope": ["F9"],
+      },
+    });
+    const service = makeService(store);
+    await service.load();
+    const snapshot = service.snapshot();
+
+    expect(snapshot.overrides).toEqual({
+      version: 1,
+      overrides: { "app.close": ["F6"], "app.next": ["F7"], "app.reopen": [] },
+    });
+    expect(snapshot.effective["app.close"]).toEqual(["F6"]);
+    expect(snapshot.effective["app.minimize"]).toEqual(["Cmd+M"]);
+    expect(snapshot.effective["app.next"]).toEqual(["F7"]);
+    expect(snapshot.effective["nav.settings"]).toEqual(["Cmd+,"]);
+    expect(snapshot.effective["app.reopen"]).toEqual([]);
+    expect(store.set).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops repeated bindings and keeps at most four per action when sanitizing", async () => {
+    const service = makeService(fakeStore({
+      version: 1,
+      overrides: { "app.launcher": ["F1", "F1", "F2", "F3", "F4", "F5"], "app.close": ["Cmd+C"] },
+    }));
+    await service.load();
+    expect(service.snapshot().overrides).toEqual({
+      version: 1,
+      overrides: { "app.launcher": ["F1", "F2", "F3", "F4"] },
+    });
   });
 
   it("loads valid stored overrides", async () => {

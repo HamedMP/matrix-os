@@ -3,7 +3,11 @@
 // menu and the windows when they change.
 import {
   EMPTY_SHORTCUT_OVERRIDES,
+  MAX_BINDINGS_PER_ACTION,
+  SHORTCUT_ACTIONS,
+  ShortcutOverridesSchema,
   resolveShortcuts,
+  validateBinding,
   validateOverrides,
   type ShortcutOverrides,
   type ShortcutPlatform,
@@ -34,6 +38,31 @@ export interface ShortcutService {
 
 export function toShortcutPlatform(platform: NodeJS.Platform): ShortcutPlatform {
   return platform === "darwin" ? "mac" : "other";
+}
+
+/**
+ * Keeps what is still valid in stored overrides, for example after a build
+ * reserves a key the owner had bound. Actions are walked in registry order, so
+ * a binding held by two actions stays with the earlier one. An action whose
+ * list empties only because bindings were dropped falls back to its defaults;
+ * a list stored empty stays unbound.
+ */
+export function sanitizeOverrides(overrides: ShortcutOverrides, platform: ShortcutPlatform): ShortcutOverrides {
+  const kept: Record<string, string[]> = {};
+  const claimed = new Set<string>();
+  for (const { id } of SHORTCUT_ACTIONS) {
+    if (!Object.hasOwn(overrides.overrides, id)) continue;
+    const stored = overrides.overrides[id] ?? [];
+    const bindings: string[] = [];
+    for (const binding of stored) {
+      if (bindings.length >= MAX_BINDINGS_PER_ACTION) break;
+      if (claimed.has(binding) || !validateBinding(binding, platform).ok) continue;
+      claimed.add(binding);
+      bindings.push(binding);
+    }
+    if (bindings.length > 0 || stored.length === 0) kept[id] = bindings;
+  }
+  return { version: 1, overrides: kept };
 }
 
 export function createShortcutService(deps: {
@@ -96,7 +125,7 @@ export function createShortcutService(deps: {
 
   return {
     async load() {
-      let stored: ShortcutOverrides | null;
+      let stored: unknown;
       try {
         stored = await deps.store.get("keyboardShortcuts");
       } catch (error: unknown) {
@@ -104,11 +133,18 @@ export function createShortcutService(deps: {
         return;
       }
       if (stored === null) return;
-      if (!validateOverrides(stored, platform)) {
-        console.warn("[shortcuts] stored overrides are invalid, using defaults");
+      const parsed = ShortcutOverridesSchema.safeParse(stored);
+      if (!parsed.success) {
+        console.warn("[shortcuts] stored overrides are unreadable, using defaults");
         return;
       }
-      current = stored;
+      if (validateOverrides(parsed.data, platform)) {
+        current = parsed.data;
+        return;
+      }
+      // Not written back: a later build may accept what this one drops.
+      console.warn("[shortcuts] dropped stored shortcuts that are no longer valid");
+      current = sanitizeOverrides(parsed.data, platform);
     },
 
     snapshot,

@@ -1202,8 +1202,8 @@ describe("IPC contract", () => {
     }).success).toBe(false);
   });
 
-  it("lets the renderer read and write keyboard shortcut overrides through saved state", () => {
-    expect(INVOKE_CHANNELS["state:get"].request.safeParse({ key: "keyboardShortcuts" }).success).toBe(true);
-    expect(INVOKE_CHANNELS["state:set"].request.safeParse({ key: "keyboardShortcuts", value: { version: 1, overrides: {} } }).success).toBe(true);
+  it("keeps keyboard shortcut overrides out of the generic saved-state channels", () => {
+    expect(INVOKE_CHANNELS["state:get"].request.safeParse({ key: "keyboardShortcuts" }).success).toBe(false);
+    expect(INVOKE_CHANNELS["state:set"].request.safeParse({ key: "keyboardShortcuts", value: { version: 1, overrides: {} } }).success).toBe(false);
   });
 });
