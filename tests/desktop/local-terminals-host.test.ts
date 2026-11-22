@@ -208,6 +208,23 @@ describe("local terminal host against a scripted core", () => {
     expect(events.state.stopped).toBe(1);
   });
 
+  // Fault detected (Greptile, #3566): a window closed while the core was starting left the events client running.
+  it("does not start following when the window left while the core was starting", async () => {
+    const events = fakeEvents([]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { host } = start(listing([]), {
+      createEvents: events.createEvents as never,
+      startCore: vi.fn(async () => { await gate; }),
+      openSocket: (() => { let dials = 0; const live = fakeCore(); return () => (dials++ === 0 ? deadSocket("ENOENT") : live.socket); })(),
+    });
+    const watching = host.watch();
+    host.unwatch();
+    release();
+    await expect(watching).rejects.toThrow("watch ended");
+    expect(events.state.started).toBe(0);
+  });
+
   it("marks seen with Herdr's turn label, or the finished label once a terminal ended", async () => {
     const events = fakeEvents([
       { id: "t1", title: "claude", status: "done", statusAt: 1, turn: 7, seenTurn: 6, finished: false },

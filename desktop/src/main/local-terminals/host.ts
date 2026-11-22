@@ -181,6 +181,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   }
 
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
+  let watchEpoch = 0;
   const events = (options.createEvents ?? createLocalTerminalEvents)({
     open: () => options.openSocket(socketPath),
     expectedVersion: options.expectedVersion,
@@ -236,13 +238,16 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * and returns what is known now; changes go to the sink's `facts`.
      */
     async watch(): Promise<LocalTerminalFact[]> {
+      const startedIn = watchEpoch;
       await ensure();
+      if (watchEpoch !== startedIn) throw new Error("local terminal watch ended");
       events.start();
       return events.facts();
     },
 
     /** Stops following status: the Terminal window closed or reloaded. */
     unwatch(): void {
+      watchEpoch += 1;
       events.stop();
     },
 

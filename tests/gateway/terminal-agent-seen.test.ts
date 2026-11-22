@@ -111,6 +111,43 @@ describe("terminal seen over the events stream", () => {
     expect(h.attention()).toMatchObject({ tabs: { [keyB]: { doneAt: "2026-11-11T10:06:30.000Z", seen: false } } });
   });
 
+  // Fault detected (Greptile, #3566): renaming an ended tab moved its timestamp and brought it back to Done.
+  it("keeps an ended tab seen when its name or saved view changes later", async () => {
+    const h = harness();
+    h.setTabs([tab(tabA, { status: "exited", exitCode: 0, updatedAt: "2026-11-11T10:04:00.000Z" })]);
+    await h.start();
+    h.handle.markSeen({ workspaceId, tabId: tabA });
+    h.advance(60_000);
+    h.setTabs([tab(tabA, { status: "exited", exitCode: 0, name: "renamed", updatedAt: "2026-11-11T10:09:00.000Z" })]);
+    await h.hub.tick();
+    expect(h.attention()).toMatchObject({ tabs: { [keyA]: { seen: true } } });
+  });
+
+  it("files a tab opened while it ran as unseen once its program ends", async () => {
+    const h = harness();
+    h.setStatus(tabA, "working", "2026-11-11T10:03:00.000Z");
+    await h.start();
+    h.handle.markSeen({ workspaceId, tabId: tabA });
+    h.setTabs([tab(tabA, { status: "exited", exitCode: 1, updatedAt: "2026-11-11T10:04:00.000Z" }), tab(tabB)]);
+    await h.hub.tick();
+    expect(h.attention()).toMatchObject({ tabs: { [keyA]: { seen: false } } });
+  });
+
+  // Fault detected (Greptile, #3566): with a long finished history, rows in the snapshot had no attention entry and could never clear.
+  it("sends attention for every done tab the snapshot carries", async () => {
+    const h = harness();
+    const finished = Array.from({ length: 1_100 }, (_, index) => tab(`tt_${index.toString(16).padStart(32, "0")}`, {
+      status: "exited", exitCode: 0, updatedAt: new Date(Date.parse("2026-11-11T10:00:00.000Z") + index * 1_000).toISOString(),
+    }));
+    h.setTabs(finished);
+    await h.start();
+    const snapshot = h.frames.find((frame) => frame.type === "snapshot");
+    const sent = snapshot?.type === "snapshot" ? snapshot.tabs.map((entry) => `${entry.ref.workspaceId}:${entry.ref.tabId}`) : [];
+    const attention = h.attention();
+    const keys = attention?.type === "attention" ? Object.keys(attention.tabs) : [];
+    expect(keys.sort()).toEqual([...sent].sort());
+  });
+
   it("refuses refs the stream does not list", async () => {
     const h = harness();
     await h.start();
@@ -153,13 +190,13 @@ describe("terminal seen store", () => {
     const path = join(home, "system", "terminal-seen.json");
     const first = createTerminalSeenStore({ path, saveDelayMs: 0 });
     await first.load();
-    first.mark(keyA, Date.parse("2026-11-11T10:05:00.000Z"));
+    first.mark(keyA, Date.parse("2026-11-11T10:05:00.000Z"), true);
     await first.close();
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ version: 1, tabs: { [keyA]: "2026-11-11T10:05:00.000Z" } });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ version: 1, tabs: { [keyA]: { at: "2026-11-11T10:05:00.000Z", finished: true } } });
 
     const second = createTerminalSeenStore({ path, saveDelayMs: 0 });
     await second.load();
-    expect(second.get(keyA)).toBe(Date.parse("2026-11-11T10:05:00.000Z"));
+    expect(second.get(keyA)).toEqual({ at: Date.parse("2026-11-11T10:05:00.000Z"), finished: true });
     await second.close();
   });
 
@@ -175,35 +212,38 @@ describe("terminal seen store", () => {
     await broken.load();
     expect(broken.get(keyA)).toBeUndefined();
 
-    await writeFile(path, JSON.stringify({ version: 1, tabs: { [keyA]: "2026-11-11T10:05:00.000Z", "../etc": "x", [keyB]: "yesterday" } }));
+    await writeFile(path, JSON.stringify({ version: 1, tabs: {
+      [keyA]: { at: "2026-11-11T10:05:00.000Z", finished: false }, "../etc": { at: "2026-11-11T10:05:00.000Z", finished: true },
+      [keyB]: { at: "yesterday", finished: true },
+    } }));
     const partial = createTerminalSeenStore({ path });
     await partial.load();
-    expect(partial.get(keyA)).toBe(Date.parse("2026-11-11T10:05:00.000Z"));
+    expect(partial.get(keyA)).toEqual({ at: Date.parse("2026-11-11T10:05:00.000Z"), finished: false });
     expect(partial.get(keyB)).toBeUndefined();
   });
 
   it("keeps the later time when a mark arrives before loading finishes", async () => {
     const home = await tempHome();
     const path = join(home, "terminal-seen.json");
-    await writeFile(path, JSON.stringify({ version: 1, tabs: { [keyA]: "2026-11-11T10:09:00.000Z" } }));
+    await writeFile(path, JSON.stringify({ version: 1, tabs: { [keyA]: { at: "2026-11-11T10:09:00.000Z", finished: true } } }));
     const store = createTerminalSeenStore({ path });
-    store.mark(keyA, Date.parse("2026-11-11T10:05:00.000Z"));
-    store.mark(keyB, Date.parse("2026-11-11T10:05:00.000Z"));
+    store.mark(keyA, Date.parse("2026-11-11T10:05:00.000Z"), false);
+    store.mark(keyB, Date.parse("2026-11-11T10:05:00.000Z"), false);
     await store.load();
-    expect(store.get(keyA)).toBe(Date.parse("2026-11-11T10:09:00.000Z"));
-    expect(store.get(keyB)).toBe(Date.parse("2026-11-11T10:05:00.000Z"));
+    expect(store.get(keyA)).toEqual({ at: Date.parse("2026-11-11T10:09:00.000Z"), finished: true });
+    expect(store.get(keyB)?.at).toBe(Date.parse("2026-11-11T10:05:00.000Z"));
   });
 
   it("is bounded, forgets closed tabs and refuses keys that are not terminal refs", () => {
     const store = createTerminalSeenStore({ path: null, maxEntries: 3 });
     for (let index = 0; index < 5; index += 1) {
-      store.mark(`${workspaceId}:tt_${index.toString(16).padStart(32, "0")}`, 1_000 + index);
+      store.mark(`${workspaceId}:tt_${index.toString(16).padStart(32, "0")}`, 1_000 + index, false);
     }
     expect(store.size()).toBe(3);
     expect(store.get(`${workspaceId}:tt_${"0".repeat(32)}`)).toBeUndefined();
     store.retain(new Set([`${workspaceId}:tt_${"4".padStart(32, "0")}`]));
     expect(store.size()).toBe(1);
-    store.mark("not-a-ref", 1);
+    store.mark("not-a-ref", 1, false);
     expect(store.size()).toBe(1);
   });
 });

@@ -89,17 +89,24 @@ export interface TerminalEventHub {
   shutdown(): void;
 }
 
+interface DoneTab {
+  /** When it became done (ISO): its latest `done` report, or (for an ended tab) its last saved change. */
+  at: string;
+  /** Its program ended; it is done for good. */
+  finished: boolean;
+}
+
 interface Listed {
   facts: Map<string, TerminalTabFacts>;
-  /** When each done tab became done (ISO): its exit, or its latest `done` report. Never sent as a fact. */
-  doneAt: Map<string, string>;
+  /** Every done tab. Never sent as a fact. */
+  done: Map<string, DoneTab>;
 }
 
 function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string, {
   status: TerminalAgentStatus; message?: string; reportedAt: string;
 }>): Listed {
   const facts = new Map<string, TerminalTabFacts>();
-  const doneAt = new Map<string, string>();
+  const done = new Map<string, DoneTab>();
   // Every owner tab, so lifecycle changes (an exit and its code) are diffed before any
   // history is trimmed; only snapshots trim finished history.
   const ordered = workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({ workspace, tab })))
@@ -108,8 +115,8 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
     const ref = { workspaceId: workspace.id, tabId: tab.id };
     const finished = tab.status === "exited" || tab.status === "failed";
     const status = finished ? undefined : statuses.get(terminalRefKey(ref));
-    if (finished) doneAt.set(terminalRefKey(ref), tab.updatedAt);
-    else if (status?.status === "done") doneAt.set(terminalRefKey(ref), status.reportedAt);
+    if (finished) done.set(terminalRefKey(ref), { at: tab.updatedAt, finished: true });
+    else if (status?.status === "done") done.set(terminalRefKey(ref), { at: status.reportedAt, finished: false });
     facts.set(terminalRefKey(ref), {
       ref,
       name: tab.name,
@@ -122,18 +129,26 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
       ...(status?.message ? { statusMessage: status.message } : {}),
     });
   }
-  return { facts, doneAt };
+  return { facts, done };
 }
 
-/** Every done tab, most recently done first, bounded like a snapshot. */
-function attentionFrom(doneAt: ReadonlyMap<string, string>, seen: TerminalSeenStore | undefined): Record<string, TerminalTabAttention> {
-  const entries = [...doneAt].map(([key, at]) => ({ key, at, time: Date.parse(at) }))
-    .sort((left, right) => (right.time || 0) - (left.time || 0))
-    .slice(0, TERMINAL_EVENTS_MAX_TABS);
+/**
+ * The done tabs among those a snapshot sends, so every done row a client
+ * shows can be marked seen. An ended tab is seen once it was opened after its
+ * program ended; a tab reporting `done` once it was opened since that report.
+ */
+function attentionFrom(facts: Map<string, TerminalTabFacts>, done: ReadonlyMap<string, DoneTab>, seen: TerminalSeenStore | undefined): Record<string, TerminalTabAttention> {
   const tabs: Record<string, TerminalTabAttention> = {};
-  for (const { key, at, time } of entries) {
+  for (const tab of snapshotTabs(facts)) {
+    const key = terminalRefKey(tab.ref);
+    const entry = done.get(key);
+    if (!entry) continue;
     const opened = seen?.get(key);
-    tabs[key] = { doneAt: at, seen: opened !== undefined && Number.isFinite(time) && opened >= time };
+    const time = Date.parse(entry.at);
+    tabs[key] = {
+      doneAt: entry.at,
+      seen: opened !== undefined && (entry.finished ? opened.finished : Number.isFinite(time) && opened.at >= time),
+    };
   }
   return tabs;
 }
@@ -185,7 +200,7 @@ export function createTerminalEventHub(options: {
   const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
   const subscribers = new Set<SubscriberState>();
   let facts: Map<string, TerminalTabFacts> | null = null;
-  let doneAt: Map<string, string> = new Map();
+  let done: Map<string, DoneTab> = new Map();
   let attention: { tabs: Record<string, TerminalTabAttention>; json: string } | null = null;
   let seq = 0;
   let pollTimer: NodeJS.Timeout | null = null;
@@ -216,13 +231,13 @@ export function createTerminalEventHub(options: {
     pollTimer = null;
     heartbeatTimer = null;
     facts = null;
-    doneAt = new Map();
+    done = new Map();
     attention = null;
   }
 
   /** Recomputes attention; true when it changed. */
   function refreshAttention(): boolean {
-    const tabs = attentionFrom(doneAt, options.seen);
+    const tabs = facts ? attentionFrom(facts, done, options.seen) : {};
     const json = JSON.stringify(tabs);
     if (attention?.json === json) return false;
     attention = { tabs, json };
@@ -252,7 +267,7 @@ export function createTerminalEventHub(options: {
     const next = listed.facts;
     const events = facts ? diff(facts, next) : [];
     facts = next;
-    doneAt = listed.doneAt;
+    done = listed.done;
     options.seen?.retain(new Set(next.keys()));
     const frames = events.map((event): TerminalEventFrame => ({ type: "event", seq: ++seq, event }));
     if (options.seen && refreshAttention()) frames.push(attentionFrame());
@@ -304,7 +319,7 @@ export function createTerminalEventHub(options: {
         markSeen: (ref) => {
           const key = terminalRefKey(ref);
           if (!options.seen || !facts?.has(key)) return false;
-          options.seen.mark(key, now());
+          options.seen.mark(key, now(), done.get(key)?.finished === true);
           if (refreshAttention()) {
             const frame = attentionFrame();
             const dead: SubscriberState[] = [];

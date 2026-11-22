@@ -37,8 +37,8 @@ const EventSchema = z.discriminatedUnion("kind", [
 // became done, and whether the person opened it since.
 const AttentionKeySchema = z.string().regex(/^tws_[0-9a-f]{32}:tt_[0-9a-f]{32}$/);
 const AttentionSchema = z.strictObject({ doneAt: z.string().max(64), seen: z.boolean() });
-// The gateway bounds attention like a snapshot's finished history.
-const MAX_ATTENTION = 1_024;
+// The gateway sends attention only for tabs its snapshot carries.
+const MAX_ATTENTION = MAX_SNAPSHOT_ENTRIES;
 
 /** Every `/ws/terminal/events` server frame, checked before anything is stored. */
 export const TerminalEventsFrameSchema = z.discriminatedUnion("type", [

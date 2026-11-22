@@ -8,6 +8,13 @@ const DEFAULT_MAX_ENTRIES = 2_048;
 const DEFAULT_SAVE_DELAY_MS = 1_000;
 const MAX_FILE_BYTES = 512 * 1024;
 const FileSchema = z.object({ version: z.literal(1), tabs: z.record(z.string(), z.unknown()) });
+const EntrySchema = z.object({ at: z.string().max(64), finished: z.boolean() });
+
+/** One opening: when, and whether the tab's program had already ended then. */
+export interface TerminalSeenEntry {
+  at: number;
+  finished: boolean;
+}
 
 /**
  * When the person last opened each terminal tab (spec 2706 layer 4), shared by
@@ -15,10 +22,14 @@ const FileSchema = z.object({ version: z.literal(1), tabs: z.record(z.string(), 
  * home so a gateway restart does not bring back every finished tab as "Done".
  */
 export interface TerminalSeenStore {
-  /** When the tab was last opened (ms since the epoch), if ever. */
-  get(key: string): number | undefined;
-  /** Records an opening; an earlier time never replaces a later one. */
-  mark(key: string, at: number): void;
+  /** The tab's last opening, if ever. */
+  get(key: string): TerminalSeenEntry | undefined;
+  /**
+   * Records an opening; an earlier one never replaces a later one. `finished`
+   * says the program had ended: an ended tab's metadata (its name, its saved
+   * view) can still change, so its own timestamps cannot say "seen since".
+   */
+  mark(key: string, at: number, finished: boolean): void;
   /** Forgets tabs that are no longer listed. */
   retain(keys: ReadonlySet<string>): void;
   size(): number;
@@ -36,17 +47,17 @@ export function createTerminalSeenStore(options: {
   const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const saveDelayMs = options.saveDelayMs ?? DEFAULT_SAVE_DELAY_MS;
   // Insertion order is recency of the last mark: the oldest drops out past the cap.
-  const seen = new Map<string, number>();
+  const seen = new Map<string, TerminalSeenEntry>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let dirty = false;
   let saving: Promise<void> = Promise.resolve();
   let closed = false;
 
-  const put = (key: string, at: number) => {
+  const put = (key: string, entry: TerminalSeenEntry) => {
     const before = seen.get(key);
-    if (before !== undefined && before >= at) return false;
+    if (before !== undefined && before.at >= entry.at) return false;
     seen.delete(key);
-    seen.set(key, at);
+    seen.set(key, entry);
     while (seen.size > maxEntries) {
       const oldest = seen.keys().next().value;
       if (oldest === undefined) break;
@@ -59,7 +70,7 @@ export function createTerminalSeenStore(options: {
     if (!options.path || !dirty) return saving;
     dirty = false;
     const path = options.path;
-    const tabs = Object.fromEntries([...seen].map(([key, at]) => [key, new Date(at).toISOString()]));
+    const tabs = Object.fromEntries([...seen].map(([key, entry]) => [key, { at: new Date(entry.at).toISOString(), finished: entry.finished }]));
     saving = saving.then(() => writeUtf8FileAtomic(path, `${JSON.stringify({ version: 1, tabs })}\n`))
       .catch((error: unknown) => {
         // Seen is advisory: a failed write only means "Done" may come back after a restart.
@@ -77,9 +88,9 @@ export function createTerminalSeenStore(options: {
 
   return {
     get: (key) => seen.get(key),
-    mark(key, at) {
+    mark(key, at, finished) {
       if (!REF_KEY.test(key) || !Number.isFinite(at)) return;
-      if (put(key, at)) schedule();
+      if (put(key, { at, finished })) schedule();
     },
     retain(keys) {
       let changed = false;
@@ -117,8 +128,9 @@ export function createTerminalSeenStore(options: {
       }
       // Marks made while loading are newer than the file unless the file says otherwise.
       for (const [key, value] of Object.entries(file.data.tabs).slice(0, maxEntries)) {
-        const at = typeof value === "string" ? Date.parse(value) : Number.NaN;
-        if (REF_KEY.test(key) && Number.isFinite(at)) put(key, at);
+        const entry = EntrySchema.safeParse(value);
+        const at = entry.success ? Date.parse(entry.data.at) : Number.NaN;
+        if (REF_KEY.test(key) && entry.success && Number.isFinite(at)) put(key, { at, finished: entry.data.finished });
       }
     },
     async close() {
