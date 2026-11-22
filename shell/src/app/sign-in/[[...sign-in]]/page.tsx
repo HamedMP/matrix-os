@@ -1,4 +1,5 @@
 import { slackLinkReturnTarget } from "../../../../../packages/platform/src/slack/link-return";
+import { gmailSignInReturnTarget } from "../../../../../packages/platform/src/gmail-sign-in-return";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { SignIn } from "@clerk/nextjs";
@@ -20,7 +21,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   // Only exact allowlisted return addresses survive; everything else lands on "/".
   const returnTarget =
-    slackLinkReturnTarget(params.redirect_url) ?? clerkSatelliteReturnTarget(params.redirect_url) ?? "/";
+    gmailSignInReturnTarget(params.redirect_url) ?? slackLinkReturnTarget(params.redirect_url) ?? clerkSatelliteReturnTarget(params.redirect_url) ?? "/";
   return (
     <ShellAuthLayout
       eyebrow="Matrix OS"
