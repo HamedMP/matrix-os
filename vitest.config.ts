@@ -51,6 +51,7 @@ export default defineConfig({
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
+      "@matrix-os/ui/shortcuts": path.resolve(__dirname, "packages/ui/src/shortcuts/index.ts"),
       "@matrix-os/ui/collaborative-app-sharing": path.resolve(__dirname, "packages/ui/src/collaboration/collaborative-app-sharing.ts"),
       "@matrix-os/ui/feature-flags": path.resolve(__dirname, "packages/ui/src/feature-flags.ts"),
       "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
