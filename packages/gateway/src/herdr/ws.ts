@@ -56,6 +56,8 @@ interface Viewer {
   sessionId: string;
   lastTouched: number;
   close(code: number, reason: string): void;
+  /** The terminal's size changed because a Matrix writer resized it. */
+  sized(size: { cols: number; rows: number }): void;
 }
 
 function parseClientFrame(raw: string): z.infer<typeof TerminalTabClientFrameSchema> | null {
@@ -98,6 +100,15 @@ export function registerHerdrTerminalWebSocket(options: {
     }
   }, SWEEP_MS);
   sweep.unref();
+
+  // Size updates carry a revision that only grows, across reconnects and
+  // gateway restarts (clients drop a canonical-size older than the last one).
+  let sizeRevision = Date.now();
+
+  /** Every Matrix viewer of the terminal draws on the size the writer put into effect. */
+  function announceSize(sessionId: string, size: { cols: number; rows: number }): void {
+    for (const viewer of viewers.values()) if (viewer.sessionId === sessionId) viewer.sized(size);
+  }
 
   options.app.get(HERDR_TERMINAL_WS_PATH, options.upgradeWebSocket((c) => {
     const query = QuerySchema.safeParse({
@@ -143,6 +154,15 @@ export function registerHerdrTerminalWebSocket(options: {
         : { workspaceId: query.data.workspaceId!, tabId: query.data.tabId! };
     // The latest size a client asked for before the attachment existed.
     let earlySize: { cols: number; rows: number } | null = null;
+    // The grid size this client was last told.
+    let reportedSize: { cols: number; rows: number } | null = null;
+    const sized = (size: { cols: number; rows: number }) => {
+      if (closed || !attached || !ref) return;
+      if (reportedSize && reportedSize.cols === size.cols && reportedSize.rows === size.rows) return;
+      reportedSize = size;
+      sizeRevision += 1;
+      send({ type: "canonical-size", terminalRef: ref, revision: sizeRevision, canonicalSize: size });
+    };
 
     const backlog = () => {
       const raw = socket?.raw as { bufferedAmount?: unknown } | undefined;
@@ -225,7 +245,7 @@ export function registerHerdrTerminalWebSocket(options: {
           sessionId = id;
           const sessionViewers = [...viewers.values()].filter((viewer) => viewer.sessionId === id).length;
           if (sessionViewers >= maxPerSession || viewers.size >= maxViewers) throw new HerdrAdapterError("capacity");
-          viewers.set(viewerId, { sessionId: id, lastTouched: now(), close: (code, reason) => { closed = true; release(); ws.close(code, reason); } });
+          viewers.set(viewerId, { sessionId: id, lastTouched: now(), close: (code, reason) => { closed = true; release(); ws.close(code, reason); }, sized });
           ref = herdrTerminalRef(id);
           const terminalRef = ref;
           ownershipKey = `${principal.userId}:herdr:${id}`;
@@ -262,6 +282,8 @@ export function registerHerdrTerminalWebSocket(options: {
           if (role === "writer") {
             if (size.cols !== cols || size.rows !== rows) opened.resize(size.cols, size.rows);
             adapter.rememberSize(id, size);
+            // A writer's attach sizes the terminal too; the other Matrix viewers redraw at it.
+            announceSize(id, size);
           }
           send({
             type: "attached", terminalRef, revision: 0, canonicalSize: size, nextSeq: seq, ownership: role,
@@ -271,6 +293,7 @@ export function registerHerdrTerminalWebSocket(options: {
           send({ type: "replay-start", terminalRef, revision: 0, fromSeq: seq });
           replaying = true;
           attached = true;
+          reportedSize = size;
           const paint = early.splice(0);
           if (paint.length > 0) {
             // Everything that arrived during the attach is the core's repaint.
@@ -322,8 +345,11 @@ export function registerHerdrTerminalWebSocket(options: {
           case "resize": {
             // Only the person who took control sets the size; observers never resize.
             if (attachment && options.terminalLiveOwnership.role(ownershipKey, viewerId) === "writer") {
-              attachment.resize(frame.size.cols, frame.size.rows);
-              if (sessionId) options.adapter?.rememberSize(sessionId, frame.size);
+              const applied = attachment.resize(frame.size.cols, frame.size.rows);
+              if (applied && sessionId) {
+                options.adapter?.rememberSize(sessionId, frame.size);
+                announceSize(sessionId, frame.size);
+              }
             }
             return;
           }
