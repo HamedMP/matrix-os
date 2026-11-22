@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Root-only customer Browser lifecycle. Preview admission remains separate."""
 import base64
+import errno
 import fcntl
 import grp
 import hashlib
@@ -41,6 +42,33 @@ def viewer_location(source):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, newurl):
         raise ValueError('Browser health redirects are forbidden')
+
+
+# A nominal 2 GiB machine: the kernel reserves part of RAM, so MemTotal reads
+# below 2 GiB (a 2048 MiB Cloud Hypervisor guest, the free metal shape, reports
+# about 1.9 GiB and grows through virtio-mem under pressure). Refuse only
+# machines clearly smaller than 2 GiB.
+MIN_MEMORY_KB = 1792 * 1024
+# Our own ValueError messages are fixed sentences; library ValueErrors can carry
+# input values, so only messages of this shape are logged.
+SAFE_REASON = re.compile(r'[A-Z][A-Za-z0-9 ;,()/.-]{0,160}')
+
+
+def failure_reason(error):
+    """A specific reason for the journal that never includes user data, paths or secrets."""
+    name = type(error).__name__
+    if isinstance(error, subprocess.CalledProcessError):
+        command = error.cmd[0] if isinstance(error.cmd, (list, tuple)) and error.cmd else ''
+        return f'{name} {PurePosixPath(str(command)).name} exit {error.returncode}'
+    if isinstance(error, subprocess.TimeoutExpired):
+        command = error.cmd[0] if isinstance(error.cmd, (list, tuple)) and error.cmd else ''
+        return f'{name} {PurePosixPath(str(command)).name}'
+    if isinstance(error, OSError):
+        return f'{name} {errno.errorcode.get(error.errno, "")}'.strip()
+    if type(error) is ValueError and len(error.args) == 1 and isinstance(error.args[0], str) \
+            and 'Browser' in error.args[0] and SAFE_REASON.fullmatch(error.args[0]):
+        return error.args[0]
+    return name
 
 
 class Runtime:
@@ -475,8 +503,10 @@ class Runtime:
             raise ValueError('Browser requires Ubuntu 24.04 x86_64')
         memory = self.path('/proc/meminfo').read_text()
         match = re.search(r'^MemTotal:\s+(\d+) kB$', memory, re.M)
-        if not match or int(match.group(1)) < 2 * 1024 * 1024 or shutil.disk_usage(self.prefix).free < 2 * 1024 ** 3:
-            raise ValueError('Browser requires 2 GiB RAM and free storage')
+        if not match or int(match.group(1)) < MIN_MEMORY_KB:
+            raise ValueError('Browser requires 2 GiB RAM')
+        if shutil.disk_usage(self.prefix).free < 2 * 1024 ** 3:
+            raise ValueError('Browser requires 2 GiB free storage')
 
     def verified_archive(self):
         archive = self.bin / 'matrix-browser-runtime.tar.gz'
@@ -675,5 +705,5 @@ if __name__ == '__main__':
     try:
         main(sys.argv[1:])
     except (ValueError, OSError, subprocess.SubprocessError) as error:
-        print('Customer Browser setup failed: ' + type(error).__name__, file=sys.stderr)
+        print('Customer Browser setup failed: ' + failure_reason(error), file=sys.stderr)
         raise SystemExit(1)
