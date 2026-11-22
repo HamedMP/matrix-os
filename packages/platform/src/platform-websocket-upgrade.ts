@@ -1,4 +1,6 @@
 import type { RuntimeUpstream } from './substrates/types.js';
+
+const OWNED_UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
 import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
@@ -439,9 +441,18 @@ export function registerPlatformWebSocketUpgradeHandler(
         const ownedHost = resolution.upstream.hostHeader;
         const headers = buildUpgradeHeaders(ownedMachine.handle, true, resolution.upstream);
         const upstream = createTlsConnection({ host: ownedHost, port: 443, servername: ownedHost, rejectUnauthorized: true }, () => {
+          clearTimeout(connectDeadline);
           if (!adoptUpstream(upstream)) return;
           writeUpgradeRequest(upstream, ownedHost, headers);
         });
+        // The tunnel dial has a deadline, and a client that leaves while it is
+        // still pending takes the half-open upstream with it.
+        const connectDeadline = setTimeout(() => upstream.destroy(new Error('owned upstream connect timeout')),
+          OWNED_UPSTREAM_CONNECT_TIMEOUT_MS);
+        connectDeadline.unref?.();
+        const abandon = () => { clearTimeout(connectDeadline); if (activeUpstream !== upstream) upstream.destroy(); };
+        socket.once('close', abandon);
+        upstream.once('close', () => { clearTimeout(connectDeadline); socket.off('close', abandon); });
         upstream.on('error', (err) => {
           upstream.destroy();
           console.warn(`[platform] websocket owned upstream failed handle=${ownedMachine.handle} pathClass=${pathClass} error=${describeError(err)}`);
