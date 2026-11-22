@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
 import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { AppAiRequestSchema, AppAiRouteSelectionSchema, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
+import { AppAiRequestSchema, AppAiRouteSelectionSchema, isEffectiveBedrockModel, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
 import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
@@ -17,7 +17,6 @@ import type { NativeProviderProfileGuard } from "../ai-providers/native-provider
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
 import { generateClaudeProfileAppText } from "./claude-profile-completion.js";
 import { generateApiAppText } from "./api-completion.js";
-import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 import type { createHermesAppCompletion } from "./hermes-completion.js";
 import type { createPiSdkAppCompletion } from "./pi-sdk-completion.js";
 import type { ChatGptPlanAuthority } from "../bots/chatgpt-plan.js";

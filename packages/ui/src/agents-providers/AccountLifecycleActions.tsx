@@ -50,6 +50,7 @@ export function AccountLifecycleActions({ accounts, snapshot, harnessId, scopeOw
     {state.error && !removal ? <p role="alert" className="matrix-ap-help">Changes were not saved. Your account is kept; try again.</p> : null}
     {removal ? <RemovalDialog key={removal.id} account={removal} accounts={snapshot.accounts}
       sources={snapshot.accessSources} harnesses={snapshot.harnesses} gatewayPolicy={snapshot.gatewayPolicy}
+      upstreamPreference={snapshot.upstreamPreference}
       disabled={disabled} canRemove={canRemove} canReassign={canReassign} onMutate={run}
       onClose={() => setState(current => ({ ...current, removeId: null, error: false }))} /> : null}
   </div>;

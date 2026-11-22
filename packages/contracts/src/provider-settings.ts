@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { AiProviderLocalObservationSchema } from "#ai-provider";
+import { AiProviderLocalObservationSchema, isEffectiveBedrockModel } from "#ai-provider";
 import {
   FundedAiChatAvailabilitySchema,
   FundedAiUpstreamPreferenceValueSchema,
@@ -680,7 +680,8 @@ export type ProviderSettingsMutationResponse = z.infer<typeof ProviderSettingsMu
 
 /**
  * Returns whether a generic coding harness can receive the selected access
- * source as explicit Anthropic-compatible process credentials.
+ * source as explicit portable process credentials. Matrix Bedrock models
+ * run through the separate managed Matrix Pi worker.
  *
  * Claude subscription/OAuth profiles are intentionally excluded: those are
  * valid for Claude Code, but they do not yield a portable API key that Pi or
@@ -693,6 +694,7 @@ export function isPortableGenericHarnessCredentialRoute(
     ProviderAccessSource,
     "id" | "kind" | "fundingKind" | "providerId" | "accountId"
   > | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
   if ((harness.harness !== "pi" && harness.harness !== "opencode")
     || harness.route.kind !== "configurable"
@@ -708,6 +710,7 @@ export function isPortableGenericHarnessCredentialRoute(
       || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
         && isManagedWorkersAiModel(harness.route.modelId)))
       && source.accountId === null
+      && !isEffectiveBedrockModel(snapshot, source.id, harness.route.modelId)
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }
   return source.kind === "provider_account"
@@ -744,8 +747,9 @@ export function isRunnableGenericHarnessCredentialRoute(
     ProviderAccessSource,
     "id" | "kind" | "fundingKind" | "providerId" | "accountId" | "harness"
   > | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
-  return isPortableGenericHarnessCredentialRoute(harness, source)
+  return isPortableGenericHarnessCredentialRoute(harness, source, snapshot)
     || isNativeGenericHarnessCredentialRoute(harness, source);
 }
 
@@ -753,6 +757,7 @@ export function isRunnableGenericHarnessCredentialRoute(
 export function isSupportedGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
   // Paired-device authority is executable only through its managed route adapter.
   if (source?.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) return false;
@@ -761,7 +766,7 @@ export function isSupportedGenericHarnessCredentialRoute(
       || isNativeGenericHarnessCredentialRoute(harness, source);
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
-    return isRunnableGenericHarnessCredentialRoute(harness, source);
+    return isRunnableGenericHarnessCredentialRoute(harness, source, snapshot);
   }
   return true;
 }

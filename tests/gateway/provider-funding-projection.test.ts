@@ -6,8 +6,10 @@ import type { AiProviderReadiness } from "@matrix-os/contracts";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
+import { applyProviderConfigurationMutation } from "../../packages/gateway/src/ai-providers/provider-settings-mutations.js";
 import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { readProviderSettingsEnrichment } from "../../packages/gateway/src/ai-providers/provider-settings-enrichment.js";
+import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 
 const now = new Date("2026-10-02T08:00:00.000Z");
 describe("owner-funded discovery projection", () => {
@@ -46,6 +48,60 @@ describe("owner-funded discovery projection", () => {
         .toMatchObject({ modelIds: [], defaultModelId: null });
       expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
         .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
+  it.each(["pi", "opencode"] as const)("keeps Bedrock in managed Matrix AI while excluding it from the Anthropic %s launcher", async (harness) => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-coding-"));
+    const checkedAt = now.toISOString();
+    const staleAfter = "2026-10-02T08:00:30.000Z";
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt, staleAfter, action: "none", safeReason: null };
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [{ id: harness, displayName: harness, kind: "cli", installState: "installed",
+        health: "ready", capabilities: ["tools"], setupActions: [] }],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: ["claude-opus-5", "claude-sonnet-5"], discoverableModelIds: ["claude-opus-5", "claude-sonnet-5"],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+          effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+          updatedAt: checkedAt, validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) },
+    });
+    try {
+      const canonical = await service.getSnapshot();
+      const config = initialProviderSettingsConfiguration(canonical);
+      const route = { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-opus-5" };
+      config.harnesses = [{ id: `harness_${harness}`, driverId: harness, harness, displayName: harness,
+        accentColor: null, enabled: true, accessSourceId: "matrix_included", selectedAccountId: null, route }];
+      const settings = await projectProviderSettings({ canonical, config, now, supportedActions: [],
+        fundedPolicyAuthoritative: true, fundedPolicy: { enabled: true, globalRevision: 1, runtimeRevision: 1,
+          allowedModelIds: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"], monthlyBudgetMicrousd: 5_000_000,
+          checkedAt, staleAfter } });
+
+      expect(settings.accessSources.find(source => source.id === "matrix_included")?.eligibleModelIds)
+        .toEqual(["claude-opus-5", "claude-sonnet-5"]);
+      expect(settings.gatewayPolicy?.allowedModelIds).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+      expect(settings.harnesses[0]).toMatchObject({ route, enabled: false, accessSourceId: null });
+      expect(settings.matrixModelInventory).toContainEqual(expect.objectContaining({ id: "claude-opus-5" }));
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
+        .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
+
+      const resolveCredentialLaunch = vi.fn();
+      const launch = createCodingHarnessCredentialResolver({ harness, homePath,
+        settings: { getSnapshot: async () => settings }, resolveCredentialLaunch });
+      await expect(launch()).rejects.toThrow("Selected coding harness access is unavailable");
+      expect(resolveCredentialLaunch).not.toHaveBeenCalled();
+      expect(() => applyProviderConfigurationMutation({ config, canonical, snapshot: settings, id: () => "new_harness",
+        mutation: { type: "add_harness", harness, displayName: harness, route, accessSourceId: "matrix_included",
+          accountId: null, expectedRevision: 0, idempotencyKey: "bedrock-harness-add" },
+      })).toThrow(expect.objectContaining({ code: "invalid_route" }));
+      expect(applyProviderConfigurationMutation({ config, canonical, snapshot: settings, id: () => "cloudflare_harness",
+        mutation: { type: "add_harness", harness, displayName: harness, route: { ...route, modelId: "claude-sonnet-5" },
+          accessSourceId: "matrix_included", accountId: null, expectedRevision: 0, idempotencyKey: "cloudflare-harness-add" },
+      })).toBe(true);
     } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
   });
 

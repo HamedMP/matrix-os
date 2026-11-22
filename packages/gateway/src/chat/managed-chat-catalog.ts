@@ -1,11 +1,11 @@
 import { resolveManagedPiRoute, MANAGED_PI_INSTANCE_ID, BotRouteError } from "../bots/route-resolver.js";
 import { FUNDED_PREVIEW_CHAT_ROUTES } from "../ai-providers/model-catalog.js";
-import type {
-  AiProviderSnapshotV3,
-  CanonicalChatSkillDescriptor,
-  CanonicalProviderInstanceDescriptor,
+import {
+  isEffectiveBedrockModel,
+  type AiProviderSnapshotV3,
+  type CanonicalChatSkillDescriptor,
+  type CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
-import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 
 const DEFAULT_MANAGED_CHAT_MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const MANAGED_CHAT_SOURCE_IDS = ["matrix_included", "matrix_cloudflare", ...FUNDED_PREVIEW_CHAT_ROUTES.map(route => route.sourceId)];

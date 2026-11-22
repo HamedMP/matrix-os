@@ -29,13 +29,6 @@ export function providerSettingsMutationChangesExecutionAuthority(
     && mutation.type !== "start_login";
 }
 
-function genericHarnessRouteIsSupported(
-  harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
-  source: ProviderAccessSource | undefined,
-): boolean {
-  return isSupportedGenericHarnessCredentialRoute(harness, source);
-}
-
 function mayEnableObservedNativeRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | undefined, now: Date,
@@ -80,11 +73,11 @@ export function applyProviderConfigurationMutation(input: {
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
         || !accountMatchesSource(source, account)
-        || !genericHarnessRouteIsSupported({
+        || !isSupportedGenericHarnessCredentialRoute({
           harness: mutation.harness,
           accessSourceId: source.id,
           route: mutation.route,
-        }, source)) {
+        }, source, input.snapshot)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       input.config.harnesses.push({
@@ -124,7 +117,7 @@ export function applyProviderConfigurationMutation(input: {
         throw new ProviderSettingsStoreError("invalid_request", 400);
       }
       const source = input.snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (mutation.enabled && !isSpecializedHarness(harness) && (!genericHarnessRouteIsSupported(harness, source)
+      if (mutation.enabled && !isSpecializedHarness(harness) && (!isSupportedGenericHarnessCredentialRoute(harness, source, input.snapshot)
         || !mayEnableObservedNativeRoute(harness, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
@@ -153,11 +146,11 @@ export function applyProviderConfigurationMutation(input: {
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
         || !accountMatchesSource(source, account)
-        || !genericHarnessRouteIsSupported({
+        || !isSupportedGenericHarnessCredentialRoute({
           harness: harness.harness,
           accessSourceId: source.id,
           route: mutation.route,
-        }, source)) {
+        }, source, input.snapshot)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       if ((harness.enabled || mutation.enableHarness === true)
@@ -178,7 +171,7 @@ export function applyProviderConfigurationMutation(input: {
         && input.snapshot.accessSources.find((candidate) => candidate.id === account.accessSourceId);
       if (!account || !source || source.providerId !== harness.route.providerId
         || !source.eligibleModelIds.includes(harness.route.modelId)
-        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)
+        || !isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source, input.snapshot)
         || (harness.enabled && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
@@ -194,7 +187,7 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(harness.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== harness.route.providerId
         || !source.eligibleModelIds.includes(harness.route.modelId)
-        || !genericHarnessRouteIsSupported({ ...harness, accessSourceId: source.id }, source)
+        || !isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source, input.snapshot)
         || ((harness.enabled || mutation.enableHarness === true) && !mayEnableObservedNativeRoute({ ...harness, accessSourceId: source.id }, source, input.now ?? new Date()))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }

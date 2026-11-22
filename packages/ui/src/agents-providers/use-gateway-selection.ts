@@ -95,6 +95,7 @@ export function useGatewaySelection({
             accessSourceId: gatewaySource.id,
           },
           gatewaySource,
+          snapshot,
         ),
     );
   const gatewayModels = harness ? gatewayModelsFor(harness) : [];
@@ -113,7 +114,7 @@ export function useGatewaySelection({
     gatewaySource !== null &&
     harness?.accessSourceId === gatewaySource.id &&
     harness.route.providerId === gatewaySource.providerId &&
-    isSupportedGenericHarnessCredentialRoute(harness, gatewaySource) &&
+    isSupportedGenericHarnessCredentialRoute(harness, gatewaySource, snapshot) &&
     eligibleGatewayModels.some((model) => model.id === harness.route.modelId);
   const compatibleGatewayAgents = supports("set_route")
     ? snapshot.harnesses.filter(

@@ -229,7 +229,7 @@ export function createProviderGenericHarnessCoordinator(options: {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
       const source = settingsSnapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (!isRunnableGenericHarnessCredentialRoute(harness, source)) {
+      if (!isRunnableGenericHarnessCredentialRoute(harness, source, settingsSnapshot)) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       return;

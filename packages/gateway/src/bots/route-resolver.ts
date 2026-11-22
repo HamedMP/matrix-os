@@ -18,10 +18,10 @@ import {
   MANAGED_WORKERS_AI_MODEL_IDS,
   MATRIX_PI_BEDROCK_CONTEXT_WINDOW,
   MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
+  isEffectiveBedrockModel,
 } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { FUNDED_PREVIEW_CHAT_ROUTES, MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
-import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
 
 /** Provider V3 access sources bots can use, in fallback order, and the credential each launches with. */
 const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAccessSourceId; anthropicOnly: boolean }> = [

@@ -22,6 +22,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  isEffectiveBedrockModel,
   ProviderConnectionAttemptSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
@@ -988,7 +989,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           const affected = config.harnesses.filter((candidate) => candidate.selectedAccountId === mutation.fromAccountId);
           if ((mutation.scope === "harnesses" || mutation.scope === "all_dependencies")
             && affected.some((candidate) => candidate.route.providerId !== targetSource.providerId
-              || !targetSource.eligibleModelIds.includes(candidate.route.modelId))) {
+              || !targetSource.eligibleModelIds.includes(candidate.route.modelId)
+              || ((candidate.harness === "pi" || candidate.harness === "opencode")
+                && isEffectiveBedrockModel(snapshot, targetSource.id, candidate.route.modelId)))) {
             throw new ProviderSettingsStoreError("invalid_route", 400);
           }
           await this.#coordinate(() => this.#dependencies!.reassignDependencies({

@@ -3,7 +3,8 @@ import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import type { ProviderAccessSource } from "@matrix-os/contracts";
+import type { ProviderAccessSource, ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { AddHarnessDialog } from "../../packages/ui/src/agents-providers/AddHarnessDialog";
 import { GatewayPanel, isMatrixGatewaySourceReady } from "../../packages/ui/src/agents-providers/GatewayPanel";
 import { gatewayCreditLines, localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils";
 
@@ -74,6 +75,33 @@ it("shows and mutates the platform-projected upstream preference only when suppl
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false}
     upstreamPreference={undefined} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByRole("combobox", { name: "Matrix AI upstream" })).toBeNull();
+});
+it.each(["Pi", "OpenCode"] as const)("excludes only the effective Bedrock model from the %s setup picker", label => {
+  const matrixSource = source();
+  matrixSource.eligibleModelIds = ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"];
+  matrixSource.readiness = { ...matrixSource.readiness, state: "ready", safeReason: null, action: "none" };
+  const snapshot: ProviderSettingsSnapshot = {
+    contractVersion: 1, projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: 1 },
+    revision: 1, refreshedAt: now, access: { mode: "writable" }, supportedActions: ["add_harness"],
+    accessSources: [matrixSource], accounts: [], harnesses: [],
+    harnessCatalog: ([["pi", "Pi"], ["opencode", "OpenCode"], ["hermes", "Hermes"], ["openclaw", "OpenClaw"]] as const)
+      .map(([harness, displayName]) => ({ harness, displayName, installState: "installed", available: true,
+        runnable: true, setupAction: "none", safeReason: null })),
+    modelProviders: [{ id: "anthropic", displayName: "Anthropic", models: [
+      { id: "anthropic/claude-opus-5", displayName: "Claude Opus 5", enabled: true },
+      { id: "anthropic/claude-sonnet-5", displayName: "Claude Sonnet 5", enabled: true },
+    ] }],
+    gatewayPolicy: { accessSourceId: matrixSource.id, allowedModelIds: matrixSource.eligibleModelIds,
+      monthlyBudgetMicrousd: 1_000_000, topUpEnabled: true },
+    upstreamPreference: { selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2, updatedAt: now, validThrough: "2026-11-01T00:00:00.000Z" },
+  };
+  render(<AddHarnessDialog snapshot={snapshot} onMutate={vi.fn()} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("radio", { name: label }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByRole("option", { name: "Claude Sonnet 5" })).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Claude Opus 5" })).toBeNull();
 });
 it.each([1, 4_999, 9_999, 10_000])("caps source credit by monthly budget and preserves precision: %s", amount => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

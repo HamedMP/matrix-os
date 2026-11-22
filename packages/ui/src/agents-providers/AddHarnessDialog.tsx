@@ -17,7 +17,7 @@ function routesFor(snapshot: ProviderSettingsSnapshot, harness: ProviderGenericH
       && (source.kind !== "matrix_gateway" || gatewayPolicyAllowsModel(snapshot.gatewayPolicy, model.id))
       && isSupportedGenericHarnessCredentialRoute({
         harness, accessSourceId: source.id, route: { kind: "configurable", providerId: source.providerId, modelId: model.id },
-      }, source)).map((model) => ({ source, model, provider: provider! }));
+      }, source, snapshot)).map((model) => ({ source, model, provider: provider! }));
   });
 }
 
