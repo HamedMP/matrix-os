@@ -39,6 +39,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     canonicalChatRuntime: { agents: service("agents") }, gatewayCollaboration: service("collaboration"), scopeRuntimeHost: service("scope"),
     backgroundAgentRuntime: service("background agents"), codingAgentWorkspaceRuntime: service("workspaces"),
     workspaceSessionRuntimeBridge: service("workspace bridge"), terminalLiveOwnership: service("terminal"),
+    herdrViewers: { drain: vi.fn(() => { calls.push("herdr viewers.drain"); }) }, herdrSessions: service("herdr sessions"),
     agentRuntimeServices: { controller: service("controller") }, aiProviderService: service("providers"),
     fundedAdmission: service("funded admission"), fundedCredentialProvider: service("funded credentials"), jevRuntime: null,
     codingAgentTurnLifecycle: service("turns"), codexEventBridge: null, codingAgentThreadStream: null,
@@ -82,6 +83,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("chats.close")).toBeLessThan(shutdown.calls.indexOf("native Claude.close"));
   expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
   // The hourly push token sweep stops before the owner database closes.
+  // Herdr viewers are drained before the herdr-core connection closes.
+  expect(shutdown.calls.indexOf("herdr viewers.drain")).toBeGreaterThan(-1);
+  expect(shutdown.calls.indexOf("herdr viewers.drain")).toBeLessThan(shutdown.calls.indexOf("herdr sessions.close"));
   expect(shutdown.calls.indexOf("push.dispose")).toBeGreaterThan(-1);
   expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
