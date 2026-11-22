@@ -111,23 +111,29 @@ async function isRoot() {
   return typeof process.getuid === 'function' && process.getuid() === 0;
 }
 
-/** Atomic write: temp file in the same directory, fsync, chmod/chown, rename. */
+/**
+ * Atomic write: temp file in the same directory, fsync, chmod/chown, rename.
+ * Any failure after the temp file exists removes it, so a full disk or a
+ * crash-looping caller never accumulates partial secret files.
+ */
 export async function writeFileAtomic(path, content, { mode, owner } = { mode: 0o600 }) {
   await mkdir(dirname(path), { recursive: true, mode: 0o755 });
   const tmp = join(dirname(path), `.${randomUUID()}.tmp`);
-  const handle = await open(tmp, 'wx', mode);
+  let handle = await open(tmp, 'wx', mode);
   try {
     await handle.writeFile(content);
     await handle.sync();
-  } finally {
     await handle.close();
-  }
-  try {
+    handle = null;
     await chmod(tmp, mode);
     if (owner && await isRoot()) await chown(tmp, owner.uid, owner.gid);
     await rename(tmp, path);
   } catch (err) {
-    await rm(tmp, { force: true }).catch((cleanupErr) => warn(`temp cleanup failed (${errorName(cleanupErr)})`));
+    warn(`write of ${path} failed (${errorName(err)})`);
+    if (handle) {
+      try { await handle.close(); } catch (closeErr) { warn(`temp close failed (${errorName(closeErr)})`); }
+    }
+    try { await rm(tmp, { force: true }); } catch (cleanupErr) { warn(`temp cleanup failed (${errorName(cleanupErr)})`); }
     throw err;
   }
 }
@@ -265,6 +271,15 @@ async function systemctl(args, env = process.env) {
   }
 }
 
+export class ActivationError extends Error {
+  constructor(step) {
+    super(`activation failed at ${step}`);
+    this.name = 'ActivationError';
+    this.step = step;
+  }
+}
+
+/** Installs units and starts services. Throws ActivationError naming the first failed step. */
 async function activate(p, env = process.env) {
   for (const unit of UNITS) {
     const src = join(p.unitSrc, unit);
@@ -272,18 +287,37 @@ async function activate(p, env = process.env) {
   }
   try {
     const { symlink, lstat } = await import('node:fs/promises');
-    await lstat(p.nginxEnabled).catch(async (err) => {
-      if (err && err.code === 'ENOENT') await symlink(p.nginxSite, p.nginxEnabled);
-      else throw err;
-    });
+    try {
+      await lstat(p.nginxEnabled);
+    } catch (err) {
+      if (!(err && err.code === 'ENOENT')) throw err;
+      await symlink(p.nginxSite, p.nginxEnabled);
+    }
   } catch (err) {
     warn(`nginx site link failed (${errorName(err)})`);
+    throw new ActivationError('the nginx tunnel site');
   }
-  await systemctl(['daemon-reload'], env);
-  await systemctl(['reload-or-restart', 'nginx'], env);
-  await systemctl(['restart', 'matrix-gateway', 'matrix-shell', 'matrix-code'], env);
-  await systemctl(['enable', '--now', ...UNITS], env);
-  await systemctl(['restart', 'matrix-cloudflared'], env);
+  const steps = [
+    [['daemon-reload'], 'systemd'],
+    [['reload-or-restart', 'nginx'], 'nginx'],
+    [['restart', 'matrix-gateway', 'matrix-shell', 'matrix-code'], 'the Matrix services'],
+    [['enable', '--now', ...UNITS], 'matrix-connect.service'],
+    [['restart', 'matrix-cloudflared'], 'matrix-cloudflared.service'],
+  ];
+  for (const [args, step] of steps) {
+    if (!(await systemctl(args, env))) throw new ActivationError(step);
+  }
+}
+
+async function activateOrExplain(p, env) {
+  try {
+    await activate(p, env);
+    return true;
+  } catch (err) {
+    if (!(err instanceof ActivationError)) throw err;
+    warn(`could not start ${err.step}. Credentials are saved; run \`sudo matrix-connect refresh\` after fixing ${err.step}.`);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- http
@@ -423,7 +457,7 @@ export async function enroll(argv, env = process.env) {
         connectedAt: new Date().toISOString(),
         lastHeartbeat: null,
       });
-      if (env.MATRIX_CONNECT_NO_ACTIVATE !== '1') await activate(p, env);
+      if (env.MATRIX_CONNECT_NO_ACTIVATE !== '1' && !(await activateOrExplain(p, env))) return EXIT.unavailable;
       log(`Connected. Open ${platform}`);
       return EXIT.ok;
     }
@@ -497,12 +531,17 @@ export async function heartbeatOnce(env = process.env, p = paths(env)) {
     await writeState(p, { ...state, lastHeartbeat: { at: new Date().toISOString(), result: 'error' } });
     return 'error';
   }
-  if (result.json.tunnel === 'reissue') {
+  // A reissue stays pending until a new token is saved and the tunnel restarted:
+  // the platform reports `ok` again once the replacement is ready, so the flag,
+  // not the latest heartbeat, decides whether to keep asking.
+  let pendingTunnelReissue = state.pendingTunnelReissue === true || result.json.tunnel === 'reissue';
+  if (pendingTunnelReissue) {
+    await writeState(p, { ...state, pendingTunnelReissue: true });
     try {
       const tunnel = await requestJson(`${platform}/api/machines/tunnel`, { headers: machineHeaders(machine) });
       if (tunnel.status === 200) {
         await writeFileAtomic(p.tunnelToken, `${validateTunnelToken(tunnel.json?.tunnelToken)}\n`, { mode: 0o600, owner: { uid: 0, gid: 0 } });
-        await systemctl(['restart', 'matrix-cloudflared'], env);
+        if (await systemctl(['restart', 'matrix-cloudflared'], env)) pendingTunnelReissue = false;
       } else if (tunnel.status === 401) {
         return 'revoked';
       }
@@ -512,6 +551,7 @@ export async function heartbeatOnce(env = process.env, p = paths(env)) {
   }
   await writeState(p, {
     ...state,
+    pendingTunnelReissue,
     lastHeartbeat: { at: new Date().toISOString(), result: 'ok' },
     autoSecurityUpdates: Boolean(result.json.autoSecurityUpdates),
     backupsEnabled: Boolean(result.json.backupsEnabled),
@@ -571,7 +611,7 @@ export async function refresh(env = process.env) {
     return EXIT.ok;
   }
   await writeMachineFiles(machine, token, p);
-  if (env.MATRIX_CONNECT_NO_ACTIVATE !== '1') await activate(p, env);
+  if (env.MATRIX_CONNECT_NO_ACTIVATE !== '1' && !(await activateOrExplain(p, env))) return EXIT.unavailable;
   log('Connection settings refreshed.');
   return EXIT.ok;
 }

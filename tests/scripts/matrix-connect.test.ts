@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ import {
   nginxSite,
   parsePlatformUrl,
   validateMachineEnv,
+  writeFileAtomic,
   writeMachineFiles,
 } from "../../distro/customer-vps/host-bin/matrix-connect.mjs";
 
@@ -242,6 +243,59 @@ describe("matrix-connect", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("keeps retrying a pending reissue after the platform reports the tunnel ok", async () => {
+    let tunnelCalls = 0;
+    let beats = 0;
+    const { server, url } = await startServer((req, _body, res) => {
+      if (req.url === "/api/machines/heartbeat") {
+        beats += 1;
+        return json(res, 200, { status: "ok", tunnel: beats === 1 ? "reissue" : "ok", autoSecurityUpdates: true, backupsEnabled: false });
+      }
+      tunnelCalls += 1;
+      if (tunnelCalls === 1) return json(res, 202, { status: "pending" });
+      return json(res, 200, { tunnelToken: "cmVwbGFjZWQ" });
+    });
+    try {
+      await connectFiles(url);
+      const result = await run(["heartbeat"], { ...env, MATRIX_CONNECT_MAX_BEATS: "2" });
+      expect(result.code).toBe(0);
+      expect(tunnelCalls).toBe(2);
+      expect(await readFile(join(dir, "etc/cloudflared.token"), "utf8")).toBe("cmVwbGFjZWQ\n");
+      const state = JSON.parse(await readFile(join(dir, "state/state.json"), "utf8"));
+      expect(state.pendingTunnelReissue).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("fails enrollment loudly when a service cannot start", async () => {
+    const { server, url } = await startServer((req, _body, res) => {
+      if (req.url === "/api/machines/enroll/start") {
+        return json(res, 200, {
+          deviceCode: "d".repeat(43), userCode: "BCDF-GHJK", verificationUri: `${url}/connect`,
+          verificationUriComplete: `${url}/connect`, expiresIn: 900, interval: 1,
+        });
+      }
+      return json(res, 200, { status: "ready", machineId: machineEnv().MATRIX_MACHINE_ID, tunnelToken: TUNNEL, env: machineEnv() });
+    });
+    try {
+      const { MATRIX_CONNECT_NO_ACTIVATE: _skip, ...activating } = env;
+      await mkdir(join(dir, "nginx"), { recursive: true });
+      const result = await run(["enroll", "--platform", url], { ...activating, MATRIX_CONNECT_SYSTEMCTL: "/bin/false" });
+      expect(result.code).not.toBe(0);
+      expect(result.stdout).not.toContain("Connected.");
+      expect(result.stderr).toContain("matrix-connect refresh");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("removes its temporary file when a write fails", async () => {
+    const target = join(dir, "atomic/secret");
+    await expect(writeFileAtomic(target, 42 as unknown as string, { mode: 0o600 })).rejects.toThrow();
+    expect((await readdir(join(dir, "atomic"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("disconnects, removing secrets even when the platform is unreachable", async () => {
