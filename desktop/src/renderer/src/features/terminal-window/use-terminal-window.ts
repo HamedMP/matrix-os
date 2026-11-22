@@ -21,7 +21,7 @@ import type { PaneButton } from "./TerminalPaneTree";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
-import { filterRows, spacesInOrder } from "./TerminalWindowSidebar";
+import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
 import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
@@ -273,6 +273,20 @@ export function useTerminalWindow() {
     clearActive();
   }, [clearActive]);
 
+  /**
+   * Makes a space active (null is All). The terminal on screen stays when it is
+   * in that space; otherwise the space's first open tab shows, or nothing.
+   */
+  const chooseSpace = useCallback((filter: SidebarFilter | null) => {
+    sidebar.setFilter(filter);
+    if (!filter) return;
+    const inSpace = new Set(filterRows(status.rows, filter).map((row) => row.key));
+    if (selectedKey && inSpace.has(selectedKey)) return;
+    const first = openTabs.tabs.find((tab) => tab.terminals.some((key) => inSpace.has(key)));
+    if (first) select(first.terminals.find((key) => inSpace.has(key)) ?? first.key);
+    else deselect();
+  }, [deselect, openTabs.tabs, select, selectedKey, sidebar, status.rows]);
+
   /** Takes a tab off the bar (its terminals keep running); the tab beside it opens when it was on screen. */
   const closeTab = useCallback((id: string) => {
     const wasOnScreen = openTabs.tabs.find((tab) => tab.id === id)?.terminals.includes(selectedKey ?? "") ?? false;
@@ -318,9 +332,9 @@ export function useTerminalWindow() {
         return;
       case "space": {
         // Ctrl+0 is All; Ctrl+1…9 the spaces in the sidebar's order.
-        if (command.index === 0) { sidebar.setFilter(null); return; }
+        if (command.index === 0) { chooseSpace(null); return; }
         const space = spaces[command.index - 1];
-        if (space) sidebar.setFilter(space);
+        if (space) chooseSpace(space);
         return;
       }
       case "select": {
@@ -340,7 +354,7 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
-  }, [createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
+  }, [chooseSpace, createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
   // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
   // right after a selection change must act on the new selection, not wait for a passive effect.
   const latestRun = useRef(run);
@@ -355,7 +369,7 @@ export function useTerminalWindow() {
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
     select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
-    tabs: shownTabs, closeTab,
+    tabs: shownTabs, closeTab, chooseSpace,
     /** The bar's +: a new terminal on the machine on screen. */
     newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },

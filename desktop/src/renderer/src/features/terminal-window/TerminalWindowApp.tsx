@@ -311,7 +311,7 @@ export default function TerminalWindowApp() {
           onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
           onOpenInTab={view.openInTab}
           filter={prefs.filter}
-          onFilter={view.sidebar.setFilter}
+          onFilter={view.chooseSpace}
           onSettings={() => focusMainWindow("settings")}
           machineOrder={prefs.machineOrder}
           onMachineOrder={view.sidebar.setMachineOrder}

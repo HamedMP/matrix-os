@@ -199,6 +199,14 @@ describe("Terminal window computers", () => {
     act(() => emit("terminal-window:command", { command: "space", index: 3 }));
     await waitFor(() => expect(tabNames()).toEqual(["site", "docs"]));
     expect(screen.getByRole("status", { name: "Space web on neo" })).toBeTruthy();
+    // The terminal on screen (docs) is in web, so it stays.
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`));
+    // A space with no open tab shows nothing until one is opened there.
+    act(() => emit("terminal-window:command", { command: "space", index: 4 }));
+    await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
+    // Back in web with nothing on screen: its first tab shows.
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_3}`));
     act(() => emit("terminal-window:command", { command: "select", index: 2 }));
     await waitFor(() => expect(within(sidebar()).getByRole("button", { name: /docs/ }).getAttribute("aria-current")).toBe("true"));
     act(() => emit("terminal-window:command", { command: "select", index: 1 }));
