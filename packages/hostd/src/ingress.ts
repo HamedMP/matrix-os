@@ -4,7 +4,7 @@ import { Agent, createServer, request as httpsRequest, type Server } from "node:
 import { isIPv4, type Socket } from "node:net";
 import { pipeline } from "node:stream";
 import type { TLSSocket } from "node:tls";
-import type { VmState, VmStore } from "./vm-store.js";
+import type { VmRecord, VmState, VmStore } from "./vm-store.js";
 
 // Host ingress: the public HTTPS front door of a metal host. The platform
 // proxies owner traffic here with `host: <handle>.matrix-os.com` and the
@@ -26,6 +26,19 @@ export const MAX_UPSTREAM_PER_VM = 256;
 
 const HANDLE_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.matrix-os\.com(?::443)?$/i;
 const ASLEEP: ReadonlySet<VmState> = new Set<VmState>(["suspended", "suspending", "resuming", "stopped"]);
+// When several records share a handle (a re-provision creates the new
+// machine's VM before the old one is torn down), the index keeps the one most
+// able to serve: lower rank wins, then the most recently updated record, then
+// the higher generation, then the id, so the choice never depends on list order.
+const STATE_RANK: Record<VmState, number> = {
+  running: 0,
+  resuming: 1,
+  suspending: 2,
+  suspended: 3,
+  creating: 4,
+  stopped: 5,
+  failed: 6,
+};
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -85,6 +98,18 @@ interface IndexEntry {
   id: string;
   state: VmState;
   privateIPv4: string;
+}
+
+type Candidate = Pick<VmRecord, "id" | "state" | "privateIPv4" | "updatedAt" | "generation">;
+
+// True when `a` should serve the handle instead of `b`.
+export function preferVm(a: Candidate, b: Candidate): boolean {
+  const rank = STATE_RANK[a.state] - STATE_RANK[b.state];
+  if (rank !== 0) return rank < 0;
+  const updated = (Date.parse(a.updatedAt) || 0) - (Date.parse(b.updatedAt) || 0);
+  if (updated !== 0) return updated > 0;
+  if (a.generation !== b.generation) return a.generation > b.generation;
+  return a.id > b.id;
 }
 
 type Route = { ok: true; entry: IndexEntry } | { ok: false; code: IngressErrorCode };
@@ -207,21 +232,30 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   async function rebuild(): Promise<void> {
     dirty = false;
-    const next = new Map<string, IndexEntry>();
+    const chosen = new Map<string, Candidate>();
     try {
       const records = await deps.store.list();
+      let capped = false;
       for (const record of records) {
-        if (next.size >= MAX_INDEXED_HANDLES) {
-          log("ingress.index_capped", { cap: MAX_INDEXED_HANDLES, records: records.length });
-          break;
-        }
         const handle = record.handle.toLowerCase();
-        if (next.has(handle)) {
-          log("ingress.duplicate_handle", { id: record.id });
+        const current = chosen.get(handle);
+        if (current === undefined) {
+          if (chosen.size >= MAX_INDEXED_HANDLES) {
+            // Keep scanning: a later record may still be a better VM for an indexed handle.
+            if (!capped) log("ingress.index_capped", { cap: MAX_INDEXED_HANDLES, records: records.length });
+            capped = true;
+            continue;
+          }
+          chosen.set(handle, record);
           continue;
         }
-        next.set(handle, { id: record.id, state: record.state, privateIPv4: record.privateIPv4 });
+        const keep = preferVm(record, current) ? record : current;
+        const drop = keep === record ? current : record;
+        log("ingress.duplicate_handle", { handle, kept: keep.id, dropped: drop.id });
+        chosen.set(handle, keep);
       }
+      const next = new Map<string, IndexEntry>();
+      for (const [handle, c] of chosen) next.set(handle, { id: c.id, state: c.state, privateIPv4: c.privateIPv4 });
       index = next;
       builtAt = now();
     } catch (error: unknown) {

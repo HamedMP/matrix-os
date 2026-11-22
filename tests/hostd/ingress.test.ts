@@ -592,3 +592,83 @@ async function rawTls(payload: string): Promise<string> {
     socket.write(payload);
   });
 }
+
+describe("host ingress with several VMs sharing one handle", () => {
+  // A handle can briefly map to two VMs: a platform re-provision creates the
+  // new machine's VM before the old one (stopped, awaiting teardown) is gone.
+  const OLD = "vm_aaaaaaaaaaaaaaaaaaaaaaaa";
+  const NEW = "vm_ffffffffffffffffffffffff";
+  let logs: Array<{ event: string; fields: Record<string, unknown> }>;
+
+  function listStore(records: VmRecord[]): Parameters<typeof createIngress>[0]["store"] {
+    return { list: async () => records, onChange: () => () => undefined };
+  }
+
+  async function startWith(records: VmRecord[]): Promise<void> {
+    logs = [];
+    await startIngress({ store: listStore(records), log: (event, fields) => logs.push({ event, fields }) });
+  }
+
+  const duplicates = () => logs.filter((l) => l.event === "ingress.duplicate_handle").map((l) => l.fields);
+
+  const stoppedOld = () =>
+    record({ id: OLD, machineId: "machine-old", state: "stopped", privateIPv4: "127.0.0.2", updatedAt: "2026-11-20T00:00:00.000Z" });
+  const runningNew = () => record({ id: NEW, machineId: "machine-new", state: "running", updatedAt: "2026-11-21T00:00:00.000Z" });
+
+  it("routes to the running VM when a stopped VM with the same handle is listed first", async () => {
+    await startWith([stoppedOld(), runningNew()]);
+    const reply = await send(authed());
+    expect(reply.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
+  });
+
+  it("routes to the running VM when it is listed first", async () => {
+    await startWith([runningNew(), stoppedOld()]);
+    expect((await send(authed())).status).toBe(200);
+    expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
+  });
+
+  it("prefers the running VM even when the stopped one was updated more recently", async () => {
+    await startWith([{ ...stoppedOld(), updatedAt: "2026-11-22T00:00:00.000Z" }, runningNew()]);
+    expect((await send(authed())).status).toBe(200);
+  });
+
+  it("keeps the most recently updated of two suspended VMs, whatever the list order", async () => {
+    const older = record({ id: NEW, machineId: "machine-old", state: "suspended", updatedAt: "2026-11-20T00:00:00.000Z" });
+    const newer = record({ id: OLD, machineId: "machine-new", state: "suspended", updatedAt: "2026-11-21T00:00:00.000Z" });
+    for (const order of [[older, newer], [newer, older]]) {
+      if (ingress) await ingress.close();
+      await startWith(order);
+      const reply = await send(authed());
+      expect(reply.status).toBe(503);
+      expect(JSON.parse(reply.body)).toEqual({ error: "runtime_asleep" });
+      expect(duplicates()).toEqual([{ handle: "alice", kept: OLD, dropped: NEW }]);
+    }
+  });
+
+  it("routes to the most recently updated of two running VMs", async () => {
+    // Only 127.0.0.1 answers; picking the older VM would give 502.
+    const older = record({ id: OLD, machineId: "machine-old", privateIPv4: "127.0.0.2", updatedAt: "2026-11-20T00:00:00.000Z" });
+    const newer = record({ id: NEW, machineId: "machine-new", updatedAt: "2026-11-21T00:00:00.000Z" });
+    await startWith([older, newer]);
+    expect((await send(authed())).status).toBe(200);
+  });
+
+  it("prefers a creating VM over a stopped or failed one", async () => {
+    const failed = record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", machineId: "machine-failed", state: "failed", updatedAt: "2026-11-22T00:00:00.000Z" });
+    const creating = record({ id: NEW, machineId: "machine-new", state: "creating" });
+    await startWith([failed, creating, stoppedOld()]);
+    const reply = await send(authed());
+    expect(reply.status).toBe(503);
+    expect(JSON.parse(reply.body)).toEqual({ error: "runtime_unavailable" });
+    expect(duplicates().map((d) => d.kept)).toEqual([NEW, NEW]);
+  });
+
+  it("leaves a single record per handle unchanged and logs no duplicate", async () => {
+    await startWith([runningNew(), record({ id: OLD, handle: "bob", state: "stopped" })]);
+    expect((await send(authed())).status).toBe(200);
+    expect(JSON.parse((await send(authed("bob.matrix-os.com"))).body)).toEqual({ error: "runtime_asleep" });
+    expect(duplicates()).toEqual([]);
+  });
+});
