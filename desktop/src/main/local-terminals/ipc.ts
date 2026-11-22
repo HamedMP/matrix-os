@@ -3,6 +3,7 @@
 import { INVOKE_CHANNELS, type InvokeRequest, type InvokeResponse } from "../../shared/ipc-contract";
 import { LOCAL_TERMINAL_INVOKE_CHANNELS } from "../../shared/local-terminals";
 import { describeError } from "./describe-error";
+import { HcCallError } from "./hc-client";
 import type { LocalTerminalHost } from "./host";
 
 interface IpcMainLike {
@@ -62,7 +63,11 @@ export function registerLocalTerminalIpc(
     },
     "local-terminal:attach": async ({ id, cols, rows }) => {
       try { return { ok: true, attachId: await host.attach(id, { cols, rows }) }; }
-      catch (error: unknown) { logFailure("local-terminal:attach", error); return { ok: false }; }
+      catch (error: unknown) {
+        // A terminal whose program has ended cannot be attached; the pane shows it ended. Not a failure.
+        if (!(error instanceof HcCallError && error.kind === "finished")) logFailure("local-terminal:attach", error);
+        return { ok: false };
+      }
     },
     "local-terminal:input": ({ attachId, data, binary }) => quiet("local-terminal:input", () => host.input(attachId, data, binary === true)),
     "local-terminal:resize": ({ attachId, cols, rows }) => quiet("local-terminal:resize", () => host.resize(attachId, { cols, rows })),

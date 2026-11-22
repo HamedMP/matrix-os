@@ -167,7 +167,9 @@ function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
   }, []);
   if (!manager) return null;
   return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut} />;
+    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
+    controlsHost={null} />;
 }
 
 function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
