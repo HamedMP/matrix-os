@@ -203,6 +203,16 @@ describe('owned machine repository', () => {
     expect(fresh).toBe('created');
   });
 
+  it('frees slots held by uncollected approvals when the owner approves again', async () => {
+    for (let i = 0; i < 3; i += 1) expect((await approve(db, (await enroll(db, `t${i}`)).userCode)).ok).toBe(true);
+    const late = new Date(NOW.getTime() + 16 * 60_000);
+    const fresh = await enroll(db, 'later');
+    await db.executor.updateTable('owned_machine_enrollments').set({ expires_at: new Date(late.getTime() + 900_000) })
+      .where('user_code', '=', fresh.userCode).execute();
+    expect((await approve(db, fresh.userCode, 'user_1', late)).ok).toBe(true);
+    expect(await listOwnedMachineLinks(db, 'user_1')).toHaveLength(1);
+  });
+
   it('refuses delivery after the delivery window even if the poll raced it', async () => {
     const { userCode, deviceCodeHash } = await enroll(db);
     await approve(db, userCode);
