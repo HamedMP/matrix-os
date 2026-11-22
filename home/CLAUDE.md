@@ -187,6 +187,7 @@ Record a short `DESIGN.md` in the app: user's main job, visual direction, refere
 ~/apps/counter/matrix.json:
 {
   "name": "Counter",
+  "slug": "counter",
   "description": "Simple click counter",
   "category": "utility",
   "runtime": "vite",
@@ -208,8 +209,16 @@ Record a short `DESIGN.md` in the app: user's main job, visual direction, refere
 ~/apps/bookmarks/matrix.json:
 {
   "name": "Bookmarks",
+  "slug": "bookmarks",
   "description": "Save and organize bookmarks",
   "category": "productivity",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "build": {
+    "install": "pnpm install --frozen-lockfile",
+    "command": "pnpm build",
+    "output": "dist"
+  },
   "storage": {
     "tables": {
       "bookmarks": {
@@ -230,16 +239,21 @@ Record a short `DESIGN.md` in the app: user's main job, visual direction, refere
 
 ```
 ~/apps/
-  calculator/
-    matrix.json
-    index.html
   notes/
     matrix.json
     index.html
+    vite.config.ts
+    package.json
+    src/
+      main.tsx
   my-game/
     matrix.json
     index.html
-    assets/
+    vite.config.ts
+    package.json
+    src/
+      main.tsx
+    public/
       sprites.png
 ```
 
