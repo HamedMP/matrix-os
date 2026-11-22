@@ -17,6 +17,7 @@ export class FakeBucket {
   failPut = false;
 
   async head(key: string) {
+    if (this.hideFromHead) return null;
     const stored = this.objects.get(key);
     return stored ? { key, size: stored.bytes.byteLength, httpEtag: `"etag-${key.length}"` } : null;
   }
@@ -43,9 +44,16 @@ export class FakeBucket {
     };
   }
 
-  async put(key: string, value: ReadableStream<Uint8Array>, options?: { httpMetadata?: { contentType?: string } }) {
+  hideFromHead = false;
+
+  async put(
+    key: string,
+    value: ReadableStream<Uint8Array>,
+    options?: { httpMetadata?: { contentType?: string }; onlyIf?: Headers },
+  ) {
     if (this.failPut) throw new Error("r2 exploded at /internal/path");
     const bytes = new Uint8Array(await new Response(value).arrayBuffer());
+    if (options?.onlyIf?.get("if-none-match") === "*" && this.objects.has(key)) return null;
     this.objects.set(key, { bytes, contentType: options?.httpMetadata?.contentType });
     return { key };
   }

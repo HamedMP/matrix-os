@@ -28,7 +28,7 @@ user surface changes.
 | Route | Caller | Credential | Check | Failure |
 | --- | --- | --- | --- | --- |
 | `POST /uploads` | repo writer | GitHub token (Bearer) | `GET /user`; `GET /repos/{repo}/collaborators/{login}/permission` is write/maintain/admin; `GET /repos/{repo}/pulls/{pr}` exists | 401 bad token, 403 not a writer, 404 unknown PR, 503 GitHub unavailable |
-| `PUT /uploads/<key>` | holder of a ticket | HMAC-SHA256 ticket | signature, expiry (5 min), key, content type, exact length | 403, 415, 411, 409 overwrite |
+| `PUT /uploads/<key>` | holder of a ticket | HMAC-SHA256 ticket (`?t=` or Bearer) over key, type, size, login, expiry | signature, expiry (5 min), key, content type, exact length; conditional `If-None-Match: *` write | 401, 403, 415, 411, 409 overwrite |
 | `GET`/`HEAD /<key>` | anyone | none (unguessable key) | key format allowlist | 404 |
 | anything else | anyone | none | none | 404/405 |
 
@@ -78,9 +78,8 @@ sandbox`, `Cache-Control: public, max-age=31536000, immutable`. No listing.
 - Ticket expires mid-upload -> 403; rerun the CLI.
 - Body shorter/longer than the ticket -> rejected before or during the R2 put
   (`FixedLengthStream` plus a counting stream); a partial object is deleted.
-- Concurrent PUTs to one key: only the ticket holder can race themselves; the
-  pre-put existence check is a best-effort overwrite guard (documented TOCTOU,
-  same bytes owner).
+- Concurrent PUTs to one key: the R2 write is conditional on the key not
+  existing (`If-None-Match: *`), so only the first succeeds; others get 409.
 - CLI fails after some uploads: uploaded objects stay and expire with the
   lifecycle rule; no comment is posted.
 

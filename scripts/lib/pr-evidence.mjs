@@ -166,11 +166,15 @@ export async function runUpload(parsed, deps = {}) {
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
     const slot = issued[i];
+    if (typeof slot?.uploadUrl !== 'string' || new URL(slot.uploadUrl).origin !== endpoint) {
+      throw new Error('Evidence service returned an unexpected upload URL');
+    }
     const bytes = await readFile(file.path);
     if (bytes.byteLength !== file.size) throw new Error(`File changed during upload: ${file.path}`);
     const put = await fetchImpl(slot.uploadUrl, {
       method: 'PUT',
-      headers: { Authorization: `Bearer ${slot.ticket}`, 'Content-Type': file.contentType },
+      // uploadUrl carries the short-lived signed ticket in its query string.
+      headers: { 'Content-Type': file.contentType },
       body: bytes,
       redirect: 'error',
       signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),

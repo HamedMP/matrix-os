@@ -11,6 +11,7 @@ const TicketPayloadSchema = z.object({
   t: z.string().refine(isMediaType),
   s: z.number().int().positive().max(MAX_FILE_BYTES),
   e: z.number().int().positive(),
+  l: z.string().regex(/^[A-Za-z0-9-]{1,39}$/),
 });
 
 export interface UploadTicket {
@@ -18,6 +19,7 @@ export interface UploadTicket {
   contentType: MediaType;
   size: number;
   expiresAt: number;
+  login: string;
 }
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
@@ -25,7 +27,7 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
 }
 
 export async function signUploadTicket(secret: string, ticket: UploadTicket): Promise<string> {
-  const payload = base64Url(utf8(JSON.stringify({ v: 1, k: ticket.key, t: ticket.contentType, s: ticket.size, e: ticket.expiresAt })));
+  const payload = base64Url(utf8(JSON.stringify({ v: 1, k: ticket.key, t: ticket.contentType, s: ticket.size, e: ticket.expiresAt, l: ticket.login })));
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", await hmacKey(secret), utf8(payload)));
   return `${payload}.${base64Url(signature)}`;
 }
@@ -52,5 +54,5 @@ export async function verifyUploadTicket(secret: string, token: string, now = Da
   const parsed = TicketPayloadSchema.safeParse(decoded);
   if (!parsed.success) return null;
   if (parsed.data.e <= now) return null;
-  return { key: parsed.data.k, contentType: parsed.data.t as MediaType, size: parsed.data.s, expiresAt: parsed.data.e };
+  return { key: parsed.data.k, contentType: parsed.data.t as MediaType, size: parsed.data.s, expiresAt: parsed.data.e, login: parsed.data.l };
 }

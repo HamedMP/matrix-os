@@ -34,14 +34,14 @@ scripts/pr-evidence upload 1234 web-desktop.png electron-desktop.png journey.mp4
 Keys are `pr-<n>/<commit7>/<26-char base32 of 128 random bits>.<ext>`. Reads are
 public to anyone holding the URL, which is unguessable.
 
-### Why upload through the Worker instead of R2 presigned URLs
+### Why upload through the Worker
 
-R2's S3 presigning can sign `Content-Type`, but binding the exact
-`Content-Length` is not reliably enforced, and it would need R2 S3 access keys
-as Worker secrets plus a new signing dependency. Streaming through the Worker
-with a signed ticket enforces type and exact size in code, needs one secret,
-and adds no dependencies. Request bodies are capped at 50 MB, below the
-Workers request-size limit on every plan.
+Uploads go through the Worker's R2 binding, not R2 S3 presigned URLs, so no R2
+S3 access keys exist. The ticket (HMAC-SHA256 over key, type, size, GitHub
+login, and a 5-minute expiry) is returned inside `uploadUrl` as `?t=<ticket>`
+(a `Bearer` header also works). The Worker checks type and exact length in
+code and writes with `If-None-Match: *`, so a key can be written only once.
+Bodies are capped at 50 MB, below the Workers request-size limit on every plan.
 
 ### Rate limiting
 
@@ -52,28 +52,21 @@ gate is GitHub write access; a Durable Object counter can replace this if
 abuse appears. The GitHub allow decision is cached by SHA-256 of the token for
 at most 5 minutes (bounded to 500 entries); denials are never cached.
 
-## Owner setup (one time, run by the owner)
+## Owner setup
 
-Nothing here is automated, and CI never deploys this Worker.
+CI never deploys this Worker. Account `63a1787d41e5df7aee344eab876fffe8` owns
+the `matrix-os.com` zone and is pinned in `wrangler.toml`.
 
-1. Create the bucket:
+1. Bucket `matrix-pr-evidence` (already created) with a 180-day expiry rule
+   (already set as `expire-180d`). To recreate:
 
    ```bash
    cd packages/pr-evidence-worker
    pnpm exec wrangler r2 bucket create matrix-pr-evidence
+   pnpm exec wrangler r2 bucket lifecycle add matrix-pr-evidence expire-180d --expire-days 180 --force
    ```
 
-2. Expire objects after 180 days:
-
-   ```bash
-   pnpm exec wrangler r2 bucket lifecycle add matrix-pr-evidence expire-evidence-180d --expire-days 180 --force
-   pnpm exec wrangler r2 bucket lifecycle list matrix-pr-evidence
-   ```
-
-   Dashboard equivalent: R2 -> `matrix-pr-evidence` -> Settings -> Object
-   lifecycle rules -> add rule, all objects, delete after 180 days.
-
-3. Set the ticket secret (at least 32 characters; uploads return 503 until it is set):
+2. Ticket secret (at least 32 characters; uploads return 503 until set):
 
    ```bash
    openssl rand -base64 48 | pnpm exec wrangler secret put UPLOAD_TICKET_SECRET
@@ -81,22 +74,16 @@ Nothing here is automated, and CI never deploys this Worker.
 
    Rotating it invalidates only in-flight 5-minute tickets.
 
-4. DNS and route: `wrangler.toml` declares the route
-   `evidence.matrix-os.com/*` on zone `matrix-os.com`. Either let the first
-   deploy attach it, or add a proxied (orange-cloud) DNS record for
-   `evidence` (for example `AAAA evidence 100::`) so the route receives
-   traffic. Alternatively replace `routes` with
-   `routes = [{ pattern = "evidence.matrix-os.com", custom_domain = true }]`
-   and Cloudflare creates the DNS record and certificate.
-
-5. Deploy:
+3. Deploy. The `evidence.matrix-os.com` custom domain route makes Cloudflare
+   create the DNS record and certificate:
 
    ```bash
+   cd packages/pr-evidence-worker
    pnpm exec wrangler deploy --dry-run   # bindings check
    pnpm exec wrangler deploy
    ```
 
-6. Verify: `curl -sI https://evidence.matrix-os.com/` returns 404, and
+4. Verify: `curl -sI https://evidence.matrix-os.com/` returns 404, and
    `scripts/pr-evidence upload <pr> shot.png --no-comment` prints a working URL.
 
 ## Development

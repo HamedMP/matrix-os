@@ -103,14 +103,14 @@ async function handleCreateUploads(request: Request, env: EvidenceEnv, deps: Evi
     files.map(async (file) => {
       const contentType = file.contentType as MediaType;
       const key = createEvidenceKey(pr, commit, contentType);
-      const ticket = await signUploadTicket(secret, { key, contentType, size: file.size, expiresAt });
+      const ticket = await signUploadTicket(secret, { key, contentType, size: file.size, expiresAt, login: decision.login });
       return {
         name: file.name,
         key,
         contentType,
         size: file.size,
         url: `${origin}/${key}`,
-        uploadUrl: `${origin}${UPLOAD_PATH_PREFIX}${key}`,
+        uploadUrl: `${origin}${UPLOAD_PATH_PREFIX}${key}?t=${ticket}`,
         ticket,
         expiresAt: new Date(expiresAt).toISOString(),
       };
@@ -132,8 +132,9 @@ async function handlePutUpload(
     console.error("[pr-evidence] misconfigured", { secret: Boolean(secret), bucket: Boolean(bucket) });
     return jsonError(503, "service_unavailable");
   }
-  const token = bearerToken(request);
-  if (!token) return jsonError(401, "unauthorized", { "WWW-Authenticate": "Bearer" });
+  // The ticket rides in `?t=` (returned uploadUrl) or, equivalently, as a Bearer header.
+  const token = new URL(request.url).searchParams.get("t") ?? bearerToken(request);
+  if (!token) return jsonError(401, "unauthorized");
   const ticket = await verifyUploadTicket(secret, token, deps.now());
   if (!ticket || ticket.key !== key || !parseEvidenceKey(key)) return jsonError(403, "invalid_ticket");
 
@@ -148,8 +149,13 @@ async function handlePutUpload(
   if (await bucket.head(key)) return jsonError(409, "already_uploaded");
 
   const sized = enforceExactSize(request.body, ticket.size);
+  let stored: R2Object | null;
   try {
-    await bucket.put(key, sized.stream, { httpMetadata: { contentType: ticket.contentType } });
+    // `If-None-Match: *` makes the write conditional on the key not existing (no overwrite/reuse).
+    stored = await bucket.put(key, sized.stream, {
+      httpMetadata: { contentType: ticket.contentType },
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
   } catch (error) {
     if (sized.mismatch()) return jsonError(400, "content_length_mismatch");
     const name = error instanceof Error ? error.name : "unknown";
@@ -160,6 +166,8 @@ async function handlePutUpload(
     await bucket.delete(key);
     return jsonError(400, "content_length_mismatch");
   }
+  if (!stored) return jsonError(409, "already_uploaded");
+  console.info("[pr-evidence] upload_stored", { login: ticket.login, size: ticket.size });
   return json(201, { key, url: `${publicOrigin(env)}/${key}` });
 }
 

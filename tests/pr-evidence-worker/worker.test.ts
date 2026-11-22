@@ -36,7 +36,7 @@ describe("POST /uploads authorization", () => {
     const [file] = body.files;
     expect(file.key).toMatch(/^pr-532\/abcdef1\/[a-z2-7]{26}\.png$/);
     expect(file.url).toBe(`https://evidence.matrix-os.com/${file.key}`);
-    expect(file.uploadUrl).toBe(`https://evidence.matrix-os.com/uploads/${file.key}`);
+    expect(file.uploadUrl).toBe(`https://evidence.matrix-os.com/uploads/${file.key}?t=${file.ticket}`);
     expect(typeof file.ticket).toBe("string");
   });
 
@@ -183,7 +183,7 @@ describe("evidence keys", () => {
 
 describe("upload tickets", () => {
   it("round-trips a signed ticket and rejects tampering and expiry", async () => {
-    const ticket = { key: "pr-1/abcdef1/" + "a".repeat(26) + ".png", contentType: "image/png" as const, size: 10, expiresAt: 2_000 };
+    const ticket = { key: "pr-1/abcdef1/" + "a".repeat(26) + ".png", contentType: "image/png" as const, size: 10, expiresAt: 2_000, login: "octo-dev" };
     const signed = await signUploadTicket(SECRET, ticket);
     expect(await verifyUploadTicket(SECRET, signed, 1_000)).toEqual(ticket);
     expect(await verifyUploadTicket(SECRET, signed, 2_000)).toBeNull();
@@ -225,7 +225,7 @@ describe("PUT /uploads/<key>", () => {
     const worker = makeWorker();
     const { body } = await issue(worker, [PNG_FILE, PNG_FILE]);
     const [first, second] = body.files;
-    const put = await worker.handle(putRequest(second.uploadUrl, first.ticket, bytes), worker.env);
+    const put = await worker.handle(putRequest(`https://evidence.matrix-os.com/uploads/${second.key}`, first.ticket, bytes), worker.env);
     expect(put.status).toBe(403);
   });
 
@@ -253,6 +253,37 @@ describe("PUT /uploads/<key>", () => {
     await worker.handle(putRequest(file.uploadUrl, file.ticket, bytes), worker.env);
     const again = await worker.handle(putRequest(file.uploadUrl, file.ticket, bytes), worker.env);
     expect(again.status).toBe(409);
+  });
+
+  it("accepts the ticket from the returned uploadUrl query string", async () => {
+    const worker = makeWorker();
+    const { body } = await issue(worker);
+    const [file] = body.files;
+    const put = await worker.handle(
+      new Request(file.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "image/png", "Content-Length": String(bytes.byteLength) },
+        body: bytes,
+      }),
+      worker.env,
+    );
+    expect(put.status).toBe(201);
+    const noTicket = await worker.handle(
+      new Request(`https://evidence.matrix-os.com/uploads/${file.key}`, { method: "PUT", body: bytes }),
+      worker.env,
+    );
+    expect(noTicket.status).toBe(401);
+  });
+
+  it("relies on a conditional R2 write so a racing reuse cannot overwrite", async () => {
+    const worker = makeWorker();
+    const { body } = await issue(worker);
+    const [file] = body.files;
+    await worker.handle(putRequest(file.uploadUrl, file.ticket, bytes), worker.env);
+    worker.bucket.hideFromHead = true;
+    const again = await worker.handle(putRequest(file.uploadUrl, file.ticket, new Uint8Array([9, 9, 9, 9])), worker.env);
+    expect(again.status).toBe(409);
+    expect(worker.bucket.objects.get(file.key)?.bytes).toEqual(bytes);
   });
 
   it("hides storage failure details", async () => {
