@@ -85,6 +85,24 @@ describe("local terminal events", () => {
     expect(h.latest()[0]).toMatchObject({ program: "node", folder: "…/projects/app" });
   });
 
+  // Hamed, 2026-11-22: a terminal's name follows its agent's title (OSC title) unless the person renamed it.
+  it("follows the program's title live, and keeps a name the person gave it", async () => {
+    const h = harness();
+    h.events.start();
+    const core = h.cores[0]!;
+    core.hello();
+    core.snapshot([terminal("t1", { title: "zsh" }), terminal("t2", { title: "zsh", labels: { "matrix.title": "Deploy" } })]);
+    core.event("title", "t1", { title: "Matrix desktop and web feature parity" });
+    core.event("title", "t2", { title: "Claude Code" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.latest().map((fact) => [fact.id, fact.title])).toEqual([["t1", "Matrix desktop and web feature parity"], ["t2", "Deploy"]]);
+    // Renaming takes over from the program's title.
+    core.event("labels", "t1", { labels: { "matrix.title": "Parity" } });
+    core.event("title", "t1", { title: "Something else" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.latest().find((fact) => fact.id === "t1")?.title).toBe("Parity");
+  });
+
   it("applies events in order: status, turn, labels, finished, removed, created", async () => {
     const h = harness();
     h.events.start();
