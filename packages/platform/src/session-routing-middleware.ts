@@ -1143,7 +1143,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       // A failed build never boots: the onboarding shell shows provisioning_failed
       // with its retry, which the boot page would make unreachable forever.
+      // Primary only: the onboarding shell reads and retries the primary journey.
       if (
+        activeMachine.runtimeSlot === 'primary' &&
         isFailedRuntimeBuild(activeMachine, new Date()) &&
         shouldProxyAuthShellForUnroutedUser({ isAppDomain, method: c.req.method, path })
       ) {

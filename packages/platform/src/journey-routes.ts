@@ -12,6 +12,7 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
+import { neverRegistered } from './substrates/metal-registration-window.js';
 
 export interface JourneyClerkAuth {
   extractToken: (authorization?: string, cookie?: string) => string | null;
@@ -130,10 +131,35 @@ function applyNoStore(c: Context): void {
 }
 
 const LIVE_MACHINE_STATUSES = new Set(['provisioning', 'recovering', 'running']);
+/** One started build per owner in this window; extra clicks or a looping client get 429. */
+export const RETRY_PROVISION_MIN_INTERVAL_MS = 30_000;
+const RETRY_THROTTLE_MAX_ENTRIES = 10_000;
 
 export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+  // Per-owner start times; entries expire after the window and the map is capped.
+  const lastRetryStart = new Map<string, number>();
+
+  /** Admits one build start per owner per window. Returns false when throttled. */
+  function admitRetryStart(clerkUserId: string): boolean {
+    const at = now().getTime();
+    const previous = lastRetryStart.get(clerkUserId);
+    if (previous !== undefined && at - previous < RETRY_PROVISION_MIN_INTERVAL_MS && at >= previous) return false;
+    lastRetryStart.delete(clerkUserId);
+    if (lastRetryStart.size >= RETRY_THROTTLE_MAX_ENTRIES) {
+      for (const [owner, startedAt] of lastRetryStart) {
+        if (at - startedAt >= RETRY_PROVISION_MIN_INTERVAL_MS) lastRetryStart.delete(owner);
+      }
+      // Still full: drop the oldest insertion (Map preserves insertion order).
+      if (lastRetryStart.size >= RETRY_THROTTLE_MAX_ENTRIES) {
+        const oldest = lastRetryStart.keys().next().value;
+        if (oldest !== undefined) lastRetryStart.delete(oldest);
+      }
+    }
+    lastRetryStart.set(clerkUserId, at);
+    return true;
+  }
 
   async function reconcileStale(clerkUserId: string, runtimeSlot: string): Promise<void> {
     if (!options.reconcileStaleRuntime) return;
@@ -206,6 +232,11 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       if (existing && LIVE_MACHINE_STATUSES.has(existing.status)) {
         return c.json({ status: 'in_progress', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);
       }
+      if (existing?.status === 'failed') {
+        // Retrying retires the failed row and its server: never for a computer that ran.
+        if (!neverRegistered(existing)) return c.json({ error: 'support_required' }, 409);
+        if (existing.attempt >= options.maxProvisionAttempts) return c.json({ error: 'retry_exhausted' }, 409);
+      }
       const prebillingIntent = await getActivePrebillingIntent(options.db, clerkUserId, runtimeSlot);
       if (prebillingIntent) {
         if (!options.resumePrebillingPreparation) {
@@ -220,6 +251,10 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       }
       if (!options.provisionRuntime) {
         return c.json({ error: 'provisioning_unavailable' }, 503);
+      }
+      if (!admitRetryStart(clerkUserId)) {
+        c.header('Retry-After', String(Math.ceil(RETRY_PROVISION_MIN_INTERVAL_MS / 1000)));
+        return c.json({ error: 'retry_throttled' }, 429);
       }
       await options.provisionRuntime(clerkUserId, runtimeSlot);
       return c.json({ status: 'started', journey: await buildJourney(clerkUserId, runtimeSlot) }, 200);

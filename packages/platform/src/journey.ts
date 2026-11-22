@@ -1,3 +1,4 @@
+import { neverRegistered } from './substrates/metal-registration-window.js';
 import { randomUUID } from 'node:crypto';
 import {
   appendJourneyEvent,
@@ -218,7 +219,9 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
         progress: { stage: deriveProvisioningStage(liveMachine), startedAt: liveMachine.provisionedAt },
       };
     case 'failed': {
-      const retryable = liveMachine.attempt < maxProvisionAttempts;
+      // A computer that once ran is not retried from onboarding: the retry
+      // would retire its server. Only a first build that never registered is.
+      const retryable = liveMachine.attempt < maxProvisionAttempts && neverRegistered(liveMachine);
       return {
         phase: 'provisioning_failed',
         detail: retryable

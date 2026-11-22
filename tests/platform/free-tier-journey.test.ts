@@ -25,6 +25,7 @@ import { AccountDeletionAdmissionError } from '../../packages/platform/src/accou
 import { resolveEffectiveBillingEntitlement } from '../../packages/platform/src/runtime-entitlement.js';
 import type { HostdClient } from '../../packages/platform/src/substrates/hostd-client.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
+import { HostdError } from '../../packages/platform/src/substrates/hostd-client.js';
 import { createMetalProvisioner } from '../../packages/platform/src/substrates/metal-provisioner.js';
 import { createMetalVmDeletionDrainer } from '../../packages/platform/src/substrates/metal-vm-deletions.js';
 import { createTestConfig } from './customer-vps-service-test-helper.js';
@@ -218,6 +219,54 @@ describe('onboarding journey on the free plan', () => {
     const again = await retry(app);
     expect(await again.json()).toMatchObject({ status: 'started' });
     expect(createVm).toHaveBeenCalledTimes(2);
+  });
+
+  it('never offers a retry that would retire a paid computer which ran and then failed recovery', async () => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    await insertUserMachine(db, {
+      machineId: 'vps-1', clerkUserId: OWNER, handle: 'freeowner', status: 'failed', failureCode: 'provider_unavailable',
+      hetznerServerId: 4343, publicIPv4: null, recoveryOldServerId: 4242, recoveryOldPublicIPv4: '203.0.113.50',
+      imageVersion: BUNDLE_VERSION, provisionedAt: NOW.toISOString(),
+    });
+    const { app, provision } = journeyApp({ resolveEntitlement: async () => paidEntitlement() });
+
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'contact_support' } });
+    const refused = await retry(app);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'support_required' });
+    expect(provision).not.toHaveBeenCalled();
+    expect(await getActiveUserMachineByClerkId(db, OWNER, 'primary')).toMatchObject({ machineId: 'vps-1', status: 'failed' });
+  });
+
+  it('stops offering free metal retries after the attempt ceiling and throttles rapid retries', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    machineIds = ['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000004'];
+    createVm.mockRejectedValue(new HostdError('internal'));
+    const { app } = journeyApp();
+
+    // Each build fails at hostd create; the route answers 503 and the row is failed.
+    expect((await retry(app)).status).toBe(503);
+    expect((await getActiveUserMachineByClerkId(db, OWNER, 'primary'))?.attempt).toBe(1);
+    // A second click inside the throttle window does not reach hostd.
+    const throttled = await retry(app);
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toEqual({ error: 'retry_throttled' });
+    expect(createVm).toHaveBeenCalledTimes(1);
+
+    for (const minute of [1, 2]) {
+      clock = new Date(NOW.getTime() + minute * 60_000);
+      expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'retry_provision' } });
+      expect((await retry(app)).status).toBe(503);
+    }
+    expect((await getActiveUserMachineByClerkId(db, OWNER, 'primary'))?.attempt).toBe(3);
+
+    clock = new Date(NOW.getTime() + 3 * 60_000);
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'contact_support' } });
+    const exhausted = await retry(app);
+    expect(exhausted.status).toBe(409);
+    expect(await exhausted.json()).toEqual({ error: 'retry_exhausted' });
+    expect(createVm).toHaveBeenCalledTimes(3);
   });
 
   it('an uninvited owner still sees plan_required and cannot start provisioning', async () => {

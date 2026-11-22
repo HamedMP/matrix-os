@@ -262,9 +262,12 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       return await withAccountDeletionAdmission(db, row.clerkUserId, async (trx): Promise<Claim> => {
         await lockUserMachineProvisioning(trx, row.clerkUserId);
         const current = await getActiveUserMachineByClerkId(trx, row.clerkUserId, row.runtimeSlot);
+        // A rebuild after a failure counts toward the owner's attempt ceiling.
+        let attempt = 1;
         if (current) {
           if (current.substrate !== 'metal') return { error: 'unavailable' };
           if (current.status !== 'failed') return { existing: current.machineId };
+          attempt = current.attempt + 1;
           await retireUserMachine(trx, current.machineId, row.at.toISOString());
           // A stale row failed by this request already had its teardown queued
           // (and maybe completed inline); never queue the same generation twice.
@@ -297,6 +300,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
             metalHostId: row.host.id,
             provisioningClass: 'customer',
             status: 'provisioning',
+            attempt,
             imageVersion: row.imageVersion,
             targetBundleVersion: row.imageVersion,
             targetBundleSha256: row.bundleSha256,

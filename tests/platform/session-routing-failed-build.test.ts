@@ -81,6 +81,40 @@ describe('app-domain routing after a failed first build', () => {
     },
   );
 
+  it('keeps the boot page for a computer that ran and then failed recovery', async () => {
+    // A recovery resets lastSeenAt but keeps the predecessor server: this computer once registered.
+    await insertUserMachine(db, machine({
+      status: 'failed', failureCode: 'provider_unavailable', publicIPv4: null, hetznerServerId: 4343,
+      recoveryOldServerId: 4242, recoveryOldPublicIPv4: '203.0.113.50', lastSeenAt: null,
+    }));
+
+    const res = await platform().request('/', { headers: CLERK_SESSION });
+
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe(getVpsBootPage({ status: 'failed' }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the boot page for a failed computer that had registered', async () => {
+    await insertUserMachine(db, machine({ status: 'failed', lastSeenAt: '2026-11-20T00:00:00.000Z' }));
+
+    const res = await platform().request('/', { headers: CLERK_SESSION });
+
+    expect(res.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the boot page for a failed build in a non-primary slot', async () => {
+    await insertUserMachine(db, machine({
+      machineId: 'machine-two', handle: 'alice-two', runtimeSlot: 'two', status: 'failed', publicIPv4: null, hetznerServerId: null,
+    }));
+
+    const res = await platform().request('/?runtime=two', { headers: CLERK_SESSION });
+
+    expect(res.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('keeps the JSON 503 for gateway paths of a failed runtime', async () => {
     await insertUserMachine(db, machine({ status: 'failed', publicIPv4: null, hetznerServerId: null }));
 
