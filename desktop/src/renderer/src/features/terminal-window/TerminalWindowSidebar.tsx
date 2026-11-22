@@ -235,16 +235,6 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
       <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
       {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
-      {props.onAddMachine ? (
-        <ul aria-label="Add machine"><li>
-          <button type="button" onClick={props.onAddMachine}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
-            style={secondaryText}>
-            <Plus size={12} aria-hidden="true" className="shrink-0" />
-            Add machine…
-          </button>
-        </li></ul>
-      ) : null}
     </div>
   );
 }
@@ -312,6 +302,14 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
           style={secondaryText}>
           <Settings size={13} aria-hidden="true" /> Settings
         </button>
+        {/* Herdr keeps Add machine at the foot of the sidebar, beside Settings. */}
+        {props.onAddMachine ? (
+          <button type="button" onClick={props.onAddMachine}
+            className="ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
+            style={secondaryText}>
+            <Plus size={12} aria-hidden="true" className="shrink-0" /> Add machine…
+          </button>
+        ) : null}
       </div>
       <ResizeEdge width={props.width} onResize={props.onResize} />
     </div>
