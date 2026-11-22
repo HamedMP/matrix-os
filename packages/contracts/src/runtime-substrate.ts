@@ -1,10 +1,10 @@
 import { z } from "zod/v4";
 
-export const SubstrateKindSchema = z.enum(["vps", "container", "metal"]);
+export const SubstrateKindSchema = z.enum(["vps", "container", "metal", "owned"]);
 export type SubstrateKind = z.infer<typeof SubstrateKindSchema>;
 
 export const RuntimeStateSchema = z.enum([
-  "ready", "waking", "restoring", "busy", "limit_reached", "failed", "migrating", "waitlisted",
+  "ready", "waking", "restoring", "busy", "limit_reached", "failed", "migrating", "waitlisted", "offline",
 ]);
 export type RuntimeState = z.infer<typeof RuntimeStateSchema>;
 

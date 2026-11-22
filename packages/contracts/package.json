@@ -165,7 +165,8 @@
     "#routine-chat-receipt": "./src/routine-chat-receipt.ts",
     "#routine-origin-proof": "./src/routine-origin-proof.ts",
     "#runtime-substrate": "./src/runtime-substrate.ts",
-    "#hostd-api": "./src/hostd-api.ts"
+    "#hostd-api": "./src/hostd-api.ts",
+    "#owned-machine": "./src/owned-machine.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

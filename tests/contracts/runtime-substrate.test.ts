@@ -18,14 +18,14 @@ function allCapabilities(state: string): Record<string, { state: string }> {
 }
 
 describe("runtime substrate contract", () => {
-  it("names exactly the vps and container substrates", () => {
-    expect(SubstrateKindSchema.options).toEqual(["vps", "container", "metal"]);
+  it("names exactly the vps, container, metal and owned substrates", () => {
+    expect(SubstrateKindSchema.options).toEqual(["vps", "container", "metal", "owned"]);
     expect(SubstrateKindSchema.safeParse("hetzner").success).toBe(false);
   });
 
   it("names the runtime states clients render and the coarse limit reasons", () => {
     expect(RuntimeStateSchema.options).toEqual([
-      "ready", "waking", "restoring", "busy", "limit_reached", "failed", "migrating", "waitlisted",
+      "ready", "waking", "restoring", "busy", "limit_reached", "failed", "migrating", "waitlisted", "offline",
     ]);
     expect(RuntimeLimitReasonSchema.options).toEqual(["ai_allowance", "storage", "compute"]);
   });

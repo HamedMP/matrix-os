@@ -873,6 +873,8 @@ export interface PlatformDatabase {
   metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
   metal_vm_deletions: import('./database/migrations/metal-hosts.js').MetalVmDeletionsTable;
   free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
+  owned_machine_links: import('./owned-machines/types.js').OwnedMachineLinksTable;
+  owned_machine_enrollments: import('./owned-machines/types.js').OwnedMachineEnrollmentsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;

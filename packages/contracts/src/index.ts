@@ -1512,3 +1512,4 @@ export * from "#routine-origin-proof";
 
 export * from "#runtime-substrate";
 export * from "#hostd-api";
+export * from "#owned-machine";

@@ -18,6 +18,7 @@ import { migratePreviewDrive } from './migrations/preview-drive.js';
 import { migrateFreeTier } from './migrations/free-tier.js';
 import { migrateMetalSleep } from './migrations/metal-sleep.js';
 import { migrateFreeFunding } from './migrations/free-funding.js';
+import { migrateOwnedMachines } from './migrations/owned-machines.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -50,6 +51,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'free-tier', run: migrateFreeTier },
   { name: 'metal-sleep', run: migrateMetalSleep },
   { name: 'free-funding', run: migrateFreeFunding },
+  { name: 'owned-machines', run: migrateOwnedMachines },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {
