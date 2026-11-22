@@ -663,10 +663,16 @@ export default function TerminalView({
 
   // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
   const takesFocusRef = useRef(takesFocus);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const became = takesFocus && !takesFocusRef.current;
     takesFocusRef.current = takesFocus;
-    if (became) termRef.current?.focus();
+    if (!became) return;
+    // A control of this view the person just clicked (its Find field) keeps the keyboard.
+    const active = document.activeElement;
+    const surface = surfaceRef.current;
+    const onOwnControl = active instanceof HTMLElement && surface?.contains(active) && !active.classList.contains("xterm-helper-textarea");
+    if (!onOwnControl) termRef.current?.focus();
   }, [takesFocus]);
 
   useEffect(() => {
@@ -876,6 +882,7 @@ export default function TerminalView({
 
   return (
     <div
+      ref={surfaceRef}
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4"
       data-terminal-surface
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}

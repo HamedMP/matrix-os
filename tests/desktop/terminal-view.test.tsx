@@ -471,6 +471,19 @@ describe("TerminalView session switching", () => {
   });
 
   // Spec 2706: every Terminal window pane stays live, and only the focused one takes the keyboard.
+  // Fault detected (Greptile, #3569): clicking a pane's open Find field focused the pane, which pulled
+  // the keyboard back to the terminal, so Find text went to the program.
+  it("leaves the keyboard on its own control when its pane becomes focused", () => {
+    const { container, rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    const terminal = createdTerminals.at(-1)!;
+    const field = document.createElement("input");
+    container.querySelector("[data-terminal-surface]")!.appendChild(field);
+    field.focus();
+    rerender(<TerminalView sessionName="alpha" active focused />);
+    expect(terminal.focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(field);
+  });
+
   it("keeps a live pane unfocused until it becomes the focused pane", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
     const terminal = createdTerminals.at(-1)!;
