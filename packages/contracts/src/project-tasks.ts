@@ -25,7 +25,7 @@ export type TaskAgentStatus = z.infer<typeof TaskAgentStatusSchema>;
 // Identifiers and bounds.
 
 export const TASK_LIMITS = {
-  title: 300,
+  title: 160,
   description: 50_000,
   comment: 10_000,
   labels: 20,
@@ -77,7 +77,8 @@ export const TaskBranchSchema = z.string().min(1).max(200)
 
 export const TaskSessionSchema = z.object({
   ref: TaskSessionRefSchema,
-  kind: z.enum(["chat", "terminal"]),
+  /** A task's chat is the task itself; sessions are the terminals attached to it. */
+  kind: z.enum(["terminal"]),
   title: z.string().min(1).max(200),
   role: z.enum(["main", "extra"]),
   agentStatus: TaskAgentStatusSchema,
@@ -127,6 +128,11 @@ export const ProjectTaskSchema = z.object({
   branch: TaskBranchSchema.nullable(),
   pullRequest: TaskPullRequestSchema.nullable(),
   externalLink: TaskExternalLinkSchema.nullable(),
+  /** The task's chat (every task is a chat); null only for a task the backfill has not linked yet. */
+  chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/).nullable(),
+  /** Agent status of the task's own chat. */
+  chatStatus: TaskAgentStatusSchema,
+  /** Terminals attached to the task. */
   sessions: z.array(TaskSessionSchema).max(TASK_LIMITS.sessions),
   commentCount: z.number().int().min(0),
   createdBy: ActorRefSchema,
@@ -203,7 +209,7 @@ export type TaskGitSummary = z.infer<typeof TaskGitSummarySchema>;
 /** A chat or terminal tab in the project that no task owns yet. */
 export const AttachableSessionSchema = z.object({
   ref: TaskSessionRefSchema,
-  kind: z.enum(["chat", "terminal"]),
+  kind: z.enum(["terminal"]),
   title: z.string().min(1).max(200),
 });
 export type AttachableSession = z.infer<typeof AttachableSessionSchema>;
@@ -296,7 +302,8 @@ export const CommentResponseSchema = z.object({ comment: TaskCommentSchema });
 export const ListActivityResponseSchema = z.object({ activity: z.array(TaskActivitySchema), nextCursor: z.string().nullable() });
 export const StartTaskResponseSchema = z.object({
   task: ProjectTaskSchema,
-  session: TaskSessionSchema,
+  /** The attached terminal; null for a chat start, whose chat is `task.chatId`. */
+  session: TaskSessionSchema.nullable(),
   /** The first message, when the server did not send it (no model selection, or a terminal session). */
   firstMessage: z.string().min(1).max(TASK_LIMITS.description + TASK_LIMITS.comment + 1_000).optional(),
 });

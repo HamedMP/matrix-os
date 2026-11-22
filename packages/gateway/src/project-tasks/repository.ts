@@ -6,7 +6,7 @@
 import { sql, type Selectable } from "kysely";
 import {
   TASK_LIMITS, TaskRankError, formatTaskKey, rankBetween, spreadRanks,
-  type ActorRef, type ProjectTask, type TaskActivity, type TaskActivityKind, type TaskPriority, type TaskPullRequest, type TaskSession, type TaskStatus,
+  type ActorRef, type ProjectTask, type TaskActivity, type TaskActivityKind, type TaskAgentStatus, type TaskPriority, type TaskPullRequest, type TaskSession, type TaskStatus,
 } from "@matrix-os/contracts/project-tasks";
 import type { BoardAutomationColumn, ProjectTaskDatabase, ProjectTaskDb, ProjectTaskTrx } from "./database.js";
 import { ProjectTaskError } from "./errors.js";
@@ -91,6 +91,7 @@ const isoOrNull = (value: Date | string | null) => (value === null ? null : iso(
 export interface TaskExtras {
   blockedBy?: readonly string[];
   sessions?: readonly TaskSession[];
+  chatStatus?: TaskAgentStatus;
 }
 
 export function pullRequestFromRow(row: TaskRow): TaskPullRequest | null {
@@ -121,6 +122,8 @@ export function toProjectTask(row: TaskRow, keyPrefix: string, extras: TaskExtra
     branch: row.branch,
     pullRequest: pullRequestFromRow(row),
     externalLink: null,
+    chatId: row.chat_id,
+    chatStatus: extras.chatStatus ?? "idle",
     sessions: [...(extras.sessions ?? [])],
     commentCount: Number(row.comment_count),
     createdBy: row.created_by as ActorRef,

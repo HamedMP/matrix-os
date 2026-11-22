@@ -50,11 +50,12 @@ export interface ProjectTaskServiceOptions {
    * through here even when a read triggered it.
    */
   admit?<T>(caller: TaskCaller, project: ProjectConfig, write: () => Promise<T>): Promise<T>;
-  /** Task sessions; without it tasks carry no sessions (layer 1 boards). */
+  /** Terminals attached to tasks; without it tasks carry no sessions. */
   sessions?: ProjectTaskSessionRepository;
-  /** Live agent status of task sessions, read once per request. */
+  /** The owner's chats: each task's own chat and its live agent status. */
+  chats?: Pick<ChatPort, "statuses">;
+  /** Live agent status of attached terminals, read once per request. */
   agentStatus?: {
-    chats?: Pick<ChatPort, "statuses"> & Partial<Pick<ChatPort, "describe">>;
     terminals?: Pick<TerminalPort, "statuses"> & Partial<Pick<TerminalPort, "existingRefs">>;
   };
 }
@@ -122,7 +123,7 @@ export class ProjectTaskService {
     return { slug, ownerScope: caller.ownerScope, project, scope, board };
   }
 
-  /** Wire tasks for rows, with their relations, sessions and live agent status loaded once per request. */
+  /** Wire tasks for rows, with relations, terminals and live agent status loaded once per request. */
   async tasks(context: BoardContext, rows: readonly TaskRow[]): Promise<ProjectTask[]> {
     const ids = rows.map((row) => row.id);
     const [blockedBy, links] = await Promise.all([
@@ -130,45 +131,30 @@ export class ProjectTaskService {
       this.options.sessions?.listForTasks(context.scope, ids) ?? Promise.resolve({} as Record<string, SessionRow[]>),
     ]);
     const all = Object.values(links).flat();
-    const [statuses, unavailable] = await Promise.all([this.agentStatuses(context, all), this.unavailableSessions(context, all)]);
+    const chatIds = rows.flatMap((row) => (row.chat_id ? [row.chat_id] : []));
+    const [statuses, unavailable] = await Promise.all([this.agentStatuses(context, chatIds, all), this.unavailableSessions(context, all)]);
     return rows.map((row) => toProjectTask(row, context.board.task_key, {
       blockedBy: blockedBy[row.id] ?? [],
+      chatStatus: row.chat_id ? statuses[row.chat_id] ?? "idle" : "idle",
       sessions: (links[row.id] ?? []).map((link) => toTaskSession(link, statuses[link.session_ref] ?? "idle", unavailable.has(link.session_ref))),
     }));
   }
 
-  /**
-   * Links whose chat is gone or archived, or whose terminal tab closed. A source
-   * that fails or is not wired proves nothing, so its links stay available.
-   */
+  /** Terminal links whose tab closed. A source that fails or is not wired proves nothing, so its links stay available. */
   async unavailableSessions(context: BoardContext, links: readonly SessionRow[]): Promise<Set<string>> {
-    const chatIds = links.filter((link) => link.kind === "chat").map((link) => link.session_ref);
-    const terminalRefs = links.filter((link) => link.kind === "terminal").map((link) => link.session_ref);
-    const describe = this.options.agentStatus?.chats?.describe;
     const existingTabs = this.options.agentStatus?.terminals?.existingRefs;
-    const live = async (source: string, run: () => Promise<string[]>): Promise<Set<string> | null> => {
-      try {
-        return new Set(await run());
-      } catch (error: unknown) {
-        console.warn("[project-tasks] session liveness unavailable", source, error instanceof Error ? error.name : typeof error);
-        return null;
-      }
-    };
-    const [liveChats, liveTabs] = await Promise.all([
-      describe && chatIds.length > 0
-        ? live("chat", async () => (await describe(context.ownerScope, chatIds)).map((chat) => chat.id)) : null,
-      existingTabs && terminalRefs.length > 0 ? live("terminal", () => existingTabs(context.project.id)) : null,
-    ]);
-    return new Set([
-      ...(liveChats ? chatIds.filter((ref) => !liveChats.has(ref)) : []),
-      ...(liveTabs ? terminalRefs.filter((ref) => !liveTabs.has(ref)) : []),
-    ]);
+    if (!existingTabs || links.length === 0) return new Set();
+    try {
+      const live = new Set(await existingTabs(context.project.id));
+      return new Set(links.map((link) => link.session_ref).filter((ref) => !live.has(ref)));
+    } catch (error: unknown) {
+      console.warn("[project-tasks] terminal liveness unavailable", error instanceof Error ? error.name : typeof error);
+      return new Set();
+    }
   }
 
-  /** Agent status per session ref; a status source that fails reads as idle rather than failing the board. */
-  async agentStatuses(context: BoardContext, links: readonly SessionRow[]): Promise<Record<string, TaskAgentStatus>> {
-    const chatIds = links.filter((link) => link.kind === "chat").map((link) => link.session_ref);
-    const hasTerminals = links.some((link) => link.kind === "terminal");
+  /** Agent status per chat id and terminal ref; a status source that fails reads as idle rather than failing the board. */
+  async agentStatuses(context: BoardContext, chatIds: readonly string[], links: readonly SessionRow[]): Promise<Record<string, TaskAgentStatus>> {
     const read = async (source: string, run: () => Promise<Record<string, TaskAgentStatus>>) => {
       try {
         return await run();
@@ -177,11 +163,11 @@ export class ProjectTaskService {
         return {};
       }
     };
-    const chats = this.options.agentStatus?.chats;
+    const chats = this.options.chats;
     const terminals = this.options.agentStatus?.terminals;
     const [fromChats, fromTerminals] = await Promise.all([
       chats && chatIds.length > 0 ? read("chat", () => chats.statuses(context.ownerScope, chatIds)) : {},
-      terminals && hasTerminals ? read("terminal", () => terminals.statuses()) : {},
+      terminals && links.length > 0 ? read("terminal", () => terminals.statuses()) : {},
     ]);
     return { ...fromTerminals, ...fromChats };
   }
@@ -321,12 +307,14 @@ export class ProjectTaskService {
     };
   }
 
-  /** Closing guard: a task whose agent is still working closes only with `force`. Closing never removes sessions. */
+  /** Closing guard: a task whose chat or terminal agent is still working closes only with `force`. Closing never removes either. */
   private async assertNoAgentWorking(context: BoardContext, taskId: string): Promise<void> {
+    const row = await this.requireRow(context, taskId);
     const links = (await this.options.sessions?.listForTasks(context.scope, [taskId]))?.[taskId] ?? [];
-    if (links.length === 0) return;
-    const statuses = await this.agentStatuses(context, links);
-    if (links.some((link) => statuses[link.session_ref] === "working")) throw new ProjectTaskError("task_agent_working");
+    const chatIds = row.chat_id ? [row.chat_id] : [];
+    if (links.length === 0 && chatIds.length === 0) return;
+    const statuses = await this.agentStatuses(context, chatIds, links);
+    if ([...chatIds, ...links.map((link) => link.session_ref)].some((ref) => statuses[ref] === "working")) throw new ProjectTaskError("task_agent_working");
   }
 
   async requireRow(context: BoardContext, taskId: string): Promise<TaskRow> {

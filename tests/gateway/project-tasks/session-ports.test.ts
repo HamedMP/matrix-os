@@ -136,7 +136,7 @@ describe("board session ports over the terminal runtime", () => {
 
   it("reports chats as unavailable without the owner database", async () => {
     const { chats } = ports(vi.fn());
-    await expect(chats.create({ type: "user", id: "u" }, { clientRequestId: "req_1", title: "t", projectId: "proj_demo" }))
+    await expect(chats.bindWorktree({ type: "user", id: "u" }, "chat_1", { projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" }))
       .rejects.toMatchObject({ name: "TaskPortUnavailableError" });
     expect(await chats.statuses({ type: "user", id: "u" }, ["chat_1"])).toEqual({});
   });

@@ -1,5 +1,5 @@
 /**
- * Start work, attach and detach sessions, git and pull request state (spec
+ * Start work, attach and detach terminals, git and pull request state (spec
  * 2699 sections 3 and 4). Start work crosses subsystems, so it is not one
  * transaction: every step is idempotent and the task records what succeeded,
  * so a retry with the same `clientRequestId` resumes instead of duplicating.
@@ -43,10 +43,9 @@ function digest(...parts: string[]): string {
   return createHash("sha256").update(parts.join("\u0000")).digest("hex");
 }
 
-function parseRef(ref: string): { kind: "chat"; chatId: string } | { kind: "terminal"; workspaceId: string; tabId: string } {
-  if (ref.startsWith("chat_")) return { kind: "chat", chatId: ref };
-  const [, workspaceId, tabId] = ref.split(".");
-  return { kind: "terminal", workspaceId: workspaceId!, tabId: tabId! };
+function parseTerminalRef(ref: string): { workspaceId: string; tabId: string } | null {
+  const [prefix, workspaceId, tabId] = ref.split(".");
+  return prefix === "term" && workspaceId && tabId ? { workspaceId, tabId } : null;
 }
 
 export interface ProjectTaskWorkOptions {
@@ -58,7 +57,8 @@ export interface ProjectTaskWorkOptions {
 
 export interface StartResult {
   task: ProjectTask;
-  session: TaskSession;
+  /** The attached terminal; null for a chat start (the chat is `task.chatId`). */
+  session: TaskSession | null;
   firstMessage?: string;
 }
 
@@ -69,20 +69,27 @@ export class ProjectTaskWork {
     this.cache = options.cache ?? new PullRequestCache();
   }
 
+  /**
+   * Start work. `kind: "chat"` prepares the task's own chat: the worktree and
+   * branch, the chat's default root bound to that worktree, and the first
+   * message (sent when a model is selected, otherwise returned for the
+   * composer). `kind: "terminal"` attaches a new terminal tab to the task.
+   */
   async start(caller: TaskCaller, slug: string, taskId: string, body: StartTaskBody, principal?: RequestPrincipal): Promise<StartResult> {
     const { tasks, sessions } = this.options;
     const context = await tasks.open(caller, slug);
     let row = await tasks.requireRow(context, taskId);
     if (body.kind === "terminal" && body.harness && !SUPPORTED_HARNESSES.has(body.harness)) throw new ProjectTaskError("invalid_request");
+    if (body.kind === "chat" && !row.chat_id) throw new ProjectTaskError("task_session_unavailable");
     const requestId = body.clientRequestId ?? `req_${randomUUID()}`;
     const seed = digest(context.scope.ownerId, taskId, requestId);
     const view = await tasks.task(context, row);
 
-    // A retried start whose link already landed skips straight to the remaining steps.
-    let link = await sessions.findByStartRequest(context.scope, taskId, requestId);
-    // Unavailable links do not count toward the limit; a full task drops them to make room.
+    // A retried terminal start whose link already landed skips straight to the remaining steps.
+    let link = body.kind === "terminal" ? await sessions.findByStartRequest(context.scope, taskId, requestId) : undefined;
+    // Closed tabs do not count toward the limit; a full task drops them to make room.
     const prune = view.sessions.filter((session) => session.unavailable).map((session) => session.ref);
-    if (!link && view.sessions.length - prune.length >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
+    if (body.kind === "terminal" && !link && view.sessions.length - prune.length >= TASK_LIMITS.sessions) throw new ProjectTaskError("task_limit_reached");
 
     const root = await this.port(() => this.options.ports.projectRoot.resolve(context.project, caller.ownerScope));
     if (!root) throw new ProjectTaskError("task_session_unavailable");
@@ -103,49 +110,44 @@ export class ProjectTaskWork {
     }
     const cwd = worktree?.path ?? root.path;
     const title = `${view.key} ${view.title}`.slice(0, 160);
-
-    let chat: { id: string; revision: number } | null = null;
-    const createChat = () => this.port(() => this.options.ports.chats.create(caller.ownerScope, {
-      clientRequestId: `req_task_${seed.slice(0, 40)}`, title, projectId: context.project.id,
-      ...(worktree ? { worktreeId: worktree.id } : {}),
-    }));
-    if (!link) {
-      let input: SessionLinkInput;
-      if (body.kind === "chat") {
-        chat = await createChat();
-        input = { ref: chat.id, kind: "chat", title, startRequestId: requestId, prune };
-      } else {
-        const { workspaceId } = await this.port(() => this.options.ports.terminals.ensureWorkspace(context.project.id));
-        const { tabId } = await this.port(() => this.options.ports.terminals.createTab({
-          workspaceId, tabId: `tt_${seed.slice(0, 32)}`, name: title, cwd,
-          env: { MATRIX_TASK_ID: taskId, MATRIX_PROJECT_ID: context.project.id },
-          ...(body.harness ? { harness: body.harness } : {}),
-        }));
-        input = {
-          ref: `term.${workspaceId}.${tabId}`, kind: "terminal", title, startRequestId: requestId, prune,
-          ...(body.harness ? { harness: body.harness } : {}),
-        };
-      }
-      link = (await sessions.link(context.scope, taskId, input, caller.actor, "session_started")).row;
-    }
-
     const text = firstMessageText(view, body.message);
     let sent = false;
-    if (link.kind === "chat" && body.selection && principal) {
-      try {
-        chat ??= await createChat();
-        await this.options.ports.chats.admitFirstTurn({
-          principal, ownerScope: caller.ownerScope, chatId: link.session_ref, baseRevision: chat.revision,
-          clientRequestId: `req_turn_${seed.slice(0, 40)}`, text, selection: body.selection,
-          executionRoot: worktree
-            ? { kind: "worktree", projectId: context.project.id, worktreeId: worktree.id }
-            : { kind: "project", projectId: context.project.id },
-        });
-        sent = true;
-      } catch (error: unknown) {
-        // The session exists and is linked; the composer gets the text instead.
-        console.warn("[project-tasks] first turn not admitted", error instanceof Error ? error.name : typeof error);
+
+    if (body.kind === "chat") {
+      const chatId = row.chat_id!;
+      if (worktree) {
+        const bound = worktree;
+        await this.port(() => this.options.ports.chats.bindWorktree(caller.ownerScope, chatId, { projectId: context.project.id, worktreeId: bound.id }));
       }
+      if (body.selection && principal) {
+        try {
+          const revision = await this.port(() => this.options.ports.chats.revision(caller.ownerScope, chatId));
+          if (revision === null) throw new ProjectTaskError("task_session_unavailable");
+          await this.options.ports.chats.admitFirstTurn({
+            principal, ownerScope: caller.ownerScope, chatId, baseRevision: revision,
+            clientRequestId: `req_turn_${seed.slice(0, 40)}`, text, selection: body.selection,
+            executionRoot: worktree
+              ? { kind: "worktree", projectId: context.project.id, worktreeId: worktree.id }
+              : { kind: "project", projectId: context.project.id },
+          });
+          sent = true;
+        } catch (error: unknown) {
+          // The chat exists; the composer gets the text instead.
+          console.warn("[project-tasks] first turn not admitted", error instanceof Error ? error.name : typeof error);
+        }
+      }
+    } else if (!link) {
+      const { workspaceId } = await this.port(() => this.options.ports.terminals.ensureWorkspace(context.project.id));
+      const { tabId } = await this.port(() => this.options.ports.terminals.createTab({
+        workspaceId, tabId: `tt_${seed.slice(0, 32)}`, name: title, cwd,
+        env: { MATRIX_TASK_ID: taskId, MATRIX_PROJECT_ID: context.project.id },
+        ...(body.harness ? { harness: body.harness } : {}),
+      }));
+      const input: SessionLinkInput = {
+        ref: `term.${workspaceId}.${tabId}`, kind: "terminal", title, startRequestId: requestId, prune,
+        ...(body.harness ? { harness: body.harness } : {}),
+      };
+      link = (await sessions.link(context.scope, taskId, input, caller.actor, "session_started")).row;
     }
 
     if (context.board.automation.startMovesToInProgress ?? DEFAULT_AUTOMATION.startMovesToInProgress) {
@@ -153,26 +155,23 @@ export class ProjectTaskWork {
     }
     const task = await tasks.task(context, await tasks.requireRow(context, taskId));
     await tasks.signal("task.updated", context, task);
-    const session = task.sessions.find((candidate) => candidate.ref === link!.session_ref)
-      ?? toTaskSession(link, "idle");
+    const session: TaskSession | null = link
+      ? task.sessions.find((candidate) => candidate.ref === link!.session_ref) ?? toTaskSession(link, "idle")
+      : null;
     return { task, session, ...(sent ? {} : { firstMessage: text }) };
   }
 
+  /** Attach a terminal tab of the project; a task's chat is the task itself, so chats are never attached. */
   async attach(caller: TaskCaller, slug: string, taskId: string, ref: string): Promise<ProjectTask> {
     const context = await this.options.tasks.open(caller, slug);
     const view = await this.options.tasks.task(context, await this.options.tasks.requireRow(context, taskId));
     const prune = view.sessions.filter((session) => session.unavailable).map((session) => session.ref);
-    const parsed = parseRef(ref);
-    let title: string | undefined;
-    if (parsed.kind === "chat") {
-      const [chat] = await this.port(() => this.options.ports.chats.describe(caller.ownerScope, [parsed.chatId]));
-      if (chat?.projectId === context.project.id) title = chat.title;
-    } else {
-      const tabs = await this.port(() => this.options.ports.terminals.listForProject(context.project.id));
-      title = tabs.find((tab) => tab.workspaceId === parsed.workspaceId && tab.tabId === parsed.tabId)?.name;
-    }
+    const parsed = parseTerminalRef(ref);
+    if (!parsed) throw new ProjectTaskError("invalid_request");
+    const tabs = await this.port(() => this.options.ports.terminals.listForProject(context.project.id));
+    const title = tabs.find((tab) => tab.workspaceId === parsed.workspaceId && tab.tabId === parsed.tabId)?.name;
     if (!title) throw new ProjectTaskError("task_session_not_found");
-    await this.options.sessions.link(context.scope, taskId, { ref, kind: parsed.kind, title: title.slice(0, 200) || ref, prune }, caller.actor, "session_attached");
+    await this.options.sessions.link(context.scope, taskId, { ref, kind: "terminal", title: title.slice(0, 200) || ref, prune }, caller.actor, "session_attached");
     return this.changed(context, taskId);
   }
 
@@ -182,17 +181,12 @@ export class ProjectTaskWork {
     return this.changed(context, taskId);
   }
 
-  /** The project's chats and tabs that no task owns yet, newest chats first, at most 200. */
+  /** The project's terminal tabs that no task owns yet, at most 200. */
   async attachable(caller: TaskCaller, slug: string): Promise<AttachableSession[]> {
     const context = await this.options.tasks.open(caller, slug);
-    const [chats, tabs] = await Promise.all([
-      this.port(() => this.options.ports.chats.listForProject(caller.ownerScope, context.project.id, ATTACHABLE_MAX)),
-      this.port(() => this.options.ports.terminals.listForProject(context.project.id)),
-    ]);
-    const candidates: AttachableSession[] = [
-      ...chats.map((chat) => ({ ref: chat.id, kind: "chat" as const, title: chat.title.slice(0, 200) || "Chat" })),
-      ...tabs.map((tab) => ({ ref: `term.${tab.workspaceId}.${tab.tabId}`, kind: "terminal" as const, title: tab.name.slice(0, 200) || "Terminal" })),
-    ].slice(0, ATTACHABLE_MAX * 2);
+    const tabs = await this.port(() => this.options.ports.terminals.listForProject(context.project.id));
+    const candidates: AttachableSession[] = tabs.slice(0, ATTACHABLE_MAX * 2)
+      .map((tab) => ({ ref: `term.${tab.workspaceId}.${tab.tabId}`, kind: "terminal" as const, title: tab.name.slice(0, 200) || "Terminal" }));
     const bound = await this.options.sessions.boundRefs(context.scope, candidates.map((candidate) => candidate.ref));
     return candidates.filter((candidate) => !bound.has(candidate.ref)).slice(0, ATTACHABLE_MAX);
   }

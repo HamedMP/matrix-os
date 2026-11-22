@@ -6,6 +6,7 @@ import { createCanonicalChatService } from "../../../packages/gateway/src/chat/s
 import { createTaskSessionPorts } from "../../../packages/gateway/src/server/project-task-sessions.js";
 
 const OWNER = { type: "user" as const, id: "user_owner" };
+const CHAT_OWNER = { type: "personal" as const, ownerId: OWNER.id };
 
 describe("board chat port over the owner chat store", () => {
   let repository: ChatRepository;
@@ -15,14 +16,14 @@ describe("board chat port over the owner chat store", () => {
     repository = new ChatRepository((await createTestPGlite()).dialect);
     await repository.bootstrap();
     chats = createTaskSessionPorts({
-      homePath: "/home/owner",
-      projectManager: {} as never,
-      worktreeManager: {} as never,
-      chats: { service: createCanonicalChatService(repository), db: repository.kysely },
-      terminalRuntime: {} as never,
+      homePath: "/home/owner", projectManager: {} as never, worktreeManager: {} as never,
+      chats: { service: createCanonicalChatService(repository), repository }, terminalRuntime: {} as never,
     }).chats;
   });
   afterEach(async () => { await repository.kysely.destroy(); });
+
+  const createChat = (requestId: string, projectId = "proj_demo") =>
+    createCanonicalChatService(repository).create(CHAT_OWNER, { clientRequestId: requestId, title: "BD-1 Task", projectId });
 
   async function addRun(chatId: string, id: string, status: string, at: string) {
     await sql`INSERT INTO chat_messages (id, chat_id, seq, role, state, parts, byte_count, created_at)
@@ -35,27 +36,26 @@ describe("board chat port over the owner chat store", () => {
       ${status}, 0, '{}'::jsonb, ${at}, ${at})`.execute(repository.kysely);
   }
 
-  it("creates project chats idempotently and lists, describes and reads their latest run status", async () => {
-    const first = await chats.create(OWNER, { clientRequestId: "req_task_a", title: "BD-1 Task", projectId: "proj_demo" });
-    const again = await chats.create(OWNER, { clientRequestId: "req_task_a", title: "BD-1 Task", projectId: "proj_demo" });
-    expect(again.id).toBe(first.id);
-    const other = await chats.create(OWNER, { clientRequestId: "req_task_b", title: "Elsewhere", projectId: "proj_other" });
-
-    expect((await chats.listForProject(OWNER, "proj_demo", 10)).map((chat) => chat.id)).toEqual([first.id]);
-    expect(await chats.describe(OWNER, [first.id, "chat_missing"])).toEqual([{ id: first.id, title: "BD-1 Task", projectId: "proj_demo" }]);
-    expect(await chats.describe({ type: "user", id: "someone_else" }, [first.id])).toEqual([]);
-
-    await addRun(first.id, "a1", "completed", "2026-11-01T00:00:01.000Z");
-    await addRun(first.id, "a2", "waiting_for_input", "2026-11-01T00:00:02.000Z");
-    await addRun(other.id, "b1", "failed", "2026-11-01T00:00:03.000Z");
-    expect(await chats.statuses(OWNER, [first.id, other.id])).toEqual({ [first.id]: "blocked", [other.id]: "error" });
-    expect(await chats.statuses({ type: "user", id: "someone_else" }, [first.id])).toEqual({});
+  it("reads each chat's latest run status for the owner only", async () => {
+    const first = await createChat("req_task_a");
+    const other = await createChat("req_task_b", "proj_other");
+    await addRun(first.chat.id, "a1", "completed", "2026-11-01T00:00:01.000Z");
+    await addRun(first.chat.id, "a2", "waiting_for_input", "2026-11-01T00:00:02.000Z");
+    await addRun(other.chat.id, "b1", "failed", "2026-11-01T00:00:03.000Z");
+    expect(await chats.statuses(OWNER, [first.chat.id, other.chat.id])).toEqual({ [first.chat.id]: "blocked", [other.chat.id]: "error" });
+    expect(await chats.statuses({ type: "user", id: "someone_else" }, [first.chat.id])).toEqual({});
   });
 
-  it("binds the task worktree as the chat's default root so later turns without one stay in it", async () => {
-    const chat = await chats.create(OWNER, { clientRequestId: "req_task_wt", title: "BD-2 Task", projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
-    expect(await repository.getExecutionDefault({ type: "personal", ownerId: OWNER.id }, chat.id)).toEqual({ projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
-    const plain = await chats.create(OWNER, { clientRequestId: "req_task_plain", title: "BD-3 Task", projectId: "proj_demo" });
-    expect(await repository.getExecutionDefault({ type: "personal", ownerId: OWNER.id }, plain.id)).toBeNull();
+  it("binds the task worktree as the chat's default root and reads the chat revision", async () => {
+    const chat = await createChat("req_task_wt");
+    await chats.bindWorktree(OWNER, chat.chat.id, { projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
+    expect(await repository.getExecutionDefault(CHAT_OWNER, chat.chat.id)).toEqual({ projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
+    // A worktree for another project is never bound to this chat.
+    const elsewhere = await createChat("req_task_other", "proj_other");
+    await chats.bindWorktree(OWNER, elsewhere.chat.id, { projectId: "proj_demo", worktreeId: "wt_0123456789abcdef" });
+    expect(await repository.getExecutionDefault(CHAT_OWNER, elsewhere.chat.id)).toBeNull();
+
+    expect(await chats.revision(OWNER, chat.chat.id)).toBe(chat.chat.revision);
+    expect(await chats.revision({ type: "user", id: "someone_else" }, chat.chat.id)).toBeNull();
   });
 });

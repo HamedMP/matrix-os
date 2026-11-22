@@ -103,7 +103,7 @@ export class ProjectTaskSessionRepository {
       }).returningAll().executeTakeFirstOrThrow();
       await this.touch(trx, scope, taskId, at);
       await this.log(trx, scope, taskId, actor, kind,
-        `${kind === "session_started" ? "Started" : "Attached"} ${input.kind === "chat" ? "a chat" : "a terminal"}: ${clip(input.title, 200)}`, at);
+        `${kind === "session_started" ? "Started" : "Attached"} a terminal: ${clip(input.title, 200)}`, at);
       return { row, created: true };
     });
   }

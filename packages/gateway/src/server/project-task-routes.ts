@@ -53,7 +53,7 @@ export function registerProjectTaskRoutes(options: {
         ...(options.chatOrchestrator ? { orchestrator: options.chatOrchestrator } : {}),
         ...(options.chatExecutionRoots ? { executionRoots: options.chatExecutionRoots } : {}),
       }),
-      db: options.chatRepository.kysely,
+      repository: options.chatRepository,
     } : null,
     terminalRuntime: options.terminalRuntime,
   });
@@ -81,7 +81,8 @@ export function registerProjectTaskRoutes(options: {
       payload: { revision: event.revision },
     }),
     ...(sessions ? { sessions } : {}),
-    agentStatus: { chats: ports.chats, terminals: ports.terminals },
+    ...(options.chatRepository ? { chats: ports.chats } : {}),
+    agentStatus: { terminals: ports.terminals },
   }) : null;
   const work = service && sessions ? new ProjectTaskWork({ tasks: service, sessions, ports }) : null;
   options.app.route("/", createProjectTaskRoutes({

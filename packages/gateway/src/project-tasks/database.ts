@@ -28,6 +28,7 @@ export interface ProjectTaskDatabase {
     next_number: Revision;
     automation: Json<BoardAutomationColumn>;
     legacy_import_at: NullableTimestamp;
+    chats_linked_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
     created_at: Timestamp;
     updated_at: Timestamp;
   };
@@ -54,6 +55,7 @@ export interface ProjectTaskDatabase {
     pr_url: ColumnType<string | null, string | null | undefined, string | null>;
     pr_refreshed_at: NullableTimestamp;
     legacy_session_id: string | null;
+    chat_id: ColumnType<string | null, string | null | undefined, string | null>;
     comment_count: Revision;
     created_by: string;
     created_at: Timestamp;
@@ -270,6 +272,29 @@ async function migrateTaskSessionsV3(trx: ProjectTaskTrx): Promise<void> {
   `).execute(trx);
 }
 
+/**
+ * Every task is a chat (spec 2699 amendment): each task links its one chat, a
+ * chat links at most one task, and task sessions hold terminals only. A task's
+ * first chat link (from earlier previews) becomes its chat.
+ */
+async function migrateTaskChatsV4(trx: ProjectTaskTrx): Promise<void> {
+  const statements = [
+    `ALTER TABLE project_tasks ADD COLUMN chat_id TEXT CHECK (chat_id ~ '^chat_[A-Za-z0-9_-]{1,128}$')`,
+    `ALTER TABLE project_board_settings ADD COLUMN chats_linked_at TIMESTAMPTZ`,
+    `UPDATE project_tasks AS task SET chat_id = link.session_ref
+    FROM (
+      SELECT DISTINCT ON (owner_id, task_id) owner_id, task_id, session_ref
+      FROM project_task_sessions WHERE kind = 'chat'
+      ORDER BY owner_id, task_id, (role = 'main') DESC, created_at ASC, session_ref ASC
+    ) AS link
+    WHERE task.owner_id = link.owner_id AND task.id = link.task_id AND task.chat_id IS NULL`,
+    `DELETE FROM project_task_sessions WHERE kind = 'chat'`,
+    `ALTER TABLE project_task_sessions ADD CONSTRAINT project_task_sessions_terminal_only CHECK (kind = 'terminal')`,
+    `CREATE UNIQUE INDEX idx_project_tasks_chat ON project_tasks(owner_id, chat_id) WHERE chat_id IS NOT NULL`,
+  ];
+  for (const statement of statements) await sql.raw(statement).execute(trx);
+}
+
 export interface ProjectTaskMigration {
   readonly version: number;
   readonly name: string;
@@ -281,6 +306,7 @@ export const PROJECT_TASK_MIGRATIONS: ProjectTaskMigration[] = [
   { version: 1, name: "project_tasks", up: migrateProjectTasksV1 },
   { version: 2, name: "task_comments_relations", up: migrateTaskCommentsV2 },
   { version: 3, name: "task_sessions_pull_requests", up: migrateTaskSessionsV3 },
+  { version: 4, name: "task_chats", up: migrateTaskChatsV4 },
 ];
 
 export class ProjectTaskSchemaError extends Error {

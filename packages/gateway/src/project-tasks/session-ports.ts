@@ -41,15 +41,11 @@ export interface GitPort {
   summary(input: { cwd: string; defaultBranch: string }): Promise<GitSummary>;
 }
 
-export interface ProjectChat {
-  id: string;
-  title: string;
-  projectId: string | null;
-}
-
 export interface ChatPort {
-  /** `worktreeId` becomes the chat's default root, so turns without one (the composer) still run in the task worktree. */
-  create(ownerScope: OwnerScope, input: { clientRequestId: string; title: string; projectId: string; worktreeId?: string }): Promise<{ id: string; revision: number }>;
+  /** Make a worktree the chat's default root, so turns without one (the composer) run in it. */
+  bindWorktree(ownerScope: OwnerScope, chatId: string, input: { projectId: string; worktreeId: string }): Promise<void>;
+  /** The chat's current revision, or null when the owner has no such chat. */
+  revision(ownerScope: OwnerScope, chatId: string): Promise<number | null>;
   /** Admit the chat's first turn; idempotent on `clientRequestId`. */
   admitFirstTurn(input: {
     principal: RequestPrincipal;
@@ -61,9 +57,6 @@ export interface ChatPort {
     selection: CanonicalChatModelSelection;
     executionRoot: { kind: "project"; projectId: string } | { kind: "worktree"; projectId: string; worktreeId: string };
   }): Promise<void>;
-  /** The owner's chats among `chatIds`; unknown or foreign ids are left out. */
-  describe(ownerScope: OwnerScope, chatIds: readonly string[]): Promise<ProjectChat[]>;
-  listForProject(ownerScope: OwnerScope, projectId: string, limit: number): Promise<ProjectChat[]>;
   /** Agent status from each chat's latest run, one query for all ids. */
   statuses(ownerScope: OwnerScope, chatIds: readonly string[]): Promise<Record<string, TaskAgentStatus>>;
 }

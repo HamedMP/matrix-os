@@ -7,11 +7,12 @@
 import { execFile } from "node:child_process";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { sql, type Kysely } from "kysely";
+import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { CanonicalOwnerScope, TerminalWorkspace } from "@matrix-os/contracts";
 import { ProjectIdSchema, TaskIdSchema, type TaskAgentStatus, type TaskPullRequest } from "@matrix-os/contracts/project-tasks";
-import type { ChatDatabase } from "../chat/database.js";
+import { writeChatExecutionDefault } from "../chat/execution-defaults.js";
+import type { ChatRepository } from "../chat/repository.js";
 import type { CanonicalChatRouteService } from "../chat/routes.js";
 import { githubOwnerEnvironment } from "../github-owner-environment.js";
 import type { createProjectManager } from "../project-manager.js";
@@ -120,8 +121,8 @@ export interface TaskSessionPortOptions {
   homePath: string;
   projectManager: Pick<ReturnType<typeof createProjectManager>, "resolveProjectWorkingDirectory" | "getCodeMetadata">;
   worktreeManager: Pick<ReturnType<typeof createWorktreeManager>, "createWorktree" | "getWorktree">;
-  /** The canonical chat service and the owner chat database; null without the owner database. */
-  chats: { service: Pick<CanonicalChatRouteService, "create" | "admitTurn">; db: Kysely<ChatDatabase> } | null;
+  /** The canonical chat service and the owner chat repository; null without the owner database. */
+  chats: { service: Pick<CanonicalChatRouteService, "admitTurn">; repository: ChatRepository } | null;
   terminalRuntime: TerminalRuntime;
   runCommand?: TaskCommandRunner;
 }
@@ -219,16 +220,22 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
   };
 
   const chatsUnavailable = () => new TaskPortUnavailableError("chats", "owner_database_unavailable");
+  const requireChats = () => {
+    if (!options.chats) throw chatsUnavailable();
+    return options.chats;
+  };
   const chats: ChatPort = {
-    async create(ownerScope, input) {
-      if (!options.chats) throw chatsUnavailable();
-      const { worktreeId, ...request } = input;
-      const record = await options.chats.service.create(chatOwner(ownerScope), request, worktreeId ? { defaultWorktreeId: worktreeId } : undefined);
-      return { id: record.chat.id, revision: record.chat.revision };
+    async bindWorktree(ownerScope, chatId, input) {
+      await writeChatExecutionDefault(requireChats().repository.kysely, chatOwner(ownerScope), chatId, input);
+    },
+    async revision(ownerScope, chatId) {
+      const owner = chatOwner(ownerScope);
+      const row = await requireChats().repository.kysely.selectFrom("chats").select("revision")
+        .where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).executeTakeFirst();
+      return row ? Number(row.revision) : null;
     },
     async admitFirstTurn(input) {
-      if (!options.chats) throw chatsUnavailable();
-      await options.chats.service.admitTurn(input.principal, chatOwner(input.ownerScope), input.chatId, {
+      await requireChats().service.admitTurn(input.principal, chatOwner(input.ownerScope), input.chatId, {
         clientRequestId: input.clientRequestId,
         baseRevision: input.baseRevision,
         parts: [{ type: "text", text: input.text }],
@@ -238,28 +245,10 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
         executionRoot: input.executionRoot,
       });
     },
-    async describe(ownerScope, chatIds) {
-      if (!options.chats) throw chatsUnavailable();
-      if (chatIds.length === 0) return [];
-      const owner = chatOwner(ownerScope);
-      const rows = await options.chats.db.selectFrom("chats").select(["id", "title", "project_id"])
-        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
-        .where("lifecycle", "=", "active").where("id", "in", [...chatIds]).limit(chatIds.length).execute();
-      return rows.map((row) => ({ id: row.id, title: row.title, projectId: row.project_id }));
-    },
-    async listForProject(ownerScope, projectId, limit) {
-      if (!options.chats) throw chatsUnavailable();
-      const owner = chatOwner(ownerScope);
-      const rows = await options.chats.db.selectFrom("chats").select(["id", "title", "project_id"])
-        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
-        .where("lifecycle", "=", "active").where("project_id", "=", projectId)
-        .orderBy("activity_at", "desc").orderBy("id", "desc").limit(limit).execute();
-      return rows.map((row) => ({ id: row.id, title: row.title, projectId: row.project_id }));
-    },
     async statuses(ownerScope, chatIds) {
       if (!options.chats || chatIds.length === 0) return {};
       const owner = chatOwner(ownerScope);
-      const rows = await options.chats.db.selectFrom("chat_runs as run")
+      const rows = await options.chats.repository.kysely.selectFrom("chat_runs as run")
         .innerJoin("chats as chat", "chat.id", "run.chat_id")
         .select(["run.chat_id", "run.status"])
         .distinctOn("run.chat_id")
