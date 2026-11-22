@@ -19,8 +19,8 @@ const deny = (): never => { throw new GoogleRunPinError(); };
 const normalized = (value: GoogleRunPinInput): GoogleRunPinInput => ({ ...value, originIds: [...value.originIds].sort(),
   stamps: [...value.stamps].sort((a, b) => JSON.stringify([a.googleAccountId, a.purposeId]).localeCompare(JSON.stringify([b.googleAccountId, b.purposeId]))) });
 
-/** Durable identity latch, NEVER an approval cache. Host registry guarantees a fresh run/generation
- * after at most 20 minutes; policy expiry never removes a latch early and permits silent replacement.
+/** Durable identity latch, NEVER an approval cache. Runtime authority applies retireAt as a
+ * nonrenewable registry deadline before dispatch; cleanup cannot leave the same run authorized.
  * Host owns migration/startCleanup/close ordering and bounded acquisition of the injected pool. Close
  * stops admission and drains all accepted SQL work and its sweep; it never destroys the host pool.
  * A fixed 64-operation ledger bounds accepted in-flight work. No content or credentials. */

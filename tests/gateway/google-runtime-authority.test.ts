@@ -63,11 +63,14 @@ suite('composed runtime Google context inference authority', () => {
   const request = (phase: 'dispatch' | 'release' = 'dispatch', value = binding()) => ({ phase, binding: value, identity: identity(), signal: new AbortController().signal });
   it('preserves ordinary runs without latching non-Google classification, then admits later explicit taint', async () => {
     const authorize = vi.spyOn(client, 'authorize');
+    const deadline = vi.spyOn(registry, 'limitLifetime');
     expect(await authority().authorize(request())).toEqual({ allowed: true, googleOrigin: false });
     expect(await pins.get(binding())).toBeNull(); expect(authorize).not.toHaveBeenCalled();
     await mark(); await target();
     expect(await authority().authorize(request())).toEqual({ allowed: true, googleOrigin: true });
-    expect(await pins.get(binding())).not.toBeNull();
+    const pin = await pins.get(binding());
+    expect(pin).not.toBeNull();
+    expect(deadline).toHaveBeenCalledWith(binding(), Date.parse(pin!.retireAt));
   });
   it('does not release an ordinary decision if collection taints the context during a pin lookup', async () => {
     const actual = pins.get.bind(pins);

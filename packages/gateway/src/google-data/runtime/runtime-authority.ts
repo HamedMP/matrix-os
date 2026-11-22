@@ -10,7 +10,7 @@ import type { GoogleDataInferenceAuthority } from './inference-policy.js';
 import { GoogleRunPinError, type GoogleRunPinKey, type GoogleRunPinStore } from './run-pins.js';
 
 interface Dependencies {
-  registry: Pick<BotRuntimeRegistry, 'lookupRun' | 'inferenceSignal'>;
+  registry: Pick<BotRuntimeRegistry, 'lookupRun' | 'inferenceSignal' | 'limitLifetime'>;
   contexts: Pick<GoogleContextStore, 'inspect'>;
   pins: Pick<GoogleRunPinStore, 'get' | 'latch'>;
   policyClient: Pick<ReturnType<typeof createGooglePlatformPolicyClient>, 'authorize' | 'revalidate'>;
@@ -29,7 +29,7 @@ const sourceIds = (context: GoogleContext) => context.sources.map(source => sour
  * a separate explicit collection-admission operation; this unit denies that change by default.
  * A new run may use fresh target-route consent for retained lineage, never revive expired/purged sources. */
 export function createGoogleRuntimeInferenceAuthority(deps: Dependencies): GoogleDataInferenceAuthority {
-  if (![deps.registry?.lookupRun, deps.registry?.inferenceSignal, deps.contexts?.inspect, deps.pins?.get,
+  if (![deps.registry?.lookupRun, deps.registry?.inferenceSignal, deps.registry?.limitLifetime, deps.contexts?.inspect, deps.pins?.get,
     deps.pins?.latch, deps.policyClient?.authorize, deps.policyClient?.revalidate].every(value => typeof value === 'function')) deny();
   const now = deps.now ?? (() => new Date());
   return {
@@ -90,6 +90,7 @@ export function createGoogleRuntimeInferenceAuthority(deps: Dependencies): Googl
           await sameContext();
           pin = await checked(() => deps.pins.latch({ ...key, identityDigest, originIds: origins, stamps }));
         }
+        if (!deps.registry.limitLifetime(binding, Date.parse(pin.retireAt))) deny();
         if (pin.identityDigest !== identityDigest || !isDeepStrictEqual(pin.originIds, origins)
           || Date.parse(pin.expiresAt) <= now().getTime() || Date.parse(pin.retireAt) <= now().getTime()
           || pin.stamps.length !== pairs.length) deny();
