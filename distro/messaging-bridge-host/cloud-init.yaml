@@ -1,0 +1,103 @@
+#cloud-config
+# Matrix OS shared messaging bridge host (spec 2701, ENG-535).
+#
+# For a fresh Hetzner Cloud server running Ubuntu 24.04 LTS. Installs Docker,
+# a firewall that allows only SSH, HTTP and HTTPS, unattended security
+# upgrades and SSH key-only login. It contains no secrets and does not run
+# bootstrap: the operator places the bundle and runs bootstrap by hand (see
+# README.md, "Provision").
+#
+# Add your SSH key through Hetzner (--ssh-key), not in this file.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  - ufw
+  - unattended-upgrades
+  - fail2ban
+  - git
+  - curl
+  - openssl
+  - python3
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-matrix-bridge-host.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+      X11Forwarding no
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/apt/apt.conf.d/52matrix-bridge-host-upgrades
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "20m", "max-file": "5" },
+        "live-restore": true,
+        "userland-proxy": false,
+        "no-new-privileges": true
+      }
+
+  - path: /usr/local/sbin/matrix-bridge-host-fetch
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Usage: matrix-bridge-host-fetch <40-character commit SHA>
+      # Places distro/messaging-bridge-host from that exact commit in
+      # /opt/matrix-bridge-host and installs the backup timer. It never
+      # touches /var/lib/matrix-bridge-host.
+      set -eu
+      set -o pipefail
+      umask 022
+      sha="${1:-}"
+      repo="${MBH_REPO_URL:-https://github.com/hamedmp/matrix-os.git}"
+      [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-character commit sha>" >&2; exit 2; }
+      work="$(mktemp -d)"
+      trap 'rm -rf -- "$work"' EXIT
+      git -C "$work" init -q
+      git -C "$work" remote add origin "$repo"
+      git -C "$work" sparse-checkout set distro/messaging-bridge-host
+      git -C "$work" fetch -q --depth 1 --filter=blob:none origin "$sha"
+      git -C "$work" checkout -q FETCH_HEAD
+      install -d -m 0755 /opt/matrix-bridge-host
+      cp -R "$work/distro/messaging-bridge-host/." /opt/matrix-bridge-host/
+      printf '%s\n' "$sha" > /opt/matrix-bridge-host/BUNDLE_COMMIT
+      install -m 0644 /opt/matrix-bridge-host/systemd/matrix-bridge-host-backup.service /etc/systemd/system/
+      install -m 0644 /opt/matrix-bridge-host/systemd/matrix-bridge-host-backup.timer /etc/systemd/system/
+      systemctl daemon-reload
+      systemctl enable --now matrix-bridge-host-backup.timer
+      echo "bundle $sha placed in /opt/matrix-bridge-host"
+
+runcmd:
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl enable --now docker
+  - systemctl enable --now unattended-upgrades
+  - systemctl enable --now fail2ban
+  - systemctl restart ssh
+  - install -d -m 0700 -o root -g root /var/lib/matrix-bridge-host
+  - install -d -m 0700 -o root -g root /var/backups/matrix-bridge-host
+  - install -d -m 0755 -o root -g root /opt/matrix-bridge-host
