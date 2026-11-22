@@ -1,6 +1,6 @@
-import { randomUUID } from "@matrix-os/ui/random-uuid";
-import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
+import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { createCanonicalChatRowActions } from "@/lib/canonical-chat-client";
 import { browserPermissionRequest, canonicalChatFileScope, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
