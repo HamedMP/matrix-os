@@ -160,7 +160,7 @@ describe('managed feature resume trigger', () => {
   it('runs one targeted activation per handle at a time and logs failures by name', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const activate = vi.fn(async () => {
+    const activate = vi.fn(async (_target: { handle?: string; signal?: AbortSignal }) => {
       await gate;
       return { activated: 1, failed: 0, complete: true, nextCursor: null };
     });
@@ -168,7 +168,7 @@ describe('managed feature resume trigger', () => {
     trigger({ handle: 'alice' });
     trigger({ handle: 'alice' });
     trigger({ handle: 'bob' });
-    expect(activate.mock.calls.map(([target]) => target)).toEqual([{ handle: 'alice' }, { handle: 'bob' }]);
+    expect(activate.mock.calls.map(([target]) => (target as { handle?: string }).handle)).toEqual(['alice', 'bob']);
     release();
     await vi.waitFor(() => expect(trigger.inFlight()).toBe(0));
 
@@ -178,6 +178,43 @@ describe('managed feature resume trigger', () => {
       failing({ handle: 'alice' });
       await vi.waitFor(() => expect(warn).toHaveBeenCalledWith('[managed-features] resume activation failed', 'TypeError'));
       expect(JSON.stringify(warn.mock.calls)).not.toContain('secret detail');
+    } finally { warn.mockRestore(); }
+  });
+
+  it('after stop() a new trigger is a no-op, stop aborts in-flight work, and drain() waits for it', async () => {
+    let finished = false;
+    const signals: AbortSignal[] = [];
+    const activate = vi.fn((target: { handle?: string; signal?: AbortSignal }) => {
+      signals.push(target.signal!);
+      return new Promise<{ activated: number; failed: number; complete: boolean; nextCursor: null }>((resolve) => {
+        target.signal!.addEventListener('abort', () => {
+          setTimeout(() => { finished = true; resolve({ activated: 0, failed: 1, complete: true, nextCursor: null }); }, 20);
+        }, { once: true });
+      });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const trigger = createManagedFeatureResumeTrigger(activate);
+      trigger({ handle: 'alice' });
+      expect(signals[0]?.aborted).toBe(false);
+      trigger.stop();
+      expect(signals[0]?.aborted).toBe(true);
+      trigger({ handle: 'bob' });
+      expect(activate).toHaveBeenCalledTimes(1);
+      expect(finished).toBe(false);
+      await trigger.drain();
+      expect(finished).toBe(true);
+      expect(trigger.inFlight()).toBe(0);
+    } finally { warn.mockRestore(); }
+  });
+
+  it('logs a triggered activation that reports failures with the handle and counts only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const trigger = createManagedFeatureResumeTrigger(vi.fn(async () => ({ activated: 0, failed: 1, complete: true, nextCursor: null })));
+      trigger({ handle: 'alice' });
+      await trigger.drain();
+      expect(warn).toHaveBeenCalledWith('[managed-features] resume activation deferred', { handle: 'alice', activated: 0, failed: 1 });
     } finally { warn.mockRestore(); }
   });
 

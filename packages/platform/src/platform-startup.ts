@@ -908,7 +908,9 @@ async function startPlatformServerWithCleanup(
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
-  // Bound below once the activator exists; a metal wake before then is covered by the periodic pass.
+  // Bound below when the activator is built, before any wake source starts (the HTTP server
+  // and the metal sleeper both start later). With customer VPS off there is no activator and
+  // the hook stays a no-op.
   let activateResumedRuntime: ManagedFeatureResumeTrigger | undefined;
   // Built before the activator, which reaches metal runtimes through their host ingress.
   const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
@@ -925,6 +927,7 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => [
     customerVpsReconciliationWorker,
     managedFeatureReconciliationWorker,
+    activateResumedRuntime,
     {
       stop() { goldenSnapshotStopped = true; if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval); },
       drain: () => goldenSnapshotPromise ?? Promise.resolve(),
@@ -1269,6 +1272,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
+    activateResumedRuntime?.stop();
     metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
@@ -1297,6 +1301,7 @@ async function startPlatformServerWithCleanup(
         await customerVpsReconciliationWorker?.drain();
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
+        await activateResumedRuntime?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         // Drain the metal maintenance pass (DB writes, hostd deletes) and sleeper tick before the pool closes.
         await metalShutdown;

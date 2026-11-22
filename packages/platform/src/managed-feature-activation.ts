@@ -12,7 +12,11 @@ import { applyUpstreamCredentials, needsVerifiedTransport, verifiedDispatcher } 
 
 const FUNDED_CONFIG_PATH = '/api/internal/platform-funded-ai/config';
 
-export interface ManagedFeatureActivationTarget { handle?: string; afterMachineId?: string }
+export interface ManagedFeatureActivationTarget {
+  handle?: string; afterMachineId?: string;
+  /** Aborts the page early (shutdown of an in-process caller); the page timeout still applies. */
+  signal?: AbortSignal;
+}
 export interface ManagedFeatureActivationPage { activated: number; failed: number; complete: boolean; nextCursor: string | null }
 export type ManagedFeatureActivator = (target: ManagedFeatureActivationTarget) => Promise<ManagedFeatureActivationPage>;
 
@@ -112,12 +116,15 @@ export function createManagedFeatureActivator(options: {
     }
     return 'failed';
   }
-  return async target => {
+  return async ({ signal: callerSignal, ...target }) => {
     if (!options.fundedAiEnabled && !options.speechEnabled) return { activated: 0, failed: 0, complete: true, nextCursor: null };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new DOMException('Activation page timed out', 'TimeoutError')), pageTimeoutMs);
     timer.unref();
     const signal = controller.signal;
+    const onCallerAbort = () => controller.abort(callerSignal?.reason);
+    if (callerSignal?.aborted) onCallerAbort();
+    else callerSignal?.addEventListener('abort', onCallerAbort, { once: true });
     try {
       const pages = iterateRunningUserMachinePages(options.db, pageSize, { ...target, provisioningClass: 'customer', activationState: 'authorized' });
       const first = await pages.next();
@@ -156,7 +163,10 @@ export function createManagedFeatureActivator(options: {
       return { activated: results.filter(result => result.activated).length,
         failed: results.filter(result => result.failed).length,
         complete, nextCursor: complete ? null : machines.at(-1)!.machineId };
-    } finally { clearTimeout(timer); }
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
+    }
   };
 }
 
@@ -174,6 +184,10 @@ export interface ManagedFeatureResumeTrigger {
   (machine: { handle: string }): void;
   /** Targeted activations still running (for tests and shutdown visibility). */
   inFlight(): number;
+  /** Rejects new triggers and aborts in-flight activations. */
+  stop(): void;
+  /** Resolves once every in-flight activation has settled. */
+  drain(): Promise<void>;
 }
 
 /**
@@ -181,25 +195,35 @@ export interface ManagedFeatureResumeTrigger {
  * of waiting for the paged periodic pass to come round. Fire-and-forget: one
  * activation per handle at a time, at most `maxInFlight` in total (extra
  * resumes are left to the periodic pass), and failures logged by name only.
+ * Shutdown calls stop() (no new work, in-flight pages aborted) then drain().
  */
 export function createManagedFeatureResumeTrigger(activate: ManagedFeatureActivator,
   limits: { maxInFlight?: number } = {}): ManagedFeatureResumeTrigger {
   const maxInFlight = limits.maxInFlight ?? 32;
-  const running = new Set<string>();
+  // Keyed by handle; bounded by maxInFlight, entries remove themselves when settled.
+  const running = new Map<string, Promise<void>>();
+  const stopping = new AbortController();
   const trigger = ((machine: { handle: string }) => {
-    if (running.has(machine.handle)) return;
+    if (stopping.signal.aborted || running.has(machine.handle)) return;
     if (running.size >= maxInFlight) {
       console.warn('[managed-features] resume activation deferred to the periodic pass');
       return;
     }
-    running.add(machine.handle);
-    let pending: Promise<unknown>;
-    try { pending = activate({ handle: machine.handle }); }
+    let pending: Promise<ManagedFeatureActivationPage>;
+    try { pending = activate({ handle: machine.handle, signal: stopping.signal }); }
     catch (error: unknown) { pending = Promise.reject(error); }
-    pending.catch((error: unknown) => {
+    const settled = pending.then((result) => {
+      if (result.failed > 0) {
+        console.warn('[managed-features] resume activation deferred',
+          { handle: machine.handle, activated: result.activated, failed: result.failed });
+      }
+    }, (error: unknown) => {
       console.warn('[managed-features] resume activation failed', error instanceof Error ? error.name : 'UnknownError');
     }).finally(() => { running.delete(machine.handle); });
+    running.set(machine.handle, settled);
   }) as ManagedFeatureResumeTrigger;
   trigger.inFlight = () => running.size;
+  trigger.stop = () => { stopping.abort(new DOMException('Platform shutting down', 'AbortError')); };
+  trigger.drain = async () => { await Promise.allSettled([...running.values()]); };
   return trigger;
 }

@@ -96,4 +96,15 @@ describe('platform substrate registration', () => {
     const lookup = registry.get('metal');
     expect(lookup.ok && lookup.substrate.kind).toBe('metal');
   });
+
+  it('the metal resume hook reaches the caller (managed-feature resume trigger)', () => {
+    const resumed: string[] = [];
+    const registry = createPlatformSubstrateRegistry(db, COMPLETE, { onMetalResumed: (ref) => { resumed.push(ref.handle); } });
+    const lookup = registry.get('metal');
+    if (!lookup.ok) throw new Error('metal substrate missing');
+    lookup.substrate.onResumed?.({ machineId: 'm-1', handle: 'alice', runtimeSlot: 'primary', generation: 1 });
+    expect(resumed).toEqual(['alice']);
+    const vps = registry.get('vps');
+    expect(vps.ok && vps.substrate.onResumed).toBeUndefined();
+  });
 });
