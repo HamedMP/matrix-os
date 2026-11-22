@@ -33,9 +33,11 @@ const ASLEEP: ReadonlySet<VmState> = new Set<VmState>(["suspended", "suspending"
 const STATE_RANK: Record<VmState, number> = {
   running: 0,
   resuming: 1,
-  suspending: 2,
-  suspended: 3,
-  creating: 4,
+  // A VM being created is the platform's intended successor: it answers
+  // runtime_unavailable, so an old suspended sibling is never woken.
+  creating: 2,
+  suspending: 3,
+  suspended: 4,
   stopped: 5,
   failed: 6,
 };
@@ -229,6 +231,8 @@ export function createIngress(deps: IngressDeps): Ingress {
   let builtAt = 0;
   let dirty = true;
   let building: Promise<void> | null = null;
+  // Duplicate tuples logged by the last rebuild; at most MAX_INDEXED_HANDLES.
+  let loggedDuplicates = new Set<string>();
 
   async function rebuild(): Promise<void> {
     dirty = false;
@@ -236,6 +240,7 @@ export function createIngress(deps: IngressDeps): Ingress {
     try {
       const records = await deps.store.list();
       let capped = false;
+      const dropped: Array<{ handle: string; id: string }> = [];
       for (const record of records) {
         const handle = record.handle.toLowerCase();
         const current = chosen.get(handle);
@@ -251,9 +256,19 @@ export function createIngress(deps: IngressDeps): Ingress {
         }
         const keep = preferVm(record, current) ? record : current;
         const drop = keep === record ? current : record;
-        log("ingress.duplicate_handle", { handle, kept: keep.id, dropped: drop.id });
+        dropped.push({ handle, id: drop.id });
         chosen.set(handle, keep);
       }
+      // Log each (handle, kept, dropped) once while it persists, not on every rebuild.
+      const seen = new Set<string>();
+      for (const d of dropped) {
+        const kept = chosen.get(d.handle)!.id;
+        if (kept === d.id) continue;
+        const key = `${d.handle} ${kept} ${d.id}`;
+        if (!loggedDuplicates.has(key)) log("ingress.duplicate_handle", { handle: d.handle, kept, dropped: d.id });
+        if (seen.size < MAX_INDEXED_HANDLES) seen.add(key);
+      }
+      loggedDuplicates = seen;
       const next = new Map<string, IndexEntry>();
       for (const [handle, c] of chosen) next.set(handle, { id: c.id, state: c.state, privateIPv4: c.privateIPv4 });
       index = next;

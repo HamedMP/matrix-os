@@ -665,6 +665,19 @@ describe("host ingress with several VMs sharing one handle", () => {
     expect(duplicates().map((d) => d.kept)).toEqual([NEW, NEW]);
   });
 
+  it("prefers a replacement being created over an old suspended VM, so the old machine is never woken", async () => {
+    for (const state of ["suspended", "suspending"] as VmState[]) {
+      if (ingress) await ingress.close();
+      const old = record({ id: OLD, machineId: "machine-old", state, updatedAt: "2026-11-22T00:00:00.000Z" });
+      const creating = record({ id: NEW, machineId: "machine-new", state: "creating", updatedAt: "2026-11-20T00:00:00.000Z" });
+      await startWith([old, creating]);
+      const reply = await send(authed());
+      expect(reply.status).toBe(503);
+      expect(JSON.parse(reply.body)).toEqual({ error: "runtime_unavailable" });
+      expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
+    }
+  });
+
   it("leaves a single record per handle unchanged and logs no duplicate", async () => {
     await startWith([runningNew(), record({ id: OLD, handle: "bob", state: "stopped" })]);
     expect((await send(authed())).status).toBe(200);
