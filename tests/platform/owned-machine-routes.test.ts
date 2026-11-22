@@ -266,4 +266,18 @@ describe('owned machine enrollment and machine routes', () => {
     expect(page).not.toContain('<script>alert');
     expect(page).toContain('value=""');
   });
+
+  it('resumes the orphan scan where the last pass stopped', async () => {
+    const pages: number[] = [];
+    const client = fakeCloudflare().client;
+    client.listTunnelsPage = async (page) => {
+      pages.push(page);
+      return Array.from({ length: 50 }, (_, i) => ({ id: `00000000-0000-4000-8000-${String(page * 100 + i).padStart(12, '0')}`, name: 'other', createdAt: new Date(0) }));
+    };
+    const deps = { db, cloudflare: client, hostSuffix: 'example.com', ingressService: CONFIG.ingressService, now };
+    const next = await runOwnedTunnelReconcilePass(deps);
+    expect(next).toBe(21);
+    expect(await runOwnedTunnelReconcilePass(deps, next)).toBe(41);
+    expect(pages[20]).toBe(21);
+  });
 });

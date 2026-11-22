@@ -113,8 +113,10 @@ export async function runOwnedTunnelWorkPass(deps: OwnedTunnelWorkerDeps): Promi
 /**
  * Hourly: reclaim tunnels of machines offline past the window, purge old
  * enrollment codes, and delete provider tunnels no live link references.
+ * The orphan scan is bounded per pass and resumes at `startPage`; it returns
+ * the page the next pass starts at (1 after a full sweep).
  */
-export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps): Promise<void> {
+export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps, startPage = 1): Promise<number> {
   const now = deps.now?.() ?? new Date();
   await queueStaleOwnedTunnelReclaim(deps.db, {
     offlineBefore: new Date(now.getTime() - OWNED_TUNNEL_RECLAIM_AFTER_MS), now, limit: 100,
@@ -122,7 +124,7 @@ export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps): 
   await lapseUndeliveredOwnedEnrollments(deps.db, now, 100);
   await purgeExpiredOwnedEnrollments(deps.db, new Date(now.getTime() - 2 * 86_400_000), 500);
   const namePrefix = ownedTunnelNamePrefix(deps.hostPrefix);
-  for (let page = 1; page <= ORPHAN_SCAN_PAGES; page += 1) {
+  for (let page = startPage; page < startPage + ORPHAN_SCAN_PAGES; page += 1) {
     const tunnels = await deps.cloudflare.listTunnelsPage(page, ORPHAN_PAGE_SIZE);
     for (const tunnel of tunnels) {
       if (!tunnel.name.startsWith(namePrefix)) continue;
@@ -139,8 +141,9 @@ export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps): 
         deps.log?.(`[owned-machines] orphan tunnel delete failed (${describe(err)})`, err);
       }
     }
-    if (tunnels.length < ORPHAN_PAGE_SIZE) break;
+    if (tunnels.length < ORPHAN_PAGE_SIZE) return 1;
   }
+  return startPage + ORPHAN_SCAN_PAGES;
 }
 
 export interface OwnedTunnelWorker {
@@ -154,15 +157,30 @@ export function startOwnedTunnelWorker(deps: OwnedTunnelWorkerDeps & {
 }): OwnedTunnelWorker {
   let stopped = false;
   let running: Promise<unknown> | undefined;
+  // A due cleanup is remembered and runs right after the current pass, so
+  // frequent tunnel work can never starve it.
+  let reconcileDue = false;
+  let nextOrphanPage = 1;
+  const reconcilePass = async () => { nextOrphanPage = await runOwnedTunnelReconcilePass(deps, nextOrphanPage); };
   const run = (pass: () => Promise<unknown>, label: string) => {
     if (stopped || running) return;
     const current = pass()
       .catch((err: unknown) => deps.log?.(`[owned-machines] ${label} pass failed (${describe(err)})`, err))
-      .finally(() => { if (running === current) running = undefined; });
+      .finally(() => {
+        if (running !== current) return;
+        running = undefined;
+        if (reconcileDue && !stopped) {
+          reconcileDue = false;
+          run(reconcilePass, 'reconcile');
+        }
+      });
     running = current;
   };
   const work = setInterval(() => run(() => runOwnedTunnelWorkPass(deps), 'tunnel'), deps.workIntervalMs ?? 5_000);
-  const reconcile = setInterval(() => run(() => runOwnedTunnelReconcilePass(deps), 'reconcile'), deps.reconcileIntervalMs ?? 3_600_000);
+  const reconcile = setInterval(() => {
+    if (running) reconcileDue = true;
+    else run(reconcilePass, 'reconcile');
+  }, deps.reconcileIntervalMs ?? 3_600_000);
   work.unref?.();
   reconcile.unref?.();
   return {
