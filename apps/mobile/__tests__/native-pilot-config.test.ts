@@ -1,4 +1,4 @@
-import resolveConfig from "../app.config.ts";
+import resolveConfig from "../app.config";
 
 const originalTarget = process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
 afterEach(() => {
