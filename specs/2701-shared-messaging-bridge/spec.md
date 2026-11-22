@@ -207,8 +207,9 @@ by tests of the real link flow.
   header that only the platform holds; without it the proxy answers 404.
 - The owner access token is stored on the VPS in the owner secret store with mode 0600. It is
   never returned to a renderer, logged, or written to audit.
-- Login field values, QR payloads and cookies pass through and are never logged or stored by
-  the gateway or platform.
+- Login field values and cookies pass through and are never logged or stored by the gateway
+  or platform. QR and pairing codes are never logged; the platform keeps the current one only
+  encrypted in the pending-login row until the flow ends or expires.
 - The bridge host accepts only HTTPS. The reverse proxy exposes the client API paths the
   gateway needs, and exposes admin and provisioning paths only to callers presenting the
   platform secret. Federation ports are closed.
@@ -252,10 +253,14 @@ in an error body.
 
 Platform Postgres: `messaging_bridge_identities`: `owner_id` (pk), `matrix_user_id`,
 `created_at`. `messaging_bridge_logins`: `process_id` (pk), `owner_id`, `network`,
-`matrix_user_id`, `expires_at`, so any platform instance can advance or cancel a pending
-login it did not start. Rows are capped per owner, ownership is enforced in every `WHERE`
-clause, and expired rows are deleted. No tokens, login field values and no message data are
-stored on the platform.
+`matrix_user_id`, `pending_step`, `expires_at`, so any platform instance can advance or
+cancel a pending login it did not start. `pending_step` is the current step the platform
+submits next (step id, field ids and the prompt, which can include a QR or pairing code); it
+is AES-256-GCM encrypted with a key derived from the user-id key and bound to its row.
+Rows are capped per owner, ownership is enforced in every `WHERE` clause, rows are deleted
+when the flow ends, and expired rows are claimed and cancelled at the bridge.
+`messaging_bridge_login_starts` holds start times for the per-owner rate limit. No tokens,
+login field values or message data are stored on the platform.
 
 ## Failure modes
 
