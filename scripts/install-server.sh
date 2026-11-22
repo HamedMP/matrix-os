@@ -637,6 +637,24 @@ nginx_browser_viewer_block() {
 EOF
 }
 
+# Public mode only: Basic Auth credentials a browser has cached are sent on
+# every request to this site, including a WebSocket opened by another site's
+# page, and CORS does not stop upgrades. So a browser WebSocket upgrade, on any
+# path, must come from a page on this same host (Origin host[:port] = the Host header). Requests
+# without an Origin are not browser pages. Private modes leave this to the
+# gateway, which checks the exact tailnet origin.
+nginx_public_origin_map() {
+  cat <<'EOF'
+map "$http_upgrade|$http_origin|$http_host" $matrix_ws_origin_ok {
+  default 0;
+  "~*^(?!websocket\|)" 1;
+  "~*^websocket\|\|" 1;
+  "~*^websocket\|https?://([^/|]+)\|\1$" 1;
+}
+
+EOF
+}
+
 # render_nginx_site <access> <server_name> <htpasswd_file> <browser on|off>
 render_nginx_site() {
   local access server_name htpasswd_file browser listen auth_lines exempt
@@ -647,13 +665,15 @@ render_nginx_site() {
   if [ "$access" = "public" ]; then
     listen="listen 80 default_server;"
     auth_lines="  auth_basic \"Matrix OS\";
-  auth_basic_user_file ${htpasswd_file};"
+  auth_basic_user_file ${htpasswd_file};
+  if (\$matrix_ws_origin_ok = 0) { return 403; }"
     exempt="auth_basic off;"
   else
     listen="listen 127.0.0.1:80 default_server;"
     auth_lines="  auth_request /_matrix_private_network_identity;"
     exempt="auth_request off;"
   fi
+  [ "$access" != "public" ] || nginx_public_origin_map
   cat <<EOF
 server {
   ${listen}
