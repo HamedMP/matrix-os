@@ -30,6 +30,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { nearestEdge } from "@desktop/renderer/src/features/terminal-window/TerminalPaneTree";
+import { MAX_PANES_PER_TAB, splitPane, type PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 
 // Spec 2706 layer 6: one terminal per pane, split, focus, swap, zoom, close,
 // resize and drag to re-split, saved per machine and restored.
@@ -258,27 +259,29 @@ describe("Terminal window panes", () => {
     await waitFor(() => expect(focusedPane()).toBe("editor"));
   });
 
+  // The cap itself is the model's (tests/ui/terminal-pane-tree.test.ts); here the window's split
+  // command goes through it. The tab starts restored at the cap instead of 15 live splits.
   it("refuses a split past 16 panes", async () => {
-    const operator = installOperator([fact("t1", "editor")]);
-    render(<TerminalWindowApp />);
-    await openFirst("editor");
-    for (let index = 0; index < 15; index += 1) {
-      operator.command({ command: index % 2 ? "split-down" : "split-right" });
-      await waitFor(() => expect(paneNames()).toHaveLength(index + 2));
-      // One start at a time, as from the + menu.
-      await waitFor(() => expect(screen.getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
+    const terminals = Array.from({ length: MAX_PANES_PER_TAB }, (_, index) => fact(`t${index + 1}`, `pane ${index + 1}`));
+    let counter = 0;
+    let tab: PaneTab = { id: "tab1", root: { type: "leaf", id: "leaf0", terminal: "local|t1" }, focus: "leaf0", zoom: null };
+    for (let index = 1; index < MAX_PANES_PER_TAB; index += 1) {
+      tab = splitPane(tab, tab.focus, index % 2 ? "right" : "down", `local|t${index + 1}`, () => `n${counter++}`)!;
     }
+    window.localStorage.setItem("matrix.terminal-window.panes.v1", JSON.stringify({ local: [tab] }));
+    const operator = installOperator(terminals);
+    render(<TerminalWindowApp />);
+    await openFirst("pane 1(?!\\d)");
+    await waitFor(() => expect(paneNames()).toHaveLength(16));
     operator.command({ command: "split-right" });
     expect(await screen.findByText("A tab holds at most 16 panes.")).toBeTruthy();
-    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(15);
+    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(0);
     // Fault detected (Greptile, #3569): with a pane's terminal gone, the split was refused against the stale tree.
-    operator.command({ command: "select", index: 1 });
-    const gone = paneNames().find((name) => name !== focusedPane() && name !== "editor")!;
-    operator.push(panes().map((pane) => pane.getAttribute("aria-label")!).filter((name) => name !== gone)
-      .map((name) => fact(name === "editor" ? "t1" : name.replace("shell ", ""), name)));
+    operator.push(terminals.filter((entry) => entry.id !== "t16"));
     await waitFor(() => expect(paneNames()).toHaveLength(15));
     operator.command({ command: "split-right" });
     await waitFor(() => expect(paneNames()).toHaveLength(16));
+    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(1);
   });
 
   // Fault detected (Greptile, #3569): a split that finished after another pane change replaced it.
