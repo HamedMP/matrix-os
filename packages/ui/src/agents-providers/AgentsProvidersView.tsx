@@ -295,12 +295,13 @@ export function AgentsProvidersView({
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             // Codex account actions own "Check again" in their single action row.
-            const codexActionsOwnRefresh = harness.harness === "codex" && nativeSource && selectedAccount?.authState === "authenticated";
+            const codexActionsOwnRefresh = guided && harness.harness === "codex" && nativeSource && selectedAccount?.authState === "authenticated";
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={legacyNative?.account ?? selectedAccount} source={legacyNative?.source ?? source} action={action} showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={String(capabilityRefreshKey)} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
-                {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
+                {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved
+                  savedReason={harness.authState === "expired" || (source && ["auth_required", "expired"].includes(source.readiness.state)) ? "sign_in" : "off"} showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}

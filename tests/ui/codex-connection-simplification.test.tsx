@@ -169,3 +169,17 @@ it("shows connected Codex secondary actions in one row without a primary action"
   fireEvent.click(within(row).getByRole("button", { name: "Check again" }));
   expect(refresh).toHaveBeenCalled();
 });
+it("explains a saved Codex account that is only Off without asking to sign in again", async () => {
+  await mount(codexFixture("off"));
+  const card = screen.getByRole("region", { name: "Codex saved account" });
+  expect(within(card).getByText(/Codex is off on this Computer/)).toBeVisible();
+  expect(within(card).queryByText(/Sign in again/)).toBeNull();
+});
+it("keeps the account card's Check account again when Codex workflow capabilities are unavailable", async () => {
+  const client = workflow(); client.capabilities.mockRejectedValue(new Error("capabilities unavailable"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await mount(codexFixture("connected"), false, client);
+    expect(await screen.findByRole("button", { name: "Check account again" })).toBeVisible();
+  } finally { warn.mockRestore(); }
+});
