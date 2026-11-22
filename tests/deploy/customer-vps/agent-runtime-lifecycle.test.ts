@@ -85,6 +85,8 @@ PYLOCK`,
     MATRIX_RUNTIME_HOME: home,
     MATRIX_NODE_PREFIX: prefix,
     MATRIX_RUNTIME_USER: "test",
+    // The fixture account does not exist here, so its group cannot be looked up.
+    MATRIX_RUNTIME_GROUP: "test",
     CALLS: log,
   };
   return { root, home, prefix, state, log, script, env };

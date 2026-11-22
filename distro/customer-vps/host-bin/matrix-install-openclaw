@@ -9,6 +9,8 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
   matrix_export_owner_env
 fi
+# The owner's group need not share the account name (self-host: alice in staff).
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$(id -gn "$MATRIX_RUNTIME_USER" 2>/dev/null || true)}"
 
 # An owner-requested uninstall remains authoritative across host upgrades.
 # Only the explicit host-control Install action clears this root-owned marker.
@@ -34,7 +36,7 @@ log() {
 
 run_installer_as_runtime_user() {
   if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    timeout 300 setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    timeout 300 setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups "$@"
     return
   fi
   timeout 300 sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
@@ -99,7 +101,7 @@ upgrade_bundled_node_runtime() (
   printf '%s  %s\n' "$NODE_RUNTIME_SHA256" "$archive" >"$tmp_dir/node-runtime.sha256"
   sha256sum -c "$tmp_dir/node-runtime.sha256"
   tar -xzf "$archive" -C "$tmp_dir" "node-v${NODE_RUNTIME_VERSION}-linux-x64/bin/node"
-  install -o root -g "$MATRIX_RUNTIME_USER" -m 0755 "$extracted/bin/node" "$replacement"
+  install -o root -g "$MATRIX_RUNTIME_GROUP" -m 0755 "$extracted/bin/node" "$replacement"
   "$replacement" --version >/dev/null
   mv -f "$replacement" "$MATRIX_NODE_PREFIX/bin/node"
   replacement=""
@@ -132,7 +134,7 @@ main() {
   check_admission
   ensure_compatible_node_runtime
 
-  install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0700 \
+  install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 \
     "$OPENCLAW_STATE_DIR" "$(dirname "$OPENCLAW_ENV_FILE")"
 
   tmp_dir="$(mktemp -d /tmp/matrix-openclaw-install.XXXXXX)"
@@ -149,7 +151,7 @@ main() {
   printf '%s  %s\n' "$OPENCLAW_SHA512" "$archive" >"$tmp_dir/openclaw.sha512"
   sha512sum -c "$tmp_dir/openclaw.sha512"
   tar -tzf "$archive" package/npm-shrinkwrap.json package/package.json package/openclaw.mjs >/dev/null
-  chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"
+  chown "root:$MATRIX_RUNTIME_GROUP" "$tmp_dir" "$archive"
   chmod 0750 "$tmp_dir"
   chmod 0640 "$archive"
 
@@ -166,7 +168,7 @@ main() {
     token="$(openssl rand -hex 32)"
     token_tmp="$(mktemp "$(dirname "$OPENCLAW_ENV_FILE")/.openclaw.env.XXXXXX")"
     printf 'OPENCLAW_GATEWAY_TOKEN=%s\n' "$token" >"$token_tmp"
-    chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_USER" "$token_tmp"
+    chown "$MATRIX_RUNTIME_USER:$MATRIX_RUNTIME_GROUP" "$token_tmp"
     chmod 0600 "$token_tmp"
     mv -f "$token_tmp" "$OPENCLAW_ENV_FILE"
   fi
