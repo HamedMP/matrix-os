@@ -17,9 +17,11 @@ user surface changes.
 ## Documentation deliverables
 
 - Contributor guide in this repo: `docs/dev/pr-evidence.md` (linked from `AGENTS.md`).
-- Public docs: a separate `FinnaAI/matrix-os-site` PR adds a "PR evidence"
-  section to `content/docs/developer/contributing.mdx` pointing to the CLI and
-  the in-repo guide. No Matrix OS end-user behavior changes, so no user docs.
+- Public site docs: deferred to
+  [ENG-534](https://linear.app/matrix-os/issue/ENG-534). This is internal
+  engineering tooling with no user-facing behavior, and a public page would
+  advertise an internal upload endpoint. ENG-534 decides the policy for
+  internal tooling under the documentation-driven development rule.
 
 ## Journey
 
