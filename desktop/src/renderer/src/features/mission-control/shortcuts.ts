@@ -6,6 +6,7 @@ import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs, type Tab } from "../../stores/tabs";
+import { recordClosedAppIfRemoved } from "../../stores/closed-apps";
 import { useUi } from "../../stores/ui";
 import { openTopLevelTabInstance } from "../../stores/top-level-tabs";
 import {
@@ -89,6 +90,7 @@ export function handleCloseSelectedAppShortcut(
 
   surfaces.closeSurface(activeTab.id);
   if (activeTab.closable) tabs.closeTab(activeTab.id);
+  recordClosedAppIfRemoved(activeTab);
   if (!fallbackId) {
     const selectedTabId = useTabs.getState().activeTabId;
     if (selectedTabId) tabs.clearActiveTab(selectedTabId);

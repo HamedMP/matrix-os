@@ -5,6 +5,7 @@ import {
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
+import { recordClosedAppIfRemoved } from "../../stores/closed-apps";
 import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
@@ -379,6 +380,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
+    recordClosedAppIfRemoved(tab);
     if (wasActive) focusFallback(tab.id);
     if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
     trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });

@@ -4,6 +4,7 @@ import {
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
 import { useTabs, type Tab } from "../../stores/tabs";
+import { recordClosedAppIfRemoved } from "../../stores/closed-apps";
 import { useUi } from "../../stores/ui";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
@@ -68,6 +69,7 @@ export default function DesktopHeaderTabs() {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
+    recordClosedAppIfRemoved(tab);
     if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
     if (wasActive) focusFallback(tab.id);
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
