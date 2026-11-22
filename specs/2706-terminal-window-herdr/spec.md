@@ -55,11 +55,35 @@ Added 2026-11-22 (Hamed):
 
 ## Behaviour
 
+### Layout (Herdr, 2026-11-22)
+
+The window follows Herdr's layout: a left sidebar, a top tab bar, panes, and a
+bottom status bar.
+
+- **Sidebar**: **Spaces** on top (machines, each with its projects, a `+` and
+  a status dot), then **Agents** (the status sections below). **Settings** and
+  **Add machine…** sit at the foot.
+- **Top tab bar**: one tab per opened pane tab (a terminal on its own is a tab
+  of one), showing the agent's icon, the focused terminal's name, the pane
+  count, a spinner while any pane works, and a close button; `+` starts a new
+  terminal on the machine on screen. Closing a tab only takes it off the bar;
+  its terminals keep running and stay in the sidebar. The bar holds at most 24
+  tabs and is kept per viewer.
+- **Panes**: every pane, a lone terminal included, has a header (agent icon,
+  name, machine and project or folder, then split right, split down, zoom and
+  close buttons). Panes have gaps and rounded borders; the focused pane has a
+  blue outline. Every visible pane streams live on an attachment of its own;
+  only the focused one takes the keyboard.
+- **Status bar**: the machine on screen, its project and branch or folder, the
+  agent count with how many work or need you, and "⌘⇧P commands".
+- **A machine as its own tab**: clicking a machine (or one of its spaces)
+  filters Agents to it, shown as a chip that clears the filter.
+
 ### Sidebar
 
 - Top: machines (This Mac, ssh machines, then Matrix computers), each
   foldable, with a `+` for a new terminal there. Fold state persists per
-  machine. The list ends with **Add machine…** (see Ssh machines).
+  machine. **Add machine…** sits at the foot beside Settings (see Ssh machines).
 - Below: terminals by status, in this order: **Needs you** (blocked or error),
   **Done** (finished and not yet seen), **Working**, **Idle**. Every section
   folds and shows a count when folded. A second view groups by machine.
@@ -78,13 +102,21 @@ Added 2026-11-22 (Hamed):
 
 ### Shortcuts (macOS)
 
-Cmd+T new terminal, Cmd+W close, Cmd+1..9 select, Cmd+] / Cmd+[ next and
+Cmd+N (and Cmd+T) new terminal, Cmd+W close the focused pane (it ends that
+pane's terminal, asking first while a program runs, and the pane beside it
+takes focus), Cmd+1..9 select, Cmd+] / Cmd+[ next and
 previous terminal in sidebar order, Ctrl+Tab and Ctrl+Shift+Tab cycle,
-Cmd+D split right, Cmd+Shift+D split down, Cmd+Shift+W close pane,
+Cmd+D split right, Cmd+Shift+D split down, Cmd+Shift+W hide pane (its terminal
+keeps running),
 Cmd+Shift+Enter zoom pane, Cmd+Alt+arrows focus pane, Cmd+Alt+Shift+arrows swap
-pane, F2 rename, Cmd+B sidebar, Cmd+P picker, Cmd+F find, plus the existing
-terminal editing keys. They are menu accelerators in the Terminal window only
-and reuse `packages/contracts/src/terminal-keyboard.ts`.
+pane, F2 rename, Cmd+B sidebar, Cmd+P and Cmd+Shift+P picker, Cmd+F find, plus
+the existing terminal editing keys. They are menu accelerators in the Terminal
+window only and reuse `packages/contracts/src/terminal-keyboard.ts`.
+
+Every shortcut works while a terminal has focus: a focused terminal leaves the
+window's keys to the menu (it neither sends them to its program nor cancels
+them), so the terminal's own bindings (for example Cmd+Alt+Shift+arrows as
+resize) cannot swallow them. Cmd+C, Cmd+V and Cmd+A stay with the terminal.
 
 ### Panes
 
@@ -99,9 +131,9 @@ one leaf, swap and focus move by direction, dividers resize. The layout is
 saved per machine and restored when the window opens; a leaf whose terminal is
 gone is dropped. A tab holds at most 16 leaves; split is refused beyond that.
 
-Drag to rearrange: each pane has a thin header (its terminal's name and
-status). Dragging it over another pane of the same tab shows a drop zone for
-the nearest edge (left, right, top, bottom); dropping moves the pane there,
+Drag to rearrange: dragging a pane's header over another pane of the same tab
+shows a labelled drop zone ("Split left", and so on) for the nearest edge
+(left, right, top, bottom); dropping moves the pane there,
 splitting that pane in that direction. Dropping on the pane's own position, or
 outside any pane, changes nothing. Escape cancels a drag. Keyboard swap
 (Cmd+Alt+Shift+arrows) stays the non-mouse way to rearrange.
@@ -270,8 +302,12 @@ event stream. Each layer's own tests do not replace this one.
   `zellij action` call while it runs.
 - Matrix tab switch among kept tabs: no WebSocket opened; shown within one frame.
 - Sidebar sections, counts, fold, seen and rail behave as above for local and
-  computer terminals; shortcuts work; panes split, zoom, swap, focus, resize,
-  drag to a new edge and restore.
+  computer terminals; shortcuts work, including while a terminal has focus;
+  panes split, zoom, swap, focus, resize, close, drag to a new edge and
+  restore, from the keys and from each pane's header buttons.
+- Every visible pane streams live, and the top tab bar opens, closes and adds
+  tabs without ending terminals (except Cmd+W and a pane's close button, which
+  end the pane's terminal after confirmation while a program runs).
 - An ssh machine with a known host key and key-based login is added from the
   sidebar, its terminals appear and a new one starts there; an unknown host key
   is refused with the Open in terminal path.
