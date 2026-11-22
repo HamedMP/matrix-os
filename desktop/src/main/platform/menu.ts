@@ -1,8 +1,24 @@
 // macOS application menu (US6): standard roles so copy/paste, window
-// management, and full-screen behave like a first-class Mac app.
+// management, and full-screen behave like a first-class Mac app. Registry
+// actions show their current shortcut bindings (specs/653).
 import { app, Menu, shell, type BrowserWindow } from "electron";
+import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
+import type { ShortcutService } from "../shortcuts/shortcut-service";
 import { createMenuRouter } from "./menu-routing";
 import { createAppMenuTemplate } from "./menu-template";
+
+// The application menu is process-wide, and so is its shortcut runner.
+let installedRunner: ((id: ShortcutActionId) => void) | null = null;
+let stopFollowingShortcuts: (() => void) | null = null;
+
+/**
+ * Runs a shortcut action the way the application menu does, through the
+ * menu router, so Terminal-window routing applies. Does nothing until
+ * installAppMenu has run. The before-input-event matcher calls this.
+ */
+export function runShortcut(id: ShortcutActionId): void {
+  installedRunner?.(id);
+}
 
 export function installAppMenu(options: {
   mainWindow(): BrowserWindow | null;
@@ -13,30 +29,48 @@ export function installAppMenu(options: {
   openTerminalWindow(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
+  shortcuts: Pick<ShortcutService, "snapshot" | "onChange">;
 }): void {
   const router = createMenuRouter(options);
-  const template = createAppMenuTemplate({
-    appName: app.name,
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-    openExternal: (url) => {
-      void shell.openExternal(url);
-    },
-    send: router.send,
-    adjustZoom: router.adjustZoom,
-    checkForUpdates: options.checkForUpdates,
-    quitApp: () => app.quit(),
-    reloadWindow: router.reload,
-    openTerminalWindow: options.openTerminalWindow,
-    ...(options.thirdPartyNoticesPath ? {
-      openThirdPartyNotices: () => {
-        // openPath resolves to an error string instead of rejecting.
-        void shell.openPath(options.thirdPartyNoticesPath!).then((failure) => {
-          if (failure) console.warn("[menu] could not open third-party notices");
-        });
-      },
-    } : {}),
-  });
+  const run = (id: ShortcutActionId): void => {
+    if (id === "terminal.window") {
+      // Windows has no Terminal window (spec 651).
+      if (process.platform !== "win32") options.openTerminalWindow();
+      return;
+    }
+    router.send("shortcut:action", { id });
+  };
+  installedRunner = run;
 
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  const build = (shortcuts: EffectiveShortcuts): void => {
+    const template = createAppMenuTemplate({
+      appName: app.name,
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      openExternal: (url) => {
+        void shell.openExternal(url);
+      },
+      send: router.send,
+      adjustZoom: router.adjustZoom,
+      checkForUpdates: options.checkForUpdates,
+      quitApp: () => app.quit(),
+      reloadWindow: router.reload,
+      openTerminalWindow: options.openTerminalWindow,
+      shortcuts,
+      runShortcut: run,
+      ...(options.thirdPartyNoticesPath ? {
+        openThirdPartyNotices: () => {
+          // openPath resolves to an error string instead of rejecting.
+          void shell.openPath(options.thirdPartyNoticesPath!).then((failure) => {
+            if (failure) console.warn("[menu] could not open third-party notices");
+          });
+        },
+      } : {}),
+    });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  };
+
+  build(options.shortcuts.snapshot().effective);
+  stopFollowingShortcuts?.();
+  stopFollowingShortcuts = options.shortcuts.onChange((snapshot) => build(snapshot.effective));
 }

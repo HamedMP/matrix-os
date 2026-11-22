@@ -1,306 +1,259 @@
 import { describe, expect, it, vi } from "vitest";
+import type { MenuItemConstructorOptions } from "electron";
+import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
+
+type Platform = "darwin" | "linux" | "win32";
+
+function options(overrides: Partial<Parameters<typeof createAppMenuTemplate>[0]> = {}) {
+  const platform = (overrides.platform ?? "darwin") as Platform;
+  return {
+    appName: "Matrix OS",
+    isPackaged: true,
+    platform,
+    openExternal: vi.fn(),
+    send: vi.fn(),
+    adjustZoom: vi.fn(),
+    checkForUpdates: vi.fn(),
+    quitApp: vi.fn(),
+    shortcuts: resolveShortcuts(null, platform === "darwin" ? "mac" : "other"),
+    runShortcut: vi.fn(),
+    ...overrides,
+  };
+}
+
+function submenu(template: MenuItemConstructorOptions[], label: string): MenuItemConstructorOptions[] {
+  const menu = template.find((item) => item.label === label);
+  return Array.isArray(menu?.submenu) ? menu.submenu : [];
+}
+
+function find(items: MenuItemConstructorOptions[], label: string): MenuItemConstructorOptions | undefined {
+  return items.find((item) => item.label === label);
+}
+
+function click(item: MenuItemConstructorOptions | undefined): void {
+  if (!item || typeof item.click !== "function") throw new Error(`${item?.label ?? "item"} is not clickable`);
+  item.click({} as never, undefined, {} as never);
+}
+
+function walk(items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] {
+  return items.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? walk(item.submenu) : [])]);
+}
+
+function accelerators(template: MenuItemConstructorOptions[], platform: Platform): string[] {
+  return walk(template)
+    .map((item) => item.accelerator)
+    .filter((accelerator): accelerator is string => typeof accelerator === "string")
+    .map((accelerator) => accelerator.replace("CmdOrCtrl", platform === "darwin" ? "Cmd" : "Ctrl"));
+}
 
 describe("createAppMenuTemplate", () => {
   it("preserves Electron's standard non-terminal Edit menu roles", () => {
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      openExternal: vi.fn(),
-      send: vi.fn(),
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp: vi.fn(),
-    });
-
-    expect(template.some((item) => item.role === "editMenu")).toBe(true);
+    expect(createAppMenuTemplate(options()).some((item) => item.role === "editMenu")).toBe(true);
   });
 
   it("offers Check for Updates in installed and development application menus", () => {
     for (const isPackaged of [true, false]) {
-      const checkForUpdates = vi.fn();
-      const send = vi.fn();
-      const template = createAppMenuTemplate({
-        appName: "Matrix OS",
-        isPackaged,
-        platform: "darwin",
-        openExternal: vi.fn(),
-        send,
-        adjustZoom: vi.fn(),
-        checkForUpdates,
-        quitApp: vi.fn(),
-      });
-      const appMenu = template.find((item) => item.label === "Matrix OS");
-      const updateItem = Array.isArray(appMenu?.submenu)
-        ? appMenu.submenu.find((item) => "label" in item && item.label === "Check for Updates…")
-        : null;
-
+      const opts = options({ isPackaged });
+      const updateItem = find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Check for Updates…");
       expect(updateItem, `isPackaged=${isPackaged}`).toBeTruthy();
-      if (!updateItem || !("click" in updateItem) || typeof updateItem.click !== "function") {
-        throw new Error("Check for Updates menu item is not clickable");
-      }
-      updateItem.click({} as never, {} as never, {} as never);
-      expect(send).toHaveBeenCalledWith("update:manual-check-requested", {});
-      expect(checkForUpdates).toHaveBeenCalledOnce();
+      click(updateItem);
+      expect(opts.send).toHaveBeenCalledWith("update:manual-check-requested", {});
+      expect(opts.checkForUpdates).toHaveBeenCalledOnce();
     }
   });
 
   it("maps Cmd+R to a renderer reload in packaged and development builds", () => {
     for (const isPackaged of [true, false]) {
-      const send = vi.fn();
       const reloadWindow = vi.fn();
-      const template = createAppMenuTemplate({
-        appName: "Matrix OS",
-        isPackaged,
-        platform: "darwin",
-        openExternal: vi.fn(),
-        send,
-        adjustZoom: vi.fn(),
-        checkForUpdates: vi.fn(),
-        quitApp: vi.fn(),
-        reloadWindow,
-      });
-      const viewMenu = template.find((item) => item.label === "View");
-      const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
-      const refreshItem = submenu.find((item) => "label" in item && item.label === "Reload");
-
-      expect(refreshItem).toBeTruthy();
-      expect(refreshItem && "accelerator" in refreshItem ? refreshItem.accelerator : null)
-        .toBe("CmdOrCtrl+R");
-      expect(submenu.some((item) => "role" in item && item.role === "reload")).toBe(false);
-      if (!refreshItem || !("click" in refreshItem) || typeof refreshItem.click !== "function") {
-        throw new Error("Refresh Home menu item is not clickable");
-      }
-      refreshItem.click({} as never, {} as never, {} as never);
+      const opts = options({ isPackaged, reloadWindow });
+      const view = submenu(createAppMenuTemplate(opts), "View");
+      const reload = find(view, "Reload");
+      expect(reload?.accelerator).toBe("CmdOrCtrl+R");
+      expect(view.some((item) => item.role === "reload")).toBe(false);
+      click(reload);
       expect(reloadWindow).toHaveBeenCalledOnce();
-      expect(send).not.toHaveBeenCalled();
+      expect(opts.send).not.toHaveBeenCalled();
+      expect(opts.runShortcut).not.toHaveBeenCalled();
     }
-  });
-
-  it("adds a Terminal menu entry that navigates to the terminal workspace", () => {
-    const send = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "darwin",
-      openExternal: vi.fn(),
-      send,
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp: vi.fn(),
-    });
-
-    const viewMenu = template.find((item) => item.label === "View");
-    const terminalItem = Array.isArray(viewMenu?.submenu)
-      ? viewMenu.submenu.find((item) => "label" in item && item.label === "Terminal")
-      : null;
-
-    expect(terminalItem).toBeTruthy();
-    expect(terminalItem && "accelerator" in terminalItem ? terminalItem.accelerator : null).toBe("Cmd+Alt+T");
-    if (!terminalItem || !("click" in terminalItem) || typeof terminalItem.click !== "function") {
-      throw new Error("Terminal menu item is not clickable");
-    }
-
-    terminalItem.click({} as never, {} as never, {} as never);
-
-    expect(send).toHaveBeenCalledWith("menu:navigate", { kind: "terminals" });
-  });
-
-  it("keeps the New Agent Thread menu entry that opens the project composer", () => {
-    const send = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "darwin",
-      openExternal: vi.fn(),
-      send,
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp: vi.fn(),
-    });
-
-    const fileMenu = template.find((item) => item.label === "File");
-    const newThreadItem = Array.isArray(fileMenu?.submenu)
-      ? fileMenu.submenu.find((item) => "label" in item && item.label === "New Agent Thread")
-      : null;
-
-    expect(newThreadItem).toBeTruthy();
-    if (!newThreadItem || !("click" in newThreadItem) || typeof newThreadItem.click !== "function") {
-      throw new Error("New Agent Thread menu item is not clickable");
-    }
-
-    newThreadItem.click({} as never, {} as never, {} as never);
-
-    expect(send).toHaveBeenCalledWith("menu:action", { action: "new-thread" });
   });
 
   it("offers View-menu zoom items that route through the shared zoom path", () => {
-    const adjustZoom = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "darwin",
-      openExternal: vi.fn(),
-      send: vi.fn(),
-      adjustZoom,
-      checkForUpdates: vi.fn(),
-      quitApp: vi.fn(),
-    });
-
-    const viewMenu = template.find((item) => item.label === "View");
-    const submenu = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
-    const findItem = (label: string) =>
-      submenu.find((item) => "label" in item && item.label === label);
-
+    const opts = options();
+    const view = submenu(createAppMenuTemplate(opts), "View");
     const cases = [
       { label: "Zoom In", accelerator: "CmdOrCtrl+=", action: "in" },
       { label: "Zoom Out", accelerator: "CmdOrCtrl+-", action: "out" },
       { label: "Actual Size", accelerator: "CmdOrCtrl+0", action: "reset" },
     ] as const;
-
     for (const { label, accelerator, action } of cases) {
-      const item = findItem(label);
-      expect(item, label).toBeTruthy();
-      expect(item && "accelerator" in item ? item.accelerator : null).toBe(accelerator);
+      const item = find(view, label);
+      expect(item?.accelerator, label).toBe(accelerator);
       // Never the raw Electron zoom roles: clicks must round-trip through the
       // shared zoom step so the change is broadcast and persisted.
-      expect(item && "role" in item ? item.role : null).toBeFalsy();
-      if (!item || !("click" in item) || typeof item.click !== "function") {
-        throw new Error(`${label} menu item is not clickable`);
-      }
-      item.click({} as never, {} as never, {} as never);
-      expect(adjustZoom).toHaveBeenCalledWith(action);
+      expect(item?.role).toBeFalsy();
+      click(item);
+      expect(opts.adjustZoom).toHaveBeenCalledWith(action);
     }
   });
 
   it("does not offer a retired Agents workspace entry", () => {
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "darwin",
-      openExternal: vi.fn(),
-      send: vi.fn(),
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp: vi.fn(),
-    });
-
-    const viewMenu = template.find((item) => item.label === "View");
-    const agentsItem = Array.isArray(viewMenu?.submenu)
-      ? viewMenu.submenu.find((item) => "label" in item && item.label === "Agents")
-      : null;
-
-    expect(agentsItem).toBeUndefined();
+    expect(find(submenu(createAppMenuTemplate(options()), "View"), "Agents")).toBeUndefined();
   });
 
-  it("routes app and tab accelerators into Matrix OS instead of closing Electron", () => {
-    const send = vi.fn();
-    const quitApp = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "darwin",
-      openExternal: vi.fn(),
-      send,
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp,
-    });
-    const appMenu = template.find((item) => item.label === "Matrix OS");
-    const appItems = Array.isArray(appMenu?.submenu) ? appMenu.submenu : [];
-    const fileMenu = template.find((item) => item.label === "File");
-    const fileItems = Array.isArray(fileMenu?.submenu) ? fileMenu.submenu : [];
-    const cases = [
-      { items: appItems, label: "Close Selected App", accelerator: "Cmd+Q", action: "close-app" },
-      { items: fileItems, label: "New Tab", accelerator: "Cmd+T", action: "new-tab" },
-      { items: fileItems, label: "Close Tab", accelerator: "Cmd+W", action: "close-tab" },
-      { items: fileItems, label: "New", accelerator: "Cmd+N", action: "new-context" },
-    ] as const;
-
-    for (const { items, label, accelerator, action } of cases) {
-      const item = items.find((candidate) => "label" in candidate && candidate.label === label);
-      expect(item && "accelerator" in item ? item.accelerator : null).toBe(accelerator);
-      if (!item || !("click" in item) || typeof item.click !== "function") {
-        throw new Error(`${label} is not clickable`);
-      }
-      item.click({} as never, {} as never, {} as never);
-      expect(send).toHaveBeenLastCalledWith("menu:action", { action });
+  it("shows each action's first binding as its accelerator on macOS", () => {
+    const template = createAppMenuTemplate(options());
+    const expected: Array<[string, string, string | undefined]> = [
+      ["Matrix OS", "Close Selected App", "Cmd+Q"],
+      ["Matrix OS", "Settings…", "Cmd+,"],
+      ["File", "New", "Cmd+N"],
+      ["File", "New Tab", "Cmd+T"],
+      ["File", "Close Tab", "Cmd+W"],
+      ["File", "New Agent Thread", "Cmd+J"],
+      ["File", "Open Chat", "Cmd+Shift+O"],
+      ["View", "Command Palette", "Cmd+K"],
+      ["View", "Go to File", "Cmd+P"],
+      ["View", "Terminal", "Cmd+Alt+T"],
+      ["Apps", "Next App", "Ctrl+Tab"],
+      ["Apps", "Previous App", "Ctrl+Shift+Tab"],
+      ["Apps", "Open App Launcher", "Alt+Space"],
+      ["Apps", "Minimize App", "Cmd+M"],
+      ["Apps", "Reopen Closed App", "Cmd+Shift+T"],
+      ["Apps", "Show Desktop", undefined],
+      ["Apps", "Toggle App Full Size", undefined],
+      ["Apps", "Open Files", undefined],
+    ];
+    for (const [menu, label, accelerator] of expected) {
+      const item = find(submenu(template, menu), label);
+      expect(item, `${menu} > ${label}`).toBeTruthy();
+      expect(item?.accelerator, `${menu} > ${label}`).toBe(accelerator);
     }
+    const switchMenu = find(submenu(template, "Apps"), "Switch to App");
+    const switchItems = Array.isArray(switchMenu?.submenu) ? switchMenu.submenu : [];
+    expect(switchItems.map((item) => item.accelerator)).toEqual(
+      ["Cmd+1", "Cmd+2", "Cmd+3", "Cmd+4", "Cmd+5", "Cmd+6", "Cmd+7", "Cmd+8", "Cmd+9"],
+    );
+  });
 
-    expect(appItems.some((item) => "role" in item && item.role === "quit")).toBe(false);
-    expect(fileItems.some((item) => "role" in item && item.role === "close")).toBe(false);
-    const quitItem = appItems.find((item) => "label" in item && item.label === "Quit Matrix OS");
-    expect(quitItem && "accelerator" in quitItem ? quitItem.accelerator : undefined).toBeUndefined();
-    if (!quitItem || !("click" in quitItem) || typeof quitItem.click !== "function") {
-      throw new Error("Quit Matrix OS is not clickable");
+  it("places the Apps menu right before Window", () => {
+    const labels = createAppMenuTemplate(options()).map((item) => item.label ?? item.role);
+    expect(labels.indexOf("Apps")).toBeGreaterThan(-1);
+    expect(labels.indexOf("Apps")).toBe(labels.indexOf("Window") - 1);
+  });
+
+  it("uses only the first binding and shows custom bindings", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "app.close": ["Cmd+Shift+W", "F6"] };
+    const template = createAppMenuTemplate(options({ shortcuts }));
+    expect(find(submenu(template, "Matrix OS"), "Close Selected App")?.accelerator).toBe("Cmd+Shift+W");
+    const all = accelerators(template, "darwin");
+    expect(all).not.toContain("Cmd+Q");
+    expect(all).not.toContain("F6");
+  });
+
+  it("omits the accelerator of an unbound action", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "tabs.close": [] };
+    const item = find(submenu(createAppMenuTemplate(options({ shortcuts })), "File"), "Close Tab");
+    expect(item).toBeTruthy();
+    expect(item && "accelerator" in item).toBe(false);
+  });
+
+  it("never gives two items the same accelerator", () => {
+    for (const platform of ["darwin", "linux", "win32"] as const) {
+      const all = accelerators(createAppMenuTemplate(options({ platform, openTerminalWindow: vi.fn() })), platform);
+      const duplicates = all.filter((accelerator, index) => all.indexOf(accelerator) !== index);
+      expect(duplicates, platform).toEqual([]);
     }
-    quitItem.click({} as never, {} as never, {} as never);
-    expect(quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("runs registry actions through the shortcut runner instead of menu events", () => {
+    const opts = options();
+    const template = createAppMenuTemplate(opts);
+    const cases: Array<[string, string, string]> = [
+      ["Apps", "Next App", "app.next"],
+      ["Matrix OS", "Close Selected App", "app.close"],
+      ["Matrix OS", "Settings…", "nav.settings"],
+      ["File", "New Agent Thread", "chat.new-thread"],
+      ["File", "Close Tab", "tabs.close"],
+      ["View", "Terminal", "terminal.focus"],
+    ];
+    for (const [menu, label, id] of cases) {
+      click(find(submenu(template, menu), label));
+      expect(opts.runShortcut).toHaveBeenLastCalledWith(id);
+    }
+    const switchMenu = find(submenu(template, "Apps"), "Switch to App");
+    click(Array.isArray(switchMenu?.submenu) ? switchMenu.submenu[2] : undefined);
+    expect(opts.runShortcut).toHaveBeenLastCalledWith("app.switch-3");
+    expect(opts.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps Quit a plain item without an accelerator", () => {
+    const opts = options();
+    const appItems = submenu(createAppMenuTemplate(opts), "Matrix OS");
+    expect(appItems.some((item) => item.role === "quit")).toBe(false);
+    const quit = find(appItems, "Quit Matrix OS");
+    expect(quit && "accelerator" in quit).toBe(false);
+    click(quit);
+    expect(opts.quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("builds the Window menu without the default Cmd+M minimize", () => {
+    const template = createAppMenuTemplate(options());
+    expect(template.some((item) => item.role === "windowMenu")).toBe(false);
+    const windowItems = submenu(template, "Window");
+    const minimize = find(windowItems, "Minimize");
+    expect(minimize).toBeTruthy();
+    expect(minimize && "accelerator" in minimize).toBe(false);
+    expect(minimize?.role).toBeUndefined();
+    expect(windowItems.some((item) => item.role === "zoom")).toBe(true);
+    expect(windowItems.some((item) => item.role === "front")).toBe(true);
+    const minimizeWindow = vi.fn();
+    minimize!.click!({} as never, { minimize: minimizeWindow } as never, {} as never);
+    expect(minimizeWindow).toHaveBeenCalledOnce();
+    const linuxWindow = submenu(createAppMenuTemplate(options({ platform: "linux" })), "Window");
+    expect(find(linuxWindow, "Minimize")).toBeTruthy();
+    expect(linuxWindow.some((item) => item.role === "front")).toBe(false);
   });
 
   it("uses Windows conventions without macOS-only application roles", () => {
-    const send = vi.fn();
-    const quitApp = vi.fn();
-    const template = createAppMenuTemplate({
-      appName: "Matrix OS",
-      isPackaged: true,
-      platform: "win32",
-      openExternal: vi.fn(),
-      send,
-      adjustZoom: vi.fn(),
-      checkForUpdates: vi.fn(),
-      quitApp,
-    });
-
+    const opts = options({ platform: "win32", openTerminalWindow: vi.fn() });
+    const template = createAppMenuTemplate(opts);
     expect(template[0]?.label).toBe("File");
     expect(template.some((item) => item.label === "Matrix OS")).toBe(false);
     const serialized = JSON.stringify(template);
-    expect(serialized).not.toContain('"role":"services"');
-    expect(serialized).not.toContain('"role":"hide"');
-    expect(serialized).not.toContain('"role":"hideOthers"');
-    expect(serialized).not.toContain('"role":"unhide"');
+    for (const role of ["services", "hide", "hideOthers", "unhide"]) {
+      expect(serialized).not.toContain(`"role":"${role}"`);
+    }
 
-    const fileMenu = template.find((item) => item.label === "File");
-    const fileItems = Array.isArray(fileMenu?.submenu) ? fileMenu.submenu : [];
+    const fileItems = submenu(template, "File");
     const expectations = [
-      ["New", "CmdOrCtrl+N"],
-      ["New Agent Thread", "CmdOrCtrl+J"],
-      ["New Tab", "CmdOrCtrl+T"],
-      ["Close Tab", "CmdOrCtrl+W"],
-      ["Settings…", "CmdOrCtrl+,"],
+      ["New", "Ctrl+N"],
+      ["New Agent Thread", "Ctrl+J"],
+      ["New Tab", "Ctrl+T"],
+      ["Close Tab", "Ctrl+W"],
+      ["Settings…", "Ctrl+,"],
+      ["Close Selected App", "Ctrl+Q"],
       ["Check for Updates…", undefined],
       ["Exit", undefined],
     ] as const;
-
     for (const [label, accelerator] of expectations) {
-      const item = fileItems.find((candidate) => "label" in candidate && candidate.label === label);
+      const item = find(fileItems, label);
       expect(item, label).toBeTruthy();
-      expect(item && "accelerator" in item ? item.accelerator : undefined).toBe(accelerator);
+      expect(item?.accelerator, label).toBe(accelerator);
     }
+    expect(find(submenu(template, "View"), "Terminal")?.accelerator).toBe("Ctrl+Alt+T");
+    expect(find(submenu(template, "View"), "Terminal Window")).toBeUndefined();
+    expect(find(submenu(template, "Apps"), "Open App Launcher")?.accelerator).toBe("Ctrl+Space");
 
-    const viewMenu = template.find((item) => item.label === "View");
-    const viewItems = Array.isArray(viewMenu?.submenu) ? viewMenu.submenu : [];
-    const terminal = viewItems.find((item) => "label" in item && item.label === "Terminal");
-    expect(terminal && "accelerator" in terminal ? terminal.accelerator : null).toBe(
-      "CmdOrCtrl+Alt+T",
-    );
-
-    const exit = fileItems.find((item) => "label" in item && item.label === "Exit");
-    if (!exit || !("click" in exit) || typeof exit.click !== "function") {
-      throw new Error("Exit is not clickable");
-    }
-    exit.click({} as never, {} as never, {} as never);
-    expect(quitApp).toHaveBeenCalledOnce();
+    click(find(fileItems, "Exit"));
+    expect(opts.quitApp).toHaveBeenCalledOnce();
   });
 
   it("lists third-party notices under Help only when the build ships them", () => {
-    const base = { appName: "Matrix OS", isPackaged: true, platform: "darwin" as const, openExternal: vi.fn(), send: vi.fn(),
-      adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn() };
     const help = (template: ReturnType<typeof createAppMenuTemplate>) =>
       template.find((item) => item.role === "help")!.submenu as Array<{ label?: string; click?: () => void }>;
-    expect(help(createAppMenuTemplate(base)).map((item) => item.label)).toEqual(["Matrix OS Documentation"]);
+    expect(help(createAppMenuTemplate(options())).map((item) => item.label)).toEqual(["Matrix OS Documentation"]);
     const openThirdPartyNotices = vi.fn();
-    const withNotices = help(createAppMenuTemplate({ ...base, openThirdPartyNotices }));
+    const withNotices = help(createAppMenuTemplate(options({ openThirdPartyNotices })));
     expect(withNotices.map((item) => item.label)).toEqual(["Matrix OS Documentation", "Third-Party Notices"]);
     withNotices[1]!.click!();
     expect(openThirdPartyNotices).toHaveBeenCalledTimes(1);

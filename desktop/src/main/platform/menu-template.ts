@@ -1,7 +1,45 @@
 import type { MenuItemConstructorOptions } from "electron";
+import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
 import type { ZoomAction } from "./zoom";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
+type ShortcutItemFactory = (id: ShortcutActionId, label: string) => MenuItemConstructorOptions;
+
+const SWITCH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+
+/** Bindings 2-4 stay out of the menu; the before-input-event matcher handles them. */
+function createShortcutItem(
+  shortcuts: EffectiveShortcuts,
+  runShortcut: (id: ShortcutActionId) => void,
+  id: ShortcutActionId,
+  label: string,
+): MenuItemConstructorOptions {
+  const accelerator = shortcuts[id]?.[0];
+  return { label, ...(accelerator ? { accelerator } : {}), click: () => runShortcut(id) };
+}
+
+function createAppsMenu(item: ShortcutItemFactory): MenuItemConstructorOptions {
+  return {
+    label: "Apps",
+    submenu: [
+      item("app.next", "Next App"),
+      item("app.previous", "Previous App"),
+      { type: "separator" },
+      item("app.launcher", "Open App Launcher"),
+      item("app.open-files", "Open Files"),
+      { type: "separator" },
+      item("app.minimize", "Minimize App"),
+      item("app.toggle-full-size", "Toggle App Full Size"),
+      item("app.show-desktop", "Show Desktop"),
+      item("app.reopen", "Reopen Closed App"),
+      { type: "separator" },
+      {
+        label: "Switch to App",
+        submenu: SWITCH_NUMBERS.map((n) => item(`app.switch-${n}`, `App ${n}`)),
+      },
+    ],
+  };
+}
 
 interface AppMenuTemplateOptions {
   appName: string;
@@ -17,6 +55,9 @@ interface AppMenuTemplateOptions {
   openTerminalWindow?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
+  /** Each registry action shows its first binding as its accelerator. */
+  shortcuts: EffectiveShortcuts;
+  runShortcut(id: ShortcutActionId): void;
 }
 
 export function createAppMenuTemplate({
@@ -31,30 +72,18 @@ export function createAppMenuTemplate({
   reloadWindow,
   openTerminalWindow,
   openThirdPartyNotices,
+  shortcuts,
+  runShortcut,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
-  const primary = (keys: string) => `${isMac ? "Cmd" : "CmdOrCtrl"}+${keys}`;
+  const item = (id: ShortcutActionId, label: string) => createShortcutItem(shortcuts, runShortcut, id, label);
   const viewSubmenu: MenuItemConstructorOptions[] = [
-    {
-      label: "Command Palette",
-      accelerator: primary("K"),
-      click: () => send("menu:action", { action: "palette" }),
-    },
-    {
-      label: "Go to File",
-      accelerator: primary("P"),
-      click: () => send("menu:action", { action: "quick-open" }),
-    },
-    {
-      label: "Terminal",
-      accelerator: primary("Alt+T"),
-      click: () => send("menu:navigate", { kind: "terminals" }),
-    },
-    ...(openTerminalWindow && platform !== "win32" ? [{
-      label: "Terminal Window",
-      accelerator: primary("Alt+Shift+T"),
-      click: () => openTerminalWindow(),
-    }] : []),
+    item("nav.palette", "Command Palette"),
+    item("nav.quick-open", "Go to File"),
+    item("terminal.focus", "Terminal"),
+    ...(openTerminalWindow && platform !== "win32"
+      ? [{ ...item("terminal.window", "Terminal Window"), click: () => openTerminalWindow() }]
+      : []),
     {
       label: "Reload",
       accelerator: "CmdOrCtrl+R",
@@ -90,33 +119,15 @@ export function createAppMenuTemplate({
       checkForUpdates();
     },
   };
-  const settingsItem: MenuItemConstructorOptions = {
-    label: "Settings…",
-    accelerator: primary(","),
-    click: () => send("menu:navigate", { kind: "settings" }),
-  };
+  const settingsItem = item("nav.settings", "Settings…");
+  const closeAppItem = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = [
-    {
-      label: "New",
-      accelerator: primary("N"),
-      click: () => send("menu:action", { action: "new-context" }),
-    },
-    {
-      label: "New Agent Thread",
-      accelerator: primary("J"),
-      click: () => send("menu:action", { action: "new-thread" }),
-    },
+    item("tabs.new-context", "New"),
+    item("chat.new-thread", "New Agent Thread"),
+    item("chat.open", "Open Chat"),
     { type: "separator" },
-    {
-      label: "New Tab",
-      accelerator: primary("T"),
-      click: () => send("menu:action", { action: "new-tab" }),
-    },
-    {
-      label: "Close Tab",
-      accelerator: primary("W"),
-      click: () => send("menu:action", { action: "close-tab" }),
-    },
+    item("tabs.new", "New Tab"),
+    item("tabs.close", "Close Tab"),
   ];
 
   const platformMenus: MenuItemConstructorOptions[] = isMac
@@ -135,11 +146,7 @@ export function createAppMenuTemplate({
             { role: "hideOthers" },
             { role: "unhide" },
             { type: "separator" },
-            {
-              label: "Close Selected App",
-              accelerator: primary("Q"),
-              click: () => send("menu:action", { action: "close-app" }),
-            },
+            closeAppItem,
             { label: `Quit ${appName}`, click: quitApp },
           ],
         },
@@ -154,11 +161,7 @@ export function createAppMenuTemplate({
             settingsItem,
             updateItem,
             { type: "separator" },
-            {
-              label: "Close Selected App",
-              accelerator: primary("Q"),
-              click: () => send("menu:action", { action: "close-app" }),
-            },
+            closeAppItem,
             { label: "Exit", click: quitApp },
           ],
         },
@@ -168,7 +171,18 @@ export function createAppMenuTemplate({
     ...platformMenus,
     { role: "editMenu" },
     { label: "View", submenu: viewSubmenu },
-    { role: "windowMenu" },
+    createAppsMenu(item),
+    {
+      // Built by hand: the windowMenu role's Minimize takes Cmd+M, which belongs to app.minimize.
+      label: "Window",
+      role: "window",
+      submenu: [
+        { label: "Minimize", click: (_menuItem, win) => win?.minimize() },
+        ...(isMac
+          ? ([{ role: "zoom" }, { type: "separator" }, { role: "front" }] as MenuItemConstructorOptions[])
+          : []),
+      ],
+    },
     {
       role: "help",
       submenu: [
