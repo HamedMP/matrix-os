@@ -151,3 +151,25 @@ describe("terminal status sidebar rows, Herdr-style", () => {
     expect(screen.queryByText("helper")).toBeNull();
   });
 });
+
+// Hamed, 2026-11-22: an agent's helper terminals (hc run --bg) hang under it with their program's
+// icon, and clicking one opens its output.
+describe("terminal status sidebar child terminals", () => {
+  it("lists child terminals under their agent with program badges and opens one on a click", () => {
+    const onSelect = vi.fn();
+    const family: TerminalSidebarRow[] = [
+      { key: "a", name: "Matrix desktop and web", machine: mac, agent: "claude", status: "working" },
+      { key: "b", name: "bun dev", machine: mac, parentKey: "a", program: "bun" },
+      { key: "c", name: "next dev", machine: mac, parentKey: "a", program: "next-server" },
+      { key: "d", name: "bash", machine: mac, parentKey: "a", program: "bash" },
+    ];
+    render(<TerminalStatusSidebar rows={family} now={NOW} onSelect={onSelect} folded={[]} onToggleFold={vi.fn()} />);
+    expect(screen.getByRole("img", { name: "bun" }).textContent).toBe("Bun");
+    expect(screen.getByRole("img", { name: "next-server" }).textContent).toBe("N");
+    expect(screen.queryByRole("img", { name: "bash" })).toBeNull();
+    const parentItem = screen.getByRole("button", { name: /^Matrix desktop and web/ }).closest("li")!;
+    expect(within(parentItem).getAllByRole("button").filter((button) => button.hasAttribute("aria-current") || /dev|bash/.test(button.textContent ?? "")).length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByRole("button", { name: /bun dev/ }));
+    expect(onSelect).toHaveBeenCalledWith("b");
+  });
+});

@@ -52,6 +52,7 @@ export function localSidebarRows(facts: readonly LocalTerminalFact[], machine: T
       ...(fact.parent ? { parentKey: terminalRowKey(machine.id, fact.parent) } : {}),
       ...(fact.agent ? { agent: fact.agent } : {}),
       ...(fact.program || fact.folder ? { detail: [fact.program, fact.folder].filter(Boolean).join(" · ") } : {}),
+      ...(fact.program ? { program: fact.program } : {}),
     };
   });
 }

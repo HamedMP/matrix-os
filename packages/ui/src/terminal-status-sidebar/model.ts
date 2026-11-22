@@ -26,6 +26,8 @@ export interface TerminalSidebarRow {
   space?: string;
   /** What runs in it or where (the program, or a short folder), on the row's second line. */
   detail?: string;
+  /** The program in the foreground (bun, node, bash…), for its icon when no agent runs there. */
+  program?: string;
 }
 
 export type TerminalStatusSectionId = "pinned" | "needs-you" | "done" | "working" | "idle";

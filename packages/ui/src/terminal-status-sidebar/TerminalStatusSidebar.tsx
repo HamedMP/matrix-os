@@ -70,8 +70,33 @@ function StatusMark({ status }: { status?: TerminalAgentWord }) {
     style={{ boxShadow: `inset 0 0 0 1.5px ${SECONDARY}`, opacity: 0.6 }} /></span>;
 }
 
+// Herdr-like badges for the programs a terminal commonly runs (an agent's helper processes).
+const PROGRAM_BADGE: Record<string, { text: string; background: string; color: string }> = {
+  bun: { text: "Bun", background: "#fbf0df", color: "#14151a" },
+  node: { text: "N", background: "#5fa04e", color: "#ffffff" },
+  npm: { text: "npm", background: "#cb3837", color: "#ffffff" },
+  pnpm: { text: "pn", background: "#f69220", color: "#ffffff" },
+  deno: { text: "D", background: "#000000", color: "#ffffff" },
+  next: { text: "N", background: "#000000", color: "#ffffff" },
+  "next-server": { text: "N", background: "#000000", color: "#ffffff" },
+  electron: { text: "E", background: "#47848f", color: "#ffffff" },
+  vite: { text: "V", background: "#646cff", color: "#ffffff" },
+  python: { text: "Py", background: "#3776ab", color: "#ffd43b" },
+  python3: { text: "Py", background: "#3776ab", color: "#ffd43b" },
+  cargo: { text: "R", background: "#dea584", color: "#000000" },
+  go: { text: "Go", background: "#00add8", color: "#ffffff" },
+  docker: { text: "D", background: "#2496ed", color: "#ffffff" },
+  git: { text: "G", background: "#f05032", color: "#ffffff" },
+};
+
 function RowIcon({ entry }: { entry: TerminalSidebarEntry }) {
   if (entry.agent && isAgentLogoKind(entry.agent)) return <AgentLogo kind={entry.agent} label={entry.agent} size={16} />;
+  const badge = entry.program ? PROGRAM_BADGE[entry.program.toLowerCase()] : undefined;
+  if (badge) {
+    return <span role="img" aria-label={entry.program} title={entry.program}
+      className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] px-0.5 text-[8px] font-bold leading-none"
+      style={{ background: badge.background, color: badge.color }}>{badge.text}</span>;
+  }
   return <SquareTerminal size={14} aria-hidden="true" className="shrink-0" style={{ color: SECONDARY }} />;
 }
 
