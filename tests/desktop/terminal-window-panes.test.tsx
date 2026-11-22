@@ -128,8 +128,14 @@ describe("Terminal window panes", () => {
     // Fault detected (Greptile, #3569): zoom unmounted the other panes, losing their screens.
     expect(panes().filter((pane) => pane.hasAttribute("data-zoomed")).map((pane) => pane.getAttribute("aria-label"))).toEqual(["editor"]);
     expect(screen.getAllByTestId("terminal-view", { hidden: true })).toHaveLength(2);
+    // Fault detected (Greptile, #3569): the divider under a zoomed pane still took focus and arrow keys.
+    const divider = document.querySelector<HTMLElement>('[role=separator][aria-label="Resize panes"]')!;
+    expect(divider.tabIndex).toBe(-1);
+    fireEvent.keyDown(divider, { key: "ArrowRight" });
+    expect(divider.getAttribute("aria-valuenow")).toBe("50");
     operator.command({ command: "zoom-pane" });
     expect(panes().some((pane) => pane.hasAttribute("data-zoomed"))).toBe(false);
+    expect(document.querySelector<HTMLElement>('[role=separator][aria-label="Resize panes"]')!.tabIndex).toBe(0);
     operator.command({ command: "close-pane" });
     // The terminal left on its own is a one-pane tab, header and all.
     await waitFor(() => expect(paneNames()).toEqual(["shell t10"]));
@@ -241,7 +247,7 @@ describe("Terminal window panes", () => {
     await openFirst("editor");
     operator.command({ command: "split-right" });
     await waitFor(() => expect(focusedPane()).toBe("shell t10"));
-    fireEvent.focus(within(panes()[0]!).getByTestId("terminal-view"));
+    fireEvent.focus(await within(panes()[0]!).findByTestId("terminal-view"));
     await waitFor(() => expect(focusedPane()).toBe("editor"));
   });
 

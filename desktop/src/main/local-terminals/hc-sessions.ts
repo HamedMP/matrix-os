@@ -8,7 +8,9 @@ import {
 } from "../../shared/local-terminals";
 import type { HcConnection, HcStream } from "./hc-client";
 
-const DEFAULT_MAX_ATTACHMENTS = 8;
+// Every pane of the Terminal window streams live: a full tab of 16 panes, plus
+// room for the panes of the tab being switched to and the main window's terminals.
+export const DEFAULT_MAX_ATTACHMENTS = 24;
 // Terminal creation is rate-limited, never count-capped.
 const CREATE_WINDOW_MS = 10_000;
 const MAX_CREATES_PER_WINDOW = 10;

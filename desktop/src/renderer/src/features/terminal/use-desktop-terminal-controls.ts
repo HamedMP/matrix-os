@@ -1,5 +1,5 @@
 import { AppError } from "../../../../shared/app-error";
-import { useCallback, useMemo, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import {
   dispatchTerminalPaneRequest,
   useTerminalControls,
@@ -19,7 +19,7 @@ interface DesktopTerminalControlsOptions {
   writable: boolean;
   isMac: boolean;
   attachmentRef: RefObject<ActiveAttachment | null>;
-  termRef: RefObject<{ focus(): void } | null>;
+  termRef: RefObject<{ focus(): void; scrollToTop(): void; scrollToBottom(): void } | null>;
   /**
    * Pane actions handled by the host instead of the computer's Zellij panes
    * (the Terminal window's own split tree, spec 2706). Scrolling still goes
@@ -41,6 +41,12 @@ export function useDesktopTerminalControls({
   termRef,
   onPaneAction,
 }: DesktopTerminalControlsOptions) {
+  // The latest host callback, read when an action runs: a new callback on each
+  // redraw must not rebuild the transport (that reloads preferences and drops a Ctrl+G prefix).
+  const onPaneActionRef = useRef(onPaneAction);
+  useEffect(() => { onPaneActionRef.current = onPaneAction; }, [onPaneAction]);
+  const hostsPanes = onPaneAction !== undefined;
+  const local = sessionName.startsWith("local:");
   const transport = useMemo<TerminalControlsTransport | null>(
     () => {
       const computer: TerminalControlsTransport | null = api
@@ -61,20 +67,29 @@ export function useDesktopTerminalControls({
               }),
           }
         : null;
-      if (!onPaneAction) return computer;
+      if (!hostsPanes) return computer;
       return {
         getPreferences: computer?.getPreferences ?? (async () => ({ preferences: { keyboard: { profile: "mac", overrides: {} } } })),
         savePreferences: computer?.savePreferences ?? (async () => { throw new AppError("server"); }),
         paneAction: async (session, action) => {
-          if (action.type === "scroll" && computer) return computer.paneAction(session, action);
-          onPaneAction(action);
+          if (action.type === "scroll") {
+            // A local terminal's history is in its own xterm; a computer's is on the computer.
+            if (local) {
+              if (action.edge === "top") termRef.current?.scrollToTop();
+              else termRef.current?.scrollToBottom();
+              return undefined;
+            }
+            if (computer) return computer.paneAction(session, action);
+            return undefined;
+          }
+          onPaneActionRef.current?.(action);
           return undefined;
         },
       };
     },
-    [api, chatId, onPaneAction],
+    [api, chatId, hostsPanes, local, termRef],
   );
-  const enabled = active && writable && socketState === "attached" && (api !== null || onPaneAction !== undefined);
+  const enabled = active && writable && socketState === "attached" && (api !== null || hostsPanes);
   const sendInput = useCallback(
     (data: string) => {
       const attachment = attachmentRef.current;

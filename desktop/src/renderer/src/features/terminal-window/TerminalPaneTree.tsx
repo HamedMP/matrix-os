@@ -55,7 +55,9 @@ interface DragState {
   target: { id: string; edge: PaneDirection } | null;
 }
 
-function Divider({ axis, ratio, onResize }: { axis: "row" | "column"; ratio: number; onResize(ratio: number): void }) {
+function Divider({ axis, ratio, covered, onResize }: {
+  axis: "row" | "column"; ratio: number; covered: boolean; onResize(ratio: number): void;
+}) {
   const dragging = useRef<HTMLElement | null>(null);
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     dragging.current = event.currentTarget.parentElement;
@@ -73,10 +75,13 @@ function Divider({ axis, ratio, onResize }: { axis: "row" | "column"; ratio: num
   const forward = axis === "row" ? "ArrowRight" : "ArrowDown";
   return (
     // The gap between two panes is the divider.
-    <div role="separator" tabIndex={0} aria-label="Resize panes" aria-orientation={axis === "row" ? "vertical" : "horizontal"}
+    // Under a zoomed pane it takes no focus, keys or pointer, so the hidden layout cannot change.
+    <div role="separator" tabIndex={covered ? -1 : 0} aria-hidden={covered || undefined} inert={covered || undefined}
+      aria-label="Resize panes" aria-orientation={axis === "row" ? "vertical" : "horizontal"}
       aria-valuemin={10} aria-valuemax={90} aria-valuenow={Math.round(ratio * 100)}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
       onKeyDown={(event) => {
+        if (covered) return;
         if (event.key === back) { event.preventDefault(); onResize(ratio - KEYBOARD_STEP); }
         if (event.key === forward) { event.preventDefault(); onResize(ratio + KEYBOARD_STEP); }
       }}
@@ -205,7 +210,7 @@ function Node({ node, props, drag, setDrag }: { node: PaneNode; props: TerminalP
       <div className="flex min-h-0 min-w-0" style={{ flex: `${node.ratio} 1 0` }}>
         <Node node={node.first} props={props} drag={drag} setDrag={setDrag} />
       </div>
-      <Divider axis={node.axis} ratio={node.ratio} onResize={(ratio) => props.onResize(node.id, ratio)} />
+      <Divider axis={node.axis} ratio={node.ratio} covered={props.tab.zoom !== null} onResize={(ratio) => props.onResize(node.id, ratio)} />
       <div className="flex min-h-0 min-w-0" style={{ flex: `${1 - node.ratio} 1 0` }}>
         <Node node={node.second} props={props} drag={drag} setDrag={setDrag} />
       </div>

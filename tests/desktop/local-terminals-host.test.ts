@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
-import { createAttachmentSlots } from "@desktop/main/local-terminals/hc-sessions";
+import { createAttachmentSlots, DEFAULT_MAX_ATTACHMENTS } from "@desktop/main/local-terminals/hc-sessions";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
@@ -402,10 +402,12 @@ describe("local terminal host against a scripted core", () => {
 
   it("frees every attachment when the window goes away, so a new window can attach again", async () => {
     const { host, sink, cores } = attaching();
-    const first = await Promise.all(Array.from({ length: 8 }, () => host.attach("t1", { cols: 80, rows: 24 })));
+    // Fault detected (Greptile, #3569): the budget of 8 left panes 9-16 of a full tab unattached.
+    const first = await Promise.all(Array.from({ length: DEFAULT_MAX_ATTACHMENTS }, () => host.attach("t1", { cols: 80, rows: 24 })));
+    expect(DEFAULT_MAX_ATTACHMENTS).toBeGreaterThanOrEqual(16);
     await expect(host.attach("t1", { cols: 80, rows: 24 })).rejects.toThrow("too many");
     host.detachAll();
-    expect(cores[0]!.sent.frames.filter((frame) => frame.kind === HC_FRAME.CLOSE)).toHaveLength(8);
+    expect(cores[0]!.sent.frames.filter((frame) => frame.kind === HC_FRAME.CLOSE)).toHaveLength(DEFAULT_MAX_ATTACHMENTS);
     // The window is gone: nothing is announced to it, and its ids are dead.
     expect(sink.closed).not.toHaveBeenCalled();
     expect(host.input(first[0]!, "ls", false)).toBe(false);
