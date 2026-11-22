@@ -21,6 +21,7 @@ import type { ShellSocketState } from "../../lib/shell-socket";
 import { LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
 import { putTerminalPasteFile } from "./terminal-paste-transport";
 import { getAttachManager } from "./terminal-runtime";
+import type { AttachManager } from "./attach-manager";
 import TerminalLinkContextMenu, { type DesktopTerminalMenuState } from "./TerminalLinkContextMenu";
 import {
   DesktopWebLinkProvider,
@@ -119,6 +120,19 @@ interface TerminalViewProps {
   findRequest?: number;
   /** The Terminal window's own panes take the pane buttons and keys instead of Zellij (spec 2706). */
   onPaneAction?: (action: TerminalPaneAction) => void;
+  /**
+   * Its own attachment manager, so this view stays live beside others (each
+   * pane of the Terminal window). Without it, the app-wide one is used, which
+   * keeps one live terminal at a time.
+   */
+  attachManager?: AttachManager;
+  /** Takes keyboard focus when it attaches or becomes focused. Defaults to `active`. */
+  focused?: boolean;
+  /**
+   * Keys the surrounding window's menu owns: the terminal neither sends them
+   * to its program nor cancels them, so the menu accelerator still fires.
+   */
+  reservedKeys?: (event: KeyboardEvent) => boolean;
 }
 
 type ClipboardFeedback = {
@@ -163,7 +177,13 @@ export default function TerminalView({
   controlsHost,
   findRequest = 0,
   onPaneAction,
+  attachManager: attachManagerProp,
+  focused,
+  reservedKeys,
 }: TerminalViewProps) {
+  const reservedKeysRef = useRef(reservedKeys);
+  useEffect(() => { reservedKeysRef.current = reservedKeys; }, [reservedKeys]);
+  const takesFocus = focused ?? active;
   const api = useConnection((state) => state.api);
   const pasteApi = sessionName.startsWith("local:") ? null : api;
   const terminalThemeId = useTerminalAppearance((state) => state.themeId);
@@ -345,6 +365,8 @@ export default function TerminalView({
     };
     host.ownerDocument.addEventListener("selectionchange", onDocumentSelectionChange);
     terminal.attachCustomKeyEventHandler((event) => {
+      // Returning false without preventDefault leaves the key to the menu.
+      if (reservedKeysRef.current?.(event)) return false;
       const selection = readTerminalSelection();
       const action = resolveTerminalClipboardKeyEvent({
         type: event.type as "keydown" | "keyup" | "keypress",
@@ -479,7 +501,7 @@ export default function TerminalView({
       console.warn("[terminal] webgl unavailable:", err instanceof Error ? err.message : String(err));
     }
     fit.fit();
-    const cached = getAttachManager().getCachedBuffer(sessionName);
+    const cached = (attachManagerProp ?? getAttachManager()).getCachedBuffer(sessionName);
     if (cached) terminal.write(cached);
     termRef.current = terminal;
     fitRef.current = fit;
@@ -540,7 +562,7 @@ export default function TerminalView({
         cancelAnimationFrame(rafId);
         rafId = null;
       }
-      const manager = getAttachManager();
+      const manager = (attachManagerProp ?? getAttachManager());
       try {
         manager.cacheBuffer(sessionName, serialize.serialize());
       } catch (err: unknown) {
@@ -551,7 +573,7 @@ export default function TerminalView({
       termRef.current = null;
       setSearch(null);
     };
-  }, [copyTerminalTextWithFeedback, sessionName]);
+  }, [attachManagerProp, copyTerminalTextWithFeedback, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -575,7 +597,7 @@ export default function TerminalView({
     }
     if (endedRef.current) return;
 
-    const manager = getAttachManager();
+    const manager = (attachManagerProp ?? getAttachManager());
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
@@ -616,7 +638,7 @@ export default function TerminalView({
     });
     const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
     attachment.resize(proposed.cols, proposed.rows);
-    terminal.focus();
+    if (takesFocusRef.current) terminal.focus();
 
     return () => {
       dataDisposable.dispose();
@@ -625,7 +647,15 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt]);
+  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp]);
+
+  // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
+  const takesFocusRef = useRef(takesFocus);
+  useEffect(() => {
+    const became = takesFocus && !takesFocusRef.current;
+    takesFocusRef.current = takesFocus;
+    if (became) termRef.current?.focus();
+  }, [takesFocus]);
 
   useEffect(() => {
     const host = hostRef.current;

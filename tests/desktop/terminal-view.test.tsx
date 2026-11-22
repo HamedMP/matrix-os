@@ -442,6 +442,17 @@ describe("TerminalView session switching", () => {
     expect(claimCalls().at(-1)![1].bindings).toEqual([]);
   });
 
+  // Spec 2706: every Terminal window pane stays live, and only the focused one takes the keyboard.
+  it("keeps a live pane unfocused until it becomes the focused pane", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    const terminal = createdTerminals.at(-1)!;
+    expect(attachMock).toHaveBeenCalledOnce();
+    expect(terminal.focus).not.toHaveBeenCalled();
+    rerender(<TerminalView sessionName="alpha" active focused />);
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(attachMock).toHaveBeenCalledOnce();
+  });
+
   it("releases keyboard focus when a retained terminal becomes inactive", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" active />);
     const terminal = createdTerminals.at(-1)!;

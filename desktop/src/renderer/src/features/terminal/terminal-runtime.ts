@@ -15,23 +15,30 @@ export function setAlternateTerminalSockets(factory: typeof alternateSockets): v
   alternateSockets = factory;
 }
 
+function createSocket(sessionName: string, events: ShellSocketEvents, chatId?: string): SocketControl {
+  if (alternateSockets && sessionName.startsWith(alternateSockets.prefix)) return alternateSockets.create(sessionName, events);
+  const { platformHost, runtimeSlot } = useConnection.getState();
+  return new ShellSocket({
+    baseUrl: platformHost,
+    sessionName,
+    chatId,
+    runtimeSlot,
+    events,
+  });
+}
+
 export function getAttachManager(): AttachManager {
-  if (!manager) {
-    manager = new AttachManager({
-      createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => {
-        if (alternateSockets && sessionName.startsWith(alternateSockets.prefix)) return alternateSockets.create(sessionName, events);
-        const { platformHost, runtimeSlot } = useConnection.getState();
-        return new ShellSocket({
-          baseUrl: platformHost,
-          sessionName,
-          chatId,
-          runtimeSlot,
-          events,
-        });
-      },
-    });
-  }
+  manager ??= new AttachManager({ createSocket });
   return manager;
+}
+
+/**
+ * A manager of its own for one pane of the Terminal window (spec 2706), so
+ * every visible pane streams live. The window bounds how many exist (one per
+ * pane, at most 16 per tab) and disposes each with its pane.
+ */
+export function createPaneAttachManager(): AttachManager {
+  return new AttachManager({ createSocket, bufferCacheCap: 1 });
 }
 
 export function resetAttachManager(): void {

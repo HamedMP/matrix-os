@@ -15,6 +15,9 @@ import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
 import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
 import { useTerminalPanes } from "./use-terminal-panes";
+import { useOpenTabs } from "./use-open-tabs";
+import { leaves } from "@matrix-os/ui/terminal-pane-tree";
+import type { PaneButton } from "./TerminalPaneTree";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
@@ -80,6 +83,9 @@ export function useTerminalWindow() {
     [visibleRows, sidebar.prefs.view, sidebar.prefs.pinned],
   );
   const selectedRow: TerminalSidebarRow | undefined = status.rows.find((row) => row.key === selectedKey);
+  // The selection when an end finishes, which may differ from when it started.
+  const selectedRef = useRef(selectedKey);
+  useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
   const { markSeen } = status;
 
   // Done since the person last looked: looking at it now counts, in this window and theirs elsewhere.
@@ -146,27 +152,6 @@ export function useTerminalWindow() {
     });
   }, [cloud, local]);
 
-  /** Ends a live terminal or removes a finished one; the pane stays until that is confirmed. */
-  const close = useCallback((key: string) => {
-    const target = terminalRowTarget(key);
-    if (!target) return;
-    if (target.kind === "local") {
-      const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
-      const ending = finished ? local.remove(target.id) : local.end(target.id);
-      void ending.then((done) => { if (done) setLocalOpen((current) => (current?.id === target.id ? null : current)); });
-      return;
-    }
-    const api = cloud.api(target.slot);
-    if (!api) { setComputerNotice("end-failed"); return; }
-    void closeComputerTab(api, target.ref).then(() => {
-      setComputerNotice(null);
-      if (cloudActive.current?.refKey === terminalRefKey(target.ref)) clearActive();
-    }, (error: unknown) => {
-      console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
-      setComputerNotice("end-failed");
-    });
-  }, [clearActive, cloud, local]);
-
   // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
   const spaceMachines = useMemo(() => inOrder([here.id, ...computers.filter((computer) => computer.availability === "available")
     .map((computer) => computerMachineId(computer.runtimeSlot))], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder]);
@@ -178,12 +163,6 @@ export function useTerminalWindow() {
     if (row) sidebar.setFilter(row.space ? { machineId: row.machine.id, space: row.space } : { machineId: row.machine.id });
     select(key);
   }, [select, sidebar, status.rows]);
-
-  /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
-  const requestClose = useCallback((key: string) => {
-    if (isFinished(key, local.state, status.states)) { close(key); return; }
-    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
-  }, [close, local.state, status.rows, status.states]);
 
   const step = useCallback((offset: number) => {
     if (order.length === 0) return;
@@ -215,6 +194,75 @@ export function useTerminalWindow() {
     ? local.state.status === "ready"
     : status.states[machineId.slice("computer:".length)]?.connected === true), [here.id, local.state.status, status.states]);
   const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createBeside, listed });
+  const { dropTerminal } = panes;
+
+  /**
+   * Ends a live terminal or removes a finished one. Its pane stays until that
+   * is confirmed, then leaves its tab, and the pane beside it takes focus.
+   */
+  const close = useCallback((key: string) => {
+    const target = terminalRowTarget(key);
+    if (!target) return;
+    const ended = () => {
+      const successor = dropTerminal(key);
+      if (successor && selectedRef.current === key) select(successor);
+      return successor;
+    };
+    if (target.kind === "local") {
+      const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
+      const ending = finished ? local.remove(target.id) : local.end(target.id);
+      void ending.then((done) => {
+        if (!done) return;
+        if (!ended()) setLocalOpen((current) => (current?.id === target.id ? null : current));
+      });
+      return;
+    }
+    const api = cloud.api(target.slot);
+    if (!api) { setComputerNotice("end-failed"); return; }
+    void closeComputerTab(api, target.ref).then(() => {
+      setComputerNotice(null);
+      if (!ended() && cloudActive.current?.refKey === terminalRefKey(target.ref)) clearActive();
+    }, (error: unknown) => {
+      console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
+      setComputerNotice("end-failed");
+    });
+  }, [clearActive, cloud, dropTerminal, local, select]);
+
+  /** Closes a terminal's pane by ending it: a finished one goes at once, a running program asks first. */
+  const requestClose = useCallback((key: string) => {
+    if (isFinished(key, local.state, status.states)) { close(key); return; }
+    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
+  }, [close, local.state, status.rows, status.states]);
+
+  const rowKeys = useMemo(() => new Set(status.rows.map((row) => row.key)), [status.rows]);
+  const exists = useCallback((key: string) => {
+    if (rowKeys.has(key)) return true;
+    return listed(key.slice(0, Math.max(0, key.indexOf("|")))) ? false : null;
+  }, [listed, rowKeys]);
+  const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
+
+  /** Shows nothing: the last tab on the bar was closed. */
+  const deselect = useCallback(() => {
+    localChoice.current += 1;
+    setLocalOpen(null);
+    clearActive();
+  }, [clearActive]);
+
+  /** Takes a tab off the bar (its terminals keep running); the tab beside it opens when it was on screen. */
+  const closeTab = useCallback((id: string) => {
+    const wasOnScreen = openTabs.tabs.find((tab) => tab.id === id)?.terminals.includes(selectedKey ?? "") ?? false;
+    const next = openTabs.closeTab(id);
+    if (!wasOnScreen) return;
+    if (next) select(next.key);
+    else deselect();
+  }, [deselect, openTabs, select, selectedKey]);
+
+  /** A pane header button. */
+  const paneButton = useCallback((leafId: string, button: PaneButton) => {
+    if (button !== "close") { panes.headerAction(leafId, button === "zoom" ? "zoom" : button); return; }
+    const terminal = panes.tab ? leaves(panes.tab.root).find((leaf) => leaf.id === leafId)?.terminal : undefined;
+    if (terminal) requestClose(terminal);
+  }, [panes, requestClose]);
 
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
@@ -231,7 +279,8 @@ export function useTerminalWindow() {
         return;
       }
       case "close-terminal":
-        if (selectedRow) requestClose(selectedRow.key);
+        // Cmd+W closes the focused pane, ending its terminal.
+        if (selectedKey) requestClose(selectedKey);
         return;
       case "space": {
         // Ctrl+0 is All; Ctrl+1…9 the spaces in the sidebar's order.
@@ -264,7 +313,10 @@ export function useTerminalWindow() {
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close, requestClose, openInTab,
+    select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
+    tabs: openTabs.tabs, closeTab,
+    /** The bar's +: a new terminal on the machine on screen. */
+    newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
   };
 }

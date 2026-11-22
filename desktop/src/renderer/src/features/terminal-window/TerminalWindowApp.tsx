@@ -1,21 +1,28 @@
 // The Electron Desktop Terminal window (specs/651-desktop-terminal-window,
 // specs/2706-terminal-window-herdr). Herdr's layout: machines and every
 // terminal by status on the left, the terminal on screen on the right.
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Toaster } from "sonner";
 import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
+import { createPaneAttachManager } from "../terminal/terminal-runtime";
+import type { AttachManager } from "../terminal/attach-manager";
+import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
+import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "../terminal/terminal-agent-options";
+import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import type { TerminalMachinesState } from "./use-terminal-machines";
 import { localSessionName, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import { LocalTerminalAttention } from "./LocalTerminalAttention";
 import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
+import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
-import { TerminalPaneTree } from "./TerminalPaneTree";
+import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
+import { TerminalTabBar } from "./TerminalTabBar";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
@@ -144,24 +151,35 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-function TerminalPane({ sessionName, findRequest, ended, onPaneAction }: {
-  sessionName: string; findRequest: number; ended?: { title: string; onClose(): void } | null;
-  onPaneAction(action: TerminalPaneAction): void;
+/**
+ * A pane's terminal, with an attachment of its own so every visible pane
+ * streams live, not only the focused one. Disposed with its pane.
+ */
+function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+  sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
 }) {
+  const [manager, setManager] = useState<AttachManager | null>(null);
+  useEffect(() => {
+    const created = createPaneAttachManager();
+    // react-doctor-disable-next-line react-doctor/no-derived-state-effect -- an external resource made and disposed with the pane
+    setManager(created);
+    return () => created.dispose();
+  }, []);
+  if (!manager) return null;
+  return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
+    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut} />;
+}
+
+function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
   return (
-    <main aria-label="Terminal" className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <TerminalView key={sessionName} sessionName={sessionName} active findRequest={findRequest} onPaneAction={onPaneAction} />
-      {ended ? (
-        <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
-          style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
-          <span>{ended.title} ended</span>
-          <button type="button" aria-label={`Close ${ended.title}`} onClick={ended.onClose}
-            className="flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
-            <X size={11} aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
-    </main>
+    <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
+      style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
+      <span>{title} ended</span>
+      <button type="button" aria-label={`Close ${title}`} onClick={onClose}
+        className="flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
+        <X size={11} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -172,33 +190,48 @@ function paneSessionName(key: string): string | null {
   return target.kind === "local" ? localSessionName(target.id) : terminalRefKey(target.ref);
 }
 
-function SplitPanes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
-  const names = new Map(view.status.rows.map((row) => [row.key, row.name]));
+function isAgentId(agent: string | undefined): agent is TerminalAgentId {
+  return TERMINAL_AGENT_OPTIONS.some((option) => option.id === agent);
+}
+
+/** A pane header: the agent's icon, the terminal's name, and where it runs. */
+export function paneInfoFor(row: TerminalSidebarRow | undefined, fallback: string): PaneInfo {
+  if (!row) return { title: fallback, icon: <SquareTerminal size={13} aria-hidden="true" style={secondaryText} /> };
+  const where = [row.machine.name, row.space ?? row.detail].filter(Boolean).join(" · ");
+  return {
+    title: row.name,
+    detail: where,
+    working: row.status === "working",
+    icon: isAgentId(row.agent) ? <DesktopTerminalAgentLogo agent={row.agent} compact /> : <SquareTerminal size={13} aria-hidden="true" style={secondaryText} />,
+  };
+}
+
+function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
+  const rows = new Map(view.status.rows.map((row) => [row.key, row]));
+  const ended = view.endedLocal;
   return (
-    <TerminalPaneTree tab={tab} paneTitle={(leaf) => names.get(leaf.terminal) ?? "Terminal"}
+    <TerminalPaneTree tab={tab}
+      paneInfo={(leaf) => paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal")}
+      onPaneButton={view.paneButton}
       onFocus={view.panes.focusLeaf} onResize={view.panes.resize} onMove={view.panes.move}
       renderPane={(leaf, focused) => {
         const sessionName = paneSessionName(leaf.terminal);
-        // Only the focused pane holds the live attachment; the others keep their last screen.
-        return sessionName
-          ? <TerminalView key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} active={focused}
+        if (!sessionName) return null;
+        // A session change remounts each pane so it attaches again with the new credentials.
+        return (
+          <>
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
               findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={view.panes.paneAction} />
-          : null;
+            {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
+          </>
+        );
       }} />
   );
 }
 
 function ActivePane({ view }: { view: TerminalWindowView }) {
-  if (view.panes.tab) return <SplitPanes view={view} tab={view.panes.tab} />;
-  // A session change resets the shared attach manager; the epoch remounts the
-  // local pane so it attaches again instead of staying on a disposed attachment.
-  if (view.localTerminal) {
-    return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)}
-      findRequest={view.findRequestFor(view.selectedKey)} onPaneAction={view.panes.paneAction}
-      ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
-  }
-  const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequestFor(view.selectedKey)} onPaneAction={view.panes.paneAction} />;
+  // A terminal on its own is a one-pane tab, so every terminal has a header and buttons.
+  if (view.panes.tab) return <Panes view={view} tab={view.panes.tab} />;
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 
@@ -230,6 +263,7 @@ export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const view = useTerminalWindow();
   const machines = useMemo(() => sidebarMachines(view), [view]);
+  const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
@@ -284,7 +318,11 @@ export default function TerminalWindowApp() {
           onResize={view.sidebar.setWidth}
           notices={notice}
         />
-        <ActivePane view={view} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <TerminalTabBar tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+            icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
+          <ActivePane view={view} />
+        </div>
       </div>
       <StatusBar view={view} />
       <TerminalPicker open={view.picker.open} entries={view.order} onClose={view.picker.close}

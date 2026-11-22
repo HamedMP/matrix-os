@@ -2,17 +2,23 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The attach managers the panes' terminals were given, to check each pane streams on its own.
+const managers = vi.hoisted(() => new Map<string, unknown>());
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName, active, findRequest, onPaneAction }: {
-    sessionName: string; active?: boolean; findRequest?: number; onPaneAction?: (action: unknown) => void;
-  }) => (
-    <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-find={findRequest ?? 0}>
-      {sessionName}
-      {active !== false ? <button type="button" aria-label="Pane split right" onClick={() => onPaneAction?.({ type: "split", direction: "right" })} /> : null}
-    </div>
-  ),
+  default: ({ sessionName, active, focused, attachManager, findRequest, onPaneAction }: {
+    sessionName: string; active?: boolean; focused?: boolean; attachManager?: unknown; findRequest?: number; onPaneAction?: (action: unknown) => void;
+  }) => {
+    managers.set(sessionName, attachManager);
+    return (
+      <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-focused={focused ? "true" : "false"} data-find={findRequest ?? 0}>
+        {sessionName}
+        {focused ? <button type="button" aria-label="Pane split right" onClick={() => onPaneAction?.({ type: "split", direction: "right" })} /> : null}
+      </div>
+    );
+  },
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
@@ -67,6 +73,12 @@ async function openFirst(name: string) {
   fireEvent.click(await within(sidebar).findByRole("button", { name: new RegExp(name) }));
 }
 
+beforeAll(() => {
+  // jsdom has no modal dialogs.
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
+});
+
 describe("Terminal window panes", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); window.localStorage.clear(); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -80,9 +92,13 @@ describe("Terminal window panes", () => {
     expect(focusedPane()).toBe("shell t10");
     operator.command({ command: "split-down" });
     await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10", "shell t11"]));
-    // Only the focused pane holds the live attachment.
-    expect(screen.getAllByTestId("terminal-view").map((view) => [view.textContent, view.getAttribute("data-active")]))
-      .toEqual([["local:t1", "false"], ["local:t10", "false"], ["local:t11", "true"]]);
+    // Fault detected (Hamed, 2026-11-22): only the focused pane streamed; the others froze.
+    // Every pane is live on an attachment of its own, and only the focused one takes the keyboard.
+    await waitFor(() => expect(screen.getAllByTestId("terminal-view").map((view) => [view.textContent, view.getAttribute("data-active"), view.getAttribute("data-focused")]))
+      .toEqual([["local:t1", "true", "false"], ["local:t10", "true", "false"], ["local:t11", "true", "true"]]));
+    const attached = ["local:t1", "local:t10", "local:t11"].map((name) => managers.get(name));
+    expect(attached.every(Boolean)).toBe(true);
+    expect(new Set(attached).size).toBe(3);
     first.unmount();
 
     render(<TerminalWindowApp />);
@@ -109,7 +125,8 @@ describe("Terminal window panes", () => {
     operator.command({ command: "zoom-pane" });
     expect(panes().some((pane) => pane.hasAttribute("data-zoomed"))).toBe(false);
     operator.command({ command: "close-pane" });
-    await waitFor(() => expect(panes()).toHaveLength(0));
+    // The terminal left on its own is a one-pane tab, header and all.
+    await waitFor(() => expect(paneNames()).toEqual(["shell t10"]));
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t10");
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
     // The closed pane's terminal is still listed.
@@ -152,8 +169,58 @@ describe("Terminal window panes", () => {
     expect(divider.getAttribute("aria-valuenow")).toBe("55");
     operator.command({ command: "focus-pane", direction: "left" });
     operator.push([fact("t1", "editor")]);
-    await waitFor(() => expect(panes()).toHaveLength(0));
+    await waitFor(() => expect(paneNames()).toEqual(["editor"]));
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+  });
+
+  // Hamed, 2026-11-22: Herdr's panes have a header with split, zoom and close on every pane.
+  it("gives a terminal on its own a pane header, and outlines the focused pane in blue", async () => {
+    installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    const [pane] = await waitFor(() => { expect(panes()).toHaveLength(1); return panes(); });
+    for (const name of ["Split right pane editor", "Split down pane editor", "Zoom pane editor", "Close pane editor"]) {
+      expect(within(pane!).getByRole("button", { name })).toBeTruthy();
+    }
+    expect(pane!.style.borderColor).toBe("rgb(59, 130, 246)");
+  });
+
+  it("splits, zooms and closes from a pane header, on that pane even when another has focus", async () => {
+    const operator = installOperator([fact("t1", "editor")], {});
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    fireEvent.click(screen.getByRole("button", { name: "Split down pane editor" }));
+    // The new pane goes under editor, not under the focused shell.
+    await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t11", "shell t10"]));
+    expect(focusedPane()).toBe("shell t11");
+    fireEvent.click(screen.getByRole("button", { name: "Zoom pane shell t10" }));
+    expect(panes().filter((pane) => pane.hasAttribute("data-zoomed")).map((pane) => pane.getAttribute("aria-label"))).toEqual(["shell t10"]);
+    fireEvent.click(screen.getByRole("button", { name: "Restore pane shell t10" }));
+    expect(panes().some((pane) => pane.hasAttribute("data-zoomed"))).toBe(false);
+
+    // Close ends that pane's terminal, asking first while it runs.
+    fireEvent.click(screen.getByRole("button", { name: "Close pane editor" }));
+    const dialog = await screen.findByRole("dialog", { name: "End terminal" });
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
+    fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t1" }));
+    await waitFor(() => expect(paneNames()).toEqual(["shell t11", "shell t10"]));
+  });
+
+  // Hamed, 2026-11-22: Cmd+W closes the focused pane, as in Herdr, and the pane beside it takes focus.
+  it("closes the focused pane on Cmd+W by ending its terminal, and focuses the pane beside it", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    operator.command({ command: "close-terminal" });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    await waitFor(() => expect(paneNames()).toEqual(["editor"]));
+    expect(focusedPane()).toBe("editor");
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t10" });
   });
 
   it("refuses a split past 16 panes", async () => {
@@ -235,6 +302,29 @@ describe("Terminal window panes", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pane split right" }));
     await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
+  });
+
+  // Hamed, 2026-11-22: Herdr's top bar of workspaces, one tab per pane tab.
+  it("shows opened terminals as top tabs, one per pane tab, and closes a tab without ending its terminals", async () => {
+    const operator = installOperator([fact("t1", "editor"), fact("t2", "logs")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    await openFirst("logs");
+    const bar = () => screen.getByRole("tablist", { name: "Open terminals" });
+    const tabNames = () => within(bar()).getAllByRole("tab").map((tab) => [tab.textContent, tab.getAttribute("aria-selected")]);
+    await waitFor(() => expect(tabNames()).toEqual([["editor", "false"], ["logs", "true"]]));
+    fireEvent.click(within(bar()).getByRole("tab", { name: /editor/ }));
+    await waitFor(() => expect(paneNames()).toEqual(["editor"]));
+    operator.command({ command: "split-right" });
+    // A split stays one tab, counting its panes.
+    // The tab's name is the focused pane's terminal, then its pane count ("2").
+    await waitFor(() => expect(tabNames()).toEqual([["shell t102", "true"], ["logs", "false"]]));
+    fireEvent.click(screen.getByRole("button", { name: "Close tab shell t10" }));
+    await waitFor(() => expect(tabNames()).toEqual([["logs", "true"]]));
+    expect(paneNames()).toEqual(["logs"]);
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
+    fireEvent.click(screen.getByRole("button", { name: "New terminal tab" }));
+    await waitFor(() => expect(tabNames().map(([name]) => name)).toEqual(["logs", "shell t11"]));
   });
 
   it("picks the drop edge nearest the pointer", () => {

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
+import { terminalWindowMenuItems } from "../../desktop/src/main/platform/terminal-menu-items";
 import { isShortcutActionAvailable } from "../../desktop/src/main/shortcuts/shortcut-availability";
 
 type Platform = "darwin" | "linux" | "win32";
@@ -383,6 +385,23 @@ describe("Terminal window menu", () => {
     expect(close).toHaveBeenCalled();
     // Main-window shortcuts that would collide are not in this menu, the Apps menu included.
     expect(items.some((item) => item.label === "Go to File" || item.label === "Command Palette" || item.label === "Next App")).toBe(false);
+  });
+
+  // Fault detected (Hamed, 2026-11-22): a focused terminal kept some of these keys, so the shortcut did nothing.
+  it("reserves every menu shortcut from a focused terminal", () => {
+    const items = flat(terminalWindowMenuItems(vi.fn(), vi.fn(), true) as Item[]);
+    const arrows: Record<string, string> = { Left: "ArrowLeft", Right: "ArrowRight", Up: "ArrowUp", Down: "ArrowDown" };
+    const accelerators = items.flatMap((item) => (item.accelerator ? [item.accelerator] : []));
+    expect(accelerators.length).toBeGreaterThan(20);
+    for (const accelerator of accelerators) {
+      const parts = accelerator.split("+");
+      const last = parts.at(-1)!;
+      const event = {
+        key: arrows[last] ?? last, metaKey: parts.includes("Cmd"), ctrlKey: parts.includes("Ctrl"),
+        altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
+      };
+      expect(isTerminalWindowShortcut(event), accelerator).toBe(true);
+    }
   });
 
   it("keeps the main window's menu free of Terminal window shortcuts", () => {

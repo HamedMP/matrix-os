@@ -41,6 +41,33 @@ export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
 ]);
 export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
 
+export interface ShortcutKeyEvent {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}
+
+const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
+
+/**
+ * The keys the Terminal window's menu owns (terminal-menu-items.ts). A focused
+ * terminal leaves these to the menu instead of sending them to its program or
+ * its own pane bindings, so every shortcut works while a terminal has focus.
+ * Cmd (Super off macOS) is the menu's modifier; Ctrl stays with the shell
+ * except for Ctrl+Tab. Cmd+C/V/A stay with the terminal's clipboard.
+ */
+export function isTerminalWindowShortcut(event: ShortcutKeyEvent): boolean {
+  const key = event.key.toLowerCase();
+  if (key === "f2" && !event.metaKey && !event.ctrlKey && !event.altKey) return true;
+  if (key === "tab" && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  if (!event.metaKey || event.ctrlKey) return false;
+  if (event.altKey) return ARROWS.has(key) || (key === "w" && !event.shiftKey);
+  return PRIMARY_KEYS.has(key);
+}
+
 export const TERMINAL_WINDOW_EVENTS = {
   "terminal-window:command": TerminalWindowCommandSchema,
 } as const;

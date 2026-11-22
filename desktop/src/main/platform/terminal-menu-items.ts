@@ -18,7 +18,8 @@ export function terminalWindowMenuItems(
   return [
     item("New Terminal", "Cmd+N", { command: "new-terminal" }),
     { ...item("New Terminal", "Cmd+T", { command: "new-terminal" }), visible: false, acceleratorWorksWhenHidden: true },
-    item("Close Terminal", "Cmd+W", { command: "close-terminal" }),
+    // Herdr's Cmd+W closes the focused pane, ending its terminal (it asks first while a program runs).
+    item("Close Pane", "Cmd+W", { command: "close-terminal" }),
     { label: "Close Window", accelerator: key("Cmd+Alt+W"), click: closeWindow },
     { type: "separator" },
     item("Rename Terminal…", "F2", { command: "rename" }),
@@ -48,7 +49,8 @@ export function terminalWindowMenuItems(
     { type: "separator" },
     item("Split Right", "Cmd+D", { command: "split-right" }),
     item("Split Down", "Cmd+Shift+D", { command: "split-down" }),
-    item("Close Pane", "Cmd+Shift+W", { command: "close-pane" }),
+    // Takes the pane off screen; its terminal keeps running in the sidebar.
+    item("Hide Pane", "Cmd+Shift+W", { command: "close-pane" }),
     item("Zoom Pane", "Cmd+Shift+Enter", { command: "zoom-pane" }),
     {
       label: "Focus Pane",

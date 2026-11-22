@@ -1,6 +1,7 @@
 // Panes in the Terminal window (spec 2706 layer 6): one terminal per pane, a
 // tab per group of panes on one machine, saved per machine. Pane focus is
-// the sidebar selection, so the two never disagree.
+// the sidebar selection, so the two never disagree. A terminal on its own is
+// a one-pane tab, so it has the same header and buttons as a split.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   closePane, focusPane, leaves, movePane, pruneTab, resizeFocusedPane, resizeSplit, singlePaneTab, splitPane, swapPanes, toggleZoom,
@@ -15,6 +16,9 @@ export type PaneCommand =
   | { command: "focus-pane" | "swap-pane"; direction: PaneDirection };
 
 export type PaneNotice = "split-limit" | "split-failed" | null;
+
+/** A pane header button other than close, which the window confirms first. */
+export type PaneHeaderAction = "split-right" | "split-down" | "zoom";
 
 const machineOf = (key: string) => key.slice(0, Math.max(0, key.indexOf("|")));
 const newId = () => crypto.randomUUID().replace(/-/g, "").slice(0, 16);
@@ -60,21 +64,25 @@ export function useTerminalPanes(options: {
 
   useEffect(() => { latest.current = { layouts: effective, selectedKey }; }, [effective, selectedKey]);
 
+  // The selected terminal on its own, as a tab that is saved only once it splits.
+  const solo = useMemo(() => (selectedKey ? singlePaneTab(selectedKey, newId) : null), [selectedKey]);
+
   /**
    * The tab on screen: the one holding the selected terminal, focused on it.
    * When the selected terminal itself is gone, its tab stays on screen with
    * the remaining panes (`orphaned`), so the person keeps them.
    */
-  const tab = useMemo<{ machineId: string; tab: PaneTab; orphaned: boolean } | null>(() => {
+  const tab = useMemo<{ machineId: string; tab: PaneTab; orphaned: boolean; solo: boolean } | null>(() => {
     if (!selectedKey) return null;
     const machineId = machineOf(selectedKey);
     const saved = tabWithTerminal(effective, machineId, selectedKey);
     const focus = saved ? leaves(saved.root).find((leaf) => leaf.terminal === selectedKey)?.id : undefined;
-    if (saved && focus) return { machineId, tab: { ...saved, focus, zoom: saved.zoom ? focus : null }, orphaned: false };
+    if (saved && focus) return { machineId, tab: { ...saved, focus, zoom: saved.zoom ? focus : null }, orphaned: false, solo: false };
     const raw = tabWithTerminal(layouts, machineId, selectedKey);
     const survivor = raw ? effective[machineId]?.find((candidate) => candidate.id === raw.id) : undefined;
-    return survivor ? { machineId, tab: { ...survivor, zoom: null }, orphaned: true } : null;
-  }, [effective, layouts, selectedKey]);
+    if (survivor) return { machineId, tab: { ...survivor, zoom: null }, orphaned: true, solo: false };
+    return solo ? { machineId, tab: solo, orphaned: false, solo: true } : null;
+  }, [effective, layouts, selectedKey, solo]);
 
   // The selected terminal left its tab: select a pane that remains.
   const orphanedFocus = tab?.orphaned ? leaves(tab.tab.root).find((leaf) => leaf.id === tab.tab.focus)?.terminal ?? null : null;
@@ -87,11 +95,12 @@ export function useTerminalPanes(options: {
     if (tab) saveTab(tab.machineId, tab.tab.id, next);
   }, [saveTab, tab]);
 
-  const split = useCallback(async (side: "right" | "down") => {
-    if (!selectedKey) return;
-    const source = selectedKey;
+  /** Splits the pane showing `source` (the selected terminal unless a pane header names another). */
+  const split = useCallback(async (side: "right" | "down", from?: string) => {
+    const source = from ?? selectedKey;
+    if (!source) return;
     const machineId = machineOf(source);
-    const before = tab?.tab ?? singlePaneTab(source, newId);
+    const before = tabWithTerminal(latest.current.layouts, machineId, source) ?? singlePaneTab(source, newId);
     if (!splitPane(before, before.focus, side, "pending", newId)) { setNotice("split-limit"); return; }
     const created = await createBeside(source);
     if (!created) { setNotice("split-failed"); return; }
@@ -106,7 +115,7 @@ export function useTerminalPanes(options: {
     saveTab(machineId, now.id, next);
     // The new pane takes focus only if the person did not choose another terminal meanwhile.
     if (latest.current.selectedKey === source) select(created);
-  }, [createBeside, saveTab, select, selectedKey, tab]);
+  }, [createBeside, saveTab, select, selectedKey]);
 
   /** Handles a pane shortcut. */
   const run = useCallback((command: PaneCommand) => {
@@ -114,7 +123,8 @@ export function useTerminalPanes(options: {
       case "split-right": void split("right"); return;
       case "split-down": void split("down"); return;
       case "close-pane": {
-        if (!tab) return;
+        // A terminal on its own has no pane to hide.
+        if (!tab || tab.solo) return;
         // The pane closes; its terminal keeps running and stays in the sidebar.
         const next = closePane(tab.tab, tab.tab.focus);
         save(next);
@@ -122,7 +132,7 @@ export function useTerminalPanes(options: {
         if (focus) select(focus);
         return;
       }
-      case "zoom-pane": if (tab) save(toggleZoom(tab.tab)); return;
+      case "zoom-pane": if (tab && !tab.solo) save(toggleZoom(tab.tab)); return;
       case "focus-pane": {
         if (!tab) return;
         const next = focusPane(tab.tab, command.direction);
@@ -165,5 +175,38 @@ export function useTerminalPanes(options: {
     }
   }, [run, save, tab]);
 
-  return { tab: tab?.tab ?? null, notice, run, focusLeaf, resize, move, paneAction };
+  /** A pane header's split or zoom, on that pane even when another one has focus. */
+  const headerAction = useCallback((leafId: string, action: PaneHeaderAction) => {
+    if (!tab) return;
+    const terminal = leaves(tab.tab.root).find((leaf) => leaf.id === leafId)?.terminal;
+    if (!terminal) return;
+    if (terminal !== selectedKey) select(terminal);
+    if (action === "zoom") {
+      if (!tab.solo) save(toggleZoom({ ...tab.tab, focus: leafId }));
+      return;
+    }
+    void split(action === "split-right" ? "right" : "down", terminal);
+  }, [save, select, selectedKey, split, tab]);
+
+  /**
+   * Drops an ended terminal's pane from its tab at once, instead of waiting
+   * for the machine's list to lose it. Returns the terminal that takes focus.
+   */
+  const dropTerminal = useCallback((key: string): string | null => {
+    const machineId = machineOf(key);
+    const saved = tabWithTerminal(latest.current.layouts, machineId, key);
+    const leaf = saved ? leaves(saved.root).find((candidate) => candidate.terminal === key) : undefined;
+    if (!saved || !leaf) return null;
+    const next = closePane(saved, leaf.id);
+    saveTab(machineId, saved.id, next);
+    return next ? leaves(next.root).find((candidate) => candidate.id === next.focus)?.terminal ?? null : null;
+  }, [saveTab]);
+
+  /** The pane tab a terminal is in, as shown; a terminal on its own is a group of one. */
+  const groupOf = useCallback((key: string): { id: string; terminals: string[] } => {
+    const saved = tabWithTerminal(effective, machineOf(key), key);
+    return saved ? { id: saved.id, terminals: leaves(saved.root).map((leaf) => leaf.terminal) } : { id: key, terminals: [key] };
+  }, [effective]);
+
+  return { tab: tab?.tab ?? null, notice, run, focusLeaf, resize, move, paneAction, headerAction, dropTerminal, groupOf };
 }
