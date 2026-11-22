@@ -136,10 +136,18 @@ bottom status bar.
   "Needs you" pill. Hover gives the row a rounded tint and shows pin and close
   in place of the time. Sub-agents hang from their parent on connector lines,
   folded with a chevron; the parent takes their most urgent status.
-- **Needs core data** (deferred): child-process rows (Bun, Node, bash) under a
-  terminal need herdr-core to report a terminal's process tree (it reports only
-  the foreground program today); a muted (slashed-bell) mark needs a mute state
-  in herdr-core; a git ahead/behind badge on spaces needs git facts per space.
+- Child terminals: the terminals an agent started (`hc run --bg`, sub-agents)
+  carry herdr-core's parent link, hang under their agent on the connector
+  line with their program's badge (Bun, Node, Next.js, Electron…), and open
+  (attached, live) in a pane on a click.
+- Titles follow the program: a local or ssh-machine terminal's name, tab and
+  pane header update live from its program's title (herdr-core `title`
+  events) unless the person renamed it (the `matrix.title` label wins).
+- **Needs core data** (deferred): live titles for Matrix computer terminals
+  need a title source on the computer (the runtime reads only status files and
+  Zellij keeps program titles to itself; herdr-core on computers would report
+  them); a muted (slashed-bell) mark needs a mute state in herdr-core; a git
+  ahead/behind badge on spaces needs git facts per space.
 - Below 160 px the sidebar becomes a numbered rail; Cmd+B toggles it.
 
 ### Shortcuts (macOS)
