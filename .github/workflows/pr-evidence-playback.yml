@@ -5,6 +5,8 @@ name: PR Evidence Playback
 # self-hosted runner image ships only Chromium's system dependencies.
 on:
   pull_request:
+    # ready_for_review: draft PRs skip the job, so run it when the PR leaves draft.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - packages/pr-evidence-worker/**
       - tests/e2e/pr-evidence-video-playback.e2e.test.ts
