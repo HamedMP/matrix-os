@@ -14,7 +14,10 @@ import { Hono, type Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
-import { createWorkerHealthApp, platformRole, shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import {
+  createWorkerHealthApp, platformRole, refuseAllWebSocketUpgrades,
+  shouldEnableMetalBackgroundWorkers, shouldEnablePlatformBackgroundWorkers,
+} from './platform-worker-mode.js';
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { resolveSitesObjectStorage } from './sites/storage-config.js';
 import { createPlatformStartupWorkerCleanup, runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
@@ -367,6 +370,8 @@ async function startPlatformServerWithCleanup(
     process.exit(1);
   }
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
+  // Metal passes run wherever workers run, including a metal-scoped worker.
+  const metalWorkersEnabled = shouldEnableMetalBackgroundWorkers(process.env);
   let runtimeConfig;
   let speechConfig;
   try {
@@ -1203,7 +1208,7 @@ async function startPlatformServerWithCleanup(
   // Metal provisioning (spec 2691): free signup's provisioner, the stale-row and teardown maintenance pass,
   // and the idle sleeper (MATRIX_FREE_TIER_SLEEP_ENABLED) that suspends idle free runtimes and wakes them for scheduled work.
   const metalRuntime = createConfiguredMetalRuntime({
-    db, env: appEnv, backgroundWorkersEnabled, substrates: substrateRegistry, platformSecret,
+    db, env: appEnv, backgroundWorkersEnabled: metalWorkersEnabled, substrates: substrateRegistry, platformSecret,
     customerVps: customerVpsDependencies
       ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
       : undefined,
@@ -1351,22 +1356,26 @@ async function startPlatformServerWithCleanup(
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
 
-  registerPlatformWebSocketUpgradeHandler({
-    server: server as Server,
-    app,
-    db,
-    docker,
-    clerkAuth,
-    env: appEnv,
-    platformSecret,
-    platformJwtSecret,
-    legacyContainerRoutingEnabled,
-    codeServerPort,
-    getRuntimeEntitlementDecision,
-    getRuntimeEntitlementDecisionForUser,
-    collaborationDirect: collaboration?.direct,
-    substrates: substrateRegistry,
-  });
+  if (role === 'worker') {
+    refuseAllWebSocketUpgrades(server as Server);
+  } else {
+    registerPlatformWebSocketUpgradeHandler({
+      server: server as Server,
+      app,
+      db,
+      docker,
+      clerkAuth,
+      env: appEnv,
+      platformSecret,
+      platformJwtSecret,
+      legacyContainerRoutingEnabled,
+      codeServerPort,
+      getRuntimeEntitlementDecision,
+      getRuntimeEntitlementDecisionForUser,
+      collaborationDirect: collaboration?.direct,
+      substrates: substrateRegistry,
+    });
+  }
 }
 
 export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {

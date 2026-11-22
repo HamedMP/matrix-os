@@ -640,6 +640,22 @@ describe('metal sleeper worker', () => {
     release();
   });
 
+  it('ticks only while holding the cluster-wide singleton', async () => {
+    vi.useFakeTimers();
+    const tick = vi.fn(async () => {});
+    let held = true; // another worker instance holds the sleeper lock
+    const singleton = vi.fn(async (run: () => Promise<void>) => { if (!held) await run(); });
+    const worker = startMetalSleeperWorker({ sleeper: { tick }, singleton, log: () => {} });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(singleton).toHaveBeenCalledTimes(1);
+    expect(tick).not.toHaveBeenCalled();
+    held = false;
+    await vi.advanceTimersByTimeAsync(METAL_SLEEP_INTERVAL_MS);
+    expect(tick).toHaveBeenCalledTimes(1);
+    worker.stop();
+    await worker.drain();
+  });
+
   it('logs a failed tick by error name and keeps ticking', async () => {
     vi.useFakeTimers();
     const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];

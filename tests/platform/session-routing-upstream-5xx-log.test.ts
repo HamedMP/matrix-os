@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createApp } from '../../packages/platform/src/main.js';
+import { appDomainPathClass } from '../../packages/platform/src/session-routing-middleware.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
@@ -43,7 +44,7 @@ describe('app-domain upstream 5xx logging', () => {
 
     expect(res.status).toBe(500);
     const line = errors.find((entry) => entry.includes('auth-shell upstream'));
-    expect(line).toBe('[platform] app-domain auth-shell upstream status=500 method=GET path=/ server_action=false');
+    expect(line).toBe('[platform] app-domain auth-shell upstream status=500 method=GET path_class=/ server_action=false');
     expect(errors.join('\n')).not.toContain('secret');
   });
 
@@ -59,6 +60,19 @@ describe('app-domain upstream 5xx logging', () => {
 
     expect(res.status).toBe(500);
     expect(errors.find((entry) => entry.includes('runtime upstream')))
-      .toBe('[platform] app-domain runtime upstream status=500 method=POST path=/ server_action=true handle=alice');
+      .toBe('[platform] app-domain runtime upstream status=500 method=POST path_class=/ server_action=true handle=alice');
+  });
+
+  it('logs a route class, never user content from the path', () => {
+    expect(appDomainPathClass('/')).toBe('/');
+    expect(appDomainPathClass('/api/journey')).toBe('/api/journey');
+    expect(appDomainPathClass('/api/chats/chat_58ed/interactions')).toBe('/api/chats/*');
+    expect(appDomainPathClass('/files/home/Taxes 2026 private.pdf')).toBe('/files/*');
+    expect(appDomainPathClass('/shared/invitations/inv_secret123')).toBe('/shared/*');
+    expect(appDomainPathClass('/_next/static/chunks/app.js')).toBe('/_next/*');
+    expect(appDomainPathClass('/__platform-shell/_next/static/x.js')).toBe('/__platform-shell/*');
+    expect(appDomainPathClass('/sign-in')).toBe('/sign-in');
+    expect(appDomainPathClass('/api/Bad Group/x')).toBe('other');
+    expect(appDomainPathClass('/my-private-app/page')).toBe('other');
   });
 });

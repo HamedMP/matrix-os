@@ -26,6 +26,9 @@ describe('metal background pass singleton', () => {
     const first = createPlatformDb(process.env.MATRIX_TEST_POSTGRES_URL!);
     const second = createPlatformDb(process.env.MATRIX_TEST_POSTGRES_URL!);
     try {
+      // Migrations finish before either instance takes the lock.
+      await first.ready;
+      await second.ready;
       let release!: () => void;
       const holding = new Promise<void>((resolve) => { release = resolve; });
       let secondRan = false;
