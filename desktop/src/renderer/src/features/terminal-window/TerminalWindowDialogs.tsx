@@ -21,17 +21,19 @@ export function TerminalPicker({ open, entries, onPick, onClose }: {
     return entries.filter((entry) => !needle || entry.name.toLowerCase().includes(needle)
       || entry.machine.name.toLowerCase().includes(needle)).slice(0, MAX_PICKER_ROWS);
   }, [entries, query]);
+  // The highlighted match, kept within the list when live updates shrink it.
+  const current = Math.min(active, Math.max(0, matches.length - 1));
   // The highlighted match stays in view as the arrow keys move it.
   const list = useRef<HTMLUListElement>(null);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>("[aria-current=true]")?.scrollIntoView?.({ block: "nearest" });
-  }, [active, matches]);
+  }, [current, matches]);
   const close = () => { setQuery(""); setActive(0); onClose(); };
   const pick = (key: string) => { setQuery(""); setActive(0); onPick(key); };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "ArrowDown") { event.preventDefault(); setActive((index) => Math.min(index + 1, matches.length - 1)); }
-    if (event.key === "ArrowUp") { event.preventDefault(); setActive((index) => Math.max(index - 1, 0)); }
-    if (event.key === "Enter" && matches[active]) { event.preventDefault(); pick(matches[active]!.key); }
+    if (event.key === "ArrowDown") { event.preventDefault(); setActive(Math.min(current + 1, matches.length - 1)); }
+    if (event.key === "ArrowUp") { event.preventDefault(); setActive(Math.max(current - 1, 0)); }
+    if (event.key === "Enter" && matches[current]) { event.preventDefault(); pick(matches[current]!.key); }
   };
   return (
     <Dialog open={open} onClose={close} aria-label="Go to terminal" style={{ padding: 12, maxWidth: 520 }}>
@@ -41,10 +43,10 @@ export function TerminalPicker({ open, entries, onPick, onClose }: {
         {matches.length === 0 ? <li className="px-2 py-1.5 text-[13px]" style={secondaryText}>No terminal matches.</li> : null}
         {matches.map((entry, index) => (
           <li key={entry.key}>
-            <button type="button" aria-current={index === active ? "true" : undefined} onClick={() => pick(entry.key)}
+            <button type="button" aria-current={index === current ? "true" : undefined} onClick={() => pick(entry.key)}
               onMouseEnter={() => setActive(index)}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] outline-none"
-              style={index === active ? { background: "var(--bg-hover, rgba(127,127,127,0.18))" } : undefined}>
+              style={index === current ? { background: "var(--bg-hover, rgba(127,127,127,0.18))" } : undefined}>
               <span className="min-w-0 flex-1 truncate">{entry.name}</span>
               <span className="shrink-0 text-[11px]" style={secondaryText}>{entry.machine.name}</span>
             </button>

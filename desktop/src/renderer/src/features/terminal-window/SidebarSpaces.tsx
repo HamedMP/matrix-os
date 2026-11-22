@@ -9,6 +9,7 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { Input } from "@matrix-os/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { SPACE_COLORS, type SpaceStyle } from "./use-sidebar-prefs";
 
@@ -95,9 +96,9 @@ function SpaceMenu({ name, style, open, onOpenChange, onStyle, onMove, first, la
               onOpenChange(false);
             }}>
               {/* react-doctor-disable-next-line react-doctor/no-autofocus -- the person just chose Rename */}
-              <input aria-label="Space name" value={naming} maxLength={64} autoFocus onChange={(event) => setNaming(event.target.value)}
+              <Input aria-label="Space name" value={naming} maxLength={64} autoFocus onChange={(event) => setNaming(event.target.value)}
                 onKeyDown={(event) => { if (event.key !== "Escape") event.stopPropagation(); }}
-                className="w-full rounded border bg-transparent px-1.5 py-0.5 text-[12px] outline-none" style={{ borderColor: "var(--border-default)" }} />
+                style={{ padding: "2px 6px", fontSize: 12 }} />
             </form>
           )}
           <div role="group" aria-label="Space color" className="flex flex-wrap gap-1 px-2.5 py-1.5">

@@ -206,7 +206,8 @@ function Row({ entry, depth, inset, props }: {
           <RowDetail entry={entry} showMachine={!inset && !props.oneMachine} />
         </span>
       </button>
-      <RowActions entry={entry} pinned={pinned} props={props} />
+      {/* Pinning lifts a terminal into Pinned; a sub-agent stays with its parent, so it is not offered there. */}
+      <RowActions entry={entry} pinned={pinned} props={depth > 0 ? { ...props, onTogglePin: undefined } : props} />
     </div>
     {entry.children.length > 0 && !folded ? (
       <ul className="relative">

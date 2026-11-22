@@ -258,7 +258,7 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
           <PanelLeftOpen size={14} aria-hidden="true" />
         </button>
         <TerminalStatusSidebar rows={rows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
-          folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} rail />
+          folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} pinned={props.pinned} rail />
       </div>
     );
   }

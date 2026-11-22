@@ -173,3 +173,14 @@ describe("terminal status sidebar child terminals", () => {
     expect(onSelect).toHaveBeenCalledWith("b");
   });
 });
+
+// Fault detected (Greptile, #3567): pinning a sub-agent did nothing, so its rows do not offer it.
+describe("terminal status sidebar sub-agent actions", () => {
+  it("offers pin on top-level rows only", () => {
+    render(<TerminalStatusSidebar rows={rows} now={NOW} onSelect={vi.fn()} folded={[]} onToggleFold={vi.fn()} onTogglePin={vi.fn()} onClose={vi.fn()} />);
+    expect(within(screen.getByRole("group", { name: "tests actions" })).getByRole("button", { name: "Pin terminal" })).toBeTruthy();
+    const child = screen.getByRole("group", { name: "helper actions" });
+    expect(within(child).queryByRole("button", { name: "Pin terminal" })).toBeNull();
+    expect(within(child).getByRole("button", { name: "Close terminal" })).toBeTruthy();
+  });
+});

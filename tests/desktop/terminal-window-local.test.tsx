@@ -377,6 +377,34 @@ describe("Terminal window shortcuts", () => {
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
   });
 
+  // Fault detected (Greptile, #3567): pinned terminals led the list, but Cmd+] and the picker ignored them.
+  it("steps through terminals in the shown order, pinned first", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    fireEvent.click(within(screen.getByRole("group", { name: "gamma actions" })).getByRole("button", { name: "Pin terminal" }));
+    expect(screen.getByRole("region", { name: "Pinned" })).toBeTruthy();
+    operator.command({ command: "next" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
+  });
+
+  // Fault detected (Greptile, #3567): when live updates shrank the matches, the highlight fell off the list.
+  it("keeps the picker's highlight on a remaining match when matches shrink", async () => {
+    let facts = three;
+    const operator = installOperator({ "local-terminal:watch": watching(() => facts) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "picker" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to terminal" });
+    const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+    for (let step = 0; step < 3; step += 1) fireEvent.keyDown(input, { key: "ArrowDown" });
+    facts = three.slice(0, 2);
+    operator.push(facts);
+    await waitFor(() => expect(within(dialog).getAllByRole("button").filter((button) => button.getAttribute("aria-current") === "true")).toHaveLength(1));
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toMatch(/local:t[12]/);
+  });
+
   // Fault detected (Greptile, #3567): ArrowDown moved the highlight below the visible list.
   it("keeps the picker's highlighted match in view", async () => {
     const scrolled: string[] = [];

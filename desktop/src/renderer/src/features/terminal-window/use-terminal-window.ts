@@ -73,8 +73,9 @@ export function useTerminalWindow() {
   // Next, previous and numbers follow the agents list as shown, with a machine opened as its own tab.
   const visibleRows = useMemo(() => filterRows(status.rows, sidebar.prefs.filter), [status.rows, sidebar.prefs.filter]);
   const order = useMemo(
-    () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view })),
-    [visibleRows, sidebar.prefs.view],
+    // The order the agents list shows, pinned terminals first, so Cmd+] / Cmd+[ and the picker follow it.
+    () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view, pinned: sidebar.prefs.pinned })),
+    [visibleRows, sidebar.prefs.view, sidebar.prefs.pinned],
   );
   const selectedRow: TerminalSidebarRow | undefined = status.rows.find((row) => row.key === selectedKey);
   const { markSeen } = status;

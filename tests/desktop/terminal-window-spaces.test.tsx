@@ -81,6 +81,8 @@ describe("Terminal window Spaces", () => {
     openMenu("hamedmp");
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename…" }));
     const field = screen.getByRole("textbox", { name: "Space name" });
+    // Fault detected (Greptile, #3567): a hand-styled native field; it is the shared Input now.
+    expect(field.classList.contains("matrix-input")).toBe(true);
     fireEvent.change(field, { target: { value: "Main" } });
     fireEvent.submit(field.closest("form")!);
     expect(names()).toEqual(["This Mac", "Main", "box"]);
