@@ -141,6 +141,32 @@ describe("tailscale connect", () => {
     controller.close();
   });
 
+  it("lets Connect retry after tailscale up failed to start", async () => {
+    // Found in review: a launch error left the dead login in flight for ten minutes.
+    const failing = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn>; exitCode: number | null };
+    failing.stdout = new PassThrough();
+    failing.stderr = new PassThrough();
+    failing.exitCode = null;
+    failing.kill = vi.fn(() => true);
+    const { child: working } = fakeLogin(["https://login.tailscale.com/a/retry"]);
+    let calls = 0;
+    const spawn: TailscaleSpawn = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) {
+        queueMicrotask(() => failing.emit("error", Object.assign(new Error("spawn EAGAIN"), { code: "EAGAIN" })));
+        return failing as never;
+      }
+      queueMicrotask(() => working.stderr.write("https://login.tailscale.com/a/retry\n"));
+      return working as never;
+    });
+    const controller = new TailscaleController({ exec: execReturning({ BackendState: "NeedsLogin" }), spawn, accessMode: "tailscale", loginServer: null, operator: "alice", loginUrlWaitMs: 1000 });
+    await controller.connect();
+    const retried = await controller.connect();
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(retried.loginUrl).toBe("https://login.tailscale.com/a/retry");
+    controller.close();
+  });
+
   it("keeps one login in flight and does nothing when already connected", async () => {
     const { spawn } = fakeLogin(["https://login.tailscale.com/a/once"]);
     const controller = new TailscaleController({ exec: execReturning({ BackendState: "NeedsLogin" }), spawn, accessMode: "tailscale", loginServer: null, operator: "alice", loginUrlWaitMs: 1000 });

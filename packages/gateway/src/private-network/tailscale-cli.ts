@@ -236,6 +236,9 @@ export class TailscaleController {
       child.stderr?.on("data", onData);
       child.once("error", (error) => {
         console.warn("[private-network] tailscale login failed to start:", error.name);
+        // No process runs: free the slot so Connect can try again at once.
+        clearTimeout(timer);
+        if (this.login === login) this.login = null;
         finish(null);
       });
       child.once("exit", () => {
