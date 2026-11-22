@@ -91,7 +91,7 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
       if (action.path === "AGENTS.md" && action.content.length > 8192) throw new ProjectSetupError("invalid");
       if (action.path.endsWith("/SKILL.md")) {
         const skill = projectSetupSkill(action.content);
-        if (skill.path !== action.path) throw new ProjectSetupError("invalid");
+        if (skill.path !== action.path) { file.path = skill.path; delete file.expectedHash; }
         draft.skill = skill;
       }
       delete draft.generation;
@@ -126,6 +126,7 @@ export function applyProjectSetupGeneration(current: ProjectSetupDraft, text: st
   if (Buffer.byteLength(text, "utf8") > 96 * 1024) throw new ProjectSetupError("invalid");
   const json = text.trim().replace(/^```(?:json)?\s*\n/, "").replace(/\n```$/, "");
   const generated = GeneratedSetupSchema.parse(JSON.parse(json));
+  if (current.answers.skillInstructions && !generated.skill) throw new ProjectSetupError("invalid");
   const draft = structuredClone(current);
   draft.proposals = [{ path: "AGENTS.md", content: generated.guidance, status: "pending" }, { path: "CLAUDE.md", content: "@AGENTS.md\n", status: "pending" }];
   if (current.answers.skillInstructions && generated.skill) {
