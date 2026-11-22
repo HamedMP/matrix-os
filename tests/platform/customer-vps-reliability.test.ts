@@ -285,6 +285,23 @@ describe('platform/customer-vps reliability', () => {
       .toEqual([{ machine_id: '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f', metal_vm_id: 'vm_0123456789abcdef01234567' }]);
   });
 
+  it('a paid build never retires a failed free metal computer that had registered', async () => {
+    const { service } = createHarness();
+    await createMetalHostsRepository(db.kysely).upsert({
+      id: 'host-a', name: 'host-a', apiUrl: 'https://host-a.metal.example.test:8443', ingressHost: 'host-a.metal.example.test',
+      status: 'active', memoryCapacityMib: 131072, admissionCeilingMib: 114688,
+    });
+    await insertUserMachine(db, {
+      machineId: '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f', clerkUserId: 'user_123', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', metalVmId: 'vm_0123456789abcdef01234567', lastSeenAt: '2026-04-25T00:00:00.000Z',
+      hetznerServerId: null, publicIPv4: null, imageVersion: 'stable', provisionedAt: '2026-04-20T00:00:00.000Z',
+    });
+
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice' })).rejects.toMatchObject({ code: 'support_required' });
+    expect(await getActiveUserMachineByClerkId(db, 'user_123', 'primary')).toMatchObject({ substrate: 'metal', status: 'failed' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('machine_id').execute()).toEqual([]);
+  });
+
   it('rejects registration for a retired machine', async () => {
     const { service } = createHarness();
     const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });

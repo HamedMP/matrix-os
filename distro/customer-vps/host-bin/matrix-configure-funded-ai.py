@@ -41,6 +41,24 @@ def reviewed_funded_pair(platform, relay):
     return platform in PREVIEW_FUNDED_PLATFORMS and relay == PREVIEW_FUNDED_RELAY
 
 
+GUEST_PLATFORM_KEY = 'PLATFORM_INTERNAL_URL'
+
+
+def guest_platform_matches(platform, internal):
+    """Only the guest's own platform may configure it (the contract's
+    fundedPlatformOriginMatchesGuest): a guest on a reviewed preview platform
+    takes only that origin; every other guest only the production origin."""
+    if not isinstance(platform, str) or not isinstance(internal, str):
+        return False
+    match = re.fullmatch(r'(https://[A-Za-z0-9.-]+(?::[0-9]+)?)/?', internal)
+    if not match:
+        return False
+    origin = match.group(1)
+    if origin in PREVIEW_FUNDED_PLATFORMS:
+        return platform == origin
+    return platform == PRODUCTION_FUNDED_PLATFORM
+
+
 def require(condition):
     if not condition:
         raise ValueError('Invalid or unavailable host configuration')
@@ -225,7 +243,7 @@ def _apply_config(env_path, value, markers):
         values = {}
         for line in lines:
             bare = line.rstrip('\r\n')
-            for key in KEYS + IDENTITY_KEYS:
+            for key in KEYS + IDENTITY_KEYS + (GUEST_PLATFORM_KEY,):
                 if re.match(r'^\s*(?:export\s+)?' + key + r'\s*=', bare):
                     require(bare.startswith(key + '=') and key not in values)
                     values[key] = bare[len(key) + 1:]
@@ -233,6 +251,7 @@ def _apply_config(env_path, value, markers):
                 (identity['handle'], identity['machineId'], identity['ownerId'], identity['runtimeSlot']))))
         epoch = str(identity['runtimeTokenEpoch'])
         require('MATRIX_RUNTIME_TOKEN_EPOCH' not in values or values['MATRIX_RUNTIME_TOKEN_EPOCH'] == epoch)
+        require(guest_platform_matches(config['platformOrigin'], values.get(GUEST_PLATFORM_KEY)))
         require(values.get('MATRIX_FUNDED_AI_PLATFORM_URL', '') in ('', config['platformOrigin']))
         require(values.get('MATRIX_FUNDED_AI_RELAY_URL', '') in ('', config['relayOrigin']))
         replacement = {'MATRIX_FUNDED_AI_ENABLED': 'true', 'MATRIX_FUNDED_AI_PLATFORM_URL': config['platformOrigin'],

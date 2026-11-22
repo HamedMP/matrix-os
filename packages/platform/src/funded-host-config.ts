@@ -40,7 +40,13 @@ export type FundedHostConfig = { enabled: false } | {
   enabled: true; machineIds: readonly string[]; relayOrigin: string; platformOrigin: string; validThrough: string; sourceSha: string;
 };
 
-export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date()): FundedHostConfig {
+/**
+ * `platformOrigin` defaults to fundedPlatformOrigin(env); the registration-time
+ * copy passes the already-validated origin explicitly instead of rebuilding the
+ * preview gate from a synthetic environment.
+ */
+export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date(),
+  platformOrigin: string | null = fundedPlatformOrigin(env)): FundedHostConfig {
   const gate = env.MATRIX_FUNDED_HOST_CONFIG_ENABLED ?? "false";
   if (gate === "false") return { enabled: false };
   if (gate !== "true" || env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED !== "true") {
@@ -52,8 +58,7 @@ export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date()): 
     validThrough: TimestampSchema, sourceSha: ShaSchema }).safeParse({ machineIds,
     relayOrigin: env.MATRIX_FUNDED_AI_RELAY_URL, validThrough: env.MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH,
     sourceSha: env.MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA });
-  const platformOrigin = fundedPlatformOrigin(env);
-  if (!valid.success || new Set(machineIds).size !== machineIds.length
+  if (!valid.success || platformOrigin === null || new Set(machineIds).size !== machineIds.length
     || fundedOriginPairKind(platformOrigin, valid.data.relayOrigin) === null
     || Date.parse(valid.data.validThrough) - now.getTime() > 7 * 24 * 60 * 60_000) {
     throw new Error("Funded host configuration is misconfigured");
@@ -97,9 +102,7 @@ export function createFundedHostConfigRoutes(options: {
     MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH: options.config.validThrough,
     MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA: options.config.sourceSha,
     MATRIX_FUNDED_AI_RELAY_URL: options.config.relayOrigin,
-    ...(options.config.platformOrigin !== FUNDED_PRODUCTION_PLATFORM_ORIGIN
-      ? { PLATFORM_PREVIEW: "true", MATRIX_APP_ORIGIN: options.config.platformOrigin } : {}),
-  }, now()) : { enabled: false as const };
+  }, now(), options.config.platformOrigin ?? FUNDED_PRODUCTION_PLATFORM_ORIGIN) : { enabled: false as const };
   const app = new Hono();
   app.use("*", async (c, next) => {
     c.header("Cache-Control", "no-store, private"); c.header("CDN-Cache-Control", "no-store");

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
+import { FUNDED_PRODUCTION_PLATFORM_ORIGIN, fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
 import { ZodError } from 'zod/v4';
 import type { Dispatcher } from 'undici';
 import { iterateRunningUserMachinePages, type PlatformDB, type UserMachineRecord } from './db.js';
@@ -30,8 +30,8 @@ export type ManagedFeatureActivator = (target: ManagedFeatureActivationTarget) =
 /** Each call handles one bounded page; failures never prevent another feature's reconciliation. */
 export function createManagedFeatureActivator(options: {
   db: PlatformDB; platformSecret: string; relayOrigin: string; fundedAiEnabled: boolean; speechEnabled: boolean;
-  /** Platform origin guests are configured against (fundedPlatformOrigin); defaults to production. */
-  platformOrigin?: string;
+  /** Platform origin guests are configured against (fundedPlatformOrigin); null disables. Defaults to production. */
+  platformOrigin?: string | null;
   activateSpeech: (target: { handle: string; signal?: AbortSignal }) => Promise<{ activated: number; failed: number }>;
   /** Reaches non-VPS runtimes (metal) through their host ingress; without it they are deferred, never sent to publicIPv4. */
   substrates?: Pick<SubstrateRegistry, 'resolveUpstream'>;
@@ -41,7 +41,7 @@ export function createManagedFeatureActivator(options: {
   // Guests accept only the reviewed relay pin (contracts and the guest's
   // configure script). A deployment configured with another relay can never
   // activate; say so once instead of failing every runtime on every pass.
-  const platformOrigin = options.platformOrigin ?? 'https://app.matrix-os.com';
+  const platformOrigin = options.platformOrigin === undefined ? FUNDED_PRODUCTION_PLATFORM_ORIGIN : options.platformOrigin;
   const relayAdmitted = !options.fundedAiEnabled || isAdmittedFundedOriginPair(platformOrigin, options.relayOrigin);
   if (!relayAdmitted) {
     console.error('[managed-features] funded activation disabled: the configured relay and platform origins are not a reviewed pair');

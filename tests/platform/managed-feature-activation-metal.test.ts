@@ -145,7 +145,8 @@ describe('managed feature activation for metal runtimes', () => {
   it('activates a free metal VM on a preview platform with the reviewed preview pair, through the ingress', async () => {
     const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
     const previewPlatform = fundedPlatformOrigin({
-      PLATFORM_PREVIEW: 'true', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com', PLATFORM_PUBLIC_URL: 'https://metal-preview.matrix-os.com',
+      PLATFORM_PREVIEW: 'true', MATRIX_FUNDED_AI_PREVIEW_PIN: '1',
+      MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com', PLATFORM_PUBLIC_URL: 'https://metal-preview.matrix-os.com',
     });
     expect(previewPlatform).toBe('https://metal-preview.matrix-os.com');
     rig.ingress.respond = configuringVm().respond;
@@ -164,10 +165,28 @@ describe('managed feature activation for metal runtimes', () => {
   });
 
   it('a production platform keeps the production origin and rejects the preview relay', async () => {
+    const preview = { PLATFORM_PREVIEW: 'true', MATRIX_FUNDED_AI_PREVIEW_PIN: '1', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' };
     expect(fundedPlatformOrigin({ MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' })).toBe('https://app.matrix-os.com');
     // A preview that can provision Hetzner VPSes is production-gated too.
-    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', HETZNER_API_TOKEN: 'token', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' }))
-      .toBe('https://app.matrix-os.com');
+    expect(fundedPlatformOrigin({ ...preview, HETZNER_API_TOKEN: 'token' })).toBe('https://app.matrix-os.com');
+    // So is a preview without the explicit preview-pin flag the preview workflow sets.
+    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' })).toBe('https://app.matrix-os.com');
+  });
+
+  it('a pinned preview platform with no configured origin emits nothing, never the production pair', async () => {
+    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', MATRIX_FUNDED_AI_PREVIEW_PIN: '1' })).toBeNull();
+    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', MATRIX_FUNDED_AI_PREVIEW_PIN: '1', MATRIX_APP_ORIGIN: 'not a url' })).toBeNull();
+    rig.ingress.respond = configuringVm().respond;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const activate = createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin, platformOrigin: null, fundedAiEnabled: true, speechEnabled: false,
+      activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates: rig.substrates,
+      now: () => new Date(at), wait: async () => {},
+    });
+    expect(await activate({ handle: HANDLE })).toEqual({ activated: 0, failed: 0, complete: true, nextCursor: null });
+    expect(rig.ingress.requests.filter((request) => request.path === CONFIG_PATH)).toEqual([]);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   });
 
   it('never sends a relay origin outside the reviewed pin, and says so once instead of a ZodError per pass', async () => {

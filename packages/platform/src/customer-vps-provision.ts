@@ -44,6 +44,7 @@ import {
 } from './customer-vps-support.js';
 import type { CustomerVpsContext } from './customer-vps-context.js';
 import { enqueueMetalVmDeletion } from './substrates/metal-vm-deletions.js';
+import { neverRegistered } from './substrates/metal-registration-window.js';
 import type { CustomerVpsProvisioningDispatcher } from './customer-vps-provisioning-dispatch.js';
 
 /** Validates a provisioning request and records its machine and durable job. */
@@ -267,6 +268,11 @@ export function createCustomerVpsProvisioner(
         // orphaned (a failed enqueue rolls back the whole retry).
         // Free metal builds keep their own ceiling (metal-provisioner); a paid
         // build that replaces one starts its own count.
+        // A free metal computer that once ran holds the owner's data on its VM
+        // disk: never retire it to make room for a paid build; support decides.
+        if (existing.substrate === 'metal' && !neverRegistered(existing)) {
+          throw new CustomerVpsError(409, 'support_required', 'Contact support');
+        }
         attempt = existing.substrate === 'metal' ? 1 : existing.attempt + 1;
         if (attempt > deps.config.maxProvisionAttempts) {
           throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
