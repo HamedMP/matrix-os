@@ -1,6 +1,5 @@
 import { sql } from 'kysely';
 import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
-import { toBillingEntitlementRow } from '../database/billing-records.js';
 import {
   getActiveUserMachineByClerkId,
   getSettlingCheckoutAttempt,
@@ -10,6 +9,13 @@ import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
 import type { MetalProvisioner } from '../substrates/metal-provisioner.js';
 import type { FreeTierConfig } from './config.js';
 import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
+import {
+  FreeEntitlementReplacementRefused,
+  hasOtherLiveRuntime,
+  paidRightsEnded,
+  storedEntitlementEnded,
+  writeFreeEntitlement,
+} from './former-paid-owner.js';
 import { countFreeOwners, getFreeTierInvite, redeemFreeTierInvite } from './invites.js';
 
 /**
@@ -30,6 +36,12 @@ import { countFreeOwners, getFreeTierInvite, redeemFreeTierInvite } from './invi
  *
  * The ceiling holds because every admission counts and inserts under one
  * transaction-scoped advisory lock.
+ *
+ * A former paid owner may take the free plan once every paid right has ended
+ * (ENG-520 P7, ported from PR #3437): their stored entitlement is an ended
+ * Stripe one, no subscription or override still grants anything, and they
+ * hold no other live runtime. The free entitlement then replaces the ended
+ * row in one guarded statement, and a later live subscription still wins.
  */
 
 export interface FreeRuntimeRecord {
@@ -89,17 +101,25 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (!admission.newWorkAllowed) return { kind: 'deletion_pending' };
       const current = await getActiveUserMachineByClerkId(trx, clerkUserId, FREE_RUNTIME_SLOT);
       if (current && current.substrate !== 'metal') return { kind: 'runtime_exists' };
+      const at = now();
+      const atIso = at.toISOString();
       const entitlement = await trx.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
-      if (entitlement && entitlement.source !== 'free') return { kind: 'plan_unavailable' };
+      const free = entitlement?.source === 'free';
+      // A stored paid entitlement blocks the free plan until every paid right in it has ended.
+      if (entitlement && !free && !await storedEntitlementEnded(trx, clerkUserId, atIso)) {
+        return { kind: 'plan_unavailable' };
+      }
       if (current && current.status !== 'failed') {
         // A metal runtime without a free entitlement is a paid or operator runtime, not this plan's.
-        return entitlement ? { kind: 'existing', runtime: toRecord(current) } : { kind: 'runtime_exists' };
+        return free ? { kind: 'existing', runtime: toRecord(current) } : { kind: 'runtime_exists' };
       }
+      if (await hasOtherLiveRuntime(trx, clerkUserId)) return { kind: 'runtime_exists' };
+      if (!await paidRightsEnded(trx, clerkUserId, atIso)) return { kind: 'plan_unavailable' };
       // Checked under the billing owner lock, which checkout creation also takes.
       if (await paidCheckoutPending(trx, clerkUserId)) return { kind: 'checkout_pending' };
       // Already admitted: the invite was redeemed and the owner is counted.
-      if (entitlement) return { kind: 'admitted' };
+      if (free) return { kind: 'admitted' };
       if (config.inviteRequired) {
         const invite = await getFreeTierInvite(trx, clerkUserId);
         if (!invite || invite.consumedAt) return { kind: 'waitlisted' };
@@ -110,12 +130,20 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (config.inviteRequired && await redeemFreeTierInvite(trx, clerkUserId) !== 'redeemed') {
         return { kind: 'waitlisted' };
       }
-      await trx.executor.insertInto('billing_entitlements')
-        .values(toBillingEntitlementRow(buildFreeEntitlement(clerkUserId, now())))
-        .onConflict((oc) => oc.column('clerk_user_id').doNothing())
-        .execute();
+      // Inserts, or replaces an ended paid row; a row that stopped being replaceable throws and rolls back.
+      await writeFreeEntitlement(trx, buildFreeEntitlement(clerkUserId, at));
       return { kind: 'admitted' };
     }, deps.env);
+  }
+
+  async function admitOrRefuse(clerkUserId: string): Promise<Admission> {
+    try {
+      return await admit(clerkUserId);
+    } catch (error: unknown) {
+      // The transaction rolled back, so the invite and the stored entitlement are untouched.
+      if (error instanceof FreeEntitlementReplacementRefused) return { kind: 'plan_unavailable' };
+      throw error;
+    }
   }
 
   return {
@@ -131,18 +159,23 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (current && current.substrate !== 'metal') return false;
       const entitlement = await db.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
-      if (entitlement && entitlement.source !== 'free') return false;
-      if (entitlement) return !(await paidCheckoutPending(db, clerkUserId));
+      const free = entitlement?.source === 'free';
+      const atIso = now().toISOString();
+      // The same order as admission, so the journey, billing status, and provisioning agree.
+      if (entitlement && !free && !await storedEntitlementEnded(db, clerkUserId, atIso)) return false;
       // A metal runtime without a free entitlement belongs to another plan.
-      if (current && current.status !== 'failed') return false;
+      if (!free && current && current.status !== 'failed') return false;
+      if (await hasOtherLiveRuntime(db, clerkUserId)) return false;
+      if (!await paidRightsEnded(db, clerkUserId, atIso)) return false;
       if (await paidCheckoutPending(db, clerkUserId)) return false;
+      if (free) return true;
       if (!config.inviteRequired) return true;
       const invite = await getFreeTierInvite(db, clerkUserId);
       return Boolean(invite && !invite.consumedAt);
     },
 
     async provision(input: { clerkUserId: string; handle: string }): Promise<FreeProvisionOutcome> {
-      const admission = await admit(input.clerkUserId);
+      const admission = await admitOrRefuse(input.clerkUserId);
       if (admission.kind !== 'admitted') return admission;
       const result = await deps.metal.provision({
         clerkUserId: input.clerkUserId, handle: input.handle, tier: 'free', runtimeSlot: FREE_RUNTIME_SLOT,

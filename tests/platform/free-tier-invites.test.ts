@@ -55,6 +55,14 @@ describe('free tier configuration', () => {
       MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5', MATRIX_FREE_TIER_INVITE_REQUIRED: 'no',
     })).toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_FREE_TIER_INVITE_REQUIRED'] });
   });
+
+  it('reads an optional positive daily funded spend ceiling (ENG-520 P7)', () => {
+    const base = { MATRIX_FREE_TIER_ENABLED: 'true', MATRIX_FREE_TIER_MAX_RUNTIMES: '5' };
+    expect(loadFreeTierConfig({ ...base, MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: '25000000' }))
+      .toEqual({ ok: true, config: { maxRuntimes: 5, inviteRequired: true, dailyFundedSpendMicrousd: 25_000_000 } });
+    expect(loadFreeTierConfig({ ...base, MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: '0' }))
+      .toEqual({ ok: false, reason: 'incomplete', invalid: ['MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD'] });
+  });
 });
 
 describe('free tier invite repository', () => {

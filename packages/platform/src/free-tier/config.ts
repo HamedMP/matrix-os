@@ -10,6 +10,11 @@ export interface FreeTierConfig {
   maxRuntimes: number;
   /** Invite-only signup (spec decision D4) unless explicitly opened. */
   inviteRequired: boolean;
+  /**
+   * Ceiling on free runtimes' funded spend per UTC day, read from the funded
+   * reservation ledger (ENG-520 P7). Unset means no free funded admission.
+   */
+  dailyFundedSpendMicrousd?: number;
 }
 
 export type FreeTierConfigResult =
@@ -20,6 +25,7 @@ export type FreeTierConfigResult =
 const FIELDS = {
   MATRIX_FREE_TIER_MAX_RUNTIMES: z.coerce.number().int().min(1).max(1_000_000),
   MATRIX_FREE_TIER_INVITE_REQUIRED: z.enum(['true', 'false']).default('true'),
+  MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 } as const;
 
 const ConfigSchema = z.object(FIELDS);
@@ -43,6 +49,8 @@ export function loadFreeTierConfig(env: NodeJS.ProcessEnv): FreeTierConfigResult
     config: {
       maxRuntimes: parsed.data.MATRIX_FREE_TIER_MAX_RUNTIMES,
       inviteRequired: parsed.data.MATRIX_FREE_TIER_INVITE_REQUIRED === 'true',
+      ...(parsed.data.MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD === undefined
+        ? {} : { dailyFundedSpendMicrousd: parsed.data.MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD }),
     },
   };
 }

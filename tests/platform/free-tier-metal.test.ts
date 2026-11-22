@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
 import { createAppSessionRoutes } from '../../packages/platform/src/app-session-routes.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
@@ -19,7 +19,10 @@ import {
 import { loadConfiguredFreeTier, type FreeTierConfig } from '../../packages/platform/src/free-tier/config.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
 import { addFreeTierInvite, getFreeTierInvite } from '../../packages/platform/src/free-tier/invites.js';
-import { createFreeTierRuntime } from '../../packages/platform/src/free-tier/provision-free-runtime.js';
+import { createFreeRuntimeProvisioner, createFreeTierRuntime } from '../../packages/platform/src/free-tier/provision-free-runtime.js';
+import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
+import { getRuntimeAccessDecision, loadStripePriceCatalog } from '../../packages/platform/src/billing.js';
+import { recomputeStripeSummary } from '../../packages/platform/src/billing/stripe-webhook-projection.js';
 import { createPrebillingIntent } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import {
   getRuntimeEntitlementDecisionForUser,
@@ -30,6 +33,7 @@ import { createMetalHostsRepository } from '../../packages/platform/src/substrat
 import { createMetalProvisioner } from '../../packages/platform/src/substrates/metal-provisioner.js';
 import { createTestConfig } from './customer-vps-service-test-helper.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createScopedPlatformDbs, freeTierPostgresUrl, type ScopedPlatformDbs } from './free-tier-postgres-helper.js';
 
 /**
  * Free plan on metal (spec 2691, ENG-520; free-tier policy ported from PR
@@ -71,6 +75,29 @@ function fakeHostd() {
     resume: unused, suspend: unused, stop: unused, setPolicy: unused,
   } as unknown as HostdClient;
   return { client, capacity, createVm };
+}
+
+const FREE = { planSlug: 'matrix_free' };
+const EARLIER = '2026-10-01T00:00:00.000Z';
+const LATER = '2026-12-01T00:00:00.000Z';
+const PRICE_ENV = { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' };
+
+function endedPaid(): BillingEntitlement {
+  return {
+    ...buildFreeEntitlement(OWNER, new Date(EARLIER)), source: 'stripe', planSlug: 'matrix_starter',
+    status: 'canceled', stripeSubscriptionId: 'sub_old', allowedServerTypes: ['cpx22'], defaultServerType: 'cpx22',
+  };
+}
+
+async function insertSubscriptionRow(db: PlatformDB, input: { id: string; runtimeSlot: string; status: string }) {
+  await db.executor.insertInto('billing_subscriptions').values({
+    stripe_subscription_id: input.id, stripe_customer_id: 'cus_1', clerk_user_id: OWNER, runtime_slot: input.runtimeSlot,
+    plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly', price_unit_amount_minor: null,
+    price_currency: null, price_interval_count: null, price_quantity: null, status: input.status, current_period_end: null,
+    grace_period_ends_at: null, trial_started_at: null, trial_ends_at: null, trial_converted_at: null,
+    first_trial_payment_failed_at: null, latest_event_created_at: EARLIER, latest_event_id: 'evt_1',
+    latest_invoice_event_created_at: null, latest_invoice_event_id: null, updated_at: EARLIER,
+  } as never).execute();
 }
 
 function paidEntitlement(): BillingEntitlement {
@@ -288,18 +315,141 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(hostd.createVm).toHaveBeenCalledTimes(2);
   });
 
-  it('never turns a lapsed paid owner into a free one', async () => {
+  // ENG-520 P7 (ported from PR #3437): P5 refused every owner with a paid
+  // billing history. A former paid owner whose paid rights have all ended may
+  // now take the free plan; any paid right still live keeps them paid.
+  it.each([
+    { name: 'active', changes: { status: 'active' as const } },
+    { name: 'trialing', changes: { status: 'trialing' as const } },
+    { name: 'past due', changes: { status: 'past_due' as const } },
+    { name: 'unpaid', changes: { status: 'unpaid' as const } },
+    { name: 'incomplete', changes: { status: 'incomplete' as const } },
+    { name: 'canceled within its grace period', changes: { gracePeriodEndsAt: LATER } },
+    { name: 'canceled before its effective end', changes: { effectiveUntil: LATER } },
+  ])('refuses a paid owner whose entitlement is $name and leaves it untouched', async ({ changes }) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    await upsertBillingEntitlement(db, { ...paidEntitlement(), status: 'canceled', stripeSubscriptionId: 'sub_old' });
+    await upsertBillingEntitlement(db, { ...endedPaid(), ...changes });
     const routes = routesFor().routes;
 
-    expect((await request(routes)).status).toBe(402);
     const explicit = await request(routes, { planSlug: 'matrix_free' });
     expect(explicit.status).toBe(409);
     expect(await explicit.json()).toMatchObject({ code: 'free_plan_unavailable' });
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_old' });
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
     expect(await metalRows()).toHaveLength(0);
+    expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'canceled', changes: {} },
+    { name: 'ended', changes: { status: 'ended' as const } },
+    { name: 'canceled after its grace period', changes: { gracePeriodEndsAt: EARLIER } },
+    { name: 'canceled past its effective end', changes: { effectiveUntil: EARLIER } },
+  ])('lets a former paid owner whose entitlement is $name take the free plan', async ({ changes }) => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, { ...endedPaid(), ...changes });
+    const response = await request(routesFor().routes, { planSlug: 'matrix_free' });
+    expect(response.status).toBe(202);
+    expect(await metalRows()).toHaveLength(1);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({
+      source: 'free', planSlug: 'matrix_free', status: 'active', stripeSubscriptionId: null,
+    });
+  });
+
+  it('offers the free plan to a former paid owner on the implicit path as well', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    const response = await request(routesFor().routes);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ runtime: 'metal' });
+  });
+
+  it('refuses a former paid owner while another subscription or an override is still live', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertSubscriptionRow(db, { id: 'sub_extra', runtimeSlot: 'extra', status: 'past_due' });
+    expect((await request(routesFor().routes, FREE)).status).toBe(409);
+
+    await db.executor.updateTable('billing_subscriptions').set({ status: 'canceled', grace_period_ends_at: LATER }).execute();
+    expect((await request(routesFor().routes, FREE)).status).toBe(409);
+
+    await db.executor.deleteFrom('billing_subscriptions').execute();
+    await db.executor.insertInto('billing_entitlement_overrides').values({ id: 'override_1', clerk_user_id: OWNER,
+      plan_slug: 'internal', status: 'active', max_runtime_slots: 1, included_runtime_slots: 1, addon_runtime_slots: 0,
+      default_server_type: 'cpx22', allowed_server_types: '["cpx22"]', reason: 'support', created_by: 'operator',
+      expires_at: null, revoked_at: null, created_at: EARLIER }).execute();
+    expect((await request(routesFor().routes, FREE)).status).toBe(409);
+    expect(await metalRows()).toHaveLength(0);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe' });
+  });
+
+  it('gives a former paid owner runtime access after free signup although their canceled subscription is retained', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertSubscriptionRow(db, { id: 'sub_old', runtimeSlot: 'primary', status: 'canceled' });
+    expect((await request(routesFor().routes, FREE)).status).toBe(202);
+    const entitlement = await resolveEffectiveBillingEntitlementForSlot(db, OWNER, NOW, 'primary', PRICE_ENV);
+    expect(entitlement).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+    expect(getRuntimeAccessDecision(entitlement, NOW, 'metal')).toMatchObject({ runtimeProxyAllowed: true });
+  });
+
+  describe('a Stripe webhook after a former paid owner took the free plan', () => {
+    const LATER_AT = new Date('2026-11-22T10:00:00.000Z');
+    async function takeFreeWithRetainedSubscription() {
+      await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+      await upsertBillingEntitlement(db, endedPaid());
+      await insertSubscriptionRow(db, { id: 'sub_old', runtimeSlot: 'primary', status: 'canceled' });
+      expect((await request(routesFor().routes, FREE)).status).toBe(202);
+    }
+    /** The webhook handler's two writes: recompute the owner's Stripe summary, then persist it. */
+    async function acceptWebhook() {
+      const summary = await recomputeStripeSummary(db, OWNER, loadStripePriceCatalog(PRICE_ENV), PRICE_ENV, LATER_AT);
+      if (summary) await upsertBillingEntitlement(db, summary);
+    }
+
+    it('keeps the free entitlement when the update is for the still-canceled subscription', async () => {
+      await takeFreeWithRetainedSubscription();
+      await acceptWebhook();
+      expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
+      const entitlement = await resolveEffectiveBillingEntitlementForSlot(db, OWNER, LATER_AT, 'primary', PRICE_ENV);
+      expect(getRuntimeAccessDecision(entitlement, LATER_AT, 'metal')).toMatchObject({ runtimeProxyAllowed: true });
+    });
+
+    it('lets a live subscription replace the free entitlement', async () => {
+      await takeFreeWithRetainedSubscription();
+      await db.executor.updateTable('billing_subscriptions').set({ status: 'active', latest_event_id: 'evt_2' }).execute();
+      await acceptWebhook();
+      expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', status: 'active', stripeSubscriptionId: 'sub_old' });
+    });
+  });
+
+  it('refuses a former paid owner who still has a live VPS in any slot', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertUserMachine(db, {
+      machineId: 'vps-extra', clerkUserId: OWNER, handle: 'freeowner-extra', runtimeSlot: 'extra', status: 'stopped',
+      imageVersion: 'v1', provisionedAt: NOW.toISOString(), activationState: 'authorized',
+    });
+    const response = await request(routesFor().routes, FREE);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'runtime_exists' });
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe' });
+
+    await db.executor.updateTable('user_machines').set({ deleted_at: EARLIER, status: 'deleted' }).execute();
+    expect((await request(routesFor().routes, FREE)).status).toBe(202);
+  });
+
+  it('lets a later Stripe reactivation replace the free entitlement even if its clock reads earlier', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    const reactivation = { ...endedPaid(), status: 'active' as const, effectiveFrom: NOW.toISOString(), updatedAt: NOW.toISOString() };
+    const provisioner = createFreeRuntimeProvisioner({
+      db, config: { maxRuntimes: 10, inviteRequired: true }, metal: metalProvisioner(), env: {},
+      now: () => new Date(NOW.getTime() + 1_000),
+    });
+    expect((await provisioner.provision({ clerkUserId: OWNER, handle: 'freeowner' })).kind).toBe('created');
+    await upsertBillingEntitlement(db, reactivation);
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', status: 'active' });
   });
 
   it('gives an invited owner with a settling paid checkout no free admission', async () => {
@@ -386,5 +536,34 @@ describe('runtime access for a free owner', () => {
     });
     const decision = await getRuntimeEntitlementDecisionForUser(db, OWNER, env, 'primary', 'customer', NOW);
     expect(decision).toMatchObject({ runtimeProxyAllowed: false });
+  });
+});
+
+describe.skipIf(!freeTierPostgresUrl)('a former paid owner taking the free plan against real Postgres', () => {
+  let scoped: ScopedPlatformDbs;
+  beforeAll(async () => { scoped = await createScopedPlatformDbs('free_former_paid', 2); });
+  afterAll(async () => { await scoped?.close(); });
+
+  it('keeps the paid entitlement when a Stripe reactivation races a former paid owner taking the free plan', async () => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    // Admission is what races; the metal create after it is out of scope here.
+    const metal = { provision: async () => ({ error: 'unavailable' as const }) };
+    for (let round = 0; round < 5; round += 1) {
+      for (const table of ['user_machines', 'free_tier_invites', 'billing_entitlements'] as const) {
+        await a.executor.deleteFrom(table).execute();
+      }
+      await addFreeTierInvite(a, { clerkUserId: OWNER, invitedBy: 'ops' });
+      await upsertBillingEntitlement(a, endedPaid());
+      const reactivatedAt = new Date().toISOString();
+      const provisioner = createFreeRuntimeProvisioner({
+        db: a, config: { maxRuntimes: 10, inviteRequired: true }, metal: metal as never, env: {},
+      });
+      const [outcome] = await Promise.all([
+        provisioner.provision({ clerkUserId: OWNER, handle: 'freeowner' }),
+        upsertBillingEntitlement(b, { ...endedPaid(), status: 'active', effectiveFrom: reactivatedAt, updatedAt: reactivatedAt }),
+      ]);
+      expect(['provisioning_unavailable', 'plan_unavailable']).toContain(outcome.kind);
+      expect(await getBillingEntitlement(a, OWNER)).toMatchObject({ source: 'stripe', status: 'active' });
+    }
   });
 });

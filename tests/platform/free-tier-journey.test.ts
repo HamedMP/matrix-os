@@ -233,13 +233,24 @@ describe('onboarding journey on the free plan', () => {
     expect(await response.json()).toEqual({ error: 'account_deletion_pending' });
   });
 
-  it('keeps a lapsed paid owner on plan_required even with an invite', async () => {
+  // ENG-520 P7 (ported from PR #3437): a lapsed paid owner whose subscription
+  // has not ended (here unpaid) keeps paid plans; one whose paid rights have
+  // all ended is offered the free plan (P5 kept every lapsed paid owner on
+  // plan_required).
+  it('keeps an unpaid paid owner on plan_required even with an invite', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    await upsertBillingEntitlement(db, { ...paidEntitlement(), status: 'canceled' });
+    await upsertBillingEntitlement(db, { ...paidEntitlement(), status: 'unpaid' });
     const { app } = journeyApp();
     expect((await journey(app)).phase).toBe('plan_required');
     expect((await retry(app)).status).toBe(402);
     expect(createVm).not.toHaveBeenCalled();
+  });
+
+  it('offers the free plan to an invited former paid owner whose paid rights have ended', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, { ...paidEntitlement(), status: 'canceled' });
+    const { app } = journeyApp();
+    expect((await journey(app)).phase).not.toBe('plan_required');
   });
 
   it('keeps an owner with a VPS in the slot out of the free plan', async () => {

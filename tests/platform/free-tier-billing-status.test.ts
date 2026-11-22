@@ -112,7 +112,9 @@ describe('/billing/status for the free plan on metal', () => {
     expect((await status({ freeTier: false })).access.runtimeProxyAllowed).toBe(false);
   });
 
-  it('leaves paid status unchanged, and never grants a lapsed paid owner free access', async () => {
+  // ENG-520 P7 (ported from PR #3437): only a lapsed paid owner whose paid
+  // rights have all ended may take the free plan; an unpaid one stays paid.
+  it('leaves paid status unchanged, and never grants an unpaid owner free access', async () => {
     await upsertBillingEntitlement(db, paidEntitlement());
     const paid = await status({ path: '/billing/status' });
     const paidWithoutFreeTier = await status({ path: '/billing/status', freeTier: false });
@@ -120,8 +122,14 @@ describe('/billing/status for the free plan on metal', () => {
     expect(paid.access.runtimeProxyAllowed).toBe(true);
 
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    await upsertBillingEntitlement(db, paidEntitlement({ status: 'canceled' }));
+    await upsertBillingEntitlement(db, paidEntitlement({ status: 'unpaid' }));
     expect((await status({ path: '/billing/status' })).access.runtimeProxyAllowed).toBe(false);
+  });
+
+  it('lets an invited former paid owner whose paid rights have ended through to the free plan', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, paidEntitlement({ status: 'canceled' }));
+    expect((await status({ path: '/billing/status?runtimeSlot=primary' })).access.runtimeProxyAllowed).toBe(true);
   });
 
   it('the CLI login path for a free owner proceeds to a computer the device flow can approve', async () => {

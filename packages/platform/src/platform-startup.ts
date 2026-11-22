@@ -406,6 +406,8 @@ async function startPlatformServerWithCleanup(
       ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
       service: speechService })
     : undefined;
+  // Read once at startup: free signup and free funded admission share it.
+  const freeTierConfig = loadConfiguredFreeTier(process.env);
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
   let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
@@ -425,6 +427,8 @@ async function startPlatformServerWithCleanup(
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      freeFunding: freeTierConfig?.dailyFundedSpendMicrousd === undefined
+        ? {} : { dailyFundedSpendMicrousd: freeTierConfig.dailyFundedSpendMicrousd },
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -1190,7 +1194,7 @@ async function startPlatformServerWithCleanup(
       : undefined,
   });
   registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
-  const freeTier = createFreeTierRuntime({ db, config: loadConfiguredFreeTier(appEnv), metal: metalRuntime?.provisioner });
+  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
   const app = createPlatformApp({
     accountDeletion,
     db,

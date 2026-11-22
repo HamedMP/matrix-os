@@ -22,6 +22,7 @@ import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import { alignCustomerOrdinaryModels } from "./customer-ordinary-model-policy.js";
+import type { FreeFundingConfig } from "./free-tier/funded-policy.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -60,6 +61,8 @@ export interface AiFundedPolicyRepositoryOptions {
   reservationTtlMs?: number;
   inFlightTtlMs?: number;
   reservationIdFactory?: () => string;
+  /** Free metal runtimes' funded admission settings (ENG-520 P7); unset refuses free funded work. */
+  freeFunding?: FreeFundingConfig;
 }
 
 export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
@@ -416,6 +419,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     reservationTtlMs,
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
+    freeFunding: options.freeFunding,
   });
   return {
     getGlobalPolicy,
