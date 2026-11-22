@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import type { PlatformMigrationExecutor } from '../migration-types.js';
+import type { PlatformMigrationExecutor } from '../database/migration-types.js';
 
 /**
  * Spec 2707: owned machines are user_machines rows with substrate 'owned' and
@@ -7,7 +7,14 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
  * owned_machine_links; enrollment codes live in owned_machine_enrollments.
  * Machine credentials are HMAC-derived from runtime_token_epoch, so no secret
  * is stored here.
+ *
+ * Independently versioned (scope 'owned-machines'), so it does not race the
+ * core schema generation on shared preview databases. Runs after core because
+ * it widens user_machines checks. Bump OWNED_MACHINES_SCHEMA_REVISION when the
+ * DDL below changes.
  */
+export const OWNED_MACHINES_SCHEMA_REVISION = { generation: 1, fingerprint: 'owned-machines-v1' } as const;
+
 export async function migrateOwnedMachines(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
     DO $$

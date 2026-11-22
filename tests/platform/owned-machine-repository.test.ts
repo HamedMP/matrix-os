@@ -231,7 +231,7 @@ describe('owned machine migration', () => {
   afterEach(async () => { await destroyTestPlatformDb(db); });
 
   it('widens a database that still has the two-substrate check and stays idempotent', async () => {
-    const { migrateOwnedMachines } = await import('../../packages/platform/src/database/migrations/owned-machines.js');
+    const { migrateOwnedMachines } = await import('../../packages/platform/src/owned-machines/migration.js');
     await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_substrate_check`.execute(db.kysely);
     await sql`ALTER TABLE user_machines ADD CONSTRAINT user_machines_substrate_check CHECK (substrate IN ('vps', 'container'))`.execute(db.kysely);
     await migrateOwnedMachines(db.kysely);
@@ -239,5 +239,11 @@ describe('owned machine migration', () => {
     const approved = await approve(db, (await enroll(db)).userCode);
     expect(approved.ok).toBe(true);
     await expect(sql`UPDATE user_machines SET substrate = 'hetzner'`.execute(db.kysely)).rejects.toThrow();
+  });
+
+  it('records its own schema scope instead of the shared core generation', async () => {
+    const rows = await sql<{ generation: number; fingerprint: string }>`
+      SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'owned-machines'`.execute(db.kysely);
+    expect(rows.rows).toEqual([{ generation: 1, fingerprint: 'owned-machines-v1' }]);
   });
 });
