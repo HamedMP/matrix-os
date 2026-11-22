@@ -1,0 +1,4 @@
+Research summary
+Remote work increased output in most teams although results varied by role.
+A follow-up survey is planned for the spring.
+The header and footer repeat on every page; the footer shows the page number.

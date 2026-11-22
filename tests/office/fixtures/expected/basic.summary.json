@@ -1,0 +1,36 @@
+{
+  "file": "basic.xlsx",
+  "valid": true,
+  "errors": [],
+  "parts": 9,
+  "sheetNames": [
+    "Basics"
+  ],
+  "sharedStrings": 0,
+  "definedNames": {},
+  "totalCells": 44,
+  "totalFormulas": 0,
+  "sheets": [
+    {
+      "name": "Basics",
+      "state": "visible",
+      "dimension": "A1:E20",
+      "cells": 44,
+      "formulaCount": 0,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "bool": 2,
+        "datetime": 2,
+        "float": 1,
+        "int": 3,
+        "str": 36
+      },
+      "maxRow": 20,
+      "maxColumn": 5
+    }
+  ]
+}

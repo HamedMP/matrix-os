@@ -1,0 +1,49 @@
+{
+  "file": "numbering.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 17,
+  "document": {
+    "bodyParagraphs": 19,
+    "allParagraphs": 19,
+    "tables": 0,
+    "numberedParagraphs": 15,
+    "paragraphStyles": {
+      "Heading1": 1,
+      "ListParagraph": 15
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 0,
+    "characters": 341,
+    "pythonDocx": {
+      "paragraphs": 19,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "Numbered and bulleted lists"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 0
+}

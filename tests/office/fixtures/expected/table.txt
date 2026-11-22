@@ -1,0 +1,9 @@
+Project budget
+The table below has a merged title row, a vertically merged cell and styled labels.
+Budget by phase (EUR)
+Phase	Owner	Q1	Q2
+Design	Ana	12,000	8,500
+Build		30,000	42,000
+Launch	Ben	5,000	9,250
+Includes launch event.
+Totals are calculated outside this document.

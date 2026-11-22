@@ -1,0 +1,49 @@
+{
+  "file": "table.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 17,
+  "document": {
+    "bodyParagraphs": 3,
+    "allParagraphs": 21,
+    "tables": 1,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "Heading1": 1,
+      "TableLabel": 5
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 0,
+    "characters": 254,
+    "pythonDocx": {
+      "paragraphs": 3,
+      "tables": 1,
+      "sections": 1,
+      "headings": [
+        "Project budget"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 0
+}

@@ -1,0 +1,9 @@
+Tracked Changes Sample
+The supplier shall deliver the report within ten business days.
+Payment terms are net thirty days.
+This paragraph will be moved to the end.
+Fees are fixed for the initial term.
+This obsolete sentence is removed.
+Governing law: England and Wales.
+Item	Qty
+End of sample.
