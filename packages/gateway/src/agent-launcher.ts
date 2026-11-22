@@ -10,6 +10,7 @@ import {
   type AgentModelOption,
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { createDetectionCache, executableFingerprint } from "./agent-detection-cache.js";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
@@ -101,6 +102,8 @@ type CommandRunner = (
 const execFileAsync = promisify(execFile);
 const DETECT_TIMEOUT_MS = 5_000;
 const DETECT_CACHE_TTL_MS = 5_000;
+/** A recent probe scan may answer at once (with a background refresh) for this long. */
+const DETECT_STALE_WINDOW_MS = 5 * 60_000;
 const ProviderEventPathSchema = z.string()
   .trim()
   .min(1)
@@ -554,11 +557,6 @@ export function createAgentLauncher(options: {
   const codexHome = process.env.CODEX_HOME;
   const now = options.now ?? Date.now;
   type DetectionResult = { agents: AgentStatus[] };
-  let installationScanInFlight: Promise<DetectionResult> | null = null;
-  let installationScanCache: { result: DetectionResult; expiresAt: number } | null = null;
-  let credentialScanInFlight: Promise<DetectionResult> | null = null;
-  let credentialScanCache: { result: DetectionResult; expiresAt: number } | null = null;
-  let credentialScanGeneration = 0;
 
   function commandFor(id: SupportedAgent): string {
     return id === "codex" && options.codexExecutable
@@ -627,49 +625,32 @@ export function createAgentLauncher(options: {
     }
   }
 
-  async function detectAgentInstallations(): Promise<DetectionResult> {
-    const cached = installationScanCache;
-    if (cached && now() < cached.expiresAt) return cached.result;
-    if (installationScanInFlight) return installationScanInFlight;
+  // Transient probe failures are re-probed synchronously; definite answers
+  // (installed, missing, signed in, signed out) may be served while refreshing.
+  const servableWhenStale = (result: DetectionResult) => result.agents.every(agent =>
+    agent.installState !== "unknown" && agent.authState !== "error" && agent.workspaceCompatibility !== "unsupported");
+  const probedExecutables = () => executableFingerprint(SupportedAgentSchema.options.map(commandFor));
+  const installationScans = createDetectionCache<DetectionResult>({
+    scan: () => Promise.all(SupportedAgentSchema.options.map(probeInstallation)).then((agents) => ({ agents })),
+    now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
+    fingerprint: probedExecutables, label: "installation probe",
+  });
+  const credentialScans = createDetectionCache<DetectionResult>({
+    scan: () => Promise.all([probeCredentials("claude"), probeCredentials("codex")]).then((agents) => ({ agents })),
+    now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
+    fingerprint: () => executableFingerprint([commandFor("claude"), commandFor("codex")]), label: "credential probe",
+  });
 
-    const scan = Promise.all(SupportedAgentSchema.options.map(probeInstallation))
-      .then((agents) => ({ agents }));
-    installationScanInFlight = scan;
-    try {
-      const result = await scan;
-      installationScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
-      return result;
-    } finally {
-      if (installationScanInFlight === scan) installationScanInFlight = null;
-    }
+  async function detectAgentInstallations(): Promise<DetectionResult> {
+    return installationScans.read();
   }
 
   async function detectAgentCredentials(): Promise<DetectionResult> {
-    const cached = credentialScanCache;
-    if (cached && now() < cached.expiresAt) return cached.result;
-    if (credentialScanInFlight) return credentialScanInFlight;
-
-    const generation = credentialScanGeneration;
-    const scan = Promise.all([
-      probeCredentials("claude"),
-      probeCredentials("codex"),
-    ]).then((agents) => ({ agents }));
-    credentialScanInFlight = scan;
-    try {
-      const result = await scan;
-      if (generation === credentialScanGeneration) {
-        credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
-      }
-      return result;
-    } finally {
-      if (credentialScanInFlight === scan) credentialScanInFlight = null;
-    }
+    return credentialScans.read();
   }
 
   function invalidateCredentialDetection(): void {
-    credentialScanGeneration += 1;
-    credentialScanCache = null;
-    credentialScanInFlight = null;
+    credentialScans.invalidate();
   }
 
   async function observeCodexLocalCredential(input: {
@@ -693,18 +674,20 @@ export function createAgentLauncher(options: {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const detected = await Promise.race([
-        detectAgentCredentials(),
+        // Local evidence is a five-second receipt: never answer it from a stale scan.
+        credentialScans.read("fresh"),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(new Error("Codex local observation timed out")), DETECT_TIMEOUT_MS);
           timer.unref?.();
         }),
       ]);
       const status = detected.agents.find((agent) => agent.id === "codex");
-      const cached = credentialScanCache;
-      if (!status || !cached || cached.result !== detected || now() >= cached.expiresAt
+      const cached = credentialScans.current();
+      const expiresAt = cached ? cached.verifiedAt + DETECT_CACHE_TTL_MS : 0;
+      if (!status || !cached || cached.result !== detected || now() >= expiresAt
         || status.workspaceCompatibility !== "compatible") return unknown;
-      const checkedAt = new Date(cached.expiresAt - DETECT_CACHE_TTL_MS).toISOString();
-      const staleAfter = new Date(cached.expiresAt).toISOString();
+      const checkedAt = new Date(cached.verifiedAt).toISOString();
+      const staleAfter = new Date(expiresAt).toISOString();
       if (status.authState === "ok" && status.credentialMode === "chatgpt") {
         return { accessSourceId: "owner_openai_profile", state: "present_unverified", checkedAt, staleAfter };
       }

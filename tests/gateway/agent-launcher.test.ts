@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
   buildAgentLaunch,
@@ -460,7 +463,7 @@ describe("agent-launcher", () => {
     expect(runCommand).not.toHaveBeenCalledWith("codex", ["login", "status"], expect.any(Object));
   });
 
-  it("deduplicates overlapping installation scans and expires the five-second cache", async () => {
+  it("deduplicates overlapping installation scans and serves a recent scan while refreshing", async () => {
     let now = 1_000;
     const runCommand = vi.fn(async (command: string) => ({
       stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`,
@@ -478,9 +481,61 @@ describe("agent-launcher", () => {
     expect(await launcher.detectAgentInstallations()).toBe(first);
     expect(runCommand).toHaveBeenCalledTimes(4);
 
+    // Past the five-second fresh window: answer at once from the recent scan,
+    // refresh once in the background, and serve the refreshed scan next.
     now += 5_001;
-    expect(await launcher.detectAgentInstallations()).not.toBe(first);
-    expect(runCommand).toHaveBeenCalledTimes(8);
+    expect(await launcher.detectAgentInstallations()).toBe(first);
+    expect(await launcher.detectAgentInstallations()).toBe(first);
+    await vi.waitFor(() => expect(runCommand).toHaveBeenCalledTimes(8));
+    await new Promise(resolve => setImmediate(resolve));
+    const refreshed = await launcher.detectAgentInstallations();
+    expect(refreshed).not.toBe(first);
+
+    // Past the stale window, a read blocks for a new scan again.
+    now += 5 * 60_000;
+    expect(await launcher.detectAgentInstallations()).not.toBe(refreshed);
+    expect(runCommand).toHaveBeenCalledTimes(12);
+  });
+
+  it("re-probes synchronously instead of serving a stale failed or unknown probe", async () => {
+    let now = 1_000;
+    let failing = true;
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (args[0] === "--version") return { stdout: command === "codex" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : `${command} 1.0.0\n`, stderr: "" };
+      if (failing) throw Object.assign(new Error("transient"), { code: 2, stdout: "", stderr: "" });
+      return { stdout: "Logged in using ChatGPT\n", stderr: "" };
+    });
+    const launcher = createAgentLauncher({ runCommand, now: () => now });
+    const before = await launcher.detectAgentCredentials();
+    expect(before.agents.find(agent => agent.id === "codex")).toMatchObject({ authState: "error" });
+    failing = false;
+    now += 5_001;
+    const after = await launcher.detectAgentCredentials();
+    expect(after.agents.find(agent => agent.id === "codex")).toMatchObject({ authState: "ok" });
+  });
+
+  it("serves recent credential probes stale but never across an executable change", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "matrix-codex-exec-"));
+    try {
+      const executable = join(dir, "codex");
+      await writeFile(executable, "#!/bin/sh\n", { mode: 0o700 });
+      let now = 1_000;
+      const runCommand = vi.fn(async (_command: string, args: string[]) => ({
+        stdout: args[0] === "--version" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : "Logged in using ChatGPT\n", stderr: "",
+      }));
+      const launcher = createAgentLauncher({ runCommand, now: () => now, codexExecutable: executable });
+      const first = await launcher.detectAgentCredentials();
+      now += 5_001;
+      expect(await launcher.detectAgentCredentials()).toBe(first);
+      await vi.waitFor(() => expect(runCommand.mock.calls.length).toBeGreaterThan(4));
+      await new Promise(resolve => setImmediate(resolve));
+      const calls = runCommand.mock.calls.length;
+      now += 5_001;
+      await writeFile(executable, "#!/bin/sh\n# upgraded\n", { mode: 0o700 });
+      const upgraded = await launcher.detectAgentCredentials();
+      expect(upgraded).not.toBe(first);
+      expect(runCommand.mock.calls.length).toBeGreaterThan(calls);
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
   it("invalidates cached credential probes after a foreground Terminal login", async () => {
