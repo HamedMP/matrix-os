@@ -1,4 +1,4 @@
-import { FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, type FundedHostActivationResponse } from '@matrix-os/contracts';
+import { FundedHostActivationRequestSchema, FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, type FundedHostActivationResponse } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
@@ -17,6 +17,15 @@ type Options = { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: 
   relayOrigin: string; now?: () => Date; env?: NodeJS.ProcessEnv };
 export type FundedHostActivationRead = { status: 'ready'; configuration: FundedHostActivationResponse }
   | { status: 'unauthorized' | 'ineligible' | 'deferred' };
+
+/**
+ * Whether a relay origin is inside the reviewed relay pin that guests accept
+ * (the activation contract and the guest's configure script). A deployment
+ * configured with any other relay can never activate funded AI.
+ */
+export function isAdmittedFundedRelayOrigin(origin: string): boolean {
+  return FundedHostActivationRequestSchema.shape.configuration.shape.relayOrigin.safeParse(origin).success;
+}
 
 /** Configuration delivery only: never issues a credential, grants credit or settles usage. */
 export async function readFundedHostActivation(options: Options & {
@@ -92,12 +101,19 @@ export function createFundedHostActivationRoutes(options: Options): Hono {
     && (options.previewRuntimeSecret.length < 32 || options.previewRuntimeSecret === options.platformSecret)) {
     throw new Error('Managed feature configuration unavailable');
   }
+  // Checked once: an unpinned relay fails every read the same way, so say so
+  // once and answer 503 instead of a ZodError per guest poll.
+  const relayAdmitted = isAdmittedFundedRelayOrigin(options.relayOrigin);
+  if (!relayAdmitted) {
+    console.error('[managed-features] activation configuration disabled: the configured relay origin is outside the reviewed relay pin');
+  }
   const app = new Hono();
   app.get('/activation-config', async c => {
     c.header('Cache-Control', 'no-store, private');
     c.header('CDN-Cache-Control', 'no-store');
     const query = Query.safeParse(c.req.query());
     if (!query.success || !Handle.safeParse(c.req.param('handle')).success) return c.json({ error: 'Invalid request' }, 400);
+    if (!relayAdmitted) return c.json({ error: 'Service unavailable' }, 503);
     try {
       const result = await readFundedHostActivation({ ...options, handle: c.req.param('handle')!,
         runtimeSlot: query.data.runtimeSlot, authorization: c.req.header('authorization') });

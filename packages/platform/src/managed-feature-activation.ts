@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { FundedHostActivationRequestSchema, fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
+import { fundedHostActivationRevisionInput, type FundedHostActivationRequest } from '@matrix-os/contracts';
 import { ZodError } from 'zod/v4';
 import type { Dispatcher } from 'undici';
 import { iterateRunningUserMachinePages, type PlatformDB, type UserMachineRecord } from './db.js';
-import { readFundedHostActivation } from './funded-host-activation.js';
+import { isAdmittedFundedRelayOrigin, readFundedHostActivation } from './funded-host-activation.js';
 import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
 import { readBoundedHostJson } from './speech/host-readiness.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
@@ -39,8 +39,7 @@ export function createManagedFeatureActivator(options: {
   // Guests accept only the reviewed relay pin (contracts and the guest's
   // configure script). A deployment configured with another relay can never
   // activate; say so once instead of failing every runtime on every pass.
-  const relayAdmitted = !options.fundedAiEnabled
-    || FundedHostActivationRequestSchema.shape.configuration.shape.relayOrigin.safeParse(options.relayOrigin).success;
+  const relayAdmitted = !options.fundedAiEnabled || isAdmittedFundedRelayOrigin(options.relayOrigin);
   if (!relayAdmitted) {
     console.error('[managed-features] funded activation disabled: the configured relay origin is outside the reviewed relay pin');
   }
