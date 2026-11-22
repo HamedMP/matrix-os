@@ -150,7 +150,8 @@ export function createClaudeModelCatalogSource(options: {
     const state = { request: Promise.resolve<CodingModelCatalogProjection | null>(null), invalidated: false };
     const save = (entry: CachedInventory) => {
       if (state.invalidated && !entry.retainOnRefresh) return;
-      if (state.invalidated) entry.expiresAt = 0;
+      // A read that finished after a Refresh is never served as recently verified.
+      if (state.invalidated) { entry.expiresAt = 0; delete entry.verifiedAt; }
       if (cached.size >= 32 && !cached.has(principal.userId)) cached.delete(cached.keys().next().value!);
       cached.set(principal.userId, entry);
     };

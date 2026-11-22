@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { webProviderSettingsIdentityKey } from "@/lib/provider-settings-identity";
 import { AgentsProvidersView, sessionProviderSettingsSnapshotCache, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
@@ -53,7 +54,7 @@ export function AgentSection({
     });
   }, [identityKey, runtimeSlot]);
   const controller = useProviderSettingsController({
-    identityKey: `${identityKey}:${runtimeSlot}`,
+    identityKey: webProviderSettingsIdentityKey(),
     automaticCreditRefreshEnabled,
     automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled,
     transport,

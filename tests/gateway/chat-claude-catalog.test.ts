@@ -396,6 +396,30 @@ describe("Claude catalog selection and CLI handoff", () => {
     expect(reads).toBe(2);
   });
 
+  it("does not serve a read that finished after Refresh as recently verified", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key: "explicit_key", retainOnRefresh: true, maxAgeMs: 60_000,
+      discover: async () => { reads++; await gate; return [{ value: `claude-model-${reads}`, displayName: "Model" }]; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source, invalidateCodingModelCatalog: source.invalidate });
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    const inFlight = service.getCatalog(principal);
+    await vi.waitFor(() => expect(reads).toBe(1));
+    const refreshed = service.refresh(principal);
+    gate = Promise.resolve();
+    release();
+    await inFlight;
+    const catalog = await refreshed;
+    // Refresh waited for a discovery started after it, not the one already running.
+    expect(reads).toBe(2);
+    expect(catalog.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-model-2")).toBe(true);
+  });
+
   it("waits for a fresh read once a profile inventory is older than the stale window or its credential context changed", async () => {
     vi.useFakeTimers();
     let key = "generation_one";

@@ -102,3 +102,23 @@ it("holds at most four identities", async () => {
   expect(cache.get("owner/0")).toBeUndefined();
   expect(cache.get("owner/4")).toBeDefined();
 });
+
+it("never lets an older shared read replace a newer saved snapshot", async () => {
+  const cache = createProviderSettingsSnapshotCache();
+  const base = snapshot();
+  const slow = deferred<ProviderSettingsSnapshot>();
+  const transport = { getSnapshot: vi.fn(() => slow.promise), mutate: vi.fn() };
+  const reader = new ProviderSettingsController({ identityKey: "owner/main", transport, snapshotCache: cache });
+  const reading = reader.refresh({ refresh: false });
+  // Another window saves a newer revision while the read is in flight.
+  cache.set("owner/main", { ...structuredClone(base), revision: base.revision + 5 });
+  slow.resolve({ ...structuredClone(base), revision: base.revision + 1 });
+  await reading;
+  expect(reader.getState().snapshot?.revision).toBe(base.revision + 5);
+  expect(cache.get("owner/main")?.revision).toBe(base.revision + 5);
+  // The next caller starts its own read rather than joining the old one.
+  transport.getSnapshot.mockImplementation(async () => ({ ...structuredClone(base), revision: base.revision + 6 }));
+  await reader.refresh({ refresh: false });
+  expect(reader.getState().snapshot?.revision).toBe(base.revision + 6);
+  reader.dispose();
+});

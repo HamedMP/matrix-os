@@ -87,6 +87,12 @@ export function createProviderSettingsSnapshotCache(): ProviderSettingsSnapshotC
     get: identityKey => snapshots.get(identityKey),
     clear: () => snapshots.clear(),
     set(identityKey, snapshot) {
+      // A read that started before a newer save (for example another window's
+      // mutation) must never move the shown state backward.
+      const current = snapshots.get(identityKey);
+      if (current && current.revision > snapshot.revision) return;
+      // Later callers start a fresh read instead of joining one older than this save.
+      reads.delete(identityKey);
       snapshots.delete(identityKey);
       snapshots.set(identityKey, snapshot);
       while (snapshots.size > SNAPSHOT_CACHE_IDENTITIES) snapshots.delete(snapshots.keys().next().value!);
@@ -314,6 +320,9 @@ export class ProviderSettingsController {
       request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
+      // Another controller may have saved a newer revision while this read ran.
+      const newer = cache?.get(this.options.identityKey);
+      if (newer && newer.revision > parsed.data.revision) parsed.data = newer;
       if (this.disposed || operationId < this.appliedOperationId) return false;
       const snapshot = nativeAuthOnly
         ? this.managedCredit.reconcileNativeSnapshot(parsed.data) : parsed.data;
