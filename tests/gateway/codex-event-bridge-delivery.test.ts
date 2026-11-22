@@ -66,4 +66,36 @@ describe("Codex event delivery", () => {
       await vi.waitFor(() => expect(f.ingest).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 20 });
     } finally { await f.bridge.shutdown(); }
   });
+
+  describe("checkpoint batches stay within the 100-event provider limit", () => {
+    const deltaLines = (count: number) => Array.from({ length: count }, (_, index) =>
+      ({ type: "matrix.codex.assistant.delta", messageId: "msg_stream", delta: `d${index} ` }));
+    async function drainAll(records: unknown[]) {
+      const f = await fixture();
+      await f.bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      const text = lines([{ type: "thread.started", thread_id: "native_current" }, ...records]);
+      await writeFile(f.path, text);
+      await f.bridge.drain();
+      const batchSizes = f.ingest.mock.calls.map(call => (call[2] as { events: unknown[] }).events.length);
+      const lastOffset = f.ingest.mock.calls.map(call => (call[3] as { offset?: number; checkpoint?: boolean }))
+        .filter(cursor => cursor.checkpoint !== false).at(-1)?.offset;
+      return { f, text, batchSizes, lastOffset, snapshot: await f.store.getThread(principal, f.threadId) };
+    }
+    it("cuts before a multi-event agent message that would overflow the batch", async () => {
+      const r = await drainAll([...deltaLines(99), { type: "item.completed", item: { id: "msg_final", type: "agent_message", text: "x".repeat(4_500) } }]);
+      try {
+        expect(Math.max(...r.batchSizes)).toBeLessThanOrEqual(100);
+        expect(r.lastOffset).toBe(Buffer.byteLength(r.text));
+        expect(r.snapshot.events.items.filter(event => event.type === "assistant.text.completed")).toHaveLength(1);
+      } finally { await r.f.bridge.shutdown(); }
+    });
+    it("cuts before a failed terminal line at the boundary and completes the thread", async () => {
+      const r = await drainAll([...deltaLines(99), { type: "turn.failed" }]);
+      try {
+        expect(Math.max(...r.batchSizes)).toBeLessThanOrEqual(100);
+        expect(r.lastOffset).toBe(Buffer.byteLength(r.text));
+        expect(r.snapshot.thread.status).toBe("failed");
+      } finally { await r.f.bridge.shutdown(); }
+    });
+  });
 });

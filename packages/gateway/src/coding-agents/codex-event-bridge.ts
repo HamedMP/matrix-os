@@ -237,8 +237,29 @@ export function createCodexEventBridge(options: {
         now: () => new Date(occurredAt),
         nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
       });
-      events.push(...parsed.events);
+      // Parse the whole line (including terminal completion events) before
+      // deciding where the checkpoint batch is cut.
+      const lineEvents = [...parsed.events, ...(parsed.outcome ? completionEvents({
+        threadId: entry.threadId,
+        outcome: parsed.outcome,
+        failureReason: parsed.failureReason,
+        occurredAt,
+        nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
+      }) : [])];
       ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome;
+      if (parsed.outcome) terminal = true;
+      if (entry.checkpoint) {
+        // Never exceed the provider batch limit: commit pending lines at this
+        // line's start offset before adding a line that would overflow.
+        if (pendingCheckpointLines > 0 && events.length + lineEvents.length > MAX_CHECKPOINT_BATCH_EVENTS) await commitCheckpoint(false);
+        // One oversized line: write its leading chunks without moving the
+        // cursor (idempotent by event ID), and checkpoint with its last chunk.
+        while (lineEvents.length > MAX_CHECKPOINT_BATCH_EVENTS) {
+          await store.ingestProviderEvents(entry.principal, entry.threadId, { events: lineEvents.splice(0, MAX_CHECKPOINT_BATCH_EVENTS) },
+            { sessionId: entry.sessionId, offset: entry.offset, generation: entry.generation, checkpoint: false });
+        }
+      }
+      events.push(...lineEvents);
       if (parsed.providerThreadId) {
         if (providerThreadId && providerThreadId !== parsed.providerThreadId) {
           throw new Error("Codex provider conversation changed");
@@ -246,16 +267,6 @@ export function createCodexEventBridge(options: {
         providerThreadId = parsed.providerThreadId;
       }
       if (parsed.tokenUsage) tokenUsage = parsed.tokenUsage;
-      if (parsed.outcome) {
-        terminal = true;
-        events.push(...completionEvents({
-          threadId: entry.threadId,
-          outcome: parsed.outcome,
-          failureReason: parsed.failureReason,
-          occurredAt,
-          nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
-        }));
-      }
       absoluteOffset += newline - lineStart + 1;
       lineStart = newline + 1;
       if (entry.checkpoint) {
