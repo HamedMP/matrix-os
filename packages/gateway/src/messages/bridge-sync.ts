@@ -33,6 +33,14 @@ export const SYNC_BACKOFF_MIN_MS = 1_000;
 export const SYNC_BACKOFF_MAX_MS = 60_000;
 export const SYNC_LOCK_RETRY_MS = 30_000;
 const IGNORED_ROOM_CAP = 256;
+/**
+ * A limited timeline left events out between the stored position and this
+ * batch. Sync fills that gap from `prev_batch` back to the stored position
+ * before advancing it, at most this many pages of this many events per room
+ * (1,000 events); anything older than that is logged and skipped.
+ */
+export const BACKFILL_PAGE_LIMIT = 100;
+export const BACKFILL_MAX_PAGES = 10;
 
 /* ------------------------------------------------------------------ */
 /* Single-sync guarantee                                               */
@@ -134,9 +142,25 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   }
 }
 
-function pickAccount(accounts: BridgeAccountRow[], network: MessagingBridgeNetwork, receiver?: string): string | null {
+/**
+ * The account a portal room belongs to. Incremental syncs usually omit
+ * unchanged bridge state, so without a receiver a known room keeps its
+ * account. A receiver must match a linked login; only a new room without one
+ * falls back to the network's account.
+ */
+function pickAccount(
+  accounts: BridgeAccountRow[],
+  network: MessagingBridgeNetwork,
+  receiver: string | undefined,
+  existing: KnownBridgeRoom | undefined,
+): string | null {
   const forNetwork = accounts.filter((account) => account.network === network);
-  return (receiver ? forNetwork.find((account) => account.loginId === receiver) : undefined)?.id ?? forNetwork[0]?.id ?? null;
+  if (receiver) {
+    return forNetwork.find((account) => account.loginId === receiver)?.id
+      ?? (existing?.network === network ? existing.accountId : null);
+  }
+  if (existing?.network === network) return existing.accountId;
+  return forNetwork[0]?.id ?? null;
 }
 
 function inviterOf(events: MatrixClientEvent[], ownUserId: string): string | null {
@@ -186,6 +210,39 @@ export function createBridgeSyncService(options: BridgeSyncServiceOptions): Brid
     }
   }
 
+  /** Events between `from` and `to`, oldest first, plus member state naming their senders. */
+  async function backfill(roomId: string, from: string, to: string, signal?: AbortSignal): Promise<{ events: MatrixClientEvent[]; state: MatrixClientEvent[] }> {
+    const events: MatrixClientEvent[] = [];
+    const state: MatrixClientEvent[] = [];
+    let token: string | undefined = from;
+    for (let page = 0; token && page < BACKFILL_MAX_PAGES; page += 1) {
+      const pageFrom: string = token;
+      let result;
+      try {
+        result = await options.sessions.withSession((current) => options.matrix.getMessages(current, {
+          roomId,
+          from: pageFrom,
+          to,
+          limit: BACKFILL_PAGE_LIMIT,
+          ...(signal ? { signal } : {}),
+        }));
+      } catch (err: unknown) {
+        // A room the homeserver refuses to page must not wedge the loop; transient failures retry the batch.
+        if (err instanceof MatrixRequestError && !err.retryable) {
+          console.warn("[messages/bridge-sync] history gap could not be filled", err.status);
+          return { events: events.reverse(), state };
+        }
+        throw err;
+      }
+      events.push(...result.chunk);
+      state.push(...result.state);
+      token = result.chunk.length > 0 && result.end && result.end !== pageFrom ? result.end : undefined;
+    }
+    if (token) console.warn("[messages/bridge-sync] history gap larger than the backfill cap; older events skipped", BACKFILL_MAX_PAGES * BACKFILL_PAGE_LIMIT);
+    // Pages run newest first.
+    return { events: events.reverse(), state };
+  }
+
   async function syncOnce(signal?: AbortSignal): Promise<void> {
     const since = await options.store.getSyncPosition(options.ownerId);
     const response = await options.sessions.withSession((session) => options.matrix.sync(session, {
@@ -222,15 +279,22 @@ export function createBridgeSyncService(options: BridgeSyncServiceOptions): Brid
         }
       }
       const network = detected?.network ?? existing!.network;
-      const accountId = pickAccount(accounts, network, detected?.receiver) ?? existing?.accountId;
+      const accountId = pickAccount(accounts, network, detected?.receiver, existing);
       if (!accountId) continue;
+      const gap = since && room.timeline?.limited && room.timeline.prev_batch
+        ? await backfill(roomId, room.timeline.prev_batch, since, signal)
+        : { events: [], state: [] };
+      const backfilled = gap.events.flatMap((event) => {
+        const result = classifyTimelineEvent(event, session.userId);
+        return result ? [result] : [];
+      });
       const renamed = stateEvents.some((event) => event.type === "m.room.name");
       const displayName = !existing || renamed ? roomDisplayName(stateEvents, session.userId) : existing.displayName;
       if (!existing || existing.network !== network || existing.accountId !== accountId || existing.displayName !== displayName) {
         conversations.push({ roomId, network, accountId, displayName });
       }
-      const names = memberDisplayNames(stateEvents);
-      for (const event of classified) {
+      const names = memberDisplayNames([...gap.state, ...stateEvents]);
+      for (const event of [...backfilled, ...classified]) {
         messages.push({
           roomId,
           eventId: event.eventId,

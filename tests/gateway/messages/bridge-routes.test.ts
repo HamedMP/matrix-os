@@ -426,6 +426,29 @@ describe("messaging bridge owner routes", () => {
     expect((await call("GET", "/conversations")).status).toBe(403);
   });
 
+  it("answers 400 invalid_request for a malformed cursor instead of bridge_unavailable", async () => {
+    await seedConversation();
+    for (const path of ["/conversations?cursor=nope", `/conversations/${encodeURIComponent(room)}/messages?cursor=nope`]) {
+      const res = await call("GET", path);
+      expect(res.status, path).toBe(400);
+      expect(MessagingBridgeErrorSchema.parse(res.body).error.code, path).toBe("invalid_request");
+    }
+  });
+
+  it("does not revive an unlinked account from a login list read before the unlink finished", async () => {
+    const { accountId } = await store.recordLinkedAccount({ ownerId, network: "whatsapp", loginId: "login_wa" });
+    platform.reply("POST /whatsapp/logout", { status: 200, body: { ok: true } });
+    expect((await call("DELETE", `/whatsapp/accounts/${accountId}`)).status).toBe(200);
+
+    // The bridge's list still names the login (read before the logout landed).
+    platform.reply("GET /whatsapp/logins", { status: 200, body: { logins: [{ loginId: "login_wa", displayName: "Phone", state: "connected" }] } });
+    platform.reply("GET /telegram/logins", { status: 200, body: { logins: [{ loginId: "login_tg", state: "connected" }] } });
+    platform.reply("GET /linkedin/logins", { status: 200, body: { logins: [] } });
+    const status = MessagingBridgeStatusSchema.parse((await call("GET", "/status")).body);
+    expect(status.networks.find((entry) => entry.network === "whatsapp")?.accounts).toEqual([]);
+    await expect(store.listBridgeAccounts(ownerId)).resolves.toEqual([expect.objectContaining({ network: "telegram", loginId: "login_tg" })]);
+  });
+
   it("sends once per clientTxnId even when retried", async () => {
     await seedConversation();
     const path = `/conversations/${encodeURIComponent(room)}/send`;

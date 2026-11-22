@@ -76,6 +76,13 @@ async function deliverApprovedReply(deps: MessagingRouteDeps, ownerId: string, a
   if (approved.status !== "sending" || !bridge || bridge.ownerId !== ownerId) return approved;
   const reply = await deps.repository.getReply({ ownerId, replyId: approved.replyId });
   if (!reply) return approved;
+  // A permission revocation after approval cancels the reply; never send a reply that is no longer sending.
+  if (reply.status !== "sending") return { replyId: reply.id, status: reply.status };
+  const permission = await deps.repository.getPermission({ ownerId }, reply.roomId);
+  if (!permission?.replyEnabled) {
+    const denied = await deps.repository.markReplyFailed({ ownerId, replyId: reply.id, failureCode: "permission_denied" });
+    return { replyId: denied.id, status: denied.status };
+  }
   try {
     const message = await bridge.deliver(ownerId, reply.roomId, { body: reply.body, clientTxnId: reply.id });
     if (message.delivery === "sent" && message.eventId) {

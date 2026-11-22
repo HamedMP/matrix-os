@@ -242,4 +242,92 @@ describe("messaging bridge sync service", () => {
     const released = await sql<{ count: number }>`SELECT count(*)::int AS count FROM pg_locks WHERE locktype = 'advisory'`.execute(kysely);
     expect(released.rows[0]?.count).toBe(0);
   });
+
+  it("fills a limited timeline's gap from prev_batch back to the stored position before advancing", async () => {
+    homeserver.syncQueue.push(syncResponse("s1", { join: { [portal]: {
+      state: { events: portalState("whatsapp") },
+      timeline: { events: [textEvent("$a", ghost, "one", "2026-11-22T10:00:00.000Z")] },
+    } } }));
+    const sync = service();
+    await sync.syncOnce();
+
+    // Offline for a while: the next batch keeps only the newest event and marks the timeline limited.
+    homeserver.historyPages[portal] = [
+      {
+        chunk: [textEvent("$c", ghost, "three", "2026-11-22T10:02:00.000Z"), textEvent("$b", "@whatsapp_4915550002:" + bridgeServer, "two", "2026-11-22T10:01:00.000Z")],
+        start: "t_prev",
+        end: "t_older",
+        state: [{ type: "m.room.member", state_key: "@whatsapp_4915550002:" + bridgeServer, content: { membership: "join", displayname: "Omid" } }],
+      },
+      { chunk: [], start: "t_older" },
+    ];
+    homeserver.syncQueue.push(syncResponse("s2", { join: { [portal]: {
+      timeline: { events: [textEvent("$d", ghost, "four", "2026-11-22T10:03:00.000Z")], limited: true, prev_batch: "t_prev" },
+    } } }));
+    await sync.syncOnce();
+
+    expect(homeserver.historyCalls).toEqual([
+      { roomId: portal, from: "t_prev", to: "s1", dir: "b" },
+      { roomId: portal, from: "t_older", to: "s1", dir: "b" },
+    ]);
+    const messages = (await store.listMessages(ownerId, portal, { limit: 50 })).items;
+    expect(messages.map((item) => item.eventId)).toEqual(["$d", "$c", "$b", "$a"]);
+    expect(messages.find((item) => item.eventId === "$b")?.senderName).toBe("Omid");
+    expect((await store.listConversations(ownerId, { limit: 50 })).items[0]).toMatchObject({ lastMessagePreview: "four", unreadCount: 4 });
+    await expect(store.getSyncPosition(ownerId)).resolves.toBe("s2");
+  });
+
+  it("keeps the stored position when filling the gap fails transiently", async () => {
+    homeserver.syncQueue.push(syncResponse("s1", { join: { [portal]: { state: { events: portalState("whatsapp") }, timeline: { events: [] } } } }));
+    const sync = service();
+    await sync.syncOnce();
+    homeserver.historyPages[portal] = [json(502, {})];
+    homeserver.syncQueue.push(syncResponse("s2", { join: { [portal]: {
+      timeline: { events: [textEvent("$d", ghost, "four", "2026-11-22T10:03:00.000Z")], limited: true, prev_batch: "t_prev" },
+    } } }));
+    await expect(sync.syncOnce()).rejects.toMatchObject({ retryable: true });
+    await expect(store.getSyncPosition(ownerId)).resolves.toBe("s1");
+    expect((await store.listMessages(ownerId, portal, { limit: 50 })).items).toEqual([]);
+  });
+
+  it("stops filling a gap at the page cap", async () => {
+    homeserver.syncQueue.push(syncResponse("s1", { join: { [portal]: { state: { events: portalState("whatsapp") }, timeline: { events: [] } } } }));
+    const sync = service();
+    await sync.syncOnce();
+    homeserver.historyPages[portal] = Array.from({ length: 12 }, (_unused, index) => ({
+      chunk: [textEvent(`$h${index}`, ghost, `old ${index}`, new Date(Date.parse("2026-11-22T09:00:00.000Z") - index * 60_000).toISOString())],
+      start: `t${index}`,
+      end: `t${index + 1}`,
+    }));
+    homeserver.syncQueue.push(syncResponse("s2", { join: { [portal]: {
+      timeline: { events: [], limited: true, prev_batch: "t0" },
+    } } }));
+    await sync.syncOnce();
+    expect(homeserver.historyCalls).toHaveLength(10);
+    expect((await store.listMessages(ownerId, portal, { limit: 50 })).items).toHaveLength(10);
+    await expect(store.getSyncPosition(ownerId)).resolves.toBe("s2");
+  });
+
+  it("keeps a known room on its account when an incremental batch carries no receiver", async () => {
+    const work = await store.recordLinkedAccount({ ownerId, network: "whatsapp", loginId: "login_wa_work" });
+    const personal = (await store.listBridgeAccounts(ownerId)).find((account) => account.loginId === "login_wa")!;
+    homeserver.syncQueue.push(syncResponse("s1", { join: { [portal]: {
+      state: { events: portalState("whatsapp").map((event) => event.type === "m.bridge"
+        ? { ...event, content: { ...(event.content as Record<string, unknown>), channel: { id: "4915550001", receiver: "login_wa" } } }
+        : event) },
+      timeline: { events: [textEvent("$a", ghost, "one", "2026-11-22T10:00:00.000Z")] },
+    } } }));
+    const sync = service();
+    await sync.syncOnce();
+    const accountOf = async () => (await kysely.selectFrom("messaging_conversations").select("account_id").where("room_id", "=", portal).executeTakeFirstOrThrow()).account_id;
+    expect(await accountOf()).toBe(personal.id);
+
+    // The work account is now the most recently updated one for WhatsApp.
+    await store.setAccountHealth(ownerId, work.accountId, "connecting");
+    homeserver.syncQueue.push(syncResponse("s2", { join: { [portal]: {
+      timeline: { events: [textEvent("$b", ghost, "two", "2026-11-22T10:01:00.000Z")] },
+    } } }));
+    await sync.syncOnce();
+    expect(await accountOf()).toBe(personal.id);
+  });
 });

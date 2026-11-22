@@ -15,7 +15,7 @@ import { BridgeLinkSessions, OwnerRateLimiter, type BridgeLinkSession } from "./
 import type { BridgeMatrixClient } from "./bridge-matrix-client.js";
 import { BridgePlatformError, type BridgePlatformFailure, type MessagingBridgePlatformClient } from "./bridge-platform-client.js";
 import type { BridgeSessionProvider } from "./bridge-session.js";
-import { toBridgeMessage, type BridgeAccountRow, type MessagingBridgeStore } from "./bridge-store.js";
+import { InvalidBridgeCursorError, toBridgeMessage, type BridgeAccountRow, type MessagingBridgeStore } from "./bridge-store.js";
 import type { BridgeSyncService } from "./bridge-sync.js";
 
 /** Owner-facing bridge operations behind `/api/messages/bridge/*` (spec 2701). */
@@ -45,6 +45,7 @@ const PLATFORM_FAILURE_CODES: Record<BridgePlatformFailure, MessagingBridgeError
 function serviceError(err: unknown): MessagingBridgeServiceError {
   if (err instanceof MessagingBridgeServiceError) return err;
   if (err instanceof BridgePlatformError) return new MessagingBridgeServiceError(PLATFORM_FAILURE_CODES[err.code]);
+  if (err instanceof InvalidBridgeCursorError) return new MessagingBridgeServiceError("invalid_request");
   return new MessagingBridgeServiceError("bridge_unavailable");
 }
 
@@ -158,14 +159,15 @@ export function createMessagingBridgeService(options: {
     const local = (await options.store.listBridgeAccounts(ownerId)).filter((account) => account.network === network);
     for (const login of logins) {
       // A login the bridge has but we never recorded (e.g. a crash right after linking).
+      // `logins` may predate an unlink that finished since; a removed account stays removed.
       const accountId = local.find((account) => account.loginId === login.loginId)?.id
-        ?? (await options.store.recordLinkedAccount({
+        ?? (await options.store.recordDiscoveredAccount({
           ownerId,
           network,
           loginId: login.loginId,
           ...(login.displayName ? { displayName: login.displayName } : {}),
-        })).accountId;
-      if (login.state !== "unknown") await options.store.setAccountHealth(ownerId, accountId, login.state);
+        }))?.accountId;
+      if (accountId && login.state !== "unknown") await options.store.setAccountHealth(ownerId, accountId, login.state);
     }
     for (const account of local) {
       if (!logins.some((login) => login.loginId === account.loginId)) {
@@ -333,10 +335,9 @@ export function createMessagingBridgeService(options: {
     listMessages(ownerId, roomId, query) {
       return guard(async () => {
         if (!await options.store.getConversationNetwork(ownerId, roomId)) throw new MessagingBridgeServiceError("not_found");
-        const page = await options.store.listMessages(ownerId, roomId, query);
-        if (query.cursor === undefined && await options.store.markConversationRead(ownerId, roomId)) {
-          changed(ownerId, "conversations");
-        }
+        if (query.cursor !== undefined) return options.store.listMessages(ownerId, roomId, query);
+        const { page, markedRead } = await options.store.readLatestMessages(ownerId, roomId, query.limit);
+        if (markedRead) changed(ownerId, "conversations");
         return page;
       });
     },

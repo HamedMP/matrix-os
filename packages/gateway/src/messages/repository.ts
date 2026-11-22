@@ -967,12 +967,14 @@ export class MessagingKyselyRepository implements MessagingRepository {
     return this.updateReplyStatus(input.ownerId, input.replyId, { status: "sending" });
   }
 
+  /** Only a `sending` reply becomes sent; a reply cancelled meanwhile stays cancelled and is returned as is. */
   async markReplySent(input: { ownerId: string; replyId: string; matrixEventId: string }): Promise<OutgoingReply> {
-    return this.updateReplyStatus(input.ownerId, input.replyId, { status: "sent", matrix_event_id: input.matrixEventId });
+    return this.updateReplyStatus(input.ownerId, input.replyId, { status: "sent", matrix_event_id: input.matrixEventId }, "sending");
   }
 
+  /** Only a `sending` reply becomes failed; a reply cancelled meanwhile stays cancelled and is returned as is. */
   async markReplyFailed(input: { ownerId: string; replyId: string; failureCode: NonNullable<OutgoingReply["failureCode"]> }): Promise<OutgoingReply> {
-    return this.updateReplyStatus(input.ownerId, input.replyId, { status: "failed", failure_code: input.failureCode });
+    return this.updateReplyStatus(input.ownerId, input.replyId, { status: "failed", failure_code: input.failureCode }, "sending");
   }
 
   async listDrafts(
@@ -1169,16 +1171,19 @@ export class MessagingKyselyRepository implements MessagingRepository {
     ownerId: string,
     replyId: string,
     patch: Partial<Pick<MessagingOutgoingRepliesTable, "status" | "matrix_event_id" | "failure_code" | "cancel_reason">>,
+    fromStatus?: OutgoingReply["status"],
   ): Promise<OutgoingReply> {
-    const row = await this.kysely
+    let update = this.kysely
       .updateTable("messaging_outgoing_replies")
       .set({ ...patch, updated_at: new Date().toISOString() })
       .where("owner_id", "=", ownerId)
-      .where("id", "=", replyId)
-      .returningAll()
-      .executeTakeFirst();
-    if (!row) throw new MessagingError("not_found", "reply not found", 404);
-    return toReply(row);
+      .where("id", "=", replyId);
+    if (fromStatus) update = update.where("status", "=", fromStatus);
+    const row = await update.returningAll().executeTakeFirst();
+    if (row) return toReply(row);
+    const current = fromStatus ? await this.getReply({ ownerId, replyId }) : null;
+    if (!current) throw new MessagingError("not_found", "reply not found", 404);
+    return current;
   }
 
   private async insertAuditEvent(
