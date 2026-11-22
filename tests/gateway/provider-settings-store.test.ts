@@ -546,6 +546,8 @@ describe("ProviderSettingsStore", () => {
         expect.objectContaining({ id: "kernel_owner", readiness: expect.objectContaining({ state: "expired" }) }),
       ]),
     });
+  });
+
   it("delegates entitled upstream preference writes to platform truth without changing owner-file revision", async () => {
     const preference = { selectedUpstream: "cloudflare" as const, effectiveUpstream: "cloudflare" as const,
       revision: 4, updatedAt: NOW.toISOString(), validThrough: "2026-09-30T00:00:00.000Z" };
