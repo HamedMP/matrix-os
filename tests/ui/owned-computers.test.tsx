@@ -66,6 +66,10 @@ describe("owned computers model", () => {
     expect(ownedComputerPlatformLabel(computer())).toBe("Ubuntu 24.04 · x86_64 · v1.2.3");
   });
 
+  it("installs with the published server installer that accepts --connect", () => {
+    expect(OWNED_COMPUTER_INSTALL_COMMAND).toBe("curl -fsSL https://matrix-os.com/install-server.sh | sudo bash -s -- --connect");
+  });
+
   it("reports the limit and rejects malformed server data", async () => {
     expect(ownedComputersAtLimit({ computers: [computer(), computer({ machineId: ID_B }), computer({ machineId: ID_C })], limit: 3 })).toBe(true);
     expect(ownedComputersAtLimit({ computers: [computer()], limit: 3 })).toBe(false);
@@ -192,18 +196,61 @@ describe("OwnedComputersPanel", () => {
     await waitFor(() => expect((screen.getByRole("switch", { name: "Back up Lab server to Matrix" }) as HTMLButtonElement).disabled).toBe(false));
   });
 
-  it("drops a reply that a newer list refresh already superseded", async () => {
+  it("does not apply a list load that overlaps a change, then refreshes once changes settle", async () => {
     const t = transport([computer()]);
     let resolvePatch: (value: unknown) => void = () => undefined;
     t.patch.mockImplementation(() => new Promise((resolve) => { resolvePatch = resolve; }));
     render(<OwnedComputersPanel scope="a" transport={t} />);
     fireEvent.click(await screen.findByRole("switch", { name: "Back up Lab server to Matrix" }));
-    t.get.mockResolvedValue({ computers: [computer({ name: "Renamed elsewhere", backupsEnabled: true })], limit: 3 });
+    // A refresh during the PATCH reads settings from before the change.
+    t.get.mockResolvedValue({ computers: [computer({ backupsEnabled: false })], limit: 3 });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await screen.findByText("Renamed elsewhere");
-    resolvePatch(computer({ name: "Lab server", backupsEnabled: false }));
-    await waitFor(() => expect((screen.getByRole("switch", { name: "Back up Renamed elsewhere to Matrix" }) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.getByText("Renamed elsewhere")).toBeTruthy();
+    await waitFor(() => expect(t.get).toHaveBeenCalledTimes(2));
+    t.get.mockResolvedValue({ computers: [computer({ backupsEnabled: true })], limit: 3 });
+    resolvePatch(computer({ backupsEnabled: true }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Back up Lab server to Matrix" }).getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(t.get).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("switch", { name: "Back up Lab server to Matrix" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("never resurrects a removed computer from a load that started before the removal", async () => {
+    const t = transport([computer()]);
+    let resolveGet: (value: unknown) => void = () => undefined;
+    render(<OwnedComputersPanel scope="a" transport={t} />);
+    await screen.findByText("Lab server");
+    t.get.mockImplementationOnce(() => new Promise((resolve) => { resolveGet = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Lab server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByText("Lab server")).toBeNull());
+    t.get.mockResolvedValue({ computers: [], limit: 3 });
+    const loadsBefore = t.get.mock.calls.length;
+    resolveGet({ computers: [computer()], limit: 3 });
+    await waitFor(() => expect(t.get.mock.calls.length).toBe(loadsBefore + 1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Lab server")).toBeNull();
+  });
+
+  it("tells the surface after a successful change so its other computer lists refresh", async () => {
+    const t = transport([computer()]);
+    const onChanged = vi.fn();
+    render(<OwnedComputersPanel scope="a" transport={t} onChanged={onChanged} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Back up Lab server to Matrix" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Lab server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not report a failed change", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = transport([computer()]);
+    t.patch.mockRejectedValue(new Error("down"));
+    const onChanged = vi.fn();
+    render(<OwnedComputersPanel scope="a" transport={t} onChanged={onChanged} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Back up Lab server to Matrix" }));
+    await screen.findByRole("alert");
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it("refreshes the list on an interval so status changes appear", async () => {

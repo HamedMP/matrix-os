@@ -10,7 +10,7 @@ import { z } from "zod/v4";
 
 export const OWNED_COMPUTERS_PATH = "/api/auth/owned-computers";
 export const OWNED_COMPUTER_INSTALL_COMMAND =
-  "curl -fsSL https://get.matrix-os.com/install | sudo bash -s -- --connect";
+  "curl -fsSL https://matrix-os.com/install-server.sh | sudo bash -s -- --connect";
 
 /** Transport supplied by each surface (Web fetch, Electron trusted-core client). */
 export interface OwnedComputersTransport {

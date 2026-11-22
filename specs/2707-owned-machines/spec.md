@@ -48,7 +48,7 @@ multi-machine pairing come later.
 ## User journey
 
 1. **Install.** On Matrix's site the owner copies one line:
-   `curl -fsSL https://get.matrix-os.com/install | sudo bash`. It checks
+   `curl -fsSL https://matrix-os.com/install-server.sh | sudo bash -s -- --connect`. It checks
    requirements, asks the 2701 questions (run account, browser use), installs
    the host bundle and local Postgres, and continues without questions on a
    non-TTY.

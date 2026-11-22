@@ -13,6 +13,7 @@ import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
 import { GettingStartedPopover, type GettingStartedDestination } from "../onboarding/GettingStartedPopover";
+import { subscribeComputersChanged } from "@/lib/computers-changed";
 
 export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers" | "organization";
 interface WebDesktopControlsProps {
@@ -91,6 +92,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
   const label = current?.label ?? (state.status === "loading" ? "Loading computers…" : state.status === "ready" ? "Current computer" : "Computer unavailable");
   const triggerLabel = state.status === "loading" ? "Loading computers" : state.status === "error" ? "Computer list unavailable" : `Change computer, currently ${label}`;
   const requestRefresh = useCallback(() => { setState({ status: "loading", inventory: null, slot: null }); setRefresh(value => value + 1); }, []);
+  useEffect(() => subscribeComputersChanged(requestRefresh), [requestRefresh]);
   return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild>
     <button type="button" aria-label={triggerLabel} className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-[13px] hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-primary">
       <MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{label}</span><ChevronDownIcon className="size-3 shrink-0" aria-hidden="true" />

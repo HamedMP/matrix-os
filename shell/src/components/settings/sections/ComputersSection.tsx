@@ -7,6 +7,7 @@ import {
 } from "@matrix-os/ui/owned-computers";
 import { useMemo, useSyncExternalStore } from "react";
 import { isSelfHostedRuntime, runtimeSubstrate } from "@/lib/self-host-mode";
+import { announceComputersChanged } from "@/lib/computers-changed";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const subscribeRuntime = () => () => {};
@@ -70,7 +71,7 @@ export function ComputersSection() {
 
 function EnrolledComputers() {
   const transport = useMemo(() => createOwnedComputersFetchTransport(null), []);
-  return <SectionFrame><OwnedComputersPanel scope="enrolled-owned-computer" transport={transport} /></SectionFrame>;
+  return <SectionFrame><OwnedComputersPanel scope="enrolled-owned-computer" transport={transport} onChanged={announceComputersChanged} /></SectionFrame>;
 }
 
 function ManagedComputers() {
@@ -81,7 +82,7 @@ function ManagedComputers() {
   );
   return (
     <SectionFrame>
-      <OwnedComputersPanel scope={JSON.stringify([userId, sessionId])} transport={transport} />
+      <OwnedComputersPanel scope={JSON.stringify([userId, sessionId])} transport={transport} onChanged={announceComputersChanged} />
     </SectionFrame>
   );
 }

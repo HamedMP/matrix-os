@@ -35,17 +35,19 @@ export interface OwnedComputersPanelProps {
   /** Changes when the signed-in identity changes, so state never leaks across accounts. */
   scope: string;
   transport: OwnedComputersTransport;
+  /** Called after a rename, setting change or removal succeeds, so other computer lists can refresh. */
+  onChanged?: () => void;
 }
 
 export function OwnedComputersPanel(props: OwnedComputersPanelProps) {
-  return <OwnedComputersContent key={props.scope} transport={props.transport} />;
+  return <OwnedComputersContent key={props.scope} transport={props.transport} onChanged={props.onChanged} />;
 }
 
 function logFailure(operation: OwnedComputersFailure, error: unknown) {
   console.warn(`[owned-computers] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
 }
 
-function OwnedComputersContent({ transport }: { transport: OwnedComputersTransport }) {
+function OwnedComputersContent({ transport, onChanged }: { transport: OwnedComputersTransport; onChanged?: () => void }) {
   const client = useMemo(() => createOwnedComputersClient(transport), [transport]);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [now, setNow] = useState(() => new Date());
@@ -53,20 +55,32 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
   const [failure, setFailure] = useState<{ machineId: string | null; kind: OwnedComputersFailure } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<OwnedComputerSummary | null>(null);
   const [showInstall, setShowInstall] = useState(false);
-  // Each list load bumps the generation; a row reply started before a newer
-  // list arrived is stale. Per-row sequences order overlapping row requests.
-  const generation = useRef(0);
+  // List loads never race changes: a load is applied only if no change was in
+  // flight or started while it ran. A discarded load is retried once all
+  // changes settle, so the list catches up with the server without ever
+  // overwriting a saved reply or bringing back a removed computer.
+  // Per-row sequences order overlapping requests for the same computer.
   const rowSequence = useRef<Record<string, number>>({});
   const loadController = useRef<AbortController | null>(null);
+  const mutationsInFlight = useRef(0);
+  const mutationEpoch = useRef(0);
+  const reloadAfterMutations = useRef(false);
 
   const load = useCallback((mode: "initial" | "background") => {
     loadController.current?.abort();
     const controller = new AbortController();
     loadController.current = controller;
+    const epoch = mutationEpoch.current;
     client.list({ signal: controller.signal }).then(
       (list) => {
         if (controller.signal.aborted) return;
-        generation.current += 1;
+        if (mutationsInFlight.current > 0 || mutationEpoch.current !== epoch) {
+          // Changes still running retry this load when they settle; if they
+          // already settled, retry now with a load that starts after them.
+          if (mutationsInFlight.current > 0) reloadAfterMutations.current = true;
+          else load(mode);
+          return;
+        }
         setState({ status: "ready", list });
       },
       (error: unknown) => {
@@ -96,14 +110,23 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
     return () => clearInterval(timer);
   }, []);
 
-  function begin(machineId: string): { sequence: number; generation: number } {
+  function begin(machineId: string): { sequence: number } {
     const sequence = (rowSequence.current[machineId] ?? 0) + 1;
     rowSequence.current[machineId] = sequence;
+    mutationsInFlight.current += 1;
+    mutationEpoch.current += 1;
     setPending((current) => ({ ...current, [machineId]: true }));
-    return { sequence, generation: generation.current };
+    return { sequence };
   }
 
-  function finish(machineId: string, sequence: number) {
+  function finish(machineId: string, sequence: number, changed: boolean) {
+    mutationsInFlight.current -= 1;
+    mutationEpoch.current += 1;
+    if (mutationsInFlight.current === 0 && reloadAfterMutations.current) {
+      reloadAfterMutations.current = false;
+      load("background");
+    }
+    if (changed) onChanged?.();
     if (rowSequence.current[machineId] !== sequence) return;
     setPending((current) => {
       const next = { ...current };
@@ -115,17 +138,20 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
   async function update(computer: OwnedComputerSummary, patch: OwnedComputerUpdate, kind: OwnedComputersFailure): Promise<boolean> {
     const ticket = begin(computer.machineId);
     setFailure(null);
+    let changed = false;
     try {
       const next = await client.update(computer.machineId, patch);
-      const current = rowSequence.current[computer.machineId] === ticket.sequence && generation.current === ticket.generation;
-      if (current) setState((value) => (value.status === "ready" ? { status: "ready", list: replaceOwnedComputer(value.list, next) } : value));
+      changed = true;
+      if (rowSequence.current[computer.machineId] === ticket.sequence) {
+        setState((value) => (value.status === "ready" ? { status: "ready", list: replaceOwnedComputer(value.list, next) } : value));
+      }
       return true;
     } catch (error: unknown) {
       logFailure(kind, error);
       if (rowSequence.current[computer.machineId] === ticket.sequence) setFailure({ machineId: computer.machineId, kind });
       return false;
     } finally {
-      finish(computer.machineId, ticket.sequence);
+      finish(computer.machineId, ticket.sequence, changed);
     }
   }
 
@@ -134,8 +160,10 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
     if (!target) return;
     const ticket = begin(target.machineId);
     setFailure(null);
+    let changed = false;
     try {
       await client.remove(target.machineId);
+      changed = true;
       setState((current) => (current.status === "ready" ? { status: "ready", list: withoutOwnedComputer(current.list, target.machineId) } : current));
       setRemoveTarget(null);
     } catch (error: unknown) {
@@ -143,7 +171,7 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
       setFailure({ machineId: target.machineId, kind: "remove" });
       setRemoveTarget(null);
     } finally {
-      finish(target.machineId, ticket.sequence);
+      finish(target.machineId, ticket.sequence, changed);
     }
   }
 

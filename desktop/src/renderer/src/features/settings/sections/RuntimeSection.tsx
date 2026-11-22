@@ -171,7 +171,7 @@ export default function RuntimeSection() {
       </Card>
       <Card>
         {ownedTransport ? (
-          <OwnedComputersPanel scope={JSON.stringify([userId, authGeneration, platformHost])} transport={ownedTransport} />
+          <OwnedComputersPanel scope={JSON.stringify([userId, authGeneration, platformHost])} transport={ownedTransport} onChanged={() => { void refresh({ force: true }); }} />
         ) : (
           <Empty text="Sign in to manage your own computers." />
         )}

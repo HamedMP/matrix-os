@@ -13,6 +13,17 @@ const inventory = { items: [
 beforeEach(() => vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => url.includes("/api/auth/computers") ? inventory : url.includes("/api/system/info") ? { runtime: { runtimeSlot: "primary" } } : {} }))));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("shared Web Desktop top bar", () => {
+ it("reloads the computer menu when Settings changes an owned computer", async () => {
+  const { announceComputersChanged } = await import("@/lib/computers-changed");
+  const props = { onOpenSettings: vi.fn(), onOpenCommandPalette: vi.fn(), onOpenSupport: vi.fn(), onOpenFirstWork: vi.fn() };
+  render(<WebDesktopControls {...props} />);
+  await screen.findByRole("button", { name: "Change computer, currently Main Computer" });
+  const fetchMock = vi.mocked(fetch);
+  const before = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/auth/computers")).length;
+  await act(async () => { announceComputersChanged(); });
+  await screen.findByRole("button", { name: "Change computer, currently Main Computer" });
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/auth/computers")).length).toBe(before + 1);
+ });
  it("uses the installed preview identity and ignores late responses from the old computer", async () => {
   let finishOld: (value: unknown) => void = () => {};
   const pending = new Promise(resolve => { finishOld = resolve; });
