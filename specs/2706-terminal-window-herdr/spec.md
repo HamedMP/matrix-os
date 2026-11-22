@@ -60,16 +60,18 @@ Added 2026-11-22 (Hamed):
 Three levels, each with its own keys; every key works while a terminal has
 focus.
 
-- **Space**: a project on a machine, or **All**. Every machine has a home
-  space (`home`; a Matrix computer's is its `main` workspace) for terminals in
-  no project, so every terminal belongs to a space. Spaces are the sidebar's
-  rows; the active one shows as a colored chip at the left of the top bar.
-  **Ctrl+1…9** switches space in the sidebar's order, **Ctrl+0** is All.
+- **Space**: a machine, a project on a machine, or **All**. Each machine is a
+  space itself and its terminals belong to it; a Matrix computer's real
+  projects (other than its reserved `main` workspace, which is the computer
+  itself) are spaces under it. Spaces are the sidebar's rows; the active one
+  shows as a colored chip at the left of the top bar. **Ctrl+1…9** switches
+  space in the sidebar's order (each machine, then its projects), **Ctrl+0** is
+  All.
 - **Tab**: one terminal or a split layout. The top bar shows only the active
   space's tabs. **Cmd+1…9** and **Ctrl+Tab / Ctrl+Shift+Tab** move among them;
-  **Cmd+T / Cmd+N** start a terminal in the active space (beside one of its
-  terminals, same machine, workspace and folder; in its machine's home when it
-  has none).
+  **Cmd+T / Cmd+N** start a terminal in the active space: on the active
+  machine, or in the active project beside one of its terminals (same
+  workspace and folder).
 - **Pane**: inside a tab. **Cmd+D / Cmd+Shift+D** split, **Cmd+W** closes the
   focused pane (the last pane closes the tab), **Cmd+Alt+arrows** focus.
 
@@ -101,22 +103,23 @@ bottom status bar.
 
 - **Spaces** (top), as Herdr's: an **All** row (every terminal; the state with
   no filter), then each machine (This Mac, ssh machines, then Matrix computers)
-  as a small muted group label: icon, name, what it is and whether it can be
-  used now, then `+` (a new terminal in its home space) and a status dot.
-  Under it, that machine's spaces (home first) as compact rows with a colored
-  rounded letter avatar, the name and a terminal count.
+  as a space row: a colored rounded letter (or icon) badge, its name (or the
+  name the person gave it), what it is and whether it can be used now, its
+  terminal count, `+` (a new terminal on it) and a status dot. There are no
+  home or `main` rows. A computer with real projects gets a chevron that lists
+  them under it as space rows; a machine without projects has no chevron.
   Unavailable machines fold into **Unavailable (n)** at the end; the list
   scrolls on its own past 40% of the window. **Add machine…** sits at the foot
   beside Settings (see Ssh machines).
-- Clicking a space's name makes it active (highlighted), which filters the tab
-  bar, Cmd+digits, Ctrl+Tab and the Agents list; **All** clears it. A space's
-  left chevron only lists its terminals inline under it; it never filters. A
-  terminal row's hover ↗ opens it as a tab of its space and makes that space
-  active.
-- A space's menu (hover `…` or right-click) renames it, picks one of eight
-  colors, picks an icon in place of the letter, moves it up or down, or resets
-  its look; spaces also reorder by drag. This dressing is kept per viewer and
-  never renames the project.
+- Clicking a space row makes it active (highlighted), which filters the tab
+  bar, Cmd+digits, Ctrl+Tab and the Agents list; **All** clears it. Chevrons
+  only list what is inside (a machine's projects, a project's terminals); they
+  never filter. A terminal row's hover ↗ opens it as a tab of its space (its
+  project, or its machine) and makes that space active.
+- Every space row's menu (hover `…` or right-click) renames it, picks one of
+  eight colors, picks an icon in place of the letter, moves it up or down, or
+  resets its look; machines and projects also reorder by drag. This dressing is
+  kept per viewer and never renames the machine or project.
 - **Agents** (below): **Pinned** first, then **Needs you** (blocked or error),
   **Done** (finished and not yet seen), **Working**, **Idle**, each foldable
   with a count (needs-you and working in amber, done green, idle grey). A
