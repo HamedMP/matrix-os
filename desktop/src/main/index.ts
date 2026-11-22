@@ -671,7 +671,7 @@ if (!gotLock) {
           win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
           // A window that closes, reloads or crashes cannot detach for itself;
           // without this its local terminal attachments would stay held.
-          const releaseLocalTerminals = () => localTerminals?.detachAll();
+          const releaseLocalTerminals = () => { localTerminals?.detachAll(); localTerminals?.unwatch(); };
           win.on("closed", releaseLocalTerminals);
           win.webContents.on("did-start-loading", releaseLocalTerminals);
           win.webContents.on("render-process-gone", releaseLocalTerminals);
@@ -706,6 +706,7 @@ if (!gotLock) {
       }, {
         output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
         closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
+        facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);

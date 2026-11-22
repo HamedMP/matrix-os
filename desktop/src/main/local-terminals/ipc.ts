@@ -64,6 +64,14 @@ export function registerLocalTerminalIpc(
     "local-terminal:resize": ({ attachId, cols, rows }) => quiet("local-terminal:resize", () => host.resize(attachId, { cols, rows })),
     "local-terminal:ack": ({ attachId, count }) => quiet("local-terminal:ack", () => host.acknowledge(attachId, count)),
     "local-terminal:detach": ({ attachId }) => quiet("local-terminal:detach", () => host.detach(attachId)),
+    "local-terminal:watch": async () => {
+      try { return { status: "ready", terminals: await host.watch() }; }
+      catch (error: unknown) { logFailure("local-terminal:watch", error); return unavailable(); }
+    },
+    "local-terminal:seen": async ({ id }) => {
+      try { await host.seen(id); return { ok: true }; }
+      catch (error: unknown) { logFailure("local-terminal:seen", error); return { ok: false }; }
+    },
   };
 
   for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {

@@ -4,11 +4,15 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import type { LocalTerminalAgent } from "../../shared/local-terminals";
+import type { LocalTerminalAgent, LocalTerminalFact } from "../../shared/local-terminals";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
 import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import {
+  createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
+  type LocalTerminalEvents, type LocalTerminalEventsOptions,
+} from "./hc-events";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -72,9 +76,20 @@ export interface LocalTerminalHostOptions {
   /** Shared with the window's other hosts, so the attachment budget holds across them. */
   slots?: AttachmentSlots;
   now?: () => number;
+  /** Follows status changes; replaced in tests. */
+  createEvents?: (options: LocalTerminalEventsOptions) => LocalTerminalEvents;
 }
 
-export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: HcSessionSink) {
+export class LocalTerminalUnknownError extends Error {
+  constructor() { super("local terminal is not listed"); this.name = "LocalTerminalUnknownError"; }
+}
+
+export interface LocalTerminalHostSink extends HcSessionSink {
+  /** Status facts changed (spec 2706 layer 4). */
+  facts?(terminals: LocalTerminalFact[]): void;
+}
+
+export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: LocalTerminalHostSink) {
   const now = options.now ?? Date.now;
   const socketPath = join(options.runtimeDir, "herdr-core", `${SESSION}.sock`);
   const starts: number[] = [];
@@ -166,6 +181,12 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   }
 
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  const events = (options.createEvents ?? createLocalTerminalEvents)({
+    open: () => options.openSocket(socketPath),
+    expectedVersion: options.expectedVersion,
+    onChange: (terminals) => sink.facts?.(terminals),
+    now,
+  });
 
   /** A real folder under home, resolved through symlinks; anything else is refused. */
   async function folderUnderHome(folder: string): Promise<string> {
@@ -210,6 +231,34 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       });
     },
 
+    /**
+     * Follows status (herdr-core `events.subscribe`) once the core is running,
+     * and returns what is known now; changes go to the sink's `facts`.
+     */
+    async watch(): Promise<LocalTerminalFact[]> {
+      await ensure();
+      events.start();
+      return events.facts();
+    },
+
+    /** Stops following status: the Terminal window closed or reloaded. */
+    unwatch(): void {
+      events.stop();
+    },
+
+    /**
+     * The person opened this terminal. Uses Herdr's own label (the turn they
+     * saw), so every client of this core agrees; a finished terminal gets
+     * its own label, since its turn no longer changes.
+     */
+    async seen(id: string): Promise<void> {
+      const fact = events.fact(id);
+      if (!fact) throw new LocalTerminalUnknownError();
+      const labels = fact.finished ? { [FINISHED_SEEN_LABEL]: "1" } : { [HERDR_SEEN_LABEL]: String(fact.turn) };
+      const core = await ensure();
+      await core.call("terminal.label", { terminal: id, labels });
+    },
+
     kill: sessions.kill,
     rename: sessions.rename,
     put: sessions.put,
@@ -223,6 +272,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** Detaches from the core. The core and its terminals keep running. */
     dispose(): void {
       disposed = true;
+      events.stop();
       sessions.drop();
       connection?.close();
       connection = null;

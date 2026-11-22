@@ -1,6 +1,7 @@
 import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
+import type { TerminalSeenStore } from "./seen-store.js";
 import type { TerminalAgentStatus } from "./verbs.js";
 
 const DEFAULT_POLL_MS = 1_000;
@@ -43,8 +44,19 @@ export type TerminalEvent =
   | { kind: "status"; ref: TerminalRef; status: TerminalAgentStatus | null; message?: string }
   | { kind: "title"; ref: TerminalRef; name: string };
 
+/** A done tab (finished, or reporting `done`): when it became done and whether it was opened since. */
+export interface TerminalTabAttention {
+  doneAt: string;
+  seen: boolean;
+}
+
 export type TerminalEventFrame =
   | { type: "snapshot"; seq: number; tabs: TerminalTabFacts[] }
+  /**
+   * Every done tab by ref key, sent after each snapshot and whenever it changes.
+   * Clients that predate it ignore an unknown frame type.
+   */
+  | { type: "attention"; seq: number; tabs: Record<string, TerminalTabAttention> }
   | { type: "event"; seq: number; event: TerminalEvent }
   | { type: "heartbeat"; seq: number }
   | { type: "missed"; seq: number }
@@ -63,17 +75,31 @@ interface SubscriberState extends TerminalEventSubscriber {
   missed: boolean;
 }
 
+export interface TerminalEventSubscription {
+  touch(): void;
+  close(): void;
+  /** The person opened this tab: every subscriber learns it is seen. False for a tab the stream does not list. */
+  markSeen(ref: TerminalRef): boolean;
+}
+
 export interface TerminalEventHub {
-  subscribe(subscriber: TerminalEventSubscriber): { touch(): void; close(): void };
+  subscribe(subscriber: TerminalEventSubscriber): TerminalEventSubscription;
   tick(): Promise<void>;
   size(): number;
   shutdown(): void;
 }
 
+interface Listed {
+  facts: Map<string, TerminalTabFacts>;
+  /** When each done tab became done (ISO): its exit, or its latest `done` report. Never sent as a fact. */
+  doneAt: Map<string, string>;
+}
+
 function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string, {
   status: TerminalAgentStatus; message?: string; reportedAt: string;
-}>): Map<string, TerminalTabFacts> {
+}>): Listed {
   const facts = new Map<string, TerminalTabFacts>();
+  const doneAt = new Map<string, string>();
   // Every owner tab, so lifecycle changes (an exit and its code) are diffed before any
   // history is trimmed; only snapshots trim finished history.
   const ordered = workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({ workspace, tab })))
@@ -82,6 +108,8 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
     const ref = { workspaceId: workspace.id, tabId: tab.id };
     const finished = tab.status === "exited" || tab.status === "failed";
     const status = finished ? undefined : statuses.get(terminalRefKey(ref));
+    if (finished) doneAt.set(terminalRefKey(ref), tab.updatedAt);
+    else if (status?.status === "done") doneAt.set(terminalRefKey(ref), status.reportedAt);
     facts.set(terminalRefKey(ref), {
       ref,
       name: tab.name,
@@ -94,7 +122,20 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
       ...(status?.message ? { statusMessage: status.message } : {}),
     });
   }
-  return facts;
+  return { facts, doneAt };
+}
+
+/** Every done tab, most recently done first, bounded like a snapshot. */
+function attentionFrom(doneAt: ReadonlyMap<string, string>, seen: TerminalSeenStore | undefined): Record<string, TerminalTabAttention> {
+  const entries = [...doneAt].map(([key, at]) => ({ key, at, time: Date.parse(at) }))
+    .sort((left, right) => (right.time || 0) - (left.time || 0))
+    .slice(0, TERMINAL_EVENTS_MAX_TABS);
+  const tabs: Record<string, TerminalTabAttention> = {};
+  for (const { key, at, time } of entries) {
+    const opened = seen?.get(key);
+    tabs[key] = { doneAt: at, seen: opened !== undefined && Number.isFinite(time) && opened >= time };
+  }
+  return tabs;
 }
 
 function diff(previous: Map<string, TerminalTabFacts>, next: Map<string, TerminalTabFacts>): TerminalEvent[] {
@@ -137,11 +178,15 @@ export function createTerminalEventHub(options: {
   heartbeatMs?: number;
   staleMs?: number;
   autoStart?: boolean;
+  /** When each tab was last opened. Without it the hub sends no attention frames and accepts no marks. */
+  seen?: TerminalSeenStore;
 }): TerminalEventHub {
   const now = options.now ?? Date.now;
   const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
   const subscribers = new Set<SubscriberState>();
   let facts: Map<string, TerminalTabFacts> | null = null;
+  let doneAt: Map<string, string> = new Map();
+  let attention: { tabs: Record<string, TerminalTabAttention>; json: string } | null = null;
   let seq = 0;
   let pollTimer: NodeJS.Timeout | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -171,7 +216,20 @@ export function createTerminalEventHub(options: {
     pollTimer = null;
     heartbeatTimer = null;
     facts = null;
+    doneAt = new Map();
+    attention = null;
   }
+
+  /** Recomputes attention; true when it changed. */
+  function refreshAttention(): boolean {
+    const tabs = attentionFrom(doneAt, options.seen);
+    const json = JSON.stringify(tabs);
+    if (attention?.json === json) return false;
+    attention = { tabs, json };
+    return true;
+  }
+
+  const attentionFrame = (): TerminalEventFrame => ({ type: "attention", seq: ++seq, tabs: attention?.tabs ?? {} });
 
   function startTimers() {
     if (options.autoStart === false || pollTimer) return;
@@ -190,10 +248,14 @@ export function createTerminalEventHub(options: {
     }
     if (subscribers.size === 0) return;
     const [workspaces, statuses] = await Promise.all([options.runtime.listWorkspaces(), options.status.list()]);
-    const next = factsFrom(workspaces, statuses);
+    const listed = factsFrom(workspaces, statuses);
+    const next = listed.facts;
     const events = facts ? diff(facts, next) : [];
     facts = next;
+    doneAt = listed.doneAt;
+    options.seen?.retain(new Set(next.keys()));
     const frames = events.map((event): TerminalEventFrame => ({ type: "event", seq: ++seq, event }));
+    if (options.seen && refreshAttention()) frames.push(attentionFrame());
     const dead: SubscriberState[] = [];
     for (const subscriber of subscribers) {
       const backedUp = (subscriber.backlog?.() ?? 0) > MAX_BACKLOG_BYTES;
@@ -207,7 +269,8 @@ export function createTerminalEventHub(options: {
       if (subscriber.needsSnapshot || subscriber.missed) {
         subscriber.needsSnapshot = false;
         subscriber.missed = false;
-        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: snapshotTabs(next) })) dead.push(subscriber);
+        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: snapshotTabs(next) })
+          || (options.seen && !deliver(subscriber, attentionFrame()))) dead.push(subscriber);
         continue;
       }
       for (const frame of frames) {
@@ -238,6 +301,23 @@ export function createTerminalEventHub(options: {
       return {
         touch: () => { state.lastTouched = now(); },
         close: () => { if (subscribers.delete(state) && subscribers.size === 0) stopTimers(); },
+        markSeen: (ref) => {
+          const key = terminalRefKey(ref);
+          if (!options.seen || !facts?.has(key)) return false;
+          options.seen.mark(key, now());
+          if (refreshAttention()) {
+            const frame = attentionFrame();
+            const dead: SubscriberState[] = [];
+            for (const subscriber of subscribers) {
+              if (subscriber.needsSnapshot || subscriber.missed) continue;
+              // A backed-up subscriber gets a fresh snapshot (and attention) once it drains.
+              if ((subscriber.backlog?.() ?? 0) > MAX_BACKLOG_BYTES) subscriber.missed = true;
+              else if (!deliver(subscriber, frame)) dead.push(subscriber);
+            }
+            dead.forEach(evict);
+          }
+          return true;
+        },
       };
     },
     tick,
