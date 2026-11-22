@@ -778,6 +778,63 @@ process.stdin.on("end", () => {
 });' 2>/dev/null || true
 }
 
+# Prints the control server this machine is signed in to (empty when tailscaled
+# keeps its default); fails when the preferences cannot be read.
+tailscale_control_url() {
+  timeout 15 tailscale debug prefs 2>/dev/null | "$(node_bin)" -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; if (input.length > 1024 * 1024) process.exit(1); });
+process.stdin.on("end", () => {
+  try {
+    const url = JSON.parse(input).ControlURL;
+    if (url !== undefined && typeof url !== "string") process.exit(1);
+    process.stdout.write((url || "").replace(/[^A-Za-z0-9._:\/-]/g, "").slice(0, 2048) + "\n");
+  } catch { process.exit(1); }
+});' 2>/dev/null
+}
+
+# normalize_control_url <url>: "tailscale" for Tailscale's own servers, else the
+# URL with a lowercase scheme/host and no trailing slash.
+normalize_control_url() {
+  local url="${1%/}" rest
+  case "${url,,}" in
+    ""|https://controlplane.tailscale.com|https://login.tailscale.com) printf 'tailscale\n'; return 0 ;;
+  esac
+  if [[ "$url" =~ ^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$ ]]; then
+    rest="${BASH_REMATCH[3]}"
+    printf '%s%s%s\n' "${BASH_REMATCH[1],,}" "${BASH_REMATCH[2],,}" "$rest"
+  else
+    printf '%s\n' "$url"
+  fi
+}
+
+# A running connection is reused only when it is on the requested network; the
+# installer never switches networks itself, because that drops the person's
+# other devices from this machine.
+require_requested_control_server() {
+  local raw current requested switch
+  raw="$(tailscale_control_url)" \
+    || fail "this machine is on a private network, but the installer could not tell which private network (tailscale debug prefs failed). Check with: sudo tailscale debug prefs"
+  current="$(normalize_control_url "$raw")"
+  if [ "$OPT_ACCESS" = "headscale" ]; then
+    requested="$(normalize_control_url "$OPT_LOGIN_SERVER")"
+  else
+    requested=tailscale
+  fi
+  [ "$current" != "$requested" ] || return 0
+  if [ "$current" = "tailscale" ]; then
+    switch="To keep Tailscale, rerun the installer without --login-server."
+    fail "this machine is already on Tailscale, not ${OPT_LOGIN_SERVER}. Matrix does not switch networks for you. To use ${OPT_LOGIN_SERVER}, run: sudo tailscale logout, then rerun the installer. ${switch}"
+  fi
+  if [ "$requested" = "tailscale" ]; then
+    switch="To keep it, rerun the installer with --access headscale --login-server ${current}."
+  else
+    switch="To keep it, rerun the installer with --login-server ${current}."
+  fi
+  fail "this machine is already on the private network at ${current}, not $( [ "$requested" = tailscale ] && printf 'Tailscale' || printf '%s' "$OPT_LOGIN_SERVER" ). Matrix does not switch networks for you. To move it, run: sudo tailscale logout, then rerun the installer. ${switch}"
+}
+
 install_tailscale() {
   local codename distro
   if command -v tailscale >/dev/null 2>&1; then
@@ -834,6 +891,7 @@ tailscale_login() {
   local line wait login_args
   line="$(tailscale_status_line)"
   if [ "${line%%$'\t'*}" = "Running" ]; then
+    require_requested_control_server
     ok "This machine is already on your private network"
     return 0
   fi

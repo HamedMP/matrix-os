@@ -330,6 +330,73 @@ OPT_ACCESS=tailscale OPT_LOGIN_SERVER="" MATRIX_INSTALL_LOG="${join(dir, "instal
     expect(existsSync(key)).toBe(false);
   });
 
+  describe("a machine already on a private network", () => {
+    // Found in review: tailscale_login reused any running connection, so a host
+    // already on Tailscale (or another Headscale) kept that network while the
+    // installer recorded the requested one, and those devices could not reach Matrix.
+    function running(controlURL: string | null, opts: string) {
+      const bin = join(dir, "bin");
+      spawnSync("mkdir", ["-p", bin]);
+      const prefs = controlURL === null ? "exit 1" : `printf '%s' '${JSON.stringify({ ControlURL: controlURL, WantRunning: true })}'`;
+      writeFileSync(join(bin, "tailscale"), `#!/bin/sh
+case "$1 $2" in
+  "status --json") printf '%s' '{"BackendState":"Running","Self":{"DNSName":"box.example.","UserID":1},"User":{"1":{"LoginName":"me@example.com"}}}' ;;
+  "debug prefs") ${prefs} ;;
+  up*|"up "*) echo "$*" >> "${join(dir, "up")}" ;;
+  *) echo "$*" >> "${join(dir, "other")}" ;;
+esac
+`);
+      chmodSync(join(bin, "tailscale"), 0o755);
+      return run(`MATRIX_INSTALL_LOG=/dev/null MATRIX_INSTALL_NODE_BIN="$(command -v node)" ${opts} tailscale_login`, {
+        PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      });
+    }
+
+    it("reuses a Tailscale connection when Tailscale is requested", () => {
+      const result = running("https://controlplane.tailscale.com", "OPT_ACCESS=tailscale OPT_LOGIN_SERVER=");
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("already on your private network");
+      expect(existsSync(join(dir, "up"))).toBe(false);
+    });
+
+    it("reuses the same Headscale server, ignoring a trailing slash and host case", () => {
+      const result = running("https://HS.example.com/", "OPT_ACCESS=headscale OPT_LOGIN_SERVER=https://hs.example.com");
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(join(dir, "up"))).toBe(false);
+    });
+
+    it("refuses to keep Tailscale when Headscale is requested, and says how to switch", () => {
+      const result = running("https://controlplane.tailscale.com", "OPT_ACCESS=headscale OPT_LOGIN_SERVER=https://hs.example.com");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("already on Tailscale");
+      expect(result.stderr).toContain("sudo tailscale logout");
+      expect(result.stderr).toContain("without --login-server");
+      expect(existsSync(join(dir, "up"))).toBe(false);
+      expect(existsSync(join(dir, "other"))).toBe(false);
+    });
+
+    it("refuses a different Headscale server", () => {
+      const result = running("https://old.example.com", "OPT_ACCESS=headscale OPT_LOGIN_SERVER=https://hs.example.com");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("https://old.example.com");
+      expect(result.stderr).toContain("--login-server https://old.example.com");
+      expect(result.stderr).toContain("sudo tailscale logout");
+    });
+
+    it("refuses to keep a Headscale network when Tailscale is requested", () => {
+      const result = running("https://old.example.com", "OPT_ACCESS=tailscale OPT_LOGIN_SERVER=");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("--access headscale --login-server https://old.example.com");
+      expect(existsSync(join(dir, "up"))).toBe(false);
+    });
+
+    it("fails closed when it cannot tell which network the machine is on", () => {
+      const result = running(null, "OPT_ACCESS=tailscale OPT_LOGIN_SERVER=");
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("could not tell which private network");
+    });
+  });
+
   it("prints the Tailscale login link while the login is still waiting, without a terminal", () => {
     // Found while testing on a live VPS: grep buffered the link until tailscale
     // gave up, so an unattended install showed it only after it had expired.
