@@ -5,6 +5,7 @@ import { useConnection } from "../../../stores/connection";
 import { invoke } from "../../../lib/operator";
 import { buildGatewayUrl } from "../../../lib/api";
 import { getKernelSocket } from "../../../lib/kernel-wiring";
+import { RUNTIME_RECONNECTED_EVENT } from "../../../lib/runtime-compatibility";
 import { useSyncExternalStore } from "react";
 
 // The trusted core injects the gateway Authorization header at the network
@@ -34,8 +35,21 @@ const subscribeKernelState = (onChange: () => void) => {
 };
 const kernelConnected = () => getKernelSocket()?.state === "connected";
 
+// Kernel socket opens, counted from the reconnect event the kernel wiring emits for every
+// socket instance, so a reconnect too short to render as disconnected still refreshes.
+let kernelOpens = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener(RUNTIME_RECONNECTED_EVENT, () => { kernelOpens += 1; });
+}
+const subscribeKernelOpens = (onChange: () => void) => {
+  window.addEventListener(RUNTIME_RECONNECTED_EVENT, onChange);
+  return () => window.removeEventListener(RUNTIME_RECONNECTED_EVENT, onChange);
+};
+const kernelOpenCount = () => kernelOpens;
+
 export default function MessagingSection() {
   const connected = useSyncExternalStore(subscribeKernelState, kernelConnected, kernelConnected);
+  const connectionEpoch = useSyncExternalStore(subscribeKernelOpens, kernelOpenCount, kernelOpenCount);
   const api = useConnection((s) => s.api);
   const userId = useConnection((s) => s.userId);
   const generation = useConnection((s) => s.authGeneration);
@@ -71,6 +85,7 @@ export default function MessagingSection() {
         fetch={bridgeFetch}
         subscribe={subscribeOwnerEvents}
         connected={connected}
+        connectionEpoch={connectionEpoch}
         onOpenExternal={open}
       />
     </>

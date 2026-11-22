@@ -43,7 +43,7 @@ function MessagingContent({ children }: { children: React.ReactNode }) {
 }
 function ManagedMessaging({ mobile }: { mobile: boolean }) {
   const { userId, sessionId, getToken } = useAuth();
-  const { subscribe, connected } = useSocket();
+  const { subscribe, connected, connectionEpoch } = useSocket();
   const scope = JSON.stringify([userId, sessionId]);
   const bridgeFetch: MessagingBridgeFetch = async (path, init) => {
     if (!userId) return signInRequired();
@@ -73,7 +73,7 @@ function ManagedMessaging({ mobile }: { mobile: boolean }) {
           return res.json();
         }}
       />
-      {mobile ? null : <ChatAppsPanel scope={scope} fetch={bridgeFetch} subscribe={subscribe} connected={connected} />}
+      {mobile ? null : <ChatAppsPanel scope={scope} fetch={bridgeFetch} subscribe={subscribe} connected={connected} connectionEpoch={connectionEpoch} />}
     </MessagingContent>
   );
 }

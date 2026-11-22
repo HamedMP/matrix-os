@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
   platformHost: "https://messaging-stage.example.com",
   runtimeSlot: "review",
 }));
-const owner = vi.hoisted(() => ({ listeners: new Set<(frame: unknown) => void>() }));
+const owner = vi.hoisted(() => ({ listeners: new Set<(frame: unknown) => void>(), epoch: 1 }));
 const ownerSubscribe = (listener: (frame: unknown) => void) => {
   owner.listeners.add(listener);
   return () => owner.listeners.delete(listener);
@@ -20,7 +20,7 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({ invoke: vi.fn().
 vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
   getKernelSocket: () => ({ subscribe: ownerSubscribe, state: "connected", onStateChange: () => () => {} }),
 }));
-vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ subscribe: ownerSubscribe, connected: true }) }));
+vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ subscribe: ownerSubscribe, connected: true, connectionEpoch: owner.epoch }) }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "synthetic-owner", sessionId: "synthetic-session", getToken: async () => "synthetic-token" }) }));
 vi.mock("@/lib/self-host-mode", () => ({ isSelfHostedRuntime: () => false }));
 
@@ -77,4 +77,29 @@ it("Electron Desktop Settings mount Your chat apps against the selected runtime 
   await waitFor(() =>
     expect(fetcher.mock.calls.map(([url]) => url)).toContain("https://gateway-stage.example.com/api/messages/bridge/status?runtime=review"),
   );
+});
+
+function statusReads(fetcher: ReturnType<typeof gatewayFetch>) {
+  return fetcher.mock.calls.filter(([url]) => String(url).includes("/api/messages/bridge/status")).length;
+}
+
+it("Web Desktop and Web Canvas refresh Your chat apps after the owner socket reopens", async () => {
+  const fetcher = gatewayFetch();
+  const { MessagingSection } = await import("../../shell/src/components/settings/sections/MessagingSection");
+  const view = render(<MessagingSection />);
+  expect(await screen.findByText("Not available yet")).toBeTruthy();
+  const before = statusReads(fetcher);
+  owner.epoch += 1;
+  view.rerender(<MessagingSection />);
+  await waitFor(() => expect(statusReads(fetcher)).toBe(before + 1));
+});
+
+it("Electron Desktop refreshes Your chat apps after the kernel socket reconnects", async () => {
+  const fetcher = gatewayFetch();
+  const { default: MessagingSection } = await import("../../desktop/src/renderer/src/features/settings/sections/MessagingSection");
+  render(<MessagingSection />);
+  expect(await screen.findByText("Not available yet")).toBeTruthy();
+  const before = statusReads(fetcher);
+  act(() => { window.dispatchEvent(new Event("matrix:runtime-reconnected")); });
+  await waitFor(() => expect(statusReads(fetcher)).toBe(before + 1));
 });

@@ -26,18 +26,26 @@ export function parseBridgeChange(frame: unknown): MessagingBridgeChangedEvent |
  * (refresh everything) every 10 s while the tab is visible when no socket is
  * available or the surface reports it disconnected (`connected === false`).
  * Change events sent during a disconnect are lost, so reconnecting refreshes
- * everything once.
+ * everything once: after `connected` returns to true, or when `connectionEpoch`
+ * (bumped on every socket open) changes, which also catches a reconnect too
+ * short for the surface to report as disconnected.
  */
 export function useMessagingBridgeChanges(
   subscribe: MessagingBridgeSubscribe | undefined,
   onChange: (event: MessagingBridgeChangedEvent | null) => void,
   enabled = true,
   connected = true,
+  connectionEpoch = 0,
 ): void {
   const notify = useEffectEvent((event: MessagingBridgeChangedEvent | null) => onChange(event));
   const missedEvents = useRef(false);
+  const seenEpoch = useRef(connectionEpoch);
   useEffect(() => {
     if (!enabled) return;
+    if (seenEpoch.current !== connectionEpoch) {
+      seenEpoch.current = connectionEpoch;
+      missedEvents.current = true;
+    }
     const unsubscribe = connected
       ? subscribe?.((frame) => {
         const event = parseBridgeChange(frame);
@@ -56,5 +64,5 @@ export function useMessagingBridgeChanges(
       if (typeof document === "undefined" || document.visibilityState === "visible") notify(null);
     }, MESSAGING_BRIDGE_FALLBACK_POLL_MS);
     return () => clearInterval(timer);
-  }, [subscribe, enabled, connected]);
+  }, [subscribe, enabled, connected, connectionEpoch]);
 }

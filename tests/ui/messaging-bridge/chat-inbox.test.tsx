@@ -198,4 +198,36 @@ describe("chat inbox", () => {
     await waitFor(() => expect(bubbles()).toEqual(["incoming:Lunch?", "incoming:Now?"]));
     expect(threadReads).toBe(2);
   });
+
+  it("shows every conversation after refresh when more arrive than one page holds, even interleaved with loaded ones", async () => {
+    // Server-side list with offset cursors of 50, newest first.
+    const at = (minutes: number) => new Date(Date.parse("2026-11-22T00:00:00.000Z") + minutes * 60_000).toISOString();
+    let server = Array.from({ length: 100 }, (_unused, index) => conversation({ roomId: `!old${index}:x`, displayName: `Old ${index}`, lastEventAt: at(1_000 - index * 2) }));
+    const page = (path: string) => {
+      const sorted = [...server].sort((a, b) => Date.parse(b.lastEventAt!) - Date.parse(a.lastEventAt!));
+      const offset = Number(/cursor=(\d+)/.exec(path)?.[1] ?? 0);
+      const items = sorted.slice(offset, offset + 50);
+      return { body: conversations(items, offset + 50 < sorted.length ? String(offset + 50) : undefined) };
+    };
+    const ws = socket();
+    renderInbox({ [`GET ${BASE}`]: (request) => page(request.path) }, ws.subscribe);
+    await screen.findByRole("button", { name: /^Old 0,/ });
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByRole("button", { name: /^Old 99,/ });
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+
+    // Linking another app adds 60 conversations: 20 newer than everything, 40 interleaved with the loaded ones.
+    server = [
+      ...server,
+      ...Array.from({ length: 60 }, (_unused, index) => conversation({ roomId: `!new${index}:x`, displayName: `New ${index}`, lastEventAt: index < 20 ? at(2_000 + index) : at(1_001 - (index - 20) * 4) })),
+    ];
+    ws.emit({ type: "messages:changed", scope: "conversations", updatedAt: "2026-11-22T10:00:00.000Z" });
+    await screen.findByRole("button", { name: /^New 0,/ });
+    while (screen.queryByRole("button", { name: "Show more" })) {
+      fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Loading…" })).toBeNull());
+    }
+    const shown = new Set(screen.getAllByRole("button", { name: /^(Old|New) \d+,/ }).map((button) => button.getAttribute("aria-label")!.split(",")[0]));
+    expect(shown.size).toBe(160);
+  });
 });

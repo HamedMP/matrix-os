@@ -11,7 +11,6 @@ import {
   deriveThreadEntries,
   mergeConversations,
   mergeMessages,
-  mergeRefreshedConversations,
   mergeRefreshedMessages,
   type ConversationFilter,
   type PendingSend,
@@ -31,6 +30,8 @@ interface ThreadState {
   error: string | null;
 }
 
+/** A refresh re-reads at most this many pages; deeper conversations load again with Show more. */
+const REFRESH_MAX_PAGES = 4;
 const EMPTY_LIST: ListState = { items: [], loading: true, loadingMore: false, error: null };
 
 export interface ChatInboxProps {
@@ -39,11 +40,13 @@ export interface ChatInboxProps {
   subscribe?: MessagingBridgeSubscribe;
   /** Whether the owner socket is live; `false` polls and refreshes on reconnect. */
   connected?: boolean;
+  /** Bumped on every owner socket open; a change refreshes once. */
+  connectionEpoch?: number;
   /** No linked account yet: the empty state points at linking. */
   hasAccounts?: boolean;
 }
 
-export function ChatInbox({ client, networks, subscribe, connected = true, hasAccounts = true }: ChatInboxProps) {
+export function ChatInbox({ client, networks, subscribe, connected = true, connectionEpoch = 0, hasAccounts = true }: ChatInboxProps) {
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [list, setList] = useState<ListState>(EMPTY_LIST);
   const [active, setActive] = useState<MessagingBridgeConversation | null>(null);
@@ -70,20 +73,28 @@ export function ChatInbox({ client, networks, subscribe, connected = true, hasAc
     listRequest.current = { generation, controller };
     if (mode === "replace") setList(EMPTY_LIST);
     if (mode === "more") setList((prev) => ({ ...prev, loadingMore: true, error: null }));
+    const query = (pageCursor?: string) => ({ ...(nextFilter === "all" ? {} : { network: nextFilter }), ...(pageCursor ? { cursor: pageCursor } : {}) });
     try {
-      const page = await client.conversations(
-        { ...(nextFilter === "all" ? {} : { network: nextFilter }), ...(cursor ? { cursor } : {}) },
-        controller.signal,
-      );
+      let page = await client.conversations(query(cursor), controller.signal);
+      if (mode === "refresh") {
+        // Cursors are offsets, which shift whenever conversations arrive anywhere in the list, so
+        // merging page one into older pages can skip some. Re-read from the top as deep as is
+        // already loaded (bounded) and replace the list and its cursor together.
+        let items = page.items;
+        for (let pages = 1; page.nextCursor && items.length < list.items.length && pages < REFRESH_MAX_PAGES; pages += 1) {
+          page = await client.conversations(query(page.nextCursor), controller.signal);
+          items = mergeConversations(items, page.items);
+        }
+        page = { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+      }
       if (listRequest.current.generation !== generation) return;
-      setList((prev) => {
-        const merged = mode === "replace"
-          ? page
-          : mode === "refresh"
-            ? mergeRefreshedConversations(prev, page)
-            : { items: mergeConversations(prev.items, page.items), nextCursor: page.nextCursor };
-        return { items: merged.items, nextCursor: merged.nextCursor, loading: false, loadingMore: false, error: null };
-      });
+      setList((prev) => ({
+        items: mode === "more" ? mergeConversations(prev.items, page.items) : page.items,
+        nextCursor: page.nextCursor,
+        loading: false,
+        loadingMore: false,
+        error: null,
+      }));
     } catch (error: unknown) {
       if (isBridgeAbort(error) || listRequest.current.generation !== generation) return;
       setList((prev) => ({ ...prev, loading: false, loadingMore: false, error: bridgeErrorText(error) }));
@@ -127,7 +138,7 @@ export function ChatInbox({ client, networks, subscribe, connected = true, hasAc
     if (event === null || (event.scope === "messages" && (!event.roomId || event.roomId === roomId))) {
       void loadThread(roomId, "refresh");
     }
-  }, true, connected);
+  }, true, connected, connectionEpoch);
 
   const chooseFilter = (next: ConversationFilter) => {
     if (next === filter) return;

@@ -201,6 +201,33 @@ describe("chat apps panel", () => {
     expect((screen.getByLabelText("Message Saved chat") as HTMLTextAreaElement).value).toBe("half-written reply");
   });
 
+  it("refreshes once after a reconnect the surface reports only through its connection epoch", async () => {
+    let statusCalls = 0;
+    let listCalls = 0;
+    const gateway = fakeGateway({
+      [STATUS]: () => {
+        statusCalls += 1;
+        return { body: readyWithAccounts() };
+      },
+      [CONVERSATIONS]: () => {
+        listCalls += 1;
+        return { body: conversations([]) };
+      },
+    });
+    const ws = socket();
+    // A short reconnect inside the surface's grace window never reports `connected={false}`.
+    const view = render(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} connected connectionEpoch={1} />);
+    await screen.findByText("+46 70 000 0000");
+    await waitFor(() => expect(listCalls).toBe(1));
+    view.rerender(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} connected connectionEpoch={2} />);
+    await waitFor(() => expect(statusCalls).toBe(2));
+    await waitFor(() => expect(listCalls).toBe(2));
+    view.rerender(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} connected connectionEpoch={2} />);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(statusCalls).toBe(2);
+    expect(listCalls).toBe(2);
+  });
+
   it("asks for a computer connection when the surface has no transport", () => {
     render(<ChatAppsPanel scope="owner" fetch={null} />);
     expect(screen.getByRole("alert").textContent).toBe("Connect to your Matrix computer to manage chat apps.");

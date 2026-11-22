@@ -34,6 +34,8 @@ export interface ChatAppsPanelProps {
   subscribe?: MessagingBridgeSubscribe;
   /** Surface adapter: whether the owner WebSocket is live right now; `false` polls and refreshes on reconnect. */
   connected?: boolean;
+  /** Surface adapter: bumped on every owner WebSocket open; a change refreshes everything once. */
+  connectionEpoch?: number;
   onOpenExternal?: (url: string) => Promise<void> | void;
 }
 
@@ -53,6 +55,7 @@ export function ChatAppsPanel(props: ChatAppsPanelProps) {
           fetch={props.fetch}
           subscribe={props.subscribe}
           connected={props.connected ?? true}
+          connectionEpoch={props.connectionEpoch ?? 0}
           onOpenExternal={props.onOpenExternal}
         />
       ) : (
@@ -68,11 +71,13 @@ function ChatAppsContent({
   fetch,
   subscribe,
   connected,
+  connectionEpoch,
   onOpenExternal,
 }: {
   fetch: MessagingBridgeFetch;
   subscribe?: MessagingBridgeSubscribe;
   connected: boolean;
+  connectionEpoch: number;
   onOpenExternal?: (url: string) => Promise<void> | void;
 }) {
   const fetchRef = useRef(fetch);
@@ -115,7 +120,7 @@ function ChatAppsContent({
 
   useMessagingBridgeChanges(subscribe, (event: MessagingBridgeChangedEvent | null) => {
     if (event === null || event.scope === "accounts") void loadStatus(false);
-  }, true, connected);
+  }, true, connected, connectionEpoch);
 
   const confirmRemove = async (target: RemoveTarget) => {
     setRemoving({ ...target, busy: true, error: null });
@@ -169,6 +174,7 @@ function ChatAppsContent({
           networks={view.kind === "ready" ? view.rows.map((row) => row.network) : [...MESSAGING_BRIDGE_NETWORKS]}
           subscribe={subscribe}
           connected={connected}
+          connectionEpoch={connectionEpoch}
           hasAccounts={view.kind === "ready" ? view.hasAccounts : true}
         />
       ) : null}
