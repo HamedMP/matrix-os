@@ -462,6 +462,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
    */
   async function failExpired(
     row: { machineId: string; metalHostId: string | null; generation: number; metalVmId: string | null },
+    teardown: 'await' | 'background' = 'await',
   ): Promise<'failed' | 'unchanged' | 'error'> {
     const at = now();
     let failed: boolean;
@@ -472,11 +473,17 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       return 'error';
     }
     if (failed && deps.drainMachineDeletions) {
-      try {
-        await deps.drainMachineDeletions(row.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
-      } catch (error: unknown) {
-        log('stale_inline_destroy_failed', { machineId: row.machineId, code: errorCode(error) });
-      }
+      const drain = deps.drainMachineDeletions;
+      const destroy = (async () => {
+        try {
+          await drain(row.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
+        } catch (error: unknown) {
+          log('stale_inline_destroy_failed', { machineId: row.machineId, code: errorCode(error) });
+        }
+      })();
+      // Read paths answer first; the bounded destroy logs its own failure and
+      // the queued deletion stays the durable fallback.
+      if (teardown === 'await') await destroy;
     }
     return failed ? 'failed' : 'unchanged';
   }
@@ -544,7 +551,8 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     async failExpiredProvisioning(clerkUserId: string, runtimeSlot: string): Promise<'failed' | 'unchanged' | 'error'> {
       const row = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       if (!row || !isMetalRegistrationExpired(row, now())) return 'unchanged';
-      return failExpired(row);
+      // A read path must stay under the shell's journey timeout: destroy after answering.
+      return failExpired(row, 'background');
     },
 
     /**
