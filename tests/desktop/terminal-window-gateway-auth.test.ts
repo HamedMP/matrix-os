@@ -76,6 +76,14 @@ describe("Terminal window gateway authentication", () => {
     expect((await send(`${GATEWAY}/api/terminal/workspaces`)).Authorization).toBe("Bearer primary-token");
   });
 
+  it("names the gateway as the Origin of its terminal WebSockets, never another host's", async () => {
+    const { send } = setup({ primary: "primary-token" });
+    expect(await send("wss://app.matrix-os.com/ws/terminal/herdr?id=t1", { Origin: "null" }))
+      .toEqual({ Authorization: "Bearer primary-token", Origin: GATEWAY });
+    expect((await send(`${GATEWAY}/api/terminal/workspaces`, { Origin: "null" })).Origin).toBe("null");
+    expect((await send("wss://evil.example/ws?runtime=primary", { Origin: "null" })).Origin).toBe("null");
+  });
+
   it("attaches no bearer and removes a renderer-supplied one when the target is unknown or foreign", async () => {
     const { broker, send } = setup({ primary: "primary-token" });
     const spoofed = { Authorization: "Bearer renderer-supplied", authorization: "Bearer lower" };

@@ -74,6 +74,30 @@ export function shouldInjectAuth(requestUrl: string, gatewayOrigin: string | nul
   );
 }
 
+/**
+ * A private self-hosted gateway refuses browser WebSocket upgrades whose
+ * Origin is not its own shell's, because its ingress adds the owner's
+ * credentials to every socket. The renderer's Origin cannot pass that check:
+ * the packaged renderer is a file:// page (Origin "null", which a sandboxed
+ * frame on any site can also send) and the dev renderer is on localhost. So the
+ * trusted core names the gateway itself as the Origin of the renderer's
+ * sockets to the active gateway, as a native client would; fetches and every
+ * other host keep the renderer's Origin.
+ */
+export function setGatewaySocketOrigin(
+  requestUrl: string,
+  gatewayOrigin: string | null,
+  headers: Record<string, string>,
+): void {
+  if (!shouldInjectAuth(requestUrl, gatewayOrigin)) return;
+  const request = new URL(requestUrl);
+  if (request.protocol !== "ws:" && request.protocol !== "wss:") return;
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === "origin") delete headers[name];
+  }
+  headers.Origin = `${request.protocol === "wss:" ? "https:" : "http:"}//${request.host}`;
+}
+
 function websocketOrigin(origin: string): string | null {
   try {
     const url = new URL(origin);
@@ -164,6 +188,7 @@ export function installHeaderInjection(
     if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
     }
+    setGatewaySocketOrigin(details.url, gatewayOrigin, details.requestHeaders);
     if (rendererOrigin === "null" && shouldInjectAuth(details.url, gatewayOrigin)) {
       // shouldInjectAuth has already parsed and validated this URL against the
       // active gateway origin, so constructing it here cannot fail.
