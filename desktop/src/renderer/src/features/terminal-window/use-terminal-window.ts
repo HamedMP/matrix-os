@@ -369,6 +369,7 @@ export function useTerminalWindow() {
         panes.run({ command: command.command, direction: command.direction });
         return;
       case "new-terminal": {
+        setOverviewOpen(false);
         // Cmd+T / Cmd+N start the terminal in the active space: in a project, beside one of its terminals
         // (same workspace and folder); on a machine, on that machine.
         const space = sidebar.prefs.filter;
@@ -401,13 +402,13 @@ export function useTerminalWindow() {
       case "select": {
         // Cmd+1…9: that tab of the active space, in tab-bar order.
         const tab = shownTabs[command.index - 1];
-        if (tab) select(tab.key);
+        if (tab) { setOverviewOpen(false); select(tab.key); }
         return;
       }
-      case "next": step(1); return;
-      case "previous": step(-1); return;
-      case "next-tab": stepTab(1); return;
-      case "previous-tab": stepTab(-1); return;
+      case "next": setOverviewOpen(false); step(1); return;
+      case "previous": setOverviewOpen(false); step(-1); return;
+      case "next-tab": setOverviewOpen(false); stepTab(1); return;
+      case "previous-tab": setOverviewOpen(false); stepTab(-1); return;
       case "rename":
         if (selectedRow) setRenaming({ key: selectedRow.key, name: selectedRow.name });
         return;
@@ -423,6 +424,12 @@ export function useTerminalWindow() {
   useLayoutEffect(() => { latestRun.current = run; }, [run]);
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
+  // What the person opens or starts themselves is shown: the overview gives way to it.
+  const show = useCallback((key: string) => { setOverviewOpen(false); select(key); }, [select]);
+  const showInTab = useCallback((key: string) => { setOverviewOpen(false); openInTab(key); }, [openInTab]);
+  const startLocal = useCallback((launch?: Parameters<typeof createLocal>[0]) => { setOverviewOpen(false); createLocal(launch); }, [createLocal]);
+  const startCloud = useCallback((slot: string) => { setOverviewOpen(false); createCloud(slot); }, [createCloud]);
+
   return {
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
@@ -430,13 +437,13 @@ export function useTerminalWindow() {
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
+    select: show, createLocal: startLocal, createCloud: startCloud, rename, close, requestClose, openInTab: showInTab, paneButton,
     tabs: shownTabs, closeTab, chooseSpace,
     overview: {
       open: overviewOpen,
       toggle: () => setOverviewOpen((open) => !open),
       /** A card's click: show that terminal and leave the overview. */
-      openTerminal: (key: string) => { setOverviewOpen(false); select(key); },
+      openTerminal: show,
     },
     /** The bar's +: a new terminal on the machine on screen. */
     newTerminal: () => run({ command: "new-terminal" }),

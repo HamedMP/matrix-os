@@ -81,6 +81,38 @@ describe("Terminal window overview", () => {
     expect(screen.queryByRole("main", { name: "Overview" })).toBeNull();
   });
 
+  // Fault detected (Greptile, #3586): Enter or Space in the rename field opened the terminal.
+  it("keeps Enter and Space in the rename field for the name", async () => {
+    const operator = installOperator({});
+    render(<TerminalWindowApp />);
+    await screen.findByRole("navigation", { name: "Terminals" });
+    operator.command({ command: "overview" });
+    const overview = await screen.findByRole("main", { name: "Overview" });
+    fireEvent.click(within(overview).getByRole("button", { name: "Rename build" }));
+    const field = within(overview).getByRole("textbox", { name: "Terminal name" });
+    fireEvent.change(field, { target: { value: "web build" } });
+    fireEvent.keyDown(field, { key: " " });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(screen.getByRole("main", { name: "Overview" })).toBeTruthy();
+    expect(within(overview).getByRole("textbox", { name: "Terminal name" })).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3586): choosing a terminal while the overview was open left it hidden behind the overview.
+  it("gives way to a terminal the person chooses or starts", async () => {
+    const operator = installOperator({});
+    render(<TerminalWindowApp />);
+    await screen.findByRole("navigation", { name: "Terminals" });
+    operator.command({ command: "overview" });
+    await screen.findByRole("main", { name: "Overview" });
+    operator.command({ command: "next" });
+    await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
+    expect(await screen.findByTestId("terminal-view")).toBeTruthy();
+    operator.command({ command: "overview" });
+    await screen.findByRole("main", { name: "Overview" });
+    operator.command({ command: "new-terminal" });
+    await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
+  });
+
   it("keeps a preview's last lines that hold something, cut to width", () => {
     expect(previewLines(`a\n\n${"x".repeat(200)}\n  \n${Array.from({ length: 10 }, (_, index) => `line ${index}`).join("\n")}\n`))
       .toEqual(Array.from({ length: 8 }, (_, index) => `line ${index + 2}`));

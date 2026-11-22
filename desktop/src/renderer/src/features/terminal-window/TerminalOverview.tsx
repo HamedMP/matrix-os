@@ -75,9 +75,13 @@ export function TerminalOverview({ rows, previews, selectedKey, now, spaceLabel,
             const lines = previews[row.key];
             return (
               <li key={row.key}>
-                {/* The whole card opens the terminal; its rename control stops the click. */}
+                {/* The whole card opens the terminal; its rename control stops the click and keeps its keys. */}
                 <div role="button" tabIndex={0} aria-label={`Open ${row.name}`} aria-current={row.key === selectedKey ? "true" : undefined}
-                  onClick={() => onOpen(row.key)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(row.key); } }}
+                  onClick={() => onOpen(row.key)} onKeyDown={(event) => {
+                    // Only the card's own keys: Enter and Space in the rename field belong to it.
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(row.key); }
+                  }}
                   className="group flex h-44 cursor-pointer flex-col gap-1.5 rounded-lg border p-2.5 text-left outline-none hover:border-[var(--border-default)] focus-visible:ring-2 focus-visible:ring-current"
                   style={{ borderColor: row.key === selectedKey ? "#3b82f6" : "var(--border-subtle)", background: "var(--bg-surface)" }}>
                   <span className="flex items-center gap-2">
