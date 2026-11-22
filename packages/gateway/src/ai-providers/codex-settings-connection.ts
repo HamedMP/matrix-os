@@ -13,9 +13,11 @@ const run = promisify(execFile);
 // Official 0.156.1/0.162.1 public auth and transport were directly qualified.
 // Retained official 0.163.0/0.164.0 generated schemas preserve the transitive
 // public auth contract; 0.164.0 only adds two plan enum values. This does not
-// claim a fresh binary/transport or live login test.
+// claim a fresh binary/transport or live login test. The retained 0.171.0
+// schema only adds an optional capability, optional account metadata and a
+// gcp account kind the bounded account reader rejects.
 // Other installed versions retain the independent official Terminal option.
-const qualifiedVersions = ["codex-cli 0.156.1", "codex-cli 0.162.1", "codex-cli 0.163.0", "codex-cli 0.164.0"];
+const qualifiedVersions = ["codex-cli 0.156.1", "codex-cli 0.162.1", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.171.0"];
 export function createCodexSettingsConnection(options: { homePath: string; profileGuard: NativeProviderProfileGuard }) {
   const scope = () => {
     const base = buildAgentRuntimeEnvironment(options.homePath);

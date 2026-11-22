@@ -79,7 +79,7 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("87a77417077059255deb56b73ee0c9881a2087f7c872e32c1c572d203fc4e52f");
+      .toBe("98b249350654cca5ffd227db7f9b1e76899207391c9630af49832e15439e801f");
     expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([
       {
         adapterId: "claude-code",
@@ -88,7 +88,7 @@ describe("scope runtime supervisor", () => {
       },
       {
         adapterId: "codex",
-        harnessVersion: "0.162.1",
+        harnessVersion: "0.171.0",
         workloads: ["chat_ai"],
       },
     ]);
@@ -110,7 +110,7 @@ describe("scope runtime supervisor", () => {
       profileId: SCOPE_RUNTIME_PROFILE.profileId,
       workload: "chat_ai",
       adapterId: "codex",
-      harnessVersion: "0.162.1",
+      harnessVersion: "0.171.0",
     })).resolves.toMatchObject({ ok: true, runtimeHandle: RUNTIME_HANDLE, state: "running" });
     expect(native.start).toHaveBeenCalledWith({
       runtimeHandle: RUNTIME_HANDLE,
@@ -118,7 +118,7 @@ describe("scope runtime supervisor", () => {
       profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "codex",
-      harnessVersion: "0.162.1",
+      harnessVersion: "0.171.0",
       executionGeneration: "10",
     });
   });

@@ -35,7 +35,7 @@ const historical0170ServerDigests = {
 };
 
 it("guards the native callback and the exact managed request and response schemas", () => {
-  expect(CODEX_VERIFIED_VERSION).toBe("0.162.1");
+  expect(CODEX_VERIFIED_VERSION).toBe("0.171.0");
   expect(app.requiredServerMethods).toContain("item/tool/call");
   const pin = JSON.parse(gunzipSync(readFileSync(new URL(
     "../fixtures/codex-0162/app-server-schema-0162.json.gz", import.meta.url,

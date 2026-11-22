@@ -33,7 +33,7 @@ describe("scope-runtime-bot-v1 profile", () => {
 
   it("pins its own digest and retains the current shared-chat qualification", () => {
     expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("a1edb17cbb6df8cc52f3d15f137dfaa616045cade2198bcd65ae2c258d94e14b");
-    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("87a77417077059255deb56b73ee0c9881a2087f7c872e32c1c572d203fc4e52f");
+    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("98b249350654cca5ffd227db7f9b1e76899207391c9630af49832e15439e801f");
   });
 
   it("names the Pi version pinned in the bot-runtime bundle as its harness version", async () => {
