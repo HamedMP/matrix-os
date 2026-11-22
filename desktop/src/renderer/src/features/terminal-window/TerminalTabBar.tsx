@@ -69,11 +69,11 @@ export function TerminalTabBar({ space, overview, tabs, selectedKey, row, icon, 
     <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-1.5 pt-1.5"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
       <SpaceChip space={space} />
-      <button type="button" aria-pressed={overview.open} aria-label="Overview" title="Overview of every terminal here (⌘⇧O)" onClick={overview.onToggle}
-        className="mb-1 flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[12px] outline-none hover:bg-[var(--border-subtle)] focus-visible:ring-2 focus-visible:ring-current"
-        style={{ ...secondaryText, ...(overview.open ? { background: "var(--bg-surface)", color: "var(--text-primary)" } : {}) }}>
+      <Button variant="ghost" aria-pressed={overview.open} aria-label="Overview" title="Overview of every terminal here (⌘⇧O)" onClick={overview.onToggle}
+        className={`mb-1 shrink-0 ${COMPACT_ICON_BUTTON_CLASS}`}
+        style={{ ...COMPACT_ICON_BUTTON, ...(overview.open ? { background: "var(--bg-surface)", color: "var(--text-primary)" } : {}) }}>
         <LayoutGrid size={13} aria-hidden="true" />
-      </button>
+      </Button>
       <div role="tablist" aria-label="Open terminals" className="flex min-w-0 items-end gap-1">
         {tabs.map((tab) => {
           const shown = row(tab.key);
