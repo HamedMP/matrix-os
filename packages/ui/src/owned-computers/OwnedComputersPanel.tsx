@@ -1,16 +1,12 @@
 "use client";
 import { OwnedMachineNameSchema, type OwnedComputerSummary } from "@matrix-os/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "../Button";
+import { Input } from "../Input";
 import { Dialog } from "../Dialog";
 import { DialogFooter } from "../DialogFooter";
 import { DialogTitle } from "../DialogTitle";
-import {
-  InstallCommand,
-  OwnedButton,
-  OwnedInput,
-  OwnedStatusDot,
-  OwnedSwitch,
-} from "./owned-computer-controls";
+import { InstallCommand, OwnedStatusDot, OwnedSwitch } from "./owned-computer-controls";
 import {
   OWNED_COMPUTERS_FAILURE_COPY,
   createOwnedComputersClient,
@@ -27,6 +23,8 @@ import {
 } from "./owned-computers-model";
 
 const CLOCK_TICK_MS = 30_000;
+/** Bounded background refresh while the panel is open and the page is visible. */
+const REFRESH_MS = 30_000;
 
 type LoadState =
   | { status: "loading" }
@@ -50,51 +48,91 @@ function logFailure(operation: OwnedComputersFailure, error: unknown) {
 function OwnedComputersContent({ transport }: { transport: OwnedComputersTransport }) {
   const client = useMemo(() => createOwnedComputersClient(transport), [transport]);
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [reload, setReload] = useState(0);
   const [now, setNow] = useState(() => new Date());
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<Record<string, true>>({});
   const [failure, setFailure] = useState<{ machineId: string | null; kind: OwnedComputersFailure } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<OwnedComputerSummary | null>(null);
   const [showInstall, setShowInstall] = useState(false);
+  // Each list load bumps the generation; a row reply started before a newer
+  // list arrived is stale. Per-row sequences order overlapping row requests.
+  const generation = useRef(0);
+  const rowSequence = useRef<Record<string, number>>({});
+  const loadController = useRef<AbortController | null>(null);
 
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Bounded, schema-validated owner inventory; the surface transport carries the timeout and stale results are discarded on scope change.
-  useEffect(() => {
-    let active = true;
-    client.list().then(
-      (list) => { if (active) setState({ status: "ready", list }); },
+  const load = useCallback((mode: "initial" | "background") => {
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    client.list({ signal: controller.signal }).then(
+      (list) => {
+        if (controller.signal.aborted) return;
+        generation.current += 1;
+        setState({ status: "ready", list });
+      },
       (error: unknown) => {
+        if (controller.signal.aborted) return;
         logFailure("load", error);
-        if (active) setState({ status: "error" });
+        // A failed background refresh keeps the last good list on screen.
+        if (mode === "initial") setState({ status: "error" });
       },
     );
-    return () => { active = false; };
-  }, [client, reload]);
+  }, [client]);
+
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Bounded, schema-validated owner inventory; loads are aborted on unmount and superseded by newer loads.
+  useEffect(() => {
+    load("initial");
+    const refresh = () => { if (typeof document === "undefined" || document.visibilityState !== "hidden") load("background"); };
+    const timer = setInterval(refresh, REFRESH_MS);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      loadController.current?.abort();
+    };
+  }, [load]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), CLOCK_TICK_MS);
     return () => clearInterval(timer);
   }, []);
 
+  function begin(machineId: string): { sequence: number; generation: number } {
+    const sequence = (rowSequence.current[machineId] ?? 0) + 1;
+    rowSequence.current[machineId] = sequence;
+    setPending((current) => ({ ...current, [machineId]: true }));
+    return { sequence, generation: generation.current };
+  }
+
+  function finish(machineId: string, sequence: number) {
+    if (rowSequence.current[machineId] !== sequence) return;
+    setPending((current) => {
+      const next = { ...current };
+      delete next[machineId];
+      return next;
+    });
+  }
+
   async function update(computer: OwnedComputerSummary, patch: OwnedComputerUpdate, kind: OwnedComputersFailure): Promise<boolean> {
-    setPending(computer.machineId);
+    const ticket = begin(computer.machineId);
     setFailure(null);
     try {
       const next = await client.update(computer.machineId, patch);
-      setState((current) => (current.status === "ready" ? { status: "ready", list: replaceOwnedComputer(current.list, next) } : current));
+      const current = rowSequence.current[computer.machineId] === ticket.sequence && generation.current === ticket.generation;
+      if (current) setState((value) => (value.status === "ready" ? { status: "ready", list: replaceOwnedComputer(value.list, next) } : value));
       return true;
     } catch (error: unknown) {
       logFailure(kind, error);
-      setFailure({ machineId: computer.machineId, kind });
+      if (rowSequence.current[computer.machineId] === ticket.sequence) setFailure({ machineId: computer.machineId, kind });
       return false;
     } finally {
-      setPending(null);
+      finish(computer.machineId, ticket.sequence);
     }
   }
 
   async function confirmRemove() {
     const target = removeTarget;
     if (!target) return;
-    setPending(target.machineId);
+    const ticket = begin(target.machineId);
     setFailure(null);
     try {
       await client.remove(target.machineId);
@@ -105,7 +143,7 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
       setFailure({ machineId: target.machineId, kind: "remove" });
       setRemoveTarget(null);
     } finally {
-      setPending(null);
+      finish(target.machineId, ticket.sequence);
     }
   }
 
@@ -116,7 +154,7 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
     return (
       <section aria-label="Your own computers" className="flex flex-col items-start gap-3 py-4">
         <p role="alert" className="text-sm">{OWNED_COMPUTERS_FAILURE_COPY.load}</p>
-        <OwnedButton onClick={() => { setState({ status: "loading" }); setReload((value) => value + 1); }}>Try again</OwnedButton>
+        <Button variant="secondary" size="sm" onClick={() => { setState({ status: "loading" }); load("initial"); }}>Try again</Button>
       </section>
     );
   }
@@ -130,16 +168,20 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
           <h3 className="text-sm font-medium">Your own computers</h3>
           <p className="text-xs opacity-70">Free Matrix computers on your laptop or server. {list.computers.length} of {list.limit} used.</p>
         </div>
-        {list.computers.length > 0 ? (
-          <OwnedButton
-            variant="primary"
-            disabled={atLimit}
-            aria-describedby={atLimit ? "owned-computers-limit" : undefined}
-            onClick={() => setShowInstall((value) => !value)}
-          >
-            Add a computer
-          </OwnedButton>
-        ) : null}
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => load("background")}>Refresh</Button>
+          {list.computers.length > 0 ? (
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={atLimit}
+              aria-describedby={atLimit ? "owned-computers-limit" : undefined}
+              onClick={() => setShowInstall((value) => !value)}
+            >
+              Add a computer
+            </Button>
+          ) : null}
+        </div>
       </div>
       {atLimit ? (
         <p id="owned-computers-limit" className="text-xs opacity-70">
@@ -157,7 +199,7 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
               key={computer.machineId}
               computer={computer}
               now={now}
-              busy={pending === computer.machineId}
+              busy={pending[computer.machineId] === true}
               failure={failure?.machineId === computer.machineId ? OWNED_COMPUTERS_FAILURE_COPY[failure.kind] : null}
               onUpdate={update}
               onRemove={() => setRemoveTarget(computer)}
@@ -172,8 +214,8 @@ function OwnedComputersContent({ transport }: { transport: OwnedComputersTranspo
           Files and data stay on the machine itself.
         </p>
         <DialogFooter>
-          <OwnedButton onClick={() => setRemoveTarget(null)}>Cancel</OwnedButton>
-          <OwnedButton variant="destructive" disabled={pending !== null} onClick={() => { void confirmRemove(); }}>Remove</OwnedButton>
+          <Button variant="secondary" size="sm" onClick={() => setRemoveTarget(null)}>Cancel</Button>
+          <Button variant="destructive" size="sm" disabled={removeTarget !== null && pending[removeTarget.machineId] === true} onClick={() => { void confirmRemove(); }}>Remove</Button>
         </DialogFooter>
       </Dialog>
     </section>
@@ -243,9 +285,9 @@ function OwnedComputerRow({
             </div>
           ) : (
             <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); void saveName(); }}>
-              <OwnedInput aria-label="Computer name" value={draft} maxLength={64} autoFocus onChange={(event) => setDraft(event.target.value)} />
-              <OwnedButton type="submit" variant="primary" disabled={!draftValid || busy}>Save</OwnedButton>
-              <OwnedButton onClick={() => setDraft(null)}>Cancel</OwnedButton>
+              <Input className="min-w-0 flex-1" aria-label="Computer name" value={draft} maxLength={64} autoFocus onChange={(event) => setDraft(event.target.value)} />
+              <Button type="submit" variant="primary" size="sm" disabled={!draftValid || busy}>Save</Button>
+              <Button variant="secondary" size="sm" onClick={() => setDraft(null)}>Cancel</Button>
             </form>
           )}
           <p className="mt-1 truncate text-xs opacity-70">
@@ -254,8 +296,8 @@ function OwnedComputerRow({
         </div>
         {draft === null ? (
           <div className="flex items-center gap-1">
-            <OwnedButton variant="ghost" disabled={busy} aria-label={`Rename ${computer.name}`} onClick={() => setDraft(computer.name)}>Rename</OwnedButton>
-            <OwnedButton variant="ghost" disabled={busy} aria-label={`Remove ${computer.name}`} onClick={onRemove}>Remove</OwnedButton>
+            <Button variant="ghost" size="sm" disabled={busy} aria-label={`Rename ${computer.name}`} onClick={() => setDraft(computer.name)}>Rename</Button>
+            <Button variant="ghost" size="sm" disabled={busy} aria-label={`Remove ${computer.name}`} onClick={onRemove}>Remove</Button>
           </div>
         ) : null}
       </div>

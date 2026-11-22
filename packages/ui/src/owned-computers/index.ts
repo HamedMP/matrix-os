@@ -8,6 +8,8 @@ export {
   ownedComputerPlatformLabel,
   ownedComputerStatusLabel,
   ownedComputersAtLimit,
+  ownedComputersAvailability,
+  type OwnedComputersAvailability,
   type OwnedComputerList,
   type OwnedComputersTransport,
 } from "./owned-computers-model";

@@ -14,7 +14,8 @@ export const OWNED_COMPUTER_INSTALL_COMMAND =
 
 /** Transport supplied by each surface (Web fetch, Electron trusted-core client). */
 export interface OwnedComputersTransport {
-  get(path: string): Promise<unknown>;
+  /** `init.signal` aborts a list load the panel no longer needs (unmount or a newer load). */
+  get(path: string, init?: { signal?: AbortSignal }): Promise<unknown>;
   patch(path: string, body: unknown): Promise<unknown>;
   remove(path: string): Promise<void>;
 }
@@ -43,8 +44,8 @@ function computerPath(machineId: string): string {
 
 export function createOwnedComputersClient(transport: OwnedComputersTransport) {
   return {
-    async list(): Promise<OwnedComputerList> {
-      const parsed = OwnedComputerListResponseSchema.parse(await transport.get(OWNED_COMPUTERS_PATH));
+    async list(init?: { signal?: AbortSignal }): Promise<OwnedComputerList> {
+      const parsed = OwnedComputerListResponseSchema.parse(await transport.get(OWNED_COMPUTERS_PATH, init));
       return { computers: parsed.computers, limit: parsed.limit };
     },
     async update(machineId: string, patch: OwnedComputerUpdate): Promise<OwnedComputerSummary> {
@@ -91,4 +92,16 @@ export function replaceOwnedComputer(list: OwnedComputerList, next: OwnedCompute
 
 export function withoutOwnedComputer(list: OwnedComputerList, machineId: string): OwnedComputerList {
   return { ...list, computers: list.computers.filter((computer) => computer.machineId !== machineId) };
+}
+
+export type OwnedComputersAvailability = "manage" | "hosted-account";
+
+/**
+ * Hosted shells and computers enrolled through the platform (substrate
+ * "owned") manage owned computers with the signed-in account. A standalone
+ * self-hosted install has no Matrix account session, so it points there.
+ */
+export function ownedComputersAvailability(runtime: { selfHosted: boolean; substrate: string | null }): OwnedComputersAvailability {
+  if (!runtime.selfHosted || runtime.substrate === "owned") return "manage";
+  return "hosted-account";
 }

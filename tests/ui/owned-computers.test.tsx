@@ -173,4 +173,69 @@ describe("OwnedComputersPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Lab server")).toBeTruthy();
   });
+
+  it("keeps other rows usable while one update is pending and ignores a stale reply", async () => {
+    const t = transport([computer(), computer({ machineId: ID_B, name: "Old laptop" })]);
+    const replies: Array<(value: unknown) => void> = [];
+    t.patch.mockImplementation(() => new Promise((resolve) => { replies.push(resolve); }));
+    render(<OwnedComputersPanel scope="a" transport={t} />);
+    const backupsA = await screen.findByRole("switch", { name: "Back up Lab server to Matrix" });
+    fireEvent.click(backupsA);
+    const backupsB = screen.getByRole("switch", { name: "Back up Old laptop to Matrix" });
+    expect((backupsB as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("switch", { name: "Back up Lab server to Matrix" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(backupsB);
+    replies[1]!(computer({ machineId: ID_B, name: "Old laptop", backupsEnabled: true }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Back up Old laptop to Matrix" }).getAttribute("aria-checked")).toBe("true"));
+    expect((screen.getByRole("switch", { name: "Back up Lab server to Matrix" }) as HTMLButtonElement).disabled).toBe(true);
+    replies[0]!(computer({ backupsEnabled: true }));
+    await waitFor(() => expect((screen.getByRole("switch", { name: "Back up Lab server to Matrix" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("drops a reply that a newer list refresh already superseded", async () => {
+    const t = transport([computer()]);
+    let resolvePatch: (value: unknown) => void = () => undefined;
+    t.patch.mockImplementation(() => new Promise((resolve) => { resolvePatch = resolve; }));
+    render(<OwnedComputersPanel scope="a" transport={t} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Back up Lab server to Matrix" }));
+    t.get.mockResolvedValue({ computers: [computer({ name: "Renamed elsewhere", backupsEnabled: true })], limit: 3 });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText("Renamed elsewhere");
+    resolvePatch(computer({ name: "Lab server", backupsEnabled: false }));
+    await waitFor(() => expect((screen.getByRole("switch", { name: "Back up Renamed elsewhere to Matrix" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByText("Renamed elsewhere")).toBeTruthy();
+  });
+
+  it("refreshes the list on an interval so status changes appear", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const t = transport([computer()]);
+      render(<OwnedComputersPanel scope="a" transport={t} />);
+      expect(await screen.findByText("Online")).toBeTruthy();
+      t.get.mockResolvedValue({ computers: [computer({ status: "offline" })], limit: 3 });
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(await screen.findByText("Offline")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("passes an abort signal to list loads", async () => {
+    const t = transport([computer()]);
+    const { unmount } = render(<OwnedComputersPanel scope="a" transport={t} />);
+    await screen.findByText("Lab server");
+    const signal = (t.get.mock.calls[0] as unknown[])[1] as { signal?: AbortSignal } | undefined;
+    expect(signal?.signal).toBeInstanceOf(AbortSignal);
+    unmount();
+    expect(signal?.signal?.aborted).toBe(true);
+  });
+});
+
+describe("owned computers settings availability", () => {
+  it("manages computers on hosted and enrolled owned computers but not on standalone self-host", async () => {
+    const { ownedComputersAvailability } = await import("../../packages/ui/src/owned-computers/owned-computers-model");
+    expect(ownedComputersAvailability({ selfHosted: false, substrate: null })).toBe("manage");
+    expect(ownedComputersAvailability({ selfHosted: true, substrate: "owned" })).toBe("manage");
+    expect(ownedComputersAvailability({ selfHosted: true, substrate: null })).toBe("hosted-account");
+  });
 });

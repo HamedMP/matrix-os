@@ -83,6 +83,9 @@ export default function RootLayout({
       <html
         lang="en"
         data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
+        // Spec 2707: a self-hosted computer enrolled through the platform manages
+        // owned computers with the owner's account session.
+        data-matrix-substrate={process.env.MATRIX_SUBSTRATE === "owned" ? "owned" : undefined}
         // Runtime replay kill switch: read on the server per request, so
         // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
         // replay without rebuilding the bundle.
