@@ -161,3 +161,27 @@ describe('owned computer projection and machine bearers', () => {
     }
   });
 });
+
+describe('owned machine revocation hooks', () => {
+  it('unpublishes every site of the removed machine, past one batch, and no other machine\'s', async () => {
+    const { unpublishOwnedMachineSites } = await import('../../packages/platform/src/owned-machines/revocation-hooks.js');
+    const { db } = await createTestPlatformDb();
+    try {
+      await insertUserMachine(db, owned());
+      const machine = await db.executor.selectFrom('user_machines').selectAll().executeTakeFirstOrThrow();
+      const rows = Array.from({ length: 205 }, (_, i) => ({
+        id: `site-${String(i).padStart(4, '0')}`, owner_id: 'user_alice',
+        machine_id: i === 204 ? 'other-machine' : owned().machineId,
+        app_slug: `app-${i}`, title: 't', description: 'd', slug: null, revision: 1, status: 'published' as const,
+        active_version: null, created_at: '2026-11-01T00:00:00.000Z',
+      }));
+      await db.executor.insertInto('public_sites').values(rows as never).execute();
+      const { mapUserMachine } = await import('../../packages/platform/src/database/user-machine-records.js');
+      await db.transaction((trx) => unpublishOwnedMachineSites(trx, mapUserMachine(machine), new Date()));
+      const published = await db.executor.selectFrom('public_sites').select('id').where('status', '=', 'published').execute();
+      expect(published.map((row) => row.id)).toEqual(['site-0204']);
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+});
