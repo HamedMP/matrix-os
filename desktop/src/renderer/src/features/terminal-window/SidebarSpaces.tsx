@@ -168,6 +168,8 @@ export function SpaceList({ label, entries, styles, expanded, onToggleExpanded, 
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const open = new Set(expanded);
+  // The chevron slot keeps names in line only when some row in this list has a chevron.
+  const slots = entries.some((entry) => entry.expansion);
   const move = (from: number, to: number) => {
     if (to < 0 || to >= entries.length || from === to) return;
     const order = entries.map((entry) => entry.id);
@@ -201,7 +203,7 @@ export function SpaceList({ label, entries, styles, expanded, onToggleExpanded, 
                   onClick={() => onToggleExpanded(entry.id)} className={smallButton} style={secondaryText}>
                   {shown ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
                 </button>
-              ) : <span aria-hidden="true" className="size-5 shrink-0" />}
+              ) : slots ? <span aria-hidden="true" className="size-5 shrink-0" /> : <span aria-hidden="true" className="w-1 shrink-0" />}
               <button type="button" aria-pressed={entry.selected} disabled={!entry.available}
                 title={shownName === entry.name ? entry.name : `${shownName} (${entry.name})`} onClick={entry.onSelect}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-current disabled:opacity-60"
