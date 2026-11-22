@@ -5,7 +5,7 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import type { LocalMachine, LocalTerminalAgent, LocalTerminalFact } from "../../shared/local-terminals";
-import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
+import { addMachine, listMachines, sshDestination, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
@@ -277,8 +277,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      */
     sshLogin(target: string, size: { cols: number; rows: number }): Promise<string | null> {
       const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
+      // `user@host:port` is herdr-core's form; OpenSSH takes the port as `-p`.
+      const { destination, port } = sshDestination(target);
       return sessions.run({
-        argv: ["/usr/bin/env", ...unset, "ssh", "--", target],
+        argv: ["/usr/bin/env", ...unset, "ssh", ...(port ? ["-p", port] : []), "--", destination],
         cwd: options.home,
         env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
         labels: { [TERMINAL_TITLE_LABEL]: `ssh ${target}`.slice(0, 64) },

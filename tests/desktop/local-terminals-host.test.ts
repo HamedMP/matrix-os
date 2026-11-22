@@ -253,9 +253,10 @@ describe("local terminal host against a scripted core", () => {
     expect(await host.create({ cols: 80, rows: 24 }, { machine: "vps" })).toBe("vps/t3");
     expect(runs[0]).toEqual({ on: "vps", size: { cols: 80, rows: 24 }, no_parent: true, no_notify: true, wait: false });
     expect(await host.sshLogin("can@10.0.0.7:2222", { cols: 80, rows: 24 })).toBe("t4");
-    expect(runs[1]).toMatchObject({ argv: expect.arrayContaining(["ssh", "--", "can@10.0.0.7:2222"]), labels: { "matrix.title": "ssh can@10.0.0.7:2222" } });
+    expect(runs[1]).toMatchObject({ labels: { "matrix.title": "ssh can@10.0.0.7:2222" } });
     const argv = runs[1]!.argv as string[];
-    expect(argv.slice(argv.indexOf("ssh"))).toEqual(["ssh", "--", "can@10.0.0.7:2222"]);
+    // Fault detected (Greptile, #3570): OpenSSH does not read a trailing :port.
+    expect(argv.slice(argv.indexOf("ssh"))).toEqual(["ssh", "-p", "2222", "--", "can@10.0.0.7"]);
   });
 
   it("removes a finished terminal with herdr-core's terminal.rm", async () => {

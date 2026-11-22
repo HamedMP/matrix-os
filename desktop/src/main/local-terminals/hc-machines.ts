@@ -46,6 +46,17 @@ export function machineNameFor(target: string): string {
   return LOCAL_MACHINE_NAME_PATTERN.test(name) ? name : "machine";
 }
 
+/** A validated target as OpenSSH takes it: `user@host` (brackets dropped) and the port apart. */
+export function sshDestination(target: string): { destination: string; port: string | null } {
+  const at = target.lastIndexOf("@");
+  const user = at < 0 ? "" : target.slice(0, at + 1);
+  const address = target.slice(at + 1);
+  const bracketed = /^\[([^\]]*)\](?::(\d{1,5}))?$/.exec(address);
+  if (bracketed) return { destination: `${user}${bracketed[1]}`, port: bracketed[2] ?? null };
+  const port = /:(\d{1,5})$/.exec(address);
+  return port ? { destination: `${user}${address.slice(0, -port[0].length)}`, port: port[1]! } : { destination: target, port: null };
+}
+
 export async function listMachines(core: HcConnection): Promise<LocalMachine[]> {
   const listed = ListedSchema.parse(await core.call("machine.list", {}));
   return listed.machines.flatMap((raw) => machineFrom(raw) ?? []).slice(0, LOCAL_MACHINES_MAX);

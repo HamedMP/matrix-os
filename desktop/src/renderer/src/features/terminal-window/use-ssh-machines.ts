@@ -6,6 +6,8 @@ import { invoke, onEvent } from "../../lib/operator";
 import type { LocalMachine, LocalMachineAddFailure } from "../../../../shared/local-terminals";
 
 const SETTLING_REFRESH_MS = 5_000;
+// A connected machine can drop, and an unreachable one come back, without anything here noticing.
+const STEADY_REFRESH_MS = 20_000;
 
 export type SshMachinesState = { status: "loading" | "unavailable" } | { status: "ready"; machines: LocalMachine[] };
 export type AddMachineOutcome = { ok: true; machine: LocalMachine } | { ok: false; reason: LocalMachineAddFailure };
@@ -33,13 +35,16 @@ export function useSshMachines() {
     return () => { generation.current += 1; stop(); };
   }, [refresh]);
 
-  // A machine still dialling settles on its own; look again until it does.
+  // A machine still dialling settles soon; others change rarely. Only while the window is visible.
   const settling = state.status === "ready" && state.machines.some((machine) => machine.state === "connecting");
+  const any = state.status === "ready" && state.machines.length > 0;
   useEffect(() => {
-    if (!settling) return;
-    const timer = setInterval(() => { void refresh(); }, SETTLING_REFRESH_MS);
+    if (!any) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, settling ? SETTLING_REFRESH_MS : STEADY_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [refresh, settling]);
+  }, [any, refresh, settling]);
 
   const add = useCallback(async (target: string, name?: string): Promise<AddMachineOutcome> => {
     let outcome: AddMachineOutcome = { ok: false, reason: "unavailable" };

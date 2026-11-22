@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { addMachine, listMachines, machineNameFor } from "@desktop/main/local-terminals/hc-machines";
+import { addMachine, listMachines, machineNameFor, sshDestination } from "@desktop/main/local-terminals/hc-machines";
 import { HcCallError, type HcConnection } from "@desktop/main/local-terminals/hc-client";
 import { SshTargetSchema } from "@desktop/shared/local-terminals";
 
@@ -34,6 +34,13 @@ describe("herdr-core machines", () => {
     expect(machineNameFor("Deploy@Build.Example.com")).toBe("build.example.com");
     expect(machineNameFor("root@[2001:db8::1]:22")).toBe("2001-db8-1");
     expect(machineNameFor("___")).toBe("machine");
+  });
+
+  it("splits a target into what OpenSSH takes", () => {
+    expect(sshDestination("vps")).toEqual({ destination: "vps", port: null });
+    expect(sshDestination("can@10.0.0.7:2222")).toEqual({ destination: "can@10.0.0.7", port: "2222" });
+    expect(sshDestination("root@[2001:db8::1]:22")).toEqual({ destination: "root@2001:db8::1", port: "22" });
+    expect(sshDestination("[2001:db8::1]")).toEqual({ destination: "2001:db8::1", port: null });
   });
 
   it("lists machines with their line state, skipping ones it cannot read", async () => {

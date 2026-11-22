@@ -29,7 +29,7 @@ function installOperator(options: { machines?: Machine[]; add?: (payload: { targ
       case "auth:status": return { signedIn: false, platformHost: "https://app.matrix-os.com", authGeneration: 0 };
       case "state:get": return { value: null };
       case "app:get-zoom": return { factor: 1 };
-      case "local-terminal:watch": return { status: "ready", terminals: options.facts ?? [] };
+      case "local-terminal:watch": return { status: "ready", terminals: [...(options.facts ?? []), fact("vps/t5", "Terminal")] };
       case "local-terminal:machines": return { status: "ready", machines };
       case "local-terminal:machine-add": {
         const result = options.add?.(payload as { target: string; name?: string }) ?? { ok: false, reason: "unavailable" };
@@ -104,6 +104,8 @@ describe("Terminal window ssh machines", () => {
     fireEvent.click(within(machinesList()).getByRole("button", { name: "New terminal on vps" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30, machine: "vps" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:vps/t5");
+    // Fault detected (Greptile, #3570): a running terminal on an added machine read as ended.
+    expect(screen.queryByText(/ ended$/)).toBeNull();
 
     fireEvent.click(within(machinesList()).getByRole("button", { name: "Remove vps" }));
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove machine" })).getByRole("button", { name: "Remove" }));
