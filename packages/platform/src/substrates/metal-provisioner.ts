@@ -8,6 +8,7 @@ import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../customer-vps-ho
 import { hostBundleUrlForImageVersion } from '../customer-vps-host-bundle.js';
 import { ClerkUserIdSchema, CustomerHandleSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { toUserMachineRow } from '../database/user-machine-records.js';
+import { DEFAULT_DEVELOPER_TOOLS, type DeveloperToolId } from '../developer-tools.js';
 import {
   getActiveUserMachineByClerkId,
   getHostBundleRelease,
@@ -55,17 +56,31 @@ const PROVISION_THROTTLE_MAX_ENTRIES = 10_000;
 /** Background teardowns in flight; one per failed-row transition, capped for shutdown drains. */
 const BACKGROUND_DESTROY_MAX = 256;
 
+export type MetalTier = 'free' | 'paid';
+
 /**
  * Free VM limits from the metal design. Paid sizing on metal is not decided;
  * an upgraded owner keeps their VM and changes policy through hostd instead of
  * being provisioned again, so paid uses the same create shape for now.
  */
 export const METAL_VM_SHAPES = {
-  free: { bootMiB: 2048, maxMiB: 8192, diskGiB: 20 },
+  // 40 GiB thin disk: the golden (~17 GB) plus Browser (~1 GB, needs 2 GiB free)
+  // and owner data. Must not exceed hostd's FREE_DISK_GIB
+  // (packages/hostd/src/vm-lifecycle.ts), which refuses larger free creates.
+  free: { bootMiB: 2048, maxMiB: 8192, diskGiB: 40 },
   paid: { bootMiB: 2048, maxMiB: 8192, diskGiB: 20 },
 } as const;
 
-export type MetalTier = keyof typeof METAL_VM_SHAPES;
+/**
+ * Developer tools preinstalled per tier. Free runtimes preinstall only Claude
+ * Code and Codex (the free plan selects no tools); OpenCode and Pi stay
+ * installable on demand from the Terminal + menu. Paid keeps the default set.
+ */
+export const METAL_DEVELOPER_TOOLS: Record<MetalTier, readonly DeveloperToolId[]> = {
+  free: ['codex', 'claude-code'],
+  paid: DEFAULT_DEVELOPER_TOOLS,
+};
+
 export type MetalProvisionResult = { machineId: string }
   | { error: 'busy' | 'unavailable' | 'throttled' | 'retry_exhausted' | 'support_required' };
 
@@ -231,6 +246,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     handle: string;
     runtimeSlot: string;
     registration: RegistrationToken;
+    developerTools: readonly DeveloperToolId[];
   }): Promise<{ userData: string; imageVersion: string; bundleSha256: string } | null> {
     try {
       // A VM is a clone of the golden disk, so it runs the golden's bundle: pin
@@ -250,7 +266,8 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       };
       const hostConfig = buildHostConfig(
         config,
-        { clerkUserId: input.clerkUserId, handle: input.handle, runtimeSlot: input.runtimeSlot, provisioningClass: 'customer' },
+        { clerkUserId: input.clerkUserId, handle: input.handle, runtimeSlot: input.runtimeSlot, provisioningClass: 'customer',
+          developerTools: [...input.developerTools] },
         input.machineId,
         input.registration.token,
         input.registration.expiresAt,
@@ -296,6 +313,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     imageVersion: string;
     bundleSha256: string;
     registration: RegistrationToken;
+    developerTools: readonly DeveloperToolId[];
     at: Date;
   }): Promise<Claim> {
     try {
@@ -343,6 +361,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
             provisioningClass: 'customer',
             status: 'provisioning',
             attempt,
+            developerTools: [...row.developerTools],
             imageVersion: row.imageVersion,
             targetBundleVersion: row.imageVersion,
             targetBundleSha256: row.bundleSha256,
@@ -567,11 +586,12 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const at = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(at, config.registrationTokenTtlMs);
-      const rendered = await renderUserData({ machineId, clerkUserId, handle, runtimeSlot, registration });
+      const developerTools = METAL_DEVELOPER_TOOLS[tier];
+      const rendered = await renderUserData({ machineId, clerkUserId, handle, runtimeSlot, registration, developerTools });
       if (!rendered) return { error: 'unavailable' };
 
       const claim = await claimSlot({
-        machineId, clerkUserId, handle, runtimeSlot, host, imageVersion: rendered.imageVersion, bundleSha256: rendered.bundleSha256, registration, at,
+        machineId, clerkUserId, handle, runtimeSlot, host, imageVersion: rendered.imageVersion, bundleSha256: rendered.bundleSha256, registration, developerTools, at,
       });
       if ('error' in claim) return claim;
       if ('existing' in claim) return { machineId: claim.existing };
