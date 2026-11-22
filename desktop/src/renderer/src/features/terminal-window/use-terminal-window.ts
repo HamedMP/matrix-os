@@ -37,6 +37,8 @@ export function useTerminalWindow() {
   const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
   const local = useLocalTerminals();
   const ssh = useSshMachines();
+  // The ssh target whose login terminal did not start, shown on its machine row.
+  const [sshLoginFailed, setSshLoginFailed] = useState<string | null>(null);
   const sidebar = useSidebarPrefs();
   const here = useMemo(() => localMachine(), []);
   const localFacts = useMemo<LocalTerminalFactsState>(
@@ -137,6 +139,7 @@ export function useTerminalWindow() {
   /** Opens the terminal running `ssh <target>`, for a host key or password only the person can answer. */
   const openSshLogin = useCallback(async (target: string): Promise<boolean> => {
     const id = await ssh.sshLogin(target);
+    setSshLoginFailed(id ? null : target);
     if (!id) return false;
     localChoice.current += 1;
     clearActive();
@@ -399,7 +402,7 @@ export function useTerminalWindow() {
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),

@@ -131,6 +131,7 @@ function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: Term
   return (
     <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9">
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.openSshLogin(machine.target); }}>Open in terminal</button>
+      {view.sshLoginFailed === machine.target ? <span role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</span> : null}
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.connect(machine.name); }}>Retry</button>
     </div>
   );

@@ -23,7 +23,7 @@ type Machine = { name: string; target: string; state: string; temporary: boolean
 const fact = (id: string, title: string) => ({ id, title, status: null, statusAt: Date.now(), turn: 0, seenTurn: null, finished: false });
 
 function installOperator(options: {
-  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean;
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean;
 } = {}) {
   let machines = options.machines ?? [];
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
@@ -41,7 +41,7 @@ function installOperator(options: {
       case "local-terminal:machine-remove":
         if (options.refuseRemove) return { ok: false };
         machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
-      case "local-terminal:ssh-login": return { status: "ready", id: "t9" };
+      case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
     }
@@ -142,6 +142,31 @@ describe("Terminal window ssh machines", () => {
     invoke.focus();
     await waitFor(() => expect(invoke.mock.calls.filter(([channel]) => channel === "local-terminal:machines").length).toBeGreaterThan(1));
     expect(within(machinesList()).getByText("can@10.0.0.7 · Connected")).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3570): a login terminal that could not start said nothing.
+  it("says so when the ssh login terminal cannot start", async () => {
+    installOperator({ machines: [{ name: "lab", target: "me@lab", state: "unreachable", temporary: false }], refuseLogin: true });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await within(await screen.findByRole("list", { name: "Machines" })).findByRole("button", { name: "Open in terminal" }));
+    expect(await within(machinesList()).findByText("Couldn't open a terminal. Try again.")).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3570): an add still running when the dialog closed closed the next one.
+  it("does not let an earlier add close a reopened dialog", async () => {
+    let finish!: (value: unknown) => void;
+    installOperator({ add: () => new Promise((resolve) => { finish = resolve; }) as never });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    let dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "slow-host" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add machine…" }));
+    dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    await act(async () => { finish({ ok: true, machine: { name: "slow-host", target: "slow-host", state: "connected", temporary: false } }); });
+    expect(screen.getByRole("dialog", { name: "Add machine" })).toBeTruthy();
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

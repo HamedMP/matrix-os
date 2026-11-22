@@ -2,7 +2,7 @@
 // device reaches over ssh, added to the local core as Herdr adds one. Keys
 // stay with ssh; a host key or password only the person can answer is
 // answered in a real terminal running `ssh <target>`.
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "@matrix-os/ui";
 import {
   LocalMachineNameSchema, SshTargetSchema, type LocalMachineAddFailure,
@@ -43,6 +43,9 @@ function AddMachineForm({ onAdd, onOpenSsh, onClose }: {
   const [adding, setAdding] = useState(false);
   const [failure, setFailure] = useState<LocalMachineAddFailure | null>(null);
   const [openFailed, setOpenFailed] = useState(false);
+  // A request still running when this form closes must not touch the next one.
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -55,6 +58,7 @@ function AddMachineForm({ onAdd, onOpenSsh, onClose }: {
     setAdding(true);
     setFailure(null);
     const outcome = await onAdd(trimmed, label || undefined);
+    if (!alive.current) return;
     setAdding(false);
     if (outcome.ok) onClose();
     else setFailure(outcome.reason);
@@ -62,7 +66,9 @@ function AddMachineForm({ onAdd, onOpenSsh, onClose }: {
 
   const openSsh = async () => {
     setOpenFailed(false);
-    if (await onOpenSsh(target.trim())) onClose();
+    const opened = await onOpenSsh(target.trim());
+    if (!alive.current) return;
+    if (opened) onClose();
     else setOpenFailed(true);
   };
 
@@ -105,10 +111,13 @@ export function RemoveMachineDialog({ name, onConfirm, onClose }: {
 function RemoveMachineBody({ name, onConfirm, onClose }: { name: string; onConfirm(name: string): Promise<boolean>; onClose(): void }) {
   const [removing, setRemoving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
   const remove = async () => {
     setRemoving(true);
     setFailed(false);
     const removed = await onConfirm(name);
+    if (!alive.current) return;
     setRemoving(false);
     if (removed) onClose();
     else setFailed(true);
