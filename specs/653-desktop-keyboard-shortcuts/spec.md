@@ -187,8 +187,9 @@ only.
 
 ## Architecture
 
-**Shared registry** — `packages/ui/src/shortcuts/` (pure TypeScript, so Web
-Desktop and Web Canvas can adopt it later):
+**Shared registry** — `packages/contracts/src/keyboard-shortcuts.ts` (pure
+TypeScript, importable by the Electron main process, and by Web Desktop and Web
+Canvas later). The Settings component lives in `packages/ui/src/shortcuts/`.
 
 - The action list: id, label, description, group, per-platform default
   bindings.
