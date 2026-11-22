@@ -174,22 +174,68 @@ resolve_run_user`,
     expect(result.stdout).not.toContain("User=");
   });
 
-  it("creates missing workload roots readable by the scope runtime's matrix group", () => {
-    const home = join(dir, "home");
-    spawnSync("mkdir", ["-p", join(home, "projects")]);
-    writeFileSync(join(dir, "keep"), "");
-    const result = run(
-      `install() { printf '%s\\n' "$*" >>"${join(dir, "calls")}"; }
-prepare_scope_runtime_roots "${home}" alice`,
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
-    // Existing roots and owner data keep their owner, mode and contents.
-    expect(calls).toEqual([
-      `-d -o alice -g matrix -m 0750 ${home}/bots`,
-      `-d -o alice -g matrix -m 0750 ${home}/agent-workspaces`,
-      `-d -o alice -g matrix -m 0750 ${home}/worktrees`,
-    ]);
+  describe("scope runtime workload roots", () => {
+    // Found in review: the gateway creates agent-workspaces/<owner>/<chat> as the
+    // owner with 0750, so without setgid those children took the owner's group
+    // and the capability-free root:matrix supervisor could not traverse them.
+    function prepare(owner: string, existing: Record<string, string>, symlinks: string[] = []) {
+      const home = join(dir, "home");
+      spawnSync("mkdir", ["-p", home]);
+      for (const root of Object.keys(existing)) spawnSync("mkdir", ["-p", join(home, root, "owner-data")]);
+      for (const root of symlinks) spawnSync("ln", ["-s", dir, join(home, root)]);
+      const owners = Object.entries(existing).map(([root, user]) => `*/${root}) echo ${user} ;;`).join("\n    ");
+      const result = run(
+        `install() { printf 'install %s\\n' "$*" >>"${join(dir, "calls")}"; }
+chgrp() { printf 'chgrp %s\\n' "$*" >>"${join(dir, "calls")}"; }
+chmod() { printf 'chmod %s\\n' "$*" >>"${join(dir, "calls")}"; }
+stat() {
+  case "\${@: -1}" in
+    ${owners || "*/never) ;;"}
+    *) echo nobody ;;
+  esac
+}
+prepare_scope_runtime_roots "${home}" ${owner}`,
+      );
+      const calls = existsSync(join(dir, "calls")) ? readFileSync(join(dir, "calls"), "utf8").trim().split("\n") : [];
+      return { result, home, calls };
+    }
+
+    it("creates missing roots setgid matrix, private to the owner and the matrix group", () => {
+      const { result, home, calls } = prepare("alice", {});
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(["bots", "agent-workspaces", "projects", "worktrees"].map(
+        (root) => `install -d -o alice -g matrix -m 2750 ${home}/${root}`,
+      ));
+    });
+
+    it("moves only an existing owner root itself into setgid group matrix, never its contents", () => {
+      const { result, home, calls } = prepare("alice", { projects: "alice", "agent-workspaces": "alice", bots: "root" }, ["worktrees"]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual([
+        `chgrp matrix ${home}/agent-workspaces`,
+        `chmod g+s ${home}/agent-workspaces`,
+        `chgrp matrix ${home}/projects`,
+        `chmod g+s ${home}/projects`,
+      ]);
+      expect(calls.join("\n")).not.toMatch(/-R|owner-data/);
+    });
+
+    it("keeps the legacy matrix layout exactly as before", () => {
+      const { result, home, calls } = prepare("matrix", { projects: "matrix" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(["bots", "agent-workspaces", "worktrees"].map(
+        (root) => `install -d -o matrix -g matrix -m 0750 ${home}/${root}`,
+      ));
+    });
+
+    it("lets a 0750 child the owner creates later inherit group matrix", () => {
+      // Real filesystem check of the property managedPiWorkspace relies on.
+      const root = join(dir, "agent-workspaces");
+      spawnSync("mkdir", ["-m", "2750", root]);
+      spawnSync("mkdir", ["-m", "0750", join(root, "child")]);
+      const mode = spawnSync("stat", ["-c", "%a", join(root, "child")], { encoding: "utf8" }).stdout.trim();
+      expect(mode).toBe("2750");
+    });
   });
 
   it("grants the run user Matrix's group-only paths by ACL, so an already-running login works", () => {

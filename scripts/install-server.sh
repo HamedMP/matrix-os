@@ -513,13 +513,26 @@ render_scope_runtime_home_dropin() {
   done
 }
 
-# prepare_scope_runtime_roots <matrix home> <owner>: creates missing workload roots
-# before the supervisor's read-only namespace exists. Group matrix lets the
-# capability-free supervisor read them; existing roots keep owner, mode and data.
+# prepare_scope_runtime_roots <matrix home> <owner>: prepares workload roots before
+# the supervisor's read-only namespace exists. The capability-free root:matrix
+# supervisor reads them through group matrix, and the gateway later creates 0750
+# children as the owner (agent-workspaces/<owner>/<chat>), so the roots are setgid:
+# those children inherit group matrix instead of the owner's own group. An existing
+# root the owner holds gets the same group and setgid on the directory itself only;
+# its contents, other owners' roots and symlinks are never touched. The legacy
+# matrix account's primary group is already matrix, so its layout stays as it was.
 prepare_scope_runtime_roots() {
-  local root
+  local root path
   for root in "${SCOPE_RUNTIME_ROOTS[@]}"; do
-    [ -d "$1/${root}" ] || install -d -o "$2" -g matrix -m 0750 "$1/${root}"
+    path="$1/${root}"
+    if [ "$2" = "matrix" ]; then
+      [ -d "$path" ] || install -d -o matrix -g matrix -m 0750 "$path"
+    elif [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      install -d -o "$2" -g matrix -m 2750 "$path"
+    elif [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %U -- "$path")" = "$2" ]; then
+      chgrp matrix "$path"
+      chmod g+s "$path"
+    fi
   done
 }
 
