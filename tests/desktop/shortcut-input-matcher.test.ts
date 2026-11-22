@@ -71,6 +71,18 @@ describe("shortcut input matcher", () => {
     expect(run).toHaveBeenCalledWith("app.close");
   });
 
+  it("leaves Ctrl+Space to the page on Windows and Linux, where it is a terminal and IME key", () => {
+    const { run, press } = setup({ platform: "other" });
+    expect(press({ key: " ", code: "Space", control: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("still runs the App Launcher from Alt+Space on macOS", () => {
+    const { run, press } = setup({ platform: "mac" });
+    expect(press({ key: " ", code: "Space", alt: true })).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.launcher");
+  });
+
   it("does nothing while a shortcut is being recorded", () => {
     const { run, press } = setup({ recording: true });
     expect(press(CTRL_TAB)).not.toHaveBeenCalled();
@@ -168,11 +180,11 @@ describe("isMainProcessShortcut", () => {
 });
 
 describe("isTerminalControlChord", () => {
-  it("is Ctrl alone plus a letter or one of [ \\ ]", () => {
-    for (const binding of ["Ctrl+W", "Ctrl+A", "Ctrl+Z", "Ctrl+[", "Ctrl+\\", "Ctrl+]"]) {
+  it("is Ctrl alone plus a letter, Space or one of [ \\ ]", () => {
+    for (const binding of ["Ctrl+W", "Ctrl+A", "Ctrl+Z", "Ctrl+[", "Ctrl+\\", "Ctrl+]", "Ctrl+Space"]) {
       expect(isTerminalControlChord(binding), binding).toBe(true);
     }
-    for (const binding of ["Ctrl+Tab", "Ctrl+1", "Ctrl+Shift+T", "Ctrl+Alt+T", "Cmd+W", "Cmd+Ctrl+W", "W", "Ctrl+,", "Ctrl+F1", "Ctrl+Space"]) {
+    for (const binding of ["Ctrl+Tab", "Ctrl+1", "Ctrl+Shift+T", "Ctrl+Alt+T", "Cmd+W", "Cmd+Ctrl+W", "W", "Ctrl+,", "Ctrl+F1", "Alt+Space", "Ctrl+Shift+Space"]) {
       expect(isTerminalControlChord(binding), binding).toBe(false);
     }
   });

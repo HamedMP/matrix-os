@@ -202,8 +202,9 @@ exactly as they did before this change, so a focused page can still claim the
 key. Every second or later binding of those actions gets a hidden menu item.
 
 **Terminal control keys are left to the page.** A binding that is Ctrl plus a
-single letter (or `[`, `\`, `]`) with no other modifier is a terminal control
-character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history. On Windows and
+single letter (or Space, `[`, `\`, `]`) with no other modifier is a terminal control
+character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history, Ctrl+Space sets
+the mark (and toggles the IME on Windows). On Windows and
 Linux several defaults have that form (Ctrl+W, Ctrl+K, Ctrl+P, Ctrl+N, Ctrl+T,
 Ctrl+J, Ctrl+Q). The matcher does not handle these bindings; they run only
 through the menu accelerator, which a page can claim by cancelling the key. So

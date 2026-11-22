@@ -181,6 +181,15 @@ describe("createAppMenuTemplate", () => {
     expect(accelerators(template, "linux")).not.toContain("F6");
   });
 
+  it("keeps Ctrl+Space a menu accelerator: the matcher leaves it to the page", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "other"), "app.launcher": ["F6", "Ctrl+Space"] };
+    const opts = options({ platform: "linux", shortcuts });
+    const items = submenu(createAppMenuTemplate(opts), "Apps").filter((item) => item.label === "Open App Launcher");
+    expect(items.map((item) => [item.accelerator, item.visible])).toEqual([["F6", undefined], ["Ctrl+Space", false]]);
+    click(items[1]);
+    expect(opts.runShortcut).toHaveBeenCalledWith("app.launcher");
+  });
+
   it("omits the accelerator of an unbound action", () => {
     const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "tabs.close": [] };
     const item = find(submenu(createAppMenuTemplate(options({ shortcuts })), "File"), "Close Tab");

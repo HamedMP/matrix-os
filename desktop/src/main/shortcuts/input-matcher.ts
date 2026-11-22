@@ -27,15 +27,16 @@ export interface ShortcutInput {
 const REPEATABLE: ReadonlySet<ShortcutActionId> = new Set(["app.next", "app.previous"]);
 
 /**
- * Ctrl alone plus a letter or `[`, `\`, `]`: a terminal control character
- * (Ctrl+W deletes a word). The matcher leaves these to the page; they run only
+ * Ctrl alone plus a letter, Space or `[`, `\`, `]`: a terminal control
+ * character (Ctrl+W deletes a word, Ctrl+Space sets the mark; it is also the
+ * Windows IME toggle). The matcher leaves these to the page; they run only
  * through menu accelerators, which a terminal can claim by cancelling the key.
  */
 export function isTerminalControlChord(binding: string): boolean {
   const match = /^Ctrl\+(.+)$/.exec(binding);
   if (!match) return false;
   const key = match[1]!;
-  return /^[A-Z]$/.test(key) || key === "[" || key === "\\" || key === "]";
+  return /^[A-Z]$/.test(key) || key === "Space" || key === "[" || key === "\\" || key === "]";
 }
 
 const MAIN_PROCESS_ACTIONS: ReadonlySet<ShortcutActionId> = new Set(
