@@ -1,11 +1,13 @@
 // Session-only history of closed apps for "Reopen closed app". Entries are tab
 // descriptions (what to open), never window placement, and live in memory only.
 import { create, type StoreApi, type UseBoundStore } from "zustand";
+import { useDesktopSurfaces } from "./desktop-surfaces";
 import { useTabs, type Tab } from "./tabs";
 
 export const CLOSED_APPS_LIMIT = 10;
 
-export type ClosedAppSpec = Omit<Tab, "id" | "closable">;
+/** Keeps `closable` so an app that cannot be closed reopens the same way. */
+export type ClosedAppSpec = Omit<Tab, "id">;
 
 interface ClosedAppsState {
   entries: ClosedAppSpec[];
@@ -14,11 +16,11 @@ interface ClosedAppsState {
 }
 
 function closedAppSpec(tab: Tab): ClosedAppSpec {
-  const { id: _id, closable: _closable, sessionName, ...spec } = tab;
+  const { id: _id, sessionName, ...spec } = tab;
   if (spec.kind === "terminal" && !spec.sharedScopeId) {
     // A session-bound terminal tab without its session is pruned on reconcile,
     // so a closed terminal reopens as the terminal workspace with a new session.
-    return { kind: "terminals", title: "Terminal" };
+    return { kind: "terminals", title: "Terminal", closable: true };
   }
   if (spec.kind === "terminal" || spec.kind === "terminals") return spec;
   return sessionName === undefined ? spec : { ...spec, sessionName };
@@ -40,8 +42,12 @@ export const useClosedApps: UseBoundStore<StoreApi<ClosedAppsState>> = create<Cl
   },
 }));
 
-/** Records `tab` only if closing it actually removed it from the tab workspace. */
-export function recordClosedAppIfRemoved(tab: Tab): void {
-  if (useTabs.getState().tabs.some((candidate) => candidate.id === tab.id)) return;
-  useClosedApps.getState().push(tab);
+/**
+ * Records `tab` after a close if the close took effect: its tab left the
+ * workspace, or (for apps that cannot be closed) its surface is now closed.
+ */
+export function recordClosedApp(tab: Tab): void {
+  const removed = !useTabs.getState().tabs.some((candidate) => candidate.id === tab.id);
+  const surfaceClosed = useDesktopSurfaces.getState().surfaces[tab.id]?.mode === "closed";
+  if (removed || surfaceClosed) useClosedApps.getState().push(tab);
 }

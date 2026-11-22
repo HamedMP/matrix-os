@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cycleApp,
+  registerDesktopShellEffects,
   minimizeActiveApp,
   openFilesApp,
   reopenClosedApp,
@@ -16,6 +17,7 @@ import {
   useDesktopSurfaces,
 } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "@desktop/renderer/src/stores/tabs";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const VIEWPORT = { width: 1280, height: 800 };
 
@@ -23,6 +25,7 @@ beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useClosedApps.setState(useClosedApps.getInitialState(), true);
+  useUi.setState(useUi.getInitialState(), true);
 });
 
 function reconcile() {
@@ -97,6 +100,30 @@ describe("cycleApp", () => {
     cycleApp(1);
     expect(active()).toBe(files);
     cycleApp(-1);
+    expect(active()).toBe(files);
+  });
+
+  it("moves from a minimized active app to its neighbour in taskbar order", () => {
+    const { files, notes, terminal } = threeApps();
+    select(notes);
+    useDesktopSurfaces.getState().minimizeSurface(notes);
+    expect(active()).toBe(notes);
+
+    cycleApp(1);
+    expect(active()).toBe(terminal);
+
+    select(notes);
+    useDesktopSurfaces.getState().minimizeSurface(notes);
+    cycleApp(-1);
+    expect(active()).toBe(files);
+  });
+
+  it("wraps from a hidden active app at the end of the taskbar", () => {
+    const { files, terminal } = threeApps();
+    select(terminal);
+    useDesktopSurfaces.getState().minimizeSurface(terminal);
+
+    cycleApp(1);
     expect(active()).toBe(files);
   });
 
@@ -204,6 +231,40 @@ describe("toggleShowDesktop", () => {
   });
 });
 
+describe("toggleShowDesktop from a full-size app", () => {
+  it("returns to the tabs view and the full-size app on the second call", () => {
+    const { files, notes } = threeApps();
+    useDesktopSurfaces.getState().maximizeToTab(notes);
+    useTabs.getState().focusTab(notes);
+    expect(visible(notes)).toBe(true);
+
+    toggleShowDesktop();
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+    expect(visible(notes)).toBe(false);
+    expect(visible(files)).toBe(false);
+
+    toggleShowDesktop();
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("tabs");
+    expect(mode(notes)).toBe("tab");
+    expect(visible(notes)).toBe(true);
+    expect(active()).toBe(notes);
+  });
+
+  it("stays on the desktop when the full-size app was closed in between", () => {
+    const { files, notes } = threeApps();
+    useDesktopSurfaces.getState().maximizeToTab(notes);
+    useTabs.getState().focusTab(notes);
+
+    toggleShowDesktop();
+    useDesktopSurfaces.getState().closeSurface(notes);
+    toggleShowDesktop();
+
+    expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
+    expect(mode(notes)).toBe("closed");
+    expect(visible(files)).toBe(true);
+  });
+});
+
 describe("openFilesApp", () => {
   it("opens Files when it is not open", () => {
     openFilesApp();
@@ -240,12 +301,26 @@ describe("reopenClosedApp", () => {
     expect(activeTab?.id).not.toBe(docs);
   });
 
-  it("does not record a non-closable app whose tab stays open", () => {
-    const { files } = threeApps();
+  it.each([
+    ["Chat", { kind: "chat" as const, title: "Chat", closable: false }],
+    ["Files", FILES_WORKSPACE_TAB_SPEC],
+  ])("reopens a non-closable %s app whose tab stayed open", (_name, spec) => {
+    const appId = useTabs.getState().openTab(spec);
+    const notes = useTabs.getState().openTab({ kind: "notes", title: "Notes" });
+    reconcile();
+    select(appId);
 
     handleCloseSelectedAppShortcut({ preventDefault: () => undefined });
-    expect(mode(files)).toBe("closed");
-    expect(useClosedApps.getState().entries).toEqual([]);
+    expect(mode(appId)).toBe("closed");
+    expect(useTabs.getState().tabs.some((tab) => tab.id === appId)).toBe(true);
+    expect(active()).toBe(notes);
+
+    reopenClosedApp();
+    expect(active()).toBe(appId);
+    expect(mode(appId)).toBe("window");
+    expect(visible(appId)).toBe(true);
+    expect(useTabs.getState().tabs.find((tab) => tab.id === appId)?.closable).toBe(false);
+    expect(useTabs.getState().tabs).toHaveLength(2);
   });
 
   it("does nothing with no closed apps", () => {
@@ -255,5 +330,66 @@ describe("reopenClosedApp", () => {
     reopenClosedApp();
     expect(useTabs.getState().tabs).toBe(tabsBefore);
     expect(active()).toBe(files);
+  });
+});
+
+describe("desktop shell side effects", () => {
+  let unregister: (() => void) | null = null;
+  afterEach(() => {
+    unregister?.();
+    unregister = null;
+  });
+
+  it("schedules a durable save for every shortcut action that changes app state", () => {
+    const schedulePersist = vi.fn();
+    unregister = registerDesktopShellEffects({ schedulePersist, openRoot: (open) => open() });
+    const { notes } = threeApps();
+
+    const actions: Array<[string, () => void]> = [
+      ["cycleApp", () => cycleApp(1)],
+      ["switchToApp", () => switchToApp(2)],
+      ["toggleActiveAppFullSize", () => { select(notes); toggleActiveAppFullSize(); }],
+      ["minimizeActiveApp", () => minimizeActiveApp()],
+      ["toggleShowDesktop", () => toggleShowDesktop()],
+      ["openFilesApp", () => openFilesApp()],
+    ];
+    for (const [name, run] of actions) {
+      schedulePersist.mockClear();
+      run();
+      expect(schedulePersist, name).toHaveBeenCalled();
+    }
+  });
+
+  it("opens reopened apps through the shell so their window is placed", () => {
+    const openRoot = vi.fn((open: () => void) => open());
+    unregister = registerDesktopShellEffects({ schedulePersist: vi.fn(), openRoot });
+    useClosedApps.getState().push({ id: "gone", kind: "notes", title: "Notes", closable: true });
+
+    reopenClosedApp();
+    expect(openRoot).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().tabs.find((tab) => tab.id === active())).toMatchObject({ kind: "notes" });
+  });
+
+  it("refreshes the desktop background when a native browser view is minimized or the desktop is shown", () => {
+    const home = useTabs.getState().openTab({ kind: "home", title: "Home" });
+    const notes = useTabs.getState().openTab({ kind: "notes", title: "Notes" });
+    reconcile();
+    select(notes);
+    select(home);
+    const refreshes = () => useUi.getState().desktopBackgroundRefreshRequest;
+
+    minimizeActiveApp();
+    expect(refreshes()).toBe(1);
+    toggleShowDesktop();
+    expect(refreshes()).toBe(2);
+  });
+
+  it("stops calling the shell after it unregisters", () => {
+    const schedulePersist = vi.fn();
+    registerDesktopShellEffects({ schedulePersist, openRoot: (open) => open() })();
+    threeApps();
+
+    cycleApp(1);
+    expect(schedulePersist).not.toHaveBeenCalled();
   });
 });

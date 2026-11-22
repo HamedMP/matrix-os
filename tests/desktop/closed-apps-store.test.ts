@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   CLOSED_APPS_LIMIT,
-  recordClosedAppIfRemoved,
+  recordClosedApp,
   useClosedApps,
 } from "@desktop/renderer/src/stores/closed-apps";
 import { useTabs, type Tab } from "@desktop/renderer/src/stores/tabs";
@@ -25,9 +25,8 @@ describe("closed apps store", () => {
     useClosedApps.getState().push(tab({ id: "b", slug: "docs" }));
 
     const spec = useClosedApps.getState().pop();
-    expect(spec).toEqual({ kind: "files", title: "Files", slug: "docs" });
+    expect(spec).toEqual({ kind: "files", title: "Files", slug: "docs", closable: true });
     expect(spec).not.toHaveProperty("id");
-    expect(spec).not.toHaveProperty("closable");
     expect(useClosedApps.getState().pop()).toMatchObject({ slug: "first" });
     expect(useClosedApps.getState().pop()).toBeNull();
   });
@@ -54,21 +53,30 @@ describe("closed apps store", () => {
     expect(terminal).not.toHaveProperty("sessionName");
     // A session-bound terminal tab without a session would be pruned on reconcile;
     // it reopens as the terminal workspace, which starts a fresh session.
-    expect(terminal).toEqual({ kind: "terminals", title: "Terminal" });
+    expect(terminal).toEqual({ kind: "terminals", title: "Terminal", closable: true });
   });
 
-  it("records a closed app only when its tab was removed from the workspace", () => {
-    const keptId = useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
-    const removedId = useTabs.getState().openTab({ kind: "notes", title: "Notes" });
-    const kept = useTabs.getState().tabs.find((candidate) => candidate.id === keptId)!;
-    const removed = useTabs.getState().tabs.find((candidate) => candidate.id === removedId)!;
+  it("records an app whose tab was removed or whose surface was closed, but not one still open", async () => {
+    const { useDesktopSurfaces } = await import("@desktop/renderer/src/stores/desktop-surfaces");
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", slug: "files", closable: false });
+    const notesId = useTabs.getState().openTab({ kind: "notes", title: "Notes" });
+    const editorId = useTabs.getState().openTab({ kind: "editor", title: "Editor", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, notesId, editorId], { width: 1280, height: 800 });
+    const find = (id: string) => useTabs.getState().tabs.find((candidate) => candidate.id === id)!;
+    const files = find(filesId);
+    const notes = find(notesId);
 
-    useTabs.getState().closeTab(keptId);
-    recordClosedAppIfRemoved(kept);
+    recordClosedApp(find(editorId));
     expect(useClosedApps.getState().entries).toEqual([]);
 
-    useTabs.getState().closeTab(removedId);
-    recordClosedAppIfRemoved(removed);
-    expect(useClosedApps.getState().entries).toEqual([{ kind: "notes", title: "Notes" }]);
+    useDesktopSurfaces.getState().closeSurface(filesId);
+    recordClosedApp(files);
+    useTabs.getState().closeTab(notesId);
+    recordClosedApp(notes);
+    expect(useClosedApps.getState().entries).toEqual([
+      { kind: "files", title: "Files", slug: "files", closable: false },
+      { kind: "notes", title: "Notes", closable: true },
+    ]);
   });
 });
