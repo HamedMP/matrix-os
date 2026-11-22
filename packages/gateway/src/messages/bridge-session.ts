@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { MessagingBridgeSessionSchema, type MessagingBridgeSession } from "@matrix-os/contracts/messaging-bridge";
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
@@ -9,10 +9,14 @@ import { MatrixUnauthorizedError } from "./bridge-matrix-client.js";
 import type { MessagingBridgePlatformClient } from "./bridge-platform-client.js";
 
 /**
- * The owner's homeserver session lives in the owner secret store (same atomic
- * 0600 writer as provider credentials). The access token never leaves this
- * module except as a request header to the homeserver.
+ * The owner's homeserver session lives in the owner secret store: the private
+ * root next to (never inside) the owner home, where provider secrets live, so
+ * no `/files/*` route, copy, export or home sync can reach it. It uses the
+ * same atomic 0600 writer as provider credentials. The access token never
+ * leaves this module except as a request header to the homeserver.
  */
+
+const PRIVATE_DIRECTORY = ".matrix-private";
 
 const SESSION_FILE_LIMIT_BYTES = 8 * 1024;
 const SessionDocumentSchema = z.object({
@@ -37,8 +41,17 @@ function isMissing(err: unknown): boolean {
   return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-export function createFileBridgeSessionStore(options: { homePath: string }): BridgeSessionStore {
-  const path = join(resolve(options.homePath), "system/messaging-bridge/session.json");
+export function bridgeSessionPath(options: { homePath: string; privateRootPath?: string }): string {
+  const homePath = resolve(options.homePath);
+  const privateRoot = resolve(options.privateRootPath ?? join(dirname(homePath), PRIVATE_DIRECTORY, basename(homePath)));
+  if (privateRoot === homePath || privateRoot.startsWith(`${homePath}/`)) {
+    throw new Error("Messaging bridge session storage must be outside the owner home");
+  }
+  return join(privateRoot, "messaging-bridge-session.json");
+}
+
+export function createFileBridgeSessionStore(options: { homePath: string; privateRootPath?: string }): BridgeSessionStore {
+  const path = bridgeSessionPath(options);
   return {
     async read(ownerId) {
       let metadata;

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,9 +6,11 @@ import { BridgePlatformError, type MessagingBridgePlatformClient } from "../../.
 import { MatrixUnauthorizedError } from "../../../packages/gateway/src/messages/bridge-matrix-client.js";
 import {
   BridgeSessionUnavailableError,
+  bridgeSessionPath,
   createBridgeSessionProvider,
   createFileBridgeSessionStore,
 } from "../../../packages/gateway/src/messages/bridge-session.js";
+import { createFileBlobRoutes } from "../../../packages/gateway/src/file-blob-routes.js";
 
 const ownerId = "user_a";
 const sessionA = {
@@ -26,17 +28,22 @@ function platform(createSession: MessagingBridgePlatformClient["createSession"])
     listLoginFlows: vi.fn(),
     startLogin: vi.fn(),
     submitLoginStep: vi.fn(),
+    cancelLogin: vi.fn(async () => {}),
     listLogins: vi.fn(),
     logout: vi.fn(),
   };
 }
 
 describe("bridge session store and provider", () => {
+  let root: string;
   let home: string;
   let logged: string[];
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "bridge-session-"));
+    // The secret store sits next to the home, so the home gets its own parent.
+    root = await mkdtemp(join(tmpdir(), "bridge-session-"));
+    home = join(root, "home");
+    await mkdir(home);
     logged = [];
     for (const method of ["log", "warn", "error"] as const) {
       vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
@@ -47,16 +54,17 @@ describe("bridge session store and provider", () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    await rm(home, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
   it("persists the session owner-scoped with mode 0600", async () => {
     const store = createFileBridgeSessionStore({ homePath: home });
     await store.write(ownerId, sessionA);
 
-    const path = join(home, "system/messaging-bridge/session.json");
+    const path = join(root, ".matrix-private/home/messaging-bridge-session.json");
+    expect(bridgeSessionPath({ homePath: home })).toBe(path);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(home, "system/messaging-bridge"))).mode & 0o777).toBe(0o700);
+    expect((await stat(join(root, ".matrix-private/home"))).mode & 0o777).toBe(0o700);
     await expect(store.read(ownerId)).resolves.toEqual(sessionA);
     await expect(store.read("user_b")).resolves.toBeNull();
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ version: 1, ownerId });
@@ -65,8 +73,32 @@ describe("bridge session store and provider", () => {
   it("refuses a session file that other users can read", async () => {
     const store = createFileBridgeSessionStore({ homePath: home });
     await store.write(ownerId, sessionA);
-    await chmod(join(home, "system/messaging-bridge/session.json"), 0o644);
+    await chmod(bridgeSessionPath({ homePath: home }), 0o644);
     await expect(store.read(ownerId)).resolves.toBeNull();
+  });
+
+  it("keeps the access token out of the owner home, so the files routes cannot serve it", async () => {
+    const store = createFileBridgeSessionStore({ homePath: home });
+    await store.write(ownerId, sessionA);
+
+    async function filesUnder(dir: string): Promise<string[]> {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const nested = await Promise.all(entries.map((entry) => {
+        const path = join(dir, entry.name);
+        return entry.isDirectory() ? filesUnder(path) : Promise.resolve([path]);
+      }));
+      return nested.flat();
+    }
+    for (const file of await filesUnder(home)) {
+      expect(await readFile(file, "utf8"), file).not.toContain(sessionA.accessToken);
+    }
+    const files = createFileBlobRoutes({ homePath: home });
+    for (const path of ["system/messaging-bridge/session.json", "../.matrix-private/home/messaging-bridge-session.json"]) {
+      const response = await files.request(`/blob?path=${encodeURIComponent(path)}`);
+      expect(response.status, path).not.toBe(200);
+      expect(await response.text()).not.toContain(sessionA.accessToken);
+    }
+    expect(() => bridgeSessionPath({ homePath: home, privateRootPath: join(home, "system") })).toThrow();
   });
 
   it("mints a session once, then serves it from the store", async () => {

@@ -134,7 +134,7 @@ function bodyFor(event: MatrixClientEvent, content: Record<string, unknown>): Pi
   if (typeof msgtype === "string" && TEXT_MSGTYPES.has(msgtype) && typeof content.body === "string") {
     return { kind: "text", body: content.body.slice(0, MESSAGING_BRIDGE_MESSAGE_BODY_MAX) };
   }
-  if (typeof msgtype === "string" && MEDIA_PLACEHOLDERS[msgtype]) {
+  if (typeof msgtype === "string" && Object.hasOwn(MEDIA_PLACEHOLDERS, msgtype)) {
     return { kind: "media", body: MEDIA_PLACEHOLDERS[msgtype]! };
   }
   return { kind: "other", body: "Unsupported message" };

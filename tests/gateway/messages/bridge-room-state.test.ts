@@ -94,6 +94,9 @@ describe("timeline event classification", () => {
     expect(classifyTimelineEvent({ ...message({ body: "sticker" }), type: "m.sticker" }, self)).toMatchObject({ kind: "media", body: "Sticker" });
     expect(classifyTimelineEvent({ ...message({ ciphertext: "..." }), type: "m.room.encrypted" }, self)).toMatchObject({ kind: "other", body: "Encrypted message" });
     expect(classifyTimelineEvent(message({ msgtype: "org.example.poll", body: "vote" }), self)).toMatchObject({ kind: "other", body: "Unsupported message" });
+    for (const inherited of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(classifyTimelineEvent(message({ msgtype: inherited, body: "x" }), self), inherited).toMatchObject({ kind: "other", body: "Unsupported message" });
+    }
   });
 
   it("drops state, reactions, edits, redactions and malformed events", () => {

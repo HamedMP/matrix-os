@@ -35,6 +35,7 @@ export function platformMock(overrides: Partial<MessagingBridgePlatformClient> =
     listLoginFlows: vi.fn(async () => []),
     startLogin: vi.fn(),
     submitLoginStep: vi.fn(),
+    cancelLogin: vi.fn(async () => {}),
     listLogins: vi.fn(async () => []),
     logout: vi.fn(async () => {}),
     ...overrides,
