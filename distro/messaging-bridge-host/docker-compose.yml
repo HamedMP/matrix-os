@@ -1,0 +1,163 @@
+# Shared messaging bridge host (spec 2701, ENG-535).
+#
+# One closed Synapse homeserver plus the mautrix WhatsApp, Telegram and
+# LinkedIn bridges, shared by allowlisted Matrix OS owners. Only Caddy
+# publishes ports. Every config file is rendered by bootstrap.sh into
+# ${MBH_STATE_DIR}; nothing in this file is secret.
+#
+# Run through bootstrap.sh, or by hand with:
+#   docker compose --env-file /var/lib/matrix-bridge-host/compose.env \
+#     -f /opt/matrix-bridge-host/docker-compose.yml up -d
+#
+# Image upgrades are deliberate: bump one tag, read that release's notes,
+# back up, then follow "Upgrade procedure" in README.md.
+
+name: matrix-bridge-host
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-bridge: &bridge
+  restart: unless-stopped
+  user: "1337:1337"
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 512
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+  networks: [db, edge]
+  depends_on:
+    synapse:
+      condition: service_healthy
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24
+    restart: unless-stopped
+    mem_limit: 1536m
+    shm_size: 256m
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/mbh/superuser-password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command:
+      - postgres
+      - -c
+      - max_connections=120
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - log_min_duration_statement=2000
+    volumes:
+      # Postgres 18 images keep PGDATA under /var/lib/postgresql/18/docker.
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/postgres/data:/var/lib/postgresql
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/postgres/superuser-password:/run/mbh/superuser-password:ro
+    networks: [db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging: *logging
+
+  synapse:
+    image: ghcr.io/element-hq/synapse:v1.165.0
+    restart: unless-stopped
+    mem_limit: 2048m
+    user: "991:991"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 1024
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/synapse:/data
+    networks: [db, edge]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8008/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+    logging: *logging
+
+  mautrix-whatsapp:
+    <<: *bridge
+    image: dock.mau.dev/mautrix/whatsapp:v0.2610.0
+    mem_limit: 768m
+    command: ["/usr/bin/mautrix-whatsapp", "-c", "/data/config.yaml", "-r", "/data/registration.yaml", "--no-update"]
+    volumes:
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/bridges/whatsapp:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29318/_matrix/mau/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  mautrix-telegram:
+    <<: *bridge
+    image: dock.mau.dev/mautrix/telegram:v0.2610.0
+    mem_limit: 768m
+    command: ["/usr/bin/mautrix-telegram", "-c", "/data/config.yaml", "-r", "/data/registration.yaml", "--no-update"]
+    volumes:
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/bridges/telegram:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29317/_matrix/mau/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  mautrix-linkedin:
+    <<: *bridge
+    image: dock.mau.dev/mautrix/linkedin:v0.2609.0
+    mem_limit: 512m
+    command: ["/usr/bin/mautrix-linkedin", "-c", "/data/config.yaml", "-r", "/data/registration.yaml", "--no-update"]
+    volumes:
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/bridges/linkedin:/data:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29341/_matrix/mau/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  caddy:
+    image: caddy:2.11.8-alpine
+    restart: unless-stopped
+    mem_limit: 256m
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/caddy/data:/data
+      - ${MBH_STATE_DIR:-/var/lib/matrix-bridge-host}/caddy/config:/config
+    networks: [edge]
+    depends_on:
+      synapse:
+        condition: service_healthy
+    logging: *logging
+
+networks:
+  # Postgres lives only here; the network has no route off the host.
+  db:
+    internal: true
+  # Proxy ingress and bridge egress to WhatsApp, Telegram and LinkedIn.
+  edge: {}
