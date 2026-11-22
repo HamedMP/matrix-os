@@ -132,19 +132,23 @@ function factsFrom(workspaces: TerminalWorkspace[], statuses: ReadonlyMap<string
   return { facts, done };
 }
 
+/** Most attention entries sent: as many tabs as a client keeps (live tabs plus finished history). */
+export const TERMINAL_ATTENTION_MAX_TABS = 10_240;
+
 /**
- * The done tabs among those a snapshot sends, so every done row a client
- * shows can be marked seen. An ended tab is seen once it was opened after its
- * program ended; a tab reporting `done` once it was opened since that report.
+ * Every done tab a client can show, from a snapshot or a later event, so each
+ * can be marked seen: live ones first, then the most recently done. An ended
+ * tab is seen once it was opened after its program ended; a tab reporting
+ * `done` once it was opened since that report.
  */
 function attentionFrom(facts: Map<string, TerminalTabFacts>, done: ReadonlyMap<string, DoneTab>, seen: TerminalSeenStore | undefined): Record<string, TerminalTabAttention> {
+  const entries = [...done].filter(([key]) => facts.has(key))
+    .map(([key, entry]) => ({ key, entry, time: Date.parse(entry.at) }))
+    .sort((left, right) => Number(left.entry.finished) - Number(right.entry.finished) || (right.time || 0) - (left.time || 0))
+    .slice(0, TERMINAL_ATTENTION_MAX_TABS);
   const tabs: Record<string, TerminalTabAttention> = {};
-  for (const tab of snapshotTabs(facts)) {
-    const key = terminalRefKey(tab.ref);
-    const entry = done.get(key);
-    if (!entry) continue;
+  for (const { key, entry, time } of entries) {
     const opened = seen?.get(key);
-    const time = Date.parse(entry.at);
     tabs[key] = {
       doneAt: entry.at,
       seen: opened !== undefined && (entry.finished ? opened.finished : Number.isFinite(time) && opened.at >= time),

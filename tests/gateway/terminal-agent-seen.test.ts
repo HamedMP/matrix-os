@@ -133,19 +133,24 @@ describe("terminal seen over the events stream", () => {
     expect(h.attention()).toMatchObject({ tabs: { [keyA]: { seen: false } } });
   });
 
-  // Fault detected (Greptile, #3566): with a long finished history, rows in the snapshot had no attention entry and could never clear.
-  it("sends attention for every done tab the snapshot carries", async () => {
+  // Fault detected (Greptile, #3566): with a long finished history, done rows a client
+  // showed (from the snapshot or a later "finished" event) had no attention entry and could never clear.
+  it("sends attention for every done tab a client can show, including ones past the snapshot's history", async () => {
     const h = harness();
     const finished = Array.from({ length: 1_100 }, (_, index) => tab(`tt_${index.toString(16).padStart(32, "0")}`, {
       status: "exited", exitCode: 0, updatedAt: new Date(Date.parse("2026-11-11T10:00:00.000Z") + index * 1_000).toISOString(),
     }));
-    h.setTabs(finished);
+    h.setTabs([...finished, tab(tabA)]);
     await h.start();
-    const snapshot = h.frames.find((frame) => frame.type === "snapshot");
-    const sent = snapshot?.type === "snapshot" ? snapshot.tabs.map((entry) => `${entry.ref.workspaceId}:${entry.ref.tabId}`) : [];
+    // tabA finishes behind the long history; the client learns it from a "finished" event.
+    h.setTabs([...finished, tab(tabA, { status: "exited", exitCode: 2, updatedAt: "2026-11-11T09:00:00.000Z" })]);
+    await h.hub.tick();
     const attention = h.attention();
     const keys = attention?.type === "attention" ? Object.keys(attention.tabs) : [];
-    expect(keys.sort()).toEqual([...sent].sort());
+    expect(keys).toHaveLength(1_101);
+    expect(keys).toContain(keyA);
+    expect(h.handle.markSeen({ workspaceId, tabId: tabA })).toBe(true);
+    expect(h.attention()).toMatchObject({ tabs: { [keyA]: { seen: true } } });
   });
 
   it("refuses refs the stream does not list", async () => {
