@@ -368,6 +368,10 @@ describe("Terminal window menu", () => {
       ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
       ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next" }], ["Ctrl+Shift+Tab", { command: "previous" }],
       ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
+      ["Cmd+D", { command: "split-right" }], ["Cmd+Shift+D", { command: "split-down" }], ["Cmd+Shift+W", { command: "close-pane" }],
+      ["Cmd+Shift+Enter", { command: "zoom-pane" }], ["Cmd+Alt+Left", { command: "focus-pane", direction: "left" }],
+      ["Cmd+Alt+Down", { command: "focus-pane", direction: "down" }], ["Cmd+Alt+Shift+Right", { command: "swap-pane", direction: "right" }],
+      ["Cmd+Alt+Shift+Up", { command: "swap-pane", direction: "up" }],
     ];
     for (const [accelerator, sent] of expected) {
       const matches = byKey(accelerator);

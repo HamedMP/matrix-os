@@ -27,14 +27,17 @@ const Ok = z.object({ ok: z.boolean() }).strict();
  */
 export const TERMINAL_WINDOW_COMMANDS = [
   "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
+  "split-right", "split-down", "close-pane", "zoom-pane", "focus-pane", "swap-pane",
   "space",
 ] as const;
 export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
+const PaneDirectionSchema = z.enum(["left", "right", "up", "down"]);
 export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
   z.strictObject({ command: z.literal("select"), index: z.number().int().min(1).max(9) }),
   // Ctrl+1…9 switches to that space in the sidebar's order; Ctrl+0 is All.
   z.strictObject({ command: z.literal("space"), index: z.number().int().min(0).max(9) }),
-  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space"]) }),
+  z.strictObject({ command: z.enum(["focus-pane", "swap-pane"]), direction: PaneDirectionSchema }),
+  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space", "focus-pane", "swap-pane"]) }),
 ]);
 export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
 

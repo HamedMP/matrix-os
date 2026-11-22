@@ -14,7 +14,10 @@ import { LocalTerminalAttention } from "./LocalTerminalAttention";
 import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
-import { computerMachineId } from "./use-terminal-status";
+import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
+import { TerminalPaneTree } from "./TerminalPaneTree";
+import { terminalRefKey } from "../../lib/terminal-workspaces";
+import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -32,6 +35,11 @@ const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "rename-failed": "Couldn't rename that terminal. Try again.",
   "end-failed": "Couldn't end that terminal. Try again.",
 };
+
+const PANE_NOTICE = {
+  "split-limit": "A tab holds at most 16 panes.",
+  "split-failed": "Couldn't start a terminal for the new pane. Try again.",
+} as const;
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -155,7 +163,31 @@ function TerminalPane({ sessionName, findRequest, ended }: {
   );
 }
 
+/** The terminal a pane shows, by its sidebar row key. */
+function paneSessionName(key: string): string | null {
+  const target = terminalRowTarget(key);
+  if (!target) return null;
+  return target.kind === "local" ? localSessionName(target.id) : terminalRefKey(target.ref);
+}
+
+function SplitPanes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
+  const names = new Map(view.status.rows.map((row) => [row.key, row.name]));
+  return (
+    <TerminalPaneTree tab={tab} paneTitle={(leaf) => names.get(leaf.terminal) ?? "Terminal"}
+      onFocus={view.panes.focusLeaf} onResize={view.panes.resize} onMove={view.panes.move}
+      renderPane={(leaf, focused) => {
+        const sessionName = paneSessionName(leaf.terminal);
+        // Only the focused pane holds the live attachment; the others keep their last screen.
+        return sessionName
+          ? <TerminalView key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} active={focused}
+              findRequest={focused ? view.findRequest : 0} />
+          : null;
+      }} />
+  );
+}
+
 function ActivePane({ view }: { view: TerminalWindowView }) {
+  if (view.panes.tab) return <SplitPanes view={view} tab={view.panes.tab} />;
   // A session change resets the shared attach manager; the epoch remounts the
   // local pane so it attaches again instead of staying on a disposed attachment.
   if (view.localTerminal) {
@@ -201,7 +233,8 @@ export default function TerminalWindowApp() {
   useEffect(() => { document.title = "Terminal"; }, []);
 
   const failed = view.local.notice ?? view.computerNotice;
-  const notice = failed ? <p role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[failed]}</p> : null;
+  const noticeText = failed ? LOCAL_NOTICE[failed] : view.panes.notice ? PANE_NOTICE[view.panes.notice] : null;
+  const notice = noticeText ? <p role="alert" className="px-2 py-1 text-[12px]">{noticeText}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
       <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(`${view.here.id}|${id}`)} />

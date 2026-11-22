@@ -13,7 +13,8 @@ import { onEvent } from "../../lib/operator";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
-import { closeComputerTab, renameComputerTab } from "./computer-terminals";
+import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
+import { useTerminalPanes } from "./use-terminal-panes";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
@@ -190,8 +191,34 @@ export function useTerminalWindow() {
     select(order[next]!.key);
   }, [order, select, selectedKey]);
 
+  const createOn = useCallback(async (machineId: string): Promise<string | null> => {
+    if (machineId === here.id) {
+      const id = await local.create({});
+      return id ? `${here.id}|${id}` : null;
+    }
+    if (!machineId.startsWith("computer:")) return null;
+    const api = cloud.api(machineId.slice("computer:".length));
+    if (!api) return null;
+    try {
+      return `${machineId}|${await createComputerTab(api, "Terminal")}`;
+    } catch (error: unknown) {
+      console.warn("[terminal-window] pane terminal failed:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }, [cloud, here.id, local]);
+  const listed = useCallback((machineId: string) => (machineId === here.id
+    ? local.state.status === "ready"
+    : status.states[machineId.slice("computer:".length)]?.connected === true), [here.id, local.state.status, status.states]);
+  const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createOn, listed });
+
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
+      case "split-right": case "split-down": case "close-pane": case "zoom-pane":
+        panes.run({ command: command.command });
+        return;
+      case "focus-pane": case "swap-pane":
+        panes.run({ command: command.command, direction: command.direction });
+        return;
       case "new-terminal": {
         const target = selectedKey ? terminalRowTarget(selectedKey) : null;
         if (target?.kind === "computer") createCloud(target.slot);
@@ -222,11 +249,11 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFindRequest((request) => request + 1); return;
     }
-  }, [createCloud, createLocal, order, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
+  }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
   useEffect(() => onEvent("terminal-window:command", run), [run]);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now, computerNotice,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,

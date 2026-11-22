@@ -14,6 +14,7 @@ export function terminalWindowMenuItems(
   const item = (label: string, accelerator: string, sent: TerminalWindowCommand): MenuItemConstructorOptions => ({
     label, accelerator: key(accelerator), click: () => command(sent),
   });
+  const directions = [["Left", "left"], ["Right", "right"], ["Up", "up"], ["Down", "down"]] as const;
   return [
     item("New Terminal", "Cmd+N", { command: "new-terminal" }),
     { ...item("New Terminal", "Cmd+T", { command: "new-terminal" }), visible: false, acceleratorWorksWhenHidden: true },
@@ -43,6 +44,19 @@ export function terminalWindowMenuItems(
           label: `Space ${offset + 1}`, accelerator: `Ctrl+${offset + 1}`, click: () => command({ command: "space", index: offset + 1 }),
         })),
       ],
+    },
+    { type: "separator" },
+    item("Split Right", "Cmd+D", { command: "split-right" }),
+    item("Split Down", "Cmd+Shift+D", { command: "split-down" }),
+    item("Close Pane", "Cmd+Shift+W", { command: "close-pane" }),
+    item("Zoom Pane", "Cmd+Shift+Enter", { command: "zoom-pane" }),
+    {
+      label: "Focus Pane",
+      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+${label}`, { command: "focus-pane", direction })),
+    },
+    {
+      label: "Swap Pane",
+      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+Shift+${label}`, { command: "swap-pane", direction })),
     },
     { type: "separator" },
     item("Toggle Sidebar", "Cmd+B", { command: "toggle-sidebar" }),
