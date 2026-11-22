@@ -65,7 +65,9 @@ file so the rules have one source of truth.
   fixture limitations; redact credentials and private customer content.
 - **Keep evidence out of the repo.** Attach screenshots and recordings to the
   PR body or a PR comment; never commit them. `docs/pr-evidence/` is a legacy
-  archive and takes no new files. When an agent cannot upload, it keeps the
+  archive and takes no new files. Agents and engineers attach captures with
+  `scripts/pr-evidence upload <pr> <files...>` (GitHub sign-in, see
+  `packages/pr-evidence-worker/README.md`). When an agent cannot upload, it keeps the
   captures outside the repo and gives the developer their paths to attach.
 - **Do not claim visual qualification without evidence.** Mockups, automated
   test results, or another surface's capture do not prove the affected running

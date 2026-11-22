@@ -1,0 +1,20 @@
+name = "matrix-pr-evidence"
+main = "src/index.ts"
+compatibility_date = "2026-06-06"
+
+# Requires a proxied (orange-cloud) DNS record for evidence.matrix-os.com.
+routes = [
+  { pattern = "evidence.matrix-os.com/*", zone_name = "matrix-os.com" }
+]
+
+[[r2_buckets]]
+binding = "EVIDENCE"
+bucket_name = "matrix-pr-evidence"
+
+[vars]
+GITHUB_REPO = "HamedMP/matrix-os"
+PUBLIC_ORIGIN = "https://evidence.matrix-os.com"
+
+# UPLOAD_TICKET_SECRET must be provisioned before deployment (>= 32 random bytes):
+#   openssl rand -base64 48 | wrangler secret put UPLOAD_TICKET_SECRET
+# The Worker returns 503 for uploads until this secret is set. Reads keep working.
