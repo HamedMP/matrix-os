@@ -295,6 +295,9 @@ All checks run in the shared validator and again in the main process on
   Replace; the main process rejects a payload that still contains a duplicate.
 - Errors returned to the renderer are generic. No Zod issues or file paths.
 - The stored value stays inside the state store's existing 64 KB bound.
+- Known and accepted: an embedded app can tell that a key is bound, because
+  the key press never reaches it. It cannot learn which action the key runs or
+  read the binding list.
 
 Auth: these IPC channels are available to the app's own windows only, the same
 as `state:get` and `state:set`. Embedded apps have no access to them.
