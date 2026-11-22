@@ -16,18 +16,33 @@ export interface ActiveSpaceChip {
   icon?: string;
 }
 
+/** How the chip reads: All, a machine (a space itself), or a project on a machine. */
+function chipText(space: ActiveSpaceChip | null) {
+  if (!space) return { label: "All", aria: "All spaces", title: "All spaces (Ctrl+1…9 picks one)", badge: "∗" };
+  const named = space.label === space.machine ? space.label : `${space.label} · ${space.machine}`;
+  return {
+    label: space.label,
+    aria: space.label === space.machine ? `Space ${space.label}` : `Space ${space.label} on ${space.machine}`,
+    title: `${named} (Ctrl+0 shows all)`,
+    badge: space.icon ?? (space.label.trim()[0] ?? "?").toUpperCase(),
+  };
+}
+
 function SpaceChip({ space }: { space: ActiveSpaceChip | null }) {
-  const label = space ? space.label : "All";
+  const text = chipText(space);
+  const frame = space
+    ? { borderColor: space.color, background: `color-mix(in srgb, ${space.color} 14%, transparent)` }
+    : { borderColor: "var(--border-default)" };
+  const badge = space
+    ? { background: space.icon ? "transparent" : space.color, ...(space.icon ? { fontSize: 12 } : {}) }
+    : { background: "transparent", color: secondaryText.color };
   return (
-    <span role="status" aria-label={!space ? "All spaces" : space.label === space.machine ? `Space ${space.label}` : `Space ${space.label} on ${space.machine}`}
-      title={!space ? "All spaces (Ctrl+1…9 picks one)" : `${space.label === space.machine ? space.label : `${space.label} · ${space.machine}`} (Ctrl+0 shows all)`}
-      className="mb-1 flex h-6 max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-[12px] font-medium"
-      style={{ borderColor: space ? space.color : "var(--border-default)", background: space ? `color-mix(in srgb, ${space.color} 14%, transparent)` : undefined }}>
-      <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center rounded-[4px] text-[9px] font-bold text-white"
-        style={{ background: space && !space.icon ? space.color : "transparent", color: space ? undefined : secondaryText.color, fontSize: space?.icon ? 12 : undefined }}>
-        {space ? space.icon ?? (space.label.trim()[0] ?? "?").toUpperCase() : "∗"}
+    <span role="status" aria-label={text.aria} title={text.title}
+      className="mb-1 flex h-6 max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-[12px] font-medium" style={frame}>
+      <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center rounded-[4px] text-[9px] font-bold text-white" style={badge}>
+        {text.badge}
       </span>
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="min-w-0 truncate">{text.label}</span>
     </span>
   );
 }
