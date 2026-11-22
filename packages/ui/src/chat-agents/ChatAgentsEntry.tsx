@@ -9,7 +9,7 @@ import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
 import { BotEditorApps } from "./bots/BotEditorApps.js";
-import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
+import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotInitialModelChoice, matrixBotModelChoices, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import { isChatAgentDriver, MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -61,7 +61,7 @@ function DailyBriefCreation({ onRefreshCatalog, onSetup, recipe, client, models,
   catalog: CanonicalProviderCatalog | null; catalogLoading: boolean; onOpen(chatId: string): void | Promise<void>; onClose(): void;
 }) {
   const [selection, setSelection] = useState<CanonicalChatModelSelection | null>(() => {
-    const choice = matrixBotSelectableModelChoices(models, catalog)[0];
+    const choice = matrixBotInitialModelChoice(models, catalog);
     return choice ? matrixBotModelSelection(choice) : null;
   });
   const [pending, setPending] = useState(false), [error, setError] = useState("");

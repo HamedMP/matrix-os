@@ -25,6 +25,11 @@ export function matrixBotSelectableModelChoices(models: readonly CanonicalProvid
     .filter(isPiBotCoordinatorRoute).flatMap(row => row.choice ? [row.choice] : []) : [];
 }
 
+/** Owner-paid OpenAI remains selectable, but never becomes an implicit recipe choice. */
+export function matrixBotInitialModelChoice(models: readonly CanonicalProviderChoice[], catalog?: CanonicalProviderCatalog | null): CanonicalProviderChoice | undefined {
+  return matrixBotSelectableModelChoices(models, catalog).find(choice => !isMatrixOpenAiBotRoute(choice));
+}
+
 function openAiChoiceMatchesSelection(choice: CanonicalProviderChoice, selection: CanonicalChatModelSelection): boolean {
   const source = matrixOpenAiSelectionBinding(choice.selectedOptions), selected = matrixOpenAiSelectionBinding(selection.options);
   return !!source && !!selected && source.connectionRevision === selected.connectionRevision && source.credentialGeneration === selected.credentialGeneration
