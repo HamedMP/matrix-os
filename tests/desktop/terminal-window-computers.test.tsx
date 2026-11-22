@@ -256,6 +256,8 @@ describe("Terminal window computers", () => {
     await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`));
     await act(async () => { finish(json({ tab: { id: `tt_${"5".repeat(32)}`, name: "Terminal" } }, 201)); });
     expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`);
+  });
+
   // Spec 2706: the overview previews a Matrix terminal's screen through its gateway.
   it("previews a computer terminal's screen in the overview", async () => {
     fetchMock.mockImplementation(async (url: string) => (String(url).includes("/read")

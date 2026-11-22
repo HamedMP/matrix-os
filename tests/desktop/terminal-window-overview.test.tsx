@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
@@ -8,7 +8,9 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
-import { previewLines } from "@desktop/renderer/src/features/terminal-window/use-terminal-previews";
+import { COMPUTER_PREVIEW_MIN_MS, previewLines, useTerminalPreviews } from "@desktop/renderer/src/features/terminal-window/use-terminal-previews";
+import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
+import type { ApiClient } from "@desktop/renderer/src/lib/api";
 
 // Hamed, 2026-11-22: an overview tab listing every terminal (of the active space) with inline
 // rename, a live preview of each one's screen, its status, and a click to open it.
@@ -83,5 +85,67 @@ describe("Terminal window overview", () => {
     expect(previewLines(`a\n\n${"x".repeat(200)}\n  \n${Array.from({ length: 10 }, (_, index) => `line ${index}`).join("\n")}\n`))
       .toEqual(Array.from({ length: 8 }, (_, index) => `line ${index + 2}`));
     expect(previewLines(`${"y".repeat(200)}`)[0]!.length).toBe(160);
+  });
+});
+
+// Greptile on #3539: a computer's gateway read asks Zellij for its screen and makes it repaint,
+// so the overview must not poll idle computer terminals, and nothing is read while hidden.
+describe("Terminal window overview previews", () => {
+  const WS = `tws_${"a".repeat(32)}`;
+  const TAB = `tt_${"b".repeat(32)}`;
+  const row = (key: string, statusAt: string) => ({ key, name: key, statusAt }) as unknown as TerminalSidebarRow;
+  const computerKey = `computer:primary|${WS}:${TAB}`;
+  let hidden = false;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hidden = false;
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => (hidden ? "hidden" : "visible"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    installOperator({ t1: "local screen" });
+  });
+  afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  function setup() {
+    const get = vi.fn(async () => ({ screen: "computer screen" }));
+    const client = { get } as unknown as ApiClient;
+    const hook = renderHook(
+      ({ rows }: { rows: TerminalSidebarRow[] }) => useTerminalPreviews({ rows, enabled: true, api: () => client }),
+      { initialProps: { rows: [row("local|t1", "1"), row(computerKey, "1")] } },
+    );
+    const localReads = () => window.operator!.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:read").length;
+    return { get, hook, localReads };
+  }
+  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+  it("reads an idle computer terminal once, and again only after its status changed and 15 s passed", async () => {
+    const { get, hook, localReads } = setup();
+    await tick(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(hook.result.current[computerKey]).toEqual(["computer screen"]);
+    await tick(30_000);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(localReads()).toBeGreaterThanOrEqual(10);
+
+    hook.rerender({ rows: [row("local|t1", "1"), row(computerKey, "2")] });
+    await tick(3_000);
+    expect(get).toHaveBeenCalledTimes(2);
+    hook.rerender({ rows: [row("local|t1", "1"), row(computerKey, "3")] });
+    await tick(3_000);
+    expect(get).toHaveBeenCalledTimes(2);
+    await tick(COMPUTER_PREVIEW_MIN_MS);
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads nothing while the window is hidden", async () => {
+    hidden = true;
+    const { get, localReads } = setup();
+    await tick(30_000);
+    expect(get).not.toHaveBeenCalled();
+    expect(localReads()).toBe(0);
+    hidden = false;
+    await tick(3_000);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(localReads()).toBe(1);
   });
 });

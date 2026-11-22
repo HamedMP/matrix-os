@@ -1,8 +1,11 @@
 // The overview's live previews (spec 2706): the last lines on each listed
-// terminal's screen, read every few seconds while the overview is open. A
-// local or ssh-machine terminal is read from the app's core; a Matrix
-// computer's from its gateway. Bounded in how many are read and how much of
-// each is kept, and every failure only leaves that preview as it was.
+// terminal's screen while the overview is open. A local or ssh-machine
+// terminal is read from the app's core every few seconds. A Matrix computer's
+// is read from its gateway, which asks Zellij for the screen and makes it
+// repaint, so it is read once and again only after its status changed (at
+// most every 15 s); an idle one is left alone. Nothing is read while the
+// window is hidden. Bounded in how many are read and how much of each is
+// kept, and every failure only leaves that preview as it was.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import { invoke } from "../../lib/operator";
@@ -13,6 +16,8 @@ export const PREVIEW_MAX_TERMINALS = 24;
 export const PREVIEW_LINES = 8;
 const PREVIEW_LINE_CHARS = 160;
 const PREVIEW_INTERVAL_MS = 3_000;
+/** A Matrix computer's terminal is read again no sooner than this, and only after its status changed. */
+export const COMPUTER_PREVIEW_MIN_MS = 15_000;
 const PREVIEW_TIMEOUT_MS = 5_000;
 const PREVIEW_MAX_BYTES = 64 * 1024;
 
@@ -43,19 +48,37 @@ export function useTerminalPreviews(options: {
 }): Readonly<Record<string, string[]>> {
   const { rows, enabled, api } = options;
   const [previews, setPreviews] = useState<Record<string, string[]>>({});
-  const keys = useMemo(() => rows.slice(0, PREVIEW_MAX_TERMINALS).map((row) => row.key), [rows]);
-  const keysRef = useRef(keys);
+  const shownRows = useMemo(() => rows.slice(0, PREVIEW_MAX_TERMINALS), [rows]);
+  const keys = useMemo(() => shownRows.map((row) => row.key), [shownRows]);
+  const rowsRef = useRef(shownRows);
   const apiRef = useRef(api);
-  useEffect(() => { keysRef.current = keys; apiRef.current = api; }, [api, keys]);
+  useEffect(() => { rowsRef.current = shownRows; apiRef.current = api; }, [api, shownRows]);
   const keySignature = keys.join("\n");
 
   useEffect(() => {
     if (!enabled) return undefined;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // When each computer terminal was last read, and the status it had then. Bounded by the list.
+    const lastRead = new Map<string, { at: number; statusAt: string | undefined }>();
+    const due = (row: TerminalSidebarRow, now: number) => {
+      if (terminalRowTarget(row.key)?.kind !== "computer") return true;
+      const last = lastRead.get(row.key);
+      return !last || (last.statusAt !== row.statusAt && now - last.at >= COMPUTER_PREVIEW_MIN_MS);
+    };
     const round = async () => {
-      const shown = keysRef.current;
-      const read = await Promise.all(shown.map(async (key) => {
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(() => { void round(); }, PREVIEW_INTERVAL_MS);
+        return;
+      }
+      const now = Date.now();
+      const listed = rowsRef.current;
+      const shown = listed.map((row) => row.key);
+      const listedKeys = new Set(shown);
+      for (const key of [...lastRead.keys()]) if (!listedKeys.has(key)) lastRead.delete(key);
+      const reading = listed.filter((row) => due(row, now));
+      for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, statusAt: row.statusAt });
+      const read = await Promise.all(reading.map(async ({ key }) => {
         try {
           const text = await readScreen(key, apiRef.current);
           return [key, text === null ? null : previewLines(text)] as const;
