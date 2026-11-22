@@ -228,7 +228,7 @@ describe("This Computer terminals", () => {
         "local-terminal:watch": watching([fact("t1", "zsh")]),
       });
       render(<TerminalWindowApp />);
-      const create = await screen.findByRole("button", { name: "New terminal on Main Computer" });
+      const create = await screen.findByRole("button", { name: "New terminal on neo" });
       fireEvent.click(create);
       await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
       fireEvent.click(row(/zsh/));
@@ -387,14 +387,23 @@ describe("Terminal window shortcuts", () => {
     expect(await screen.findByRole("button", { name: "Show sidebar" })).toBeTruthy();
   });
 
-  it("folds a machine's terminals away, groups by machine, and turns into the rail below 160 px", async () => {
+  // Fault detected (Hamed, 2026-11-22): expanding a machine showed nothing under it.
+  it("lists exactly a machine's terminals under it, folds them, groups by machine, and turns into the rail below 160 px", async () => {
     installOperator({ "local-terminal:watch": watching(three) });
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
-    const machine = within(screen.getByRole("list", { name: "Machines" })).getByRole("button", { name: /This Computer/ });
+    const machines = screen.getByRole("list", { name: "Machines" });
+    const own = within(machines).getByRole("list", { name: "This Computer terminals" });
+    expect(within(own).getAllByRole("button").map((button) => button.textContent?.match(/alpha|beta|gamma|remote one/)?.[0])).toEqual(["alpha", "beta", "gamma"]);
+    fireEvent.click(within(own).getByRole("button", { name: /gamma/ }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
+
+    const machine = within(machines).getByRole("button", { name: /This Computer/ });
     fireEvent.click(machine);
     expect(machine.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("button", { name: /alpha/ })).toBeNull();
+    expect(within(machines).queryByRole("list", { name: "This Computer terminals" })).toBeNull();
+    // The status list still shows every terminal.
+    expect(within(sidebar()).getByRole("button", { name: /alpha/ })).toBeTruthy();
     fireEvent.click(machine);
     fireEvent.click(screen.getByRole("button", { name: "Group by machine" }));
     expect(screen.getByRole("region", { name: "This Computer" })).toBeTruthy();

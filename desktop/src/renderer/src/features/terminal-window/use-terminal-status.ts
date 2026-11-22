@@ -28,8 +28,9 @@ const COMPUTER_PREFIX = "computer:";
 
 export const computerMachineId = (slot: string) => `${COMPUTER_PREFIX}${slot}`;
 
-export function computerMachine(computer: Pick<MatrixComputer, "runtimeSlot" | "label">): TerminalSidebarMachine {
-  return { id: computerMachineId(computer.runtimeSlot), name: computer.label, remote: true };
+/** A computer by its own name (its handle), so rows can tell computers apart. */
+export function computerMachine(computer: Pick<MatrixComputer, "runtimeSlot" | "handle">): TerminalSidebarMachine {
+  return { id: computerMachineId(computer.runtimeSlot), name: computer.handle, remote: true };
 }
 
 export type LocalTerminalFactsState =
@@ -134,7 +135,7 @@ export function useComputerTerminalEvents(options: {
 /** Every terminal the sidebar shows: this Mac first, then each computer in inventory order. */
 export function terminalStatusRows(
   local: LocalTerminalFactsState,
-  computers: ReadonlyArray<Pick<MatrixComputer, "runtimeSlot" | "label">>,
+  computers: ReadonlyArray<Pick<MatrixComputer, "runtimeSlot" | "handle">>,
   states: Readonly<Record<string, TerminalEventsState>>,
   here: TerminalSidebarMachine = localMachine(),
 ): TerminalSidebarRow[] {

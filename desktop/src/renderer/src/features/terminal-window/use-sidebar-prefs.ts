@@ -15,13 +15,14 @@ const MAX_FOLDS = 200;
 
 const PrefsSchema = z.object({
   folded: z.array(z.string().max(256)).max(MAX_FOLDS).catch([]),
-  foldedMachines: z.array(z.string().max(128)).max(MAX_FOLDS).catch([]),
+  // A machine's own terminal list, folded (true) or open (false) by the person; absent means the default.
+  machineFolds: z.record(z.string().max(128), z.boolean()).refine((folds) => Object.keys(folds).length <= MAX_FOLDS).catch({}),
   view: z.enum(["priority", "machine"]).catch("priority"),
   width: z.number().min(SIDEBAR_MIN_WIDTH).max(SIDEBAR_MAX_WIDTH).catch(DEFAULT_WIDTH),
   rail: z.boolean().catch(false),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], foldedMachines: [], view: "priority", width: DEFAULT_WIDTH, rail: false };
+const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false };
 
 function read(): SidebarPrefs {
   try {
@@ -61,7 +62,13 @@ export function useSidebarPrefs() {
   return {
     prefs,
     toggleFold: useCallback((id: string) => update((current) => ({ ...current, folded: toggled(current.folded, id) })), [update]),
-    toggleMachine: useCallback((id: string) => update((current) => ({ ...current, foldedMachines: toggled(current.foldedMachines, id) })), [update]),
+    /** Folds or opens a machine's own list; `folded` is how it shows now (its default included). */
+    setMachineFolded: useCallback((id: string, folded: boolean) => update((current) => {
+      const machineFolds = { ...current.machineFolds, [id]: folded };
+      const keys = Object.keys(machineFolds);
+      for (const key of keys.slice(0, Math.max(0, keys.length - MAX_FOLDS))) delete machineFolds[key];
+      return { ...current, machineFolds };
+    }), [update]),
     setView: useCallback((view: TerminalSidebarView) => update((current) => ({ ...current, view })), [update]),
     /** Dragging the edge below the rail width turns the sidebar into the rail. */
     setWidth: useCallback((width: number) => update((current) => (width < SIDEBAR_RAIL_BELOW

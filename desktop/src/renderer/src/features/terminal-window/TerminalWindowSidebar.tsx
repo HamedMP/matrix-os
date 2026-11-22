@@ -1,9 +1,11 @@
 // The Terminal window's left side, as in Herdr (spec 2706): machines on top,
 // each foldable with a `+`, then every terminal by what it needs from the
 // person. Below the rail width it is a numbered rail.
-import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Cloud, Laptop, ListTree, PanelLeftOpen, Plus, Rows3 } from "lucide-react";
-import { TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView } from "@matrix-os/ui/terminal-status-sidebar";
+import {
+  TerminalSidebarList, TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
+} from "@matrix-os/ui/terminal-status-sidebar";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "./use-sidebar-prefs";
@@ -19,6 +21,8 @@ export interface SidebarMachine {
   dotColor?: string;
   /** Terminals can be listed and started there now. */
   available: boolean;
+  /** Unavailable for now (not starting): listed compactly under one fold at the end. */
+  dormant?: boolean;
   /** A computer's `+`: starts a shell there. This device uses the agent menu instead. */
   onCreate?(): void;
   creating?: boolean;
@@ -30,7 +34,8 @@ export interface TerminalWindowSidebarProps {
   machines: readonly SidebarMachine[];
   /** Shown below the machines: the Matrix computers' loading, sign-in or error state. */
   machinesStatus?: ReactNode;
-  foldedMachines: readonly string[];
+  /** Whether a machine's own terminal list is folded. */
+  machineFolded(id: string): boolean;
   onToggleMachine(id: string): void;
   localCreating: boolean;
   onCreateLocal(launch: { agent?: LocalTerminalAgent }): void;
@@ -49,8 +54,10 @@ export interface TerminalWindowSidebarProps {
   notices?: ReactNode;
 }
 
-function MachineRow({ machine, folded, onToggle, local }: {
+function MachineRow({ machine, folded, onToggle, local, terminals }: {
   machine: SidebarMachine; folded: boolean; onToggle(): void; local?: ReactNode;
+  /** The machine's own terminals, shown while it is open. */
+  terminals?: ReactNode;
 }) {
   const icon = machine.kind === "local" ? <Laptop size={14} /> : <Cloud size={14} />;
   return (
@@ -76,6 +83,7 @@ function MachineRow({ machine, folded, onToggle, local }: {
         ) : null)}
       </div>
       {machine.status ?? null}
+      {folded ? null : terminals ?? null}
     </li>
   );
 }
@@ -103,9 +111,55 @@ function ResizeEdge({ width, onResize }: { width: number; onResize(width: number
   );
 }
 
+function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[] }) {
+  const [open, setOpen] = useState(false);
+  if (machines.length === 0) return null;
+  return (
+    <li>
+      <button type="button" aria-expanded={open} onClick={() => setOpen((shown) => !shown)}
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
+        style={secondaryText}>
+        {open ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+        Unavailable ({machines.length})
+      </button>
+      {open ? (
+        <ul aria-label="Unavailable machines" className="flex flex-col pl-5">
+          {machines.map((machine) => (
+            <li key={machine.id} data-machine={machine.id} className="truncate px-2 py-0.5 text-[12px] opacity-70" style={secondaryText}>
+              {machine.name} · {machine.detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
+  const rowsByMachine = new Map<string, TerminalSidebarRow[]>();
+  for (const row of props.rows) rowsByMachine.set(row.machine.id, [...(rowsByMachine.get(row.machine.id) ?? []), row]);
+  const machineRow = (machine: SidebarMachine, local?: ReactNode) => (
+    <MachineRow key={machine.id} machine={machine} folded={props.machineFolded(machine.id)}
+      onToggle={() => props.onToggleMachine(machine.id)} local={local}
+      terminals={<TerminalSidebarList label={`${machine.name} terminals`} rows={rowsByMachine.get(machine.id) ?? []}
+        selectedKey={props.selectedKey} onSelect={props.onSelect} folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} />} />
+  );
+  const [local, ...others] = props.machines;
+  return (
+    // Its own scroll past a third of the window, so the terminals below stay in view.
+    <ul aria-label="Machines" className="flex max-h-[33vh] shrink-0 flex-col gap-0.5 overflow-y-auto">
+      {local
+        ? machineRow(local, local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null)
+        : null}
+      {others.filter((machine) => !machine.dormant).map((machine) => machineRow(machine))}
+      {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
+      <UnavailableMachines machines={others.filter((machine) => machine.dormant)} />
+      {props.machinesStatus ?? null}
+    </ul>
+  );
+}
+
 export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
-  const foldedMachines = new Set(props.foldedMachines);
-  const visibleRows = props.rows.filter((row) => !foldedMachines.has(row.machine.id));
   const shell = { borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" };
   if (props.rail) {
     return (
@@ -114,27 +168,16 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
           className={`${iconButton} mt-2`} style={secondaryText}>
           <PanelLeftOpen size={14} aria-hidden="true" />
         </button>
-        <TerminalStatusSidebar rows={visibleRows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
+        <TerminalStatusSidebar rows={props.rows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
           folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} rail />
       </div>
     );
   }
-  const [local, ...computers] = props.machines;
   return (
     <div className="relative flex shrink-0 flex-col border-r" style={{ ...shell, width: props.width }}>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-1.5">
         <h2 className="px-2 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide" style={secondaryText}>Machines</h2>
-        <ul aria-label="Machines" className="flex flex-col gap-0.5">
-          {local ? (
-            <MachineRow machine={local} folded={foldedMachines.has(local.id)} onToggle={() => props.onToggleMachine(local.id)}
-              local={local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null} />
-          ) : null}
-          {computers.map((machine) => (
-            <MachineRow key={machine.id} machine={machine} folded={foldedMachines.has(machine.id)}
-              onToggle={() => props.onToggleMachine(machine.id)} />
-          ))}
-          {props.machinesStatus ?? null}
-        </ul>
+        <MachinesList props={props} />
         <div className="mt-2 flex items-center gap-1 px-2 pb-0.5 pt-1">
           <h2 className="min-w-0 flex-1 text-[11px] font-medium uppercase tracking-wide" style={secondaryText}>Terminals</h2>
           <button type="button" aria-label={props.view === "priority" ? "Group by machine" : "Group by status"}
@@ -143,9 +186,9 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
             {props.view === "priority" ? <ListTree size={13} aria-hidden="true" /> : <Rows3 size={13} aria-hidden="true" />}
           </button>
         </div>
-        {visibleRows.length === 0
+        {props.rows.length === 0
           ? <p className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet. Start one with + next to a machine.</p>
-          : <TerminalStatusSidebar rows={visibleRows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
+          : <TerminalStatusSidebar rows={props.rows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
               folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} />}
         {props.notices ?? null}
       </div>

@@ -74,3 +74,19 @@ describe("terminal status sidebar", () => {
     expect(within(screen.getByRole("button", { name: "zsh" })).queryByLabelText("Working")).toBeNull();
   });
 });
+
+describe("one machine's terminal list", () => {
+  it("lists exactly the rows it is given, most urgent first, and opens one", async () => {
+    const { TerminalSidebarList } = await import("../../packages/ui/src/terminal-status-sidebar/index.js");
+    const { render, screen, within, fireEvent, cleanup } = await import("@testing-library/react");
+    const machine = { id: "computer:demo", name: "matrix-demo", remote: true };
+    const onSelect = vi.fn();
+    render(<TerminalSidebarList label="matrix-demo terminals" now={Date.now()} folded={[]} onToggleFold={() => undefined} onSelect={onSelect}
+      rows={[{ key: "a", name: "idle shell", machine }, { key: "b", name: "agent", machine, status: "blocked" }]} />);
+    const list = screen.getByRole("list", { name: "matrix-demo terminals" });
+    expect(within(list).getAllByRole("button").map((button) => button.textContent)).toEqual([expect.stringContaining("agent"), expect.stringContaining("idle shell")]);
+    fireEvent.click(within(list).getByRole("button", { name: /idle shell/ }));
+    expect(onSelect).toHaveBeenCalledWith("a");
+    cleanup();
+  });
+});

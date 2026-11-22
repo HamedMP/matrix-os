@@ -97,6 +97,18 @@ function Section({ section, props }: { section: TerminalSidebarSection; props: T
 }
 
 /**
+ * One machine's terminals as plain rows (no sections), most urgent first, as
+ * under a machine in the sidebar's machines list.
+ */
+export function TerminalSidebarList(props: Omit<TerminalStatusSidebarProps, "view" | "rail"> & { label: string }) {
+  const entries = useMemo(() => terminalStatusSections(props.rows).flatMap((section) => section.rows), [props.rows]);
+  if (entries.length === 0) return null;
+  return <ul aria-label={props.label} className="px-1 pb-1">
+    {entries.map((entry) => <Row key={entry.key} entry={entry} depth={0} props={{ ...props, view: "priority" }} />)}
+  </ul>;
+}
+
+/**
  * Herdr's agents sidebar: terminals by what they need from the person (Needs
  * you, Done, Working, Idle) or by machine, each section foldable, sub-agents
  * under their parent. Shared so Web can adopt it; the host owns fold state,

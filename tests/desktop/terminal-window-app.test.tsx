@@ -68,13 +68,14 @@ describe("Terminal window", () => {
   it("lists this device first, then every Matrix computer with its availability, streaming status only from available ones", async () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);
-    expect(await screen.findByText("Main Computer")).toBeTruthy();
+    expect(await screen.findByText("operator")).toBeTruthy();
     const sections = Array.from(document.querySelectorAll("[data-machine]"));
-    expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "computer:primary", "computer:review", "computer:old"]);
+    expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "computer:primary", "computer:review"]);
     expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]);
-    expect(screen.getByText("Main Computer")).toBeTruthy();
-    expect(screen.getByText("operator-review · Starting")).toBeTruthy();
-    expect(screen.getByText("operator-old · Unavailable")).toBeTruthy();
+    // Each computer leads with its own name; unavailable ones wait under one fold.
+    expect(screen.getByText("Preview Computer · Starting")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Unavailable (1)" }));
+    expect(screen.getByText("operator-old · Additional Computer · Unavailable")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Terminals across your computers" })).toBeTruthy();
   });
 
@@ -107,7 +108,7 @@ describe("Terminal window", () => {
     expect(document.body.textContent).not.toContain("ECONNREFUSED");
     fail = false;
     fireEvent.click(retry);
-    expect(await screen.findByText("Main Computer")).toBeTruthy();
+    expect(await screen.findByText("operator")).toBeTruthy();
   });
 
   it("reloads the inventory when the session changes and ignores a stale response", async () => {
@@ -122,19 +123,19 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     await waitFor(() => expect(calls).toBe(1));
     act(() => operator.emit("auth:changed", { signedIn: true, handle: "operator" }));
-    expect(await screen.findByText("Preview Computer")).toBeTruthy();
+    expect(await screen.findByText("operator-review")).toBeTruthy();
     await act(async () => { resolveFirst(computers); });
-    expect(screen.queryByText("Main Computer")).toBeNull();
+    expect(screen.queryByText("operator")).toBeNull();
   });
 
   it("lets a computer that finished starting be opened without reopening the window", async () => {
     let inventory = { ...computers, items: computers.items.map((item, index) => (index === 0 ? { ...item, availability: "starting" } : item)) };
     const operator = installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => inventory });
     render(<TerminalWindowApp />);
-    const name = computers.items[0]!.label;
+    const name = computers.items[0]!.handle;
     await screen.findByText(name);
     // While it starts there is nothing to open, and no events stream.
-    const machine = () => screen.getByRole("button", { name: new RegExp(`^${name}`) }) as HTMLButtonElement;
+    const machine = () => screen.getByRole("button", { name: new RegExp(`^${name}(?!-)`) }) as HTMLButtonElement;
     expect(machine().disabled).toBe(true);
     expect(FakeWebSocket.opened).toEqual([]);
     inventory = computers;
@@ -151,11 +152,11 @@ describe("Terminal window", () => {
     const operator = installOperator({ ...base, "auth:status": () => signedIn,
       "runtime:list-computers": () => { if (fail) throw new Error("offline"); return computers; } });
     render(<TerminalWindowApp />);
-    await screen.findByText(computers.items[0]!.label);
+    await screen.findByText(computers.items[0]!.handle);
     fail = true;
     act(() => operator.emit("window:focus-changed", { focused: true }));
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(screen.getByText(computers.items[0]!.label)).toBeTruthy();
+    expect(screen.getByText(computers.items[0]!.handle)).toBeTruthy();
     expect(screen.queryByText("Couldn't load your computers.")).toBeNull();
   });
 
@@ -163,10 +164,10 @@ describe("Terminal window", () => {
     let status: unknown = signedIn;
     const operator = installOperator({ ...base, "auth:status": () => status, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);
-    expect(await screen.findByText("Main Computer")).toBeTruthy();
+    expect(await screen.findByText("operator")).toBeTruthy();
     status = { signedIn: false, platformHost: "https://app.matrix-os.com", authGeneration: 2 };
     act(() => operator.emit("auth:changed", { signedIn: false }));
     expect(await screen.findByRole("button", { name: "Sign in" })).toBeTruthy();
-    expect(screen.queryByText("Main Computer")).toBeNull();
+    expect(screen.queryByText("operator")).toBeNull();
   });
 });

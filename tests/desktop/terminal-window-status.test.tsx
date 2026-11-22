@@ -88,7 +88,7 @@ describe("Terminal window status", () => {
       lab.deliver({ type: "attention", seq: 2, tabs: { [`${workspaceId}:${tabId}`]: { doneAt: "2026-11-11T10:04:00.000Z", seen: false } } });
     });
     const key = `computer:lab|${workspaceId}:${tabId}`;
-    expect(result.current.rows).toEqual([expect.objectContaining({ key, name: "build", status: "done", seen: false, machine: expect.objectContaining({ name: "lab", remote: true }) })]);
+    expect(result.current.rows).toEqual([expect.objectContaining({ key, name: "build", status: "done", seen: false, machine: expect.objectContaining({ name: "neo", remote: true }) })]);
 
     act(() => result.current.markSeen(key));
     expect(lab.sent).toEqual([JSON.stringify({ type: "seen", ref: { workspaceId, tabId } })]);

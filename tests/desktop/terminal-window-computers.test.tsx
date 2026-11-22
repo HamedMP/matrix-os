@@ -110,7 +110,7 @@ describe("Terminal window computers", () => {
     await stream("primary", [tabFacts(TAB_1, "build", { agentStatus: "working" })]);
     await stream("extra", [tabFacts(TAB_2, "deploy", { agentStatus: "blocked" })]);
     const needsYou = await screen.findByRole("region", { name: "Needs you" });
-    expect(within(needsYou).getByRole("button", { name: /deploy/ }).textContent).toContain("Additional Computer");
+    expect(within(needsYou).getByRole("button", { name: /deploy/ }).textContent).toContain("neo-extra");
     expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -140,7 +140,7 @@ describe("Terminal window computers", () => {
       return json(workspace([{ id: TAB_1, name: "Terminal" }]));
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal on Main Computer" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
 
     expect((await screen.findByTestId("terminal-view")).textContent).toBe(`${WS}:${TAB_1}`);
     expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/ensure`);
@@ -153,7 +153,7 @@ describe("Terminal window computers", () => {
     fetchMock.mockImplementation(async () => json({ error: "unavailable" }, 503));
     render(<TerminalWindowApp />);
     await stream("primary", [tabFacts(TAB_1, "build")]);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal on Main Computer" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
     expect(within(sidebar()).getByRole("button", { name: /build/ })).toBeTruthy();
   });
@@ -163,7 +163,7 @@ describe("Terminal window computers", () => {
     let refuse = true;
     fetchMock.mockImplementation(async () => (refuse ? json({ error: "jwt expired at db01.internal" }, 401) : json(workspace([]))));
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal on Main Computer" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
     const reconnect = await screen.findByRole("button", { name: "Reconnect" });
     expect(screen.getByText("This computer needs you to reconnect.")).toBeTruthy();
     expect(document.body.textContent).not.toContain("db01");
@@ -182,7 +182,7 @@ describe("Terminal window computers", () => {
     });
     render(<TerminalWindowApp />);
     await stream("primary", [tabFacts(TAB_1, "build")]);
-    const create = await screen.findByRole("button", { name: "New terminal on Main Computer" });
+    const create = await screen.findByRole("button", { name: "New terminal on neo" });
     fireEvent.click(create);
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
     fireEvent.click(within(sidebar()).getByRole("button", { name: /build/ }));
@@ -205,7 +205,7 @@ describe("Terminal window computers", () => {
       return json(workspace([{ id: TAB_1, name: "build" }]));
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "New terminal on Main Computer" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
 
     signedIn = false;
@@ -254,9 +254,9 @@ describe("Terminal window computers", () => {
   // Fault detected (Greptile, #3567): an available computer whose stream never connected looked like one with no terminals.
   it("shows an available computer as connecting until its stream connects", async () => {
     render(<TerminalWindowApp />);
-    expect(await screen.findByText("neo · Connecting…")).toBeTruthy();
+    expect(await screen.findByText("Main Computer · Connecting…")).toBeTruthy();
     await stream("primary", []);
-    expect(await screen.findByText("neo · Available")).toBeTruthy();
+    expect(await screen.findByText("Main Computer · Available")).toBeTruthy();
   });
 
   it("asks before Cmd+W ends a running computer terminal, and removes a finished one at once", async () => {

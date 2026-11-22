@@ -101,13 +101,15 @@ function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
   };
   const computers = (view.ready?.computers ?? []).map((computer): SidebarMachine => ({
     id: computerMachineId(computer.runtimeSlot),
-    name: computer.label,
+    // Led by its own name; the kind (Main, Preview, Additional) is the detail.
+    name: computer.handle,
     kind: "computer",
     // An available computer whose stream has not connected says so, instead of looking empty.
-    detail: `${computer.handle} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
+    detail: `${computer.label} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
       ? "Connecting…" : AVAILABILITY_LABEL[computer.availability]}`,
     dotColor: AVAILABILITY_COLOR[computer.availability],
     available: computer.availability === "available",
+    dormant: computer.availability === "unavailable",
     creating: view.cloud.creating === computer.runtimeSlot,
     onCreate: () => view.createCloud(computer.runtimeSlot),
     ...(view.cloud.terminals[computer.runtimeSlot]?.status === "failed"
@@ -198,8 +200,8 @@ export default function TerminalWindowApp() {
         <TerminalWindowSidebar
           machines={machines}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
-          foldedMachines={prefs.foldedMachines}
-          onToggleMachine={view.sidebar.toggleMachine}
+          machineFolded={view.machineFolded}
+          onToggleMachine={(id) => view.sidebar.setMachineFolded(id, !view.machineFolded(id))}
           localCreating={view.local.creating}
           onCreateLocal={view.createLocal}
           rows={view.status.rows}

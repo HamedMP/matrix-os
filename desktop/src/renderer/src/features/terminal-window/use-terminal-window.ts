@@ -68,10 +68,7 @@ export function useTerminalWindow() {
 
   const selectedKey = localOpen ? `${here.id}|${localOpen.id}`
     : cloud.active ? `${computerMachineId(cloud.active.slot)}|${cloud.active.refKey}` : null;
-  const visibleRows = useMemo(() => {
-    const folded = new Set(sidebar.prefs.foldedMachines);
-    return status.rows.filter((row) => !folded.has(row.machine.id));
-  }, [status.rows, sidebar.prefs.foldedMachines]);
+  const visibleRows = status.rows;
   const order = useMemo(
     () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view })),
     [visibleRows, sidebar.prefs.view],
@@ -204,6 +201,8 @@ export function useTerminalWindow() {
 
   return {
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice,
+    /** This Mac and the machine on screen start open; others start folded, unless the person chose. */
+    machineFolded: (id: string) => sidebar.prefs.machineFolds[id] ?? !(id === here.id || (selectedKey?.startsWith(`${id}|`) ?? false)),
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
