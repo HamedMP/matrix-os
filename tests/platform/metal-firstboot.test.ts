@@ -84,7 +84,7 @@ describe('metal VM first boot', () => {
 
   async function provision(configOverrides: Partial<ReturnType<typeof createTestConfig>> = {}) {
     const client = {
-      capacity: async () => ({ memoryAvailableMiB: 60_000, poolFreeBytes: 1024 ** 4, runningVms: 0, suspendedVms: 0 }),
+      capacity: async () => ({ memoryAvailableMiB: 60_000, poolFreeBytes: 1024 ** 4, runningVms: 0, suspendedVms: 0, thinPool: { dataPercent: 20, metadataPercent: 5 } }),
       createVm: async (spec: HostdCreateVmRequest) => {
         userData = spec.userData;
         return { id: 'vm_0123456789abcdef01234567', privateIPv4: '10.78.0.14' };

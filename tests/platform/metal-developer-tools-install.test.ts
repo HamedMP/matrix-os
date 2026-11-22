@@ -58,7 +58,7 @@ describe('free metal developer tools on a clone', () => {
   async function renderFreeUserData(): Promise<string> {
     let userData = '';
     const client = {
-      capacity: async () => ({ memoryAvailableMiB: 60_000, poolFreeBytes: 1024 ** 4, runningVms: 0, suspendedVms: 0 }),
+      capacity: async () => ({ memoryAvailableMiB: 60_000, poolFreeBytes: 1024 ** 4, runningVms: 0, suspendedVms: 0, thinPool: { dataPercent: 20, metadataPercent: 5 } }),
       createVm: async (spec: HostdCreateVmRequest) => { userData = spec.userData; return { id: 'vm_0123456789abcdef01234567', privateIPv4: '10.78.0.14' }; },
     } as unknown as HostdClient;
     await createMetalProvisioner({

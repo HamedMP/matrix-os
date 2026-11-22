@@ -62,7 +62,7 @@ async function pinStableBundle(db: PlatformDB) {
 
 function fakeHostd() {
   const capacity = vi.fn(async (): Promise<HostdCapacityResponse> => ({
-    memoryAvailableMiB: 60_000, poolFreeBytes: 1024 * 1024 ** 3, runningVms: 0, suspendedVms: 0,
+    memoryAvailableMiB: 60_000, poolFreeBytes: 1024 * 1024 ** 3, runningVms: 0, suspendedVms: 0, thinPool: { dataPercent: 20, metadataPercent: 5 },
   }));
   let vmCount = 0;
   const createVm = vi.fn(async (_spec: HostdCreateVmRequest) => {

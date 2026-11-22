@@ -129,10 +129,22 @@ describe('hostd client', () => {
     [503, 'busy'],
     [401, 'unauthorized'],
     [507, 'pool_full'],
+    // The host's thin pool is too full for a new VM: placement tries another host.
+    [503, 'capacity'],
   ] as const)('maps a %i %s answer to a typed error', async (status, code) => {
     hostd.handle((_req, res) => json(res, status, { error: code }));
 
     expect((await rejection(client().resume(VM_ID, 1000))).code).toBe(code);
+  });
+
+  it('parses the thin pool usage in capacity, or null when hostd cannot read it', async () => {
+    const base = { memoryAvailableMiB: 1000, poolFreeBytes: 10, runningVms: 1, suspendedVms: 0 };
+    hostd.handle((_req, res) => json(res, 200, { ...base, thinPool: { dataPercent: 41.5, metadataPercent: 12 } }));
+    expect(await client().capacity()).toMatchObject({ thinPool: { dataPercent: 41.5, metadataPercent: 12 } });
+    hostd.handle((_req, res) => json(res, 200, { ...base, thinPool: null }));
+    expect((await client().capacity()).thinPool).toBeNull();
+    hostd.handle((_req, res) => json(res, 200, { ...base, thinPool: { dataPercent: 140, metadataPercent: 12 } }));
+    expect((await rejection(client().capacity())).code).toBe('invalid_response');
   });
 
   it('never surfaces hostd error text in the error message', async () => {

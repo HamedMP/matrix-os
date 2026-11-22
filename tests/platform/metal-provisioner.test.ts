@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
 import { sql, type KyselyPlugin, type QueryId } from 'kysely';
 import {
+  getActiveUserMachineByClerkId,
   getUserMachine,
   insertUserMachine,
   promoteHostBundleChannel,
@@ -123,7 +124,8 @@ interface FakeHost {
 function fakeHost(capacity: Partial<HostdCapacityResponse> | Error): FakeHost {
   const capacityFn = vi.fn(async () => {
     if (capacity instanceof Error) throw capacity;
-    return { memoryAvailableMiB: 0, poolFreeBytes: 1024 * GiB, runningVms: 0, suspendedVms: 0, ...capacity };
+    return { memoryAvailableMiB: 0, poolFreeBytes: 1024 * GiB, runningVms: 0, suspendedVms: 0,
+      thinPool: { dataPercent: 20, metadataPercent: 5 }, ...capacity };
   });
   const createVm = vi.fn(async (_spec: HostdCreateVmRequest) => ({ id: 'vm_0123456789abcdef01234567', privateIPv4: '10.77.0.9' }));
   const listVms = vi.fn(async () => []);
@@ -295,6 +297,42 @@ describe('metal provisioner', () => {
     expect(await provisioner({ machineIds: ['1f1e2d3c-4b5a-4968-8776-655443322110'] })
       .provision({ clerkUserId: 'user_third', handle: 'carol', tier: 'paid', developerTools: ['vim' as never] }))
       .toEqual({ error: 'unavailable' });
+  });
+
+  it('skips hosts whose thin pool is unknown or past the thresholds, and prefers the emptier pool', async () => {
+    const unknown = await addHost('host-a', { memoryAvailableMiB: 90_000, thinPool: null });
+    const fullData = await addHost('host-b', { memoryAvailableMiB: 90_000, thinPool: { dataPercent: 86, metadataPercent: 5 } });
+    const fullMeta = await addHost('host-c', { memoryAvailableMiB: 90_000, thinPool: { dataPercent: 10, metadataPercent: 81 } });
+    const busier = await addHost('host-d', { memoryAvailableMiB: 60_000, thinPool: { dataPercent: 70, metadataPercent: 5 } });
+    const emptier = await addHost('host-e', { memoryAvailableMiB: 60_000, thinPool: { dataPercent: 30, metadataPercent: 5 } });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    for (const skipped of [unknown, fullData, fullMeta, busier]) expect(skipped.createVm).not.toHaveBeenCalled();
+    expect(emptier.createVm).toHaveBeenCalledTimes(1);
+  });
+
+  it('places on another host when hostd refuses for capacity, without failing the build', async () => {
+    const first = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    const second = await addHost('host-b', { memoryAvailableMiB: 60_000 });
+    first.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    expect(second.createVm).toHaveBeenCalledTimes(1);
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'provisioning', metalHostId: 'host-b', attempt: 1 });
+    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toEqual([]);
+  });
+
+  it('answers busy when every host refuses for capacity, and the next build is still attempt 1', async () => {
+    const only = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    only.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    expect(await getActiveUserMachineByClerkId(db, 'user_metal', 'primary')).toBeUndefined();
+    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toEqual([]);
+
+    expect(await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: '0f1e2d3c-4b5a-4968-8776-655443322110' });
+    expect(await getUserMachine(db, '0f1e2d3c-4b5a-4968-8776-655443322110')).toMatchObject({ attempt: 1 });
   });
 
   it('breaks a headroom tie by the fewest running VMs', async () => {
