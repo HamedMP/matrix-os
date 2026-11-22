@@ -8,7 +8,7 @@ import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../customer-vps-ho
 import { hostBundleUrlForImageVersion } from '../customer-vps-host-bundle.js';
 import { ClerkUserIdSchema, CustomerHandleSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { toUserMachineRow } from '../database/user-machine-records.js';
-import { DEFAULT_DEVELOPER_TOOLS, type DeveloperToolId } from '../developer-tools.js';
+import { DEFAULT_DEVELOPER_TOOLS, DeveloperToolsSchema, type DeveloperToolId } from '../developer-tools.js';
 import {
   getActiveUserMachineByClerkId,
   getHostBundleRelease,
@@ -72,9 +72,10 @@ export const METAL_VM_SHAPES = {
 } as const;
 
 /**
- * Developer tools preinstalled per tier. Free runtimes preinstall only Claude
- * Code and Codex (the free plan selects no tools); OpenCode and Pi stay
- * installable on demand from the Terminal + menu. Paid keeps the default set.
+ * Developer tools preinstalled per tier when the caller names none. Free
+ * runtimes always preinstall only Claude Code and Codex (the free plan selects
+ * no tools); OpenCode and Pi stay installable from the Terminal + menu. Paid
+ * uses the owner's plan-step choice, else the default set.
  */
 export const METAL_DEVELOPER_TOOLS: Record<MetalTier, readonly DeveloperToolId[]> = {
   free: ['codex', 'claude-code'],
@@ -89,6 +90,8 @@ const ProvisionInputSchema = z.object({
   handle: CustomerHandleSchema,
   tier: z.enum(['free', 'paid']),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+  /** A paid owner's plan-step choice (canonicalized like the Hetzner path). Ignored for free. */
+  developerTools: DeveloperToolsSchema.optional(),
 });
 
 type Log = (event: string, fields: Record<string, unknown>) => void;
@@ -555,10 +558,15 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
   }
 
   return {
-    async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
+    async provision(input: {
+      clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string; developerTools?: readonly DeveloperToolId[];
+    }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
       if (!parsed.success) return { error: 'unavailable' };
       const { clerkUserId, handle, tier, runtimeSlot } = parsed.data;
+      const developerTools = tier === 'free'
+        ? METAL_DEVELOPER_TOOLS.free
+        : parsed.data.developerTools ?? METAL_DEVELOPER_TOOLS.paid;
 
       // Cheap idempotency check before probing hosts; the claim re-checks under the lock.
       let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
@@ -586,7 +594,6 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const at = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(at, config.registrationTokenTtlMs);
-      const developerTools = METAL_DEVELOPER_TOOLS[tier];
       const rendered = await renderUserData({ machineId, clerkUserId, handle, runtimeSlot, registration, developerTools });
       if (!rendered) return { error: 'unavailable' };
 

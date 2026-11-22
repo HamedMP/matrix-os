@@ -280,6 +280,23 @@ describe('metal provisioner', () => {
     expect(paid.userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code opencode pi'$/m);
   });
 
+  it('honours a paid owner\'s plan-step tool choice, canonicalized, but never a free owner\'s', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'paid', developerTools: ['pi', 'codex', 'pi'] });
+    expect((host.createVm.mock.calls[0]![0] as HostdCreateVmRequest).userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex pi'$/m);
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ developerTools: ['codex', 'pi'] });
+
+    await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_other', handle: 'bob', tier: 'free', developerTools: ['opencode', 'pi'] });
+    expect((host.createVm.mock.calls[1]![0] as HostdCreateVmRequest).userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code'$/m);
+
+    // An unknown tool is refused, not silently dropped.
+    expect(await provisioner({ machineIds: ['1f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_third', handle: 'carol', tier: 'paid', developerTools: ['vim' as never] }))
+      .toEqual({ error: 'unavailable' });
+  });
+
   it('breaks a headroom tie by the fewest running VMs', async () => {
     const busy = await addHost('host-a', { memoryAvailableMiB: 50_000, runningVms: 30 });
     const quiet = await addHost('host-b', { memoryAvailableMiB: 50_000, runningVms: 3 });
