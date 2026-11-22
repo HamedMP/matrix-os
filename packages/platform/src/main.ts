@@ -280,6 +280,8 @@ export function createApp(deps: {
   orgMcpRoutes?: Hono<any>;
   /** Matrix Core repo webhook, admin sync, and VPS tarball routes (spec 2691); platform-owned. */
   coreRepoRoutes?: Hono<any>;
+  /** Spec 2701 shared messaging bridge: machine-credential routes under /internal/messaging-bridge. */
+  messagingBridgeRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -689,6 +691,7 @@ export function createApp(deps: {
   deps.collaboration?.register(app);
   if (deps.orgMcpRoutes) app.route('/', deps.orgMcpRoutes);
   if (deps.coreRepoRoutes) app.route('/', deps.coreRepoRoutes);
+  if (deps.messagingBridgeRoutes) app.route('/', deps.messagingBridgeRoutes);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
   const browserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });

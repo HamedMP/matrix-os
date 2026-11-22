@@ -126,6 +126,7 @@ import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 import { loadPreviewRuntimeAccessConfig } from './preview-runtime-access.js';
 import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
+import { createConfiguredMessagingBridge } from './messaging-bridge/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 import { appOrigin } from './origins.js';
 import { createPreviewPairRuntimeOnlyService } from './preview-pair/candidate-runtime.js';
@@ -267,6 +268,7 @@ type CreatePlatformApp = (deps: {
   externalCoreMcp?: ExternalCoreMcp;
   orgMcpRoutes?: Hono<any>;
   coreRepoRoutes?: Hono<any>;
+  messagingBridgeRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -890,6 +892,9 @@ async function startPlatformServerWithCleanup(
     organizations: platformOrganizations, authenticateMachine: createCoreRepoMachineAuthenticator(db, platformSecret),
     resolveActor: resolveSessionActor, backgroundWorkers: backgroundWorkersEnabled });
   registerCustomMcpStartupCleanup(coreRepo.shutdown);
+  // Spec 2701: shared messaging bridge session and login routes (answer 503 until configured).
+  const messagingBridge = await createConfiguredMessagingBridge({ env: process.env, db, platformSecret });
+  registerCustomMcpStartupCleanup(async () => messagingBridge.shutdown());
 
   // Runtime-only candidates reuse registration/status without provider clients,
   // paid lifecycle workers, or a second machine/organization source of truth.
@@ -1189,6 +1194,7 @@ async function startPlatformServerWithCleanup(
     externalCoreMcp,
     orgMcpRoutes: orgMcp.routes,
     coreRepoRoutes: coreRepo.routes,
+    messagingBridgeRoutes: messagingBridge.routes,
     internalSyncRoutes,
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
@@ -1274,6 +1280,7 @@ async function startPlatformServerWithCleanup(
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
           coreRepo.shutdown(),
+          Promise.resolve(messagingBridge.shutdown()),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);
