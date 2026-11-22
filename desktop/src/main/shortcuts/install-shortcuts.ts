@@ -103,16 +103,19 @@ export async function installShortcuts(deps: {
     const onNavigation: NavigationListener = (details) => {
       if (details.isMainFrame && !details.isSameDocument) stopRecording();
     };
-    const onClosed = () => detachers.get(win)?.();
+    // Electron throws on any use of a window after "closed", and its listeners
+    // die with it, so a closed window is only forgotten, never detached.
+    const onClosed = () => { detachers.delete(win); };
+    const contents = win.webContents;
     const attached = watch(win, () => {
       win.removeListener("blur", stopRecording);
       win.removeListener("closed", onClosed);
-      win.webContents.removeListener("did-start-navigation", onNavigation);
+      contents.removeListener("did-start-navigation", onNavigation);
     });
     if (!attached) return;
     win.on("blur", stopRecording);
     win.on("closed", onClosed);
-    win.webContents.on("did-start-navigation", onNavigation);
+    contents.on("did-start-navigation", onNavigation);
   };
 
   // Covers the main window, the Terminal window and every embedded app view.
@@ -123,7 +126,8 @@ export async function installShortcuts(deps: {
     run: deps.run,
   });
   const watchContents: ContentsCreatedListener = (_event, contents) => {
-    const onDestroyed = () => detachers.get(contents)?.();
+    // Destroyed web contents are forgotten the same way as closed windows.
+    const onDestroyed = () => { detachers.delete(contents); };
     const attached = watch(contents, () => {
       contents.removeListener("before-input-event", matcher);
       contents.removeListener("destroyed", onDestroyed);

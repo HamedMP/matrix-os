@@ -170,17 +170,26 @@ describe("installShortcuts", () => {
     expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenCalledTimes(1);
   });
 
-  it("detaches window listeners on dispose and forgets closed windows", async () => {
-    const { app, main, terminal, installed } = await setup();
+  it("detaches window listeners on dispose", async () => {
+    const { app, main, installed } = await setup();
     app.create(main!);
-    app.create(terminal!);
-    terminal!.emit("closed");
-    expect(terminal!.events.count("blur")).toBe(0);
-    expect(terminal!.webContents.events.count("did-start-navigation")).toBe(0);
     installed.dispose();
     expect(main!.events.count("blur")).toBe(0);
     expect(main!.events.count("closed")).toBe(0);
     expect(main!.webContents.events.count("did-start-navigation")).toBe(0);
+  });
+
+  it("does not touch a window after it closes, because Electron throws on a destroyed window", async () => {
+    const { app, terminal, installed } = await setup();
+    app.create(terminal!);
+    // What Electron does once "closed" fires: every access throws.
+    terminal!.isDestroyed.mockReturnValue(true);
+    Object.defineProperty(terminal!, "webContents", {
+      get() { throw new TypeError("Object has been destroyed"); },
+    });
+    terminal!.removeListener.mockImplementation(() => { throw new TypeError("Object has been destroyed"); });
+    expect(() => terminal!.emit("closed")).not.toThrow();
+    expect(() => installed.dispose()).not.toThrow();
   });
 
   it("runs a bound action from any web contents and stops the page from seeing the key", async () => {
@@ -217,8 +226,8 @@ describe("installShortcuts", () => {
     const destroyed = fakeContents();
     app.createContents(live);
     app.createContents(destroyed);
-    destroyed.events.emit("destroyed");
-    expect(destroyed.events.count("before-input-event")).toBe(0);
+    destroyed.removeListener.mockImplementation(() => { throw new TypeError("Object has been destroyed"); });
+    expect(() => destroyed.events.emit("destroyed")).not.toThrow();
     installed.dispose();
     expect(live.events.count("before-input-event")).toBe(0);
     expect(live.events.count("destroyed")).toBe(0);
