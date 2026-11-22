@@ -32,6 +32,27 @@ export function fundedOriginPairKind(platformOrigin: unknown, relayOrigin: unkno
   return null;
 }
 
+/**
+ * Whether a configuration's platform origin is the guest's own platform. A
+ * guest whose PLATFORM_INTERNAL_URL is a reviewed preview platform accepts only
+ * that exact origin (the preview pair). Every other guest (production hosts on
+ * app/api.matrix-os.com, and collaboration preview pairs on tagged preview API
+ * revisions, which are production-funded) accepts only the production origin.
+ * So a preview proof can never repoint a production guest, nor the reverse.
+ */
+export function fundedPlatformOriginMatchesGuest(platformOrigin: unknown, platformInternalUrl: unknown): boolean {
+  if (typeof platformOrigin !== 'string' || typeof platformInternalUrl !== 'string') return false;
+  let internal: string;
+  try {
+    internal = new URL(platformInternalUrl).origin;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+  if ((FUNDED_PREVIEW_PLATFORM_ORIGINS as readonly string[]).includes(internal)) return platformOrigin === internal;
+  return platformOrigin === FUNDED_PRODUCTION_PLATFORM_ORIGIN;
+}
+
 const fields = {
   contractVersion: z.literal(1),
   identity: FundedHostActivationIdentitySchema,

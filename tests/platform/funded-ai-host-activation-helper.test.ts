@@ -9,7 +9,7 @@ const helper = fileURLToPath(new URL('../../distro/customer-vps/host-bin/matrix-
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 const request = { contractVersion: 1, identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary', runtimeTokenEpoch: 2 }, configuration: { enabled: true, platformOrigin: 'https://app.matrix-os.com', relayOrigin: 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app', runtimeToken: 'a'.repeat(64) } };
-const original = '# preserve bytes\r\nMATRIX_HANDLE=alice\nMATRIX_MACHINE_ID=machine-1\nMATRIX_CLERK_USER_ID=user_1\nMATRIX_RUNTIME_SLOT=primary\nOTHER_SETTING="keep exact"\nMATRIX_FUNDED_AI_ENABLED=false\n';
+const original = '# preserve bytes\r\nMATRIX_HANDLE=alice\nMATRIX_MACHINE_ID=machine-1\nMATRIX_CLERK_USER_ID=user_1\nMATRIX_RUNTIME_SLOT=primary\nPLATFORM_INTERNAL_URL=https://app.matrix-os.com\nOTHER_SETTING="keep exact"\nMATRIX_FUNDED_AI_ENABLED=false\n';
 async function fixture() { const dir = await mkdtemp(join(tmpdir(), 'matrix-funded-activation-')); dirs.push(dir); const envPath = join(dir, 'host.env'); await writeFile(envPath, original, { mode: 0o640 }); return { dir, envPath }; }
 function apply(envPath: string, body: unknown = request, extra = '', markers: string[] = []) {
   const now = new Date();
@@ -57,8 +57,27 @@ describe('funded AI host configuration primitive', () => {
     { identity: { ...request.identity, machineId: 'other' } }, { identity: { ...request.identity, ownerId: 'other' } }, { identity: { ...request.identity, handle: 'bob' } }, { identity: { ...request.identity, runtimeSlot: 'secondary' } },
     { configuration: { ...request.configuration, relayOrigin: 'https://evil.test' } }, { configuration: { ...request.configuration, enabled: false } }, { configuration: { ...request.configuration, runtimeToken: 'bad' } }, { extra: true },
   ])('rejects malformed and mismatched identity/configuration without mutation %j', async (extra) => { const f = await fixture(); expect(apply(f.envPath, { ...request, ...extra }).status).not.toBe(0); expect(await readFile(f.envPath, 'utf8')).toBe(original); });
-  it('installs the reviewed preview pair (preview relay with a preview platform origin)', async () => {
+  it('a production guest rejects the reviewed preview pair, even with a valid proof', async () => {
     const f = await fixture();
+    const preview = { ...request, configuration: { ...request.configuration,
+      platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app' } };
+    expect(apply(f.envPath, preview).status).not.toBe(0);
+    expect(await readFile(f.envPath, 'utf8')).toBe(original);
+  });
+  it('a preview guest rejects the production pair and another preview platform', async () => {
+    for (const platformOrigin of ['https://app.matrix-os.com', 'https://preview.matrix-os.com']) {
+      const f = await fixture();
+      const previewEnv = original.replace('PLATFORM_INTERNAL_URL=https://app.matrix-os.com', 'PLATFORM_INTERNAL_URL=https://metal-preview.matrix-os.com');
+      await writeFile(f.envPath, previewEnv);
+      const body = platformOrigin === 'https://app.matrix-os.com' ? request : { ...request, configuration: { ...request.configuration,
+        platformOrigin, relayOrigin: 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app' } };
+      expect(apply(f.envPath, body).status).not.toBe(0);
+      expect(await readFile(f.envPath, 'utf8')).toBe(previewEnv);
+    }
+  });
+  it('installs the reviewed preview pair on a guest of that preview platform', async () => {
+    const f = await fixture();
+    await writeFile(f.envPath, original.replace('PLATFORM_INTERNAL_URL=https://app.matrix-os.com', 'PLATFORM_INTERNAL_URL=https://metal-preview.matrix-os.com'));
     const preview = { ...request, configuration: { ...request.configuration,
       platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app' } };
     const result = apply(f.envPath, preview);

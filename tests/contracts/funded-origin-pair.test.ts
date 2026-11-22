@@ -6,6 +6,7 @@ import {
   FUNDED_PRODUCTION_PLATFORM_ORIGIN,
   FundedHostActivationRequestSchema,
   fundedOriginPairKind,
+  fundedPlatformOriginMatchesGuest,
 } from '@matrix-os/contracts';
 
 /**
@@ -60,8 +61,44 @@ describe('reviewed funded-AI origin pairs', () => {
       expect(source, path).toContain(`PREVIEW_FUNDED_RELAY = '${FUNDED_PREVIEW_RELAY_ORIGIN}'`);
       expect(source, path).toContain(`PREVIEW_FUNDED_PLATFORMS = (${FUNDED_PREVIEW_PLATFORM_ORIGINS.map((origin) => `'${origin}'`).join(', ')})`);
     }
+    // Production constants too: the Python pattern must accept and reject exactly what the contract does.
+    for (const path of ['distro/customer-vps/host-bin/matrix-configure-funded-ai.py', 'distro/customer-vps/funded-host-config/reconcile.py']) {
+      const source = readFileSync(path, 'utf8');
+      expect(source, path).toContain(`PRODUCTION_FUNDED_PLATFORM = '${FUNDED_PRODUCTION_PLATFORM_ORIGIN}'`);
+      const pattern = /PRODUCTION_FUNDED_RELAY = r'([^']+)'/.exec(source)?.[1];
+      expect(pattern, path).toBeDefined();
+      const python = new RegExp(`^${pattern!}$`);
+      for (const relay of [PRODUCTION_RELAY, FUNDED_PREVIEW_RELAY_ORIGIN, 'https://candidate---matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app',
+        'https://matrix-ai-relay-production-a.a.run.app', 'https://example.com']) {
+        expect(python.test(relay), `${path} ${relay}`).toBe(fundedOriginPairKind(FUNDED_PRODUCTION_PLATFORM_ORIGIN, relay) === 'production');
+      }
+    }
     // Sync-only enrollment stays production-only, through the same reviewed pair helper.
     expect(readFileSync('distro/customer-vps/funded-host-config/sync-initialization.py', 'utf8'))
       .toContain('reviewed_funded_pair(PRODUCTION_FUNDED_PLATFORM, relay)');
+  });
+
+  it('sets the positive preview-pin flag only in the preview platform workflow', () => {
+    expect(readFileSync('.github/workflows/preview-platform.yml', 'utf8')).toContain('|MATRIX_FUNDED_AI_PREVIEW_PIN=1');
+    expect(readFileSync('.github/workflows/platform-cloud-run.yml', 'utf8')).not.toContain('MATRIX_FUNDED_AI_PREVIEW_PIN');
+  });
+
+  it('binds a configuration to the guest\'s own platform', () => {
+    // Production guests (app or api) take only the production origin.
+    for (const internal of ['https://app.matrix-os.com', 'https://api.matrix-os.com']) {
+      expect(fundedPlatformOriginMatchesGuest(FUNDED_PRODUCTION_PLATFORM_ORIGIN, internal)).toBe(true);
+      expect(fundedPlatformOriginMatchesGuest(PREVIEW_PLATFORM, internal)).toBe(false);
+    }
+    // A reviewed preview guest takes only its own origin.
+    expect(fundedPlatformOriginMatchesGuest(PREVIEW_PLATFORM, PREVIEW_PLATFORM)).toBe(true);
+    expect(fundedPlatformOriginMatchesGuest('https://preview.matrix-os.com', PREVIEW_PLATFORM)).toBe(false);
+    expect(fundedPlatformOriginMatchesGuest(FUNDED_PRODUCTION_PLATFORM_ORIGIN, PREVIEW_PLATFORM)).toBe(false);
+    // Collaboration preview pairs (tagged preview API revisions) stay production-funded.
+    const pairApi = 'https://cp-11111111-g1-api---matrix-platform-preview-test.a.run.app';
+    expect(fundedPlatformOriginMatchesGuest(FUNDED_PRODUCTION_PLATFORM_ORIGIN, pairApi)).toBe(true);
+    expect(fundedPlatformOriginMatchesGuest(PREVIEW_PLATFORM, pairApi)).toBe(false);
+    // Missing or malformed: fail closed.
+    expect(fundedPlatformOriginMatchesGuest(FUNDED_PRODUCTION_PLATFORM_ORIGIN, undefined)).toBe(false);
+    expect(fundedPlatformOriginMatchesGuest(FUNDED_PRODUCTION_PLATFORM_ORIGIN, 'not a url')).toBe(false);
   });
 });
