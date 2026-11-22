@@ -3,6 +3,8 @@
 // many panes it holds, a close button, and + for a new terminal.
 import type { ReactNode } from "react";
 import { Loader2, Plus, X } from "lucide-react";
+import { Button } from "../../design/primitives";
+import { COMPACT_ICON_BUTTON, COMPACT_ICON_BUTTON_CLASS } from "./compact-icon-button";
 import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import type { OpenTab } from "./use-open-tabs";
 
@@ -85,20 +87,19 @@ export function TerminalTabBar({ space, tabs, selectedKey, row, icon, onSelect, 
                 {tab.terminals.length > 1 ? <span className="shrink-0 tabular-nums text-[10px]" style={secondaryText}>{tab.terminals.length}</span> : null}
                 {working ? <Loader2 role="img" aria-label="Working" size={11} className="shrink-0 animate-spin" style={{ color: "#3b82f6" }} /> : null}
               </button>
-              <button type="button" aria-label={`Close tab ${title}`} title="Close tab (the terminals keep running)"
+              <Button variant="ghost" aria-label={`Close tab ${title}`} title="Close tab (the terminals keep running)"
                 onClick={() => onClose(tab.id)}
-                className="flex size-5 shrink-0 items-center justify-center rounded opacity-60 outline-none hover:bg-[var(--border-subtle)] hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current">
+                className={`shrink-0 opacity-60 hover:opacity-100 ${COMPACT_ICON_BUTTON_CLASS}`} style={{ ...COMPACT_ICON_BUTTON, width: 20, height: 20 }}>
                 <X size={11} aria-hidden="true" />
-              </button>
+              </Button>
             </div>
           );
         })}
       </div>
-      <button type="button" aria-label="New terminal tab" title="New terminal (⌘N)" onClick={onNew}
-        className="mb-1 flex size-6 shrink-0 items-center justify-center rounded outline-none hover:bg-[var(--border-subtle)] focus-visible:ring-2 focus-visible:ring-current"
-        style={secondaryText}>
+      <Button variant="ghost" aria-label="New terminal tab" title="New terminal (⌘N)" onClick={onNew}
+        className={`mb-1 shrink-0 ${COMPACT_ICON_BUTTON_CLASS}`} style={COMPACT_ICON_BUTTON}>
         <Plus size={13} aria-hidden="true" />
-      </button>
+      </Button>
     </div>
   );
 }

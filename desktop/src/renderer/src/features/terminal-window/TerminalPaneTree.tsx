@@ -5,6 +5,8 @@
 // onto another pane's edge to split there.
 import { useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
+import { Button } from "../../design/primitives";
+import { COMPACT_ICON_BUTTON, COMPACT_ICON_BUTTON_CLASS } from "./compact-icon-button";
 import {
   leaves, paneRects, splitFrames, type PaneDirection, type PaneLeaf, type PaneRect, type PaneTab, type SplitFrame,
 } from "@matrix-os/ui/terminal-pane-tree";
@@ -138,12 +140,11 @@ function PaneButtons({ title, zoomed, onButton }: { title: string; zoomed: boole
       {PANE_BUTTONS.map((button) => {
         const label = button.id === "zoom" && zoomed ? "Restore" : button.label;
         return (
-          <button key={button.id} type="button" title={`${label} (${button.keys})`} aria-label={`${label} pane ${title}`}
+          <Button key={button.id} variant="ghost" title={`${label} (${button.keys})`} aria-label={`${label} pane ${title}`}
             onClick={() => onButton(button.id)}
-            className="flex size-6 items-center justify-center rounded outline-none hover:bg-[var(--border-subtle)] focus-visible:ring-2 focus-visible:ring-current"
-            style={secondaryText}>
+            className={COMPACT_ICON_BUTTON_CLASS} style={COMPACT_ICON_BUTTON}>
             <ButtonIcon id={button.id} zoomed={zoomed} />
-          </button>
+          </Button>
         );
       })}
     </span>
