@@ -55,7 +55,7 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
     if (!response.ok) throw new Error("Computer inventory unavailable");
     return response.json();
   }
-  const [list, context] = await Promise.all([read("/api/auth/computers"), read(`${gateway}/api/system/info`)]);
+  const [list, context] = await Promise.all([read("/api/auth/computers?include=owned"), read(`${gateway}/api/system/info`)]);
   const inventory = MatrixComputerListSchema.parse(list);
   const slot = ComputerContextSchema.parse(context).runtime.runtimeSlot;
   // Installed runtime identity wins over the account's stored primary selection.

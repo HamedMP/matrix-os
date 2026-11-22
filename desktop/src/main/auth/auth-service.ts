@@ -516,6 +516,8 @@ export class AuthService {
     if (!currentCredential) throw new Error("Runtime computers unavailable");
 
     const endpoint = new URL("/api/auth/computers", this.deps.platformHost);
+    // Spec 2707: this build understands owned computers; older builds never see them.
+    endpoint.searchParams.set("include", "owned");
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     try {
       const response = await fetchFn(endpoint.toString(), {

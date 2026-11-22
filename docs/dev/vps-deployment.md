@@ -2,6 +2,8 @@
 
 Complete guide for deploying Matrix OS on Hetzner. Production Matrix OS is VPS-native: one VPS per user, host-level Matrix services, local owner-controlled Postgres, Cloudflare routing, R2 backups, and no user runtime containers.
 
+**Owned machines (spec 2707).** Owners may also connect up to three of their own Linux machines for free. They run the same host bundle, installed with `install-server.sh --connect`, and are reached only through a per-machine Cloudflare Tunnel that the platform creates at approval. Platform settings: `MATRIX_OWNED_MACHINES_ENABLED`, `MATRIX_OWNED_CF_ACCOUNT_ID`, `MATRIX_OWNED_CF_ZONE_ID`, `MATRIX_OWNED_CF_API_TOKEN` (Tunnel edit + DNS edit on the origin zone), `MATRIX_OWNED_HOST_SUFFIX` (a dedicated origin subdomain, never user-facing), and `MATRIX_OWNED_ACCESS_CLIENT_ID`/`MATRIX_OWNED_ACCESS_CLIENT_SECRET` (a Cloudflare Access service token). The Access self-hosted application for `*.<suffix>` with a Service Auth policy for that token is created once by an operator. A partial configuration answers 503 on owned routes. The platform never SSHes into or pushes to an owned machine.
+
 ## Production Rule: VPS-Native Only
 
 Effective 2026-05-06, production user runtime is **per-user VPS only**.

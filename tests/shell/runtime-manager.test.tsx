@@ -127,7 +127,7 @@ function installFetchRouter(options: {
 } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
-    if (url === "/api/auth/computers") return json(options.computerInventory ?? inventory);
+    if (url === "/api/auth/computers?include=owned") return json(options.computerInventory ?? inventory);
     if (url.startsWith("/billing/status")) return json(options.billing ?? billingStatus());
     if (url === "/api/auth/provision-runtime") {
       return options.provision ?? json({ status: "provisioning", runtimeSlot: "new-computer" }, 202);
@@ -429,7 +429,7 @@ describe("RuntimeManager", () => {
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") return inventoryResponse;
+      if (url === "/api/auth/computers?include=owned") return inventoryResponse;
       if (url.startsWith("/billing/status")) return json(billingStatus(3));
       throw new Error(`Unhandled test request: ${url}`);
     });
@@ -450,7 +450,7 @@ describe("RuntimeManager", () => {
     let inventoryReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") {
+      if (url === "/api/auth/computers?include=owned") {
         inventoryReads += 1;
         if (inventoryReads === 1) throw new Error("inventory unavailable");
         return json(inventory);
@@ -649,7 +649,7 @@ describe("RuntimeManager", () => {
     let journeyReads = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") return json(inventory);
+      if (url === "/api/auth/computers?include=owned") return json(inventory);
       if (url.startsWith("/billing/status")) return json(billingStatus(3, "override"));
       if (url === "/api/auth/provision-runtime") return json({ status: "provisioning" }, 202);
       if (url.startsWith("/api/journey?runtimeSlot=")) {
@@ -687,7 +687,7 @@ describe("RuntimeManager", () => {
     };
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") {
+      if (url === "/api/auth/computers?include=owned") {
         inventoryReads += 1;
         return json(inventoryReads > 1 ? { ...inventory, items: [...inventory.items, completedComputer] } : inventory);
       }
@@ -719,7 +719,7 @@ describe("RuntimeManager", () => {
     let billingReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") return json(inventory);
+      if (url === "/api/auth/computers?include=owned") return json(inventory);
       if (url === "/billing/status" || url === "/billing/status?trialOfferVersion=2") return json(billingStatus(2));
       if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;
@@ -756,7 +756,7 @@ describe("RuntimeManager", () => {
     let billingReads = 0;
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url === "/api/auth/computers") return json(inventory);
+      if (url === "/api/auth/computers?include=owned") return json(inventory);
       if (url === "/billing/status" || url === "/billing/status?trialOfferVersion=2") return json(billingStatus(2));
       if (url.startsWith("/billing/status?runtimeSlot=")) {
         billingReads += 1;

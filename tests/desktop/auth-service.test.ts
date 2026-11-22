@@ -926,7 +926,7 @@ describe("AuthService expireSession", () => {
 
     await expect(auth.listRuntimeComputers()).resolves.toEqual(inventory);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/api/auth/computers",
+      "https://app.matrix-os.com/api/auth/computers?include=owned",
       expect.objectContaining({
         method: "GET",
         headers: { authorization: "Bearer opaque-runtime-token" },

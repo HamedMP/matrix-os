@@ -507,6 +507,32 @@ Decided by Hamed on 2026-11-21 unless marked proposed.
 | D10 | Budget beyond 1,000 included tunnels ($4.50 each per month) | Proposed, not yet confirmed | Accept for beta; revisit with a reverse relay if volume grows |
 | D11 | Invite gate for owned-machine signup | Proposed, not yet confirmed | Same invite gate as the free tier during beta |
 
+## Implementation notes (stack, 2026-11-22)
+
+Where the build differs from the design above, or defers part of it:
+
+- **Credentials are derived, not stored.** Every machine token is an HMAC
+  of machine id, slot and `runtime_token_epoch`, like VPS runtime tokens.
+  Revocation bumps the epoch in the unpair transaction. A scheduled
+  rotation endpoint is deferred; rotation today is re-enrollment.
+- **Routing state lives on `user_machines`.** The tunnel hostname is mirrored
+  into `private_address` only while the tunnel is ready, and the heartbeat into
+  `last_seen_at`, so the substrate's `resolveUpstream` stays synchronous.
+- **Owned rows are opt-in for clients.** `/api/auth/computers` returns them
+  only with `?include=owned`, because released clients parse a strict list.
+- **Backups (D4).** The opt-in gate is enforced on the sync routes. The
+  cumulative 1 GB quota needs byte accounting the broker does not have yet:
+  follow-up.
+- **Sharing (D7).** Chat shares and site form submissions go through the
+  tunnel; sites keep serving from storage while offline; unpair unpublishes
+  the machine's sites in the revoke transaction. Owned machines as
+  collaboration homes are deferred: the relay and direct sessions still
+  address homes by public IPv4 and fail closed for owned machines.
+- **Fail-closed routes.** Custom MCP, journey, routine proofs, Slack, browser
+  approvals and the code-editor domain still use the handle-wide token or a
+  public address, so they are unavailable on owned machines until migrated to
+  `matchRuntimeBearerForHandle` / the substrate registry.
+
 ## Risks and open questions
 
 - Tunnel cost at scale (D10) and Cloudflare API rate limits during spikes.
