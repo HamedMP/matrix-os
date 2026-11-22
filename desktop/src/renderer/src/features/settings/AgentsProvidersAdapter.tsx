@@ -4,6 +4,7 @@ import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/cont
 import {
   AgentsProvidersView,
   createBrowserSpeechClient,
+  sessionProviderSettingsSnapshotCache,
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
@@ -89,7 +90,7 @@ function ConnectedAgentsProvidersAdapter({
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot, receipt?: ProviderWorkflow) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot, receipt);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled, automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, snapshotCache: sessionProviderSettingsSnapshotCache, automaticCreditRefreshEnabled, automaticNativeAuthRefreshEnabled: automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
   const synchronizedInitialSnapshot = useRef(false);
@@ -107,13 +108,14 @@ function ConnectedAgentsProvidersAdapter({
     [identityKey],
   );
   useEffect(() => {
-    if (controller.snapshot === null || synchronizedInitialSnapshot.current || !isIdentityCurrent()) return;
+    // A snapshot shown from an earlier open is not authoritative yet; wait for this open's read.
+    if (controller.snapshot === null || controller.snapshotFromCache || synchronizedInitialSnapshot.current || !isIdentityCurrent()) return;
     // Settings can discover a CLI login that happened after Chat prewarmed its
     // catalog. Revalidate once when the first authoritative snapshot arrives so
     // the two surfaces cannot disagree until the user presses Refresh manually.
     synchronizedInitialSnapshot.current = true;
     onCatalogChanged();
-  }, [controller.snapshot, isIdentityCurrent, onCatalogChanged]);
+  }, [controller.snapshot, controller.snapshotFromCache, isIdentityCurrent, onCatalogChanged]);
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);
