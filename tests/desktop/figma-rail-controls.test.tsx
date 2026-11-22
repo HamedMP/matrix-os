@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { resolveShortcuts, type ShortcutPlatform } from "@matrix-os/contracts/keyboard-shortcuts";
@@ -49,6 +50,17 @@ it('labels Search chats with the palette binding and hides it when unbound', () 
  expect(search().querySelector('kbd')?.textContent).toBe('Ctrl+K');
  act(() => loadBindings('mac', { 'nav.palette': [] }));
  expect(search().querySelector('kbd')).toBeNull();
+});
+it('derives aria-keyshortcuts for Search chats from the first palette binding', () => {
+ render(<WorkRailSearchControls onSearch={vi.fn()} />);
+ const search = () => screen.getByRole('button', { name: 'Search chats' });
+ expect(search()).toHaveAttribute('aria-keyshortcuts', 'Meta+K');
+ act(() => loadBindings('other'));
+ expect(search()).toHaveAttribute('aria-keyshortcuts', 'Control+K');
+ act(() => loadBindings('mac', { 'nav.palette': ['Cmd+Alt+Shift+F', 'Cmd+K'] }));
+ expect(search()).toHaveAttribute('aria-keyshortcuts', 'Meta+Alt+Shift+F');
+ act(() => loadBindings('mac', { 'nav.palette': [] }));
+ expect(search()).not.toHaveAttribute('aria-keyshortcuts');
 });
 it('keeps New Chat clickable without advertising an unavailable shortcut', () => {
  const create=vi.fn();
