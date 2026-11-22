@@ -17,7 +17,8 @@ import { closeComputerTab, renameComputerTab } from "./computer-terminals";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
-import { filterRows, spaceOfRow, spacesInOrder } from "./TerminalWindowSidebar";
+import { filterRows, spacesInOrder } from "./TerminalWindowSidebar";
+import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
   computerMachineId, localMachine, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
@@ -164,14 +165,14 @@ export function useTerminalWindow() {
   }, [clearActive, cloud, local]);
 
   // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
-  const spaceMachines = useMemo(() => [here.id, ...computers.filter((computer) => computer.availability === "available")
-    .map((computer) => computerMachineId(computer.runtimeSlot))], [computers, here.id]);
+  const spaceMachines = useMemo(() => inOrder([here.id, ...computers.filter((computer) => computer.availability === "available")
+    .map((computer) => computerMachineId(computer.runtimeSlot))], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder]);
   const spaces = useMemo(() => spacesInOrder(spaceMachines, status.rows, sidebar.prefs.spaceOrder), [sidebar.prefs.spaceOrder, spaceMachines, status.rows]);
 
-  /** A terminal's ↗: show it, as a tab of its own space, and make that space active. */
+  /** A terminal's ↗: show it, as a tab of its own space (its project, or its machine), and make that space active. */
   const openInTab = useCallback((key: string) => {
     const row = status.rows.find((candidate) => candidate.key === key);
-    if (row) sidebar.setFilter({ machineId: row.machine.id, space: spaceOfRow(row) });
+    if (row) sidebar.setFilter(row.space ? { machineId: row.machine.id, space: row.space } : { machineId: row.machine.id });
     select(key);
   }, [select, sidebar, status.rows]);
 

@@ -69,8 +69,9 @@ describe("Terminal window", () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);
     expect(await screen.findByText("operator")).toBeTruthy();
-    const sections = Array.from(document.querySelectorAll("[data-machine]"));
-    expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "computer:primary", "computer:review"]);
+    // Each machine is a space of its own (no home or main rows under it).
+    const machines = Array.from(document.querySelectorAll('ul[aria-label="Machines"] > li[data-space]'));
+    expect(machines.map((item) => item.getAttribute("data-space"))).toEqual(["local", "computer:primary", "computer:review"]);
     expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]);
     // Each computer leads with its own name; unavailable ones wait under one fold.
     expect(screen.getByText("Preview Computer · Starting")).toBeTruthy();
@@ -137,13 +138,14 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     const name = computers.items[0]!.handle;
     await screen.findByText(name);
-    // While it starts there is nothing to open (no spaces, no +), and no events stream.
-    expect(screen.queryByRole("list", { name: `${name} spaces` })).toBeNull();
+    // While it starts it cannot be chosen, has no +, and no events stream.
+    const machine = () => document.querySelector<HTMLButtonElement>(`li[data-space="computer:primary"] button[aria-pressed]`)!;
+    expect(machine().disabled).toBe(true);
     expect(screen.queryByRole("button", { name: `New terminal on ${name}` })).toBeNull();
     expect(FakeWebSocket.opened).toEqual([]);
     inventory = computers;
     act(() => operator.emit("window:focus-changed", { focused: true }));
-    await waitFor(() => expect(screen.getByRole("list", { name: `${name} spaces` })).toBeTruthy());
+    await waitFor(() => expect(machine().disabled).toBe(false));
     await waitFor(() => expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]));
     expect(screen.getByRole("button", { name: `New terminal on ${name}` })).toBeTruthy();
     // The refresh never flashed the loading state over the list.

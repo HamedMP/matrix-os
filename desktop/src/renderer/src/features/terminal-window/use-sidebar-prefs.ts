@@ -37,11 +37,13 @@ const PrefsSchema = z.object({
   spaceStyles: z.record(z.string().max(512), SpaceStyleSchema).refine((styles) => Object.keys(styles).length <= MAX_SPACES).catch({}),
   // The order the person dragged each machine's spaces into.
   spaceOrder: z.record(z.string().max(128), z.array(z.string().max(256)).max(MAX_SPACES)).refine((order) => Object.keys(order).length <= MAX_FOLDS).catch({}),
+  // The order the person dragged the machines into.
+  machineOrder: z.array(z.string().max(128)).max(MAX_FOLDS).catch([]),
   // Spaces whose terminals the person listed inline under them.
   expandedSpaces: z.array(z.string().max(512)).max(MAX_SPACES).catch([]),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {}, expandedSpaces: [] };
+const DEFAULTS: SidebarPrefs = { folded: [], view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {}, machineOrder: [], expandedSpaces: [] };
 
 function read(): SidebarPrefs {
   try {
@@ -100,6 +102,7 @@ export function useSidebarPrefs() {
     setSpaceOrder: useCallback((machineId: string, order: readonly string[]) => update((current) => ({
       ...current, spaceOrder: { ...current.spaceOrder, [machineId]: order.slice(0, MAX_SPACES) },
     })), [update]),
+    setMachineOrder: useCallback((order: readonly string[]) => update((current) => ({ ...current, machineOrder: order.slice(0, MAX_FOLDS) })), [update]),
     toggleSpaceExpanded: useCallback((id: string) => update((current) => ({
       ...current,
       expandedSpaces: current.expandedSpaces.includes(id)

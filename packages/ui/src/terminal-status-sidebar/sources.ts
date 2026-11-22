@@ -74,7 +74,8 @@ export function computerSidebarRows(state: TerminalEventsState, machine: Termina
       ...(status ? { status } : {}),
       ...(statusAt ? { statusAt } : {}),
       ...(status === "done" ? { seen: attention?.seen === true } : {}),
-      space: tab.projectId ?? "main",
+      // A project is its own space; the reserved main workspace is the computer itself.
+      ...(tab.projectId && tab.projectId !== "main" ? { space: tab.projectId } : {}),
       ...(tab.cwd ? { detail: `~/${tab.cwd}` } : {}),
     };
   });

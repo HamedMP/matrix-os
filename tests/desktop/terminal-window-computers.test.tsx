@@ -124,10 +124,11 @@ describe("Terminal window computers", () => {
     // The space itself (aria-pressed), not its chevron or options button.
     const space = (list: string, name: string) => within(within(machines).getByRole("list", { name: list })).getAllByRole("button", { name: new RegExp(name) })
       .find((button) => button.hasAttribute("aria-pressed"))!;
-    // Every machine has a home space: a computer's is its main workspace.
-    fireEvent.click(space("neo-extra spaces", "main"));
+    // The computer itself is a space; its main workspace is not a row of its own.
+    fireEvent.click(document.querySelector<HTMLElement>('li[data-space="computer:extra"] button[aria-pressed]')!);
     await waitFor(() => expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull());
     expect(within(sidebar()).getByRole("button", { name: /deploy/ })).toBeTruthy();
+    fireEvent.click(within(machines).getByRole("button", { name: "Show neo projects" }));
     fireEvent.click(space("neo spaces", "web"));
     await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
@@ -139,14 +140,14 @@ describe("Terminal window computers", () => {
     await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);
     await stream("extra", [tabFacts(TAB_2, "deploy")]);
     const chip = () => screen.queryByRole("button", { name: /Show all machines/ })?.getAttribute("aria-label");
-    // Order: This Computer's home, then neo's main and web, then neo-extra's main.
+    // Order: This Computer, then neo and its project web, then neo-extra.
     act(() => emit("terminal-window:command", { command: "space", index: 3 }));
     await waitFor(() => expect(chip()).toBe("Show all machines (now neo · web)"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
     act(() => emit("terminal-window:command", { command: "space", index: 4 }));
-    await waitFor(() => expect(chip()).toBe("Show all machines (now neo-extra · main)"));
+    await waitFor(() => expect(chip()).toBe("Show all machines (now neo-extra)"));
     act(() => emit("terminal-window:command", { command: "space", index: 9 }));
-    expect(chip()).toBe("Show all machines (now neo-extra · main)");
+    expect(chip()).toBe("Show all machines (now neo-extra)");
     act(() => emit("terminal-window:command", { command: "space", index: 0 }));
     await waitFor(() => expect(chip()).toBeUndefined());
   });

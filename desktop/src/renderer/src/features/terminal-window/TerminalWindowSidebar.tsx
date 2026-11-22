@@ -11,7 +11,7 @@ import {
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
-import { AllSpacesRow, MachineHeader, SpaceRows, orderedSpaces, spaceId } from "./SidebarSpaces";
+import { AllSpacesRow, SpaceList, inOrder, orderedSpaces, spaceId, type SpaceEntry } from "./SidebarSpaces";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const iconButton = "no-drag flex size-6 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -67,6 +67,9 @@ export interface TerminalWindowSidebarProps {
   notices?: ReactNode;
   /** The footer's Settings: the main window's settings. */
   onSettings(): void;
+  /** The order the person dragged the machines into. */
+  machineOrder: readonly string[];
+  onMachineOrder(order: readonly string[]): void;
   /** How the person dressed each space, and the order they dragged each machine's spaces into. */
   spaceStyles: Readonly<Record<string, SpaceStyle>>;
   spaceOrder: Readonly<Record<string, readonly string[]>>;
@@ -79,45 +82,30 @@ export interface TerminalWindowSidebarProps {
   onCloseTerminal(key: string): void;
 }
 
-/** Every machine has a home space: its terminals that belong to no project live there. */
-export const HOME_SPACE = "home";
-/** A Matrix computer's home is its `main` workspace. */
-export function homeSpaceFor(machineId: string): string {
-  return machineId.startsWith("computer:") ? "main" : HOME_SPACE;
-}
-/** The space a terminal belongs to: its project, or its machine's home. */
-export function spaceOfRow(row: TerminalSidebarRow): string {
-  return row.space ?? homeSpaceFor(row.machine.id);
-}
-
-/** A machine's spaces with how many terminals each has: home first, then the most used. */
+/** A machine's projects (spaces under it) with how many terminals each has, the most used first. */
 export function machineSpaces(rows: readonly TerminalSidebarRow[], machineId: string): Array<{ space: string; count: number }> {
-  const home = homeSpaceFor(machineId);
-  const counts = new Map<string, number>([[home, 0]]);
-  for (const row of rows) if (row.machine.id === machineId) counts.set(spaceOfRow(row), (counts.get(spaceOfRow(row)) ?? 0) + 1);
-  return [...counts].map(([space, count]) => ({ space, count }))
-    .sort((left, right) => Number(right.space === home) - Number(left.space === home) || right.count - left.count || left.space.localeCompare(right.space));
+  const counts = new Map<string, number>();
+  for (const row of rows) if (row.machine.id === machineId && row.space) counts.set(row.space, (counts.get(row.space) ?? 0) + 1);
+  return [...counts].map(([space, count]) => ({ space, count })).sort((left, right) => right.count - left.count || left.space.localeCompare(right.space));
 }
 
-/** Every space in the sidebar's order, for Ctrl+1…9. */
+/** Every space in the sidebar's order, for Ctrl+1…9: each machine, then its projects. */
 export function spacesInOrder(machineIds: readonly string[], rows: readonly TerminalSidebarRow[], order: Readonly<Record<string, readonly string[]>>): SidebarFilter[] {
-  return machineIds.flatMap((machineId) => orderedSpaces(machineSpaces(rows, machineId), machineId, order[machineId])
-    .map((item) => ({ machineId, space: item.space })));
+  return machineIds.flatMap((machineId) => [
+    { machineId },
+    ...orderedSpaces(machineSpaces(rows, machineId), machineId, order[machineId]).map((item) => ({ machineId, space: item.space })),
+  ]);
 }
 
 export function filterRows(rows: readonly TerminalSidebarRow[], filter: SidebarFilter | null): readonly TerminalSidebarRow[] {
   if (!filter) return rows;
-  return rows.filter((row) => row.machine.id === filter.machineId && (!filter.space || spaceOfRow(row) === filter.space));
+  return rows.filter((row) => row.machine.id === filter.machineId && (!filter.space || row.space === filter.space));
 }
 
-function MachineRow({ machine, local, spaces, props }: {
-  machine: SidebarMachine; local?: ReactNode;
-  spaces: Array<{ space: string; count: number }>;
-  props: TerminalWindowSidebarProps;
-}) {
+/** A machine as a space: its row, and its projects (if it has any) behind its chevron. */
+function machineEntry(machine: SidebarMachine, props: TerminalWindowSidebarProps, local?: ReactNode): SpaceEntry {
   const { filter, onFilter } = props;
-  const items = machine.available ? orderedSpaces(spaces, machine.id, props.spaceOrder[machine.id]) : [];
-  // `+` starts a terminal in the machine's home space.
+  const projects = machine.available ? orderedSpaces(machineSpaces(props.rows, machine.id), machine.id, props.spaceOrder[machine.id]) : [];
   const add = local ?? (machine.onCreate && machine.available ? (
     <button type="button" aria-label={`New terminal on ${machine.name}`} title="New terminal" disabled={machine.creating}
       onClick={machine.onCreate} className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
@@ -125,25 +113,51 @@ function MachineRow({ machine, local, spaces, props }: {
       <Plus size={12} aria-hidden="true" />
     </button>
   ) : null);
-  return (
-    <li data-machine={machine.id} className="pt-1.5">
-      <MachineHeader name={machine.name} detail={machine.detail} kind={machine.kind} dotColor={machine.dotColor} actions={add} />
-      {machine.status ?? null}
-      {items.length === 0 ? null : (
-        <SpaceRows machineName={machine.name} items={items} styles={props.spaceStyles}
-          selected={filter?.machineId === machine.id && filter.space ? spaceId(machine.id, filter.space) : null}
-          onSelect={(item) => onFilter({ machineId: machine.id, space: item.space })}
-          onStyle={props.onSpaceStyle} onReorder={(order) => props.onSpaceOrder(machine.id, order)}
-          expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
-          renderTerminals={(item) => (
-            <TerminalSidebarList label={`${item.space} terminals`}
-              rows={filterRows(props.rows, { machineId: machine.id, space: item.space })}
-              selectedKey={props.selectedKey} onSelect={props.onSelect} folded={props.folded} onToggleFold={props.onToggleFold}
-              now={props.now} onOpenInTab={props.onOpenInTab} oneMachine />
-          )} />
-      )}
-    </li>
-  );
+  const projectEntries = projects.map((item): SpaceEntry => ({
+    id: item.id,
+    name: item.space,
+    count: item.count,
+    selected: filter?.machineId === machine.id && filter.space === item.space,
+    available: true,
+    onSelect: () => onFilter({ machineId: machine.id, space: item.space }),
+    // A project's chevron lists its terminals right there; choosing it is the name's job.
+    expansion: {
+      label: `${item.space} terminals`,
+      content: (
+        <div className="pl-9">
+          <TerminalSidebarList label={`${item.space} terminals`} rows={filterRows(props.rows, { machineId: machine.id, space: item.space })}
+            selectedKey={props.selectedKey} onSelect={props.onSelect} folded={props.folded} onToggleFold={props.onToggleFold}
+            now={props.now} onOpenInTab={props.onOpenInTab} oneMachine />
+        </div>
+      ),
+    },
+  }));
+  return {
+    id: machine.id,
+    name: machine.name,
+    count: props.rows.filter((row) => row.machine.id === machine.id).length,
+    detail: machine.detail,
+    ...(machine.dotColor ? { dotColor: machine.dotColor } : {}),
+    actions: add,
+    selected: filter?.machineId === machine.id && !filter.space,
+    available: machine.available,
+    onSelect: () => onFilter({ machineId: machine.id }),
+    ...(projectEntries.length > 0 ? {
+      expansion: {
+        label: `${machine.name} projects`,
+        content: (
+          <SpaceList label={`${machine.name} spaces`} entries={projectEntries} styles={props.spaceStyles} indent
+            expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
+            onStyle={props.onSpaceStyle} onReorder={(ids) => {
+              // Ids are `machineId|space`; the order is kept by project name.
+              const byId = new Map(projects.map((item) => [item.id, item.space]));
+              props.onSpaceOrder(machine.id, ids.flatMap((id) => byId.get(id) ?? []));
+            }} />
+        ),
+      },
+    } : {}),
+    ...(machine.status ? { status: machine.status } : {}),
+  };
 }
 
 function ResizeEdge({ width, onResize }: { width: number; onResize(width: number): void }) {
@@ -194,29 +208,35 @@ function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[]
 }
 
 function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
-  const machineRow = (machine: SidebarMachine, local?: ReactNode) => (
-    <MachineRow key={machine.id} machine={machine} local={local} spaces={machineSpaces(props.rows, machine.id)} props={props} />
-  );
   const [local, ...others] = props.machines;
+  const usable = [
+    ...(local ? [machineEntry(local, props, local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null)] : []),
+    ...others.filter((machine) => !machine.dormant).map((machine) => machineEntry(machine, props)),
+  ];
+  const entries = inOrder(usable, (entry) => entry.id, props.machineOrder);
   return (
-    // Its own scroll past a third of the window, so the terminals below stay in view.
-    <ul aria-label="Machines" className="flex max-h-[40vh] shrink-0 flex-col overflow-y-auto">
-      <li><AllSpacesRow chosen={props.filter === null} count={props.rows.length} onChoose={() => props.onFilter(null)} /></li>
-      {local
-        ? machineRow(local, local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null)
-        : null}
-      {others.filter((machine) => !machine.dormant).map((machine) => machineRow(machine))}
+    // Its own scroll past 40% of the window, so the terminals below stay in view.
+    <div className="flex max-h-[40vh] shrink-0 flex-col overflow-y-auto">
+      <AllSpacesRow chosen={props.filter === null} count={props.rows.length} onChoose={() => props.onFilter(null)} />
+      <SpaceList label="Machines" entries={entries} styles={props.spaceStyles}
+        expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
+        onStyle={props.onSpaceStyle} onReorder={props.onMachineOrder} />
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
-      <UnavailableMachines machines={others.filter((machine) => machine.dormant)} />
-      {props.machinesStatus ?? null}
-    </ul>
+      <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
+      {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
+    </div>
   );
 }
 
 function FilterChip({ props }: { props: TerminalWindowSidebarProps }) {
   if (!props.filter) return null;
-  const machine = props.machines.find((candidate) => candidate.id === props.filter?.machineId);
-  const label = [machine?.name ?? "Machine", props.filter.space].filter(Boolean).join(" · ");
+  const { machineId, space } = props.filter;
+  const machine = props.machines.find((candidate) => candidate.id === machineId);
+  // The names the person gave them, if any.
+  const label = [
+    props.spaceStyles[machineId]?.name ?? machine?.name ?? "Machine",
+    space ? props.spaceStyles[spaceId(machineId, space)]?.name ?? space : null,
+  ].filter(Boolean).join(" · ");
   return (
     <button type="button" aria-label={`Show all machines (now ${label})`} onClick={() => props.onFilter(null)}
       className="flex max-w-[60%] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-current"

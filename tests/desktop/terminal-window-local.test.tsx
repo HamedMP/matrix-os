@@ -413,10 +413,9 @@ describe("Terminal window shortcuts", () => {
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
     const machines = screen.getByRole("list", { name: "Machines" });
-    // This Computer's terminals live in its home space.
-    fireEvent.click(within(within(machines).getByRole("list", { name: "This Computer spaces" })).getAllByRole("button", { name: /home/ })
-      .find((button) => button.hasAttribute("aria-pressed"))!);
-    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer · home\)/ })).toBeTruthy();
+    // This Computer is a space of its own.
+    fireEvent.click(document.querySelector<HTMLElement>('li[data-space="local"] button[aria-pressed]')!);
+    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer\)/ })).toBeTruthy();
     expect(within(sidebar()).getByRole("button", { name: /alpha/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Show all machines/ }));
     fireEvent.click(screen.getByRole("button", { name: "Group by machine" }));

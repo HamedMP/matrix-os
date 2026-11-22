@@ -223,6 +223,8 @@ export default function TerminalWindowApp() {
           filter={prefs.filter}
           onFilter={view.sidebar.setFilter}
           onSettings={() => focusMainWindow("settings")}
+          machineOrder={prefs.machineOrder}
+          onMachineOrder={view.sidebar.setMachineOrder}
           spaceStyles={prefs.spaceStyles}
           spaceOrder={prefs.spaceOrder}
           onSpaceStyle={view.sidebar.setSpaceStyle}
