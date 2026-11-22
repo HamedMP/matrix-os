@@ -92,6 +92,28 @@ describe("herdr adapter discovery", () => {
     expect(adapter.resolve({ workspaceId: `tws_${"1".repeat(32)}`, tabId: herdrTabId("t7") })).toBeUndefined();
   });
 
+  it("shows a terminal that left the listing as exited for ten minutes, never one hidden by a failed listing", async () => {
+    const { core, adapter, advance } = setup();
+    core.add("t1", { title: "build" });
+    core.add("t2");
+    await adapter.list();
+    core.failList("unavailable");
+    advance(2_001);
+    expect(await adapter.workspace()).toBeNull();
+    core.failList(null);
+    core.terminals.delete("t1");
+    advance(2_001);
+    const tabs = (await adapter.workspace())!.tabs;
+    expect(tabs.map((tab) => [tab.id, tab.status, tab.exitCode ?? null])).toEqual([
+      [herdrTabId("t2"), "running", null],
+      [herdrTabId("t1"), "exited", null],
+    ]);
+    expect(TerminalWorkspaceSchema.safeParse(await adapter.workspace()).success).toBe(true);
+    expect((await adapter.list()).sessions.map((session) => session.id)).toEqual(["t2"]);
+    advance(10 * 60_000);
+    expect((await adapter.workspace())!.tabs.map((tab) => tab.id)).toEqual([herdrTabId("t2")]);
+  });
+
   it("reports statuses with a report time that moves only when the status changes", async () => {
     const { core, adapter, advance } = setup();
     core.add("t1", { status: { state: "working" } });
