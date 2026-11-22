@@ -49,8 +49,10 @@ VM disks are thin clones that grow to the requested size, so the pool is
 overcommitted. hostd refuses a new VM with `503 {"error":"capacity"}` while
 the pool's Data% is above `HOSTD_POOL_MAX_DATA_PERCENT` (default 85) or its
 Metadata% is above `HOSTD_POOL_MAX_METADATA_PERCENT` (default 80), or when it
-cannot read them within `HOSTD_POOL_QUERY_TIMEOUT_MS` (default 5000; the read
-uses `lvs --readonly`, so it does not wait on the LVM lock). `GET /v1/capacity`
+cannot read them within `HOSTD_POOL_QUERY_TIMEOUT_MS` (default 5000). The read
+is a plain `lvs -o data_percent,metadata_percent vmvg/pool`: `--readonly` skips
+the device-mapper status query and prints blank percentages (LVM 2.03.16),
+which would refuse every create. `GET /v1/capacity`
 reports both as `thinPool`, which is `null` when unreadable or slower than the
 endpoint's 2 s probe bound, so placement can prefer hosts with room.
 

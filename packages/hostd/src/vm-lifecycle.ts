@@ -409,9 +409,12 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     const timeout = AbortSignal.timeout(cfg.poolQueryTimeoutMs);
     let result: { code: number; stdout: string };
     try {
-      // --readonly reads metadata without taking the LVM lock lvcreate/lvextend hold.
+      // Never pass --readonly: it skips the device-mapper status query, so on
+      // LVM 2.03.16 data_percent and metadata_percent print blank and every
+      // create would fail closed. A plain lvs answers in ~40 ms; the short
+      // poolQueryTimeoutMs bounds it if it waits on the LVM lock.
       result = await exec(
-        ["lvs", "--readonly", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", pool],
+        ["lvs", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", pool],
         { signal: signal ? AbortSignal.any([timeout, signal]) : timeout },
       );
     } catch (error: unknown) {

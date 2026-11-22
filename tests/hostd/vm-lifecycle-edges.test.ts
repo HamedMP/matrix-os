@@ -518,7 +518,7 @@ describe("VM disk size against the golden image", () => {
 });
 
 describe("thin pool admission", () => {
-  const poolQuery = ["lvs", "--readonly", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", "vmvg/pool"];
+  const poolQuery = ["lvs", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", "vmvg/pool"];
   const created = () => execCalls.some((c) => c[0] === "lvcreate");
 
   it("creates a VM while the pool is below both thresholds", async () => {
@@ -536,6 +536,22 @@ describe("thin pool admission", () => {
       await expect(store.list()).resolves.toEqual([]);
     }
     expect(logs.filter((l) => l.event === "vm_thin_pool_full")).toHaveLength(2);
+  });
+
+  it("never passes --readonly: on LVM 2.03.16 it skips the device-mapper status, so the percentages print blank", async () => {
+    await make().create(spec);
+    const query = execCalls.find((c) => c[0] === "lvs" && c.includes("data_percent,metadata_percent"));
+    expect(query).toEqual(poolQuery);
+    expect(query).not.toContain("--readonly");
+  });
+
+  it("treats blank percentage fields (the --readonly output shape) as unreadable and refuses with capacity", async () => {
+    for (const output of ["  \n", "      \n", "\n"]) {
+      thinPool = output;
+      await expect(make().create(spec)).rejects.toMatchObject({ code: "capacity" });
+    }
+    expect(execCalls.some((c) => c[0] === "lvcreate")).toBe(false);
+    expect(logs.filter((l) => l.event === "vm_thin_pool_unreadable")).toHaveLength(3);
   });
 
   it("honours configured thresholds", async () => {
