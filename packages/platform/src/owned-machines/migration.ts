@@ -13,32 +13,39 @@ import type { PlatformMigrationExecutor } from '../database/migration-types.js';
  * it widens user_machines checks. Bump OWNED_MACHINES_SCHEMA_REVISION when the
  * DDL below changes.
  */
-export const OWNED_MACHINES_SCHEMA_REVISION = { generation: 1, fingerprint: 'owned-machines-v1' } as const;
+export const OWNED_MACHINES_SCHEMA_REVISION = { generation: 2, fingerprint: 'owned-machines-v2' } as const;
 
 export async function migrateOwnedMachines(db: PlatformMigrationExecutor): Promise<void> {
+  // Widen the existing checks by adding 'owned' to whatever values they already
+  // allow. Shared preview databases may carry values from other branches, so
+  // the allowed set is extended, never replaced, and existing rows are not rescanned.
   await sql`
     DO $$
+    DECLARE
+      target RECORD;
+      existing TEXT;
+      allowed TEXT[];
     BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'user_machines'::regclass
-          AND conname = 'user_machines_substrate_check'
-          AND pg_get_constraintdef(oid) LIKE '%owned%'
-      ) THEN
-        ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_substrate_check;
-        ALTER TABLE user_machines ADD CONSTRAINT user_machines_substrate_check
-          CHECK (substrate IN ('vps', 'container', 'owned'));
-      END IF;
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'user_machines'::regclass
-          AND conname = 'user_machines_provisioning_class_check'
-          AND pg_get_constraintdef(oid) LIKE '%owned%'
-      ) THEN
-        ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_provisioning_class_check;
-        ALTER TABLE user_machines ADD CONSTRAINT user_machines_provisioning_class_check
-          CHECK (provisioning_class IN ('customer', 'preview', 'private-preview', 'owned')) NOT VALID;
-      END IF;
+      FOR target IN SELECT * FROM (VALUES
+        ('user_machines_substrate_check', 'substrate', ARRAY['vps', 'container']),
+        ('user_machines_provisioning_class_check', 'provisioning_class', ARRAY['customer', 'preview', 'private-preview'])
+      ) AS t(name, col, defaults)
+      LOOP
+        SELECT pg_get_constraintdef(oid) INTO existing FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass AND conname = target.name;
+        IF existing IS NOT NULL AND existing LIKE '%''owned''%' THEN CONTINUE; END IF;
+        IF existing IS NULL THEN
+          allowed := target.defaults;
+        ELSE
+          SELECT array_agg(DISTINCT m[1]) INTO allowed FROM regexp_matches(existing, '''([A-Za-z0-9_-]+)''', 'g') AS m;
+        END IF;
+        allowed := array_append(COALESCE(allowed, target.defaults), 'owned');
+        EXECUTE format('ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS %I', target.name);
+        -- An IN list keeps Postgres' ARRAY['x'::text, ...] rendering, which the
+        -- 'owned' check above and the value extraction both read.
+        EXECUTE format('ALTER TABLE user_machines ADD CONSTRAINT %I CHECK (%I IN (%s)) NOT VALID',
+          target.name, target.col, (SELECT string_agg(quote_literal(v), ', ') FROM unnest(allowed) AS v));
+      END LOOP;
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'user_machines'::regclass

@@ -241,9 +241,23 @@ describe('owned machine migration', () => {
     await expect(sql`UPDATE user_machines SET substrate = 'hetzner'`.execute(db.kysely)).rejects.toThrow();
   });
 
+  it('keeps values another branch added to the substrate check when widening it', async () => {
+    const { migrateOwnedMachines } = await import('../../packages/platform/src/owned-machines/migration.js');
+    await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_substrate_check`.execute(db.kysely);
+    await sql`ALTER TABLE user_machines DROP CONSTRAINT user_machines_owned_shape_check`.execute(db.kysely);
+    await sql`ALTER TABLE user_machines ADD CONSTRAINT user_machines_substrate_check CHECK (substrate IN ('vps', 'container', 'metal'))`.execute(db.kysely);
+    await sql`INSERT INTO user_machines (machine_id, clerk_user_id, handle, runtime_slot, provisioned_at, status, substrate)
+      VALUES ('m-metal', 'u', 'h', 'primary', '2026-11-01', 'running', 'metal')`.execute(db.kysely);
+    await migrateOwnedMachines(db.kysely);
+    await migrateOwnedMachines(db.kysely);
+    const def = await sql<{ d: string }>`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'user_machines_substrate_check'`.execute(db.kysely);
+    expect(def.rows[0]?.d).toContain('metal');
+    expect(def.rows[0]?.d).toContain('owned');
+  });
+
   it('records its own schema scope instead of the shared core generation', async () => {
     const rows = await sql<{ generation: number; fingerprint: string }>`
       SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'owned-machines'`.execute(db.kysely);
-    expect(rows.rows).toEqual([{ generation: 1, fingerprint: 'owned-machines-v1' }]);
+    expect(rows.rows).toEqual([{ generation: 2, fingerprint: 'owned-machines-v2' }]);
   });
 });
