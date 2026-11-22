@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +75,24 @@ describe("command exit files", () => {
     const [shell2, ...args2] = recorder.wrap(TAB_NAME, ["sh", "-c", "kill -TERM $$"]);
     spawnSync(shell2!, args2);
     expect(await recorder.read()).toEqual([{ zellijTabName: TAB_NAME, exitCode: 143 }]);
+  });
+
+  // Fault detected (Greptile, #3542): one unreadable exit file discarded every record in the pass.
+  it("skips an unreadable exit file and still reports the others", async () => {
+    const directory = await tempDir();
+    const recorder = new TerminalExitRecorder({ directory });
+    await recorder.prepare();
+    const locked = join(directory, `matrix-tab-${"e".repeat(32)}`);
+    await writeFile(locked, "1\n");
+    await chmod(locked, 0o000);
+    await writeFile(join(directory, `matrix-tab-${"f".repeat(32)}`), "7\n");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await recorder.read()).toEqual([{ zellijTabName: `matrix-tab-${"f".repeat(32)}`, exitCode: 7 }]);
+      expect(warn).toHaveBeenCalledWith("[terminal-runtime] exit file unreadable:", "EACCES");
+    } finally {
+      await chmod(locked, 0o600);
+    }
   });
 
   it("ignores files it did not name, symlinks and bad contents", async () => {

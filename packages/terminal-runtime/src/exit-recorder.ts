@@ -77,13 +77,20 @@ export class TerminalExitRecorder {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+    // One file that cannot be read or swept is logged and skipped, so it never holds back every other exit.
     for (const name of names.filter((entry) => TEMP_NAME.test(entry)).slice(0, MAX_FILES_PER_PASS)) {
-      await this.removeAbandonedTemp(join(this.directory, name));
+      await this.removeAbandonedTemp(join(this.directory, name)).catch((error: unknown) => {
+        console.warn("[terminal-runtime] exit temp file not swept:", (error as NodeJS.ErrnoException).code ?? "unknown");
+      });
     }
     const records: TerminalExitRecord[] = [];
     for (const name of names.filter((entry) => TAB_NAME.test(entry)).slice(0, MAX_FILES_PER_PASS)) {
-      const exitCode = await this.readCode(join(this.directory, name));
-      if (exitCode !== null) records.push({ zellijTabName: name, exitCode });
+      try {
+        const exitCode = await this.readCode(join(this.directory, name));
+        if (exitCode !== null) records.push({ zellijTabName: name, exitCode });
+      } catch (error: unknown) {
+        console.warn("[terminal-runtime] exit file unreadable:", (error as NodeJS.ErrnoException).code ?? "unknown");
+      }
     }
     return records;
   }
