@@ -71,6 +71,7 @@ import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
+import { SHORTCUT_EVENTS, SHORTCUT_INVOKE } from "./shortcuts-ipc";
 
 const Empty = z.object({}).strict();
 
@@ -144,6 +145,7 @@ const STATE_KEYS = [
   "recents",
   "projectViews",
   "providerPreferences",
+  // keyboardShortcuts is deliberately absent: only shortcuts:set may write it.
 ] as const;
 
 const MAX_STATE_VALUE_BYTES = 64 * 1024;
@@ -168,6 +170,7 @@ export const INVOKE_CHANNELS = {
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
   ...AI_USAGE_INVOKE,
+  ...SHORTCUT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
@@ -546,6 +549,7 @@ export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
+  ...SHORTCUT_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
   "app:open-chat": NativeAppOpenChatEventSchema,

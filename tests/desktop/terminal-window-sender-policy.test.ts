@@ -67,7 +67,7 @@ describe("IPC sender policy", () => {
 
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
-      ["auth:changed", "local-terminal:closed", "local-terminal:output", "window:focus-changed"],
+      ["auth:changed", "local-terminal:closed", "local-terminal:output", "shortcuts:changed", "window:focus-changed"],
     );
     for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });
