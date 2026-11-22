@@ -109,6 +109,10 @@ export class TailscaleController {
   private readonly spawn: TailscaleSpawn;
   private readonly loginUrlWaitMs: number;
   private login: { child: TailscaleLoginProcess; timer: NodeJS.Timeout; url: string | null } | null = null;
+  /** Bumped by disconnect/close: a connect started before it must not run `tailscale up`. */
+  private generation = 0;
+  /** Connects run one at a time so two requests cannot start two logins. */
+  private connectQueue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly options: TailscaleControllerOptions) {
     const bin = options.bin ?? "/usr/bin/tailscale";
@@ -146,8 +150,21 @@ export class TailscaleController {
     return url.origin === "https://login.tailscale.com";
   }
 
-  async connect(): Promise<{ state: TailscaleState; loginUrl: string | null }> {
+  connect(): Promise<{ state: TailscaleState; loginUrl: string | null }> {
+    const generation = this.generation;
+    const run = this.connectQueue.then(() => this.connectOnce(generation));
+    this.connectQueue = run.catch((error: unknown) => {
+      console.warn("[private-network] tailscale connect failed:", error instanceof Error ? error.name : "unknown");
+    });
+    return run;
+  }
+
+  private async connectOnce(generation: number): Promise<{ state: TailscaleState; loginUrl: string | null }> {
+    const cancelled = { state: "stopped" as const, loginUrl: null };
+    if (generation !== this.generation) return cancelled;
     const before = await this.status();
+    // The owner disconnected (or the gateway is closing) while status was read.
+    if (generation !== this.generation) return cancelled;
     if (before.state === "connected" || before.state === "not-installed" || before.state === "unavailable") {
       return { state: before.state, loginUrl: null };
     }
@@ -160,17 +177,21 @@ export class TailscaleController {
     if (this.options.accessMode === "headscale" && this.options.loginServer) args.push(`--login-server=${this.options.loginServer}`);
     args.push("--timeout=600s");
     const url = await this.startLogin(args);
+    if (generation !== this.generation) return cancelled;
     if (url) return { state: "needs-login", loginUrl: url };
     const after = await this.status();
+    if (generation !== this.generation) return cancelled;
     return { state: after.state, loginUrl: after.authUrl && this.isLoginUrl(after.authUrl) ? after.authUrl : null };
   }
 
   async disconnect(): Promise<void> {
+    this.generation += 1;
     this.stopLogin();
     await this.exec(["down"], { timeoutMs: DOWN_TIMEOUT_MS });
   }
 
   close(): void {
+    this.generation += 1;
     this.stopLogin();
   }
 

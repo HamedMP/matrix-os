@@ -116,6 +116,61 @@ describe("tailscale connect", () => {
     await expect(connected.connect()).resolves.toEqual({ state: "connected", loginUrl: null });
   });
 
+  function slowStatusExec() {
+    const pending: Array<() => void> = [];
+    const exec: TailscaleExec = vi.fn(async (args: string[]) => {
+      if (args[0] === "status") {
+        await new Promise<void>((resolve) => pending.push(resolve));
+        return { stdout: JSON.stringify({ BackendState: "NeedsLogin" }), stderr: "" };
+      }
+      return { stdout: "", stderr: "" };
+    });
+    return { exec, releaseStatus: () => pending.splice(0).forEach((resolve) => resolve()) };
+  }
+
+  it("never runs tailscale up after a disconnect that finished while connect was reading status", async () => {
+    const { exec, releaseStatus } = slowStatusExec();
+    const { spawn } = fakeLogin(["https://login.tailscale.com/a/late"]);
+    const controller = new TailscaleController({ exec, spawn, accessMode: "tailscale", loginServer: null, operator: "alice", loginUrlWaitMs: 1000 });
+    const connecting = controller.connect();
+    await vi.waitFor(() => expect(exec).toHaveBeenCalledWith(["status", "--json"], expect.anything()));
+    await controller.disconnect();
+    expect(exec).toHaveBeenCalledWith(["down"], expect.anything());
+    releaseStatus();
+    await expect(connecting).resolves.toEqual({ state: "stopped", loginUrl: null });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("drops a pending connect when the controller closes", async () => {
+    const { exec, releaseStatus } = slowStatusExec();
+    const { spawn } = fakeLogin(["https://login.tailscale.com/a/late"]);
+    const controller = new TailscaleController({ exec, spawn, accessMode: "tailscale", loginServer: null, operator: "alice", loginUrlWaitMs: 1000 });
+    const connecting = controller.connect();
+    await vi.waitFor(() => expect(exec).toHaveBeenCalled());
+    controller.close();
+    releaseStatus();
+    await expect(connecting).resolves.toEqual({ state: "stopped", loginUrl: null });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("starts one tailscale up for concurrent connects", async () => {
+    const { exec, releaseStatus } = slowStatusExec();
+    const { spawn } = fakeLogin(["https://login.tailscale.com/a/once"]);
+    const controller = new TailscaleController({ exec, spawn, accessMode: "tailscale", loginServer: null, operator: "alice", loginUrlWaitMs: 1000 });
+    const first = controller.connect();
+    const second = controller.connect();
+    await vi.waitFor(() => expect(exec).toHaveBeenCalled());
+    const release = setInterval(releaseStatus, 5);
+    try {
+      const results = await Promise.all([first, second]);
+      expect(results.map((r) => r.loginUrl)).toEqual(["https://login.tailscale.com/a/once", "https://login.tailscale.com/a/once"]);
+    } finally {
+      clearInterval(release);
+    }
+    expect(spawn).toHaveBeenCalledTimes(1);
+    controller.close();
+  });
+
   it("disconnects with tailscale down", async () => {
     const exec = execReturning(running);
     const controller = new TailscaleController({ exec, accessMode: "tailscale", loginServer: null, operator: "alice" });
