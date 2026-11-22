@@ -1,4 +1,4 @@
-import { FundedHostActivationRequestSchema, FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, type FundedHostActivationResponse } from '@matrix-os/contracts';
+import { FUNDED_PRODUCTION_PLATFORM_ORIGIN, FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, fundedOriginPairKind, type FundedHostActivationResponse } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
@@ -14,17 +14,38 @@ const Query = z.object({ runtimeSlot: RuntimeSlot.optional().default('primary') 
 const Models = z.array(z.string().max(128)).max(32);
 const ordinaryModels = new Set<string>(['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS]);
 type Options = { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string;
-  relayOrigin: string; now?: () => Date; env?: NodeJS.ProcessEnv };
+  relayOrigin: string;
+  /** The platform origin guests are configured against; see fundedPlatformOrigin. Defaults to production. */
+  platformOrigin?: string;
+  now?: () => Date; env?: NodeJS.ProcessEnv };
 export type FundedHostActivationRead = { status: 'ready'; configuration: FundedHostActivationResponse }
   | { status: 'unauthorized' | 'ineligible' | 'deferred' };
 
 /**
- * Whether a relay origin is inside the reviewed relay pin that guests accept
- * (the activation contract and the guest's configure script). A deployment
- * configured with any other relay can never activate funded AI.
+ * The platform origin funded AI configures guests against. Production always
+ * uses https://app.matrix-os.com. Only a preview platform (PLATFORM_PREVIEW=true
+ * and no Hetzner token, the same gate as storage-less sync) uses its own public
+ * origin, which must then pair with the reviewed preview relay.
  */
-export function isAdmittedFundedRelayOrigin(origin: string): boolean {
-  return FundedHostActivationRequestSchema.shape.configuration.shape.relayOrigin.safeParse(origin).success;
+export function fundedPlatformOrigin(env: NodeJS.ProcessEnv): string {
+  const preview = env.PLATFORM_PREVIEW === 'true' && !env.HETZNER_API_TOKEN?.trim();
+  const raw = preview ? env.MATRIX_APP_ORIGIN ?? env.PLATFORM_PUBLIC_URL : undefined;
+  if (!raw) return FUNDED_PRODUCTION_PLATFORM_ORIGIN;
+  try {
+    return new URL(raw).origin;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) throw error;
+    return FUNDED_PRODUCTION_PLATFORM_ORIGIN;
+  }
+}
+
+/**
+ * Whether the platform and relay origins form a reviewed pair guests accept
+ * (production, or the exact preview pair). Any other pair, including a mixed
+ * one, can never activate funded AI.
+ */
+export function isAdmittedFundedOriginPair(platformOrigin: string, relayOrigin: string): boolean {
+  return fundedOriginPairKind(platformOrigin, relayOrigin) !== null;
 }
 
 /** Configuration delivery only: never issues a credential, grants credit or settles usage. */
@@ -91,7 +112,8 @@ export async function readFundedHostActivation(options: Options & {
     return { status: 'ready', configuration: FundedHostActivationResponseSchema.parse({ contractVersion: 1,
       identity: { handle: machine.handle, machineId: machine.machine_id, ownerId: machine.clerk_user_id,
         runtimeSlot: machine.runtime_slot, runtimeTokenEpoch: machine.runtime_token_epoch },
-      configuration: { enabled: true, platformOrigin: 'https://app.matrix-os.com', relayOrigin: options.relayOrigin, runtimeToken },
+      configuration: { enabled: true, platformOrigin: options.platformOrigin ?? FUNDED_PRODUCTION_PLATFORM_ORIGIN,
+        relayOrigin: options.relayOrigin, runtimeToken },
       issuedAt: now.toISOString(), expiresAt: new Date(expiresAt).toISOString() }) };
   });
 }
@@ -103,9 +125,9 @@ export function createFundedHostActivationRoutes(options: Options): Hono {
   }
   // Checked once: an unpinned relay fails every read the same way, so say so
   // once and answer 503 instead of a ZodError per guest poll.
-  const relayAdmitted = isAdmittedFundedRelayOrigin(options.relayOrigin);
+  const relayAdmitted = isAdmittedFundedOriginPair(options.platformOrigin ?? FUNDED_PRODUCTION_PLATFORM_ORIGIN, options.relayOrigin);
   if (!relayAdmitted) {
-    console.error('[managed-features] activation configuration disabled: the configured relay origin is outside the reviewed relay pin');
+    console.error('[managed-features] activation configuration disabled: the configured relay and platform origins are not a reviewed pair');
   }
   const app = new Hono();
   app.get('/activation-config', async c => {

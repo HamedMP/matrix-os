@@ -57,6 +57,26 @@ describe('funded AI host configuration primitive', () => {
     { identity: { ...request.identity, machineId: 'other' } }, { identity: { ...request.identity, ownerId: 'other' } }, { identity: { ...request.identity, handle: 'bob' } }, { identity: { ...request.identity, runtimeSlot: 'secondary' } },
     { configuration: { ...request.configuration, relayOrigin: 'https://evil.test' } }, { configuration: { ...request.configuration, enabled: false } }, { configuration: { ...request.configuration, runtimeToken: 'bad' } }, { extra: true },
   ])('rejects malformed and mismatched identity/configuration without mutation %j', async (extra) => { const f = await fixture(); expect(apply(f.envPath, { ...request, ...extra }).status).not.toBe(0); expect(await readFile(f.envPath, 'utf8')).toBe(original); });
+  it('installs the reviewed preview pair (preview relay with a preview platform origin)', async () => {
+    const f = await fixture();
+    const preview = { ...request, configuration: { ...request.configuration,
+      platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app' } };
+    const result = apply(f.envPath, preview);
+    expect(result.status, result.stderr).toBe(0);
+    const updated = await readFile(f.envPath, 'utf8');
+    expect(updated).toContain('MATRIX_FUNDED_AI_PLATFORM_URL=https://metal-preview.matrix-os.com\n');
+    expect(updated).toContain('MATRIX_FUNDED_AI_RELAY_URL=https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app\n');
+  });
+  it.each([
+    ['preview relay with the production platform', 'https://app.matrix-os.com', 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'],
+    ['production relay with a preview platform', 'https://metal-preview.matrix-os.com', 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app'],
+    ['an unreviewed preview relay', 'https://metal-preview.matrix-os.com', 'https://matrix-ai-relay-preview-x-ey.a.run.app'],
+    ['an unreviewed preview platform', 'https://evil.matrix-os.com', 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'],
+  ])('rejects a mixed or unreviewed pair: %s', async (_name, platformOrigin, relayOrigin) => {
+    const f = await fixture();
+    expect(apply(f.envPath, { ...request, configuration: { ...request.configuration, platformOrigin, relayOrigin } }).status).not.toBe(0);
+    expect(await readFile(f.envPath, 'utf8')).toBe(original);
+  });
   it('rejects present differing epoch, duplicate assignments, exported overrides and custom origins', async () => {
     for (const suffix of ['MATRIX_RUNTIME_TOKEN_EPOCH=1\n', 'MATRIX_MACHINE_ID=machine-1\n', 'export MATRIX_FUNDED_AI_ENABLED=false\n', 'MATRIX_FUNDED_AI_PLATFORM_URL=https://custom.test\n', 'MATRIX_FUNDED_AI_RELAY_URL=https://custom.test\n']) {
       const f = await fixture();

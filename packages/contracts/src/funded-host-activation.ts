@@ -6,15 +6,43 @@ export const FundedHostActivationIdentitySchema = z.object({
   runtimeSlot: z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/),
   runtimeTokenEpoch: z.number().int().min(1).max(2147483647),
 }).strict();
+/** The production platform origin funded AI is configured against. */
+export const FUNDED_PRODUCTION_PLATFORM_ORIGIN = 'https://app.matrix-os.com';
+/** Untagged production Cloud Run relay services only. */
+const PRODUCTION_RELAY_PATTERN = /^https:\/\/matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app$/;
+/**
+ * Reviewed preview pair (spec 2691, ENG-520): exactly this preview relay, and
+ * only together with one of these preview platform origins. Guest scripts
+ * (matrix-configure-funded-ai.py, funded-host-config/*.py) carry the same list;
+ * a test keeps them identical. Never widen to a pattern.
+ */
+export const FUNDED_PREVIEW_RELAY_ORIGIN = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+export const FUNDED_PREVIEW_PLATFORM_ORIGINS = [
+  'https://preview.matrix-os.com',
+  'https://metal-preview.matrix-os.com',
+  'https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app',
+] as const;
+
+/** Which reviewed pair a platform and relay origin form, or null for any other (including mixed) pair. */
+export function fundedOriginPairKind(platformOrigin: unknown, relayOrigin: unknown): 'production' | 'preview' | null {
+  if (typeof platformOrigin !== 'string' || typeof relayOrigin !== 'string' || relayOrigin.length > 256) return null;
+  if (platformOrigin === FUNDED_PRODUCTION_PLATFORM_ORIGIN && PRODUCTION_RELAY_PATTERN.test(relayOrigin)) return 'production';
+  if ((FUNDED_PREVIEW_PLATFORM_ORIGINS as readonly string[]).includes(platformOrigin)
+    && relayOrigin === FUNDED_PREVIEW_RELAY_ORIGIN) return 'preview';
+  return null;
+}
+
 const fields = {
   contractVersion: z.literal(1),
   identity: FundedHostActivationIdentitySchema,
   configuration: z.object({
     enabled: z.literal(true),
-    platformOrigin: z.literal('https://app.matrix-os.com'),
-    relayOrigin: z.string().max(256).regex(/^https:\/\/matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app$/),
+    platformOrigin: z.string().max(256),
+    relayOrigin: z.string().max(256),
     runtimeToken: z.string().regex(/^[a-f0-9]{64}$/),
-  }).strict(),
+  }).strict().refine(value => fundedOriginPairKind(value.platformOrigin, value.relayOrigin) !== null, {
+    message: 'Unreviewed funded AI origin pair',
+  }),
 };
 export const FundedHostActivationRequestSchema = z.object(fields).strict();
 export const FundedHostActivationResponseSchema = z.object({

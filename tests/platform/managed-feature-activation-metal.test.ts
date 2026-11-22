@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fundedHostActivationRevisionInput } from '@matrix-os/contracts';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { FREE_MANAGED_MODEL_ID } from '../../packages/platform/src/free-tier/funded-policy.js';
+import { fundedPlatformOrigin } from '../../packages/platform/src/funded-host-activation.js';
 import {
   createManagedFeatureActivator,
   createManagedFeatureResumeTrigger,
@@ -141,6 +142,34 @@ describe('managed feature activation for metal runtimes', () => {
     expect(JSON.parse(posted!.body)).toMatchObject({ identity: { machineId: rig.machineId, runtimeTokenEpoch: 1 } });
   });
 
+  it('activates a free metal VM on a preview platform with the reviewed preview pair, through the ingress', async () => {
+    const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+    const previewPlatform = fundedPlatformOrigin({
+      PLATFORM_PREVIEW: 'true', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com', PLATFORM_PUBLIC_URL: 'https://metal-preview.matrix-os.com',
+    });
+    expect(previewPlatform).toBe('https://metal-preview.matrix-os.com');
+    rig.ingress.respond = configuringVm().respond;
+
+    const activate = createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin: previewRelay, platformOrigin: previewPlatform, fundedAiEnabled: true,
+      speechEnabled: false, activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates: rig.substrates,
+      now: () => new Date(at), wait: async () => {},
+    });
+
+    expect(await activate({ handle: HANDLE })).toEqual({ activated: 1, failed: 0, complete: true, nextCursor: null });
+    const posted = rig.ingress.requests.find((request) => request.path === CONFIG_PATH && request.method === 'POST');
+    expect(JSON.parse(posted!.body)).toMatchObject({
+      configuration: { platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: previewRelay },
+    });
+  });
+
+  it('a production platform keeps the production origin and rejects the preview relay', async () => {
+    expect(fundedPlatformOrigin({ MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' })).toBe('https://app.matrix-os.com');
+    // A preview that can provision Hetzner VPSes is production-gated too.
+    expect(fundedPlatformOrigin({ PLATFORM_PREVIEW: 'true', HETZNER_API_TOKEN: 'token', MATRIX_APP_ORIGIN: 'https://metal-preview.matrix-os.com' }))
+      .toBe('https://app.matrix-os.com');
+  });
+
   it('never sends a relay origin outside the reviewed pin, and says so once instead of a ZodError per pass', async () => {
     // The live preview platform's relay: a real Cloud Run origin the contract does not admit.
     const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
@@ -159,7 +188,7 @@ describe('managed feature activation for metal runtimes', () => {
     expect(rig.ingress.requests.filter((request) => request.path === CONFIG_PATH)).toEqual([]);
     expect(warn.mock.calls.flat().map(String)).not.toContain('ZodError');
     expect(error).toHaveBeenCalledTimes(1);
-    expect(String(error.mock.calls[0]![0])).toContain('relay origin');
+    expect(String(error.mock.calls[0]![0])).toContain('relay and platform origins');
     expect(JSON.stringify(error.mock.calls)).not.toContain(previewRelay);
   });
 

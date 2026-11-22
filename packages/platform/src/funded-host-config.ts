@@ -1,4 +1,5 @@
-import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import { FUNDED_PRODUCTION_PLATFORM_ORIGIN, MANAGED_WORKERS_AI_MODEL_IDS, fundedOriginPairKind } from "@matrix-os/contracts";
+import { fundedPlatformOrigin } from "./funded-host-activation.js";
 import { Hono } from "hono";
 import { readUsageWaiverAudit, USAGE_WAIVER_MAX_RECORDS } from "./ai-funded-usage-waiver-audit.js";
 import { getAccountDeletionAdmission } from "./account-deletion/admission.js";
@@ -11,11 +12,10 @@ import { buildPlatformRuntimeVerificationToken, buildPlatformSyncVerificationTok
 const EpochSchema = z.number().int().min(1).max(2_147_483_647);
 const TimestampSchema = z.string().datetime({ precision: 3 });
 const ShaSchema = z.string().regex(/^[a-f0-9]{40}$/);
-// Untagged production Cloud Run services only. Reviewed operators configure the
-// exact origin; recipient requests cannot supply an origin or path.
-const RelayOriginSchema = z.string().max(256).regex(
-  /^https:\/\/matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app$/,
-);
+// Reviewed operators configure the exact relay; recipient requests cannot
+// supply an origin or path. The relay must form a reviewed pair with the
+// platform origin (production, or the exact preview pair on a preview platform).
+const RelayOriginSchema = z.string().max(256);
 const IdentitySchema = z.object({ handle: CustomerHandleSchema, machineId: z.uuid(),
   runtimeSlot: z.literal("primary"), runtimeTokenEpoch: EpochSchema }).strict();
 export const FundedHostConfigResponseSchema = z.object({
@@ -25,8 +25,8 @@ export const FundedHostConfigResponseSchema = z.object({
   configuration: z.object({ MATRIX_FUNDED_AI_ENABLED: z.literal("true"),
     MATRIX_FUNDED_AI_RELAY_URL: RelayOriginSchema,
     MATRIX_FUNDED_AI_RUNTIME_TOKEN: z.string().regex(/^[a-f0-9]{64}$/),
-    MATRIX_FUNDED_AI_PLATFORM_URL: z.literal("https://app.matrix-os.com"),
-  }).strict(),
+    MATRIX_FUNDED_AI_PLATFORM_URL: z.string().max(256),
+  }).strict().refine(value => fundedOriginPairKind(value.MATRIX_FUNDED_AI_PLATFORM_URL, value.MATRIX_FUNDED_AI_RELAY_URL) !== null),
 }).strict().refine(value => Date.parse(value.expiresAt) > Date.parse(value.issuedAt)
   && Date.parse(value.expiresAt) - Date.parse(value.issuedAt) <= 30_000);
 export const FundedHostEpochResponseSchema = z.object({
@@ -37,7 +37,7 @@ export const FundedHostEpochResponseSchema = z.object({
   && Date.parse(value.expiresAt) - Date.parse(value.issuedAt) <= 30_000);
 export type FundedHostConfigResponse = z.infer<typeof FundedHostConfigResponseSchema>;
 export type FundedHostConfig = { enabled: false } | {
-  enabled: true; machineIds: readonly string[]; relayOrigin: string; validThrough: string; sourceSha: string;
+  enabled: true; machineIds: readonly string[]; relayOrigin: string; platformOrigin: string; validThrough: string; sourceSha: string;
 };
 
 export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date()): FundedHostConfig {
@@ -52,7 +52,9 @@ export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date()): 
     validThrough: TimestampSchema, sourceSha: ShaSchema }).safeParse({ machineIds,
     relayOrigin: env.MATRIX_FUNDED_AI_RELAY_URL, validThrough: env.MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH,
     sourceSha: env.MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA });
+  const platformOrigin = fundedPlatformOrigin(env);
   if (!valid.success || new Set(machineIds).size !== machineIds.length
+    || fundedOriginPairKind(platformOrigin, valid.data.relayOrigin) === null
     || Date.parse(valid.data.validThrough) - now.getTime() > 7 * 24 * 60 * 60_000) {
     throw new Error("Funded host configuration is misconfigured");
   }
@@ -60,7 +62,7 @@ export function loadFundedHostConfig(env: NodeJS.ProcessEnv, now = new Date()): 
   // Later autoscaled instances must keep Platform available and mount no repair
   // route. Validate all settings first so expiry cannot hide malformed config.
   if (Date.parse(valid.data.validThrough) <= now.getTime()) return { enabled: false };
-  return { enabled: true, ...valid.data };
+  return { enabled: true, ...valid.data, platformOrigin };
 }
 
 const RequestSchema = IdentitySchema.extend({
@@ -95,6 +97,8 @@ export function createFundedHostConfigRoutes(options: {
     MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH: options.config.validThrough,
     MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA: options.config.sourceSha,
     MATRIX_FUNDED_AI_RELAY_URL: options.config.relayOrigin,
+    ...(options.config.platformOrigin !== FUNDED_PRODUCTION_PLATFORM_ORIGIN
+      ? { PLATFORM_PREVIEW: "true", MATRIX_APP_ORIGIN: options.config.platformOrigin } : {}),
   }, now()) : { enabled: false as const };
   const app = new Hono();
   app.use("*", async (c, next) => {
@@ -186,7 +190,7 @@ export function createFundedHostConfigRoutes(options: {
           identity: { ...identity, runtimeTokenEpoch: machine.runtime_token_epoch },
           configuration: { MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RELAY_URL: config.relayOrigin,
             MATRIX_FUNDED_AI_RUNTIME_TOKEN: buildPlatformRuntimeVerificationToken(identity, platformSecret, machine.runtime_token_epoch),
-            MATRIX_FUNDED_AI_PLATFORM_URL: "https://app.matrix-os.com" },
+            MATRIX_FUNDED_AI_PLATFORM_URL: config.platformOrigin },
         }) };
       });
       if (result.status === "unauthorized") return c.json({ error: "Unauthorized" }, 401);

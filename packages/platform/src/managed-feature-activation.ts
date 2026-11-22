@@ -4,7 +4,7 @@ import { fundedHostActivationRevisionInput, type FundedHostActivationRequest } f
 import { ZodError } from 'zod/v4';
 import type { Dispatcher } from 'undici';
 import { iterateRunningUserMachinePages, type PlatformDB, type UserMachineRecord } from './db.js';
-import { isAdmittedFundedRelayOrigin, readFundedHostActivation } from './funded-host-activation.js';
+import { isAdmittedFundedOriginPair, readFundedHostActivation } from './funded-host-activation.js';
 import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
 import { readBoundedHostJson } from './speech/host-readiness.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
@@ -30,6 +30,8 @@ export type ManagedFeatureActivator = (target: ManagedFeatureActivationTarget) =
 /** Each call handles one bounded page; failures never prevent another feature's reconciliation. */
 export function createManagedFeatureActivator(options: {
   db: PlatformDB; platformSecret: string; relayOrigin: string; fundedAiEnabled: boolean; speechEnabled: boolean;
+  /** Platform origin guests are configured against (fundedPlatformOrigin); defaults to production. */
+  platformOrigin?: string;
   activateSpeech: (target: { handle: string; signal?: AbortSignal }) => Promise<{ activated: number; failed: number }>;
   /** Reaches non-VPS runtimes (metal) through their host ingress; without it they are deferred, never sent to publicIPv4. */
   substrates?: Pick<SubstrateRegistry, 'resolveUpstream'>;
@@ -39,9 +41,10 @@ export function createManagedFeatureActivator(options: {
   // Guests accept only the reviewed relay pin (contracts and the guest's
   // configure script). A deployment configured with another relay can never
   // activate; say so once instead of failing every runtime on every pass.
-  const relayAdmitted = !options.fundedAiEnabled || isAdmittedFundedRelayOrigin(options.relayOrigin);
+  const platformOrigin = options.platformOrigin ?? 'https://app.matrix-os.com';
+  const relayAdmitted = !options.fundedAiEnabled || isAdmittedFundedOriginPair(platformOrigin, options.relayOrigin);
   if (!relayAdmitted) {
-    console.error('[managed-features] funded activation disabled: the configured relay origin is outside the reviewed relay pin');
+    console.error('[managed-features] funded activation disabled: the configured relay and platform origins are not a reviewed pair');
   }
   const pageTimeoutMs = options.pageTimeoutMs ?? 110_000;
   if (!Number.isInteger(pageTimeoutMs) || pageTimeoutMs < 1 || pageTimeoutMs > 110_000) throw new RangeError('Invalid activation page timeout');
@@ -94,7 +97,7 @@ export function createManagedFeatureActivator(options: {
     const token = buildPlatformRuntimeVerificationToken({ handle: machine.handle, machineId: machine.machineId,
       runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch);
     const eligibility = await readFundedHostActivation({ db: options.db, platformSecret: options.platformSecret,
-      relayOrigin: options.relayOrigin, handle: machine.handle, runtimeSlot: machine.runtimeSlot,
+      relayOrigin: options.relayOrigin, platformOrigin, handle: machine.handle, runtimeSlot: machine.runtimeSlot,
       authorization: `Bearer ${token}`, now: options.now });
     signal.throwIfAborted();
     if (eligibility.status === 'ineligible') return 'skipped';

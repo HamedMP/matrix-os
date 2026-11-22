@@ -94,7 +94,7 @@ import {
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
-import { createFundedHostActivationRoutes } from './funded-host-activation.js';
+import { createFundedHostActivationRoutes, fundedPlatformOrigin } from './funded-host-activation.js';
 import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, createManagedFeatureResumeTrigger, type ManagedFeatureActivator, type ManagedFeatureResumeTrigger } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
@@ -988,8 +988,11 @@ async function startPlatformServerWithCleanup(
       ...(activatePreviewRuntimeAccess ? { activatePreviewRuntimeAccess } : {}),
     });
     customerVpsService = createCustomerVpsService(customerVpsDependencies);
+    // Production configures guests against app.matrix-os.com; only a preview
+    // platform uses its own origin, which must pair with the reviewed preview relay.
+    const fundedOrigin = fundedPlatformOrigin(process.env);
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
-      relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      relayOrigin: customerVpsConfig.fundedAiRelayUrl, platformOrigin: fundedOrigin, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
       fetchDispatcher: customerVpsProxyDispatcher, substrates: substrateRegistry });
     activateResumedRuntime = createManagedFeatureResumeTrigger(activateManagedFeatures);
@@ -997,7 +1000,7 @@ async function startPlatformServerWithCleanup(
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret,
         ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
-        relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl, platformOrigin: fundedOrigin }));
     }
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {
