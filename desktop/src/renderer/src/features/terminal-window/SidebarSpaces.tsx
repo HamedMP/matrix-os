@@ -72,10 +72,13 @@ export function MachineHeader({ name, detail, kind, dotColor, folded, canFold, c
       </button>
       {create ?? null}
       {dotColor ? <span aria-hidden="true" className="mx-0.5 size-1.5 shrink-0 rounded-full" style={{ background: dotColor }} /> : null}
-      <button type="button" aria-expanded={!folded} aria-label={`${folded ? "Show" : "Hide"} ${name} spaces`}
-        disabled={!canFold} onClick={onToggle} className={smallButton} style={secondaryText}>
-        {folded ? <ChevronRight size={11} aria-hidden="true" /> : <ChevronDown size={11} aria-hidden="true" />}
-      </button>
+      {/* A machine with no spaces keeps the slot, so every header lines up. */}
+      {canFold ? (
+        <button type="button" aria-expanded={!folded} aria-label={`${folded ? "Show" : "Hide"} ${name} spaces`}
+          onClick={onToggle} className={smallButton} style={secondaryText}>
+          {folded ? <ChevronRight size={11} aria-hidden="true" /> : <ChevronDown size={11} aria-hidden="true" />}
+        </button>
+      ) : <span aria-hidden="true" className="size-5 shrink-0" />}
     </div>
   );
 }
