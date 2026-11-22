@@ -520,7 +520,7 @@ Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and CSP `con
 
 ## Deferred Work (TODO)
 
-- **Hidden shell Settings sections (paid-beta scope)**: the **Channels, Skills, Security, Cron, and Plugins** Settings pages are hidden from the shell Settings nav via `HIDDEN_SECTION_IDS` in `shell/src/components/Settings.tsx`; every other section is shown. The section components and their render branches are intentionally left intact — re-enable a page by removing its id from `HIDDEN_SECTION_IDS`. **TODO before unhiding**: finish/redesign each surface (content, copy, empty states, error handling) and add coverage. Track per-section follow-ups in the backlog.
+- **Hidden shell Settings sections (paid-beta scope)**: the **Channels, Skills, Security, Cron, and Plugins** Settings pages are hidden from the shell Settings nav via `HIDDEN_SECTION_IDS` in `shell/src/components/Settings.tsx`. Self-hosted runtimes separately hide Billing and Organization (`showBillingSection={false}`). The section components and their render branches are intentionally left intact — re-enable a page by removing its id from `HIDDEN_SECTION_IDS`. **TODO before unhiding**: finish/redesign each surface (content, copy, empty states, error handling) and add coverage. Track per-section follow-ups in the backlog.
 
 ## Reference Docs
 

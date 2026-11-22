@@ -188,6 +188,7 @@ Record a short `DESIGN.md` in the app: user's main job, visual direction, refere
 {
   "name": "Counter",
   "slug": "counter",
+  "version": "1.0.0",
   "description": "Simple click counter",
   "category": "utility",
   "runtime": "vite",
@@ -210,6 +211,7 @@ Record a short `DESIGN.md` in the app: user's main job, visual direction, refere
 {
   "name": "Bookmarks",
   "slug": "bookmarks",
+  "version": "1.0.0",
   "description": "Save and organize bookmarks",
   "category": "productivity",
   "runtime": "vite",
