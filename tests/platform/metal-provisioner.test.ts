@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
 import { sql, type KyselyPlugin, type QueryId } from 'kysely';
 import {
+  getActiveUserMachineByClerkId,
   getUserMachine,
   insertUserMachine,
   promoteHostBundleChannel,
@@ -123,7 +124,8 @@ interface FakeHost {
 function fakeHost(capacity: Partial<HostdCapacityResponse> | Error): FakeHost {
   const capacityFn = vi.fn(async () => {
     if (capacity instanceof Error) throw capacity;
-    return { memoryAvailableMiB: 0, poolFreeBytes: 1024 * GiB, runningVms: 0, suspendedVms: 0, ...capacity };
+    return { memoryAvailableMiB: 0, poolFreeBytes: 1024 * GiB, runningVms: 0, suspendedVms: 0,
+      thinPool: { dataPercent: 20, metadataPercent: 5 }, ...capacity };
   });
   const createVm = vi.fn(async (_spec: HostdCreateVmRequest) => ({ id: 'vm_0123456789abcdef01234567', privateIPv4: '10.77.0.9' }));
   const listVms = vi.fn(async () => []);
@@ -278,6 +280,102 @@ describe('metal provisioner', () => {
       .provision({ clerkUserId: 'user_other', handle: 'bob', tier: 'paid' });
     const paid = host.createVm.mock.calls[1]![0] as HostdCreateVmRequest;
     expect(paid.userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code opencode pi'$/m);
+  });
+
+  it('honours a paid owner\'s plan-step tool choice, canonicalized, but never a free owner\'s', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'paid', developerTools: ['pi', 'codex', 'pi'] });
+    expect((host.createVm.mock.calls[0]![0] as HostdCreateVmRequest).userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex pi'$/m);
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ developerTools: ['codex', 'pi'] });
+
+    await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_other', handle: 'bob', tier: 'free', developerTools: ['opencode', 'pi'] });
+    expect((host.createVm.mock.calls[1]![0] as HostdCreateVmRequest).userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code'$/m);
+
+    // An unknown tool is refused, not silently dropped.
+    expect(await provisioner({ machineIds: ['1f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_third', handle: 'carol', tier: 'paid', developerTools: ['vim' as never] }))
+      .toEqual({ error: 'unavailable' });
+  });
+
+  it('skips hosts whose thin pool is unknown or past the thresholds, and prefers the emptier pool', async () => {
+    const unknown = await addHost('host-a', { memoryAvailableMiB: 90_000, thinPool: null });
+    const fullData = await addHost('host-b', { memoryAvailableMiB: 90_000, thinPool: { dataPercent: 86, metadataPercent: 5 } });
+    const fullMeta = await addHost('host-c', { memoryAvailableMiB: 90_000, thinPool: { dataPercent: 10, metadataPercent: 81 } });
+    const busier = await addHost('host-d', { memoryAvailableMiB: 60_000, thinPool: { dataPercent: 70, metadataPercent: 5 } });
+    const emptier = await addHost('host-e', { memoryAvailableMiB: 60_000, thinPool: { dataPercent: 30, metadataPercent: 5 } });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    for (const skipped of [unknown, fullData, fullMeta, busier]) expect(skipped.createVm).not.toHaveBeenCalled();
+    expect(emptier.createVm).toHaveBeenCalledTimes(1);
+  });
+
+  it('places on another host when hostd refuses for capacity, without failing the build', async () => {
+    const first = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    const second = await addHost('host-b', { memoryAvailableMiB: 60_000 });
+    first.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    expect(second.createVm).toHaveBeenCalledTimes(1);
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'provisioning', metalHostId: 'host-b', attempt: 1 });
+    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toEqual([]);
+  });
+
+  it('answers busy when every host refuses for capacity, and the next build is still attempt 1', async () => {
+    const only = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    only.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    expect(await getActiveUserMachineByClerkId(db, 'user_metal', 'primary')).toBeUndefined();
+    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toEqual([]);
+
+    expect(await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: '0f1e2d3c-4b5a-4968-8776-655443322110' });
+    expect(await getUserMachine(db, '0f1e2d3c-4b5a-4968-8776-655443322110')).toMatchObject({ attempt: 1 });
+  });
+
+  it('a rebuild that no host has room for keeps the attempt history: busy now, attempt 3 next', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 2,
+      imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+    host.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+    const shared = provisioner({ machineIds: [MACHINE_ID, '0f1e2d3c-4b5a-4968-8776-655443322110'] });
+
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    // The owner still has a failed build at attempt 2 (the journey keeps offering its retry).
+    expect(await getActiveUserMachineByClerkId(db, 'user_metal', 'primary')).toMatchObject({ status: 'failed', attempt: 2 });
+
+    // Busy consumed neither an attempt nor the rebuild throttle: an immediate retry builds attempt 3.
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: '0f1e2d3c-4b5a-4968-8776-655443322110' });
+    expect(await getUserMachine(db, '0f1e2d3c-4b5a-4968-8776-655443322110')).toMatchObject({ attempt: 3, status: 'provisioning' });
+  });
+
+  it('a rebuild refused by placement (no host fits) does not consume the rebuild throttle', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 1_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 1,
+      imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+    const shared = provisioner();
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    host.capacity.mockImplementation(async () => ({ memoryAvailableMiB: 90_000, poolFreeBytes: 1024 * GiB, runningVms: 0,
+      suspendedVms: 0, thinPool: { dataPercent: 20, metadataPercent: 5 } }));
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+  });
+
+  it('places on a legacy hostd that reports no thin pool, with a warning, but never on an unreadable one', async () => {
+    const legacy = await addHost('host-a', { memoryAvailableMiB: 90_000, thinPool: undefined });
+    await addHost('host-b', { memoryAvailableMiB: 95_000, thinPool: null });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    expect(legacy.createVm).toHaveBeenCalledTimes(1);
+    expect(logs).toContain('placement_thin_pool_unreported');
   });
 
   it('breaks a headroom tie by the fewest running VMs', async () => {

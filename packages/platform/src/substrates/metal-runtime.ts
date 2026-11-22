@@ -124,6 +124,8 @@ export function createConfiguredMetalRuntime(input: {
     hosts,
     clientFor,
     goldenVersion: metal.goldenVersion,
+    ...(metal.poolMaxDataPercent !== undefined ? { poolMaxDataPercent: metal.poolMaxDataPercent } : {}),
+    ...(metal.poolMaxMetadataPercent !== undefined ? { poolMaxMetadataPercent: metal.poolMaxMetadataPercent } : {}),
     config: input.customerVps.config,
     drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
     ...(input.customerVps.cloudInitTemplate ? { cloudInitTemplate: input.customerVps.cloudInitTemplate } : {}),

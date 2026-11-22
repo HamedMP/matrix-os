@@ -10,7 +10,11 @@ import { z } from 'zod/v4';
 
 export type MetalSubstrateConfig =
   | { enabled: false; reason: 'disabled' | 'incomplete' }
-  | { enabled: true; apiToken: string; ingressToken: string; goldenVersion: string; caPem?: string };
+  | {
+    enabled: true; apiToken: string; ingressToken: string; goldenVersion: string; caPem?: string;
+    /** Thin-pool usage above which placement skips a host (defaults in the provisioner: 85 / 80). */
+    poolMaxDataPercent?: number; poolMaxMetadataPercent?: number;
+  };
 
 const MAX_PEM_BYTES = 64 * 1024;
 const TokenSchema = z.string().min(32).max(512).regex(/^[\x21-\x7e]+$/);
@@ -32,11 +36,15 @@ const CaPemSchema = z.string().max(MAX_PEM_BYTES)
   .transform((value) => value.replace(/\\n/g, '\n'))
   .refine(isCertificatePem, 'invalid certificate');
 
+const PercentEnvSchema = z.string().regex(/^\d{1,3}$/).transform(Number).pipe(z.number().int().min(1).max(100));
+
 const MetalEnvSchema = z.object({
   METAL_HOSTD_API_TOKEN: TokenSchema,
   METAL_HOSTD_INGRESS_TOKEN: TokenSchema,
   METAL_HOSTD_CA_PEM: CaPemSchema.optional(),
   METAL_GOLDEN_VERSION: GoldenVersionSchema,
+  METAL_POOL_MAX_DATA_PERCENT: PercentEnvSchema.optional(),
+  METAL_POOL_MAX_METADATA_PERCENT: PercentEnvSchema.optional(),
 });
 
 export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrateConfig {
@@ -49,6 +57,8 @@ export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrate
     METAL_HOSTD_INGRESS_TOKEN: env.METAL_HOSTD_INGRESS_TOKEN,
     METAL_HOSTD_CA_PEM: caPem ? caPem : undefined,
     METAL_GOLDEN_VERSION: env.METAL_GOLDEN_VERSION?.trim(),
+    METAL_POOL_MAX_DATA_PERCENT: env.METAL_POOL_MAX_DATA_PERCENT?.trim() || undefined,
+    METAL_POOL_MAX_METADATA_PERCENT: env.METAL_POOL_MAX_METADATA_PERCENT?.trim() || undefined,
   });
   if (!parsed.success) {
     // Names only: issue messages could echo values.
@@ -61,8 +71,13 @@ export function loadMetalSubstrateConfig(env: NodeJS.ProcessEnv): MetalSubstrate
     METAL_HOSTD_INGRESS_TOKEN: ingressToken,
     METAL_HOSTD_CA_PEM: pem,
     METAL_GOLDEN_VERSION: goldenVersion,
+    METAL_POOL_MAX_DATA_PERCENT: poolMaxDataPercent,
+    METAL_POOL_MAX_METADATA_PERCENT: poolMaxMetadataPercent,
   } = parsed.data;
-  return pem
-    ? { enabled: true, apiToken, ingressToken, goldenVersion, caPem: pem }
-    : { enabled: true, apiToken, ingressToken, goldenVersion };
+  return {
+    enabled: true, apiToken, ingressToken, goldenVersion,
+    ...(pem ? { caPem: pem } : {}),
+    ...(poolMaxDataPercent !== undefined ? { poolMaxDataPercent } : {}),
+    ...(poolMaxMetadataPercent !== undefined ? { poolMaxMetadataPercent } : {}),
+  };
 }

@@ -52,6 +52,13 @@ describe('metal substrate config', () => {
     expect(logged).not.toContain(INGRESS_TOKEN);
   });
 
+  it('carries optional thin-pool placement thresholds, and refuses out-of-range ones', () => {
+    expect(loadMetalSubstrateConfig({ ...COMPLETE, METAL_POOL_MAX_DATA_PERCENT: '70', METAL_POOL_MAX_METADATA_PERCENT: '60' }))
+      .toMatchObject({ enabled: true, poolMaxDataPercent: 70, poolMaxMetadataPercent: 60 });
+    expect(loadMetalSubstrateConfig({ ...COMPLETE, METAL_POOL_MAX_DATA_PERCENT: '150' })).toEqual({ enabled: false, reason: 'incomplete' });
+    expect(loadMetalSubstrateConfig({ ...COMPLETE, METAL_POOL_MAX_METADATA_PERCENT: 'x' })).toEqual({ enabled: false, reason: 'incomplete' });
+  });
+
   it('accepts a CA PEM, including one with escaped newlines', () => {
     const { cert } = generateSelfSignedCert();
     const escaped = cert.trim().replace(/\n/g, '\\n');

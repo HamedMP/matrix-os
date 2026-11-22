@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { z } from 'zod/v4';
 import { AccountDeletionAdmissionError, withAccountDeletionAdmission } from '../account-deletion/admission.js';
 import { createRegistrationToken, type RegistrationToken } from '../customer-vps-auth.js';
@@ -8,7 +9,7 @@ import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../customer-vps-ho
 import { hostBundleUrlForImageVersion } from '../customer-vps-host-bundle.js';
 import { ClerkUserIdSchema, CustomerHandleSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { toUserMachineRow } from '../database/user-machine-records.js';
-import { DEFAULT_DEVELOPER_TOOLS, type DeveloperToolId } from '../developer-tools.js';
+import { DEFAULT_DEVELOPER_TOOLS, DeveloperToolsSchema, type DeveloperToolId } from '../developer-tools.js';
 import {
   getActiveUserMachineByClerkId,
   getHostBundleRelease,
@@ -41,6 +42,8 @@ export const METAL_USER_DATA_LIMIT_BYTES = 64 * 1024;
 const CAPACITY_CONCURRENCY = 4;
 /** Attempts to record a created VM's id and address before giving up and tearing it down. */
 export const METAL_VM_RECORD_ATTEMPTS = 3;
+export const METAL_POOL_MAX_DATA_PERCENT = 85;
+export const METAL_POOL_MAX_METADATA_PERCENT = 80;
 const VM_RECORD_BACKOFF_MS = 200;
 /**
  * Create errors after which hostd may still be cloning or booting the VM. Its
@@ -72,9 +75,10 @@ export const METAL_VM_SHAPES = {
 } as const;
 
 /**
- * Developer tools preinstalled per tier. Free runtimes preinstall only Claude
- * Code and Codex (the free plan selects no tools); OpenCode and Pi stay
- * installable on demand from the Terminal + menu. Paid keeps the default set.
+ * Developer tools preinstalled per tier when the caller names none. Free
+ * runtimes always preinstall only Claude Code and Codex (the free plan selects
+ * no tools); OpenCode and Pi stay installable from the Terminal + menu. Paid
+ * uses the owner's plan-step choice, else the default set.
  */
 export const METAL_DEVELOPER_TOOLS: Record<MetalTier, readonly DeveloperToolId[]> = {
   free: ['codex', 'claude-code'],
@@ -89,6 +93,8 @@ const ProvisionInputSchema = z.object({
   handle: CustomerHandleSchema,
   tier: z.enum(['free', 'paid']),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
+  /** A paid owner's plan-step choice (canonicalized like the Hetzner path). Ignored for free. */
+  developerTools: DeveloperToolsSchema.optional(),
 });
 
 type Log = (event: string, fields: Record<string, unknown>) => void;
@@ -116,6 +122,10 @@ export interface MetalProvisionerDeps {
    * not keep holding host memory where no maintenance worker drains the queue.
    */
   drainMachineDeletions?: (machineId: string, signal: AbortSignal) => Promise<unknown>;
+  /** Thin-pool Data% above which a host takes no new VM (matches hostd's default refusal). Default 85. */
+  poolMaxDataPercent?: number;
+  /** Thin-pool Metadata% above which a host takes no new VM. Default 80. */
+  poolMaxMetadataPercent?: number;
   log?: Log;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -203,12 +213,16 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
 
   type Placement = { host: MetalHost } | { error: 'busy' | 'unavailable' };
 
+  const poolMaxDataPercent = deps.poolMaxDataPercent ?? METAL_POOL_MAX_DATA_PERCENT;
+  const poolMaxMetadataPercent = deps.poolMaxMetadataPercent ?? METAL_POOL_MAX_METADATA_PERCENT;
+
   /**
-   * The active host with the most memory headroom under its admission ceiling
-   * that can still boot this VM and has more than 200 GiB of pool free. Ties go
-   * to the host running fewer VMs. Unreachable hosts are skipped.
+   * The active host with the most memory headroom that can boot this VM, has
+   * room in its data pool and a known, not-too-full VM disk thin pool (unknown
+   * usage counts as full). Ties go to the emptier thin pool, then the host
+   * running fewer VMs. Unreachable and excluded hosts are skipped.
    */
-  async function place(bootMiB: number): Promise<Placement> {
+  async function place(bootMiB: number, excluded: ReadonlySet<string> = new Set()): Promise<Placement> {
     let hosts: MetalHost[];
     try {
       hosts = await deps.hosts.listActive();
@@ -216,7 +230,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       log('placement_registry_unavailable', { code: errorCode(error) });
       return { error: 'unavailable' };
     }
-    const probes = await mapBounded(hosts, CAPACITY_CONCURRENCY, async (host) => {
+    const probes = await mapBounded(hosts.filter((host) => !excluded.has(host.id)), CAPACITY_CONCURRENCY, async (host) => {
       try {
         const capacity = await deps.clientFor(host).capacity(AbortSignal.timeout(METAL_CAPACITY_TIMEOUT_MS));
         return { host, capacity };
@@ -234,9 +248,23 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         poolFreeBytes: capacity.poolFreeBytes,
         // Memory the host may still commit before it reaches its admission ceiling.
         headroomMiB: capacity.memoryAvailableMiB - (host.memoryCapacityMib - host.admissionCeilingMib),
+        thinPool: capacity.thinPool,
       }))
-      .filter((c) => c.headroomMiB >= bootMiB && c.poolFreeBytes > METAL_POOL_FREE_MIN_BYTES)
-      .sort((a, b) => b.headroomMiB - a.headroomMiB || a.runningVms - b.runningVms || a.host.name.localeCompare(b.host.name));
+      .filter((c) => {
+        if (c.headroomMiB < bootMiB || c.poolFreeBytes <= METAL_POOL_FREE_MIN_BYTES) return false;
+        // null: hostd tried and could not read its pool (it refuses creates too).
+        if (c.thinPool === null) return false;
+        // Absent: a legacy hostd without the pool guard. Placeable during a
+        // rolling upgrade, but flagged so the host gets upgraded.
+        if (c.thinPool === undefined) {
+          log('placement_thin_pool_unreported', { hostId: c.host.id });
+          return true;
+        }
+        return c.thinPool.dataPercent <= poolMaxDataPercent && c.thinPool.metadataPercent <= poolMaxMetadataPercent;
+      })
+      .sort((a, b) => b.headroomMiB - a.headroomMiB
+        || (a.thinPool?.dataPercent ?? 100) - (b.thinPool?.dataPercent ?? 100)
+        || a.runningVms - b.runningVms || a.host.name.localeCompare(b.host.name));
     return candidates[0] ? { host: candidates[0].host } : { error: 'busy' };
   }
 
@@ -384,6 +412,61 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         log('provision_claim_failed', { machineId: row.machineId, code: errorCode(error) });
       }
       return { error: 'unavailable' };
+    }
+  }
+
+  /** Moves a claimed row that hostd refused for capacity to another host; false if the row moved on. */
+  async function retargetClaim(machineId: string, fromHostId: string, toHostId: string): Promise<boolean> {
+    try {
+      const moved = await db.executor.updateTable('user_machines')
+        .set({ metal_host_id: toHostId })
+        .where('machine_id', '=', machineId)
+        .where('metal_host_id', '=', fromHostId)
+        .where('status', '=', 'provisioning')
+        .where('metal_vm_id', 'is', null)
+        .where('deleted_at', 'is', null)
+        .returning('machine_id')
+        .executeTakeFirst();
+      return moved !== undefined;
+    } catch (error: unknown) {
+      log('capacity_retarget_failed', { machineId, code: errorCode(error) });
+      return false;
+    }
+  }
+
+  /**
+   * Gives up a claimed row no host had capacity for. hostd refuses for
+   * capacity before creating anything, so no VM exists and no teardown is
+   * queued, and busy consumes no attempt: a first build's row is retired, and
+   * a rebuild's row (which replaced the owner's failed row) becomes that failed
+   * build again, with the attempt count it had, so the ceiling and the
+   * journey's retry survive.
+   */
+  async function releaseClaim(machineId: string): Promise<void> {
+    const at = now().toISOString();
+    try {
+      await runInPlatformTransaction(db, async (trx) => {
+        const restored = await trx.executor.updateTable('user_machines')
+          .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at, attempt: sql<number>`attempt - 1` })
+          .where('machine_id', '=', machineId)
+          .where('status', '=', 'provisioning')
+          .where('metal_vm_id', 'is', null)
+          .where('deleted_at', 'is', null)
+          .where('attempt', '>', 1)
+          .returning('machine_id')
+          .executeTakeFirst();
+        if (restored) return;
+        await trx.executor.updateTable('user_machines')
+          .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at, deleted_at: at })
+          .where('machine_id', '=', machineId)
+          .where('status', '=', 'provisioning')
+          .where('metal_vm_id', 'is', null)
+          .where('deleted_at', 'is', null)
+          .execute();
+      });
+    } catch (error: unknown) {
+      // The row stays provisioning without a VM; reconcileStale fails it after the window.
+      log('capacity_release_failed', { machineId, code: errorCode(error) });
     }
   }
 
@@ -555,10 +638,15 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
   }
 
   return {
-    async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
+    async provision(input: {
+      clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string; developerTools?: readonly DeveloperToolId[];
+    }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
       if (!parsed.success) return { error: 'unavailable' };
       const { clerkUserId, handle, tier, runtimeSlot } = parsed.data;
+      const developerTools = tier === 'free'
+        ? METAL_DEVELOPER_TOOLS.free
+        : parsed.data.developerTools ?? METAL_DEVELOPER_TOOLS.paid;
 
       // Cheap idempotency check before probing hosts; the claim re-checks under the lock.
       let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
@@ -577,16 +665,24 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       // Throttle rebuilds only: a first build is idempotent (later calls return
       // its row), so only a failing build can drive a create loop.
       if (existing && !admitBuildStart(clerkUserId)) return { error: 'throttled' };
+      // A busy answer started no build: it must not hold the rebuild throttle.
+      const busy = (): MetalProvisionResult => {
+        if (existing) lastBuildStart.delete(clerkUserId);
+        return { error: 'busy' };
+      };
 
       const shape = METAL_VM_SHAPES[tier];
       const placement = await place(shape.bootMiB);
-      if ('error' in placement) return placement;
+      if ('error' in placement) {
+        if (placement.error === 'busy') return busy();
+        if (existing) lastBuildStart.delete(clerkUserId);
+        return placement;
+      }
       const { host } = placement;
 
       const at = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(at, config.registrationTokenTtlMs);
-      const developerTools = METAL_DEVELOPER_TOOLS[tier];
       const rendered = await renderUserData({ machineId, clerkUserId, handle, runtimeSlot, registration, developerTools });
       if (!rendered) return { error: 'unavailable' };
 
@@ -596,23 +692,37 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       if ('error' in claim) return claim;
       if ('existing' in claim) return { machineId: claim.existing };
 
-      let vm: { id: string; privateIPv4: string };
-      try {
-        vm = await deps.clientFor(host).createVm({
-          machineId,
-          generation: 1,
-          handle,
-          tier,
-          bootMiB: shape.bootMiB,
-          maxMiB: shape.maxMiB,
-          diskGiB: shape.diskGiB,
-          userData: rendered.userData,
-          goldenVersion: deps.goldenVersion,
-        });
-      } catch (error: unknown) {
-        return failCreate(machineId, host, error);
+      const createSpec = {
+        machineId,
+        generation: 1,
+        handle,
+        tier,
+        bootMiB: shape.bootMiB,
+        maxMiB: shape.maxMiB,
+        diskGiB: shape.diskGiB,
+        userData: rendered.userData,
+        goldenVersion: deps.goldenVersion,
+      };
+      // A capacity refusal (thin pool too full) happens before hostd creates
+      // anything: try the next host instead of failing the build.
+      const excluded = new Set<string>();
+      let target = host;
+      for (;;) {
+        try {
+          const vm = await deps.clientFor(target).createVm(createSpec);
+          return recordCreated(machineId, target, vm);
+        } catch (error: unknown) {
+          if (!(error instanceof HostdError && error.code === 'capacity')) return failCreate(machineId, target, error);
+          log('hostd_create_capacity', { machineId, hostId: target.id });
+          excluded.add(target.id);
+        }
+        const next = await place(shape.bootMiB, excluded);
+        if ('error' in next || !await retargetClaim(machineId, target.id, next.host.id)) {
+          await releaseClaim(machineId);
+          return busy();
+        }
+        target = next.host;
       }
-      return recordCreated(machineId, host, vm);
     },
 
     /**

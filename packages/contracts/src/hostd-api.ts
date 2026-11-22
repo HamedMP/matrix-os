@@ -10,7 +10,8 @@ export const HOSTD_MAX_RESUME_BUDGET_MS = 15_000;
 export const HostdVmIdSchema = z.string().regex(/^vm_[0-9a-f]{24}$/);
 
 export const HostdErrorCodeSchema = z.enum([
-  "unauthorized", "bad_request", "not_found", "busy", "pool_full", "conflict", "internal",
+  // capacity (503): the host's thin pool is too full for a new VM; place it elsewhere.
+  "unauthorized", "bad_request", "not_found", "busy", "capacity", "pool_full", "conflict", "internal",
 ]);
 export type HostdErrorCode = z.infer<typeof HostdErrorCodeSchema>;
 
@@ -88,9 +89,16 @@ export type HostdVm = z.infer<typeof HostdVmSchema>;
 
 export const HostdListVmsResponseSchema = z.object({ vms: z.array(HostdVmSchema).max(4096) });
 
+const PercentSchema = z.number().min(0).max(100);
+
 export const HostdCapacityResponseSchema = z.object({
   memoryAvailableMiB: z.number().nonnegative(),
   poolFreeBytes: z.number().nonnegative(),
+  /**
+   * VM disk thin-pool usage; null when hostd cannot read it. Absent from hosts
+   * that predate it. Placement treats null or absent as no room (fail closed).
+   */
+  thinPool: z.object({ dataPercent: PercentSchema, metadataPercent: PercentSchema }).nullable().optional(),
   runningVms: z.int().nonnegative(),
   suspendedVms: z.int().nonnegative(),
 });
