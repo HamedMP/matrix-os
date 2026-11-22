@@ -1184,4 +1184,26 @@ describe("IPC contract", () => {
       }).success,
     ).toBe(false);
   });
+  it("bounds the keyboard shortcut channels", () => {
+    const set = INVOKE_CHANNELS["shortcuts:set"].request;
+    const valid = { overrides: { version: 1, overrides: { "app.close": ["Cmd+Shift+W"] } } };
+    expect(set.safeParse(valid).success).toBe(true);
+    expect(set.safeParse({ ...valid, extra: true }).success).toBe(false);
+    expect(set.safeParse({ overrides: { ...valid.overrides, extra: true } }).success).toBe(false);
+    expect(set.safeParse({ overrides: { version: 1, overrides: { "app.close": ["x".repeat(41)] } } }).success).toBe(false);
+    expect(INVOKE_CHANNELS["shortcuts:get"].request.safeParse({ extra: true }).success).toBe(false);
+    expect(INVOKE_CHANNELS["shortcuts:set-recording"].request.safeParse({ recording: "yes" }).success).toBe(false);
+    expect(EVENT_CHANNELS["shortcut:action"].safeParse({ id: "app.next" }).success).toBe(true);
+    expect(EVENT_CHANNELS["shortcut:action"].safeParse({ id: "app.unknown" }).success).toBe(false);
+    expect(EVENT_CHANNELS["shortcuts:changed"].safeParse({
+      platform: "mac",
+      overrides: { version: 1, overrides: {} },
+      effective: { "app.next": ["Ctrl+Tab"] },
+    }).success).toBe(false);
+  });
+
+  it("lets the renderer read and write keyboard shortcut overrides through saved state", () => {
+    expect(INVOKE_CHANNELS["state:get"].request.safeParse({ key: "keyboardShortcuts" }).success).toBe(true);
+    expect(INVOKE_CHANNELS["state:set"].request.safeParse({ key: "keyboardShortcuts", value: { version: 1, overrides: {} } }).success).toBe(true);
+  });
 });

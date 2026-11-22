@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerIpcHandlers, type HandlerContext } from "../../desktop/src/main/ipc/handlers";
 import { AppError } from "../../desktop/src/shared/app-error";
+import { resolveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+
+const SHORTCUT_SNAPSHOT = {
+  platform: "mac",
+  overrides: { version: 1, overrides: {} },
+  effective: resolveShortcuts(null, "mac"),
+};
 
 type IpcListener = (event: unknown, payload: unknown) => Promise<unknown> | unknown;
 
@@ -80,6 +87,11 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     submitInputAnswer: vi.fn(),
     createAgentThread: vi.fn(),
     createAgentTurn: vi.fn(),
+    shortcuts: {
+      snapshot: vi.fn(() => SHORTCUT_SNAPSHOT),
+      set: vi.fn(async () => SHORTCUT_SNAPSHOT),
+      setRecording: vi.fn(),
+    },
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -1374,5 +1386,37 @@ describe("registerIpcHandlers sender authorization", () => {
 
   it("refuses to register without the title bar overlay service", () => {
     expect(() => makeHarness({ setTitlebarOverlay: undefined as never })).toThrow("window services unavailable");
+  });
+  it("serves keyboard shortcut snapshots and changes from the shortcut service", async () => {
+    const harness = makeHarness();
+    const overrides = { version: 1, overrides: { "app.close": ["Cmd+Shift+W"] } };
+
+    await expect(harness.invoke("shortcuts:get")).resolves.toEqual(SHORTCUT_SNAPSHOT);
+    await expect(harness.invoke("shortcuts:set", { overrides })).resolves.toEqual(SHORTCUT_SNAPSHOT);
+    expect(harness.ctx.shortcuts.set).toHaveBeenCalledWith(overrides);
+  });
+
+  it("keeps rejected keyboard shortcut changes generic", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.shortcuts.set).mockRejectedValue(new Error("invalid request"));
+    await expect(harness.invoke("shortcuts:set", { overrides: { version: 1, overrides: { "app.close": ["Cmd+C"] } } }))
+      .rejects.toThrow(/^invalid request$/);
+    await expect(harness.invoke("shortcuts:set", { overrides: { version: 2, overrides: {} } }))
+      .rejects.toThrow(/^invalid request$/);
+    expect(harness.ctx.shortcuts.set).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts and stops shortcut recording on the sender webContents only", async () => {
+    const harness = makeHarness();
+    const sender = { setIgnoreMenuShortcuts: vi.fn(), isDestroyed: vi.fn(() => false) };
+
+    await expect(harness.invoke("shortcuts:set-recording", { recording: true }, { sender })).resolves.toEqual({ ok: true });
+    expect(harness.ctx.shortcuts.setRecording).toHaveBeenCalledWith(sender, true);
+    await expect(harness.invoke("shortcuts:set-recording", { recording: true }, {})).rejects.toThrow(/^invalid request$/);
+    expect(harness.ctx.shortcuts.setRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to register without the shortcut service", () => {
+    expect(() => makeHarness({ shortcuts: undefined as never })).toThrow("shortcut service unavailable");
   });
 });
