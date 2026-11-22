@@ -22,6 +22,7 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/chat-order-title.test.ts',
   'tests/gateway/jev-inbox-batch-postgres.test.ts',
   'tests/gateway/jev-repository-postgres.test.ts',
+  'tests/gateway/messages/bridge-store-postgres.test.ts',
   'tests/gateway/sites-bootstrap-postgres.test.ts',
   'tests/gateway/slack-pi-integration.test.ts',
   'tests/platform/sites-email-invitations-postgres.test.ts',

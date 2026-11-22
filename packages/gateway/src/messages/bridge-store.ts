@@ -106,6 +106,16 @@ const CONVERSATION_CURSOR = /^\d{1,6}$/;
 const MESSAGE_CURSOR = /^(\d{1,15})_(msg_[0-9a-f]{32})$/;
 const BRIDGE_NETWORKS: readonly string[] = MESSAGING_BRIDGE_NETWORKS;
 
+/**
+ * Serializes, per owner, the transactions that attach event ids to messages:
+ * a sync batch storing an echo and a send confirmation recording the same
+ * event id. Without it the confirmation can miss an echo that commits between
+ * its delete and its update and then fail on the event-id unique index.
+ */
+export async function lockOwnerMessages(trx: Transaction<MessagingBridgeDatabase>, ownerId: string): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`matrix-os:messaging-bridge-messages:${ownerId}`}, 0))`.execute(trx);
+}
+
 function prefixedId(prefix: "msg" | "acct" | "audit" | "conv"): string {
   return `${prefix}_${randomUUID().replaceAll("-", "")}`;
 }
@@ -222,6 +232,7 @@ export class MessagingBridgeStore {
    */
   async applySyncBatch(batch: BridgeSyncBatch): Promise<{ changedRoomIds: string[]; conversationsChanged: boolean }> {
     return this.database.transaction().execute(async (trx) => {
+      await lockOwnerMessages(trx, batch.ownerId);
       const now = new Date().toISOString();
       for (const conversation of batch.conversations) {
         await this.upsertConversation(trx, batch.ownerId, conversation, now);
@@ -452,6 +463,7 @@ export class MessagingBridgeStore {
 
   async markOutgoingSent(ownerId: string, clientTxnId: string, eventId: string): Promise<MessagingBridgeMessage> {
     return this.database.transaction().execute(async (trx) => {
+      await lockOwnerMessages(trx, ownerId);
       // Sync may already have stored the echo without our transaction id.
       await trx
         .deleteFrom("messaging_messages")
