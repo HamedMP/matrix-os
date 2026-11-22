@@ -368,7 +368,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     validateSpec(spec);
     // Allocation is serialized host-wide so two creates never share an address or a machine.
     const claim = allocation.then(async () => {
-      let existing = (await store.list()).find((r) => r.machineId === spec.machineId);
+      const records = await store.list();
+      let existing = records.find((r) => r.machineId === spec.machineId);
       if (existing?.state === "failed" && existing.failedDuring === "create" && existing.generation === spec.generation) {
         // A create that never finished holds no owner data: clear it and create afresh.
         const failedId = existing.id;
@@ -401,6 +402,11 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         updatedAt: new Date(clock.now()).toISOString(),
       };
       await store.put(record);
+      // Another machine's VM may still hold this handle: a re-provision creates
+      // the new VM before the platform tears the old one down. Ingress routes
+      // the handle to the better VM, so this is a warning, not a refusal.
+      const others = records.filter((r) => r.handle === spec.handle && r.machineId !== spec.machineId).map((r) => r.id);
+      if (others.length > 0) log("vm_create_handle_shared", { id: record.id, machineId: spec.machineId, others });
       return { record, fresh: true, address };
     });
     // The caller receives claim's rejection; the chain only needs to keep moving.

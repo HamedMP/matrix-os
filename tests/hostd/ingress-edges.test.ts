@@ -187,6 +187,41 @@ describe("host ingress edges", () => {
     expect(has("ingress.duplicate_handle")).toBe(true);
   });
 
+  it("past the cap still resolves duplicates of indexed handles but admits no new handle", async () => {
+    records = Array.from({ length: MAX_INDEXED_HANDLES + 1 }, (_, i) =>
+      record({ id: `vm_${i.toString(16).padStart(24, "0")}`, handle: `h${i}`, state: i === 0 ? "stopped" : "running" }),
+    );
+    // Past the cap: a better VM for indexed h0, then one more new handle.
+    records.push(record({ id: `vm_${"e".repeat(24)}`, handle: "h0", state: "creating" }));
+    await start();
+    const h0 = await send(authed("h0.matrix-os.com"));
+    expect(h0.status).toBe(503);
+    expect(JSON.parse(h0.body)).toEqual({ error: "runtime_unavailable" });
+    expect((await send(authed(`h${MAX_INDEXED_HANDLES}.matrix-os.com`))).status).toBe(404);
+    expect(logs.filter((l) => l.event === "ingress.index_capped")).toHaveLength(1);
+  });
+
+  it("logs a duplicate handle once until the kept or dropped VM changes", async () => {
+    const a = record({ id: `vm_${"a".repeat(24)}`, state: "stopped" });
+    const b = record({ id: `vm_${"b".repeat(24)}`, machineId: "machine-2" });
+    records = [a, b];
+    await start();
+    const dups = () => logs.filter((l) => l.event === "ingress.duplicate_handle").map((l) => l.fields);
+    await send(authed());
+    listener?.("x");
+    await send(authed());
+    expect(dups()).toEqual([{ handle: "alice", kept: b.id, dropped: a.id }]);
+    records = [{ ...a, state: "running", updatedAt: "2026-11-22T00:00:00.000Z" }, b];
+    listener?.("x");
+    await send(authed());
+    listener?.("x");
+    await send(authed());
+    expect(dups()).toEqual([
+      { handle: "alice", kept: b.id, dropped: a.id },
+      { handle: "alice", kept: a.id, dropped: b.id },
+    ]);
+  });
+
   it("shares one rebuild between concurrent lookups and rebuilds again after a change lands mid-rebuild", async () => {
     let lists = 0;
     let release!: () => void;

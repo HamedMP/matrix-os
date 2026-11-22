@@ -426,3 +426,27 @@ describe("free-tier limits", () => {
     await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 131072 })).resolves.toMatchObject({ maxMiB: 131072 });
   });
 });
+
+describe("create for a handle another machine's VM still holds", () => {
+  it("creates the new VM, warns with both ids, and leaves the old VM for its own teardown", async () => {
+    const lifecycle = make();
+    const old = await lifecycle.create(spec);
+    await lifecycle.stop(old.id);
+    const fresh = await lifecycle.create({ ...spec, machineId: "machine-2" });
+    expect(fresh.state).toBe("running");
+    const warning = logs.find((l) => l.event === "vm_create_handle_shared");
+    expect(warning?.fields).toEqual({ id: fresh.id, machineId: "machine-2", others: [old.id] });
+    await expect(store.get(old.id)).resolves.toMatchObject({ state: "stopped" });
+    // The platform's late-retry flow then destroys the old VM.
+    await lifecycle.destroy(old.id);
+    await expect(store.get(old.id)).resolves.toBeNull();
+    await expect(store.get(fresh.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("does not warn for a handle no other VM holds", async () => {
+    const lifecycle = make();
+    await lifecycle.create(spec);
+    await lifecycle.create({ ...spec, machineId: "machine-2", handle: "bob" });
+    expect(has("vm_create_handle_shared")).toBe(false);
+  });
+});
