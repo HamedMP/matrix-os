@@ -44,19 +44,34 @@ const base = {
   "app:get-zoom": () => ({ factor: 1 }),
   "app:set-zoom": () => ({ ok: true }),
   "state:get": () => ({ value: null }),
-  "local-terminal:list": () => ({ status: "ready", terminals: [] }),
+  "local-terminal:watch": () => ({ status: "ready", terminals: [] }),
 };
 
-describe("Terminal window", () => {
-  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+// Every available computer gets an events stream; none may reach the network in a test.
+class FakeWebSocket {
+  static opened: string[] = [];
+  readyState = 0;
+  onopen = null; onmessage = null; onclose = null; onerror = null;
+  constructor(readonly url: string) { FakeWebSocket.opened.push(url); }
+  send() { /* no server */ }
+  close() { this.readyState = 3; }
+}
 
-  it("lists This Computer first, then every Matrix computer with its availability", async () => {
+describe("Terminal window", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    FakeWebSocket.opened = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it("lists this device first, then every Matrix computer with its availability, streaming status only from available ones", async () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);
     expect(await screen.findByText("Main Computer")).toBeTruthy();
     const sections = Array.from(document.querySelectorAll("[data-machine]"));
-    expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "primary", "review", "old"]);
+    expect(sections.map((item) => item.getAttribute("data-machine"))).toEqual(["local", "computer:primary", "computer:review", "computer:old"]);
+    expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]);
     expect(screen.getByText("Main Computer")).toBeTruthy();
     expect(screen.getByText("operator-review · Starting")).toBeTruthy();
     expect(screen.getByText("operator-old · Unavailable")).toBeTruthy();
@@ -118,11 +133,15 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     const name = computers.items[0]!.label;
     await screen.findByText(name);
-    // While it starts there is nothing to expand.
-    expect(screen.queryByRole("button", { name: new RegExp(name) })).toBeNull();
+    // While it starts there is nothing to open, and no events stream.
+    const machine = () => screen.getByRole("button", { name: new RegExp(`^${name}`) }) as HTMLButtonElement;
+    expect(machine().disabled).toBe(true);
+    expect(FakeWebSocket.opened).toEqual([]);
     inventory = computers;
     act(() => operator.emit("window:focus-changed", { focused: true }));
-    expect(await screen.findByRole("button", { name: new RegExp(name) })).toBeTruthy();
+    await waitFor(() => expect(machine().disabled).toBe(false));
+    await waitFor(() => expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]));
+    expect(screen.getByRole("button", { name: `New terminal on ${name}` })).toBeTruthy();
     // The refresh never flashed the loading state over the list.
     expect(screen.queryByText("Loading your computers…")).toBeNull();
   });

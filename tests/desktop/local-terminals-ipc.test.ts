@@ -22,6 +22,7 @@ function setup(authorized = true) {
     watch: vi.fn(async () => [{ id: "t1", title: "zsh", status: "done", statusAt: 1, turn: 2, seenTurn: null, finished: false }]),
     unwatch: vi.fn(),
     seen: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -46,7 +47,7 @@ describe("local terminal IPC", () => {
       "local-terminal:detach": { attachId: 1 },
       "local-terminal:rename": { id: "t1", name: "review" },
       "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
-      "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" },
+      "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:remove": { id: "t1" },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
@@ -55,6 +56,14 @@ describe("local terminal IPC", () => {
     for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach, host.watch, host.seen]) {
       expect(method).not.toHaveBeenCalled();
     }
+  });
+
+  it("removes a finished terminal, and reports a refusal as not done", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:remove", { id: "vps/t3" })).toEqual({ ok: true });
+    expect(host.remove).toHaveBeenCalledWith("vps/t3");
+    host.remove.mockRejectedValueOnce(new Error("live"));
+    expect(await invoke("local-terminal:remove", { id: "t3" })).toEqual({ ok: false });
   });
 
   // Spec 2706 layer 4.

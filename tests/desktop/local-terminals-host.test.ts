@@ -243,6 +243,15 @@ describe("local terminal host against a scripted core", () => {
     await expect(host.seen("t9")).rejects.toThrow("not listed");
   });
 
+  it("removes a finished terminal with herdr-core's terminal.rm", async () => {
+    const calls: unknown[] = [];
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.rm") { calls.push(call.params); core.reply(call.id, { result: { removed: true } }); }
+    });
+    await host.remove("vps/t3");
+    expect(calls).toEqual([{ terminal: "vps/t3" }]);
+  });
+
   it("lists live terminals with safe titles, and one malformed entry does not hide the rest", async () => {
     const { host } = start(listing([
       { address: "t1", state: "live", title: "\u202Egnp.exe\u0007 build", status: { state: "blocked", message: "free text" } },

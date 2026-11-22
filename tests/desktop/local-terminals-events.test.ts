@@ -81,6 +81,9 @@ describe("local terminal events", () => {
     const core = h.cores[0]!;
     core.hello();
     core.snapshot([terminal("t1")]);
+    core.event("status", "t1", { status: { state: "blocked", msg: "approve\u0007 v2?\u202e" }, reported: true });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.latest()[0]).toMatchObject({ status: "blocked", statusMessage: "approve v2?" });
     core.event("status", "t1", { status: { state: "working" }, reported: true });
     core.event("status", "t1", { status: { state: "done" }, reported: true });
     core.event("turn", "t1", { turn: 1 });

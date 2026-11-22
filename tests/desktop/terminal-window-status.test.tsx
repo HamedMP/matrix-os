@@ -6,8 +6,13 @@ import type { MatrixComputer } from "@matrix-os/contracts";
 import type { TerminalEventsSocket } from "@matrix-os/ui/terminal-agents";
 import {
   terminalRowTarget,
+  useLocalTerminalFacts,
   useTerminalStatus,
 } from "@desktop/renderer/src/features/terminal-window/use-terminal-status";
+
+function useStatus(options: Omit<Parameters<typeof useTerminalStatus>[0], "local">) {
+  return useTerminalStatus({ ...options, local: useLocalTerminalFacts().state });
+}
 
 // Spec 2706 layer 4: the Terminal window's sidebar rows come from pushed local
 // facts and one events stream per available computer, and opening a terminal
@@ -57,7 +62,7 @@ describe("Terminal window status", () => {
 
   it("shows local rows from watch, then pushed changes, without listing on a timer", async () => {
     const operator = installOperator({ "local-terminal:watch": () => ({ status: "ready", terminals: [localFact] }) });
-    const { result } = renderHook(() => useTerminalStatus({ platformHost: null, sessionKey: "", computers: [] }));
+    const { result } = renderHook(() => useStatus({ platformHost: null, sessionKey: "", computers: [] }));
     await waitFor(() => expect(result.current.rows).toEqual([expect.objectContaining({ key: "local|t1", status: "done", seen: false })]));
     act(() => operator.emit("local-terminal:facts", { terminals: [{ ...localFact, seenTurn: 2 }] }));
     expect(result.current.rows[0]).toMatchObject({ seen: true });
@@ -68,7 +73,7 @@ describe("Terminal window status", () => {
     installOperator({ "local-terminal:watch": () => ({ status: "unavailable" }) });
     const sockets: FakeSocket[] = [];
     const createSocket = (url: string) => { const socket = new FakeSocket(url); sockets.push(socket); return socket; };
-    const { result, rerender } = renderHook((props: { computers: MatrixComputer[] }) => useTerminalStatus({
+    const { result, rerender } = renderHook((props: { computers: MatrixComputer[] }) => useStatus({
       platformHost: "https://app.matrix-os.com", sessionKey: "s1", computers: props.computers, createSocket,
     }), { initialProps: { computers: [computer("primary"), computer("lab"), computer("cold", "starting")] } });
     await waitFor(() => expect(sockets).toHaveLength(2));
@@ -98,7 +103,7 @@ describe("Terminal window status", () => {
   it("marks a local terminal seen through the trusted core", async () => {
     const seen = vi.fn(() => ({ ok: true }));
     installOperator({ "local-terminal:watch": () => ({ status: "ready", terminals: [localFact] }), "local-terminal:seen": seen });
-    const { result } = renderHook(() => useTerminalStatus({ platformHost: null, sessionKey: "", computers: [] }));
+    const { result } = renderHook(() => useStatus({ platformHost: null, sessionKey: "", computers: [] }));
     await waitFor(() => expect(result.current.rows).toHaveLength(1));
     act(() => result.current.markSeen("local|t1"));
     await waitFor(() => expect(seen).toHaveBeenCalledWith({ id: "t1" }));

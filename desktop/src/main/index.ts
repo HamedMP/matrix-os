@@ -145,6 +145,8 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
 
 let mainWindow: BrowserWindow | null = null;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
+// Swaps in the Terminal window's shortcuts while it has focus (spec 2706).
+let terminalMenu: ReturnType<typeof installAppMenu> | null = null;
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
@@ -667,8 +669,15 @@ if (!gotLock) {
             trustedUrl: terminalRendererUrl,
             onLoadError: (error) => logMainError("failed to load Terminal window", error),
           });
-          win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
-          win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
+          win.on("focus", () => {
+            terminalMenu?.terminalWindowFocused(true);
+            sendTerminalWindowEvent("window:focus-changed", { focused: true });
+          });
+          win.on("blur", () => {
+            terminalMenu?.terminalWindowFocused(false);
+            sendTerminalWindowEvent("window:focus-changed", { focused: false });
+          });
+          win.on("closed", () => terminalMenu?.terminalWindowFocused(false));
           // A window that closes, reloads or crashes cannot detach for itself;
           // without this its local terminal attachments would stay held.
           const releaseLocalTerminals = () => { localTerminals?.detachAll(); localTerminals?.unwatch(); };
@@ -897,7 +906,8 @@ if (!gotLock) {
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
-      installAppMenu({
+      terminalMenu = installAppMenu({
+        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command),
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
         thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,

@@ -59,3 +59,25 @@ export async function createComputerTab(api: ApiClient, name: string): Promise<s
   );
   return terminalRefKey({ workspaceId: workspace.id, tabId: tab.id });
 }
+
+const RevisionListingSchema = z.object({
+  workspaces: z.array(z.object({
+    id: TerminalWorkspaceIdSchema,
+    tabs: z.array(z.object({ id: TerminalTabIdSchema, revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) })).max(10_000),
+  })).max(1_000),
+});
+
+/** Renames a computer tab; the gateway checks the name and the revision it was read at. */
+export async function renameComputerTab(api: ApiClient, ref: { workspaceId: string; tabId: string }, name: string): Promise<void> {
+  const listing = RevisionListingSchema.parse(await api.get("/api/terminal/workspaces"));
+  const tab = listing.workspaces.find((workspace) => workspace.id === ref.workspaceId)?.tabs.find((entry) => entry.id === ref.tabId);
+  if (!tab) throw new AppError("notFound");
+  await api.patch(`/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`, {
+    name, baseRevision: tab.revision,
+  });
+}
+
+/** Ends a computer tab's program and removes the tab. */
+export async function closeComputerTab(api: ApiClient, ref: { workspaceId: string; tabId: string }): Promise<void> {
+  await api.delete(`/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`);
+}

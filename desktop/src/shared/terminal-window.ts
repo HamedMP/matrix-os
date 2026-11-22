@@ -21,6 +21,24 @@ export const TERMINAL_WINDOW_MAX_COMPUTERS = 20;
 const Empty = z.object({}).strict();
 const Ok = z.object({ ok: z.boolean() }).strict();
 
+/**
+ * Herdr's Terminal window shortcuts (spec 2706), delivered from menu
+ * accelerators that exist only while the Terminal window has focus.
+ */
+export const TERMINAL_WINDOW_COMMANDS = [
+  "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
+] as const;
+export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
+export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
+  z.object({ command: z.literal("select"), index: z.number().int().min(1).max(9) }).strict(),
+  z.object({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select"]) }).strict(),
+]);
+export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
+
+export const TERMINAL_WINDOW_EVENTS = {
+  "terminal-window:command": TerminalWindowCommandSchema,
+} as const;
+
 export const TERMINAL_WINDOW_INVOKE = {
   "terminal-window:open": { request: Empty, response: Ok },
   "terminal-window:focus-main": { request: Empty, response: Ok },
@@ -48,7 +66,7 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
 
 /** Events the Terminal window may subscribe to. */
 export const TERMINAL_WINDOW_EVENT_CHANNELS = [
-  "auth:changed", "window:focus-changed", "shortcuts:changed", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+  "auth:changed", "window:focus-changed", "shortcuts:changed", "terminal-window:command", ...LOCAL_TERMINAL_EVENT_CHANNELS,
 ] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";

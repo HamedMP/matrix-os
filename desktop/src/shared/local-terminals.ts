@@ -56,6 +56,7 @@ export const LocalTerminalFactSchema = z.strictObject({
   id: LocalTerminalAddressSchema,
   title: z.string().max(256),
   status: LocalTerminalStatusSchema.nullable(),
+  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
   statusAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
   turn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   seenTurn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
@@ -101,6 +102,8 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalIdSchema }), response: Ok },
+  // Removes a finished terminal (herdr-core `terminal.rm`); a live one is refused by the core.
+  "local-terminal:remove": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
   "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalIdSchema, name: LocalTerminalNameSchema }), response: Ok },
   // Writes a pasted file beside the terminal (herdr-core `terminal.put`) and
   // returns where it landed, for the window to paste that path.

@@ -19,7 +19,11 @@ import { invoke, onEvent } from "../../lib/operator";
 import { buildTerminalEventsWsUrl } from "../../stores/terminal-agent-events";
 import type { LocalTerminalFact, LocalTerminalUnavailable } from "../../../../shared/local-terminals";
 
-export const LOCAL_MACHINE: TerminalSidebarMachine = { id: "local", name: "This Mac", remote: false };
+const LOCAL_MACHINE_ID = "local";
+/** This device, named as Herdr names it on a Mac. */
+export function localMachine(isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac")): TerminalSidebarMachine {
+  return { id: LOCAL_MACHINE_ID, name: isMac ? "This Mac" : "This Computer", remote: false };
+}
 const COMPUTER_PREFIX = "computer:";
 
 export const computerMachineId = (slot: string) => `${COMPUTER_PREFIX}${slot}`;
@@ -33,9 +37,10 @@ export type LocalTerminalFactsState =
   | { status: "ready"; terminals: LocalTerminalFact[] }
   | { status: LocalTerminalUnavailable };
 
-/** Local status facts: one `watch`, then pushed changes; no polling. */
-export function useLocalTerminalFacts(): LocalTerminalFactsState {
+/** Local status facts: one `watch`, then pushed changes; no polling. `retry` watches again after a failure. */
+export function useLocalTerminalFacts(): { state: LocalTerminalFactsState; retry(): void } {
   const [state, setState] = useState<LocalTerminalFactsState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let current = true;
     // A pushed change can arrive before `watch` answers; it is the newer one.
@@ -55,8 +60,9 @@ export function useLocalTerminalFacts(): LocalTerminalFactsState {
       setState({ status: "unavailable" });
     });
     return () => { current = false; stop(); };
-  }, []);
-  return state;
+  }, [attempt]);
+  const retry = useCallback(() => { setState({ status: "loading" }); setAttempt((value) => value + 1); }, []);
+  return { state, retry };
 }
 
 /**
@@ -130,8 +136,9 @@ export function terminalStatusRows(
   local: LocalTerminalFactsState,
   computers: ReadonlyArray<Pick<MatrixComputer, "runtimeSlot" | "label">>,
   states: Readonly<Record<string, TerminalEventsState>>,
+  here: TerminalSidebarMachine = localMachine(),
 ): TerminalSidebarRow[] {
-  const rows = local.status === "ready" ? localSidebarRows(local.terminals, LOCAL_MACHINE) : [];
+  const rows = local.status === "ready" ? localSidebarRows(local.terminals, here) : [];
   for (const computer of computers) {
     rows.push(...computerSidebarRows(states[computer.runtimeSlot] ?? EMPTY_TERMINAL_EVENTS_STATE, computerMachine(computer)));
   }
@@ -150,21 +157,22 @@ export function terminalRowTarget(key: string): TerminalRowTarget | null {
   if (bar < 0) return null;
   const machine = key.slice(0, bar);
   const terminal = key.slice(bar + 1);
-  if (machine === LOCAL_MACHINE.id) return { kind: "local", id: terminal };
+  if (machine === LOCAL_MACHINE_ID) return { kind: "local", id: terminal };
   if (!machine.startsWith(COMPUTER_PREFIX)) return null;
   const ref = REF_KEY.exec(terminal);
   if (!ref) return null;
   return { kind: "computer", slot: machine.slice(COMPUTER_PREFIX.length), ref: { workspaceId: ref[1]!, tabId: ref[2]! } };
 }
 
-/** The sidebar's rows and the one action on them this layer adds: marking a terminal seen. */
+/** The sidebar's rows and marking a terminal seen. `local` is this device's facts (`useLocalTerminalFacts`). */
 export function useTerminalStatus(options: {
+  local: LocalTerminalFactsState;
   platformHost: string | null;
   sessionKey: string;
   computers: readonly MatrixComputer[];
   createSocket?: (url: string) => TerminalEventsSocket;
 }) {
-  const local = useLocalTerminalFacts();
+  const { local } = options;
   const available = useMemo(() => options.computers.filter((computer) => computer.availability === "available"), [options.computers]);
   const slots = useMemo(() => available.map((computer) => computer.runtimeSlot), [available]);
   const computers = useComputerTerminalEvents({
@@ -186,5 +194,5 @@ export function useTerminalStatus(options: {
     });
   }, [markComputerSeen]);
 
-  return { local, rows, markSeen };
+  return { rows, states: computers.states, markSeen };
 }
