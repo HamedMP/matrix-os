@@ -137,6 +137,7 @@ import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 import { appOrigin } from './origins.js';
 import { createOwnedMachinesRuntime, type OwnedMachinesRuntime } from './owned-machines/runtime.js';
+import { loadOwnedMachinesConfig } from './owned-machines/config.js';
 import { selectProvisionIdentityForClerkUser } from './provisioning-identity.js';
 import { createPreviewPairRuntimeOnlyService } from './preview-pair/candidate-runtime.js';
 
@@ -937,8 +938,23 @@ async function startPlatformServerWithCleanup(
   // the hook stays a no-op.
   let activateResumedRuntime: ManagedFeatureResumeTrigger | undefined;
   // Built before the activator, which reaches metal runtimes through their host ingress.
+  // Spec 2707: owned machines are reached through tunnels named by env-only settings, so their
+  // substrate is known here; the enrollment routes below get the hosted VPS base when it exists.
+  const ownedFallbackBase = {
+    publicUrl: appOrigin(), platformInternalUrl: appOrigin(), platformSecret,
+    fundedAiEnabled: false, fundedAiRelayUrl: '', platformSpeechEnabled: false,
+  };
+  const ownedSubstrateConfig = loadOwnedMachinesConfig(process.env, ownedFallbackBase);
+  const ownedAccess = ownedSubstrateConfig.status === 'ready' ? ownedSubstrateConfig.config.access : null;
   const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
     onMetalResumed: (ref) => activateResumedRuntime?.(ref),
+    ...(ownedSubstrateConfig.status === 'ready' && ownedAccess ? {
+      owned: {
+        hostSuffix: ownedSubstrateConfig.config.hostSuffix,
+        accessClientId: ownedAccess.clientId,
+        accessClientSecret: ownedAccess.clientSecret,
+      },
+    } : {}),
   });
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
@@ -1245,10 +1261,7 @@ async function startPlatformServerWithCleanup(
   const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
   ownedMachines = createOwnedMachinesRuntime({
     db, env: process.env, clerkAuth, platformJwtSecret: process.env.PLATFORM_JWT_SECRET ?? '',
-    base: ownedBase ?? {
-      publicUrl: appOrigin(), platformInternalUrl: appOrigin(), platformSecret,
-      fundedAiEnabled: false, fundedAiRelayUrl: '', platformSpeechEnabled: false,
-    },
+    base: ownedBase ?? ownedFallbackBase,
     backgroundWorkersEnabled,
     resolveHandle: async (clerkUserId) =>
       (await selectProvisionIdentityForClerkUser(db, clerkUserId, process.env))?.handle ?? null,

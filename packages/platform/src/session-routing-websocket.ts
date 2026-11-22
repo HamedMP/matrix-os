@@ -8,6 +8,7 @@ import {
 } from './ws-upgrade.js';
 import {
   buildPlatformVerificationToken,
+  buildRuntimeAuthToken,
   timingSafeTokenEquals,
 } from './platform-token.js';
 import { PREVIEW_TERMINAL_ACCESS_HEADER } from './preview-terminal-access.js';
@@ -83,7 +84,11 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
   includePlatformProof: boolean;
   isCodeDomain: boolean;
   previewTerminalAccess?: string;
+  /** Spec 2707: owned machines get their own bearer and origin headers instead of the handle token. */
+  machine?: Parameters<typeof buildRuntimeAuthToken>[0];
+  upstreamHeaders?: Readonly<Record<string, string>>;
 }): string {
+  const runtimeToken = opts.machine && opts.platformSecret ? buildRuntimeAuthToken(opts.machine, opts.platformSecret) : null;
   return Object.entries(opts.incomingHeaders)
     .filter(([k]) => (
       k.toLowerCase() !== 'x-platform-user-id' &&
@@ -95,7 +100,9 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
       k !== 'authorization' &&
       k !== 'cookie' &&
       k !== 'x-forwarded-host' &&
-      k !== 'x-forwarded-proto'
+      k !== 'x-forwarded-proto' &&
+      k.toLowerCase() !== 'cf-access-client-id' &&
+      k.toLowerCase() !== 'cf-access-client-secret'
     ))
     .flatMap(([k, v]) => {
       if (v === undefined) return [];
@@ -108,8 +115,10 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
     .concat(
       opts.platformSecret && opts.includePlatformProof
         ? [
-            `authorization: Bearer ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`,
-            `x-platform-verified: ${buildPlatformUserProof(opts.handle, opts.userId, opts.platformSecret)}`,
+            `authorization: Bearer ${runtimeToken ?? buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`,
+            `x-platform-verified: ${runtimeToken
+              ? createHmac('sha256', runtimeToken).update(opts.userId).digest('hex')
+              : buildPlatformUserProof(opts.handle, opts.userId, opts.platformSecret)}`,
             `x-platform-user-id: ${opts.userId}`,
           ]
         : [],
@@ -121,5 +130,6 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
         ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`]
         : [],
     )
+    .concat(Object.entries(opts.upstreamHeaders ?? {}).map(([name, value]) => `${name}: ${value}`))
     .join('\r\n');
 }

@@ -2,6 +2,7 @@ import { createBoundedRateLimiter, runtimeSelectionSourceKey } from './request-a
 import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import {
   MatrixComputerListSchema,
+  OWNED_MACHINE_HEARTBEAT_FRESH_MS,
   MatrixComputerSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSelectionResponseSchema,
@@ -56,7 +57,28 @@ function computerVersionLabel(imageVersion: string | null): MatrixComputerVersio
   return releaseDate ? `v${releaseDate}` as MatrixComputerVersionLabel : 'Version pending';
 }
 
-export function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
+function ownedComputerAvailability(machine: UserRuntimeComputerRecord, now: number): MatrixComputerAvailability {
+  if (machine.status === 'enrolling') return 'starting';
+  const seen = machine.lastSeenAt ? Date.parse(machine.lastSeenAt) : Number.NaN;
+  const online = machine.status === 'running' && Boolean(machine.privateAddress)
+    && Number.isFinite(seen) && now - seen <= OWNED_MACHINE_HEARTBEAT_FRESH_MS;
+  return online ? 'available' : 'unavailable';
+}
+
+export function projectComputer(machine: UserRuntimeComputerRecord, now = Date.now()): MatrixComputer | null {
+  if (machine.provisioningClass === 'owned') {
+    const parsed = MatrixComputerSchema.safeParse({
+      handle: machine.handle,
+      runtimeSlot: machine.runtimeSlot,
+      label: 'Own Computer',
+      availability: ownedComputerAvailability(machine, now),
+      kind: 'owned',
+      versionLabel: computerVersionLabel(machine.imageVersion),
+      gatewayPath: `/vm/${machine.handle}?runtime=${machine.runtimeSlot}`,
+      capabilities: COMPUTER_CAPABILITIES,
+    });
+    return parsed.success ? parsed.data : null;
+  }
   // The existing wire category is presentation only; private machine access
   // remains owner-only through accessibleUserMachinePredicate, not shared-preview rules.
   const preview = machine.provisioningClass === 'private-preview' || isPreviewMachine(machine);
@@ -174,6 +196,7 @@ export function createComputerRoutes(opts: {
         identity.userId,
         COMPUTER_QUERY_LIMIT,
         requestedSelectedSlot ?? undefined,
+        { includeOwned: c.req.query('include') === 'owned' },
       );
       const projected = records.flatMap((record) => {
         const computer = projectComputer(record);

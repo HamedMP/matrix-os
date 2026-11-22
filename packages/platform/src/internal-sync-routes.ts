@@ -364,6 +364,12 @@ export function createInternalSyncRoutes(opts: {
       if (!timingSafeTokenEquals(token, expected)) {
         return c.json({ error: "Unauthorized" }, 401);
       }
+      // Spec 2707 (D4): backups from an owned machine are opt-in.
+      if (machine.substrate === "owned") {
+        const link = await opts.db.executor.selectFrom("owned_machine_links").select("backups_enabled")
+          .where("machine_id", "=", machine.machineId).where("revoked_at", "is", null).executeTakeFirst();
+        if (!link?.backups_enabled) return c.json({ error: "Backups are off for this computer" }, 403);
+      }
       scope = { ownerId: machine.clerkUserId, runtimeSlot: machine.runtimeSlot };
     } else {
       const expected = buildPlatformVerificationToken(handle, opts.platformSecret);

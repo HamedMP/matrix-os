@@ -1,0 +1,139 @@
+import { createHmac } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
+import { insertUserMachine, type NewUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { createApp } from '../../packages/platform/src/main.js';
+import { projectComputer } from '../../packages/platform/src/computer-routes.js';
+import { buildOwnedMachineVerificationToken, buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
+import { matchRuntimeBearerForHandle } from '../../packages/platform/src/runtime-auth.js';
+import { createOwnedSubstrate } from '../../packages/platform/src/substrates/owned-substrate.js';
+import { createPlatformSubstrateRegistry } from '../../packages/platform/src/substrates/platform-substrates.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+import { stubOrchestrator } from './proxy-routing-test-utils.js';
+
+const SECRET = 'platform-secret-123';
+const CLERK_SESSION = { host: 'app.matrix-os.com', authorization: 'Bearer clerk-session' };
+const OWNED = { hostSuffix: 'm.example.net', accessClientId: 'access-id', accessClientSecret: 'access-secret' };
+const HOST = '0123456789abcdef.m.example.net';
+const SLOT = 'owned-0a1b2c3d';
+
+function owned(overrides: Partial<NewUserMachine> = {}): NewUserMachine {
+  return {
+    machineId: '4f7c2d1e-5a6b-4c3d-8e9f-0a1b2c3d4e5f',
+    clerkUserId: 'user_alice',
+    handle: 'alice',
+    runtimeSlot: SLOT,
+    provisioningClass: 'owned',
+    substrate: 'owned',
+    status: 'running',
+    privateAddress: HOST,
+    lastSeenAt: new Date().toISOString(),
+    provisionedAt: '2026-11-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function app(db: PlatformDB) {
+  return createApp({
+    db,
+    orchestrator: stubOrchestrator(),
+    clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: 'user_alice' }) }),
+    platformSecret: SECRET,
+    substrateRegistry: createPlatformSubstrateRegistry(db, { owned: OWNED }),
+    env: { ...process.env, MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'missing' },
+  });
+}
+
+describe('owned substrate', () => {
+  const substrate = createOwnedSubstrate({ ...OWNED, loadMachine: async () => undefined, now: () => Date.parse('2026-11-22T10:00:00Z') });
+  const base = { handle: 'alice', status: 'running', substrate: 'owned' as const, publicIPv4: null, privateAddress: HOST };
+
+  it('routes only to a suffix-bound tunnel host with a fresh heartbeat', () => {
+    const fresh = { ...base, lastSeenAt: '2026-11-22T09:59:30Z' };
+    expect(substrate.resolveUpstream(fresh, { path: '/api/x', queryString: 'a=1' })).toEqual({
+      url: `https://${HOST}/api/x?a=1`, hostHeader: HOST, tlsServerName: HOST,
+      headers: { 'cf-access-client-id': 'access-id', 'cf-access-client-secret': 'access-secret' },
+    });
+    expect(substrate.resolveUpstream({ ...fresh, lastSeenAt: '2026-11-22T09:58:00Z' }, { path: '/' })).toBeNull();
+    expect(substrate.resolveUpstream({ ...fresh, privateAddress: 'evil.example.com' }, { path: '/' })).toBeNull();
+    expect(substrate.resolveUpstream({ ...fresh, privateAddress: `x.${HOST}` }, { path: '/' })).toBeNull();
+    expect(substrate.resolveUpstream({ ...fresh, status: 'enrolling' }, { path: '/' })).toBeNull();
+  });
+});
+
+describe('session routing to owned machines', () => {
+  let db: PlatformDB;
+  let fetchMock: ReturnType<typeof vi.spyOn>;
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('runtime', { status: 200 }));
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await destroyTestPlatformDb(db);
+  });
+
+  it('proxies through the tunnel with the owned bearer, user proof and origin headers, and no paid plan', async () => {
+    await insertUserMachine(db, owned());
+    const res = await app(db).request(`/vm/alice/~runtime/${SLOT}/api/projects`, {
+      headers: { ...CLERK_SESSION, 'cf-access-client-secret': 'forged' },
+    });
+    expect(res.status).toBe(200);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Headers;
+    const token = buildOwnedMachineVerificationToken(
+      { handle: 'alice', machineId: owned().machineId, runtimeSlot: SLOT }, SECRET, 1);
+    expect(url).toBe(`https://${HOST}/api/projects`);
+    expect(headers.get('host')).toBe(HOST);
+    expect(headers.get('authorization')).toBe(`Bearer ${token}`);
+    expect(headers.get('authorization')).not.toBe(`Bearer ${buildPlatformVerificationToken('alice', SECRET)}`);
+    expect(headers.get('x-platform-verified')).toBe(createHmac('sha256', token).update('user_alice').digest('hex'));
+    expect(headers.get('cf-access-client-secret')).toBe('access-secret');
+  });
+
+  it('shows the offline page and JSON instead of a 502 when the heartbeat is stale', async () => {
+    await insertUserMachine(db, owned({ lastSeenAt: '2026-11-01T00:00:00.000Z' }));
+    const page = await app(db).request(`/vm/alice/~runtime/${SLOT}/`, { headers: CLERK_SESSION });
+    expect(page.status).toBe(503);
+    expect(await page.text()).toContain('Your computer is offline');
+    const api = await app(db).request(`/vm/alice/~runtime/${SLOT}/api/projects`, { headers: CLERK_SESSION });
+    expect(api.status).toBe(503);
+    expect(await api.json()).toEqual({ error: 'computer_offline' });
+    expect(api.headers.get('retry-after')).toBe('30');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lists owned computers only for clients that ask for them', async () => {
+    await insertUserMachine(db, owned());
+    const legacy = await app(db).request('/api/auth/computers', { headers: CLERK_SESSION });
+    expect((await legacy.json() as { items: unknown[] }).items).toEqual([]);
+    const current = await app(db).request('/api/auth/computers?include=owned', { headers: CLERK_SESSION });
+    expect((await current.json() as { items: unknown[] }).items).toMatchObject([
+      { kind: 'owned', label: 'Own Computer', availability: 'available', runtimeSlot: SLOT },
+    ]);
+  });
+});
+
+describe('owned computer projection and machine bearers', () => {
+  it('projects enrolling, online and offline states', () => {
+    const now = Date.parse('2026-11-22T10:00:00Z');
+    const record = { handle: 'alice', runtimeSlot: SLOT, provisioningClass: 'owned' as const, imageVersion: null, privateAddress: HOST };
+    expect(projectComputer({ ...record, status: 'enrolling' }, now)?.availability).toBe('starting');
+    expect(projectComputer({ ...record, status: 'running', lastSeenAt: '2026-11-22T09:59:50Z' }, now)?.availability).toBe('available');
+    expect(projectComputer({ ...record, status: 'running', lastSeenAt: '2026-11-22T09:00:00Z' }, now)?.availability).toBe('unavailable');
+  });
+
+  it('accepts a live owned machine bearer for its handle and rejects it after revocation', async () => {
+    const { db } = await createTestPlatformDb();
+    try {
+      await insertUserMachine(db, owned());
+      const token = buildOwnedMachineVerificationToken({ handle: 'alice', machineId: owned().machineId, runtimeSlot: SLOT }, SECRET, 1);
+      expect(await matchRuntimeBearerForHandle(db, 'alice', token, SECRET)).toBe(token);
+      expect(await matchRuntimeBearerForHandle(db, 'bob', token, SECRET)).toBeNull();
+      await db.executor.updateTable('user_machines').set({ runtime_token_epoch: 2 }).execute();
+      expect(await matchRuntimeBearerForHandle(db, 'alice', token, SECRET)).toBeNull();
+    } finally {
+      await destroyTestPlatformDb(db);
+    }
+  });
+});

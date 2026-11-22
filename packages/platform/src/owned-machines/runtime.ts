@@ -7,6 +7,7 @@ import { createOwnedMachineRoutes } from './machine-routes.js';
 import { createOwnedOwnerRoutes } from './owner-routes.js';
 import type { OwnedRevocationHook } from './repository.js';
 import { startOwnedTunnelWorker, type OwnedTunnelWorker } from './tunnel-worker.js';
+import { OWNED_REVOCATION_HOOKS } from './revocation-hooks.js';
 
 export interface OwnedMachinesRuntime {
   routes: Hono;
@@ -37,15 +38,16 @@ export function createOwnedMachinesRuntime(deps: {
   }
   const config = loaded.status === 'ready' ? loaded.config : null;
   const cloudflare = config ? createOwnedCloudflareClient(config.cloudflare) : null;
+  const revocationHooks = deps.revocationHooks ?? OWNED_REVOCATION_HOOKS;
   const routes = new Hono();
   routes.route('/', createOwnedMachineRoutes({
     db: deps.db, config, cloudflare, edgeSecret: deps.env.EDGE_ROUTER_SECRET,
-    revocationHooks: deps.revocationHooks, log: deps.log,
+    revocationHooks, log: deps.log,
   }));
   routes.route('/', createOwnedOwnerRoutes({
     db: deps.db, config, clerkAuth: deps.clerkAuth, platformJwtSecret: deps.platformJwtSecret,
     publishableKey: deps.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
-    resolveHandle: deps.resolveHandle, revocationHooks: deps.revocationHooks, log: deps.log,
+    resolveHandle: deps.resolveHandle, revocationHooks, log: deps.log,
   }));
   let worker: OwnedTunnelWorker | undefined;
   if (config && cloudflare && deps.backgroundWorkersEnabled) {

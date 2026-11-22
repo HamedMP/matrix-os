@@ -339,8 +339,8 @@ export const MatrixComputerHandleSchema = z.string()
   .max(63)
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
-export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
-export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
+export const MatrixComputerKindSchema = z.enum(["customer", "preview", "owned"]);
+export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer", "Own Computer"]);
 export const MatrixComputerVersionLabelSchema = z.preprocess((value) => {
   if (typeof value !== "string" || value.length > 128) return value;
   const legacyChannel = value.match(/^matrix-os-host-(stable|dev|canary|beta)$/)?.[1];

@@ -1,3 +1,4 @@
+import type { RuntimeUpstream } from './substrates/types.js';
 import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
@@ -83,7 +84,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     runtimeSlot?: string,
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
-  /** On-demand runtimes are woken and addressed through their substrate; absent, they are unavailable. */
+  /** On-demand runtimes are woken and owned machines (spec 2707) are dialed through their substrate; absent, both are unavailable. */
   substrates?: SubstrateRegistry;
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
@@ -370,13 +371,14 @@ export function registerPlatformWebSocketUpgradeHandler(
       return true;
     };
 
-    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
+    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean, ownedUpstream?: RuntimeUpstream): string => (
       directUpgrade
         ? directUpgrade.headers
         : buildPlatformWebSocketUpgradeHeaders({
         incomingHeaders: req.headers,
         externalHost: host,
         handle,
+        ...(ownedUpstream && runningMachine ? { machine: runningMachine, upstreamHeaders: ownedUpstream.headers } : {}),
         userId: identity.userId,
         platformSecret,
         includePlatformProof: includePlatformProof && identity.source !== 'static-route',
@@ -425,6 +427,26 @@ export function registerPlatformWebSocketUpgradeHandler(
           pathClass,
         });
         refuse(403);
+        return;
+      }
+      if (runningMachine.substrate === 'owned') {
+        const ownedMachine = runningMachine;
+        const resolution = substrates?.resolveUpstream(ownedMachine, { path: webSocketProxyPath });
+        if (isCodeDomain || directUpgrade || !resolution || resolution.kind !== 'upstream') {
+          refuse(503);
+          return;
+        }
+        const ownedHost = resolution.upstream.hostHeader;
+        const headers = buildUpgradeHeaders(ownedMachine.handle, true, resolution.upstream);
+        const upstream = createTlsConnection({ host: ownedHost, port: 443, servername: ownedHost, rejectUnauthorized: true }, () => {
+          if (!adoptUpstream(upstream)) return;
+          writeUpgradeRequest(upstream, ownedHost, headers);
+        });
+        upstream.on('error', (err) => {
+          upstream.destroy();
+          console.warn(`[platform] websocket owned upstream failed handle=${ownedMachine.handle} pathClass=${pathClass} error=${describeError(err)}`);
+          refuse(502);
+        });
         return;
       }
       if (runningMachine.substrate !== 'vps') {

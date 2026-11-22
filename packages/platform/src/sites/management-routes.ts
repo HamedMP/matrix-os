@@ -40,7 +40,7 @@ export function createSiteManagementRoutes(options: {
         // Reuse the already-provisioned machine/slot/epoch-bound sync credential.
         const authorization = c.req.header('authorization');
         const bearer = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
-        if (!machine || machine.provisioningClass !== 'customer' || machine.accessClerkUserIds.length > 0 || !timingSafeTokenEquals(bearer, buildPlatformSyncVerificationToken({handle:machine.handle,machineId:machine.machineId,runtimeSlot:machine.runtimeSlot}, options.platformSecret,machine.runtimeTokenEpoch)))
+        if (!machine || (machine.provisioningClass !== 'customer' && machine.provisioningClass !== 'owned') || machine.accessClerkUserIds.length > 0 || !timingSafeTokenEquals(bearer, buildPlatformSyncVerificationToken({handle:machine.handle,machineId:machine.machineId,runtimeSlot:machine.runtimeSlot}, options.platformSecret,machine.runtimeTokenEpoch)))
             return null;
         return { ownerId: machine.clerkUserId, machineId: machine.machineId, appSlug: appSlug.data,
             authenticatedRuntime: { handle: machine.handle, runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: machine.runtimeTokenEpoch } };

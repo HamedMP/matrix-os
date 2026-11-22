@@ -69,8 +69,10 @@ export async function getRuntimeEntitlementDecisionForUser(
       remediation: existing ? null : 'Account deletion is pending.',
     };
   }
+  // Spec 2707: owned machines are free. The account-deletion check above still
+  // applies; the three-machine cap is enforced when a machine is approved.
   // Preview and Private Preview machines are platform-funded and bounded by their own quotas.
-  if (provisioningClass === 'preview' || provisioningClass === 'private-preview') {
+  if (provisioningClass === 'owned' || provisioningClass === 'preview' || provisioningClass === 'private-preview') {
     return {
       status: 'active',
       runtimeProxyAllowed: true,

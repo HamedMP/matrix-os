@@ -127,3 +127,13 @@ export const OwnedEnrollLookupResponseSchema = z.object({
   report: OwnedMachineReportSchema,
   expiresAt: z.string(),
 }).strict();
+
+/** Spec 2707: an owned computer that is not reachable is offline, not broken. */
+export function matrixComputerAvailabilityLabel(computer: {
+  kind: string;
+  availability: "available" | "starting" | "unavailable";
+}): string {
+  if (computer.availability === "available") return "Available";
+  if (computer.kind === "owned") return computer.availability === "starting" ? "Connecting" : "Offline";
+  return computer.availability === "starting" ? "Starting" : "Unavailable";
+}

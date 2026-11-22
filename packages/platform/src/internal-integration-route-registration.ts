@@ -5,10 +5,9 @@ import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
 import { createIntegrationChatApprovalRoutes } from './integration-chat-approval.js';
 import type { PrivatePreviewEligibility } from './private-preview-eligibility.js';
-import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
+import { matchRuntimeBearerForHandle, verifyRuntimeDelegationProof } from './runtime-auth.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
 import { z } from 'zod/v4';
-import { buildPlatformUserProof } from './session-routing-websocket.js';
 import { createUnavailableInternalIntegrationRoutes } from './integration-route-fallback.js';
 
 /**
@@ -45,8 +44,9 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
     }
     const auth = c.req.header('authorization');
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-    const expected = buildPlatformVerificationToken(handle, platformSecret);
-    if (!timingSafeTokenEquals(token, expected)) {
+    // Spec 2707: owned machines present their own epoch-bound bearer.
+    const runtimeToken = await matchRuntimeBearerForHandle(db, handle, token, platformSecret);
+    if (!runtimeToken) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -82,7 +82,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
         && machine.accessClerkUserIds.length === 0;
       if ((delegatedId || delegatedProof) && !legacyOwnerHeader) {
         if (!delegatedId || !delegatedProof || !/^[A-Za-z0-9_-]{1,256}$/.test(delegatedId)
-          || !timingSafeTokenEquals(delegatedProof, buildPlatformUserProof(handle, delegatedId, platformSecret))) {
+          || !verifyRuntimeDelegationProof(runtimeToken, delegatedId, delegatedProof)) {
           c.res = c.json({ error: 'Unauthorized' }, 401);
           return;
         }
