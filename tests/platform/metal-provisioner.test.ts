@@ -335,6 +335,49 @@ describe('metal provisioner', () => {
     expect(await getUserMachine(db, '0f1e2d3c-4b5a-4968-8776-655443322110')).toMatchObject({ attempt: 1 });
   });
 
+  it('a rebuild that no host has room for keeps the attempt history: busy now, attempt 3 next', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 90_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 2,
+      imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+    host.createVm.mockRejectedValueOnce(new HostdError('capacity'));
+    const shared = provisioner({ machineIds: [MACHINE_ID, '0f1e2d3c-4b5a-4968-8776-655443322110'] });
+
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    // The owner still has a failed build at attempt 2 (the journey keeps offering its retry).
+    expect(await getActiveUserMachineByClerkId(db, 'user_metal', 'primary')).toMatchObject({ status: 'failed', attempt: 2 });
+
+    // Busy consumed neither an attempt nor the rebuild throttle: an immediate retry builds attempt 3.
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: '0f1e2d3c-4b5a-4968-8776-655443322110' });
+    expect(await getUserMachine(db, '0f1e2d3c-4b5a-4968-8776-655443322110')).toMatchObject({ attempt: 3, status: 'provisioning' });
+  });
+
+  it('a rebuild refused by placement (no host fits) does not consume the rebuild throttle', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 1_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 1,
+      imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+    const shared = provisioner();
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
+    host.capacity.mockImplementation(async () => ({ memoryAvailableMiB: 90_000, poolFreeBytes: 1024 * GiB, runningVms: 0,
+      suspendedVms: 0, thinPool: { dataPercent: 20, metadataPercent: 5 } }));
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+  });
+
+  it('places on a legacy hostd that reports no thin pool, with a warning, but never on an unreadable one', async () => {
+    const legacy = await addHost('host-a', { memoryAvailableMiB: 90_000, thinPool: undefined });
+    await addHost('host-b', { memoryAvailableMiB: 95_000, thinPool: null });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    expect(legacy.createVm).toHaveBeenCalledTimes(1);
+    expect(logs).toContain('placement_thin_pool_unreported');
+  });
+
   it('breaks a headroom tie by the fewest running VMs', async () => {
     const busy = await addHost('host-a', { memoryAvailableMiB: 50_000, runningVms: 30 });
     const quiet = await addHost('host-b', { memoryAvailableMiB: 50_000, runningVms: 3 });
