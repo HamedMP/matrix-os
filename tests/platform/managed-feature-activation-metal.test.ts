@@ -1,0 +1,233 @@
+import { createHash } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fundedHostActivationRevisionInput } from '@matrix-os/contracts';
+import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import {
+  createManagedFeatureActivator,
+  createManagedFeatureResumeTrigger,
+} from '../../packages/platform/src/managed-feature-activation.js';
+import { wakeOnDemandRuntime } from '../../packages/platform/src/substrates/substrate-wake.js';
+import type { FakeIngressRequest } from './fake-metal-ingress.js';
+import { createMetalWakeRig, HANDLE, INGRESS_TOKEN, OWNER, type MetalWakeRig } from './metal-wake-rig.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+
+/**
+ * Matrix AI activation for metal runtimes (spec 2691, ENG-520 Task P8).
+ * A metal VM has no public IPv4; the funded config must reach it through the
+ * host ingress (credential, verified TLS, handle Host) the routing proxy uses.
+ *
+ * Faults detected: activation sent to a public IPv4 a metal VM does not have
+ * (every free runtime stuck without Matrix AI), activation that wakes or keeps
+ * awake an idle VM, an asleep VM counted as a failure, a VPS activation
+ * changed by the metal branch, and a woken VM left waiting for a full sweep.
+ */
+
+const secret = 'strong-platform-secret-for-test-only';
+const at = '2026-11-21T10:00:00.000Z';
+const relayOrigin = 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app';
+const CONFIG_PATH = '/api/internal/platform-funded-ai/config';
+
+async function fundRuntime(db: PlatformDB, machineId: string, owner: string): Promise<void> {
+  await db.executor.insertInto('ai_funded_runtime_policies').values({
+    machine_id: machineId, owner_id: owner, runtime_slot: 'primary', enabled: true,
+    allowed_model_ids: JSON.stringify(['anthropic/claude-sonnet-5']), monthly_budget_microusd: 100,
+    expires_at: null, next_issue_at: at, revision: 1, created_at: at, updated_at: at,
+  }).execute();
+}
+
+/** A VM gateway that stores the posted config and reports its revision. */
+function configuringVm(): { respond: (request: FakeIngressRequest) => { status: number; body: unknown } | undefined } {
+  let revision: string | null = null;
+  return {
+    respond(request) {
+      if (!request.path.startsWith(CONFIG_PATH)) return undefined;
+      if (request.method === 'POST') {
+        revision = createHash('sha256').update(fundedHostActivationRevisionInput(JSON.parse(request.body))).digest('hex');
+        return { status: 202, body: { status: 'restarting' } };
+      }
+      return { status: 200, body: { configured: revision !== null, configurationRevision: revision } };
+    },
+  };
+}
+
+describe('managed feature activation for metal runtimes', () => {
+  let db: PlatformDB;
+  let rig: MetalWakeRig;
+  const resumed: Array<{ handle: string }> = [];
+
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await db.executor.updateTable('ai_funded_global_policy')
+      .set({ enabled: true, allowed_model_ids: JSON.stringify(['anthropic/claude-sonnet-5']) }).execute();
+    resumed.length = 0;
+    rig = await createMetalWakeRig(db, {
+      status: 'running', activationState: 'authorized', runtimeSlot: 'primary', runtimeTokenEpoch: 2,
+      publicIPv4: '203.0.113.10',
+    }, { onResumed: (ref) => { resumed.push({ handle: ref.handle }); } });
+    await fundRuntime(db, rig.machineId, OWNER);
+  });
+
+  afterEach(async () => {
+    await rig.close();
+    await destroyTestPlatformDb(db);
+  });
+
+  function activator(fetchImpl?: typeof fetch) {
+    return createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin, fundedAiEnabled: true, speechEnabled: false,
+      activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates: rig.substrates,
+      ...(fetchImpl ? { fetchImpl } : {}), now: () => new Date(at), wait: async () => {},
+    });
+  }
+
+  it('activates a running metal runtime through the hostd ingress', async () => {
+    rig.ingress.respond = configuringVm().respond;
+    expect(await activator()({})).toEqual({ activated: 1, failed: 0, complete: true, nextCursor: null });
+    const config = rig.ingress.requests.filter((request) => request.path === CONFIG_PATH);
+    expect(config.map((request) => request.method)).toEqual(['GET', 'POST', 'GET']);
+    for (const request of config) {
+      expect(request.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
+      expect(request.headers.host).toContain(HANDLE);
+      expect(request.headers['x-matrix-upstream-host']).toBeUndefined();
+      expect(request.headers.authorization).toMatch(/^Bearer \S+$/);
+    }
+    expect(JSON.parse(config[1]!.body)).toMatchObject({
+      identity: { machineId: rig.machineId, runtimeTokenEpoch: 2 }, configuration: { enabled: true, relayOrigin },
+    });
+  });
+
+  it('does not use publicIPv4 for metal', async () => {
+    rig.ingress.respond = configuringVm().respond;
+    const fetchImpl = vi.fn((url: string | URL | Request, init?: RequestInit) => fetch(url, init));
+    expect(await activator(fetchImpl as typeof fetch)({})).toMatchObject({ activated: 1, failed: 0 });
+    expect(fetchImpl).toHaveBeenCalled();
+    for (const [url, init] of fetchImpl.mock.calls) {
+      expect(String(url)).not.toContain('203.0.113.10');
+      expect(String(url)).toBe(`https://${rig.ingress.ingressHost}${CONFIG_PATH}`);
+      expect(init?.redirect).toBe('error');
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+
+    // Without a metal upstream (no substrate registry) the VPS address is never a fallback.
+    const fallback = vi.fn(async () => Response.json({}));
+    const unrouted = createManagedFeatureActivator({
+      db, platformSecret: secret, relayOrigin, fundedAiEnabled: true, speechEnabled: false,
+      activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), fetchImpl: fallback as typeof fetch,
+      now: () => new Date(at), wait: async () => {},
+    });
+    expect(await unrouted({})).toMatchObject({ activated: 0, failed: 1 });
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('metal runtime_asleep answer is skipped, not failed', async () => {
+    rig.ingress.asleepResponses = 1;
+    expect(await activator()({})).toEqual({ activated: 0, failed: 0, complete: true, nextCursor: null });
+    expect(rig.resumeCalls()).toEqual([]);
+    const machine = await rig.machine();
+    expect(machine?.status).toBe('running');
+    expect(rig.ingress.requests.filter((request) => request.method === 'POST')).toEqual([]);
+  });
+
+  it('a VM app answering a runtime_asleep body without the ingress marker is a failure, not skipped', async () => {
+    rig.ingress.vmAsleepBodyResponses = 1;
+    expect(await activator()({})).toMatchObject({ activated: 0, failed: 1 });
+  });
+
+  it('activation does not stamp last_activity_at', async () => {
+    rig.ingress.respond = configuringVm().respond;
+    expect(await activator()({})).toMatchObject({ activated: 1 });
+    const machine = await rig.machine();
+    expect(machine?.lastActivityAt ?? null).toBeNull();
+  });
+
+  it('a metal resume triggers a targeted activation for that handle', async () => {
+    await db.executor.updateTable('user_machines').set({ status: 'suspended' })
+      .where('machine_id', '=', rig.machineId).execute();
+    const suspended = await rig.machine();
+    const metal = rig.substrates.get('metal');
+    if (!metal.ok) throw new Error('metal substrate missing');
+    const woke = await wakeOnDemandRuntime(db, metal.substrate, suspended!);
+    expect(woke.result).toEqual({ state: 'running' });
+    expect(resumed).toEqual([{ handle: HANDLE }]);
+
+    // A wake of a record that was already running is not a resume.
+    await wakeOnDemandRuntime(db, metal.substrate, (await rig.machine())!);
+    expect(resumed).toHaveLength(1);
+  });
+});
+
+describe('managed feature resume trigger', () => {
+  it('runs one targeted activation per handle at a time and logs failures by name', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const activate = vi.fn(async () => {
+      await gate;
+      return { activated: 1, failed: 0, complete: true, nextCursor: null };
+    });
+    const trigger = createManagedFeatureResumeTrigger(activate);
+    trigger({ handle: 'alice' });
+    trigger({ handle: 'alice' });
+    trigger({ handle: 'bob' });
+    expect(activate.mock.calls.map(([target]) => target)).toEqual([{ handle: 'alice' }, { handle: 'bob' }]);
+    release();
+    await vi.waitFor(() => expect(trigger.inFlight()).toBe(0));
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const failing = createManagedFeatureResumeTrigger(vi.fn(async () => { throw new TypeError('secret detail'); }));
+      failing({ handle: 'alice' });
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith('[managed-features] resume activation failed', 'TypeError'));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret detail');
+    } finally { warn.mockRestore(); }
+  });
+
+  it('caps in-flight activations and drops extra resumes for the periodic pass', async () => {
+    const activate = vi.fn(() => new Promise<never>(() => {}));
+    const trigger = createManagedFeatureResumeTrigger(activate, { maxInFlight: 2 });
+    for (const handle of ['a', 'b', 'c']) trigger({ handle });
+    expect(activate).toHaveBeenCalledTimes(2);
+    expect(trigger.inFlight()).toBe(2);
+  });
+});
+
+describe('vps activation', () => {
+  let db: PlatformDB;
+  beforeEach(async () => {
+    ({ db } = await createTestPlatformDb());
+    await db.executor.updateTable('ai_funded_global_policy')
+      .set({ enabled: true, allowed_model_ids: JSON.stringify(['anthropic/claude-sonnet-5']) }).execute();
+  });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+
+  it('vps activation unchanged', async () => {
+    const machineId = '12345678-1234-4234-8234-123456789abc';
+    await insertUserMachine(db, { machineId, clerkUserId: 'user_bob', handle: 'bob', runtimeSlot: 'primary', status: 'running',
+      activationState: 'authorized', runtimeTokenEpoch: 2, publicIPv4: '203.0.113.10', provisionedAt: at });
+    await fundRuntime(db, machineId, 'user_bob');
+    let revision: string | null = null;
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+      if (options?.method === 'POST') {
+        revision = createHash('sha256').update(fundedHostActivationRevisionInput(JSON.parse(String(options.body)))).digest('hex');
+        return Response.json({ status: 'restarting' }, { status: 202 });
+      }
+      return Response.json({ configured: revision !== null, configurationRevision: revision });
+    });
+    const dispatcher = { marker: 'vps-pool' } as never;
+    const substrates = { get: vi.fn(), resolveUpstream: vi.fn() };
+    const activate = createManagedFeatureActivator({ db, platformSecret: secret, relayOrigin, fundedAiEnabled: true,
+      speechEnabled: false, activateSpeech: vi.fn(async () => ({ activated: 0, failed: 0 })), substrates,
+      fetchImpl: fetchImpl as typeof fetch, fetchDispatcher: dispatcher, now: () => new Date(at), wait: async () => {} });
+    expect(await activate({})).toMatchObject({ activated: 1, failed: 0 });
+    expect(substrates.resolveUpstream).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([
+      [`https://203.0.113.10:443${CONFIG_PATH}`, 'GET'],
+      [`https://203.0.113.10:443${CONFIG_PATH}`, 'POST'],
+      [`https://203.0.113.10:443${CONFIG_PATH}`, 'GET'],
+    ]);
+    for (const [, init] of fetchImpl.mock.calls) {
+      const options = init as RequestInit & { dispatcher?: unknown };
+      expect(options.dispatcher).toBe(dispatcher);
+      expect(new Headers(options.headers).get('x-matrix-host-auth')).toBeNull();
+    }
+  });
+});

@@ -41,7 +41,7 @@ export interface MetalWakeRig {
 export async function createMetalWakeRig(
   db: PlatformDB,
   overrides: Partial<NewUserMachine> = {},
-  options: { requestWaitMs?: number; hostdTimeoutMs?: number } = {},
+  options: { requestWaitMs?: number; hostdTimeoutMs?: number; onResumed?: (ref: { handle: string }) => void } = {},
 ): Promise<MetalWakeRig> {
   const cert = generateSelfSignedCert();
   const hostd = await startFakeHostd(cert);
@@ -93,6 +93,7 @@ export async function createMetalWakeRig(
       loadMachine, hosts, apiToken: API_TOKEN, ingressToken: INGRESS_TOKEN, caPem: cert.cert,
       ...(options.requestWaitMs === undefined ? {} : { requestWaitMs: options.requestWaitMs }),
       ...(options.hostdTimeoutMs === undefined ? {} : { clientOptions: { timeoutMs: options.hostdTimeoutMs } }),
+      ...(options.onResumed ? { onResumed: options.onResumed } : {}),
     }),
   ]);
 

@@ -95,7 +95,7 @@ import {
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
 import { createFundedHostActivationRoutes } from './funded-host-activation.js';
-import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, createManagedFeatureResumeTrigger, type ManagedFeatureActivator, type ManagedFeatureResumeTrigger } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -908,6 +908,12 @@ async function startPlatformServerWithCleanup(
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
+  // Bound below once the activator exists; a metal wake before then is covered by the periodic pass.
+  let activateResumedRuntime: ManagedFeatureResumeTrigger | undefined;
+  // Built before the activator, which reaches metal runtimes through their host ingress.
+  const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
+    onMetalResumed: (ref) => activateResumedRuntime?.(ref),
+  });
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
@@ -979,7 +985,8 @@ async function startPlatformServerWithCleanup(
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
-      fetchDispatcher: customerVpsProxyDispatcher });
+      fetchDispatcher: customerVpsProxyDispatcher, substrates: substrateRegistry });
+    activateResumedRuntime = createManagedFeatureResumeTrigger(activateManagedFeatures);
     if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret,
@@ -1184,7 +1191,6 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
-  const substrateRegistry = createPlatformSubstrateRegistry(db, appEnv);
   // Metal provisioning (spec 2691): free signup's provisioner, the stale-row and teardown maintenance pass,
   // and the idle sleeper (MATRIX_FREE_TIER_SLEEP_ENABLED) that suspends idle free runtimes and wakes them for scheduled work.
   const metalRuntime = createConfiguredMetalRuntime({

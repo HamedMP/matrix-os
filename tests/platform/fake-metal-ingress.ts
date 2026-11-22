@@ -27,6 +27,8 @@ export interface FakeMetalIngress {
   asleepResponses: number;
   /** The next N requests reach the VM, whose app answers a 503 runtime_asleep body without the ingress marker. */
   vmAsleepBodyResponses: number;
+  /** Optional VM answer for a forwarded request; return undefined for the default text answer. */
+  respond?: (request: FakeIngressRequest) => { status: number; body: unknown } | undefined;
   close(): Promise<void>;
 }
 
@@ -38,7 +40,9 @@ function record(req: IncomingMessage, upgrade: boolean): FakeIngressRequest {
 
 export async function startFakeMetalIngress(cert: { key: string; cert: string }): Promise<FakeMetalIngress> {
   const requests: FakeIngressRequest[] = [];
-  const state = { asleepResponses: 0, vmAsleepBodyResponses: 0 };
+  const state: { asleepResponses: number; vmAsleepBodyResponses: number; respond?: FakeMetalIngress['respond'] } = {
+    asleepResponses: 0, vmAsleepBodyResponses: 0,
+  };
   const server: Server = createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
     const recorded = record(req, false);
     requests.push(recorded);
@@ -57,6 +61,12 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
         state.vmAsleepBodyResponses -= 1;
         res.writeHead(503, { 'content-type': 'application/json' });
         res.end(ASLEEP_BODY);
+        return;
+      }
+      const answer = state.respond?.(recorded);
+      if (answer) {
+        res.writeHead(answer.status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(answer.body));
         return;
       }
       // A misbehaving upstream that echoes the credential back must not leak it to clients.
@@ -92,6 +102,8 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
     set asleepResponses(value: number) { state.asleepResponses = value; },
     get vmAsleepBodyResponses() { return state.vmAsleepBodyResponses; },
     set vmAsleepBodyResponses(value: number) { state.vmAsleepBodyResponses = value; },
+    get respond() { return state.respond; },
+    set respond(value: FakeMetalIngress['respond']) { state.respond = value; },
     async close() {
       for (const client of wss.clients) client.terminate();
       wss.close();

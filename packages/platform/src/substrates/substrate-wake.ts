@@ -139,6 +139,18 @@ async function markRunning(db: PlatformDB, machine: UserMachineRecord, now: Date
   return { result: { state: 'running' }, machine: current };
 }
 
+function notifyResumed(substrate: RuntimeSubstrate, machine: UserMachineRecord, log: Log): void {
+  try {
+    substrate.onResumed?.({
+      machineId: machine.machineId, handle: machine.handle, runtimeSlot: machine.runtimeSlot, generation: machine.generation,
+    });
+  } catch (error: unknown) {
+    log('[substrate-wake] resume hook failed', {
+      machineId: machine.machineId, cause: error instanceof Error ? error.name : 'unknown',
+    });
+  }
+}
+
 async function runWake(
   db: PlatformDB,
   substrate: RuntimeSubstrate,
@@ -162,7 +174,9 @@ async function runWake(
   }
   if (result.state !== 'running') return { result };
   try {
-    return await markRunning(db, machine, (options.now ?? (() => new Date()))());
+    const woke = await markRunning(db, machine, (options.now ?? (() => new Date()))());
+    if (woke.machine && machine.status !== 'running') notifyResumed(substrate, woke.machine, log);
+    return woke;
   } catch (error: unknown) {
     // A database failure is not "not found": answer unavailable and let the client retry.
     log('[substrate-wake] recording running failed', {

@@ -63,6 +63,12 @@ export interface RuntimeSubstrate {
   /** Upstream for proxying, or null when the runtime is not routable right now. */
   resolveUpstream(machine: RoutableMachine, target: RuntimeUpstreamTarget): RuntimeUpstream | null;
   ensureRunning(ref: RuntimeRef, signal: AbortSignal): Promise<EnsureRunningResult>;
+  /**
+   * Called, fire-and-forget, after a wake moved the platform record to
+   * running from another state (for example to push managed-feature config
+   * to the woken runtime). Must not throw or block.
+   */
+  onResumed?(ref: RuntimeRef): void;
 }
 
 export type StopRuntimeResult =

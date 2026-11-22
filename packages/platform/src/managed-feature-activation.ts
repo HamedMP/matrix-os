@@ -6,6 +6,11 @@ import { iterateRunningUserMachinePages, type PlatformDB, type UserMachineRecord
 import { readFundedHostActivation } from './funded-host-activation.js';
 import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
 import { readBoundedHostJson } from './speech/host-readiness.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
+import { readRuntimeAsleep } from './substrates/runtime-asleep.js';
+import { applyUpstreamCredentials, needsVerifiedTransport, verifiedDispatcher } from './substrates/upstream-transport.js';
+
+const FUNDED_CONFIG_PATH = '/api/internal/platform-funded-ai/config';
 
 export interface ManagedFeatureActivationTarget { handle?: string; afterMachineId?: string }
 export interface ManagedFeatureActivationPage { activated: number; failed: number; complete: boolean; nextCursor: string | null }
@@ -15,6 +20,8 @@ export type ManagedFeatureActivator = (target: ManagedFeatureActivationTarget) =
 export function createManagedFeatureActivator(options: {
   db: PlatformDB; platformSecret: string; relayOrigin: string; fundedAiEnabled: boolean; speechEnabled: boolean;
   activateSpeech: (target: { handle: string; signal?: AbortSignal }) => Promise<{ activated: number; failed: number }>;
+  /** Reaches non-VPS runtimes (metal) through their host ingress; without it they are deferred, never sent to publicIPv4. */
+  substrates?: Pick<SubstrateRegistry, 'resolveUpstream'>;
   fetchImpl?: typeof fetch; fetchDispatcher?: Dispatcher; now?: () => Date; wait?: (ms: number) => Promise<void>; pageTimeoutMs?: number;
 }): ManagedFeatureActivator {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -22,6 +29,47 @@ export function createManagedFeatureActivator(options: {
   if (!Number.isInteger(pageTimeoutMs) || pageTimeoutMs < 1 || pageTimeoutMs > 110_000) throw new RangeError('Invalid activation page timeout');
   const wait = (ms: number, signal: AbortSignal) => options.wait ? options.wait(ms) : delay(ms, undefined, { signal });
   const pageSize = 8;
+  type HostAnswer = { asleep: true } | { asleep: false; response: Response };
+  type HostSend = (method: 'GET' | 'POST', body?: string) => Promise<HostAnswer>;
+  /**
+   * How funded config reaches the runtime gateway. A VPS is called on its
+   * public IPv4 with the shared VPS pool, unchanged. A metal VM has no public
+   * address: it is reached through its substrate upstream (the host ingress
+   * credential, verified TLS, and handle Host the routing proxy uses), and an
+   * ingress-marked `runtime_asleep` answer is reported, never retried, so
+   * activation cannot wake a VM. Neither path stamps owner activity.
+   */
+  function hostChannel(machine: UserMachineRecord, signal: AbortSignal): HostSend | null {
+    const timed = () => AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+    const bearer = () => `Bearer ${buildPlatformVerificationToken(machine.handle, options.platformSecret)}`;
+    if (machine.substrate === 'vps') {
+      if (!machine.publicIPv4) return null;
+      const path = `https://${machine.publicIPv4}:443${FUNDED_CONFIG_PATH}`;
+      const requestOptions = () => ({ headers: { authorization: bearer() },
+        signal: timed(), redirect: 'error' as const,
+        ...(options.fetchDispatcher ? { dispatcher: options.fetchDispatcher } : {}) }) as RequestInit & { dispatcher?: Dispatcher };
+      return async (method, body) => {
+        const base = requestOptions();
+        const init = body === undefined ? { ...base, method }
+          : { ...base, method, headers: { ...base.headers, 'content-type': 'application/json' }, body };
+        return { asleep: false, response: await fetchImpl(path, init) };
+      };
+    }
+    const resolution = options.substrates?.resolveUpstream(machine, { path: FUNDED_CONFIG_PATH });
+    if (!resolution || resolution.kind !== 'upstream') return null;
+    const { upstream } = resolution;
+    return async (method, body) => {
+      const headers = new Headers({ authorization: bearer() });
+      if (body !== undefined) headers.set('content-type', 'application/json');
+      applyUpstreamCredentials(headers, upstream);
+      const response = await fetchImpl(upstream.url, { method, headers, signal: timed(), redirect: 'error',
+        ...(body === undefined ? {} : { body }),
+        ...(needsVerifiedTransport(upstream) ? { dispatcher: verifiedDispatcher(upstream) } : {}),
+      } as RequestInit);
+      const peeked = await readRuntimeAsleep(response);
+      return peeked.asleep ? { asleep: true } : { asleep: false, response: peeked.response };
+    };
+  }
   async function activateFunded(machine: UserMachineRecord, signal: AbortSignal): Promise<'ready' | 'skipped' | 'failed'> {
     signal.throwIfAborted();
     if (!options.fundedAiEnabled || machine.runtimeSlot !== 'primary') return 'skipped';
@@ -32,30 +80,33 @@ export function createManagedFeatureActivator(options: {
       authorization: `Bearer ${token}`, now: options.now });
     signal.throwIfAborted();
     if (eligibility.status === 'ineligible') return 'skipped';
-    if (eligibility.status !== 'ready' || !machine.publicIPv4) return 'failed';
+    if (eligibility.status !== 'ready') return 'failed';
     const { issuedAt: _issuedAt, expiresAt: _expiresAt, ...body } = eligibility.configuration;
     const expected = createHash('sha256').update(fundedHostActivationRevisionInput(body)).digest('hex');
-    const path = `https://${machine.publicIPv4}:443/api/internal/platform-funded-ai/config`;
-    const requestOptions = () => ({ headers: { authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, options.platformSecret)}` },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]), redirect: 'error' as const,
-      ...(options.fetchDispatcher ? { dispatcher: options.fetchDispatcher } : {}) }) as RequestInit & { dispatcher?: Dispatcher };
-    const configured = async () => {
-      const response = await fetchImpl(path, { ...requestOptions(), method: 'GET' });
-      const result = await readBoundedHostJson(response, 1024) as { configured?: unknown; configurationRevision?: unknown } | null;
+    const send = hostChannel(machine, signal);
+    if (!send) return 'failed';
+    const configured = async (): Promise<boolean | 'asleep'> => {
+      const answer = await send('GET');
+      if (answer.asleep) return 'asleep';
+      const result = await readBoundedHostJson(answer.response, 1024) as { configured?: unknown; configurationRevision?: unknown } | null;
       return result?.configured === true && result.configurationRevision === expected;
     };
-    if (await configured()) return 'ready';
-    const response = await fetchImpl(path, { ...requestOptions(), method: 'POST',
-      headers: { ...requestOptions().headers, 'content-type': 'application/json' },
-      body: JSON.stringify(body satisfies FundedHostActivationRequest) });
-    await response.body?.cancel();
-    if (!response.ok) return 'failed';
+    const initial = await configured();
+    if (initial === 'asleep') return 'skipped';
+    if (initial) return 'ready';
+    const posted = await send('POST', JSON.stringify(body satisfies FundedHostActivationRequest));
+    if (posted.asleep) return 'skipped';
+    await posted.response.body?.cancel();
+    if (!posted.response.ok) return 'failed';
     for (let attempt = 0; attempt < 12; attempt += 1) {
       signal.throwIfAborted();
       await wait(1000, signal);
       signal.throwIfAborted();
-      try { if (await configured()) return 'ready'; }
-      catch (error: unknown) {
+      try {
+        const state = await configured();
+        if (state === 'asleep') return 'skipped';
+        if (state) return 'ready';
+      } catch (error: unknown) {
         if (signal.aborted || attempt === 11) throw error;
       }
     }
@@ -117,4 +168,38 @@ export function createManagedFeatureReconciliationPass(activate: ManagedFeatureA
     cursor = result.complete ? null : result.nextCursor;
     if (result.activated || result.failed) console.info(`[managed-features] reconciled activated=${result.activated} deferred=${result.failed}`);
   };
+}
+
+export interface ManagedFeatureResumeTrigger {
+  (machine: { handle: string }): void;
+  /** Targeted activations still running (for tests and shutdown visibility). */
+  inFlight(): number;
+}
+
+/**
+ * Activates a runtime right after an on-demand substrate resumed it, instead
+ * of waiting for the paged periodic pass to come round. Fire-and-forget: one
+ * activation per handle at a time, at most `maxInFlight` in total (extra
+ * resumes are left to the periodic pass), and failures logged by name only.
+ */
+export function createManagedFeatureResumeTrigger(activate: ManagedFeatureActivator,
+  limits: { maxInFlight?: number } = {}): ManagedFeatureResumeTrigger {
+  const maxInFlight = limits.maxInFlight ?? 32;
+  const running = new Set<string>();
+  const trigger = ((machine: { handle: string }) => {
+    if (running.has(machine.handle)) return;
+    if (running.size >= maxInFlight) {
+      console.warn('[managed-features] resume activation deferred to the periodic pass');
+      return;
+    }
+    running.add(machine.handle);
+    let pending: Promise<unknown>;
+    try { pending = activate({ handle: machine.handle }); }
+    catch (error: unknown) { pending = Promise.reject(error); }
+    pending.catch((error: unknown) => {
+      console.warn('[managed-features] resume activation failed', error instanceof Error ? error.name : 'UnknownError');
+    }).finally(() => { running.delete(machine.handle); });
+  }) as ManagedFeatureResumeTrigger;
+  trigger.inFlight = () => running.size;
+  return trigger;
 }

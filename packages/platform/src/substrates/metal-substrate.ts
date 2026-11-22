@@ -155,6 +155,8 @@ export interface MetalSubstrateDeps {
   clientOptions?: Pick<HostdClientOptions, 'timeoutMs' | 'resumeGraceMs' | 'suspendTimeoutMs'>;
   /** How long a request waits for a resume before being answered "waking"; defaults to the resume budget plus grace. */
   requestWaitMs?: number;
+  /** Fire-and-forget hook after a wake records the runtime running again (targeted managed-feature activation). */
+  onResumed?: (ref: RuntimeRef) => void;
   log?: Log;
 }
 
@@ -226,6 +228,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
     kind: 'metal',
     startsOnDemand: true,
     requestWaitMs: deps.requestWaitMs ?? METAL_RESUME_BUDGET_MS + HOSTD_RESUME_GRACE_MS,
+    ...(deps.onResumed ? { onResumed: deps.onResumed } : {}),
 
     resolveUpstream(machine, target) {
       if (machine.status !== 'running' || machine.substrate !== 'metal' || !machine.metalHostId) return null;
