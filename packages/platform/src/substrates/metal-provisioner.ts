@@ -5,11 +5,12 @@ import { createRegistrationToken, type RegistrationToken } from '../customer-vps
 import { renderCloudInitTemplate } from '../customer-vps-cloud-init.js';
 import type { CustomerVpsConfig } from '../customer-vps-config.js';
 import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../customer-vps-host-config.js';
-import { resolveHostBundleRef } from '../customer-vps-host-bundle.js';
+import { hostBundleUrlForImageVersion } from '../customer-vps-host-bundle.js';
 import { ClerkUserIdSchema, CustomerHandleSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { toUserMachineRow } from '../database/user-machine-records.js';
 import {
   getActiveUserMachineByClerkId,
+  getHostBundleRelease,
   getUserMachine,
   lockUserMachineProvisioning,
   retireUserMachine,
@@ -73,7 +74,11 @@ export interface MetalProvisionerDeps {
   db: PlatformDB;
   hosts: Pick<MetalHostsRepository, 'listActive'>;
   clientFor: (host: MetalHost) => HostdClient;
-  /** Validated METAL_GOLDEN_VERSION from the metal substrate config. */
+  /**
+   * Validated METAL_GOLDEN_VERSION from the metal substrate config: the host
+   * bundle version the golden disk was built from (build-golden-disk.sh names
+   * the LV golden-<bundle-version>), so it is also the bundle every VM runs.
+   */
   goldenVersion: string;
   config: CustomerVpsConfig;
   cloudInitTemplate?: string;
@@ -179,13 +184,21 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     registration: RegistrationToken;
   }): Promise<{ userData: string; imageVersion: string; bundleSha256: string } | null> {
     try {
-      const bundleRef = await resolveHostBundleRef(db, config);
+      // A VM is a clone of the golden disk, so it runs the golden's bundle: pin
+      // that registered release instead of the update channel, which may point
+      // elsewhere or nowhere (a preview's empty dev channel).
+      const release = await getHostBundleRelease(db, deps.goldenVersion);
       // Registration verifies the guest against this pin; a metal runtime never boots unpinned.
-      const bundleSha256 = bundleRef.sha256;
-      if (!bundleSha256 || !/^[a-f0-9]{64}$/.test(bundleSha256) || bundleSha256 === '0'.repeat(64)) {
-        log('bundle_unpinned', { machineId: input.machineId });
+      const bundleSha256 = release?.sha256;
+      if (!release || !bundleSha256 || !/^[a-f0-9]{64}$/.test(bundleSha256) || bundleSha256 === '0'.repeat(64)) {
+        log('golden_bundle_unpinned', { machineId: input.machineId, goldenVersion: deps.goldenVersion });
         return null;
       }
+      const bundleRef = {
+        imageVersion: release.version,
+        hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
+        sha256: bundleSha256,
+      };
       const hostConfig = buildHostConfig(
         config,
         { clerkUserId: input.clerkUserId, handle: input.handle, runtimeSlot: input.runtimeSlot, provisioningClass: 'customer' },
@@ -198,6 +211,11 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const userData = withMetalServerEnv(
         renderCloudInitTemplate(deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE, {
           ...hostConfig,
+          // The clone already holds this exact bundle and its host
+          // prerequisites; naming it as the snapshot source lets cloud-init's
+          // matrix-golden-snapshot-fast-path skip the clean-image install.
+          imageSource: 'snapshot',
+          snapshotSourceVersion: release.version,
           targetBundleSha256: bundleSha256,
         }),
         input.machineId,
@@ -384,6 +402,38 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     return { error: 'unavailable' };
   }
 
+  /**
+   * Fails a metal row still provisioning after its registration window closed
+   * and queues its teardown, in one transaction. A row the guest registered
+   * meanwhile is left alone.
+   */
+  async function failStale(
+    row: { machineId: string; metalHostId: string | null; generation: number; metalVmId: string | null },
+    at: Date,
+  ): Promise<boolean> {
+    if (!row.metalHostId) return false;
+    const metalHostId = row.metalHostId;
+    return runInPlatformTransaction(db, async (trx) => {
+      const updated = await trx.executor.updateTable('user_machines')
+        .set({ status: 'failed', failure_code: 'registration_timeout', failure_at: at.toISOString() })
+        .where('machine_id', '=', row.machineId)
+        .where('status', '=', 'provisioning')
+        .where('deleted_at', 'is', null)
+        .returning('machine_id')
+        .executeTakeFirst();
+      if (!updated) return false;
+      await enqueueMetalVmDeletion(trx, {
+        metalHostId,
+        machineId: row.machineId,
+        generation: row.generation,
+        metalVmId: row.metalVmId,
+        reason: 'registration_timeout',
+        now: at,
+      });
+      return true;
+    });
+  }
+
   return {
     async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
@@ -391,7 +441,21 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const { clerkUserId, handle, tier, runtimeSlot } = parsed.data;
 
       // Cheap idempotency check before probing hosts; the claim re-checks under the lock.
-      const existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      // A guest that never registered (its first boot failed) would otherwise be
+      // returned forever wherever no maintenance worker runs reconcileStale.
+      const startedAt = now();
+      if (existing?.substrate === 'metal' && existing.status === 'provisioning'
+        && existing.registrationTokenExpiresAt !== null
+        && Date.parse(existing.registrationTokenExpiresAt) < startedAt.getTime()) {
+        try {
+          await failStale(existing, startedAt);
+        } catch (error: unknown) {
+          log('stale_fail_failed', { machineId: existing.machineId, code: errorCode(error) });
+          return { error: 'unavailable' };
+        }
+        existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      }
       if (existing && (existing.substrate !== 'metal' || existing.status !== 'failed')) {
         return existing.substrate === 'metal' ? { machineId: existing.machineId } : { error: 'unavailable' };
       }
@@ -451,28 +515,9 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         .execute();
       let failed = 0;
       for (const row of stale) {
-        if (!row.metal_host_id) continue;
-        const metalHostId = row.metal_host_id;
-        const changed = await runInPlatformTransaction(db, async (trx) => {
-          const updated = await trx.executor.updateTable('user_machines')
-            .set({ status: 'failed', failure_code: 'registration_timeout', failure_at: at.toISOString() })
-            .where('machine_id', '=', row.machine_id)
-            .where('status', '=', 'provisioning')
-            .where('deleted_at', 'is', null)
-            .returning('machine_id')
-            .executeTakeFirst();
-          if (!updated) return false;
-          await enqueueMetalVmDeletion(trx, {
-            metalHostId,
-            machineId: row.machine_id,
-            generation: row.generation,
-            metalVmId: row.metal_vm_id,
-            reason: 'registration_timeout',
-            now: at,
-          });
-          return true;
-        });
-        if (changed) failed += 1;
+        if (await failStale({
+          machineId: row.machine_id, metalHostId: row.metal_host_id, generation: row.generation, metalVmId: row.metal_vm_id,
+        }, at)) failed += 1;
       }
       return { failed };
     },

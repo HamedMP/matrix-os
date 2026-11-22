@@ -114,7 +114,7 @@ describe('onboarding journey on the free plan', () => {
     } as unknown as HostdClient;
     const metal = createMetalProvisioner({
       db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => client,
-      goldenVersion: 'golden-2026.11.20-1', config: createTestConfig(), cloudInitTemplate: template,
+      goldenVersion: BUNDLE_VERSION, config: createTestConfig(), cloudInitTemplate: template,
       now: () => NOW, sleep: async () => undefined, machineIdFactory: () => '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f',
       tokenFactory: () => ({ token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2026-11-21T13:00:00.000Z' }),
       postgresPasswordFactory: () => 'postgres-secret', log: () => {},
