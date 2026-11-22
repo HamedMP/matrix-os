@@ -132,6 +132,18 @@ describe("Terminal window computers", () => {
     fireEvent.click(space("neo spaces", "web"));
     await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
+
+    // The tab bar follows the chosen space too; All shows every open tab again.
+    fireEvent.click(within(machines).getByRole("button", { name: /^All/ }));
+    fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
+    fireEvent.click(within(sidebar()).getByRole("button", { name: /site/ }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site"]));
+    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getAllByRole("button", { name: /web/ })
+      .find((button) => button.hasAttribute("aria-pressed"))!);
+    await waitFor(() => expect(tabNames()).toEqual(["site"]));
+    fireEvent.click(within(machines).getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site"]));
   });
 
   // Hamed, 2026-11-22 (navigation model): Ctrl+1…9 switch space in the sidebar's order, Ctrl+0 is All.

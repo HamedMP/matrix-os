@@ -203,16 +203,22 @@ export function useTerminalWindow() {
   }, [listed, rowKeys]);
   const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
   const { forget: forgetTab } = openTabs;
+  // With a space (or machine) chosen, the tab bar shows only its tabs, as the agents list does.
+  const shownTabs = useMemo(() => {
+    if (!sidebar.prefs.filter) return openTabs.tabs;
+    const shown = new Set(visibleRows.map((row) => row.key));
+    return openTabs.tabs.filter((tab) => tab.terminals.some((key) => shown.has(key)));
+  }, [openTabs.tabs, sidebar.prefs.filter, visibleRows]);
 
   /** Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab in the tab bar, wrapping around. */
   const stepTab = useCallback((offset: number) => {
-    const tabs = openTabs.tabs;
+    const tabs = shownTabs;
     if (tabs.length === 0) return;
     const index = tabs.findIndex((tab) => selectedKey !== null && tab.terminals.includes(selectedKey));
     const next = index < 0 ? (offset > 0 ? 0 : tabs.length - 1) : (index + offset + tabs.length) % tabs.length;
     const tab = tabs[next];
     if (tab && tab.key !== selectedKey) select(tab.key);
-  }, [openTabs.tabs, select, selectedKey]);
+  }, [shownTabs, select, selectedKey]);
 
 
   /**
@@ -334,7 +340,7 @@ export function useTerminalWindow() {
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
     select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
-    tabs: openTabs.tabs, closeTab,
+    tabs: shownTabs, closeTab,
     /** The bar's +: a new terminal on the machine on screen. */
     newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
