@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { compile } from "@tailwindcss/node";
 import { Scanner } from "@tailwindcss/oxide";
 import { build } from "esbuild";
@@ -32,9 +33,9 @@ beforeAll(async () => {
           const inProject = new URLSearchParams(location.search).has("project");
           const projectSlashScope = inProject ? {
             scope: "isolated-fixture", projectId: "fixture",
-            read: async () => ({ skills: [{ name: "release-check", source: ".agents/skills" }], instructions: [], mcpServers: [], incompleteSources: [] }),
+            read: async () => ({ skills: [{ name: "release-check", source: ".agents/skills" }, { name: "worktree-pr-monitor", source: ".agents/skills" }, { name: "check-very-long-project-skill-name-that-must-fit-in-a-narrow-chat-composer", source: ".agents/skills" }], instructions: [], mcpServers: [], incompleteSources: [] }),
           } : undefined;
-          return <main className="flex h-[420px] w-[640px] flex-col overflow-hidden">
+          return <main className="flex h-[420px] w-full max-w-[640px] flex-col overflow-hidden">
             <header className="flex-1 overflow-y-auto">Project home {sent && <output>{sent}</output>}</header>
             <section className="relative flex min-h-0 shrink flex-col overflow-hidden">
               <SharedChatComposer value={value} onChange={setValue} referenceTokens={tokens}
@@ -60,6 +61,10 @@ beforeAll(async () => {
     loader: { ".png": "dataurl" },
     define: { "process.env.NODE_ENV": '"production"', "process.env": "{}" },
     plugins: [{ name: "react-dedupe", setup(builder) {
+      builder.onResolve({ filter: /^@matrix-os\/(ui|contracts)(?:\/.*)?$/ }, args => {
+        const name = args.path.split("/")[1]!;
+        return { path: createRequire(join(root, "packages", name, "package.json")).resolve(args.path) };
+      });
       builder.onResolve({ filter: /^react(?:-dom)?(?:\/.*)?$/ }, args => ({ path: desktopRequire.resolve(args.path) }));
     } }],
   });
@@ -69,7 +74,8 @@ beforeAll(async () => {
     { base: root, pattern: "tests/e2e/project-composer-suggestions.e2e.test.ts", negated: false },
     { base: desktop, pattern: "features/chat/**/*.{tsx,ts}", negated: false },
     { base: join(root, "packages/ui/src"), pattern: "chat/**/*.{tsx,ts}", negated: false },
-  ] }).scan()) + bundle.outputFiles.filter(file => file.path.endsWith(".css")).map(file => file.text).join("\n");
+  ] }).scan()) + bundle.outputFiles.filter(file => file.path.endsWith(".css")).map(file => file.text).join("\n")
+    + await readFile(join(root, "packages/ui/src/chat/composer/chat-composer.css"), "utf8");
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
 });
 
@@ -148,5 +154,83 @@ it("selects the project Skill through the real composer without sending an insta
     expect(await page.locator("output").textContent()).toContain(".agents/skills/release-check/SKILL.md");
   } finally {
     await page.close();
+  }
+});
+
+
+// Fault: project-skill chips touched the card's top edge, had undersized
+// removal targets, and let long names push the chip outside narrow composers.
+it.each([
+  { width: 800, theme: "dark" as const, touch: false },
+  { width: 375, theme: "dark" as const, touch: false },
+  { width: 800, theme: "light" as const, touch: false },
+  { width: 375, theme: "light" as const, touch: true },
+])("keeps project skills padded, bounded and removable at $width px ($theme, touch=$touch)", async ({ width, theme, touch }) => {
+  const evidence = process.env.MATRIX_PROJECT_COMPOSER_EVIDENCE_DIR;
+  const page = await browser.newPage({ viewport: { width, height: 460 }, colorScheme: theme, hasTouch: touch,
+    ...(evidence ? { recordVideo: { dir: evidence, size: { width, height: 460 } } } : {}),
+  });
+  page.setDefaultTimeout(4500);
+  try {
+    const origin = "https://matrix-fixture.invalid/?project&chips";
+    await page.route("**/*", route => route.request().url() === origin
+      ? route.fulfill({ contentType: "text/html", body: `<!doctype html><style>${css}
+        :root{--bg-surface:#141414;--bg-overlay:#1c1c1c;--bg-hover:#262626;--bg-active:#262626;--border-default:#333;--border-subtle:#2a2a2a;--text-primary:#ededed;--text-secondary:#aaa;--text-tertiary:#777;--accent:#ededed;--text-on-accent:#141414;--radius-xl:12px}
+        ${theme === "light" ? ":root{--bg-surface:#fff;--bg-overlay:#fff;--bg-hover:#f5f5f5;--bg-active:#e5e5e5;--border-default:#ddd;--border-subtle:#e5e5e5;--text-primary:#171717;--text-secondary:#666;--text-tertiary:#777;--accent:#171717;--text-on-accent:#fff}" : ""}
+        body{margin:20px;background:${theme === "dark" ? "#0d0d0d" : "#fafafa"};color:var(--text-primary);font:14px system-ui}
+      </style><div id="root"></div>` }) : route.abort());
+    await page.goto(origin);
+    await page.addScriptTag({ content: script });
+    const editor = page.getByRole("textbox", { name: "Start a chat" });
+    const select = async (name: string) => {
+      await editor.fill("/" + name);
+      await page.getByRole("listbox", { name: "Skills and commands" }).getByRole("option", { name: new RegExp(name) }).click();
+    };
+    await select("worktree-pr-monitor");
+    await editor.fill("resolve it in a PR and");
+    if (evidence) {
+      await page.screenshot({ path: join(evidence, `project-skill-chips-${width}-${theme}.png`) });
+      await page.locator(".prompt-card").screenshot({ path: join(evidence, `project-skill-chip-detail-${width}-${theme}.png`) });
+    }
+    const card = page.locator(".prompt-card");
+    const list = page.getByRole("list", { name: "Selected project skills" });
+    const bounds = await list.evaluate(element => {
+      const card = element.closest(".prompt-card")!.getBoundingClientRect();
+      const chip = element.querySelector("li")!.getBoundingClientRect();
+      return { top: chip.top - card.top, left: chip.left - card.left, height: chip.height };
+    });
+    expect(bounds.top, "Keep breathing room above the skill chip").toBeGreaterThanOrEqual(12);
+    expect(bounds.left, "Align chips with the message inset").toBeGreaterThanOrEqual(15);
+    expect(bounds.height, "Keep the selected skill readable").toBeGreaterThanOrEqual(28);
+    const remove = list.getByRole("button", { name: "Remove skill worktree-pr-monitor" });
+    const target = await remove.boundingBox();
+    expect(target!.width).toBeGreaterThanOrEqual(touch ? 44 : 24);
+    expect(target!.height).toBeGreaterThanOrEqual(touch ? 44 : 24);
+    expect(await remove.locator("svg").count()).toBe(1);
+    await remove.focus();
+    expect(await remove.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe("none");
+    await remove.press("Enter");
+    expect(await list.count()).toBe(0);
+    expect(await editor.textContent()).toBe("resolve it in a PR and");
+
+    await select("worktree-pr-monitor");
+    const longName = "check-very-long-project-skill-name-that-must-fit-in-a-narrow-chat-composer";
+    await select(longName);
+    for (const chip of await list.locator("li").all()) {
+      const chipBox = await chip.boundingBox();
+      const cardBox = await card.boundingBox();
+      expect(chipBox!.x + chipBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 12);
+    }
+    await page.getByRole("button", { name: "Remove skill " + longName }).click();
+    expect(await list.locator("li").count()).toBe(1);
+    await editor.fill("Keep this draft");
+    await editor.press("Enter");
+    await page.locator("output").waitFor();
+    expect(await page.locator("output").textContent()).toContain(".agents/skills/worktree-pr-monitor/SKILL.md");
+    expect(await page.locator("output").textContent()).not.toContain(longName);
+  } finally {
+    const video = page.video();
+    await page.close();
+    if (evidence && video) await video.saveAs(join(evidence, `project-skill-chip-interaction-${width}-${theme}.webm`));
   }
 });
