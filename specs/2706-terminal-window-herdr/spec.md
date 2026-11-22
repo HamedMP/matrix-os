@@ -98,10 +98,14 @@ bottom status bar.
   terminal of the active space (All: every terminal) as a card in place of the
   panes: its icon and name (renamed in place with the pencil), status, machine
   and folder, time since it changed, and a live preview of the last lines on
-  its screen, read every 3 s while the overview is open (at most 24 terminals,
-  8 lines of 160 characters each; local and ssh-machine terminals through the
-  app's core, `terminal.read`; Matrix computers through the gateway's
-  `GET …/tabs/:tab/read`). A click opens the terminal and leaves the overview.
+  its screen (at most 24 terminals, 8 lines of 160 characters each). Local
+  and ssh-machine terminals are read through the app's core
+  (`terminal.read`, no Zellij) every 3 s. A Matrix computer's terminal is read
+  through the gateway's `GET …/tabs/:tab/read`, which asks Zellij for its
+  screen and makes it repaint; so it is read once when the overview opens and
+  again only after that terminal's status changed, at most every 15 s, and an
+  idle computer terminal is never re-read. Every read pauses while the window
+  is hidden. A click opens the terminal and leaves the overview.
 - **Status bar**: the machine on screen, its project and branch or folder, the
   agent count with how many work or need you, and "⌘⇧P commands".
 - **Active space**: choosing a space filters the tab bar and the Agents list
@@ -132,8 +136,9 @@ bottom status bar.
   **Done** (finished and not yet seen), **Working**, **Idle**, each foldable
   with a count (needs-you and working in amber, done green, idle grey). A
   second view groups by machine; there, and under a machine filter, rows are
-  inset and do not repeat the machine's name. Agents is the only list of
-  terminals: Spaces shows machines and their spaces, never terminals again.
+  inset and do not repeat the machine's name. Agents is the full list of
+  terminals; in Spaces, terminals appear only when a project's chevron lists
+  that project's terminals inline under it (same rows, never a filter).
 - Done means finished since the person last looked. Opening the terminal marks
   it seen; seen is shared across the person's windows and devices.
 - A row shows the agent icon, the project in bold then " · title" muted, the
