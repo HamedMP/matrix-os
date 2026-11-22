@@ -145,6 +145,10 @@ describe("runtime with command exit files", () => {
     expect(zellij.commands.at(-1)?.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
     expect(zellij.commands.at(-1)?.slice(-2)).toEqual(["bun", "test"]);
 
+    // The first pass after start reconciles once; passes while the command runs ask nothing.
+    await runtime.sweepHeldPaneExits();
+    zellij.listCalls = 0;
+    await runtime.sweepHeldPaneExits();
     await runtime.sweepHeldPaneExits();
     expect(zellij.listCalls).toBe(0);
 
@@ -187,6 +191,93 @@ describe("runtime with command exit files", () => {
     expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab!.id]!.status).toBe("running");
 
     await runtime.sweepHeldPaneExits();
+    zellij.listCalls = 0;
+    await runtime.sweepHeldPaneExits();
     expect(zellij.listCalls).toBe(0);
+  });
+});
+
+// Fault detected (review of #3542): exitRecorded says how a command was
+// launched, not that its record was written. A record lost to a storage
+// outage left the tab "running" forever, because the held-pane sweep skipped it.
+describe("a lost exit record", () => {
+  /** Zellij stand-in that runs the wrapped command and, as Zellij does, holds its pane with the exit code. */
+  class HoldingZellij extends RecordingZellij {
+    readonly held = new Map<string, Array<{ tabId: number; paneId: string; exitCode: number }>>();
+    readonly finished: Array<Promise<void>> = [];
+    private nextHeldTab = 1;
+    /** Runs just before the program starts, after the runtime prepared its launch. */
+    beforeRun: () => Promise<void> = async () => undefined;
+    override async createTab(session: string, input: { internalName: string; command?: string[] }) {
+      this.commands.push(input.command);
+      const tabId = this.nextHeldTab++;
+      const paneId = `terminal_${tabId}`;
+      if (input.command) {
+        await this.beforeRun();
+        const [program, ...args] = input.command;
+        const result = spawnSync(program!, args, { encoding: "utf8" });
+        this.held.set(session, [...(this.held.get(session) ?? []), { tabId, paneId, exitCode: result.status ?? 1 }]);
+      }
+      return { tabId, paneId };
+    }
+    override async listHeldPaneExits(session?: string) {
+      this.listCalls += 1;
+      return session ? this.held.get(session) ?? [] : [];
+    }
+  }
+
+  it("completes the tab once the exit directory is back, on the next reconciling pass", async () => {
+    const homePath = await tempDir();
+    const exitDirectory = join(homePath, "exits");
+    const exits = new TerminalExitRecorder({ directory: exitDirectory });
+    await exits.prepare();
+    let now = Date.parse("2026-11-22T12:00:00Z");
+    const store = new TerminalWorkspaceStore({ homePath, now: () => new Date(now) });
+    const zellij = new HoldingZellij();
+    const runtime = new TerminalRuntime({ store, zellij, exits, recordedReconcileMs: 5 * 60_000 });
+    const workspace = await runtime.ensureWorkspace({ projectId: "app" });
+    await runtime.sweepHeldPaneExits();
+
+    // The exit directory becomes unavailable while the program runs and exits.
+    zellij.beforeRun = async () => {
+      await rm(exitDirectory, { recursive: true, force: true });
+      await writeFile(exitDirectory, "not a directory");
+    };
+    const tab = await runtime.createTab(workspace.id, { name: "tests", cwd: "", command: ["sh", "-c", "exit 7"] });
+    expect(zellij.held.get((await store.getRuntimeWorkspace(workspace.id))!.zellijSessionName)?.[0]?.exitCode).toBe(7);
+
+    // Storage comes back; there is no record to read.
+    await rm(exitDirectory, { force: true });
+    await exits.prepare();
+    await runtime.sweepRecordedExits();
+    zellij.listCalls = 0;
+    await runtime.sweepHeldPaneExits();
+    // Still quiet between reconciling passes.
+    expect(zellij.listCalls).toBe(0);
+    expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!.status).toBe("running");
+
+    now += 5 * 60_000;
+    await runtime.sweepRecordedExits();
+    await runtime.sweepHeldPaneExits();
+    expect(zellij.listCalls).toBe(1);
+    expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]).toMatchObject({ status: "exited", exitCode: 7 });
+  });
+});
+
+describe("an unusable exit directory at launch", () => {
+  it("starts the command anyway, to be noticed by the held-pane sweep", async () => {
+    const homePath = await tempDir();
+    const exitDirectory = join(homePath, "exits");
+    const exits = new TerminalExitRecorder({ directory: exitDirectory });
+    await exits.prepare();
+    await rm(exitDirectory, { recursive: true, force: true });
+    await writeFile(exitDirectory, "not a directory");
+    const store = new TerminalWorkspaceStore({ homePath });
+    const zellij = new RecordingZellij();
+    const runtime = new TerminalRuntime({ store, zellij, exits });
+    const workspace = await runtime.ensureWorkspace({ projectId: "app" });
+    const tab = await runtime.createTab(workspace.id, { name: "tests", cwd: "", command: ["bun", "test"] });
+    expect(zellij.commands.at(-1)).toEqual(["bun", "test"]);
+    expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]).toMatchObject({ status: "running", exitRecorded: false });
   });
 });

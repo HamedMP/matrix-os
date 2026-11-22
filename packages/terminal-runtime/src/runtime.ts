@@ -109,6 +109,12 @@ export interface TerminalRuntimeOptions {
   observerCloseTimeoutMs?: number;
   /** Command tabs write their exit code here, so their exit needs no Zellij call (spec 2706). */
   exits?: TerminalExitRecorder;
+  /**
+   * How often the held-pane sweep also asks Zellij about commands that write
+   * an exit file, in case a record was lost. Default 5 minutes; the first
+   * sweep after start always does.
+   */
+  recordedReconcileMs?: number;
 }
 export interface TerminalViewer {
   write(data: string | Uint8Array): Promise<void>;
@@ -161,6 +167,8 @@ export class TerminalRuntime {
   private readonly observerReservations = new Map<string, number>();
   private readonly nativeHosts?: NativeTerminalHosts;
   private readonly exits?: TerminalExitRecorder;
+  private readonly recordedReconcileMs: number;
+  private lastRecordedReconcile = Number.NEGATIVE_INFINITY;
   private readonly nativeDispatchLeases = new NativeDispatchLeases();
   private readonly inputQueues = new Map<string, InputQueueState>();
   private readonly terminatingTabKeys = new Set<string>();
@@ -188,6 +196,7 @@ export class TerminalRuntime {
     this.zellij = options.zellij;
     this.nativeHosts = options.nativeHosts;
     this.exits = options.exits;
+    this.recordedReconcileMs = z.number().int().min(0).max(24 * 60 * 60_000).parse(options.recordedReconcileMs ?? 5 * 60_000);
     this.maxTabsPerWorkspace = z.number().int().min(1).max(10_000).parse(options.maxTabsPerWorkspace ?? 64);
     this.maxTabsTotal = z.number().int().min(this.maxTabsPerWorkspace).max(10_000)
       .parse(options.maxTabsTotal ?? 256);
@@ -860,7 +869,11 @@ export class TerminalRuntime {
   async sweepHeldPaneExits(): Promise<HeldPaneExitSweepResult> {
     const listHeldPaneExits = this.zellij.listHeldPaneExits?.bind(this.zellij);
     if (!listHeldPaneExits || this.shuttingDown) return { sessions: 0, exited: 0 };
+    const now = this.store.currentTime().getTime();
+    const reconcileRecorded = now - this.lastRecordedReconcile >= this.recordedReconcileMs;
+    if (reconcileRecorded) this.lastRecordedReconcile = now;
     return sweepHeldPaneExits({
+      reconcileRecorded,
       // One read of the state file per pass, not one per saved workspace.
       workspaces: await this.store.listRuntimeWorkspaces(),
       maxSessions: this.maxObservers,
@@ -924,7 +937,14 @@ export class TerminalRuntime {
       await this.store.markExitRecorded(ref, false);
       return { command: [...command], exitRecorded: false };
     }
-    await this.exits.clear(zellijTabName);
+    try {
+      await this.exits.clear(zellijTabName);
+    } catch (error: unknown) {
+      // An unusable exit directory must not stop the command: it runs as before, noticed by the held-pane sweep.
+      console.warn("[terminal-runtime] exit file unavailable; launching without it", error instanceof Error ? error.name : "unknown_error");
+      await this.store.markExitRecorded(ref, false);
+      return { command: [...command], exitRecorded: false };
+    }
     // Saved before the command starts, so recovery after a stop mid-launch keeps it.
     await this.store.markExitRecorded(ref, true);
     return { command: this.exits.wrap(zellijTabName, command), exitRecorded: true };

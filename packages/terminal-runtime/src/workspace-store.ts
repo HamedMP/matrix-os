@@ -45,8 +45,9 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   // facts file, never in this one (see launch-facts.ts); read here only from
   // state an earlier build of spec 2706 wrote.
   heldOnExit: z.boolean().optional(),
-  // The command writes its exit code to an exit file (spec 2706), so the
-  // held-pane sweep never needs to ask Zellij about it.
+  // The command was launched to write its exit code to an exit file (spec
+  // 2706), so the held-pane sweep asks Zellij about it only now and then. A
+  // launch fact, kept like heldOnExit in the launch facts file.
   exitRecorded: z.boolean().optional(),
 }).strict();
 const InternalWorkspaceBaseSchema = z.object({
