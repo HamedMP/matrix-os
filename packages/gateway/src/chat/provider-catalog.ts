@@ -1,4 +1,5 @@
 import { codexCatalogObservation } from "../ai-providers/codex-native-observation.js";
+import { timeChatSendStage } from "./send-timing.js";
 import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
@@ -544,7 +545,7 @@ export function createChatProviderCatalogService(options: {
     // it before observing runtime/Settings authority; never retimestamp a
     // receipt or project it against an earlier clock to extend admission.
     const [codingResult] = await Promise.allSettled([
-      scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.readCoding ? timeChatSendStage("catalog_coding_inventory", () => options.codingProviders.listProviders(principal)) : Promise.resolve([]),
     ]);
     if (codingResult.status === "rejected") {
       console.warn("[chat-providers] Coding Provider inventory unavailable");
@@ -591,14 +592,14 @@ export function createChatProviderCatalogService(options: {
     const [runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot({
+      timeChatSendStage("catalog_settings_snapshot", async () => options.harnessSettingsSource?.getSnapshot({
         ...(selection || observationScope ? scope.snapshotOptions : {}),
         ...(nativeCodexIdentityRequired ? {
           includeNativeAccountMetadata: true,
           includeNativeAccountUsage: false,
           ...(options.canRecoverNativeConnection?.(principal) === true ? { recoverNativeConnection: true } : {}),
         } : {}),
-      }) ?? Promise.resolve(undefined),
+      })),
       systemRuntimeReads,
     ]);
     if (runtimeResult.status === "rejected") {

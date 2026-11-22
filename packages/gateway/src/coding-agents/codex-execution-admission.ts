@@ -1,4 +1,5 @@
 import { isSessionStartClean, isSessionStopConfirmed } from "./session-start-cleanup-proof.js";
+import { timeChatSendStage } from "../chat/send-timing.js";
 import { nativeCodexConfigurationFingerprint } from "./native-codex-configuration-fingerprint.mjs";
 import { createCodexExecutionSessions } from "./codex-execution-sessions.js";
 import { boundedOperation } from "../bounded-operation.js";
@@ -36,7 +37,8 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
   const path = join(resolve(options.homePath), "system/ai-providers/settings.json");
   const sessions = createCodexExecutionSessions(resolve(options.homePath), options.stopSession);
   const reject = (): never => { throw new Error(UNAVAILABLE); };
-  async function current(userId: string) {
+  const current = (userId: string) => timeChatSendStage("codex_execution_admission", () => currentUntimed(userId));
+  async function currentUntimed(userId: string) {
     if (!await options.isOwner(userId)) reject();
     // Do not wait on the Settings lock while its revocation is stopping children.
     await sessions.assertOpen();

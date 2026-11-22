@@ -1,4 +1,5 @@
 import { CODING_PREPARATION_TIMEOUT_MS, createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
+import { recordChatSendStage, startChatSendStage } from "../chat/send-timing.js";
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
 import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
 import { boundedOperation } from "../bounded-operation.js";
@@ -1137,7 +1138,9 @@ export function createCodingAgentThreadStore(
     request: CreateAgentThreadRequest,
     relationValidator?: CodingAgentThreadRelationValidator,
   ): Promise<ThreadCreateResult> {
+    const queuedAt = startChatSendStage();
     const result = await mutate(async (state) => {
+      recordChatSendStage("thread_store_queue_wait", queuedAt);
       const existing = state.threads.find((thread) =>
         thread.ownerId === principal.userId && thread.clientRequestId === request.clientRequestId
       );
@@ -1321,7 +1324,9 @@ export function createCodingAgentThreadStore(
         throw new CodingAgentTurnError("turn_unavailable");
       }
       try {
+        const queuedAt = startChatSendStage();
         const result = await mutate<TurnAcceptMutationResult>(async (state) => {
+          recordChatSendStage("thread_store_queue_wait", queuedAt);
           const thread = state.threads.find((candidate) =>
             candidate.ownerId === principal.userId && candidate.id === threadId
           );

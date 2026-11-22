@@ -1,4 +1,5 @@
 import { readCollaborationNativeAccounts, qualifyNativeCodexCollaborationRoute, qualifyNativeClaudeCollaborationRoute } from "./collaboration-native-accounts.js";
+import { timeChatSendStage } from "../chat/send-timing.js";
 import { markCodexCatalogObservation, observeCodexNativeAccount } from "./codex-native-observation.js";
 import { createCodexNativeConnectionRecovery } from "./codex-native-connection-recovery.js";
 import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
@@ -382,17 +383,17 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (options.includeNativeAccountMetadata && attempt === 0) {
         const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
         const [codex, hermes, claude] = await Promise.all([
-          installed("codex") ? observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false) : undefined,
+          installed("codex") ? timeChatSendStage("codex_identity_observe", () => observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false)) : undefined,
           installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
-          installed("claude_code") ? this.#claudeAccountMetadata?.(options.includeNativeAccountUsage !== false) : undefined,
+          installed("claude_code") && this.#claudeAccountMetadata ? timeChatSendStage("claude_identity", () => this.#claudeAccountMetadata!(options.includeNativeAccountUsage !== false)) : undefined,
         ]);
         nativeObservationState = codex?.state;
         // Null/cooldown is already unavailable; do not run another full probe.
         if (codex?.metadata || hermes || claude) {
           captured = await read();
           [metadata, hermesMetadata, claudeMetadata] = await Promise.all([
-            verifyNativeAccountMetadata(codex?.metadata), verifyNativeAccountMetadata(hermes),
-            verifyNativeAccountMetadata(claude) as Promise<ClaudeNativeAccountMetadata | null>,
+            timeChatSendStage("codex_identity_verify", () => verifyNativeAccountMetadata(codex?.metadata)), verifyNativeAccountMetadata(hermes),
+            timeChatSendStage("claude_identity", () => verifyNativeAccountMetadata(claude)) as Promise<ClaudeNativeAccountMetadata | null>,
           ]);
           if (codex?.metadata && !metadata) nativeObservationState = this.#nativeAccountMetadata?.identityFailureState?.(codex.metadata) ?? "unavailable";
           retryMetadata = metadata;
@@ -404,7 +405,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       retryMetadata = metadata;
       if (options.includeNativeAccountMetadata && attempt === 0 && !claudeMetadata
         && captured.canonical.drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed")) {
-        claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
+        claudeSignedOut = await timeChatSendStage("claude_identity", () => readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut));
       }
       options.signal?.throwIfAborted();
       // Optional funding/account metadata must not turn profile expiry into logout.

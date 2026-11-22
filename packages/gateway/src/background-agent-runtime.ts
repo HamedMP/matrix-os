@@ -1,4 +1,5 @@
 import { openBackgroundLaunchChannel, validPrivateLaunch, type BackgroundPrivateControl, type ManagedLaunchChannel, type PrivateLaunchSpawn } from "./background-launch-channel.js";
+import { recordChatSendStage, startChatSendStage } from "./chat/send-timing.js";
 import { execFile } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { lstat, mkdir, opendir, chmod, realpath, open, rm, writeFile } from "node:fs/promises";
@@ -56,9 +57,15 @@ export function createBackgroundAgentRuntime(options: {
     if (closed) return Promise.reject(new Error("Background runtime closed"));
     if (waiting >= 64) return Promise.reject(new Error("Background runtime capacity reached"));
     waiting++;
+    const queuedAt = startChatSendStage();
     const operation = tail.then(async () => {
+      recordChatSendStage("background_queue_wait", queuedAt);
       await privateDirectory(root);
-      return withLock(join(root, ".admission.lock"), fn);
+      const flockAt = startChatSendStage();
+      return withLock(join(root, ".admission.lock"), () => {
+        recordChatSendStage("background_flock", flockAt);
+        return fn();
+      });
     }).finally(() => { waiting--; });
     tail = operation.catch((error: unknown) => {
       console.warn("[background-agent] operation failed", error instanceof Error ? error.name : "UnknownError");
@@ -157,6 +164,7 @@ export function createBackgroundAgentRuntime(options: {
     stop,
     start: async (input) => {
       SessionIdSchema.parse(input.sessionId);
+      const inventoryAt = startChatSendStage();
       let active = 0;
       let retained = 0;
       const refs = await records();
@@ -176,6 +184,7 @@ export function createBackgroundAgentRuntime(options: {
           if (await descriptorSession(dir) === input.sessionId) throw new BackgroundSessionRunningError();
         }
       }
+      recordChatSendStage("background_inventory", inventoryAt);
       if (active >= maxJobs || retained >= MAX_RECORDS) throw new Error("Background runtime capacity reached");
       const ref = { id: `bg_${randomUUID().replaceAll("-", "")}` };
       const dir = join(root, ref.id);
@@ -187,6 +196,7 @@ export function createBackgroundAgentRuntime(options: {
       try {
         await input.onPrepared?.(ref);
         const privateControl = input.privateControl && validPrivateLaunch(input.launch) ? input.privateControl : undefined;
+        const spawnAt = startChatSendStage();
         const serviceArgs = [
           "--user", "--quiet", "--collect", `--unit=${unit(ref)}`,
           "--slice=matrix-terminal.slice", "--service-type=exec",
@@ -208,7 +218,10 @@ export function createBackgroundAgentRuntime(options: {
             }
           } catch (error) { console.warn("[background-agent] Private control unavailable", error instanceof Error ? error.name : "UnknownError"); }
         } else await run("/usr/bin/systemd-run", serviceArgs);
+        recordChatSendStage("systemd_run_spawned", spawnAt);
+        const activeAt = startChatSendStage();
         if (!await isRunning(ref)) throw new Error("Background runtime exited during startup");
+        recordChatSendStage("unit_active", activeAt);
       } catch (error: unknown) {
         // Keep the private descriptor if stop cannot be confirmed, for recovery/admission.
         await stop(ref);
