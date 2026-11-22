@@ -16,10 +16,13 @@ const UPLOAD_PATH_PREFIX = "/uploads/";
 export const SERVED_CSP = "default-src 'none'; sandbox";
 /**
  * Opening a video URL makes the browser build a media document whose <video>
- * loads the same URL; `default-src 'none'` alone blocks that load. Allow media
- * from this origin only; scripts, styles, frames and everything else stay blocked.
+ * loads the same URL; `default-src 'none'` alone blocks that load, so allow media
+ * from this origin only. No `sandbox`: Safari gives a sandboxed media document an
+ * opaque origin, so 'self' stops matching and the video never loads. A video
+ * document runs no page script, and `default-src 'none'` still blocks scripts,
+ * styles, frames and connections.
  */
-export const SERVED_MEDIA_CSP = "default-src 'none'; media-src 'self'; sandbox";
+export const SERVED_MEDIA_CSP = "default-src 'none'; media-src 'self'";
 
 export interface EvidenceEnv {
   EVIDENCE?: R2Bucket;

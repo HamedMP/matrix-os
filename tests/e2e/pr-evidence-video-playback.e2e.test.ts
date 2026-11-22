@@ -4,11 +4,18 @@ import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createEvidenceKey } from "../../packages/pr-evidence-worker/src/keys.js";
-import { SERVED_CSP } from "../../packages/pr-evidence-worker/src/worker.js";
+import { SERVED_CSP, SERVED_MEDIA_CSP } from "../../packages/pr-evidence-worker/src/worker.js";
 import { makeWorker } from "../pr-evidence-worker/helpers.js";
 
 // Outcome: a reviewer who opens a recording link sees it play and can seek.
 // Fault detected: a served CSP that blocks the browser's media document (readyState stays 0).
+// Chromium always runs. WebKit (Safari's engine) needs extra system libraries, so the
+// GitHub-hosted "PR Evidence Playback" workflow runs both with
+// PR_EVIDENCE_PLAYBACK_BROWSERS=chromium,webkit; the shared E2E lane runs Chromium.
+const BROWSERS = (process.env.PR_EVIDENCE_PLAYBACK_BROWSERS ?? "chromium").split(",").map((name) => name.trim());
+for (const name of BROWSERS) {
+  if (name !== "chromium" && name !== "webkit") throw new Error(`Unsupported PR_EVIDENCE_PLAYBACK_BROWSERS entry: ${name}`);
+}
 const require = createRequire(new URL("../../shell/package.json", import.meta.url));
 const VIDEO = readFileSync(new URL("../fixtures/pr-evidence/h264-3s.mp4", import.meta.url));
 
@@ -50,12 +57,15 @@ async function serveEvidence(overrideCsp?: string): Promise<Served> {
   };
 }
 
-describe("PR evidence video playback in Chromium", () => {
+describe.each(BROWSERS)("PR evidence video playback in %s", (browserName) => {
   let browser: { newPage(): Promise<any>; close(): Promise<void> };
 
   beforeAll(async () => {
-    const { chromium } = require("@playwright/test");
-    browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, headless: true });
+    const playwright = require("@playwright/test");
+    browser =
+      browserName === "chromium"
+        ? await playwright.chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, headless: true })
+        : await playwright.webkit.launch({ headless: true });
   });
 
   afterAll(async () => {
@@ -67,7 +77,7 @@ describe("PR evidence video playback in Chromium", () => {
     const page = await browser.newPage();
     try {
       const response = await page.goto(served.url);
-      expect(response.headers()["content-security-policy"]).toContain("media-src 'self'");
+      expect(response.headers()["content-security-policy"]).toBe(SERVED_MEDIA_CSP);
       // rAF polling does not tick inside a media document; poll on an interval instead.
       await page.waitForFunction(() => (document.querySelector("video")?.readyState ?? 0) === 4, null, { polling: 100, timeout: 15_000 });
       const duration = await page.evaluate(() => document.querySelector("video")!.duration);
@@ -107,7 +117,10 @@ describe("PR evidence video playback in Chromium", () => {
     }
   });
 
-  it("control: the old image policy leaves the recording unplayable", async () => {
+  // Safari also refuses `media-src 'self'` combined with `sandbox` (the sandboxed media
+  // document gets an opaque origin), but Playwright's Linux WebKit build plays it, so that
+  // case is guarded by the unit test on the policy string and a real-Safari check.
+  it("control: the image policy leaves the recording unplayable", async () => {
     const served = await serveEvidence(SERVED_CSP);
     const page = await browser.newPage();
     try {

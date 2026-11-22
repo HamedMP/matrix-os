@@ -345,10 +345,10 @@ describe("GET /<key>", () => {
     async (type) => {
       const { servedHeaders } = await import("../../packages/pr-evidence-worker/src/worker.js");
       const csp = servedHeaders(type).get("content-security-policy")!;
-      expect(csp).toContain("default-src 'none'");
-      expect(csp).toContain("media-src 'self'");
-      expect(csp).toContain("sandbox");
-      expect(csp).not.toMatch(/script-src|'unsafe|\*/);
+      // Exact policy: `sandbox` would give Safari's media document an opaque origin and break playback.
+      expect(csp).toBe("default-src 'none'; media-src 'self'");
+      expect(servedHeaders(type).get("x-content-type-options")).toBe("nosniff");
+      expect(servedHeaders(type).get("content-type")).toBe(type);
     },
   );
 
