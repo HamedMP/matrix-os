@@ -450,6 +450,38 @@ describe('metal provisioner', () => {
       .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
   });
 
+  it('a retry after the registration window closed fails the stuck row and provisions afresh, even with no maintenance worker', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    const second = '0f1e2d3c-4b5a-4968-8776-655443322110';
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    const later = createMetalProvisioner({
+      db,
+      hosts: createMetalHostsRepository(db.kysely),
+      clientFor: () => host.client,
+      goldenVersion: GOLDEN,
+      config: createTestConfig(),
+      cloudInitTemplate: template,
+      now: () => new Date('2026-11-21T14:00:00.000Z'),
+      machineIdFactory: () => second,
+      log: () => undefined,
+    });
+
+    expect(await later.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: second });
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'failed', failureCode: 'registration_timeout' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
+      .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
+    expect(host.createVm).toHaveBeenCalledTimes(2);
+  });
+
+  it('a retry inside the registration window returns the provisioning runtime', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+
+    expect(await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: MACHINE_ID });
+    expect(host.createVm).toHaveBeenCalledTimes(1);
+  });
+
   it('fails a metal row whose registration window expired and queues its destroy', async () => {
     await addHost('host-a', { memoryAvailableMiB: 60_000 });
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });

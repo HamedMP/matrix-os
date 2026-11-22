@@ -402,6 +402,38 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     return { error: 'unavailable' };
   }
 
+  /**
+   * Fails a metal row still provisioning after its registration window closed
+   * and queues its teardown, in one transaction. A row the guest registered
+   * meanwhile is left alone.
+   */
+  async function failStale(
+    row: { machineId: string; metalHostId: string | null; generation: number; metalVmId: string | null },
+    at: Date,
+  ): Promise<boolean> {
+    if (!row.metalHostId) return false;
+    const metalHostId = row.metalHostId;
+    return runInPlatformTransaction(db, async (trx) => {
+      const updated = await trx.executor.updateTable('user_machines')
+        .set({ status: 'failed', failure_code: 'registration_timeout', failure_at: at.toISOString() })
+        .where('machine_id', '=', row.machineId)
+        .where('status', '=', 'provisioning')
+        .where('deleted_at', 'is', null)
+        .returning('machine_id')
+        .executeTakeFirst();
+      if (!updated) return false;
+      await enqueueMetalVmDeletion(trx, {
+        metalHostId,
+        machineId: row.machineId,
+        generation: row.generation,
+        metalVmId: row.metalVmId,
+        reason: 'registration_timeout',
+        now: at,
+      });
+      return true;
+    });
+  }
+
   return {
     async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
@@ -409,7 +441,21 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       const { clerkUserId, handle, tier, runtimeSlot } = parsed.data;
 
       // Cheap idempotency check before probing hosts; the claim re-checks under the lock.
-      const existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      // A guest that never registered (its first boot failed) would otherwise be
+      // returned forever wherever no maintenance worker runs reconcileStale.
+      const startedAt = now();
+      if (existing?.substrate === 'metal' && existing.status === 'provisioning'
+        && existing.registrationTokenExpiresAt !== null
+        && Date.parse(existing.registrationTokenExpiresAt) < startedAt.getTime()) {
+        try {
+          await failStale(existing, startedAt);
+        } catch (error: unknown) {
+          log('stale_fail_failed', { machineId: existing.machineId, code: errorCode(error) });
+          return { error: 'unavailable' };
+        }
+        existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      }
       if (existing && (existing.substrate !== 'metal' || existing.status !== 'failed')) {
         return existing.substrate === 'metal' ? { machineId: existing.machineId } : { error: 'unavailable' };
       }
@@ -469,28 +515,9 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         .execute();
       let failed = 0;
       for (const row of stale) {
-        if (!row.metal_host_id) continue;
-        const metalHostId = row.metal_host_id;
-        const changed = await runInPlatformTransaction(db, async (trx) => {
-          const updated = await trx.executor.updateTable('user_machines')
-            .set({ status: 'failed', failure_code: 'registration_timeout', failure_at: at.toISOString() })
-            .where('machine_id', '=', row.machine_id)
-            .where('status', '=', 'provisioning')
-            .where('deleted_at', 'is', null)
-            .returning('machine_id')
-            .executeTakeFirst();
-          if (!updated) return false;
-          await enqueueMetalVmDeletion(trx, {
-            metalHostId,
-            machineId: row.machine_id,
-            generation: row.generation,
-            metalVmId: row.metal_vm_id,
-            reason: 'registration_timeout',
-            now: at,
-          });
-          return true;
-        });
-        if (changed) failed += 1;
+        if (await failStale({
+          machineId: row.machine_id, metalHostId: row.metal_host_id, generation: row.generation, metalVmId: row.metal_vm_id,
+        }, at)) failed += 1;
       }
       return { failed };
     },
