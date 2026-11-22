@@ -6,7 +6,6 @@ import { canRouteMachineOnPreviewHost } from "./customer-vps-preview.js";
 import { buildCustomerVpsProxyUrl, isCustomerVpsProxyMachineRoutable } from "./profile-routing.js";
 import { createBoundedRateLimiter, runtimeSelectionSourceKey } from "./request-admission.js";
 import { buildRuntimeAuthToken } from "./platform-token.js";
-import { applyRuntimeUpstreamHeaders } from "./runtime-auth.js";
 import type { SubstrateRegistry } from "./substrates/registry.js";
 
 const SHARE_ROUTE = /^\/shared\/chat\/([a-z0-9][a-z0-9-]{0,62})\/([A-Za-z0-9_-]{1,64})\/([a-f0-9]{64})$/;
@@ -45,15 +44,16 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
     const machine = await getActiveUserMachineByHandle(db, route.handle, route.runtimeSlot);
     if (!machine || !canRouteMachineOnPreviewHost(host, machine)) return c.text("Shared Chat unavailable", 404);
     const sharePath = `/api/share/chats/${route.token}`;
-    const headers = new Headers({ accept: "application/json" });
+    const headers: Record<string, string> = { accept: "application/json" };
     let url: string | null;
     if (machine.substrate === "owned") {
       // Spec 2707: the snapshot comes through the tunnel; the platform still renders it.
       const resolution = owned?.substrates.resolveUpstream(machine, { path: sharePath });
       if (!owned || !resolution || resolution.kind !== "upstream") return c.text("This chat is unavailable right now", 503);
       url = resolution.upstream.url;
-      applyRuntimeUpstreamHeaders(headers, resolution.upstream);
-      headers.set("authorization", `Bearer ${buildRuntimeAuthToken(machine, owned.platformSecret)}`);
+      Object.assign(headers, resolution.upstream.headers, {
+        authorization: `Bearer ${buildRuntimeAuthToken(machine, owned.platformSecret)}`,
+      });
     } else {
       if (!isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
       // Address comes from the operator-controlled machine registry, never a request URL.

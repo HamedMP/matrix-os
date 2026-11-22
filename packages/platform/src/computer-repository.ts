@@ -55,7 +55,6 @@ export async function listUserRuntimeComputersByClerkId(
     provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     status: row.status,
     imageVersion: row.image_version,
-    lastSeenAt: row.last_seen_at,
-    privateAddress: row.private_address,
+    ...(row.provisioning_class === 'owned' ? { lastSeenAt: row.last_seen_at, privateAddress: row.private_address } : {}),
   }));
 }

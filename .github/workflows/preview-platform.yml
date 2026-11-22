@@ -536,7 +536,7 @@ jobs:
           fi
           owned_env_bindings=""
           owned_secret_bindings=""
-          if [ "$PREVIEW_OWNED_MACHINES_ENABLED" = "true" ]; then
+          if [ "${PREVIEW_OWNED_MACHINES_ENABLED:-false}" = "true" ]; then
             if ! [[ "${PREVIEW_OWNED_CF_ACCOUNT_ID:-}" =~ ^[0-9a-f]{32}$ && "${PREVIEW_OWNED_CF_ZONE_ID:-}" =~ ^[0-9a-f]{32}$ \
               && "${PREVIEW_OWNED_HOST_SUFFIX:-}" =~ ^[a-z0-9.-]+$ && "${PREVIEW_OWNED_ACCESS_CLIENT_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]]; then
               echo "Owned machine preview settings are incomplete." >&2
