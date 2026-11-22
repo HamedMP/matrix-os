@@ -1,8 +1,8 @@
 import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
-import { stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { lstat, stat } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
 
@@ -71,6 +71,19 @@ export interface CodexNativeAccountMetadataReader {
 /** Upper bound for admission identity reuse; metadata freshness (30 s) bounds it further. */
 export const CODEX_IDENTITY_REUSE_MAX_MS = 60_000;
 
+/** Stat identity of the Codex config (credential store backend lives there); absent is its own state. */
+async function defaultConfigFingerprint(path: string): Promise<string | null> {
+  try {
+    const info = await lstat(path);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch (error: unknown) {
+    if (!(error instanceof Error && "code" in error)) throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    console.warn("[provider-settings] Codex config fingerprint unavailable:", error.name);
+    return null;
+  }
+}
+
 async function defaultExecutableFingerprint(executable: string): Promise<string | null> {
   // A bare command name has no stable file to compare; treat it as one fixed identity.
   if (!isAbsolute(executable)) return `command:${executable}`;
@@ -100,6 +113,7 @@ export function createCodexNativeAccountMetadataReader(input: {
    */
   identityReuseMs?: number;
   readExecutableFingerprint?: () => Promise<string | null>;
+  readConfigFingerprint?: () => Promise<string | null>;
 }): CodexNativeAccountMetadataReader {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
   const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true });
@@ -115,6 +129,13 @@ export function createCodexNativeAccountMetadataReader(input: {
   const verificationObservations = new WeakMap<Promise<CodexNativeAccountMetadata | null>, { state: CodexNativeObservationState }>();
   const reuseMs = Math.max(0, Math.min(input.identityReuseMs ?? 0, CODEX_IDENTITY_REUSE_MAX_MS));
   const readExecutableFingerprint = input.readExecutableFingerprint ?? (() => defaultExecutableFingerprint(input.executable));
+  const configPath = join(resolve(input.cwd, input.environment.CODEX_HOME ?? ".codex"), "config.toml");
+  const readConfigFingerprint = input.readConfigFingerprint ?? (() => defaultConfigFingerprint(configPath));
+  // Executable and config identity together; null when either cannot be proven.
+  const readRuntimeFingerprint = async () => {
+    const [executable, config] = await Promise.all([readExecutableFingerprint(), readConfigFingerprint()]);
+    return executable === null || config === null ? null : `${executable}#${config}`;
+  };
   const clock = () => (input.now ?? (() => new Date()))().getTime();
   // Single entry: at most one reusable identity per reader (one per runtime owner).
   let recentIdentity: { value: CodexNativeAccountMetadata; credentialProof: string; executable: string; provenAt: number } | null = null;
@@ -128,7 +149,7 @@ export function createCodexNativeAccountMetadataReader(input: {
       return null;
     }
     const epoch = identityEpoch;
-    const [credentialProof, executable] = await Promise.all([readCredentialFileProof(), readExecutableFingerprint()]);
+    const [credentialProof, executable] = await Promise.all([readCredentialFileProof(), readRuntimeFingerprint()]);
     if (epoch !== identityEpoch || recentIdentity !== recent) return null;
     if (credentialProof !== recent.credentialProof || executable !== recent.executable) {
       recentIdentity = null;
@@ -172,7 +193,7 @@ export function createCodexNativeAccountMetadataReader(input: {
     if (!identityOnly && waitMs > 0) return null;
     if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
     const readEpoch = identityEpoch;
-    const executableAtStart = reuseMs > 0 ? await readExecutableFingerprint() : null;
+    const executableAtStart = reuseMs > 0 ? await readRuntimeFingerprint() : null;
     // Tentative evidence precedes process startup: the app-server can cache
     // account state at spawn. It becomes usable only after effective file authority.
     const tentativeCredentialProof = await readCredentialFileProof();

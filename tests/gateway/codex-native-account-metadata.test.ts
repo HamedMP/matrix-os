@@ -495,12 +495,13 @@ describe("native Codex account metadata", () => {
   describe("bounded admission identity reuse", () => {
     // Let a completed observation release its coalescing slot before the next call.
     const settle = () => new Promise(resolve => setImmediate(resolve));
-    function reuseReader(options: { proof?: () => string; executable?: () => string | null; clock?: () => Date; reuseMs?: number } = {}) {
+    function reuseReader(options: { proof?: () => string; executable?: () => string | null; config?: () => string | null; clock?: () => Date; reuseMs?: number } = {}) {
       const spawnProcess = vi.fn(() => fixture(false, false, account, undefined, undefined, undefined, "file").spawnProcess());
       const reader = createCodexNativeAccountMetadataReader({ executable: "/opt/codex/bin/codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" },
         now: options.clock ?? (() => now), timeoutMs: 40, spawnProcess: spawnProcess as never, identityReuseMs: options.reuseMs ?? 30_000,
         readCredentialFileProof: async () => (options.proof ?? (() => "stable-proof"))(),
-        readExecutableFingerprint: async () => (options.executable ?? (() => "codex-1"))() });
+        readExecutableFingerprint: async () => (options.executable ?? (() => "codex-1"))(),
+        readConfigFingerprint: async () => (options.config ?? (() => "config-1"))() });
       return { reader, spawnProcess };
     }
     it("reuses one private identity read for observe and verify within the window", async () => {
@@ -530,6 +531,20 @@ describe("native Codex account metadata", () => {
       await reader.observeIdentity!(); await settle();
       await reader.observeIdentity!(); await settle();
       expect(spawnProcess).toHaveBeenCalledTimes(5);
+    });
+    it("never reuses across a Codex config change (for example the credential store backend)", async () => {
+      let config: string | null = "config-1";
+      const { reader, spawnProcess } = reuseReader({ config: () => config });
+      await reader.observeIdentity!(); await settle();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      config = "config-keyring";
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      config = null;
+      await reader.observeIdentity!(); await settle();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(4);
     });
     it("expires after the bounded window and on explicit invalidation", async () => {
       let time = now.getTime();
