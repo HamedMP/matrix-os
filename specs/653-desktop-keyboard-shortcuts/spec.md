@@ -61,8 +61,10 @@ Everything below that is not in this list is the author's proposal.
 | Apps | Reopen closed app | Cmd+Shift+T | Ctrl+Shift+T | new |
 | Apps | Switch to app 1 … 9 | Cmd+1 … Cmd+9 | Ctrl+1 … Ctrl+9 | new |
 | Apps | Show desktop | none | none | new |
-| Apps | Toggle app full size | none | none | new |
+| Apps | Toggle app full size | Ctrl+Option+Enter | Ctrl+Alt+Enter | new |
 | Apps | Open Files | none | none | new |
+| Apps | Move app to left / right / top / bottom half | Ctrl+Option+arrow | Ctrl+Alt+arrow | new, see Window arrangement |
+| Apps | Restore app size | Ctrl+Option+Backspace | Ctrl+Alt+Backspace | new, see Window arrangement |
 | Navigation | Command palette | Cmd+K | Ctrl+K | exists |
 | Navigation | Go to file | Cmd+P | Ctrl+P | exists |
 | Navigation | Settings | Cmd+, | Ctrl+, | exists |
@@ -366,6 +368,51 @@ Tests first, per the constitution.
   or change a default that would take a key from them.
 - **Stakeholder review**: suggest design review of the Settings section before
   it is marked ready.
+
+## Window arrangement
+
+Owner request (2026-11-22): keys like Rectangle and Magnet on macOS that move
+app windows inside the Matrix desktop. They arrange Matrix app windows, not the
+native Electron window. All are Apps-group actions, so they work with focus
+anywhere, and they use the same keys on every platform.
+
+| Action | Default |
+| --- | --- |
+| Move app to left half | Ctrl+Alt+Left |
+| Move app to right half | Ctrl+Alt+Right |
+| Move app to top half | Ctrl+Alt+Up |
+| Move app to bottom half | Ctrl+Alt+Down |
+| Toggle app full size (existing, now bound) | Ctrl+Alt+Enter |
+| Restore app size | Ctrl+Alt+Backspace |
+
+- They act on the selected app. A selected app that is full size or minimized
+  becomes a floating window first. With no selected app, or an app hidden by
+  Show desktop, nothing happens.
+- A half is half of the area the shell already uses to keep windows in bounds:
+  below the header, above the taskbar. Halves have no gap. Windows keep their
+  minimum size (440 × 300), so on a small screen two halves can overlap.
+- Tiled bounds are saved through the same path as the end of a drag, so the
+  placement is kept the same way a dragged window's is.
+- **Restore rule.** The first tile remembers the window's floating bounds.
+  Later tiles keep that first value, so left, then right, then Restore returns
+  to the original size. Restore puts the window back and forgets the value.
+  Full size does not change the floating bounds, so Restore on a full-size app
+  returns it to its window; if it was tiled before, to its size before the tile.
+  With nothing remembered, Restore on a floating window does nothing.
+- **Manual move wins.** Any drag or resize by the user forgets the remembered
+  bounds. The window stays where the user put it, and Restore does nothing
+  until the next tile.
+- The remembered bounds are session state in the desktop surfaces store. They
+  are never persisted, are dropped when the app closes or its tab goes away,
+  and are cleared on a computer switch.
+- Toggle app full size keeps its behavior: from full size it returns to the
+  window's last floating bounds, which may be a half.
+- On the Canvas presentation these actions do nothing, because Canvas windows
+  are not placed on the screen.
+- Rectangle, Magnet and similar tools register these same keys globally. While
+  one runs, it takes the key before Matrix sees it. Some Linux desktops use
+  Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
+  Settings → Shortcuts.
 
 ## Left to the Builder
 
