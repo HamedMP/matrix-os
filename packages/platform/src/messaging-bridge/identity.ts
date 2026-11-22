@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import { MatrixUserIdSchema } from "@matrix-os/contracts/messaging-bridge";
 import { runPlatformMigration } from "../migration-runner.js";
+import { createMessagingBridgeLoginTables, type MessagingBridgeLoginDatabase } from "./login-store.js";
 
 /**
  * Owner -> shared-homeserver identity (spec 2701). The Matrix user id is a
@@ -17,11 +18,11 @@ export interface MessagingBridgeIdentitiesTable {
   created_at: ColumnType<Date, Date | string | undefined, never>;
 }
 
-export interface MessagingBridgeDatabase {
+export interface MessagingBridgeDatabase extends MessagingBridgeLoginDatabase {
   messaging_bridge_identities: MessagingBridgeIdentitiesTable;
 }
 
-export const MESSAGING_BRIDGE_SCHEMA_REVISION = { generation: 1, fingerprint: "messaging-bridge-identities-v1" } as const;
+export const MESSAGING_BRIDGE_SCHEMA_REVISION = { generation: 2, fingerprint: "messaging-bridge-identities-logins-v2" } as const;
 
 const OWNER_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
 
@@ -33,6 +34,7 @@ async function createMessagingBridgeTables(db: Transaction<MessagingBridgeDataba
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `.execute(db);
+  await createMessagingBridgeLoginTables(db);
 }
 
 export async function bootstrapMessagingBridgeDatabase(db: Kysely<MessagingBridgeDatabase>): Promise<void> {

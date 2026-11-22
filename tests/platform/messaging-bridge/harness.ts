@@ -61,8 +61,10 @@ export async function createHarness(db: PlatformDB, options: {
   env?: NodeJS.ProcessEnv;
   stepWaitMs?: number;
   now?: () => number;
+  /** Share one fake bridge host between harnesses that stand for separate platform instances. */
+  host?: ReturnType<typeof createFakeBridgeHost>;
 } = {}) {
-  const host = createFakeBridgeHost();
+  const host = options.host ?? createFakeBridgeHost();
   const logs: string[] = [];
   const log = (...parts: unknown[]) => { logs.push(parts.map(part => typeof part === "string" ? part : JSON.stringify(part)).join(" ")); };
   const bridge = await createConfiguredMessagingBridge({

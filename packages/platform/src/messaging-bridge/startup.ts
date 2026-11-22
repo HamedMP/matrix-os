@@ -9,6 +9,7 @@ import {
   type MessagingBridgeDatabase,
   type MessagingBridgeIdentityStore,
 } from "./identity.js";
+import { createMessagingBridgeLoginStore, type MessagingBridgeLoginStore } from "./login-store.js";
 import { createMessagingBridgeRoutes } from "./routes.js";
 
 const consoleLogger: MessagingBridgeLogger = {
@@ -34,13 +35,15 @@ export async function createConfiguredMessagingBridge(options: {
   const log = options.log ?? consoleLogger;
   const config = parseMessagingBridgeConfig(options.env);
   let identities: MessagingBridgeIdentityStore | undefined;
+  let logins: MessagingBridgeLoginStore | undefined;
   if (config.host) {
     const kysely = options.db.kysely as unknown as Kysely<MessagingBridgeDatabase>;
     try {
       await bootstrapMessagingBridgeDatabase(kysely);
       identities = createMessagingBridgeIdentityStore(kysely);
+      logins = createMessagingBridgeLoginStore(kysely, config.host.userIdKey);
     } catch (error: unknown) {
-      log.error("[messaging-bridge] identity table bootstrap failed; routes answer misconfigured", describeForLog(error));
+      log.error("[messaging-bridge] table bootstrap failed; routes answer misconfigured", describeForLog(error));
     }
   } else if (config.allowedHandles.size > 0) {
     log.warn("[messaging-bridge] allowlist set but bridge host is not configured; routes answer misconfigured");
@@ -49,7 +52,7 @@ export async function createConfiguredMessagingBridge(options: {
     config,
     // The same machine credential check the gateway's other header-addressed internal routes use.
     authenticateMachine: createCoreRepoMachineAuthenticator(options.db, options.platformSecret),
-    ...(identities ? { identities } : {}),
+    ...(identities && logins ? { identities, logins } : {}),
     fetchImpl: options.fetchImpl ?? fetch,
     log,
     ...(options.now ? { now: options.now } : {}),

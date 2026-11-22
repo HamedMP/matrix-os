@@ -22,7 +22,7 @@ import { configuredNetworks, type MessagingBridgeConfig, type MessagingBridgeHos
 import { MessagingBridgeHttpError, describeForLog, mapErrorToResponse, respondWithError, type MessagingBridgeLogger } from "./errors.js";
 import { createBridgeHostClient, createSynapseAdmin } from "./host-client.js";
 import { deriveMatrixUserId, type MessagingBridgeIdentityStore } from "./identity.js";
-import { createLoginProcessRegistry, createLoginStartLimiter, startLimitSweeper } from "./limits.js";
+import { startLoginSweeper, type AbandonedLogin, type MessagingBridgeLoginStore } from "./login-store.js";
 import { DIALOG_LOGIN_FLOWS, createProvisioningAdapter } from "./provisioning-adapter.js";
 import type { NormalizedStep, PendingNativeStep } from "./step-normalizer.js";
 
@@ -55,8 +55,10 @@ export interface MessagingBridgeRouteDeps {
   config: MessagingBridgeConfig;
   /** Verifies the machine bearer for a handle and returns the owner's Clerk id. */
   authenticateMachine(input: { handle: string; token: string }): Promise<string | null>;
-  /** Absent when the bridge host is unconfigured or its table could not be bootstrapped. */
+  /** Absent when the bridge host is unconfigured or its tables could not be bootstrapped. */
   identities?: MessagingBridgeIdentityStore;
+  /** Pending logins shared by every platform instance; present whenever `identities` is. */
+  logins?: MessagingBridgeLoginStore;
   fetchImpl: typeof fetch;
   log: MessagingBridgeLogger;
   now?: () => number;
@@ -74,15 +76,25 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
   const adapter = host && client
     ? createProvisioningAdapter({ client, stepWaitMs: deps.stepWaitMs ?? MESSAGING_BRIDGE_STEP_WAIT_MS, secretFor: network => host.provisioningSecrets[network]! })
     : undefined;
+  const logins = deps.logins;
   // Expired or evicted flows are cancelled at the bridge best-effort; the bridge also times them out itself.
-  const registry = createLoginProcessRegistry(now, (processId, abandoned) => {
+  function cancelAbandoned(abandoned: AbandonedLogin[]) {
     if (!adapter) return;
-    void adapter.cancelLogin(abandoned.network, abandoned.userId, processId).catch((error: unknown) => {
-      log.warn("[messaging-bridge] abandoned login cancel failed", { network: abandoned.network, ...describeForLog(error) });
-    });
-  });
-  const limiter = createLoginStartLimiter(now);
-  const stopSweeper = startLimitSweeper([registry, limiter]);
+    for (const login of abandoned) {
+      void adapter.cancelLogin(login.network, login.userId, login.processId).catch((error: unknown) => {
+        log.warn("[messaging-bridge] abandoned login cancel failed", { network: login.network, ...describeForLog(error) });
+      });
+    }
+  }
+  const stopSweeper = logins
+    ? startLoginSweeper(async () => {
+      try {
+        cancelAbandoned(await logins.sweep(now()));
+      } catch (error: unknown) {
+        log.warn("[messaging-bridge] login sweep failed", describeForLog(error));
+      }
+    })
+    : () => undefined;
 
   const app = new Hono<Env>().basePath(MESSAGING_BRIDGE_PLATFORM_BASE_PATH);
   const tooLarge = (c: Context) => respondWithError(c, "invalid_request", 413);
@@ -103,7 +115,7 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
     }
     if (!ownerId) return respondWithError(c, "unauthorized");
     if (!deps.config.allowedHandles.has(handle)) return respondWithError(c, "not_enabled");
-    if (!host || !deps.identities) return respondWithError(c, "misconfigured");
+    if (!host || !deps.identities || !logins) return respondWithError(c, "misconfigured");
     c.set("messagingBridgeOwner", ownerId);
     await next();
   });
@@ -154,12 +166,12 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
     return deps.identities!.ensure(ownerId, deriveMatrixUserId(hostConfig.userIdKey, ownerId, hostConfig.serverName));
   }
 
-  function record(processId: string, ownerId: string, network: MessagingBridgeNetwork, userId: string, result: NormalizedStep): MessagingBridgeLoginStep {
+  async function record(processId: string, ownerId: string, network: MessagingBridgeNetwork, userId: string, result: NormalizedStep): Promise<MessagingBridgeLoginStep> {
     if (result.kind === "pending") {
-      registry.put(processId, { ownerId, network, userId, pending: result.pending });
+      cancelAbandoned(await logins!.put(processId, { ownerId, network, userId, pending: result.pending }, now()));
       return result.pending.step;
     }
-    registry.delete(processId);
+    await logins!.delete(processId, ownerId, network);
     if (result.step.type === "failed") log.warn("[messaging-bridge] login flow ended", { network, reason: result.reason ?? result.step.reason });
     return result.step;
   }
@@ -205,39 +217,42 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
       throw new MessagingBridgeHttpError("invalid_request", { stage: "login_start", network, flow: "not_offered" });
     }
     const ownerId = c.get("messagingBridgeOwner");
-    if (!limiter.tryAcquire(ownerId)) throw new MessagingBridgeHttpError("rate_limited", { stage: "login_start", network });
+    if (!(await logins!.tryStart(ownerId, now()))) throw new MessagingBridgeHttpError("rate_limited", { stage: "login_start", network });
     const userId = await ownerUserId(c, hostConfig);
     const flowId = body.flowId ?? (await adapter!.listFlows(network, userId))[0]?.id;
     if (!flowId) throw new MessagingBridgeHttpError("bridge_unavailable", { stage: "login_start", network, flows: 0 });
     // max_logins is 1 per network: an existing login (e.g. after BAD_CREDENTIALS) is re-linked in place.
     const [existingLoginId] = await adapter!.listLoginIds(network, userId);
     const started = await adapter!.startLogin(network, userId, flowId, existingLoginId);
-    return c.json(ProgressInput(started.processId, record(started.processId, ownerId, network, userId, started.result)));
+    return c.json(ProgressInput(started.processId, await record(started.processId, ownerId, network, userId, started.result)));
   }));
 
   app.post("/:network/login/step", stepLimit, guarded("login_step", async (c, hostConfig) => {
     const network = networkParam(c, hostConfig);
     const body = await readBody(c, MessagingBridgeLoginStepRequestSchema);
     const ownerId = c.get("messagingBridgeOwner");
-    const process = registry.get(body.loginProcessId, ownerId, network);
+    const { record: process, abandoned } = await logins!.get(body.loginProcessId, ownerId, network, now());
+    if (abandoned) cancelAbandoned([abandoned]);
     if (!process) throw new MessagingBridgeHttpError("not_found", { stage: "login_step", network });
     if (process.pending.stepId !== body.stepId) throw new MessagingBridgeHttpError("conflict", { stage: "login_step", network });
     checkFields(process.pending, body.fields);
     const outcome = await adapter!.submitStep(network, process.userId, body.loginProcessId, process.pending, body.fields, c.req.raw.signal);
     if (outcome.kind === "still_waiting") {
-      registry.put(body.loginProcessId, { ownerId, network, userId: process.userId, pending: process.pending });
+      cancelAbandoned(await logins!.put(body.loginProcessId, process, now()));
       return c.json(ProgressInput(body.loginProcessId, process.pending.step));
     }
-    return c.json(ProgressInput(body.loginProcessId, record(body.loginProcessId, ownerId, network, process.userId, outcome.result)));
+    return c.json(ProgressInput(body.loginProcessId, await record(body.loginProcessId, ownerId, network, process.userId, outcome.result)));
   }));
 
-  /** Best-effort and idempotent: only the caller's own live process is cancelled; anything else is already gone. */
+  /**
+   * Best-effort and idempotent: only the caller's own process is cancelled, on
+   * whichever instance receives the request; anything else is already gone.
+   */
   app.post("/:network/login/cancel", smallLimit, guarded("login_cancel", async (c, hostConfig) => {
     const network = networkParam(c, hostConfig);
     const body = await readBody(c, MessagingBridgeLoginCancelRequestSchema);
-    const process = registry.get(body.loginProcessId, c.get("messagingBridgeOwner"), network);
+    const process = await logins!.delete(body.loginProcessId, c.get("messagingBridgeOwner"), network);
     if (process) {
-      registry.delete(body.loginProcessId);
       try {
         await adapter!.cancelLogin(network, process.userId, body.loginProcessId);
       } catch (error: unknown) {
@@ -266,10 +281,9 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
 
   return {
     routes: app,
+    /** Pending logins live in Postgres and survive this instance; only the sweeper stops. */
     shutdown() {
       stopSweeper();
-      registry.clear();
-      limiter.clear();
     },
   };
 }
