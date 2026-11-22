@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import { captureChatSendStage } from "../chat/send-timing.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
+import { watch as watchDirectory, type FSWatcher } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -36,6 +37,8 @@ const WatchInputSchema = z.object({
 const MAX_WATCHERS = 100;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_DRAIN_BYTES = 1024 * 1024;
+/** Checkpointed lines are committed together, bounded per thread-store write. */
+const MAX_CHECKPOINT_BATCH_EVENTS = 100;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_CACHE_TTL_MS = 30_000;
@@ -109,6 +112,12 @@ export function createCodexEventBridge(options: {
   runVersionCommand?: VersionCommand;
   codexExecutable?: string;
   pollIntervalMs?: number;
+  /**
+   * Drain as soon as a runner appends (one directory watcher), with polling as
+   * the fallback. Defaults on for real-time polling (<= 1 s); a bridge set up
+   * for manual draining keeps manual control.
+   */
+  eventDrivenDrain?: boolean;
   now?: () => Date;
   nowMs?: () => number;
   isRuntimeAlive?: (sessionId: string) => Promise<boolean>;
@@ -121,6 +130,7 @@ export function createCodexEventBridge(options: {
     options.codexExecutable ?? codexExecutableFromEnv(process.env),
   );
   const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
+  const eventDrivenDrain = options.eventDrivenDrain ?? pollIntervalMs <= 1_000;
   const now = options.now ?? (() => new Date());
   const nowMs = options.nowMs ?? Date.now;
   const watchers = new Map<string, WatchEntry>();
@@ -200,8 +210,23 @@ export function createCodexEventBridge(options: {
     let ready = false;
     let lineStart = 0;
     let absoluteOffset = entry.offset;
+    let pendingCheckpointLines = 0;
     const occurredAt = entry.pendingOccurredAt ?? now().toISOString();
     entry.pendingOccurredAt = occurredAt;
+    // One thread-store write per batch of complete lines (each write rewrites
+    // the thread file). The cursor offset moves with the events atomically, and
+    // deterministic event IDs keep a retried batch idempotent.
+    const commitCheckpoint = async (outcome: boolean) => {
+      if (pendingCheckpointLines === 0) return;
+      await store!.ingestProviderEvents(entry.principal, entry.threadId, {
+        events: [...events], ...(providerThreadId ? { providerThreadId } : {}),
+        ...(outcome && tokenUsage ? { tokenUsage } : {}),
+      }, { sessionId: entry.sessionId, offset: absoluteOffset, ...(entry.generation ? { generation: entry.generation } : {}) });
+      events.length = 0;
+      providerThreadId = undefined;
+      tokenUsage = undefined;
+      pendingCheckpointLines = 0;
+    };
     while (lineStart < consumedBytes) {
       const newline = bytes.indexOf(0x0a, lineStart);
       if (newline < 0 || newline >= consumedBytes) break;
@@ -234,15 +259,12 @@ export function createCodexEventBridge(options: {
       absoluteOffset += newline - lineStart + 1;
       lineStart = newline + 1;
       if (entry.checkpoint) {
-        await store.ingestProviderEvents(entry.principal, entry.threadId, {
-          events: [...events], ...(providerThreadId ? { providerThreadId } : {}),
-          ...(parsed.outcome && tokenUsage ? { tokenUsage } : {}),
-        }, { sessionId: entry.sessionId, offset: absoluteOffset, ...(entry.generation ? { generation: entry.generation } : {}) });
-        events.length = 0;
-        providerThreadId = undefined;
-        tokenUsage = undefined;
+        pendingCheckpointLines += 1;
+        // A terminal line carries its own token usage; commit it with its outcome.
+        if (parsed.outcome || events.length >= MAX_CHECKPOINT_BATCH_EVENTS) await commitCheckpoint(Boolean(parsed.outcome));
       }
     }
+    if (entry.checkpoint) await commitCheckpoint(false);
 
     const chunks: AgentThreadEvent[][] = [];
     for (let index = 0; index < events.length; index += 100) chunks.push(events.slice(index, index + 100));
@@ -361,12 +383,36 @@ export function createCodexEventBridge(options: {
   }
 
   let drainScheduled = false;
-  const timer = setInterval(() => {
-    if (drainScheduled) return;
+  let drainRequested = false;
+  function scheduleDrain(): void {
+    if (closed) return;
+    if (drainScheduled) { drainRequested = true; return; }
     drainScheduled = true;
-    queue = queue.then(drainAll, drainAll).finally(() => { drainScheduled = false; });
-  }, pollIntervalMs);
+    drainRequested = false;
+    queue = queue.then(drainAll, drainAll).finally(() => {
+      drainScheduled = false;
+      if (drainRequested) scheduleDrain();
+    });
+  }
+  const timer = setInterval(scheduleDrain, pollIntervalMs);
   timer.unref();
+  // Event-driven fast path: one directory watcher triggers a drain as soon as a
+  // runner appends. Polling stays as the fallback if the watcher fails or misses.
+  let directoryWatcher: FSWatcher | undefined;
+  function watchEventDirectory(): void {
+    if (!eventDrivenDrain || directoryWatcher || closed) return;
+    try {
+      const watcher = watchDirectory(eventDir, { persistent: false }, () => { if (watchers.size > 0) scheduleDrain(); });
+      watcher.on("error", (error: unknown) => {
+        console.warn("[coding-agents] Codex event watcher unavailable; polling continues", error instanceof Error ? error.name : "UnknownError");
+        watcher.close();
+        if (directoryWatcher === watcher) directoryWatcher = undefined;
+      });
+      directoryWatcher = watcher;
+    } catch (error: unknown) {
+      console.warn("[coding-agents] Codex event watcher unavailable; polling continues", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
 
   return {
     attachThreadStore(nextStore: ProviderEventStore): void {
@@ -397,6 +443,7 @@ export function createCodexEventBridge(options: {
         ...(input.generation !== undefined ? { generation: input.generation } : {}),
       });
       await ensureEventDirectory();
+      watchEventDirectory();
       const path = codexProviderEventPath(homePath, parsed.sessionId);
       const prepared = input.resume ? await store?.prepareProviderObservation?.(input.principal, parsed.threadId, parsed.sessionId, input.resume) : undefined;
       const existing = watchers.get(parsed.sessionId);
@@ -462,6 +509,8 @@ export function createCodexEventBridge(options: {
     async shutdown(): Promise<void> {
       if (closed) return;
       clearInterval(timer);
+      directoryWatcher?.close();
+      directoryWatcher = undefined;
       await queue;
       queue = queue.then(drainAll, drainAll);
       await queue;
