@@ -1,0 +1,29 @@
+{
+  "name": "Mail",
+  "description": "Read, search, triage and draft Gmail and Outlook mail with the agent beside you",
+  "category": "productivity",
+  "icon": "mail",
+  "author": "system",
+  "version": "0.1.0",
+  "slug": "mail",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../system/icons/v3-*.png",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts"
+    ]
+  },
+  "listingTrust": "first_party"
+}

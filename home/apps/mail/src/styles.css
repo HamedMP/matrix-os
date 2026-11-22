@@ -1,0 +1,3 @@
+/* Mail app styles. Shared components come from ../../_shared/office-ui. */
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--app-bg); color: var(--app-fg); }

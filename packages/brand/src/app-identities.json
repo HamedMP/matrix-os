@@ -180,5 +180,33 @@
     "darkAccent": "#f6adaa",
     "wash": "#fcebe7",
     "glow": "#f4d3ce"
+  },
+  "mail": {
+    "name": "Harbor",
+    "accent": "#1f6496",
+    "darkAccent": "#93c7ef",
+    "wash": "#e3f0fa",
+    "glow": "#c5dff2"
+  },
+  "calendar": {
+    "name": "Brick",
+    "accent": "#a8413a",
+    "darkAccent": "#ffaca2",
+    "wash": "#fbeae7",
+    "glow": "#f2cfc9"
+  },
+  "docs": {
+    "name": "Indigo",
+    "accent": "#4652a8",
+    "darkAccent": "#b3baf5",
+    "wash": "#ebedfb",
+    "glow": "#d6daf5"
+  },
+  "sheets": {
+    "name": "Fern",
+    "accent": "#2b6b45",
+    "darkAccent": "#90d6a8",
+    "wash": "#e3f2e8",
+    "glow": "#c7e5d1"
   }
 }
