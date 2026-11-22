@@ -117,7 +117,7 @@ import json, sys
 user_data, handle, golden = sys.argv[1:]
 print(json.dumps({
     "machineId": f"smoke_{handle.removeprefix('smoke-')}", "generation": 1, "handle": handle,
-    "tier": "free", "bootMiB": 2048, "maxMiB": 8192, "diskGiB": 20,
+    "tier": "free", "bootMiB": 2048, "maxMiB": 8192, "diskGiB": 40,
     "userData": open(user_data).read(), "goldenVersion": golden,
 }))
 PY
@@ -127,12 +127,14 @@ case "$(cat "$work/status")" in 201|202) ;; *) die "create returned $(cat "$work
 vm_id="$(printf '%s' "$created" | json_field id)"
 vm_ip="$(printf '%s' "$created" | json_field privateIPv4)"
 [[ "$vm_id" =~ ^vm_[a-f0-9]{24}$ ]] || die "unexpected VM id"
-pass "created $vm_id at $vm_ip (free: boot 2048 MiB, max 8192 MiB, disk 20 GiB)"
+pass "created $vm_id at $vm_ip (free: boot 2048 MiB, max 8192 MiB, disk 40 GiB)"
 
 lv="vmvg/mx-$vm_id"
 lvs "$lv" >/dev/null 2>&1 || die "no LV $lv"
 has "golden-$golden" lvs --noheadings -o origin "$lv" || die "$lv is not a clone of golden-$golden"
 [ "$(stat -L -c %U "/dev/$lv")" = matrix-vm ] || die "/dev/$lv is not owned by matrix-vm"
+lv_bytes="$(lvs --noheadings --nosuffix --units b -o lv_size "$lv" | tr -d ' ')"
+[ "$lv_bytes" = "$((40 * 1024 * 1024 * 1024))" ] || die "$lv is $lv_bytes bytes, not the requested 40 GiB"
 pass "disk $lv is a thin clone of golden-$golden owned by matrix-vm"
 
 # --- boot -------------------------------------------------------------------------

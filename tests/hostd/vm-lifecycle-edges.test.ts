@@ -40,8 +40,14 @@ const spec: CreateVmSpec = {
   goldenVersion: "2026.11.20-1",
 };
 
+const GiB = 1024 ** 3;
+let goldenBytes: number;
 const exec: Exec = async (argv) => {
   execCalls.push([...argv]);
+  if (argv[0] === "lvs" && argv.includes("lv_size")) {
+    // NaN: lvs knows no such LV.
+    return Number.isNaN(goldenBytes) ? { code: 5, stdout: "", stderr: "" } : { code: 0, stdout: `  ${goldenBytes}\n`, stderr: "" };
+  }
   const outcome = execFail(argv);
   if (outcome instanceof Error || typeof outcome === "string") throw outcome;
   if (typeof outcome === "number") return { code: outcome, stdout: "", stderr: "" };
@@ -113,6 +119,7 @@ beforeEach(async () => {
   chState = "Shutdown";
   chOverrides = {};
   clockT = 1_000_000;
+  goldenBytes = 20 * GiB;
 });
 
 afterEach(async () => {
@@ -405,9 +412,13 @@ describe("repeated create never destroys a VM that has a real disk", () => {
 });
 
 describe("free-tier limits", () => {
-  it("rejects a free VM that is not booted at 2048 MiB, exceeds 8192 MiB, or exceeds 20 GiB", async () => {
+  it("accepts a free VM with the full 40 GiB disk", async () => {
+    await expect(make().create({ ...spec, diskGiB: 40 })).resolves.toMatchObject({ tier: "free", diskGiB: 40, state: "running" });
+  });
+
+  it("rejects a free VM that is not booted at 2048 MiB, exceeds 8192 MiB, or exceeds 40 GiB", async () => {
     const lifecycle = make();
-    for (const patch of [{ bootMiB: 1024 }, { bootMiB: 4096 }, { maxMiB: 8320 }, { diskGiB: 21 }]) {
+    for (const patch of [{ bootMiB: 1024 }, { bootMiB: 4096 }, { maxMiB: 8320 }, { diskGiB: 41 }]) {
       await expect(lifecycle.create({ ...spec, ...patch })).rejects.toMatchObject({ code: "invalid" });
     }
     await expect(lifecycle.create({ ...spec, tier: "paid", bootMiB: 4096, maxMiB: 131072, diskGiB: 200 })).resolves.toMatchObject({
@@ -448,5 +459,48 @@ describe("create for a handle another machine's VM still holds", () => {
     await lifecycle.create(spec);
     await lifecycle.create({ ...spec, machineId: "machine-2", handle: "bob" });
     expect(has("vm_create_handle_shared")).toBe(false);
+  });
+});
+
+describe("VM disk size against the golden image", () => {
+  const lvCalls = () => execCalls.filter((c) => c[0] === "lvcreate" || c[0] === "lvextend" || c[0] === "systemctl").map((c) => c[0]);
+
+  it("extends the clone of a 20 GiB golden to a requested 40 GiB before boot", async () => {
+    const vm = await make().create({ ...spec, diskGiB: 40 });
+    expect(execCalls).toContainEqual(["lvs", "--noheadings", "--nosuffix", "--units", "b", "-o", "lv_size", "vmvg/golden-2026.11.20-1"]);
+    expect(execCalls).toContainEqual(["lvextend", "--size", "40G", `vmvg/mx-${vm.id}`]);
+    expect(lvCalls().slice(0, 3)).toEqual(["lvcreate", "lvextend", "systemctl"]);
+    expect(vm).toMatchObject({ diskGiB: 40, state: "running" });
+  });
+
+  it("leaves the clone alone when the request equals the golden size", async () => {
+    await make().create({ ...spec, diskGiB: 20 });
+    expect(execCalls.some((c) => c[0] === "lvextend")).toBe(false);
+    expect(execCalls.some((c) => c[0] === "lvcreate")).toBe(true);
+  });
+
+  it("refuses a disk smaller than the golden before creating any record or LV", async () => {
+    goldenBytes = 30 * GiB;
+    await expect(make().create({ ...spec, diskGiB: 20 })).rejects.toMatchObject({
+      code: "invalid",
+      message: "requested disk is smaller than the golden image",
+    });
+    expect(execCalls.some((c) => c[0] === "lvcreate" || c[0] === "lvextend")).toBe(false);
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("refuses an unknown golden version as invalid before creating any record", async () => {
+    goldenBytes = Number.NaN;
+    const lifecycle = make();
+    await expect(lifecycle.create({ ...spec, goldenVersion: "2026.11.20-9" })).rejects.toMatchObject({ code: "invalid" });
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("marks the VM failed during create when the extend fails", async () => {
+    execFail = (argv) => (argv[0] === "lvextend" ? 5 : undefined);
+    await expect(make().create({ ...spec, diskGiB: 40 })).rejects.toMatchObject({ code: "failed" });
+    const [record] = await store.list();
+    expect(record).toMatchObject({ state: "failed", failedDuring: "create" });
+    expect(execCalls.some((c) => c[0] === "systemctl" && c[1] === "start")).toBe(false);
   });
 });

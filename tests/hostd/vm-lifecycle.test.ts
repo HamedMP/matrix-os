@@ -62,6 +62,7 @@ const fakeExec: Exec = async (argv) => {
   const cmd = [...argv];
   execCalls.push(cmd);
   events.push(`exec:${cmd.join(" ")}`);
+  if (cmd[0] === "lvs" && cmd.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (cmd[0] === "cloud-localds") await writeFile(cmd[cmd.length - 3]!, "seed-image");
   if (cmd[0] === "lvs") return { code: lvExists ? 0 : 5, stdout: "", stderr: "" };
   if (cmd[0] === "lvremove") lvExists = false;
