@@ -121,12 +121,12 @@ describe("createAppMenuTemplate", () => {
       ["Apps", "Minimize App", "Cmd+M"],
       ["Apps", "Reopen Closed App", "Cmd+Shift+T"],
       ["Apps", "Show Desktop", undefined],
-      ["Apps", "Toggle App Full Size", "Ctrl+Alt+Enter"],
-      ["Apps", "Move App to Left Half", "Ctrl+Alt+Left"],
-      ["Apps", "Move App to Right Half", "Ctrl+Alt+Right"],
-      ["Apps", "Move App to Top Half", "Ctrl+Alt+Up"],
-      ["Apps", "Move App to Bottom Half", "Ctrl+Alt+Down"],
-      ["Apps", "Restore App Size", "Ctrl+Alt+Backspace"],
+      ["Apps", "Toggle App Full Size", "Ctrl+Shift+Enter"],
+      ["Apps", "Move App to Left Half", "Ctrl+Shift+Left"],
+      ["Apps", "Move App to Right Half", "Ctrl+Shift+Right"],
+      ["Apps", "Move App to Top Half", "Ctrl+Shift+Up"],
+      ["Apps", "Move App to Bottom Half", "Ctrl+Shift+Down"],
+      ["Apps", "Restore App Size", "Ctrl+Shift+Backspace"],
       ["Apps", "Open Files", undefined],
     ];
     for (const [menu, label, accelerator] of expected) {

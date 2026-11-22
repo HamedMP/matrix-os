@@ -204,8 +204,9 @@ describe("window arrangement keys", () => {
       [{ key: "Enter", code: "Enter" }, "app.toggle-full-size"],
       [{ key: "Backspace", code: "Backspace" }, "app.restore-size"],
     ];
+    const modifiers = platform === "mac" ? { control: true, shift: true } : { control: true, alt: true };
     for (const [key, id] of keys) {
-      expect(press({ ...key, control: true, alt: true }), id).toHaveBeenCalledTimes(1);
+      expect(press({ ...key, ...modifiers }), id).toHaveBeenCalledTimes(1);
       expect(run).toHaveBeenLastCalledWith(id);
     }
     expect(run).toHaveBeenCalledTimes(keys.length);
@@ -213,8 +214,8 @@ describe("window arrangement keys", () => {
 
   it("does not repeat a tile while the key is held", () => {
     const { run, press } = setup();
-    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, alt: true });
-    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, alt: true, isAutoRepeat: true });
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, shift: true });
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, shift: true, isAutoRepeat: true });
     expect(run).toHaveBeenCalledTimes(1);
   });
 });

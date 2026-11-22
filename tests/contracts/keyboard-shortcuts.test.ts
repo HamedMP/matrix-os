@@ -174,8 +174,11 @@ describe("resolveShortcuts", () => {
     expect(resolveShortcuts(EMPTY_SHORTCUT_OVERRIDES, "other")["nav.settings"]).toEqual(["Ctrl+,"]);
   });
 
-  it.each(PLATFORMS)("ships Rectangle's window arrangement keys on %s", (platform) => {
+  it.each(PLATFORMS)("ships window arrangement keys that stay clear of Rectangle and Magnet on %s", (platform) => {
     const effective = resolveShortcuts(null, platform);
+    // Ctrl+Shift on macOS (Rectangle and Magnet own Ctrl+Option there);
+    // Ctrl+Alt elsewhere, where Ctrl+Shift+arrow selects text by word.
+    const m = platform === "mac" ? "Ctrl+Shift" : "Ctrl+Alt";
     expect({
       left: effective["app.tile-left"],
       right: effective["app.tile-right"],
@@ -184,12 +187,12 @@ describe("resolveShortcuts", () => {
       fullSize: effective["app.toggle-full-size"],
       restore: effective["app.restore-size"],
     }).toEqual({
-      left: ["Ctrl+Alt+Left"],
-      right: ["Ctrl+Alt+Right"],
-      top: ["Ctrl+Alt+Up"],
-      bottom: ["Ctrl+Alt+Down"],
-      fullSize: ["Ctrl+Alt+Enter"],
-      restore: ["Ctrl+Alt+Backspace"],
+      left: [`${m}+Left`],
+      right: [`${m}+Right`],
+      top: [`${m}+Up`],
+      bottom: [`${m}+Down`],
+      fullSize: [`${m}+Enter`],
+      restore: [`${m}+Backspace`],
     });
     for (const id of ["app.tile-left", "app.tile-right", "app.tile-top", "app.tile-bottom", "app.restore-size"] as const) {
       expect(SHORTCUT_ACTIONS.find((action) => action.id === id)?.group).toBe("apps");

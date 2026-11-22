@@ -43,8 +43,11 @@ function action(
 }
 
 // Same keys on every platform, as in Rectangle.
-function everywhere(binding: string): [readonly string[], readonly string[]] {
-  return [[binding], [binding]];
+// Window arrangement: Ctrl+Shift on macOS, because Rectangle and Magnet take
+// Ctrl+Option there. Elsewhere Ctrl+Shift+arrow selects text by word, so the
+// keys stay on Ctrl+Alt.
+function arrange(key: string): [readonly string[], readonly string[]] {
+  return [[`Ctrl+Shift+${key}`], [`Ctrl+Alt+${key}`]];
 }
 
 // "Mod" binding: Cmd on mac, Ctrl elsewhere.
@@ -65,13 +68,13 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   action("app.reopen", "apps", "Reopen closed app", "Reopen the app you closed most recently.", ...mod("Shift+T")),
   ...SWITCH_ACTIONS,
   action("app.show-desktop", "apps", "Show desktop", "Minimize every open app.", [], []),
-  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", ...everywhere("Ctrl+Alt+Enter")),
+  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", ...arrange("Enter")),
   action("app.open-files", "apps", "Open Files", "Open the Files app.", [], []),
-  action("app.tile-left", "apps", "Move app to left half", "Place the selected app on the left half of the desktop.", ...everywhere("Ctrl+Alt+Left")),
-  action("app.tile-right", "apps", "Move app to right half", "Place the selected app on the right half of the desktop.", ...everywhere("Ctrl+Alt+Right")),
-  action("app.tile-top", "apps", "Move app to top half", "Place the selected app on the top half of the desktop.", ...everywhere("Ctrl+Alt+Up")),
-  action("app.tile-bottom", "apps", "Move app to bottom half", "Place the selected app on the bottom half of the desktop.", ...everywhere("Ctrl+Alt+Down")),
-  action("app.restore-size", "apps", "Restore app size", "Return the selected app to its size before it was moved to a half or made full size.", ...everywhere("Ctrl+Alt+Backspace")),
+  action("app.tile-left", "apps", "Move app to left half", "Place the selected app on the left half of the desktop.", ...arrange("Left")),
+  action("app.tile-right", "apps", "Move app to right half", "Place the selected app on the right half of the desktop.", ...arrange("Right")),
+  action("app.tile-top", "apps", "Move app to top half", "Place the selected app on the top half of the desktop.", ...arrange("Up")),
+  action("app.tile-bottom", "apps", "Move app to bottom half", "Place the selected app on the bottom half of the desktop.", ...arrange("Down")),
+  action("app.restore-size", "apps", "Restore app size", "Return the selected app to its size before it was moved to a half or made full size.", ...arrange("Backspace")),
   action("nav.palette", "navigation", "Command palette", "Search commands and apps.", ...mod("K")),
   action("nav.quick-open", "navigation", "Go to file", "Find and open a file by name.", ...mod("P")),
   action("nav.settings", "navigation", "Settings", "Open Settings.", ...mod(",")),

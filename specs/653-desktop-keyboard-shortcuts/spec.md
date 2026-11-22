@@ -61,10 +61,10 @@ Everything below that is not in this list is the author's proposal.
 | Apps | Reopen closed app | Cmd+Shift+T | Ctrl+Shift+T | new |
 | Apps | Switch to app 1 … 9 | Cmd+1 … Cmd+9 | Ctrl+1 … Ctrl+9 | new |
 | Apps | Show desktop | none | none | new |
-| Apps | Toggle app full size | Ctrl+Option+Enter | Ctrl+Alt+Enter | new |
+| Apps | Toggle app full size | Ctrl+Shift+Enter | Ctrl+Alt+Enter | new |
 | Apps | Open Files | none | none | new |
-| Apps | Move app to left / right / top / bottom half | Ctrl+Option+arrow | Ctrl+Alt+arrow | new, see Window arrangement |
-| Apps | Restore app size | Ctrl+Option+Backspace | Ctrl+Alt+Backspace | new, see Window arrangement |
+| Apps | Move app to left / right / top / bottom half | Ctrl+Shift+arrow | Ctrl+Alt+arrow | new, see Window arrangement |
+| Apps | Restore app size | Ctrl+Shift+Backspace | Ctrl+Alt+Backspace | new, see Window arrangement |
 | Navigation | Command palette | Cmd+K | Ctrl+K | exists |
 | Navigation | Go to file | Cmd+P | Ctrl+P | exists |
 | Navigation | Settings | Cmd+, | Ctrl+, | exists |
@@ -374,16 +374,18 @@ Tests first, per the constitution.
 Owner request (2026-11-22): keys like Rectangle and Magnet on macOS that move
 app windows inside the Matrix desktop. They arrange Matrix app windows, not the
 native Electron window. All are Apps-group actions, so they work with focus
-anywhere, and they use the same keys on every platform.
+anywhere. On macOS they use Ctrl+Shift, because Rectangle and Magnet take
+Ctrl+Option (owner decision, 2026-11-22). On Windows and Linux they use
+Ctrl+Alt, because Ctrl+Shift+arrow selects text by word there.
 
-| Action | Default |
-| --- | --- |
-| Move app to left half | Ctrl+Alt+Left |
-| Move app to right half | Ctrl+Alt+Right |
-| Move app to top half | Ctrl+Alt+Up |
-| Move app to bottom half | Ctrl+Alt+Down |
-| Toggle app full size (existing, now bound) | Ctrl+Alt+Enter |
-| Restore app size | Ctrl+Alt+Backspace |
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Move app to left half | Ctrl+Shift+Left | Ctrl+Alt+Left |
+| Move app to right half | Ctrl+Shift+Right | Ctrl+Alt+Right |
+| Move app to top half | Ctrl+Shift+Up | Ctrl+Alt+Up |
+| Move app to bottom half | Ctrl+Shift+Down | Ctrl+Alt+Down |
+| Toggle app full size (existing, now bound) | Ctrl+Shift+Enter | Ctrl+Alt+Enter |
+| Restore app size | Ctrl+Shift+Backspace | Ctrl+Alt+Backspace |
 
 - They act on the selected app. A selected app that is full size or minimized
   becomes a floating window first. With no selected app, or an app hidden by
@@ -409,9 +411,8 @@ anywhere, and they use the same keys on every platform.
   window's last floating bounds, which may be a half.
 - On the Canvas presentation these actions do nothing, because Canvas windows
   are not placed on the screen.
-- Rectangle, Magnet and similar tools register these same keys globally. While
-  one runs, it takes the key before Matrix sees it. Some Linux desktops use
-  Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
+- A tool that registers the same keys globally takes them before Matrix sees
+  them. Some Linux desktops use Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
   Settings → Shortcuts.
 
 ## Left to the Builder
