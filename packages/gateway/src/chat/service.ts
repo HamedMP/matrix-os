@@ -170,7 +170,7 @@ export function createCanonicalChatService(
   return {
     navigation: createChatNavigationService({ navigation: options.navigation }),
     /** `server` carries gateway-only settings that no client request can supply. */
-    async create(owner: ChatOwner, input: CanonicalCreateChatRequest, server?: { defaultWorktreeId?: string }): Promise<CanonicalChatRecord> {
+    async create(owner: ChatOwner, input: CanonicalCreateChatRequest, server?: { defaultWorktreeId?: string; ticket?: unknown }): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
       const defaultWorktreeId = server?.defaultWorktreeId === undefined ? undefined : WorktreeIdSchema.parse(server.defaultWorktreeId);
       if (defaultWorktreeId !== undefined && request.projectId === undefined) {
@@ -185,6 +185,7 @@ export function createCanonicalChatService(
         ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
         ...(request.currentSelection === undefined ? {} : { currentSelection: request.currentSelection }),
         ...(defaultWorktreeId === undefined ? {} : { defaultWorktreeId }),
+        ...(server?.ticket === undefined ? {} : { ticket: server.ticket }),
       });
       const created = options.projectAssignments
         ? await options.projectAssignments.run(owner, create)

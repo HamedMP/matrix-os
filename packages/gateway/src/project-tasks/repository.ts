@@ -3,6 +3,7 @@
  * activity row in one transaction; content edits carry `WHERE revision = base`
  * in the UPDATE itself, and moves are one targeted last-writer-wins UPDATE.
  */
+import { randomUUID } from "node:crypto";
 import { sql, type Selectable } from "kysely";
 import {
   TASK_LIMITS, TaskRankError, formatTaskKey, rankBetween, spreadRanks,
@@ -249,28 +250,126 @@ export class ProjectTaskRepository {
         if (!row || row.deleted_at !== null) throw new ProjectTaskError("task_not_found");
         return { row, created: false };
       }
-      await this.lockBoard(trx, scope);
-      await this.assertBelowLimit(trx, scope);
-      if (input.parentTaskId) await this.assertParent(trx, scope, input.id, input.parentTaskId);
-      const status = input.status ?? "backlog";
-      const rank = await this.rankForInsert(trx, scope, status, input.afterTaskId);
-      const number = await this.allocateNumber(trx, scope);
-      const row = await trx.insertInto("project_tasks").values({
-        owner_id: scope.ownerId, id: input.id, project_id: scope.projectId, number, title: input.title,
-        description: input.description ?? "", status, priority: input.priority ?? "none", rank,
-        assignee: input.assignee ?? null, labels: [...(input.labels ?? [])], parent_task_id: input.parentTaskId ?? null,
-        due_at: input.dueAt ?? null, worktree_id: null, branch: null, pr_number: null, legacy_session_id: null,
-        comment_count: 0, created_by: actor, created_at: at, updated_at: at, revision: 1, archived_at: null, deleted_at: null,
-      }).returningAll().executeTakeFirstOrThrow();
-      await this.log(trx, scope, input.id, actor, "created", "Created the task", at);
+      const row = await this.insertTaskInside(trx, scope, { ...input, chatId: null }, actor);
       await trx.updateTable("project_task_operations").set({ task_id: input.id })
         .where("owner_id", "=", scope.ownerId).where("client_request_id", "=", input.clientRequestId).execute();
       return { row, created: true };
     });
   }
 
+  /**
+   * Insert a task under the board lock: limit, parent check, rank and number.
+   * The caller owns the transaction (a board create or a chat create).
+   */
+  async insertTaskInside(
+    trx: ProjectTaskTrx, scope: TaskScope, input: CreateTaskInput & { id: string; chatId: string | null; archived?: boolean }, actor: ActorRef,
+  ): Promise<TaskRow> {
+    const at = this.now();
+    await this.lockBoard(trx, scope);
+    await this.assertBelowLimit(trx, scope);
+    if (input.parentTaskId) await this.assertParent(trx, scope, input.id, input.parentTaskId);
+    const status = input.status ?? "backlog";
+    const rank = await this.rankForInsert(trx, scope, status, input.afterTaskId);
+    const number = await this.allocateNumber(trx, scope);
+    const row = await trx.insertInto("project_tasks").values({
+      owner_id: scope.ownerId, id: input.id, project_id: scope.projectId, number, title: input.title,
+      description: input.description ?? "", status, priority: input.priority ?? "none", rank,
+      assignee: input.assignee ?? null, labels: [...(input.labels ?? [])], parent_task_id: input.parentTaskId ?? null,
+      due_at: input.dueAt ?? null, worktree_id: null, branch: null, pr_number: null, legacy_session_id: null, chat_id: input.chatId,
+      comment_count: 0, created_by: actor, created_at: at, updated_at: at, revision: 1, archived_at: input.archived ? at : null, deleted_at: null,
+    }).returningAll().executeTakeFirstOrThrow();
+    await this.log(trx, scope, input.id, actor, "created", "Created the task", at);
+    return row;
+  }
+
+  /**
+   * Reserve a create's request id. A retry of a finished create gets its task
+   * id; a different payload under the same id is refused.
+   */
+  async reserveCreate(scope: TaskScope, clientRequestId: string, hash: string): Promise<{ taskId: string | null; fresh: boolean }> {
+    const reserved = await this.db.insertInto("project_task_operations").values({
+      owner_id: scope.ownerId, client_request_id: clientRequestId, project_id: scope.projectId,
+      payload_hash: hash, task_id: null, created_at: this.now(),
+    }).onConflict((conflict) => conflict.columns(["owner_id", "client_request_id"]).doNothing())
+      .returning("client_request_id").executeTakeFirst();
+    if (reserved) return { taskId: null, fresh: true };
+    const existing = await this.db.selectFrom("project_task_operations").selectAll()
+      .where("owner_id", "=", scope.ownerId).where("client_request_id", "=", clientRequestId).executeTakeFirstOrThrow();
+    if (existing.payload_hash !== hash || existing.project_id !== scope.projectId) throw new ProjectTaskError("invalid_request");
+    return { taskId: existing.task_id, fresh: false };
+  }
+
+  async completeCreate(scope: TaskScope, clientRequestId: string, taskId: string): Promise<void> {
+    await this.db.updateTable("project_task_operations").set({ task_id: taskId })
+      .where("owner_id", "=", scope.ownerId).where("client_request_id", "=", clientRequestId).where("task_id", "is", null).execute();
+  }
+
+  /** Link a chat to a task that has none (backfill of tasks created before every task was a chat). */
+  async linkChatInside(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, chatId: string): Promise<TaskRow | undefined> {
+    return trx.updateTable("project_tasks").set({ chat_id: chatId, updated_at: this.now(), revision: sql<number>`revision + 1` })
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).where("id", "=", taskId)
+      .where("chat_id", "is", null).where("deleted_at", "is", null)
+      .returningAll().executeTakeFirst();
+  }
+
+  /** Project chats of this owner with no task yet, oldest first. */
+  async unlinkedChats(scope: TaskScope, limit: number): Promise<Array<{ id: string; title: string; lifecycle: "active" | "archived" }>> {
+    const result = await sql<{ id: string; title: string; lifecycle: "active" | "archived" }>`
+      SELECT chats.id, chats.title, chats.lifecycle FROM chats
+      WHERE chats.owner_type = 'personal' AND chats.owner_id = ${scope.ownerId} AND chats.project_id = ${scope.projectId}
+        AND NOT EXISTS (
+          SELECT 1 FROM project_tasks AS task
+          WHERE task.owner_id = chats.owner_id AND task.chat_id = chats.id AND task.deleted_at IS NULL
+        )
+      ORDER BY chats.created_at ASC, chats.id ASC
+      LIMIT ${limit}`.execute(this.db);
+    return result.rows;
+  }
+
+  /** Tasks of this board with no chat yet (file imports), oldest first. */
+  async chatlessTasks(scope: TaskScope, limit: number): Promise<TaskRow[]> {
+    return this.db.selectFrom("project_tasks").selectAll()
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
+      .where("chat_id", "is", null).where("deleted_at", "is", null)
+      .orderBy("number", "asc").limit(limit).execute();
+  }
+
+  async markChatsLinked(scope: TaskScope): Promise<void> {
+    await this.db.updateTable("project_board_settings").set({ chats_linked_at: this.now(), updated_at: this.now() })
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).execute();
+  }
+
+  /** Backfilled chat: a task in Done (the chat predates the board), title and archived state copied. */
+  async insertBackfilledInside(trx: ProjectTaskTrx, scope: TaskScope, chat: { id: string; title: string; lifecycle: "active" | "archived" }): Promise<TaskRow | undefined> {
+    const existing = await this.findByChat(trx, scope.ownerId, chat.id, true);
+    if (existing) return undefined;
+    return this.insertTaskInside(trx, scope, {
+      id: `task_${randomUUID()}`, chatId: chat.id, title: clip(chat.title.trim() || "Untitled chat", TASK_LIMITS.title),
+      status: "done", archived: chat.lifecycle === "archived",
+    }, "system:backfill");
+  }
+
+  /** The task linked to a chat, live or most recently deleted. */
+  async findByChatAny(ownerId: string, chatId: string): Promise<TaskRow | undefined> {
+    return this.db.selectFrom("project_tasks").selectAll()
+      .where("owner_id", "=", ownerId).where("chat_id", "=", chatId)
+      .orderBy(sql`deleted_at IS NULL`, "desc").orderBy("updated_at", "desc").limit(1).executeTakeFirst();
+  }
+
+  /** The live task linked to a chat, in any project of the owner. */
+  async findByChat(executor: ProjectTaskTrx, ownerId: string, chatId: string, lock = false): Promise<TaskRow | undefined> {
+    let query = executor.selectFrom("project_tasks").selectAll()
+      .where("owner_id", "=", ownerId).where("chat_id", "=", chatId).where("deleted_at", "is", null);
+    if (lock) query = query.forUpdate();
+    return query.executeTakeFirst();
+  }
+
   async updateTask(scope: TaskScope, taskId: string, baseRevision: number, patch: TaskPatch, actor: ActorRef): Promise<TaskRow> {
-    return this.db.transaction().execute(async (trx) => {
+    return this.db.transaction().execute((trx) => this.updateTaskInside(trx, scope, taskId, baseRevision, patch, actor));
+  }
+
+  async updateTaskInside(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, baseRevision: number, patch: TaskPatch, actor: ActorRef): Promise<TaskRow> {
+    {
       const before = await trx.selectFrom("project_tasks").selectAll()
         .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId)
         .where("id", "=", taskId).where("deleted_at", "is", null).executeTakeFirst();
@@ -308,7 +407,7 @@ export class ProjectTaskRepository {
         await this.log(trx, scope, taskId, actor, "relations_changed", patch.blockedBy!.length ? "Changed what blocks this task" : "Removed all blockers", at);
       }
       return row;
-    });
+    }
   }
 
   async moveTask(scope: TaskScope, taskId: string, input: MoveInput, actor: ActorRef): Promise<{ row: TaskRow; previousStatus: TaskStatus }> {
@@ -334,7 +433,11 @@ export class ProjectTaskRepository {
   }
 
   async setArchived(scope: TaskScope, taskId: string, archived: boolean, actor: ActorRef): Promise<{ row: TaskRow; changed: boolean }> {
-    return this.db.transaction().execute(async (trx) => {
+    return this.db.transaction().execute((trx) => this.setArchivedInside(trx, scope, taskId, archived, actor));
+  }
+
+  async setArchivedInside(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, archived: boolean, actor: ActorRef): Promise<{ row: TaskRow; changed: boolean }> {
+    {
       const at = this.now();
       if (!archived) {
         // Restoring counts against the same active-task limit as creating.
@@ -356,12 +459,16 @@ export class ProjectTaskRepository {
       }
       await this.log(trx, scope, taskId, actor, archived ? "archived" : "unarchived", archived ? "Archived the task" : "Restored the task", at);
       return { row, changed: true };
-    });
+    }
   }
 
   /** Soft delete; a repeat delete is not found. Subtasks lose their parent in the same transaction. */
   async deleteTask(scope: TaskScope, taskId: string, actor: ActorRef): Promise<TaskRow> {
-    return this.db.transaction().execute(async (trx) => {
+    return this.db.transaction().execute((trx) => this.deleteTaskInside(trx, scope, taskId, actor));
+  }
+
+  async deleteTaskInside(trx: ProjectTaskTrx, scope: TaskScope, taskId: string, actor: ActorRef): Promise<TaskRow> {
+    {
       const at = this.now();
       const row = await trx.updateTable("project_tasks")
         .set({ deleted_at: at, updated_at: at, revision: sql<number>`revision + 1` })
@@ -378,7 +485,56 @@ export class ProjectTaskRepository {
       await trx.deleteFrom("project_task_sessions").where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).execute();
       await this.log(trx, scope, taskId, actor, "deleted", "Deleted the task", at);
       return row;
-    });
+    }
+  }
+
+  /** Copy the chat's title onto its task; no write when it already matches. */
+  async mirrorTitleInside(trx: ProjectTaskTrx, row: TaskRow, title: string, actor: ActorRef): Promise<TaskRow> {
+    const clipped = clip(title.trim() || "Untitled chat", TASK_LIMITS.title);
+    if (row.title === clipped) return row;
+    const at = this.now();
+    const updated = await trx.updateTable("project_tasks").set({ title: clipped, updated_at: at, revision: sql<number>`revision + 1` })
+      .where("owner_id", "=", row.owner_id).where("id", "=", row.id).where("deleted_at", "is", null)
+      .returningAll().executeTakeFirstOrThrow();
+    await this.log(trx, { ownerId: row.owner_id, projectId: row.project_id }, row.id, actor, "renamed", `Renamed to “${clip(clipped, 120)}”`, at);
+    return updated;
+  }
+
+  /**
+   * Move a task to another project's board with a new number at the top of its
+   * column. Parent, subtask and blocker links stay within one board, so they go.
+   */
+  async moveProjectInside(trx: ProjectTaskTrx, row: TaskRow, to: TaskScope, defaultKey: string, actor: ActorRef): Promise<TaskRow> {
+    if (row.project_id === to.projectId) return row;
+    const at = this.now();
+    await this.ensureBoardInside(trx, to, defaultKey);
+    await this.lockBoard(trx, to);
+    const status = row.status as TaskStatus;
+    const rank = await this.rankForInsert(trx, to, status);
+    const number = await this.allocateNumber(trx, to);
+    await trx.updateTable("project_tasks").set({ parent_task_id: null, updated_at: at, revision: sql<number>`revision + 1` })
+      .where("owner_id", "=", row.owner_id).where("parent_task_id", "=", row.id).where("deleted_at", "is", null).execute();
+    await trx.deleteFrom("project_task_relations").where("owner_id", "=", row.owner_id)
+      .where((eb) => eb.or([eb("task_id", "=", row.id), eb("blocked_by_task_id", "=", row.id)])).execute();
+    const moved = await trx.updateTable("project_tasks").set({
+      project_id: to.projectId, number, rank, parent_task_id: null, worktree_id: null, branch: null,
+      updated_at: at, revision: sql<number>`revision + 1`,
+    }).where("owner_id", "=", row.owner_id).where("id", "=", row.id).returningAll().executeTakeFirstOrThrow();
+    await trx.updateTable("project_task_activity").set({ project_id: to.projectId })
+      .where("owner_id", "=", row.owner_id).where("task_id", "=", row.id).execute();
+    await this.log(trx, to, row.id, actor, "moved", "Moved here with its chat from another project", at);
+    return moved;
+  }
+
+  /** Board row inside the caller's transaction, created with defaults on first use. */
+  async ensureBoardInside(trx: ProjectTaskTrx, scope: TaskScope, defaultKey: string): Promise<BoardRow> {
+    const at = this.now();
+    await trx.insertInto("project_board_settings").values({
+      owner_id: scope.ownerId, project_id: scope.projectId, task_key: defaultKey, next_number: 1,
+      automation: JSON.stringify(DEFAULT_AUTOMATION), legacy_import_at: null, created_at: at, updated_at: at,
+    }).onConflict((conflict) => conflict.columns(["owner_id", "project_id"]).doNothing()).execute();
+    return trx.selectFrom("project_board_settings").selectAll()
+      .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).executeTakeFirstOrThrow();
   }
 
   async listActivity(scope: TaskScope, taskId: string, after: number, limit: number): Promise<{ rows: ActivityRow[]; nextCursor: string | null }> {

@@ -17,6 +17,7 @@ import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { createCanonicalChatService } from "../chat/service.js";
 import { ProjectTaskSessionRepository } from "../project-tasks/sessions.js";
+import { createProjectChatHook } from "../project-tasks/task-chats.js";
 import { ProjectTaskWork } from "../project-tasks/work.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { createTaskSessionPorts, type TaskSessionPortOptions } from "./project-task-sessions.js";
@@ -84,6 +85,16 @@ export function registerProjectTaskRoutes(options: {
     ...(options.chatRepository ? { chats: ports.chats } : {}),
     agentStatus: { terminals: ports.terminals },
   }) : null;
+  if (service && options.repository && options.chatRepository) {
+    // Every task is a chat: project chat writes create, rename, archive, move and delete their tasks in the same transaction.
+    options.chatRepository.setProjectChatHook(createProjectChatHook({ repository: options.repository, projects: options.projectManager }));
+    options.chatRepository.registerOutboxSink(({ owner, event }) => {
+      if (owner.type !== "personal") return;
+      service.chatChanged({ type: "user", id: owner.ownerId }, event.chatId, event.eventType).catch((error: unknown) => {
+        console.warn("[project-tasks] chat change not applied", error instanceof Error ? error.name : typeof error);
+      });
+    });
+  }
   const work = service && sessions ? new ProjectTaskWork({ tasks: service, sessions, ports }) : null;
   options.app.route("/", createProjectTaskRoutes({
     service,

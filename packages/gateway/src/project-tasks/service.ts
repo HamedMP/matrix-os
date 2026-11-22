@@ -19,15 +19,26 @@ import { assignmentNotification, commentNotifications, type TaskNotification } f
 import { mapLegacyTasks, readLegacyTasks } from "./legacy-import.js";
 import {
   ProjectTaskRepository, RevisionConflict, toProjectTask, toTaskActivity, type BoardRow, type TaskRow, type TaskScope,
+  DEFAULT_AUTOMATION,
 } from "./repository.js";
-import type { ChatPort, TerminalPort } from "./session-ports.js";
+import { ChatBusyError, ChatConflictError } from "../chat/errors.js";
+import { TASK_LIMITS } from "@matrix-os/contracts/project-tasks";
+import type { ProjectTaskTrx } from "./database.js";
+import type { ChatPort, TaskChatTransaction, TerminalPort } from "./session-ports.js";
 import type { ProjectTaskSessionRepository, SessionRow } from "./sessions.js";
 
+type ProjectResult = Promise<
+  | { ok: true; project: ProjectConfig }
+  | { ok: false; status: number; error: { code: string; message: string } }
+>;
 type ProjectLookup = {
-  getProject(slug: string, ownerScope?: OwnerScope): Promise<
-    | { ok: true; project: ProjectConfig }
-    | { ok: false; status: number; error: { code: string; message: string } }
-  >;
+  getProject(slug: string, ownerScope?: OwnerScope): ProjectResult;
+  getProjectById?(ownerScope: OwnerScope, projectId: string): ProjectResult;
+};
+
+/** Chat events the board follows after commit. */
+const CHAT_EVENT_SIGNALS: Record<string, TaskEventType> = {
+  "chat.created": "task.created", "chat.updated": "task.updated", "chat.deleted": "task.deleted", "turn.accepted": "task.updated",
 };
 type LegacyTasks = Pick<ReturnType<typeof createTaskManager>, "listTasks">;
 
@@ -52,13 +63,20 @@ export interface ProjectTaskServiceOptions {
   admit?<T>(caller: TaskCaller, project: ProjectConfig, write: () => Promise<T>): Promise<T>;
   /** Terminals attached to tasks; without it tasks carry no sessions. */
   sessions?: ProjectTaskSessionRepository;
-  /** The owner's chats: each task's own chat and its live agent status. */
-  chats?: Pick<ChatPort, "statuses">;
+  /**
+   * The owner's chats. Every task is a chat: creates, renames, archives and
+   * deletes go through here so the chat and its task change in one
+   * transaction. Without it (a board with no chat store) tasks have no chat.
+   */
+  chats?: ChatPort;
   /** Live agent status of attached terminals, read once per request. */
   agentStatus?: {
     terminals?: Pick<TerminalPort, "statuses"> & Partial<Pick<TerminalPort, "existingRefs">>;
   };
 }
+
+/** Rows the chat backfill handles per board open; the next open continues. */
+export const CHAT_BACKFILL_BATCH = 500;
 
 /** The caller resolved from the request principal; never from a body. */
 export interface TaskCaller {
@@ -109,15 +127,20 @@ export class ProjectTaskService {
   async open(caller: TaskCaller, slug: string): Promise<BoardContext> {
     const { project, scope } = await this.resolve(caller, slug);
     const existing = await this.options.repository.getBoard(scope);
-    if (existing && existing.legacy_import_at !== null) return { slug, ownerScope: caller.ownerScope, project, scope, board: existing };
+    if (existing && existing.legacy_import_at !== null && (existing.chats_linked_at !== null || !this.linksChats(caller))) {
+      return { slug, ownerScope: caller.ownerScope, project, scope, board: existing };
+    }
     const prepare = async () => {
-      const board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
-      if (board.legacy_import_at !== null) return board;
-      const legacy = await readLegacyTasks(this.options.legacyTasks, slug, caller.ownerScope);
-      // A failed read leaves the marker unset, so the next open retries the import.
-      if (!legacy) throw new ProjectTaskError("board_unavailable");
-      await this.options.repository.importLegacy(scope, mapLegacyTasks(legacy));
-      return this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
+      let board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
+      if (board.legacy_import_at === null) {
+        const legacy = await readLegacyTasks(this.options.legacyTasks, slug, caller.ownerScope);
+        // A failed read leaves the marker unset, so the next open retries the import.
+        if (!legacy) throw new ProjectTaskError("board_unavailable");
+        await this.options.repository.importLegacy(scope, mapLegacyTasks(legacy));
+      }
+      if (board.chats_linked_at === null && this.linksChats(caller)) await this.linkChats(caller, scope);
+      board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
+      return board;
     };
     const board = this.options.admit ? await this.options.admit(caller, project, prepare) : await prepare();
     return { slug, ownerScope: caller.ownerScope, project, scope, board };
@@ -172,6 +195,42 @@ export class ProjectTaskService {
     return { ...fromTerminals, ...fromChats };
   }
 
+  /** Whether this caller's chats get tasks (personal owners; organizations come with sharing). */
+  private linksChats(caller: TaskCaller): boolean {
+    return this.options.chats !== undefined && caller.ownerScope.type === "user";
+  }
+
+  /**
+   * Backfill, bounded per open and safe to re-run: project chats without a task
+   * become tasks in Done, and tasks without a chat (file imports) get an empty
+   * chat. The board is marked linked once a pass finds less than a full batch.
+   */
+  private async linkChats(caller: TaskCaller, scope: TaskScope): Promise<void> {
+    const chats = this.options.chats!;
+    const repository = this.options.repository;
+    const unlinked = await repository.unlinkedChats(scope, CHAT_BACKFILL_BATCH);
+    if (unlinked.length > 0) {
+      await repository.db.transaction().execute(async (trx) => {
+        for (const chat of unlinked) await repository.insertBackfilledInside(trx, scope, chat);
+      });
+    }
+    const chatless = await repository.chatlessTasks(scope, CHAT_BACKFILL_BATCH - unlinked.length);
+    for (const row of chatless) {
+      try {
+        const chat = await chats.create(caller.ownerScope, {
+          clientRequestId: `req_link_${row.id.slice(5)}`, title: row.title.slice(0, TASK_LIMITS.title),
+          projectId: scope.projectId, ticket: { linkTaskId: row.id },
+        });
+        if (row.archived_at !== null) await chats.transaction((tx) => tx.setArchived(caller.ownerScope, chat.id, true));
+      } catch (error: unknown) {
+        // The board still opens; the next open retries this task.
+        console.warn("[project-tasks] chat backfill failed", error instanceof Error ? error.name : typeof error);
+        return;
+      }
+    }
+    if (unlinked.length + chatless.length < CHAT_BACKFILL_BATCH) await repository.markChatsLinked(scope);
+  }
+
   async task(context: BoardContext, row: TaskRow): Promise<ProjectTask> {
     return (await this.tasks(context, [row]))[0]!;
   }
@@ -187,12 +246,19 @@ export class ProjectTaskService {
     return this.task(context, await this.requireRow(context, taskId));
   }
 
+  /**
+   * A board create is a chat create carrying the task's fields: the chat
+   * repository inserts the task in the same transaction, and the task's chat
+   * starts on its first message. Retries with the same id return the same pair.
+   */
   async createTask(caller: TaskCaller, slug: string, body: CreateTaskBody): Promise<{ task: ProjectTask; created: boolean }> {
     const context = await this.open(caller, slug);
     const { clientRequestId, ...input } = body;
-    const { row, created } = await this.options.repository.createTask(context.scope, {
-      ...input, id: `task_${randomUUID()}`, clientRequestId, payloadHash: payloadHash(input),
-    }, caller.actor);
+    const { row, created } = this.linksChats(caller)
+      ? await this.createTaskChat(caller, context, clientRequestId, input)
+      : await this.options.repository.createTask(context.scope, {
+        ...input, id: `task_${randomUUID()}`, clientRequestId, payloadHash: payloadHash(input),
+      }, caller.actor);
     const task = await this.task(context, row);
     if (created) {
       await this.signal("task.created", context, task);
@@ -201,14 +267,55 @@ export class ProjectTaskService {
     return { task, created };
   }
 
+  private async createTaskChat(
+    caller: TaskCaller, context: BoardContext, clientRequestId: string, input: Omit<CreateTaskBody, "clientRequestId">,
+  ): Promise<{ row: TaskRow; created: boolean }> {
+    const repository = this.options.repository;
+    const reservation = await repository.reserveCreate(context.scope, clientRequestId, payloadHash(input));
+    if (reservation.taskId) {
+      const existing = await repository.getTask(context.scope, reservation.taskId);
+      if (!existing) throw new ProjectTaskError("task_not_found");
+      return { row: existing, created: false };
+    }
+    const { title, ...fields } = input;
+    const chat = await this.options.chats!.create(caller.ownerScope, {
+      clientRequestId, title, projectId: context.project.id,
+      ticket: { ...fields, status: fields.status ?? "backlog", actor: caller.actor },
+    });
+    const row = await repository.findByChat(repository.db, context.scope.ownerId, chat.id);
+    if (!row || row.project_id !== context.scope.projectId) throw new ProjectTaskError("board_unavailable");
+    await repository.completeCreate(context.scope, clientRequestId, row.id);
+    return { row, created: reservation.fresh };
+  }
+
+  /** Board writes that change the chat too run in one transaction with it; others are board-only. */
+  private async withChat<T>(row: TaskRow, run: (trx: ProjectTaskTrx | null, chat: TaskChatTransaction | null) => Promise<T>): Promise<T> {
+    if (!row.chat_id || !this.options.chats) return run(null, null);
+    try {
+      return await this.options.chats.transaction((tx) => run(tx.board, tx));
+    } catch (error: unknown) {
+      if (error instanceof ChatBusyError) throw new ProjectTaskError("task_agent_working");
+      if (error instanceof ChatConflictError) throw new ProjectTaskError("task_revision_conflict");
+      throw error;
+    }
+  }
+
   async updateTask(caller: TaskCaller, slug: string, taskId: string, body: UpdateTaskBody): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
     const { baseRevision, ...patch } = body;
     let row: TaskRow;
     let before: TaskRow | undefined;
     try {
-      before = patch.assignee !== undefined ? await this.options.repository.getTask(context.scope, taskId) : undefined;
-      row = await this.options.repository.updateTask(context.scope, taskId, baseRevision, patch, caller.actor);
+      before = patch.assignee !== undefined || patch.title !== undefined ? await this.options.repository.getTask(context.scope, taskId) : undefined;
+      row = before && patch.title !== undefined
+        ? await this.withChat(before, async (trx, chat) => {
+          if (!trx || !chat) return this.options.repository.updateTask(context.scope, taskId, baseRevision, patch, caller.actor);
+          // The task keeps its copy of the title; renaming the chat in the same transaction keeps them one value.
+          const updated = await this.options.repository.updateTaskInside(trx, context.scope, taskId, baseRevision, patch, caller.actor);
+          await chat.rename(context.ownerScope, before!.chat_id!, updated.title);
+          return updated;
+        })
+        : await this.options.repository.updateTask(context.scope, taskId, baseRevision, patch, caller.actor);
     } catch (error: unknown) {
       if (error instanceof RevisionConflict) throw new ProjectTaskError("task_revision_conflict", await this.task(context, error.current));
       throw error;
@@ -232,7 +339,13 @@ export class ProjectTaskService {
 
   async setArchived(caller: TaskCaller, slug: string, taskId: string, archived: boolean): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
-    const { row, changed } = await this.options.repository.setArchived(context.scope, taskId, archived, caller.actor);
+    const current = await this.requireRow(context, taskId);
+    const { row, changed } = await this.withChat(current, async (trx, chat) => {
+      if (!trx || !chat) return this.options.repository.setArchived(context.scope, taskId, archived, caller.actor);
+      const result = await this.options.repository.setArchivedInside(trx, context.scope, taskId, archived, caller.actor);
+      await chat.setArchived(context.ownerScope, current.chat_id!, archived);
+      return result;
+    });
     const task = await this.task(context, row);
     if (changed) await this.signal("task.updated", context, task);
     return task;
@@ -240,8 +353,41 @@ export class ProjectTaskService {
 
   async deleteTask(caller: TaskCaller, slug: string, taskId: string): Promise<void> {
     const context = await this.open(caller, slug);
-    const row = await this.options.repository.deleteTask(context.scope, taskId, caller.actor);
+    const current = await this.requireRow(context, taskId);
+    // Deleting a task deletes its chat, as deleting the chat deletes its task.
+    const row = await this.withChat(current, async (trx, chat) => {
+      if (!trx || !chat) return this.options.repository.deleteTask(context.scope, taskId, caller.actor);
+      const deleted = await this.options.repository.deleteTaskInside(trx, context.scope, taskId, caller.actor);
+      await chat.remove(context.ownerScope, current.chat_id!, `req_delete_${taskId.slice(5)}`);
+      return deleted;
+    });
     await this.signal("task.deleted", context, toProjectTask(row, context.board.task_key));
+  }
+
+  /**
+   * A chat change committed elsewhere (the Chat app, CLI, an agent). Boards get
+   * a change signal, and the first turn on a Backlog or To do task's chat moves
+   * the card to In progress. Runs after commit and never fails the chat write.
+   */
+  async chatChanged(ownerScope: OwnerScope, chatId: string, eventType: string): Promise<void> {
+    const signal = CHAT_EVENT_SIGNALS[eventType];
+    if (!signal || ownerScope.type !== "user" || !this.options.projects.getProjectById) return;
+    let row = await this.options.repository.findByChatAny(ownerScope.id, chatId);
+    if (!row) return;
+    const lookup = await this.options.projects.getProjectById(ownerScope, row.project_id);
+    if (!lookup.ok) return;
+    const scope: TaskScope = { ownerId: ownerScope.id, projectId: row.project_id };
+    if (eventType === "turn.accepted" && row.deleted_at === null && (row.status === "backlog" || row.status === "todo") && this.options.sessions) {
+      const board = await this.options.repository.getBoard(scope);
+      if (board && (board.automation.startMovesToInProgress ?? DEFAULT_AUTOMATION.startMovesToInProgress)) {
+        row = await this.options.sessions.advance(scope, row.id, ["backlog", "todo"], "in_progress") ?? row;
+      }
+    }
+    try {
+      await this.options.publish({ type: row.deleted_at === null ? signal : "task.deleted", projectSlug: lookup.project.slug, taskId: row.id, revision: Number(row.revision) });
+    } catch (error: unknown) {
+      console.warn("[project-tasks] change signal failed", error instanceof Error ? error.name : typeof error);
+    }
   }
 
   async listActivity(caller: TaskCaller, slug: string, taskId: string, after: number, limit: number): Promise<{ activity: TaskActivity[]; nextCursor: string | null }> {
