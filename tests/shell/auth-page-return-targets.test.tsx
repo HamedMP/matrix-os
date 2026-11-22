@@ -44,6 +44,13 @@ const bypasses = [
 ];
 
 describe("sign-in page return target", () => {
+  it.each(["https://app.matrix-os.com", "https://gmail-pilot.matrix-os.com"])("retains the absolute launcher returned by the shell proxy on %s", async origin => {
+    const target = origin + gmailLink;
+    expect(await signInRedirect(target)).toEqual({ forceRedirectUrl: target, fallbackRedirectUrl: target });
+  });
+  it.each(["https://app.matrix-os.com.evil.test", "https://app.matrix-os.com:443", "http://app.matrix-os.com", "https://evil@app.matrix-os.com"])("rejects ambiguous launcher origin %s", async origin => {
+    expect(await signInRedirect(origin + gmailLink)).toEqual({ forceRedirectUrl: "/", fallbackRedirectUrl: "/" });
+  });
   it("returns a signed-out Gmail connection to its exact pending consent", async () => {
     expect(await signInRedirect(gmailLink)).toEqual({ forceRedirectUrl: gmailLink, fallbackRedirectUrl: gmailLink });
   });
