@@ -4,6 +4,10 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 
 const workflow = parse(readFileSync(".github/workflows/platform-cloud-run.yml", "utf8"));
+const fixtureDeployEnv = {
+  ...Object.fromEntries(Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+  AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED: "false",
+};
 const steps = workflow.jobs.deploy.steps as { name: string; run?: string }[];
 const step = (name: string) => steps.find((entry) => entry.name === name)!.run!;
 const sourceSha = "0123456789abcdef0123456789abcdef01234567";
@@ -42,8 +46,7 @@ function deploy(overrides: Record<string, string>) {
     gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
     ${script}
     printf '%s\\n' "$deploy_json"
-  `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
-    Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+  `], { encoding: "utf8", env: { ...env, ...fixtureDeployEnv,
     MATRIX_PUBLIC_SITES_ENABLED: "false",
     MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
     GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
@@ -128,8 +131,7 @@ describe("Matrix AI credit Cloud Run deployment", () => {
       gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
       ${script}
       printf '%s\\n' "$deploy_json"
-    `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
-      Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+    `], { encoding: "utf8", env: { ...env, ...fixtureDeployEnv,
       MATRIX_PUBLIC_SITES_ENABLED: "false",
       MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
@@ -215,8 +217,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
       gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
       ${script}
       printf '%s\\n' "$deploy_json"
-    `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
-      Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
+    `], { encoding: "utf8", env: { ...env, ...fixtureDeployEnv,
       MATRIX_PUBLIC_SITES_ENABLED: "false",
       MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
@@ -247,8 +248,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
         gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
         ${script}
         printf '%s\\n' "$deploy_json"
-      `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
-        Object.keys(workflow.jobs.deploy.env).map((name) => [name, "fixture"])),
+      `], { encoding: "utf8", env: { ...env, ...fixtureDeployEnv,
         MATRIX_PUBLIC_SITES_ENABLED: "false",
         MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
         GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",

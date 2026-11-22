@@ -45,6 +45,7 @@ function deploy(enabled: boolean) {
       MATRIX_PUBLIC_SITES_ENABLED: 'false',
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
       MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14',
+      AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED: 'false',
       GOOGLE_TAG_MANAGER_ID: 'GTM-TEST123', GOOGLE_ANALYTICS_MEASUREMENT_ID: '',
       GOOGLE_ANALYTICS_API_SECRET_VERSION: '1',
       WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
@@ -72,6 +73,8 @@ describe('Custom MCP Cloud Run deployment', () => {
     const secrets = args[args.indexOf('--set-secrets') + 1];
     expect(env.startsWith('^|^')).toBe(true);
     expect(env.slice(3).split('|')).toContain('CUSTOM_MCP_ENABLED=true');
+    expect(env.slice(3).split('|')).toContain('AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED=false');
+    expect(secrets).not.toContain('AI_FUNDED_UPSTREAM_SELECTION_SECRET=');
     expect(env.slice(3).split('|')).toContain('MATRIX_CARD_TRIAL_DAYS=3');
     expect(env.slice(3).split('|')).toContain('MATRIX_STARTER_TRIAL_DAYS=14');
     expect(env).not.toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=');
