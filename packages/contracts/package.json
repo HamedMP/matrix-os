@@ -20,6 +20,7 @@
     "./managed-integrations": "./src/managed-integrations.ts",
     "./remote-mcp-catalog": "./src/remote-mcp-catalog.ts",
     "./slack-bridge": "./src/slack-bridge.ts",
+    "./messaging-bridge": "./src/messaging-bridge.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
     "./data-imports": "./src/data-imports.ts",
     "./command-preview-policy": "./src/command-preview-policy.mjs",

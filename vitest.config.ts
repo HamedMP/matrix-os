@@ -82,6 +82,7 @@ export default defineConfig({
       "@matrix-os/contracts/routine-cli": path.resolve(__dirname, "packages/contracts/src/routine-cli.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/slack-bridge": path.resolve(__dirname, "packages/contracts/src/slack-bridge.ts"),
+      "@matrix-os/contracts/messaging-bridge": path.resolve(__dirname, "packages/contracts/src/messaging-bridge.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
       "@matrix-os/contracts/preview-pair-artifact": path.resolve(__dirname, "packages/contracts/src/preview-pair-artifact.ts"),
       "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
