@@ -89,16 +89,18 @@ describe("run-owned broker inference cancellation", () => {
       await runtime.adapter.cancel!({ ...input, owner: { type: "personal", ownerId: "other_owner" } });
       await runtime.adapter.cancel!({ ...input, chatId: "chat_other" });
       expect(signal?.aborted).toBe(false); expect(runBot).toHaveBeenCalledTimes(1);
-      let cancelled = false;
-      const cancellation = runtime.adapter.cancel!(input).then(() => { cancelled = true; });
+      const cancellation = runtime.adapter.cancel!(input);
       await expect(pending).resolves.toMatchObject({ ok: false, error: "provider_unavailable" });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(cancelled).toBe(false);
-      finish({ ok: true, reply: { runId: binding.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 } });
+      // User Stop is immediate; the separate retention receipt waits for drainage.
       await cancellation;
+      finish({ ok: true, reply: { runId: binding.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 } });
       expect((await iterator.next()).value).toMatchObject({ type: "run.completed", outcome: "aborted" });
       await iterator.next();
-    } finally { await runtime.close(); fixture.queue.close(); fixture.registry.shutdown(); }
+    } finally {
+      finish?.({ ok: true, reply: { runId: binding.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 } });
+      await runtime.close(); fixture.queue.close(); fixture.registry.shutdown();
+    }
   });
 
   it.each(["headers", "body"] as const)("aborts pending %s on release without waiting for the funded deadline or retrying", async (phase) => {
@@ -200,12 +202,12 @@ describe("bounded asynchronous inference authority",()=>{
     finally{f.run.abort();finish?.(false);f.queue.close();}
   });
   it.each(["abort","timeout"])("releases the real funded pump when queued reauthorization stalls then %s",async(mode)=>{
-    const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false;
-    f.fetchImpl.mockResolvedValueOnce(new Response("busy",{status:429,headers:{"x-matrix-funded-reason":"capacity"}}));
-    const authorize=vi.fn().mockResolvedValueOnce(allowed).mockResolvedValueOnce(allowed).mockImplementationOnce(()=>new Promise<typeof allowed>(resolve=>{finish=resolve;})).mockResolvedValue(allowed);
+    const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false, awaitingRetry=false, deferred=false;
+    f.fetchImpl.mockImplementationOnce(async()=>{awaitingRetry=true;return new Response("busy",{status:429,headers:{"x-matrix-funded-reason":"capacity"}});});
+    const authorize=vi.fn(()=>{if(awaitingRetry&&!deferred){deferred=true;return new Promise<typeof allowed>(resolve=>{finish=resolve;});}return Promise.resolve(allowed);});
     const first=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,f.deps).then(result=>{settled=true;return result;});
     try{
-      await vi.advanceTimersByTimeAsync(250);expect(authorize).toHaveBeenCalledTimes(3);expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(250);expect(deferred).toBe(true);expect(f.fetchImpl).toHaveBeenCalledTimes(1);
       const other={...binding,runtimeHandle:`runtime_${"d".repeat(32)}`,runId:"run_other"};
       const next=forwardBotInference(frame(other) as ScopeRuntimeBotInferenceRequest,other,()=>allowed,{...f.deps,runSignal:new AbortController().signal});
       await vi.advanceTimersByTimeAsync(0);expect(f.fetchImpl).toHaveBeenCalledTimes(1);
@@ -217,8 +219,9 @@ describe("bounded asynchronous inference authority",()=>{
   });
   it("bounds catch-path diagnostic authorization after an unknown provider outcome without retry",async()=>{
     const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false;const diagnostic=vi.fn();
-    f.fetchImpl.mockRejectedValue(new Error("unknown outcome"));
-    const authorize=vi.fn().mockResolvedValueOnce(allowed).mockResolvedValueOnce(allowed).mockImplementation(()=>new Promise<typeof allowed>(resolve=>{finish=resolve;}));
+    let providerAttempted=false;
+    f.fetchImpl.mockImplementation(async()=>{providerAttempted=true;throw new Error("unknown outcome");});
+    const authorize=vi.fn(()=>providerAttempted?new Promise<typeof allowed>(resolve=>{finish=resolve;}):Promise.resolve(allowed));
     const pending=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,{...f.deps,onFundedFailure:diagnostic}).then(result=>{settled=true;return result;});
     try{await vi.advanceTimersByTimeAsync(10_000);expect(settled).toBe(true);await expect(pending).resolves.toMatchObject({error:"provider_unavailable"});expect(f.fetchImpl).toHaveBeenCalledOnce();expect(diagnostic).not.toHaveBeenCalled();}
     finally{f.run.abort();finish?.(allowed);f.queue.close();}
