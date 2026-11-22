@@ -96,4 +96,41 @@ describe("bridge Matrix client", () => {
     const fetchImpl = vi.fn(async () => json(200, { rooms: {} }));
     await expect(createBridgeMatrixClient({ fetchImpl }).sync(session, { timeoutMs: 0 })).rejects.toMatchObject({ retryable: true });
   });
+
+  it("keeps a limited timeline's prev_batch so the caller can fill the gap", async () => {
+    const fetchImpl = vi.fn(async () => json(200, {
+      next_batch: "s3",
+      rooms: { join: { "!abc:bridge.example.test": { timeline: { events: [], limited: true, prev_batch: "t_prev" } } } },
+    }));
+    const response = await createBridgeMatrixClient({ fetchImpl }).sync(session, { since: "s2", timeoutMs: 0 });
+    expect(response.rooms?.join?.["!abc:bridge.example.test"]?.timeline).toEqual({ events: [], limited: true, prev_batch: "t_prev" });
+  });
+
+  it("pages room history backwards between two tokens with a timeout", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchImpl = vi.fn(async () => json(200, {
+      chunk: [{ type: "m.room.message", event_id: "$e1", sender: "@a:x", origin_server_ts: 1, content: { msgtype: "m.text", body: "hi" } }],
+      start: "t_prev",
+      end: "t_older",
+      state: [{ type: "m.room.member", state_key: "@a:x", content: { membership: "join", displayname: "Ann" } }],
+    }));
+    const page = await createBridgeMatrixClient({ fetchImpl }).getMessages(session, {
+      roomId: "!abc:bridge.example.test", from: "t_prev", to: "s2", limit: 100,
+    });
+    expect(page.chunk.map((event) => event.event_id)).toEqual(["$e1"]);
+    expect(page.end).toBe("t_older");
+    expect(page.state).toHaveLength(1);
+
+    const [rawUrl, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const url = new URL(rawUrl);
+    expect(url.pathname).toBe("/_matrix/client/v3/rooms/!abc%3Abridge.example.test/messages");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ dir: "b", from: "t_prev", to: "s2", limit: "100" });
+    expect(JSON.parse(url.searchParams.get("filter") ?? "{}")).toEqual({ lazy_load_members: true });
+    expect(init.redirect).toBe("error");
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+
+    const empty = vi.fn(async () => json(200, { chunk: [], start: "t_prev" }));
+    await expect(createBridgeMatrixClient({ fetchImpl: empty }).getMessages(session, { roomId: "!abc:bridge.example.test", from: "t_prev", limit: 100 }))
+      .resolves.toEqual({ chunk: [], state: [] });
+  });
 });

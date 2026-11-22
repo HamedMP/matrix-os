@@ -53,10 +53,24 @@ const EventSchema = z.looseObject({
 
 const EventListSchema = z.object({ events: z.array(EventSchema).max(10_000).default([]) }).loose();
 
+const TimelineSchema = EventListSchema.extend({
+  limited: z.boolean().optional(),
+  prev_batch: z.string().min(1).max(2_048).optional(),
+});
+
 const JoinedRoomSchema = z.looseObject({
   state: EventListSchema.optional(),
-  timeline: EventListSchema.optional(),
+  timeline: TimelineSchema.optional(),
 });
+
+const MessagesResponseSchema = z.looseObject({
+  chunk: z.array(EventSchema).max(1_000).default([]),
+  end: z.string().min(1).max(2_048).optional(),
+  state: z.array(EventSchema).max(10_000).default([]),
+});
+
+/** Member events for the senders on each history page, so the caller can name them. */
+const MESSAGES_FILTER = { lazy_load_members: true } as const;
 
 const InvitedRoomSchema = z.looseObject({
   invite_state: EventListSchema.optional(),
@@ -73,7 +87,11 @@ const SyncResponseSchema = z.looseObject({
 export interface MatrixSyncResponse {
   next_batch: string;
   rooms?: {
-    join?: Record<string, { state?: { events: MatrixClientEvent[] }; timeline?: { events: MatrixClientEvent[] } }>;
+    join?: Record<string, {
+      state?: { events: MatrixClientEvent[] };
+      /** `limited` means events between the previous batch and this timeline were left out; fill from `prev_batch`. */
+      timeline?: { events: MatrixClientEvent[]; limited?: boolean; prev_batch?: string };
+    }>;
     invite?: Record<string, { invite_state?: { events: MatrixClientEvent[] } }>;
   };
 }
@@ -83,6 +101,14 @@ export interface BridgeMatrixClient {
   sendText(session: MessagingBridgeSession, input: { roomId: string; txnId: string; body: string; signal?: AbortSignal }): Promise<{ eventId: string }>;
   getRoomState(session: MessagingBridgeSession, roomId: string, signal?: AbortSignal): Promise<MatrixClientEvent[]>;
   joinRoom(session: MessagingBridgeSession, roomId: string, signal?: AbortSignal): Promise<void>;
+  /** One page of room history, newest first, from `from` back towards `to`; no `end` means no older events. */
+  getMessages(session: MessagingBridgeSession, input: { roomId: string; from: string; to?: string; limit: number; signal?: AbortSignal }): Promise<MatrixMessagesPage>;
+}
+
+export interface MatrixMessagesPage {
+  chunk: MatrixClientEvent[];
+  end?: string;
+  state: MatrixClientEvent[];
 }
 
 function homeserverOrigin(session: MessagingBridgeSession): string {
@@ -191,6 +217,26 @@ export function createBridgeMatrixClient(options: { fetchImpl?: typeof fetch } =
     },
     async joinRoom(session, roomId, signal) {
       await request(session, "POST", `/rooms/${encodeURIComponent(roomId)}/join`, { body: {}, signal });
+    },
+    async getMessages(session, input) {
+      const params = new URLSearchParams({
+        dir: "b",
+        from: input.from,
+        limit: String(input.limit),
+        filter: JSON.stringify(MESSAGES_FILTER),
+      });
+      if (input.to) params.set("to", input.to);
+      const payload = await request(session, "GET", `/rooms/${encodeURIComponent(input.roomId)}/messages?${params.toString()}`, {
+        limit: STATE_RESPONSE_LIMIT_BYTES,
+        signal: input.signal,
+      });
+      const parsed = MessagesResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new MatrixRequestError(200, true);
+      return {
+        chunk: parsed.data.chunk as MatrixClientEvent[],
+        ...(parsed.data.end ? { end: parsed.data.end } : {}),
+        state: parsed.data.state as MatrixClientEvent[],
+      };
     },
   };
 }
