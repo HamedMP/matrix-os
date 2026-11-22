@@ -2,7 +2,7 @@
 // tab per group of panes on one machine, saved per machine. Pane focus is
 // the sidebar selection, so the two never disagree. A terminal on its own is
 // a one-pane tab, so it has the same header and buttons as a split.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   closePane, focusPane, leaves, movePane, pruneTab, resizeFocusedPane, resizeSplit, singlePaneTab, splitPane, swapPanes, toggleZoom,
   type PaneDirection, type PaneTab,
@@ -62,7 +62,7 @@ export function useTerminalPanes(options: {
     return out;
   }, [layouts, listed, rows]);
 
-  useEffect(() => { latest.current = { layouts: effective, selectedKey }; }, [effective, selectedKey]);
+  useLayoutEffect(() => { latest.current = { layouts: effective, selectedKey }; }, [effective, selectedKey]);
 
   // The selected terminal on its own, as a tab that is saved only once it splits.
   const solo = useMemo(() => (selectedKey ? singlePaneTab(selectedKey, newId) : null), [selectedKey]);

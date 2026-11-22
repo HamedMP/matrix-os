@@ -1,7 +1,7 @@
 // The Electron Desktop Terminal window (specs/651-desktop-terminal-window,
 // specs/2706-terminal-window-herdr). Herdr's layout: machines and every
 // terminal by status on the left, the terminal on screen on the right.
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
 import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
@@ -155,7 +155,8 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * A pane's terminal, with an attachment of its own so every visible pane
  * streams live, not only the focused one. Disposed with its pane.
  */
-function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+// Memoized: the window redraws on every status event, and a terminal must not redraw with it.
+const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
   sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
@@ -170,7 +171,7 @@ function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
     onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
-}
+});
 
 function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
   return (
@@ -210,6 +211,10 @@ export function paneInfoFor(row: TerminalSidebarRow | undefined, fallback: strin
 
 function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
   const rows = new Map(view.status.rows.map((row) => [row.key, row]));
+  // One callback for every pane's terminal that always runs the latest handler, so status updates leave panes alone.
+  const latestPaneAction = useRef(view.panes.paneAction);
+  useEffect(() => { latestPaneAction.current = view.panes.paneAction; }, [view.panes.paneAction]);
+  const paneAction = useCallback((action: TerminalPaneAction) => latestPaneAction.current(action), []);
   const ended = view.endedLocal;
   return (
     <TerminalPaneTree tab={tab}
@@ -223,7 +228,7 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         return (
           <>
             <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
-              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={view.panes.paneAction} />
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>
         );

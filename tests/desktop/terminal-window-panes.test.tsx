@@ -8,12 +8,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const managers = vi.hoisted(() => new Map<string, unknown>());
 // How many times each terminal's view was mounted, to catch a pane that remounts (and loses its screen).
 const mounts = vi.hoisted(() => new Map<string, number>());
+// How many times each terminal's view rendered, to catch panes redrawing on status updates.
+const renders = vi.hoisted(() => new Map<string, number>());
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
   default: ({ sessionName, active, focused, attachManager, findRequest, onPaneAction }: {
     sessionName: string; active?: boolean; focused?: boolean; attachManager?: unknown; findRequest?: number; onPaneAction?: (action: unknown) => void;
   }) => {
     managers.set(sessionName, attachManager);
+    renders.set(sessionName, (renders.get(sessionName) ?? 0) + 1);
     // eslint-disable-next-line react-hooks/rules-of-hooks -- a test double counting its own mounts
     React.useEffect(() => { mounts.set(sessionName, (mounts.get(sessionName) ?? 0) + 1); }, [sessionName]);
     return (
@@ -377,6 +380,23 @@ describe("Terminal window panes", () => {
     operator.command({ command: "close-pane" });
     await waitFor(() => expect(paneNames()).toHaveLength(2));
     expect([mounts.get("local:t1"), mounts.get("local:t10"), mounts.get("local:t11")]).toEqual([1, 1, 1]);
+  });
+
+  // Fault detected (Hamed, 2026-11-22, scroll lag): every status event redrew every pane's terminal.
+  it("leaves pane terminals alone when terminal status changes", async () => {
+    const operator = installOperator([fact("t1", "editor"), fact("t2", "logs")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    await waitFor(() => expect(screen.getAllByTestId("terminal-view")).toHaveLength(2));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    const before = [renders.get("local:t1"), renders.get("local:t10")];
+    for (let turn = 1; turn <= 5; turn += 1) {
+      operator.push([fact("t1", "editor"), { ...fact("t2", "logs"), turn, statusAt: Date.now() + turn }, fact("t10", "shell t10")]);
+    }
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Terminals" })).toBeTruthy());
+    expect([renders.get("local:t1"), renders.get("local:t10")]).toEqual(before);
   });
 
   it("picks the drop edge nearest the pointer", () => {

@@ -1,7 +1,7 @@
 // Everything the Terminal window shows and does (spec 651, spec 2706): the
 // inventories, live status rows, the one terminal on screen, and Herdr's
 // shortcuts. Kept apart from the view so the rules stay testable.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   terminalSidebarOrder,
   terminalStatusSections,
@@ -308,7 +308,11 @@ export function useTerminalWindow() {
       case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
   }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
-  useEffect(() => onEvent("terminal-window:command", run), [run]);
+  // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
+  // right after a selection change must act on the new selection, not wait for a passive effect.
+  const latestRun = useRef(run);
+  useLayoutEffect(() => { latestRun.current = run; }, [run]);
+  useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes,
