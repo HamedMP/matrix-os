@@ -211,12 +211,16 @@ describe("hostd API", () => {
 
   it("enforces free-tier limits with bad_request", async () => {
     const app = api();
-    for (const patch of [{ bootMiB: 4096 }, { maxMiB: 16384 }, { diskGiB: 40 }]) {
+    for (const patch of [{ bootMiB: 4096 }, { maxMiB: 16384 }, { diskGiB: 41 }]) {
       const res = await send(app, "POST", "/v1/vms", { body: { ...body, ...patch }, headers: auth });
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "bad_request" });
     }
-    const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
+    const createdRes = await send(app, "POST", "/v1/vms", { body: { ...body, diskGiB: 40 }, headers: auth });
+    expect(createdRes.status).toBeLessThan(300);
+    const created = (await createdRes.json()) as { id: string };
+    const shown = (await (await send(app, "GET", `/v1/vms/${created.id}`, { headers: auth })).json()) as { diskGiB: number };
+    expect(shown.diskGiB).toBe(40);
     const raise = await send(app, "PUT", `/v1/vms/${created.id}/policy`, { body: { tier: "free", maxMiB: 16384 }, headers: auth });
     expect(raise.status).toBe(400);
     const huge = await send(app, "PUT", `/v1/vms/${created.id}/policy`, { body: { tier: "paid", maxMiB: 262144 }, headers: auth });

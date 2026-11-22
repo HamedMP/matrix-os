@@ -117,7 +117,7 @@ import json, sys
 user_data, handle, golden = sys.argv[1:]
 print(json.dumps({
     "machineId": f"smoke_{handle.removeprefix('smoke-')}", "generation": 1, "handle": handle,
-    "tier": "free", "bootMiB": 2048, "maxMiB": 8192, "diskGiB": 20,
+    "tier": "free", "bootMiB": 2048, "maxMiB": 8192, "diskGiB": 40,
     "userData": open(user_data).read(), "goldenVersion": golden,
 }))
 PY
@@ -127,7 +127,7 @@ case "$(cat "$work/status")" in 201|202) ;; *) die "create returned $(cat "$work
 vm_id="$(printf '%s' "$created" | json_field id)"
 vm_ip="$(printf '%s' "$created" | json_field privateIPv4)"
 [[ "$vm_id" =~ ^vm_[a-f0-9]{24}$ ]] || die "unexpected VM id"
-pass "created $vm_id at $vm_ip (free: boot 2048 MiB, max 8192 MiB, disk 20 GiB)"
+pass "created $vm_id at $vm_ip (free: boot 2048 MiB, max 8192 MiB, disk 40 GiB)"
 
 lv="vmvg/mx-$vm_id"
 lvs "$lv" >/dev/null 2>&1 || die "no LV $lv"

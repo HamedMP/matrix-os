@@ -405,9 +405,13 @@ describe("repeated create never destroys a VM that has a real disk", () => {
 });
 
 describe("free-tier limits", () => {
-  it("rejects a free VM that is not booted at 2048 MiB, exceeds 8192 MiB, or exceeds 20 GiB", async () => {
+  it("accepts a free VM with the full 40 GiB disk", async () => {
+    await expect(make().create({ ...spec, diskGiB: 40 })).resolves.toMatchObject({ tier: "free", diskGiB: 40, state: "running" });
+  });
+
+  it("rejects a free VM that is not booted at 2048 MiB, exceeds 8192 MiB, or exceeds 40 GiB", async () => {
     const lifecycle = make();
-    for (const patch of [{ bootMiB: 1024 }, { bootMiB: 4096 }, { maxMiB: 8320 }, { diskGiB: 21 }]) {
+    for (const patch of [{ bootMiB: 1024 }, { bootMiB: 4096 }, { maxMiB: 8320 }, { diskGiB: 41 }]) {
       await expect(lifecycle.create({ ...spec, ...patch })).rejects.toMatchObject({ code: "invalid" });
     }
     await expect(lifecycle.create({ ...spec, tier: "paid", bootMiB: 4096, maxMiB: 131072, diskGiB: 200 })).resolves.toMatchObject({

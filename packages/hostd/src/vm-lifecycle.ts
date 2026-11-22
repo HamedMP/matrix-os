@@ -151,7 +151,7 @@ const MiB = 1024 * 1024;
 // Free-tier limits, enforced here as defense in depth (the platform enforces them too).
 export const FREE_BOOT_MIB = 2048;
 export const FREE_MAX_MIB = 8192;
-export const FREE_DISK_GIB = 20;
+export const FREE_DISK_GIB = 40;
 // Host maximum for any VM.
 export const HOST_MAX_MIB = 131_072;
 const maxMiBFor = (tier: VmTier) => (tier === "free" ? FREE_MAX_MIB : HOST_MAX_MIB);
