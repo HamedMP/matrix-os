@@ -7,6 +7,7 @@ import { Kysely, type KyselyPlugin } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { JoinCodeRegistry } from "../../packages/gateway/src/private-network/join-codes.js";
+import { readPrivateNetworkConfig } from "../../packages/gateway/src/private-network/config.js";
 import {
   PairingStore,
   PairingStoreError,
@@ -144,20 +145,22 @@ describe("private network pairing", () => {
     Peer: { a: { HostName: "second", DNSName: "second.tail1234.ts.net.", Online: true } },
   };
 
-  function setup(options: { selfHosted?: boolean; tailnetScheme?: "http" | "https" | null } = {}) {
+  function setup(options: { selfHosted?: boolean; tailnetScheme?: "http" | "https" | null; headscaleLoginServer?: string | null } = {}) {
+    const accessMode = options.headscaleLoginServer ? "headscale" as const : "tailscale" as const;
+    const loginServer = options.headscaleLoginServer ?? null;
     const exec: TailscaleExec = vi.fn(async (args) => {
       if (args[0] === "status") return { stdout: JSON.stringify(status), stderr: "" };
       return { stdout: "", stderr: "" };
     });
-    const tailscale = new TailscaleController({ exec, accessMode: "tailscale", loginServer: null, operator: "alice" });
+    const tailscale = new TailscaleController({ exec, accessMode, loginServer, operator: "alice" });
     const ownerLogins = new OwnerLoginStore({ homePath: home, installLogin: "alice@example.com" });
     const joinCodes = new JoinCodeRegistry({ now: () => now });
     const app = new Hono();
-    app.use("*", privateNetworkIdentityMiddleware({ accessMode: "tailscale", ownerLogin: () => ownerLogins.get(), remoteAddress: () => "127.0.0.1" }));
+    app.use("*", privateNetworkIdentityMiddleware({ accessMode, ownerLogin: () => ownerLogins.get(), remoteAddress: () => "127.0.0.1" }));
     app.use("*", authMiddleware(TOKEN));
     app.route("/api/system/private-network", createPrivateNetworkRoutes({
       config: {
-        selfHosted: options.selfHosted ?? true, accessMode: "tailscale", loginServer: null, installOwnerLogin: "alice@example.com",
+        selfHosted: options.selfHosted ?? true, accessMode, loginServer, installOwnerLogin: "alice@example.com",
         runUser: "alice", updateChannel: "dev", ownerId: OWNER, machineId: "self-host-matrix", tailscaleBin: "/usr/bin/tailscale",
         tailnetScheme: options.tailnetScheme ?? null,
       },
@@ -196,6 +199,15 @@ describe("private network pairing", () => {
     expect(await (await request("GET", "")).json()).toMatchObject({ machine: { url: "http://primary.tail1234.ts.net" } });
     const issued = await (await request("POST", "/join-codes", {})).json() as { code: string; command: string };
     expect(issued.command).toContain("--join http://primary.tail1234.ts.net --join-code");
+  });
+
+  it("puts the configured Headscale URL, path included, in the join command", async () => {
+    const { loginServer } = readPrivateNetworkConfig({
+      MATRIX_SELF_HOSTED: "1", MATRIX_ACCESS_MODE: "headscale", MATRIX_TAILSCALE_LOGIN_SERVER: "https://hs.example.com/headscale/",
+    });
+    const { request } = setup({ headscaleLoginServer: loginServer });
+    const issued = await (await request("POST", "/join-codes", {})).json() as { code: string; command: string };
+    expect(issued.command).toContain("--access headscale --login-server https://hs.example.com/headscale --join ");
   });
 
   it("pairs a second machine end to end and lists it with live tailnet status", async () => {

@@ -4,7 +4,7 @@ export type PrivateNetworkAccessMode = "tailscale" | "headscale" | "public";
 export interface PrivateNetworkConfig {
   selfHosted: boolean;
   accessMode: PrivateNetworkAccessMode | null;
-  /** Headscale server origin, e.g. `https://hs.example.com`. */
+  /** Headscale server URL, path included, e.g. `https://hs.example.com/headscale`. */
   loginServer: string | null;
   installOwnerLogin: string | null;
   runUser: string | null;
@@ -18,15 +18,26 @@ export interface PrivateNetworkConfig {
 
 const ACCESS_MODES = new Set<PrivateNetworkAccessMode>(["tailscale", "headscale", "public"]);
 
-function httpsOrigin(value: string | undefined): string | null {
-  if (!value) return null;
+// Same path characters the installer accepts for --login-server; the value is
+// also printed into the join command, so nothing shell-sensitive gets through.
+const LOGIN_SERVER_PATH = /^(?:\/[A-Za-z0-9._~-]*)*$/;
+
+/**
+ * Headscale control-server URL as configured (https, host, port and path),
+ * without a trailing slash. Credentials, a query or a fragment reject it.
+ */
+function headscaleLoginServer(value: string | undefined): string | null {
+  if (!value || value.length > 2048 || /[?#]/.test(value)) return null;
+  let url: URL;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password ? url.origin : null;
+    url = new URL(value);
   } catch (error: unknown) {
     if (error instanceof TypeError) return null;
     throw error;
   }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return null;
+  if (!LOGIN_SERVER_PATH.test(url.pathname)) return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 function urlScheme(value: string | undefined): "http" | "https" | null {
@@ -45,7 +56,7 @@ export function readPrivateNetworkConfig(env: NodeJS.ProcessEnv = process.env): 
     selfHosted,
     // Installs from before spec 2701 have no access mode and kept nginx Basic Auth.
     accessMode: selfHosted ? (mode && ACCESS_MODES.has(mode) ? mode : "public") : null,
-    loginServer: httpsOrigin(env.MATRIX_TAILSCALE_LOGIN_SERVER),
+    loginServer: headscaleLoginServer(env.MATRIX_TAILSCALE_LOGIN_SERVER),
     installOwnerLogin: env.MATRIX_TAILSCALE_OWNER_LOGIN?.trim() || null,
     runUser: runUser && /^[a-z_][a-z0-9_-]{0,31}$/.test(runUser) ? runUser : null,
     updateChannel: channel && /^[A-Za-z0-9._-]{1,32}$/.test(channel) ? channel : null,

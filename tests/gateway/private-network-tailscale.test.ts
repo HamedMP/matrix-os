@@ -7,6 +7,7 @@ import {
   type TailscaleExec,
   type TailscaleSpawn,
 } from "../../packages/gateway/src/private-network/tailscale-cli.js";
+import { readPrivateNetworkConfig } from "../../packages/gateway/src/private-network/config.js";
 
 const running = {
   BackendState: "Running",
@@ -76,6 +77,28 @@ describe("tailscale status", () => {
   });
 });
 
+describe("private network config", () => {
+  const loginServer = (value: string) =>
+    readPrivateNetworkConfig({ MATRIX_SELF_HOSTED: "1", MATRIX_ACCESS_MODE: "headscale", MATRIX_TAILSCALE_LOGIN_SERVER: value }).loginServer;
+
+  it("keeps the Headscale URL path and port with the trailing slash removed", () => {
+    expect(loginServer("https://hs.example.com/headscale")).toBe("https://hs.example.com/headscale");
+    expect(loginServer("https://hs.example.com/headscale/")).toBe("https://hs.example.com/headscale");
+    expect(loginServer("https://HS.example.com:8443/")).toBe("https://hs.example.com:8443");
+    expect(loginServer("https://hs.example.com")).toBe("https://hs.example.com");
+  });
+
+  it("rejects Headscale URLs with credentials, a query, a fragment, odd path characters or plain HTTP", () => {
+    expect(loginServer("https://user:pass@hs.example.com/headscale")).toBeNull();
+    expect(loginServer("https://hs.example.com/headscale?x=1")).toBeNull();
+    expect(loginServer("https://hs.example.com/headscale?")).toBeNull();
+    expect(loginServer("https://hs.example.com/headscale#top")).toBeNull();
+    expect(loginServer("https://hs.example.com/head scale")).toBeNull();
+    expect(loginServer("https://hs.example.com/$(id)")).toBeNull();
+    expect(loginServer("http://hs.example.com/headscale")).toBeNull();
+  });
+});
+
 describe("tailscale connect", () => {
   it("returns the Tailscale login URL printed by tailscale up", async () => {
     const { spawn, child } = fakeLogin(["", "To authenticate, visit:", "", "\thttps://login.tailscale.com/a/1a2b3c", ""]);
@@ -94,6 +117,20 @@ describe("tailscale connect", () => {
     const result = await controller.connect();
     expect(spawn).toHaveBeenCalledWith(["up", "--operator=alice", "--login-server=https://hs.example.com", "--timeout=600s"]);
     expect(result.loginUrl).toBe("https://hs.example.com/register/nodekey123");
+    controller.close();
+  });
+
+  it("keeps a Headscale path in tailscale up and still checks login links by origin", async () => {
+    const { spawn } = fakeLogin([
+      "https://hs.example.com.evil.test/headscale/register/a",
+      "https://hs.example.com/register/nodekey123",
+    ]);
+    const controller = new TailscaleController({ exec: execReturning({ BackendState: "NeedsLogin" }), spawn, accessMode: "headscale", loginServer: "https://hs.example.com/headscale", operator: "alice", loginUrlWaitMs: 1000 });
+    const result = await controller.connect();
+    expect(spawn).toHaveBeenCalledWith(["up", "--operator=alice", "--login-server=https://hs.example.com/headscale", "--timeout=600s"]);
+    expect(result.loginUrl).toBe("https://hs.example.com/register/nodekey123");
+    expect(controller.isLoginUrl("https://hs.example.com/headscale/register/x")).toBe(true);
+    expect(controller.isLoginUrl("https://other.example.com/headscale/register/x")).toBe(false);
     controller.close();
   });
 

@@ -108,6 +108,7 @@ export class TailscaleController {
   private readonly exec: TailscaleExec;
   private readonly spawn: TailscaleSpawn;
   private readonly loginUrlWaitMs: number;
+  private readonly loginServerOrigin: string | null;
   private login: { child: TailscaleLoginProcess; timer: NodeJS.Timeout; url: string | null } | null = null;
   /** Bumped by disconnect/close: a connect started before it must not run `tailscale up`. */
   private generation = 0;
@@ -119,6 +120,7 @@ export class TailscaleController {
     this.exec = options.exec ?? defaultExec(bin);
     this.spawn = options.spawn ?? defaultSpawn(bin);
     this.loginUrlWaitMs = options.loginUrlWaitMs ?? 15_000;
+    this.loginServerOrigin = options.loginServer ? originOf(options.loginServer) : null;
   }
 
   async status(): Promise<TailscaleSnapshot> {
@@ -145,7 +147,8 @@ export class TailscaleController {
     }
     if (url.protocol !== "https:" || url.username || url.password) return false;
     if (this.options.accessMode === "headscale") {
-      return this.options.loginServer !== null && url.origin === this.options.loginServer;
+      // Login pages are served from the control server's origin, whatever its path.
+      return this.loginServerOrigin !== null && url.origin === this.loginServerOrigin;
     }
     return url.origin === "https://login.tailscale.com";
   }
@@ -241,6 +244,15 @@ export class TailscaleController {
         finish(login.url);
       });
     });
+  }
+}
+
+function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
   }
 }
 
