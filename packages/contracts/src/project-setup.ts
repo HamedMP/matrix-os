@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
-import { CanonicalChatIdSchema, CanonicalChatModelSelectionSchema, CanonicalChatRequestIdSchema } from "./canonical-chat.js";
-import { CanonicalChatRecordSchema } from "./canonical-chat-api.js";
-import { ProjectAgentConfigFileSchema, ProjectAgentContextNameSchema, PROJECT_SKILL_FILE_MAX_BYTES } from "./project-agent-context.js";
-import { referenceId } from "./legacy-contract-primitives.js";
+import { CanonicalChatIdSchema, CanonicalChatModelSelectionSchema, CanonicalChatRequestIdSchema } from "#canonical-chat";
+import { CanonicalChatRecordSchema } from "#canonical-chat-api";
+import { ProjectAgentConfigFileSchema, ProjectAgentContextNameSchema, PROJECT_SKILL_FILE_MAX_BYTES } from "#project-agent-context";
+import { referenceId } from "#legacy-contract-primitives";
 
 const answer = z.string().trim().min(1).max(4096);
 const markdown = z.string().min(1).max(PROJECT_SKILL_FILE_MAX_BYTES)

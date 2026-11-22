@@ -1513,4 +1513,4 @@ export * from "#routine-origin-proof";
 export * from "#runtime-substrate";
 export * from "#hostd-api";
 
-export * from "./project-setup.js";
+export * from "#project-setup";
