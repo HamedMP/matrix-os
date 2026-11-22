@@ -299,7 +299,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         if (!entry) return machine;
         if (!machineSshMatches(entry, machine)) {
           // The name now belongs to another host: its old settings must not reach it.
-          void machineSsh.remove(machine.name).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
+          // Only the entry that was checked: settings saved by a re-add while this listing waited stay.
+          void machineSsh.removeIfUnchanged(machine.name, entry).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
           return machine;
         }
         return { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) };
@@ -346,7 +347,9 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** Forgets a machine; its terminals keep running there. */
     async removeMachine(name: string): Promise<void> {
       await (await ensure()).call("machine.rm", { machine: name });
-      await machineSsh.remove(name);
+      // The machine is gone, so this is done. Settings left behind are inert: a later add of the
+      // name overwrites them, and they never reach a different host (machineSshMatches).
+      await machineSsh.remove(name).catch((error: unknown) => console.warn("[local-terminals] removed machine's ssh not cleared:", describeError(error)));
     },
 
     /** Dials a machine now (after a login in a terminal) instead of at its next retry. */

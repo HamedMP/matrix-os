@@ -81,5 +81,10 @@ export function createMachineSshStore(dataDir: string) {
     all: () => read(),
     set: (name: string, entry: MachineSsh) => change((machines) => { machines[name] = entry; }),
     remove: (name: string) => change((machines) => { delete machines[name]; }),
+    /** Removes the entry only while it is still the one that was checked, so settings saved since then stay. */
+    removeIfUnchanged: (name: string, checked: MachineSsh) => change((machines) => {
+      const current = machines[name];
+      if (current && JSON.stringify(current) === JSON.stringify(checked)) delete machines[name];
+    }),
   };
 }
