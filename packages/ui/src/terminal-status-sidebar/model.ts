@@ -28,7 +28,7 @@ export interface TerminalSidebarRow {
   detail?: string;
 }
 
-export type TerminalStatusSectionId = "needs-you" | "done" | "working" | "idle";
+export type TerminalStatusSectionId = "pinned" | "needs-you" | "done" | "working" | "idle";
 
 export interface TerminalSidebarEntry extends TerminalSidebarRow {
   /** The most urgent status among this terminal and its sub-agents. */
@@ -47,8 +47,9 @@ export interface TerminalSidebarSection {
 
 export type TerminalSidebarView = "priority" | "machine";
 
-const SECTION_ORDER: readonly TerminalStatusSectionId[] = ["needs-you", "done", "working", "idle"];
+const SECTION_ORDER: readonly Exclude<TerminalStatusSectionId, "pinned">[] = ["needs-you", "done", "working", "idle"];
 export const TERMINAL_STATUS_SECTION_LABEL: Record<TerminalStatusSectionId, string> = {
+  pinned: "Pinned",
   "needs-you": "Needs you",
   done: "Done",
   working: "Working",
@@ -125,9 +126,16 @@ function buildEntries(rows: readonly TerminalSidebarRow[]): TerminalSidebarEntry
  */
 export function terminalStatusSections(
   rows: readonly TerminalSidebarRow[],
-  options: { view?: TerminalSidebarView } = {},
+  options: { view?: TerminalSidebarView; pinned?: readonly string[] } = {},
 ): TerminalSidebarSection[] {
-  const entries = buildEntries(rows).sort(compareEntries);
+  const all = buildEntries(rows).sort(compareEntries);
+  // Pinned terminals lead, in a section of their own, and leave the others.
+  const pinnedKeys = new Set(options.pinned ?? []);
+  const pinned = all.filter((entry) => pinnedKeys.has(entry.key));
+  const entries = all.filter((entry) => !pinnedKeys.has(entry.key));
+  const lead: TerminalSidebarSection[] = pinned.length > 0
+    ? [{ id: "pinned", label: TERMINAL_STATUS_SECTION_LABEL.pinned, status: rollUpTerminalStatus(pinned.map((entry) => entry.status)), rows: pinned }]
+    : [];
   if (options.view === "machine") {
     // Machines keep the order they are given in (this device first), as Herdr's machine headers do.
     const machines = new Map<string, TerminalSidebarSection>();
@@ -141,16 +149,16 @@ export function terminalStatusSections(
       section.rows.push(entry);
       machines.set(id, section);
     }
-    return [...machines.values()].filter((section) => section.rows.length > 0).map((section) => ({
+    return [...lead, ...[...machines.values()].filter((section) => section.rows.length > 0).map((section) => ({
       ...section,
       status: rollUpTerminalStatus(section.rows.map((entry) => entry.status)),
-    }));
+    }))];
   }
-  return SECTION_ORDER.flatMap((id) => {
+  return [...lead, ...SECTION_ORDER.flatMap((id) => {
     const sectionRows = entries.filter((entry) => sectionOf(entry.status) === id);
     if (sectionRows.length === 0) return [];
     return [{ id, label: TERMINAL_STATUS_SECTION_LABEL[id], status: rollUpTerminalStatus(sectionRows.map((entry) => entry.status)), rows: sectionRows }];
-  });
+  })];
 }
 
 /** Herdr's short time since a change: `<1m`, `5m`, `2h`, `3d`. */

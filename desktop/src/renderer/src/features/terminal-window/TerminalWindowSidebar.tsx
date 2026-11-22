@@ -64,6 +64,11 @@ export interface TerminalWindowSidebarProps {
   notices?: ReactNode;
   /** The footer's Settings: the main window's settings. */
   onSettings(): void;
+  /** Terminals pinned to the top of the agents list. */
+  pinned: readonly string[];
+  onTogglePin(key: string): void;
+  /** A row's close: ends the terminal, asking first while a program runs. */
+  onCloseTerminal(key: string): void;
 }
 
 /** A machine's spaces (projects or workspaces) with how many terminals each has, most first. */
@@ -248,7 +253,8 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
         {rows.length === 0
           ? <p className="px-2 py-1 text-[12px]" style={secondaryText}>{props.filter ? "No terminals here yet." : "No terminals yet. Start one with + next to a machine."}</p>
           : <TerminalStatusSidebar rows={rows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
-              folded={props.folded} onToggleFold={props.onToggleFold} now={props.now} />}
+              folded={props.folded} onToggleFold={props.onToggleFold} now={props.now}
+              pinned={props.pinned} onTogglePin={props.onTogglePin} onClose={props.onCloseTerminal} oneMachine={props.filter !== null} />}
         {props.notices ?? null}
       </div>
       <div className="flex shrink-0 items-center gap-1 border-t px-2 py-1.5" style={{ borderColor: "var(--border-subtle)" }}>

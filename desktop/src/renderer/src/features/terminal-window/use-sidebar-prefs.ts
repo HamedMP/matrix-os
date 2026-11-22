@@ -12,6 +12,7 @@ export const SIDEBAR_MIN_WIDTH = 120;
 export const SIDEBAR_MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 260;
 const MAX_FOLDS = 200;
+const MAX_PINNED = 50;
 
 const PrefsSchema = z.object({
   folded: z.array(z.string().max(256)).max(MAX_FOLDS).catch([]),
@@ -22,9 +23,11 @@ const PrefsSchema = z.object({
   rail: z.boolean().catch(false),
   // A machine (or one of its spaces) opened as its own tab.
   filter: z.object({ machineId: z.string().max(128), space: z.string().max(256).optional() }).nullable().catch(null),
+  // Terminals pinned to the top of the agents list, by row key.
+  pinned: z.array(z.string().max(512)).max(MAX_PINNED).catch([]),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null };
+const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [] };
 
 function read(): SidebarPrefs {
   try {
@@ -78,5 +81,9 @@ export function useSidebarPrefs() {
       : { ...current, rail: false, width: Math.min(SIDEBAR_MAX_WIDTH, Math.round(width)) })), [update]),
     toggleRail: useCallback(() => update((current) => ({ ...current, rail: !current.rail })), [update]),
     setFilter: useCallback((filter: SidebarPrefs["filter"]) => update((current) => ({ ...current, filter })), [update]),
+    togglePin: useCallback((key: string) => update((current) => ({
+      ...current,
+      pinned: current.pinned.includes(key) ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key].slice(-MAX_PINNED),
+    })), [update]),
   };
 }

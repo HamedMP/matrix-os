@@ -143,11 +143,15 @@ describe("This Computer terminals", () => {
     ]) });
     render(<TerminalWindowApp />);
     const needsYou = await screen.findByRole("region", { name: "Needs you" });
-    expect(within(needsYou).getAllByRole("button").map((button) => button.textContent?.replace(/Needs you|Error|<1m|\d+[mhd]/g, "").trim()))
+    expect(within(needsYou).getAllByRole("button").filter((button) => !/^(Pin|Unpin|Close) terminal$/.test(button.getAttribute("aria-label") ?? ""))
+      .map((button) => button.textContent?.replace(/Needs you|Error|<1m|\d+[mhd]/g, "").trim()))
       .toEqual(expect.arrayContaining(["claude", "tests"]));
     expect(within(screen.getByRole("region", { name: "Done" })).getByRole("button", { name: /finished/ })).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "Idle" })).getAllByRole("button").map((button) => button.textContent))
+    // Each row's pin and close actions are left out: they are not rows.
+    const rowButtons = (region: HTMLElement) => within(region).getAllByRole("button")
+      .filter((button) => !/^(Pin|Unpin|Close) terminal$/.test(button.getAttribute("aria-label") ?? ""));
+    expect(rowButtons(screen.getByRole("region", { name: "Idle" })).map((button) => button.textContent))
       .toEqual(["Idle2", expect.stringContaining("shell"), expect.stringContaining("plain")]);
     fireEvent.click(within(needsYou).getByRole("button", { name: /claude/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");

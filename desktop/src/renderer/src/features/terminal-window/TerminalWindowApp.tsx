@@ -221,6 +221,9 @@ export default function TerminalWindowApp() {
           filter={prefs.filter}
           onFilter={view.sidebar.setFilter}
           onSettings={() => focusMainWindow("settings")}
+          pinned={prefs.pinned}
+          onTogglePin={view.sidebar.togglePin}
+          onCloseTerminal={view.requestClose}
           onToggleMachine={(id) => view.sidebar.setMachineFolded(id, !view.machineFolded(id))}
           localCreating={view.local.creating}
           onCreateLocal={view.createLocal}

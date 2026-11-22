@@ -30,8 +30,8 @@ export const TERMINAL_WINDOW_COMMANDS = [
 ] as const;
 export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
 export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
-  z.object({ command: z.literal("select"), index: z.number().int().min(1).max(9) }).strict(),
-  z.object({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select"]) }).strict(),
+  z.strictObject({ command: z.literal("select"), index: z.number().int().min(1).max(9) }),
+  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select"]) }),
 ]);
 export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
 

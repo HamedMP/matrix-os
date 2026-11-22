@@ -90,3 +90,64 @@ describe("one machine's terminal list", () => {
     cleanup();
   });
 });
+
+// Hamed, 2026-11-22: rows laid out like Herdr's agents list.
+describe("terminal status sidebar rows, Herdr-style", () => {
+  const herdrRows: TerminalSidebarRow[] = [
+    { key: "p", name: "fix auth", space: "matrix-os", machine: vps, status: "working", statusAt: new Date(NOW - 16 * 3_600_000).toISOString() },
+    { key: "q", name: "a much longer terminal title that has to truncate before the time column", machine: vps, statusAt: new Date(NOW - 22 * 3_600_000).toISOString() },
+    { key: "r", name: "shell", machine: mac },
+  ];
+  const draw = (extra: Partial<React.ComponentProps<typeof TerminalStatusSidebar>> = {}) => render(
+    <TerminalStatusSidebar rows={herdrRows} now={NOW} onSelect={vi.fn()} folded={[]} onToggleFold={vi.fn()} {...extra} />,
+  );
+
+  it("puts the project in bold before a muted title, with times and marks in fixed columns", () => {
+    const { container } = draw();
+    const project = screen.getByText("matrix-os");
+    expect(project.className).toContain("font-semibold");
+    expect(screen.getByText(/· fix auth/)).toBeTruthy();
+    // Every row's time sits in the same fixed-width column, so 16h and 22h line up whatever the name's length.
+    const times = [...container.querySelectorAll("span.tabular-nums.w-8")].map((time) => time.textContent);
+    expect(times).toEqual(expect.arrayContaining(["16h", "22h"]));
+    for (const time of container.querySelectorAll("span.tabular-nums.w-8")) expect(time.className).toContain("shrink-0");
+    expect(container.querySelector("span.truncate")).toBeTruthy();
+  });
+
+  it("lists pinned terminals first and offers pin and close on each row", () => {
+    const onTogglePin = vi.fn();
+    const onClose = vi.fn();
+    draw({ pinned: ["r"], onTogglePin, onClose });
+    const sections = screen.getAllByRole("region").map((section) => section.getAttribute("aria-label"));
+    expect(sections[0]).toBe("Pinned");
+    const shellActions = screen.getByRole("group", { name: "shell actions" });
+    fireEvent.click(within(shellActions).getByRole("button", { name: "Unpin terminal" }));
+    expect(onTogglePin).toHaveBeenCalledWith("r");
+    fireEvent.click(within(screen.getByRole("group", { name: "fix auth actions" })).getByRole("button", { name: "Close terminal" }));
+    expect(onClose).toHaveBeenCalledWith("p");
+  });
+
+  it("names a row's machine only where machines mix: not inside its own group or a machine filter", () => {
+    const { unmount } = draw();
+    expect(screen.getAllByText("Main Computer").length).toBeGreaterThan(0);
+    unmount();
+    const grouped = draw({ view: "machine" });
+    const group = screen.getByRole("region", { name: "Main Computer" });
+    // The group header names it once; its rows do not, and they are inset under it.
+    expect(within(group).getAllByText("Main Computer")).toHaveLength(1);
+    const insetRow = within(group).getByRole("button", { name: /fix auth/ }).parentElement!;
+    expect(insetRow.style.paddingLeft).toBe("16px");
+    grouped.unmount();
+    draw({ oneMachine: true });
+    expect(screen.queryByText("Main Computer")).toBeNull();
+  });
+
+  it("hangs sub-agents from their parent on a connector line, with a fold chevron", () => {
+    const { container } = render(<Host />);
+    const toggle = screen.getByRole("button", { name: /sub-agents of tests/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelectorAll("li > ul > span[aria-hidden=true].w-px")).toHaveLength(1);
+    fireEvent.click(toggle);
+    expect(screen.queryByText("helper")).toBeNull();
+  });
+});

@@ -163,6 +163,12 @@ export function useTerminalWindow() {
     });
   }, [clearActive, cloud, local]);
 
+  /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
+  const requestClose = useCallback((key: string) => {
+    if (isFinished(key, local.state, status.states)) { close(key); return; }
+    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
+  }, [close, local.state, status.rows, status.states]);
+
   const step = useCallback((offset: number) => {
     if (order.length === 0) return;
     const index = order.findIndex((entry) => entry.key === selectedKey);
@@ -179,10 +185,7 @@ export function useTerminalWindow() {
         return;
       }
       case "close-terminal":
-        if (!selectedRow) return;
-        // A finished terminal goes at once; ending a running program asks first.
-        if (isFinished(selectedRow.key, local.state, status.states)) close(selectedRow.key);
-        else setClosing({ key: selectedRow.key, name: selectedRow.name });
+        if (selectedRow) requestClose(selectedRow.key);
         return;
       case "select": {
         const entry = order[command.index - 1];
@@ -198,7 +201,7 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFindRequest((request) => request + 1); return;
     }
-  }, [close, createCloud, createLocal, local.state, order, select, selectedKey, selectedRow, sidebar, status.states, step]);
+  }, [createCloud, createLocal, order, requestClose, select, selectedKey, selectedRow, sidebar, step]);
   useEffect(() => onEvent("terminal-window:command", run), [run]);
 
   return {
@@ -208,7 +211,7 @@ export function useTerminalWindow() {
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close,
+    select, createLocal, createCloud, rename, close, requestClose,
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
   };
 }
