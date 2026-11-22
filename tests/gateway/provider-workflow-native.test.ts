@@ -375,7 +375,7 @@ it('installs the verified Pi Settings version rather than an unverified latest r
   const f = nativeFixture('pi');
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, genericWriter: { acquire: async () => async () => {} } as never, hostControl: { available: false, run: vi.fn() } });
   const running = await adapter!.start({ registerCleanup: () => {}, request: { harnessInstanceId: f.row.id, kind: 'install', idempotencyKey: 'verified-pi' }, publish: vi.fn() });
-  expect(vi.mocked(f.terminal.createTab).mock.calls[0]![1].command).toEqual(['sh', '-lc', expect.stringContaining("'@earendil-works/pi-coding-agent@1.0.0'")]);
+  expect(vi.mocked(f.terminal.createTab).mock.calls[0]![1].command).toEqual(['sh', '-lc', expect.stringContaining("'@earendil-works/pi-coding-agent@1.6.0'")]);
   await running.cancel();
 });
 

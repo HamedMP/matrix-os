@@ -17,7 +17,7 @@ describe("cloud workspace runtime gates", () => {
       `ARG CODEX_VERSION=${CODEX_VERIFIED_VERSION}`,
       '"@openai/codex@${CODEX_VERSION}"',
       "OPENCODE_AI_VERSION=latest",
-      "PI_CODING_AGENT_VERSION=latest",
+      "PI_CODING_AGENT_VERSION=1.6.0",
       '"opencode-ai@${OPENCODE_AI_VERSION}"',
       '"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"',
     ]) {

@@ -661,7 +661,7 @@ exit 99
     expect(toolPackInstaller).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(toolPackInstaller).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
-    expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
+    expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-1.6.0}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(toolPackInstaller).toContain('run_npm_install()');
     expect(toolPackInstaller).toContain('resolve_runtime_user()');
