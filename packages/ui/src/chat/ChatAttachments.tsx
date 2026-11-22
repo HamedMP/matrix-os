@@ -89,8 +89,11 @@ export function AttachmentImage({
     setResult({ src, loader: loadImage, url: "", failed: false });
     let active = true;
     let objectUrl: string | undefined;
-    void loadImage(src).then((blob) => {
+    // A loader that throws or returns something other than a Blob shows the
+    // same safe "preview unavailable" state instead of an uncaught error.
+    void Promise.resolve().then(() => loadImage(src)).then((blob) => {
       if (!active) return;
+      if (!(blob instanceof Blob)) throw new TypeError("ImagePreviewUnavailable");
       objectUrl = URL.createObjectURL(blob);
       setResult({ src, loader: loadImage, url: objectUrl, failed: false, blob });
     }).catch((error: unknown) => {
