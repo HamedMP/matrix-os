@@ -63,8 +63,10 @@ it("shows and mutates the platform-projected upstream preference only when suppl
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false} canSetUpstream
     upstreamPreference={preference} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   const choice = screen.getByRole("combobox", { name: "Matrix AI upstream" });
-  expect(choice).toHaveValue("cloudflare");
-  fireEvent.change(choice, { target: { value: "aws_bedrock" } });
+  expect(choice).toHaveAttribute("data-slot", "select-trigger");
+  expect(choice).toHaveTextContent("Cloudflare");
+  fireEvent.keyDown(choice, { key: "Enter" });
+  fireEvent.click(screen.getByRole("option", { name: "AWS Bedrock" }));
   expect(onMutate).toHaveBeenCalledWith({ type: "set_gateway_upstream", expectedUpstreamRevision: 2,
     selectedUpstream: "aws_bedrock" });
   view.unmount();

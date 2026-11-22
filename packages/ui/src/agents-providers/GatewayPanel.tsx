@@ -4,6 +4,7 @@ import { checkoutUnavailablePresentation } from "./checkout-unavailable-presenta
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../Select.js";
 import type {
   ProviderAccessSource,
   ProviderGatewayPolicy,
@@ -432,25 +433,29 @@ export function GatewayPanel({
 
           <div className="matrix-ap-policy-grid">
             {upstreamPreference ? (
-              <label className="matrix-ap-field">
+              <div className="matrix-ap-field">
                 <span>Matrix AI upstream</span>
-                <select
-                  aria-label="Matrix AI upstream"
+                <Select
                   value={upstreamPreference.selectedUpstream}
                   disabled={disabled || !canSetUpstream}
-                  onChange={(event) => onMutate({
-                    type: "set_gateway_upstream",
-                    expectedUpstreamRevision: upstreamPreference.revision,
-                    selectedUpstream: event.target.value === "aws_bedrock" ? "aws_bedrock" : "cloudflare",
-                  })}
+                  onValueChange={(selectedUpstream) => {
+                    if (selectedUpstream !== "aws_bedrock" && selectedUpstream !== "cloudflare") return;
+                    onMutate({ type: "set_gateway_upstream",
+                      expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream });
+                  }}
                 >
-                  <option value="cloudflare">Cloudflare</option>
-                  <option value="aws_bedrock">AWS Bedrock</option>
-                </select>
+                  <SelectTrigger aria-label="Matrix AI upstream">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    <SelectItem value="cloudflare">Cloudflare</SelectItem>
+                    <SelectItem value="aws_bedrock">AWS Bedrock</SelectItem>
+                  </SelectContent>
+                </Select>
                 {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
                   <span>Cloudflare remains active until the selected route is available.</span>
                 ) : null}
-              </label>
+              </div>
             ) : null}
             {canSetBudget ? (
               <>
