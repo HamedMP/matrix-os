@@ -216,6 +216,8 @@ export function registerHerdrTerminalWebSocket(options: {
         if (viewers.size >= maxViewers) { fail("capacity", "Too many viewers", 1013); return; }
         void (async () => {
           const listed = await adapter.list();
+          // A core that cannot be listed says nothing about the terminal: retry, never end.
+          if (!listed.available) throw new HerdrAdapterError("unavailable");
           const session = listed.sessions.find((candidate) => (named.id !== undefined ? candidate.id === named.id : candidate.tabId === named.tabId));
           if (!session) throw new HerdrAdapterError("not_found");
           if (closed) return;
@@ -283,7 +285,11 @@ export function registerHerdrTerminalWebSocket(options: {
           if (closed) return;
           if (error instanceof HerdrAdapterError) {
             if (error.code === "capacity") { fail("capacity", "Too many viewers", 1013); release(); return; }
-            fail(error.code === "not_found" ? "not_found" : "unavailable", "Terminal unavailable");
+            // The core is up and the terminal is not there: it ended. That is
+            // final (clients stop retrying on session_not_found); a core that
+            // cannot be reached stays retryable.
+            if (error.code === "not_found") fail("session_not_found", "Terminal ended", 1000);
+            else fail("unavailable", "Terminal unavailable", 1013);
             release();
             return;
           }
