@@ -310,10 +310,15 @@ Security implications:
   reach the machine directly. Repeat abuse suspends the owner's sharing
   entitlement without touching their local data.
 - **Revocation on unpair.** Unpair, in the same transaction that revokes the
-  credential (before any Cloudflare call), disables the machine's share links, unpublishes its sites (the
-  bucket objects are deleted by the existing site lifecycle) and ends its
-  collaboration sessions with an "owner computer removed" reason. Account
-  deletion follows the existing deletion guarantees.
+  credential (before any Cloudflare call), disables the machine's share links, unpublishes its sites (access
+  state only, as `unpublish()` does today, so viewers are cut at commit) and
+  ends its
+  collaboration sessions with an "owner computer removed" reason. A new
+  machine-scoped cleanup job then deletes the stored versions of exactly the
+  sites whose `public_sites.machine_id` is the removed machine. It never uses
+  the owner-prefix deletion from `account-lifecycle.ts`, which would also
+  remove sites from the owner's other computers. Account deletion follows the
+  existing deletion guarantees.
 | Channels, cron, bots | Available; they run locally | — |
 
 ## Requirements
@@ -511,3 +516,12 @@ Decided by Hamed on 2026-11-21 unless marked proposed.
 - Support cannot SSH in; diagnostics come from `matrix status` output the
   owner chooses to share.
 - 2701's own-account spike (S1) must land before PR 4.
+- Scope-runtime sandbox paths are hardcoded to `/home/matrix`
+  ([ENG-530](https://linear.app/matrix-os/issue/ENG-530)). Owned machines run
+  as the owner's account, so agent and build sandboxes break or fall back
+  unsafely until ENG-530 parametrises them. Blocks PR 4.
+- ENG-519 owner-account installer findings apply here too: workload roots
+  need setgid group ownership so the gateway and sandboxed workloads share
+  files without world-writable dirs, and browser use must run in the owner's
+  account session (display, keyring, Chrome profile) rather than a system
+  user. PR 4 reuses those fixes, it does not re-solve them.
