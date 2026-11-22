@@ -229,3 +229,19 @@ it.each(["routine.propose", "routine.control"] as const)("refuses %s on shared b
   expect(routines.list).not.toHaveBeenCalled();
   expect(routines.control).not.toHaveBeenCalled();
 });
+
+it.each(['github.developer', 'routine.cli'] as const)('checks Google-data egress before preparing or dispatching %s', async capability => {
+  const guard = vi.fn(async () => { throw new BotBrokerActionError('denied'); });
+  const execute = vi.fn(async () => ({ ok: true, content: [] }));
+  const github = { prepare: vi.fn(), dispatch: execute, closeRun: vi.fn() };
+  const tools = createBotToolDispatcher({ homePath: home, managedWorkspace: async () => home, authorizeExternalEgress: guard,
+    githubDeveloper: github, managedRoutine: { execute } });
+  const owned = { ...binding, kind: 'managed_chat', capabilities: [capability] } as never;
+  const request = { toolCallId: 'egress_current', capability,
+    args: capability === 'github.developer' ? { action: 'status' } : { operation: 'list' } } as never;
+  await expect(tools.prepare!(owned, request, signal)).rejects.toMatchObject({ code: 'denied' });
+  await expect(tools.dispatch(owned, request, signal)).rejects.toMatchObject({ code: 'denied' });
+  expect(guard).toHaveBeenCalledTimes(2);
+  expect(github.prepare).not.toHaveBeenCalled();
+  expect(execute).not.toHaveBeenCalled();
+});

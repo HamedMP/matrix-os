@@ -198,6 +198,8 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  /** New host capabilities must honor the same onward Google-data boundary. */
+  authorizeExternalEgress?(binding: PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
   managedRoutine?: { execute(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal): Promise<BotToolResult> };
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
@@ -346,6 +348,8 @@ export function createBotToolDispatcher(deps: {
   return {
     effectClass: (request) => request.capability === "github.developer" ? request.args.action === "status" ? "read" : ["push", "pull_request"].includes(request.args.action) ? "send" : "write" : request.capability === "routine.cli" ? (["list", "show", "request"].includes(request.args.operation) ? "read" : "write") : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      if (request.capability === "github.developer" || request.capability === "routine.cli")
+        await deps.authorizeExternalEgress?.(binding, signal);
       if (request.capability === "routine.cli") {
         if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
         return;
@@ -367,6 +371,8 @@ export function createBotToolDispatcher(deps: {
       }
     },
     async dispatch(binding, request, signal) {
+      if (request.capability === "github.developer" || request.capability === "routine.cli")
+        await deps.authorizeExternalEgress?.(binding, signal);
       if (request.capability === "routine.cli") {
         if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedRoutine.execute(binding, request.args, request.toolCallId, signal) };
