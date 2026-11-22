@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { RedirectType, redirect, usePathname, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
@@ -290,16 +290,12 @@ function BillingGateRoute({
  * journey is unavailable, the add-computer flow still renders.
  */
 function AddComputerHandoff() {
-  const router = useRouter();
   const { isLoaded, isSignedIn } = useAuth();
   const { state, status } = useJourney();
-  const firstBuildFailed = status === "ready" && state?.phase === "provisioning_failed";
-  useEffect(() => {
-    if (firstBuildFailed) router.replace("/");
-  }, [firstBuildFailed, router]);
   // Signed-out owners get the add-computer flow's own sign-in redirect.
   if (isLoaded && !isSignedIn) return <AddComputerOnboarding />;
-  if (!isLoaded || status === "loading" || firstBuildFailed) return <BillingStatusLoading />;
+  if (status === "ready" && state?.phase === "provisioning_failed") redirect("/", RedirectType.replace);
+  if (!isLoaded || status === "loading") return <BillingStatusLoading />;
   return <AddComputerOnboarding />;
 }
 

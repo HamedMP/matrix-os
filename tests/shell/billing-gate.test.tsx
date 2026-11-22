@@ -14,6 +14,7 @@ const clerkState = vi.hoisted(() => ({
 }));
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
+  redirect: vi.fn(),
 }));
 const addComputerRender = vi.hoisted(() => vi.fn());
 
@@ -79,6 +80,11 @@ async function loadBillingGate() {
 }
 
 vi.mock("next/navigation", () => ({
+  RedirectType: { push: "push", replace: "replace" },
+  redirect: (...args: unknown[]) => {
+    navigationState.redirect(...args);
+    throw new Error("NEXT_REDIRECT");
+  },
   usePathname: () => window.location.pathname,
   useRouter: () => ({
     replace: navigationState.replace,
@@ -110,6 +116,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
+    navigationState.redirect.mockReset();
     addComputerRender.mockReset();
     vi.restoreAllMocks();
   });
@@ -188,7 +195,7 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    await waitFor(() => expect(navigationState.replace).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(navigationState.redirect).toHaveBeenCalledWith("/", "replace"));
     expect(screen.queryByTestId("add-computer-onboarding")).toBeNull();
     expect(addComputerRender).not.toHaveBeenCalled();
   });
