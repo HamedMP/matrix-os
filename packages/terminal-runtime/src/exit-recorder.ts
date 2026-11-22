@@ -43,6 +43,21 @@ export class TerminalExitRecorder {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
   }
 
+  /**
+   * prepare() for service startup: a directory that cannot be made (a file in
+   * its place, a full disk) is logged, not fatal. Command launches then run
+   * without the recorder and the held-pane sweep notices their exit.
+   */
+  async prepareForStartup(): Promise<boolean> {
+    try {
+      await this.prepare();
+      return true;
+    } catch (error: unknown) {
+      console.warn("[terminal-runtime] exit directory unavailable at startup", error instanceof Error ? error.name : "unknown_error");
+      return false;
+    }
+  }
+
   /** The command to give Zellij in place of `command`. */
   wrap(zellijTabName: string, command: readonly string[]): string[] {
     return ["/bin/sh", "-c", RECORDER_SCRIPT, "matrix-exit", this.path(zellijTabName), ...command];

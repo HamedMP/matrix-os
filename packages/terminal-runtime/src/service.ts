@@ -102,7 +102,8 @@ async function main(): Promise<void> {
   const store = new TerminalWorkspaceStore({ homePath });
   // Next to the workspace state, private to the owner (spec 2706).
   const exits = new TerminalExitRecorder({ directory: join(homePath, "system", "terminal-workspaces", "exits") });
-  await exits.prepare();
+  // An unusable exit directory must not stop the service: commands then launch without it.
+  await exits.prepareForStartup();
   const runtime = new TerminalRuntime({
     store,
     exits,

@@ -281,3 +281,17 @@ describe("an unusable exit directory at launch", () => {
     expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]).toMatchObject({ status: "running", exitRecorded: false });
   });
 });
+
+// Fault detected (Greptile, #3542): an unusable exit directory at startup stopped the whole terminal service.
+describe("an unusable exit directory at startup", () => {
+  it("is logged instead of stopping the service", async () => {
+    const homePath = await tempDir();
+    const exitDirectory = join(homePath, "exits");
+    await writeFile(exitDirectory, "not a directory");
+    const exits = new TerminalExitRecorder({ directory: exitDirectory });
+    await expect(exits.prepare()).rejects.toThrow();
+    await expect(exits.prepareForStartup()).resolves.toBe(false);
+    await rm(exitDirectory);
+    await expect(exits.prepareForStartup()).resolves.toBe(true);
+  });
+});
