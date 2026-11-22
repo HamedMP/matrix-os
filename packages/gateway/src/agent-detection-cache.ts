@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 /**
@@ -87,6 +87,27 @@ export async function executableFingerprint(commands: readonly string[]): Promis
       if (!(error instanceof Error && "code" in error)) throw error;
       // Missing or unreadable: never serve a stale scan for it.
       return null;
+    }
+  }
+  return parts.join("|");
+}
+
+/**
+ * Stat identity of credential files (path, inode, size, mtime, ctime). A
+ * missing file is a distinct state, so logging in or out outside Matrix
+ * (for example `codex logout` in a Terminal tab) changes the fingerprint and
+ * a stale signed-in scan is never served.
+ */
+export async function credentialFileFingerprint(paths: readonly string[]): Promise<string | null> {
+  const parts: string[] = [];
+  for (const path of paths) {
+    try {
+      const info = await lstat(path);
+      parts.push(`${path}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`);
+    } catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error)) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+      parts.push(`${path}:absent`);
     }
   }
   return parts.join("|");

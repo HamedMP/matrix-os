@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
@@ -512,6 +512,33 @@ describe("agent-launcher", () => {
     now += 5_001;
     const after = await launcher.detectAgentCredentials();
     expect(after.agents.find(agent => agent.id === "codex")).toMatchObject({ authState: "ok" });
+  });
+
+  it("never serves a stale signed-in scan after the credential files change outside Matrix", async () => {
+    const home = await mkdtemp(join(tmpdir(), "matrix-cred-home-"));
+    try {
+      await mkdir(join(home, ".codex"), { recursive: true });
+      await writeFile(join(home, ".codex", "auth.json"), "{}", { mode: 0o600 });
+      vi.stubEnv("CODEX_HOME", join(home, ".codex"));
+      let now = 1_000;
+      const runCommand = vi.fn(async (_command: string, args: string[]) => ({
+        stdout: args[0] === "--version" ? `codex-cli ${CODEX_VERIFIED_VERSION}\n` : "Logged in using ChatGPT\n", stderr: "",
+      }));
+      const launcher = createAgentLauncher({ runCommand, now: () => now, runtimeHome: home });
+      const first = await launcher.detectAgentCredentials();
+      now += 5_001;
+      // Unchanged credential files: the recent scan answers at once.
+      expect(await launcher.detectAgentCredentials()).toBe(first);
+      await vi.waitFor(() => expect(runCommand.mock.calls.length).toBeGreaterThan(4));
+      await new Promise(resolve => setImmediate(resolve));
+      const refreshed = await launcher.detectAgentCredentials();
+      now += 5_001;
+      await rm(join(home, ".codex", "auth.json")); // `codex logout` in a Terminal tab
+      const calls = runCommand.mock.calls.length;
+      const afterLogout = await launcher.detectAgentCredentials();
+      expect(afterLogout).not.toBe(refreshed);
+      expect(runCommand.mock.calls.length).toBeGreaterThan(calls);
+    } finally { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
 
   it("serves recent credential probes stale but never across an executable change", async () => {

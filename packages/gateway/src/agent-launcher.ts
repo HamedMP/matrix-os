@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -10,7 +10,8 @@ import {
   type AgentModelOption,
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
-import { createDetectionCache, executableFingerprint } from "./agent-detection-cache.js";
+import { createDetectionCache, credentialFileFingerprint, executableFingerprint } from "./agent-detection-cache.js";
+import { homedir } from "node:os";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
@@ -635,10 +636,21 @@ export function createAgentLauncher(options: {
     now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
     fingerprint: probedExecutables, label: "installation probe",
   });
+  const credentialFiles = () => {
+    const home = detectEnv.HOME ?? process.env.HOME ?? homedir();
+    return [join(codexHome ?? join(home, ".codex"), "auth.json"), join(home, ".claude", ".credentials.json"), join(home, ".claude.json")];
+  };
   const credentialScans = createDetectionCache<DetectionResult>({
     scan: () => Promise.all([probeCredentials("claude"), probeCredentials("codex")]).then((agents) => ({ agents })),
     now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
-    fingerprint: () => executableFingerprint([commandFor("claude"), commandFor("codex")]), label: "credential probe",
+    // Executables plus credential files: never serve a stale "signed in" after a logout outside Matrix.
+    fingerprint: async () => {
+      const [executables, credentials] = await Promise.all([
+        executableFingerprint([commandFor("claude"), commandFor("codex")]), credentialFileFingerprint(credentialFiles()),
+      ]);
+      return executables === null || credentials === null ? null : `${executables}#${credentials}`;
+    },
+    label: "credential probe",
   });
 
   async function detectAgentInstallations(): Promise<DetectionResult> {
