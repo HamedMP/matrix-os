@@ -50,7 +50,7 @@ export function createOwnedMachinesRuntime(deps: {
   let worker: OwnedTunnelWorker | undefined;
   if (config && cloudflare && deps.backgroundWorkersEnabled) {
     worker = startOwnedTunnelWorker({
-      db: deps.db, cloudflare, hostSuffix: config.hostSuffix, ingressService: config.ingressService,
+      db: deps.db, cloudflare, hostSuffix: config.hostSuffix, hostPrefix: config.hostPrefix, ingressService: config.ingressService,
       log: (message, err) => deps.log(message, err),
     });
   }

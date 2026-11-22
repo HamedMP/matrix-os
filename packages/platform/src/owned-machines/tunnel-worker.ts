@@ -22,8 +22,16 @@ const ORPHAN_SCAN_PAGES = 20;
 const ORPHAN_PAGE_SIZE = 50;
 export const OWNED_TUNNEL_NAME_PREFIX = 'matrix-owned-';
 
-export function ownedTunnelName(machineId: string): string {
-  return `${OWNED_TUNNEL_NAME_PREFIX}${machineId}`;
+/**
+ * Tunnel names carry the host prefix, so environments sharing one Cloudflare
+ * account (preview and production) never adopt or reconcile each other's tunnels.
+ */
+export function ownedTunnelNamePrefix(hostPrefix = ''): string {
+  return `${hostPrefix}${OWNED_TUNNEL_NAME_PREFIX}`;
+}
+
+export function ownedTunnelName(machineId: string, hostPrefix = ''): string {
+  return `${ownedTunnelNamePrefix(hostPrefix)}${machineId}`;
 }
 
 function backoffMs(attempts: number): number {
@@ -34,6 +42,7 @@ export interface OwnedTunnelWorkerDeps {
   db: PlatformDB;
   cloudflare: OwnedCloudflareClient;
   hostSuffix: string;
+  hostPrefix?: string;
   ingressService: string;
   now?: () => Date;
   log?: (message: string, err?: unknown) => void;
@@ -45,14 +54,14 @@ function describe(err: unknown): string {
 }
 
 async function createTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkItem): Promise<void> {
-  const name = ownedTunnelName(item.machineId);
+  const name = ownedTunnelName(item.machineId, deps.hostPrefix);
   let tunnelId = item.tunnelId;
   let hostname = item.tunnelHostname;
   if (!tunnelId || !hostname) {
     const existing = await deps.cloudflare.findTunnelByName(name);
     const tunnel = existing ?? await deps.cloudflare.createTunnel(name);
     tunnelId = tunnel.id;
-    hostname = `${randomBytes(8).toString('hex')}.${deps.hostSuffix}`;
+    hostname = `${deps.hostPrefix ?? ''}${randomBytes(8).toString('hex')}.${deps.hostSuffix}`;
     if (!(await recordOwnedTunnelCreated(deps.db, { machineId: item.machineId, tunnelId, tunnelHostname: hostname }))) {
       // Revoked while creating: the reconciler deletes the unreferenced tunnel.
       return;
@@ -101,12 +110,15 @@ export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps): 
     offlineBefore: new Date(now.getTime() - OWNED_TUNNEL_RECLAIM_AFTER_MS), now, limit: 100,
   });
   await purgeExpiredOwnedEnrollments(deps.db, new Date(now.getTime() - 2 * 86_400_000), 500);
+  const namePrefix = ownedTunnelNamePrefix(deps.hostPrefix);
   for (let page = 1; page <= ORPHAN_SCAN_PAGES; page += 1) {
     const tunnels = await deps.cloudflare.listTunnelsPage(page, ORPHAN_PAGE_SIZE);
     for (const tunnel of tunnels) {
-      if (!tunnel.name.startsWith(OWNED_TUNNEL_NAME_PREFIX)) continue;
+      if (!tunnel.name.startsWith(namePrefix)) continue;
       if (!tunnel.createdAt || now.getTime() - tunnel.createdAt.getTime() < ORPHAN_MIN_AGE_MS) continue;
-      const machineId = tunnel.name.slice(OWNED_TUNNEL_NAME_PREFIX.length);
+      const machineId = tunnel.name.slice(namePrefix.length);
+      // A production reconciler must not treat a prefixed preview tunnel as its own orphan.
+      if (!/^[0-9a-f-]{36}$/.test(machineId)) continue;
       const link = await getOwnedMachineLink(deps.db, machineId);
       const referenced = link && !link.revokedAt && link.tunnelId === tunnel.id;
       if (referenced || (link && link.tunnelState === 'pending' && !link.tunnelId)) continue;

@@ -6,7 +6,7 @@ import type { OwnedMachinesConfig } from '../../packages/platform/src/owned-mach
 import { createOwnedMachineRoutes } from '../../packages/platform/src/owned-machines/machine-routes.js';
 import { createOwnedOwnerRoutes } from '../../packages/platform/src/owned-machines/owner-routes.js';
 import { getOwnedMachineLink } from '../../packages/platform/src/owned-machines/repository.js';
-import { runOwnedTunnelWorkPass } from '../../packages/platform/src/owned-machines/tunnel-worker.js';
+import { runOwnedTunnelReconcilePass, runOwnedTunnelWorkPass } from '../../packages/platform/src/owned-machines/tunnel-worker.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
@@ -14,6 +14,7 @@ const SECRET = 's'.repeat(48);
 const CONFIG: OwnedMachinesConfig = {
   cloudflare: { apiBase: 'https://cf.test', accountId: 'a'.repeat(32), zoneId: 'b'.repeat(32), apiToken: 't'.repeat(40) },
   hostSuffix: 'm.example.net',
+  hostPrefix: '',
   ingressService: 'http://127.0.0.1:8790',
   access: { clientId: 'client-id-1', clientSecret: 'client-secret-123456' },
   publicUrl: 'https://app.example.com',
@@ -207,5 +208,25 @@ describe('owned machine enrollment and machine routes', () => {
     const app = buildApp(db, fakeCloudflare().client, null);
     expect((await app.request('/api/machines/enroll/start', json(REPORT))).status).toBe(503);
     expect((await app.request('/api/auth/owned-computers', { headers: { authorization: 'Bearer owner-token' } })).status).toBe(503);
+  });
+
+  it('names preview tunnels with the host prefix and never reconciles another environment\'s tunnels', async () => {
+    const cf = fakeCloudflare();
+    const app = buildApp(db, cf.client);
+    await enrollAndApprove(app);
+    const deps = { db, cloudflare: cf.client, hostSuffix: 'example.com', hostPrefix: 'eng524-preview-', ingressService: CONFIG.ingressService, now };
+    await runOwnedTunnelWorkPass(deps);
+    const [created] = [...cf.tunnels.values()];
+    expect(created?.name).toMatch(/^eng524-preview-matrix-owned-[0-9a-f-]{36}$/);
+    expect(cf.calls.find((call) => call.startsWith('config:'))).toMatch(/^config:eng524-preview-[0-9a-f]{16}\.example\.com:/);
+    const prodId = '00000000-0000-4000-8000-999999999999';
+    const orphanId = '00000000-0000-4000-8000-888888888888';
+    cf.tunnels.set(prodId, { id: prodId, name: 'matrix-owned-11111111-1111-4111-8111-111111111111' });
+    cf.tunnels.set(orphanId, { id: orphanId, name: 'eng524-preview-matrix-owned-22222222-2222-4222-8222-222222222222' });
+    cf.client.listTunnelsPage = async () => [...cf.tunnels.values()].map((t) => ({ ...t, createdAt: new Date(0) }));
+    await runOwnedTunnelReconcilePass(deps);
+    expect(cf.tunnels.has(prodId)).toBe(true);
+    expect(cf.tunnels.has(orphanId)).toBe(false);
+    expect(cf.tunnels.has(created!.id)).toBe(true);
   });
 });

@@ -10,9 +10,12 @@ export interface OwnedMachinesConfig {
     zoneId: string;
     apiToken: string;
   };
+  /** Origin hostnames are `${hostPrefix}${16 hex}.${hostSuffix}`: one label, so the zone's edge certificate covers them. */
   hostSuffix: string;
+  hostPrefix: string;
   ingressService: string;
-  access: { clientId: string; clientSecret: string };
+  /** Optional Cloudflare Access service token; the machine's own bearer protects the origin either way. */
+  access: { clientId: string; clientSecret: string } | null;
   publicUrl: string;
   platformInternalUrl: string;
   platformSecret: string;
@@ -24,15 +27,18 @@ export interface OwnedMachinesConfig {
 
 const EnvSchema = z.object({
   MATRIX_OWNED_MACHINES_ENABLED: z.literal('true'),
-  MATRIX_OWNED_CF_ACCOUNT_ID: z.string().regex(CF_ID),
-  MATRIX_OWNED_CF_ZONE_ID: z.string().regex(CF_ID),
-  MATRIX_OWNED_CF_API_TOKEN: z.string().min(20).max(256).regex(/^[A-Za-z0-9_-]+$/),
+  CLOUDFLARE_ACCOUNT_ID: z.string().regex(CF_ID),
+  CLOUDFLARE_TUNNEL_ZONE_ID: z.string().regex(CF_ID),
+  CLOUDFLARE_TUNNEL_API_TOKEN: z.string().min(20).max(256).regex(/^[A-Za-z0-9_-]+$/),
   MATRIX_OWNED_CF_API_BASE: z.url().optional(),
   MATRIX_OWNED_HOST_SUFFIX: z.string().toLowerCase().regex(HOST_SUFFIX),
+  MATRIX_OWNED_HOST_PREFIX: z.string().regex(/^[a-z][a-z0-9-]{0,39}-$/).optional(),
   MATRIX_OWNED_INGRESS_SERVICE: z.string().regex(/^http:\/\/127\.0\.0\.1:[0-9]{2,5}$/).optional(),
-  MATRIX_OWNED_ACCESS_CLIENT_ID: z.string().min(8).max(256).regex(/^[A-Za-z0-9._-]+$/),
-  MATRIX_OWNED_ACCESS_CLIENT_SECRET: z.string().min(16).max(256).regex(/^[A-Za-z0-9._-]+$/),
+  MATRIX_OWNED_ACCESS_CLIENT_ID: z.string().min(8).max(256).regex(/^[A-Za-z0-9._-]+$/).optional(),
+  MATRIX_OWNED_ACCESS_CLIENT_SECRET: z.string().min(16).max(256).regex(/^[A-Za-z0-9._-]+$/).optional(),
   MATRIX_OWNED_UPDATE_CHANNEL: z.enum(['dev', 'canary', 'beta', 'stable']).optional(),
+}).refine((env) => Boolean(env.MATRIX_OWNED_ACCESS_CLIENT_ID) === Boolean(env.MATRIX_OWNED_ACCESS_CLIENT_SECRET), {
+  path: ['MATRIX_OWNED_ACCESS_CLIENT_SECRET'],
 });
 
 export type OwnedMachinesConfigResult =
@@ -61,13 +67,16 @@ export function loadOwnedMachinesConfig(env: NodeJS.ProcessEnv, base: {
     config: {
       cloudflare: {
         apiBase: (e.MATRIX_OWNED_CF_API_BASE ?? 'https://api.cloudflare.com/client/v4').replace(/\/$/, ''),
-        accountId: e.MATRIX_OWNED_CF_ACCOUNT_ID,
-        zoneId: e.MATRIX_OWNED_CF_ZONE_ID,
-        apiToken: e.MATRIX_OWNED_CF_API_TOKEN,
+        accountId: e.CLOUDFLARE_ACCOUNT_ID,
+        zoneId: e.CLOUDFLARE_TUNNEL_ZONE_ID,
+        apiToken: e.CLOUDFLARE_TUNNEL_API_TOKEN,
       },
       hostSuffix: e.MATRIX_OWNED_HOST_SUFFIX,
+      hostPrefix: e.MATRIX_OWNED_HOST_PREFIX ?? '',
       ingressService: e.MATRIX_OWNED_INGRESS_SERVICE ?? 'http://127.0.0.1:8790',
-      access: { clientId: e.MATRIX_OWNED_ACCESS_CLIENT_ID, clientSecret: e.MATRIX_OWNED_ACCESS_CLIENT_SECRET },
+      access: e.MATRIX_OWNED_ACCESS_CLIENT_ID && e.MATRIX_OWNED_ACCESS_CLIENT_SECRET
+        ? { clientId: e.MATRIX_OWNED_ACCESS_CLIENT_ID, clientSecret: e.MATRIX_OWNED_ACCESS_CLIENT_SECRET }
+        : null,
       publicUrl: base.publicUrl.replace(/\/$/, ''),
       platformInternalUrl: base.platformInternalUrl.replace(/\/$/, ''),
       platformSecret: base.platformSecret,

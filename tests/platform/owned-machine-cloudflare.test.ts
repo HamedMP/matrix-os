@@ -56,8 +56,8 @@ describe('owned machine config', () => {
   const base = { publicUrl: 'https://app.example.com/', platformInternalUrl: 'https://p.example.com', platformSecret: 'x'.repeat(40),
     fundedAiEnabled: false, fundedAiRelayUrl: '', platformSpeechEnabled: false };
   const env = {
-    MATRIX_OWNED_MACHINES_ENABLED: 'true', MATRIX_OWNED_CF_ACCOUNT_ID: 'a'.repeat(32), MATRIX_OWNED_CF_ZONE_ID: 'b'.repeat(32),
-    MATRIX_OWNED_CF_API_TOKEN: 't'.repeat(40), MATRIX_OWNED_HOST_SUFFIX: 'm.example.net',
+    MATRIX_OWNED_MACHINES_ENABLED: 'true', CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_TUNNEL_ZONE_ID: 'b'.repeat(32),
+    CLOUDFLARE_TUNNEL_API_TOKEN: 't'.repeat(40), MATRIX_OWNED_HOST_SUFFIX: 'm.example.net',
     MATRIX_OWNED_ACCESS_CLIENT_ID: 'client-id-1', MATRIX_OWNED_ACCESS_CLIENT_SECRET: 'client-secret-123456',
   };
 
@@ -66,8 +66,16 @@ describe('owned machine config', () => {
   });
 
   it('reports which settings are missing without echoing values', () => {
-    const result = loadOwnedMachinesConfig({ ...env, MATRIX_OWNED_CF_API_TOKEN: undefined }, base);
-    expect(result).toEqual({ status: 'misconfigured', missing: ['MATRIX_OWNED_CF_API_TOKEN'] });
+    const result = loadOwnedMachinesConfig({ ...env, CLOUDFLARE_TUNNEL_API_TOKEN: undefined }, base);
+    expect(result).toEqual({ status: 'misconfigured', missing: ['CLOUDFLARE_TUNNEL_API_TOKEN'] });
+  });
+
+  it('treats the Access service token as optional but all-or-nothing', () => {
+    const { MATRIX_OWNED_ACCESS_CLIENT_ID: _id, MATRIX_OWNED_ACCESS_CLIENT_SECRET: _secret, ...withoutAccess } = env;
+    const result = loadOwnedMachinesConfig({ ...withoutAccess, MATRIX_OWNED_HOST_PREFIX: 'eng524-preview-' }, base);
+    expect(result.status === 'ready' && result.config.access).toBeNull();
+    expect(result.status === 'ready' && result.config.hostPrefix).toBe('eng524-preview-');
+    expect(loadOwnedMachinesConfig({ ...withoutAccess, MATRIX_OWNED_ACCESS_CLIENT_ID: 'client-id-1' }, base).status).toBe('misconfigured');
   });
 
   it('defaults the ingress to the loopback tunnel server', () => {
