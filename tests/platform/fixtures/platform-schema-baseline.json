@@ -561,6 +561,7 @@
     {"table_name":"owned_machine_links","column_name":"tunnel_hostname","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"owned_machine_links","column_name":"tunnel_attempts","data_type":"integer","is_nullable":"NO","column_default":"0","character_maximum_length":null,"numeric_precision":32,"numeric_scale":0},
     {"table_name":"owned_machine_links","column_name":"tunnel_next_attempt_at","data_type":"timestamp with time zone","is_nullable":"NO","column_default":"now()","character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
+    {"table_name":"owned_machine_links","column_name":"tunnel_claim_id","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"owned_machine_links","column_name":"reported_hostname","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"owned_machine_links","column_name":"reported_os","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"owned_machine_links","column_name":"reported_arch","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},

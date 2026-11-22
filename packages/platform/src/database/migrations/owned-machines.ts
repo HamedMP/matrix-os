@@ -57,6 +57,7 @@ export async function migrateOwnedMachines(db: PlatformMigrationExecutor): Promi
       tunnel_hostname TEXT UNIQUE,
       tunnel_attempts INTEGER NOT NULL DEFAULT 0 CHECK (tunnel_attempts >= 0),
       tunnel_next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      tunnel_claim_id TEXT,
       reported_hostname TEXT,
       reported_os TEXT,
       reported_arch TEXT CHECK (reported_arch IS NULL OR reported_arch IN ('x86_64', 'arm64')),

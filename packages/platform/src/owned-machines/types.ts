@@ -15,6 +15,7 @@ export interface OwnedMachineLinksTable {
   tunnel_hostname: string | null;
   tunnel_attempts: Generated<number>;
   tunnel_next_attempt_at: Timestamp;
+  tunnel_claim_id: string | null;
   reported_hostname: string | null;
   reported_os: string | null;
   reported_arch: 'x86_64' | 'arm64' | null;

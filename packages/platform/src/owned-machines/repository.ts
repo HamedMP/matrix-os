@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   OWNED_MACHINE_HEARTBEAT_FRESH_MS,
@@ -13,6 +14,8 @@ import type { OwnedTunnelState } from './types.js';
 export const OWNED_ENROLLMENTS_PER_SOURCE_PER_HOUR = 5;
 export const OWNED_ENROLLMENTS_PER_OWNER_PER_DAY = 5;
 export const OWNED_PENDING_ENROLLMENTS_MAX = 1_000;
+/** After approval the machine has this long to collect its credentials, or the approval lapses. */
+export const OWNED_DELIVERY_WINDOW_MS = 15 * 60_000;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
@@ -30,9 +33,11 @@ export async function createOwnedEnrollment(db: PlatformDB, input: {
   sourceKey: string;
   now: Date;
   expiresAt: Date;
+  pendingCap?: number;
 }): Promise<CreateEnrollmentResult> {
   return db.transaction(async (trx) => {
-    await advisoryLock(trx, `owned-enroll-source:${input.sourceKey}`);
+    // One global lock: the pending cap and the per-source rate are both read-then-insert.
+    await advisoryLock(trx, 'owned-enroll-start');
     const recent = await trx.executor.selectFrom('owned_machine_enrollments')
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('source_key', '=', input.sourceKey)
@@ -44,7 +49,7 @@ export async function createOwnedEnrollment(db: PlatformDB, input: {
       .where('status', '=', 'pending')
       .where('expires_at', '>', input.now)
       .executeTakeFirstOrThrow();
-    if (Number(pending.count) >= OWNED_PENDING_ENROLLMENTS_MAX) return 'capacity';
+    if (Number(pending.count) >= (input.pendingCap ?? OWNED_PENDING_ENROLLMENTS_MAX)) return 'capacity';
     const inserted = await trx.executor.insertInto('owned_machine_enrollments').values({
       enrollment_id: input.enrollmentId,
       device_code_hash: input.deviceCodeHash,
@@ -153,7 +158,10 @@ export async function approveOwnedEnrollment(db: PlatformDB, input: {
       revoked_at: null,
     }).execute();
     await trx.executor.updateTable('owned_machine_enrollments')
-      .set({ status: 'approved', clerk_user_id: input.clerkUserId, machine_id: input.machineId, approved_at: input.now })
+      .set({
+        status: 'approved', clerk_user_id: input.clerkUserId, machine_id: input.machineId, approved_at: input.now,
+        expires_at: new Date(input.now.getTime() + OWNED_DELIVERY_WINDOW_MS),
+      })
       .where('enrollment_id', '=', enrollment.enrollment_id).execute();
     return { ok: true, machine: mapUserMachine(machineRow) };
   });
@@ -171,9 +179,11 @@ export async function pollOwnedEnrollment(
       .where('device_code_hash', '=', deviceCodeHash).forUpdate().executeTakeFirst();
     if (!row || row.status === 'delivered' || row.status === 'expired') return { status: 'expired' };
     if (row.status === 'denied') return { status: 'denied' };
-    if (row.status === 'pending' && new Date(row.expires_at).getTime() <= now.getTime()) {
+    if (new Date(row.expires_at).getTime() <= now.getTime()) {
       await trx.executor.updateTable('owned_machine_enrollments').set({ status: 'expired' })
         .where('enrollment_id', '=', row.enrollment_id).execute();
+      // An approval nobody collected must not hold one of the owner's three slots.
+      if (row.status === 'approved' && row.machine_id) await lapseUndeliveredMachine(trx, row.machine_id, now);
       return { status: 'expired' };
     }
     const tooFast = row.last_polled_at && now.getTime() - new Date(row.last_polled_at).getTime() < minIntervalMs;
@@ -193,9 +203,39 @@ export async function markOwnedEnrollmentDelivered(db: PlatformDB, enrollmentId:
   await db.ready;
   const result = await db.executor.updateTable('owned_machine_enrollments')
     .set({ status: 'delivered', delivered_at: now })
-    .where('enrollment_id', '=', enrollmentId).where('status', '=', 'approved')
+    .where('enrollment_id', '=', enrollmentId).where('status', '=', 'approved').where('expires_at', '>', now)
     .returning('machine_id').executeTakeFirst();
   return Boolean(result);
+}
+
+async function lapseUndeliveredMachine(trx: PlatformDB, machineId: string, now: Date): Promise<void> {
+  const link = await trx.executor.updateTable('owned_machine_links')
+    .set({
+      revoked_at: now,
+      tunnel_state: sql<OwnedTunnelState>`CASE WHEN tunnel_id IS NULL THEN 'deleted' ELSE 'deleting' END`,
+      tunnel_next_attempt_at: now, tunnel_attempts: 0, tunnel_claim_id: null,
+    })
+    .where('machine_id', '=', machineId).where('revoked_at', 'is', null)
+    .returning('machine_id').executeTakeFirst();
+  if (!link) return;
+  await trx.executor.updateTable('user_machines').set({
+    status: 'deleted', deleted_at: now.toISOString(), runtime_token_epoch: sql`runtime_token_epoch + 1`,
+  }).where('machine_id', '=', machineId).where('substrate', '=', 'owned').where('deleted_at', 'is', null).execute();
+}
+
+/** Sweeps approvals whose machine never collected its credentials. */
+export async function lapseUndeliveredOwnedEnrollments(db: PlatformDB, now: Date, limit: number): Promise<number> {
+  return db.transaction(async (trx) => {
+    const rows = await trx.executor.selectFrom('owned_machine_enrollments').select(['enrollment_id', 'machine_id'])
+      .where('status', '=', 'approved').where('expires_at', '<=', now)
+      .orderBy('expires_at').limit(limit).forUpdate().skipLocked().execute();
+    for (const row of rows) {
+      await trx.executor.updateTable('owned_machine_enrollments').set({ status: 'expired' })
+        .where('enrollment_id', '=', row.enrollment_id).execute();
+      if (row.machine_id) await lapseUndeliveredMachine(trx, row.machine_id, now);
+    }
+    return rows.length;
+  });
 }
 
 export interface OwnedMachineLink {
@@ -365,6 +405,7 @@ export async function revokeOwnedMachine(db: PlatformDB, input: {
       tunnel_state: link.tunnel_id ? 'deleting' : 'deleted',
       tunnel_attempts: 0,
       tunnel_next_attempt_at: input.now,
+      tunnel_claim_id: null,
     }).where('machine_id', '=', input.machineId).execute();
     const machine = await trx.executor.updateTable('user_machines').set({
       status: 'deleted',
@@ -387,9 +428,18 @@ export interface OwnedTunnelWorkItem {
   tunnelHostname: string | null;
   revoked: boolean;
   attempts: number;
+  /** Identifies this lease. Every write requires it and an unexpired lease. */
+  claimId: string;
 }
 
-/** Leases due tunnel work. A crashed worker's lease expires and the item is picked up again. */
+/** A worker's proof that it still owns an item: its claim id and the current time. */
+export interface OwnedTunnelClaim { claimId: string; now: Date }
+
+/**
+ * Leases due tunnel work, one claim id per item. A crashed or slow worker's
+ * lease expires and the item is claimed again under a new id; the old
+ * worker's later writes then match nothing.
+ */
 export async function claimOwnedTunnelWork(db: PlatformDB, input: {
   now: Date; limit: number; leaseMs: number;
 }): Promise<OwnedTunnelWorkItem[]> {
@@ -400,64 +450,79 @@ export async function claimOwnedTunnelWork(db: PlatformDB, input: {
       .where('tunnel_next_attempt_at', '<=', input.now)
       .orderBy('tunnel_next_attempt_at').limit(input.limit)
       .forUpdate().skipLocked().execute();
-    if (rows.length === 0) return [];
-    await trx.executor.updateTable('owned_machine_links')
-      .set({ tunnel_next_attempt_at: new Date(input.now.getTime() + input.leaseMs), tunnel_attempts: sql`tunnel_attempts + 1` })
-      .where('machine_id', 'in', rows.map((row) => row.machine_id)).execute();
-    return rows.map((row) => ({
-      machineId: row.machine_id,
-      clerkUserId: row.clerk_user_id,
-      tunnelState: row.tunnel_state as 'pending' | 'deleting',
-      tunnelId: row.tunnel_id,
-      tunnelHostname: row.tunnel_hostname,
-      revoked: Boolean(row.revoked_at),
-      attempts: row.tunnel_attempts + 1,
-    }));
+    const items: OwnedTunnelWorkItem[] = [];
+    for (const row of rows) {
+      const claimId = randomUUID();
+      await trx.executor.updateTable('owned_machine_links')
+        .set({
+          tunnel_next_attempt_at: new Date(input.now.getTime() + input.leaseMs),
+          tunnel_attempts: sql`tunnel_attempts + 1`,
+          tunnel_claim_id: claimId,
+        })
+        .where('machine_id', '=', row.machine_id).execute();
+      items.push({
+        machineId: row.machine_id,
+        clerkUserId: row.clerk_user_id,
+        tunnelState: row.tunnel_state as 'pending' | 'deleting',
+        tunnelId: row.tunnel_id,
+        tunnelHostname: row.tunnel_hostname,
+        revoked: Boolean(row.revoked_at),
+        attempts: row.tunnel_attempts + 1,
+        claimId,
+      });
+    }
+    return items;
   });
 }
 
 /** Records the provider tunnel before configuration, so a crash can be adopted or cleaned up. */
 export async function recordOwnedTunnelCreated(db: PlatformDB, input: {
-  machineId: string; tunnelId: string; tunnelHostname: string;
+  machineId: string; tunnelId: string; tunnelHostname: string; claim: OwnedTunnelClaim;
 }): Promise<boolean> {
   await db.ready;
   const result = await db.executor.updateTable('owned_machine_links')
     .set({ tunnel_id: input.tunnelId, tunnel_hostname: input.tunnelHostname })
     .where('machine_id', '=', input.machineId).where('tunnel_state', '=', 'pending').where('revoked_at', 'is', null)
+    .where('tunnel_id', 'is', null)
+    .where('tunnel_claim_id', '=', input.claim.claimId).where('tunnel_next_attempt_at', '>', input.claim.now)
     .returning('machine_id').executeTakeFirst();
   return Boolean(result);
 }
 
-export async function markOwnedTunnelReady(db: PlatformDB, machineId: string): Promise<boolean> {
+export async function markOwnedTunnelReady(db: PlatformDB, machineId: string, claim: OwnedTunnelClaim): Promise<boolean> {
   await db.ready;
   const result = await db.executor.updateTable('owned_machine_links')
-    .set({ tunnel_state: 'ready', tunnel_attempts: 0 })
+    .set({ tunnel_state: 'ready', tunnel_attempts: 0, tunnel_claim_id: null })
     .where('machine_id', '=', machineId).where('tunnel_state', '=', 'pending').where('revoked_at', 'is', null)
     .where('tunnel_id', 'is not', null)
+    .where('tunnel_claim_id', '=', claim.claimId).where('tunnel_next_attempt_at', '>', claim.now)
     .returning('machine_id').executeTakeFirst();
   return Boolean(result);
 }
 
-export async function markOwnedTunnelDeleted(db: PlatformDB, machineId: string): Promise<void> {
+export async function markOwnedTunnelDeleted(db: PlatformDB, machineId: string, claim: OwnedTunnelClaim): Promise<void> {
   await db.ready;
   await db.executor.updateTable('owned_machine_links')
     .set({
       tunnel_state: sql`CASE WHEN revoked_at IS NULL THEN 'reclaimed' ELSE 'deleted' END`,
-      tunnel_id: null, tunnel_hostname: null, tunnel_attempts: 0,
+      tunnel_id: null, tunnel_hostname: null, tunnel_attempts: 0, tunnel_claim_id: null,
     })
-    .where('machine_id', '=', machineId).where('tunnel_state', '=', 'deleting').execute();
+    .where('machine_id', '=', machineId).where('tunnel_state', '=', 'deleting')
+    .where('tunnel_claim_id', '=', claim.claimId).where('tunnel_next_attempt_at', '>', claim.now)
+    .execute();
 }
 
 export async function deferOwnedTunnelWork(db: PlatformDB, input: {
-  machineId: string; nextAttemptAt: Date; failed: boolean;
+  machineId: string; nextAttemptAt: Date; failed: boolean; claim: OwnedTunnelClaim;
 }): Promise<void> {
   await db.ready;
   await db.executor.updateTable('owned_machine_links')
     .set({
       tunnel_next_attempt_at: input.nextAttemptAt,
+      tunnel_claim_id: null,
       ...(input.failed ? { tunnel_state: sql`CASE WHEN tunnel_state = 'pending' THEN 'failed' ELSE tunnel_state END` } : {}),
     })
-    .where('machine_id', '=', input.machineId).execute();
+    .where('machine_id', '=', input.machineId).where('tunnel_claim_id', '=', input.claim.claimId).execute();
 }
 
 /** Machines offline past the reclaim window give their tunnel back; reconnect reissues it. */
@@ -466,7 +531,8 @@ export async function queueStaleOwnedTunnelReclaim(db: PlatformDB, input: {
 }): Promise<number> {
   await db.ready;
   const result = await sql<{ machine_id: string }>`
-    UPDATE owned_machine_links SET tunnel_state = 'deleting', tunnel_attempts = 0, tunnel_next_attempt_at = ${input.now}
+    UPDATE owned_machine_links SET tunnel_state = 'deleting', tunnel_attempts = 0, tunnel_next_attempt_at = ${input.now},
+      tunnel_claim_id = NULL
     WHERE machine_id IN (
       SELECT machine_id FROM owned_machine_links
       WHERE tunnel_state = 'ready' AND revoked_at IS NULL
@@ -482,7 +548,7 @@ export async function queueStaleOwnedTunnelReclaim(db: PlatformDB, input: {
 export async function requestOwnedTunnelReissue(db: PlatformDB, machineId: string, now: Date): Promise<boolean> {
   await db.ready;
   const result = await db.executor.updateTable('owned_machine_links')
-    .set({ tunnel_state: 'pending', tunnel_attempts: 0, tunnel_next_attempt_at: now })
+    .set({ tunnel_state: 'pending', tunnel_attempts: 0, tunnel_next_attempt_at: now, tunnel_claim_id: null })
     .where('machine_id', '=', machineId).where('tunnel_state', 'in', ['reclaimed', 'failed'])
     .where('revoked_at', 'is', null)
     .returning('machine_id').executeTakeFirst();

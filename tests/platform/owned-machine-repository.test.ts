@@ -11,6 +11,7 @@ import {
   claimOwnedTunnelWork,
   createOwnedEnrollment,
   getOwnedMachineLink,
+  lapseUndeliveredOwnedEnrollments,
   listOwnedMachineLinks,
   markOwnedEnrollmentDelivered,
   markOwnedTunnelDeleted,
@@ -54,6 +55,20 @@ async function approve(db: PlatformDB, userCode: string, owner = 'user_1', now =
     userCode, clerkUserId: owner, handle: 'alice', name: 'Lab', machineId: randomUUID(),
     runtimeSlot: `owned-${randomUUID().slice(0, 8)}`, now, isHandleAvailable: async () => true,
   });
+}
+
+async function provisionTunnel(db: PlatformDB, machineId: string, tunnelId: string, host: string, now = NOW) {
+  const [item] = await claimOwnedTunnelWork(db, { now, limit: 1, leaseMs: 60_000 });
+  expect(item?.machineId).toBe(machineId);
+  const claim = { claimId: item!.claimId, now };
+  expect(await recordOwnedTunnelCreated(db, { machineId, tunnelId, tunnelHostname: host, claim })).toBe(true);
+  expect(await markOwnedTunnelReady(db, machineId, claim)).toBe(true);
+}
+
+async function finishDelete(db: PlatformDB, machineId: string, now = NOW) {
+  const [item] = await claimOwnedTunnelWork(db, { now, limit: 1, leaseMs: 60_000 });
+  expect(item).toMatchObject({ machineId, tunnelState: 'deleting' });
+  await markOwnedTunnelDeleted(db, machineId, { claimId: item!.claimId, now });
 }
 
 describe('owned machine repository', () => {
@@ -102,8 +117,7 @@ describe('owned machine repository', () => {
     const approved = await approve(db, (await enroll(db)).userCode);
     if (!approved.ok) throw new Error('approve failed');
     const machineId = approved.machine.machineId;
-    await recordOwnedTunnelCreated(db, { machineId, tunnelId: 't-1', tunnelHostname: 'abc.m.example.net' });
-    expect(await markOwnedTunnelReady(db, machineId)).toBe(true);
+    await provisionTunnel(db, machineId, 't-1', 'abc.m.example.net');
     const beat = await recordOwnedHeartbeat(db, { machineId, epoch: 1, agentVersion: '1.0.1', now: NOW, debounceMs: 30_000 });
     expect(beat?.machine.status).toBe('running');
     expect(toOwnedComputerSummary(beat!, NOW).status).toBe('online');
@@ -127,7 +141,7 @@ describe('owned machine repository', () => {
     expect(await revokeOwnedMachine(db, { machineId, now: NOW })).toBe(false);
     const work = await claimOwnedTunnelWork(db, { now: NOW, limit: 10, leaseMs: 60_000 });
     expect(work).toMatchObject([{ machineId, tunnelState: 'deleting', revoked: true, tunnelId: 't-1' }]);
-    await markOwnedTunnelDeleted(db, machineId);
+    await markOwnedTunnelDeleted(db, machineId, { claimId: work[0]!.claimId, now: NOW });
     expect((await getOwnedMachineLink(db, machineId))?.tunnelState).toBe('deleted');
   });
 
@@ -141,10 +155,9 @@ describe('owned machine repository', () => {
     const approved = await approve(db, (await enroll(db)).userCode);
     if (!approved.ok) throw new Error('approve failed');
     const machineId = approved.machine.machineId;
-    await recordOwnedTunnelCreated(db, { machineId, tunnelId: 't-2', tunnelHostname: 'def.m.example.net' });
-    await markOwnedTunnelReady(db, machineId);
+    await provisionTunnel(db, machineId, 't-2', 'def.m.example.net');
     expect(await queueStaleOwnedTunnelReclaim(db, { offlineBefore: new Date(NOW.getTime() + 1), now: NOW, limit: 10 })).toBe(1);
-    await markOwnedTunnelDeleted(db, machineId);
+    await finishDelete(db, machineId);
     expect((await getOwnedMachineLink(db, machineId))?.tunnelState).toBe('reclaimed');
     expect(await requestOwnedTunnelReissue(db, machineId, NOW)).toBe(true);
     expect((await getOwnedMachineLink(db, machineId))?.tunnelState).toBe('pending');
@@ -155,6 +168,53 @@ describe('owned machine repository', () => {
     expect(await claimOwnedTunnelWork(db, { now: NOW, limit: 10, leaseMs: 60_000 })).toHaveLength(1);
     expect(await claimOwnedTunnelWork(db, { now: NOW, limit: 10, leaseMs: 60_000 })).toHaveLength(0);
     expect(await claimOwnedTunnelWork(db, { now: new Date(NOW.getTime() + 61_000), limit: 10, leaseMs: 60_000 })).toHaveLength(1);
+  });
+
+  it('rejects writes from a worker whose lease expired and was re-claimed', async () => {
+    const approved = await approve(db, (await enroll(db)).userCode);
+    if (!approved.ok) throw new Error('approve failed');
+    const machineId = approved.machine.machineId;
+    const [first] = await claimOwnedTunnelWork(db, { now: NOW, limit: 1, leaseMs: 60_000 });
+    const later = new Date(NOW.getTime() + 61_000);
+    const [second] = await claimOwnedTunnelWork(db, { now: later, limit: 1, leaseMs: 60_000 });
+    expect(second?.claimId).not.toBe(first?.claimId);
+    expect(await recordOwnedTunnelCreated(db, { machineId, tunnelId: 'old', tunnelHostname: 'old.m.example.net',
+      claim: { claimId: first!.claimId, now: later } })).toBe(false);
+    expect(await recordOwnedTunnelCreated(db, { machineId, tunnelId: 'new', tunnelHostname: 'new.m.example.net',
+      claim: { claimId: second!.claimId, now: later } })).toBe(true);
+    expect(await markOwnedTunnelReady(db, machineId, { claimId: first!.claimId, now: later })).toBe(false);
+    expect((await getOwnedMachineLink(db, machineId))?.tunnelHostname).toBe('new.m.example.net');
+  });
+
+  it('lapses an approval the machine never collects and frees the slot', async () => {
+    const codes = [];
+    for (let i = 0; i < 3; i += 1) codes.push(await enroll(db, `s${i}`));
+    for (const { userCode } of codes) expect((await approve(db, userCode)).ok).toBe(true);
+    const late = new Date(NOW.getTime() + 16 * 60_000);
+    const poll = await pollOwnedEnrollment(db, codes[0]!.deviceCodeHash, late, 0);
+    expect(poll).toEqual({ status: 'expired' });
+    expect(await lapseUndeliveredOwnedEnrollments(db, late, 10)).toBe(2);
+    expect(await listOwnedMachineLinks(db, 'user_1')).toEqual([]);
+    const fresh = await createOwnedEnrollment(db, {
+      enrollmentId: randomUUID(), deviceCodeHash: 'late', userCode: code(), report: REPORT, sourceKey: 'late',
+      now: late, expiresAt: new Date(late.getTime() + 900_000),
+    });
+    expect(fresh).toBe('created');
+  });
+
+  it('refuses delivery after the delivery window even if the poll raced it', async () => {
+    const { userCode, deviceCodeHash } = await enroll(db);
+    await approve(db, userCode);
+    const poll = await pollOwnedEnrollment(db, deviceCodeHash, NOW, 0);
+    if (poll.status !== 'approved') throw new Error('not approved');
+    expect(await markOwnedEnrollmentDelivered(db, poll.enrollmentId, new Date(NOW.getTime() + 16 * 60_000))).toBe(false);
+  });
+
+  it('enforces the global pending cap across sources', async () => {
+    const base = { report: REPORT, now: NOW, expiresAt: new Date(NOW.getTime() + 900_000), pendingCap: 2 };
+    expect(await createOwnedEnrollment(db, { ...base, enrollmentId: randomUUID(), deviceCodeHash: 'a', userCode: code(), sourceKey: 'one' })).toBe('created');
+    expect(await createOwnedEnrollment(db, { ...base, enrollmentId: randomUUID(), deviceCodeHash: 'b', userCode: code(), sourceKey: 'two' })).toBe('created');
+    expect(await createOwnedEnrollment(db, { ...base, enrollmentId: randomUUID(), deviceCodeHash: 'c', userCode: code(), sourceKey: 'three' })).toBe('capacity');
   });
 
   it('enforces the owned row shape in the database', async () => {
