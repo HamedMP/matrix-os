@@ -251,13 +251,18 @@ in an error body.
   accepts `linkedin`.
 
 Platform Postgres: `messaging_bridge_identities`: `owner_id` (pk), `matrix_user_id`,
-`created_at`. No tokens and no message data are stored on the platform.
+`created_at`. `messaging_bridge_logins`: `process_id` (pk), `owner_id`, `network`,
+`matrix_user_id`, `expires_at`, so any platform instance can advance or cancel a pending
+login it did not start. Rows are capped per owner, ownership is enforced in every `WHERE`
+clause, and expired rows are deleted. No tokens, login field values and no message data are
+stored on the platform.
 
 ## Failure modes
 
 | Failure | Behaviour |
 | --- | --- |
 | Bridge host down | Sync backs off (1 s to 60 s, jittered). Status shows "Unavailable". Stored messages stay readable. |
+| Limited sync timeline | Before advancing `next_batch`, sync backfills the gap with `/messages` from `prev_batch`, at most 10 pages of 100 events per room, each request with a timeout. A gap beyond that cap is logged and skipped. |
 | Sync batch partly applied | Messages and `next_batch` commit in one transaction; replay is safe because inserts use `ON CONFLICT DO NOTHING`. |
 | Send times out | Message stays `failed`; retry reuses `client_txn_id`, which is also the Matrix transaction id, so no duplicate is delivered. |
 | Access token rejected | Gateway requests a new session once, then marks availability "unavailable". |
@@ -271,7 +276,10 @@ Platform Postgres: `messaging_bridge_identities`: `owner_id` (pk), `matrix_user_
 - Link sessions: in-memory map, cap 16 per owner, 10-minute TTL, periodic sweep, cleared on
   shutdown.
 - Sync: one loop per owner, one request in flight, timeline limit 50 events per room per
-  batch, bodies truncated to the contract maximum.
+  batch, limited-timeline backfill capped at 10 pages of 100 events per room, bodies
+  truncated to the contract maximum.
+- Platform pending logins: Postgres rows, cap 16 per owner, 10-minute expiry, expired rows
+  deleted on each start; login starts are rate limited per owner from the same table.
 - Message retention in owner Postgres: unlimited in phase 0; measured and reported.
 - Bridge host: homeserver retention purge after 7 days; media cache capped; nightly database
   backup with 7-day rotation.
@@ -319,3 +327,9 @@ One GitHub native stack sharing ENG-535, in this order:
 5. Gateway bridge clients and session store (`packages/gateway/src/messages/`).
 6. Gateway sync, store, send and owner routes.
 7. Renderer components and wiring (`packages/ui/src/messaging/`, `shell/`, `desktop/`).
+
+Follow-up deliverable outside this stack:
+
+8. Public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/`, covering
+   account linking, what the shared host stores, and the phase 0 limits (allowlist,
+   supported apps, account-ban risk). It ships before phase 0 opens beyond the allowlist.
