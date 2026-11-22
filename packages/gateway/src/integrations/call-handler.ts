@@ -42,7 +42,7 @@ export function createIntegrationCallHandler(deps: IntegrationCallHandlerDepende
 
     const parsed = CallBodySchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+      return c.json({ error: "Invalid request body" }, 400);
     }
 
     const { service, action, label, params, connectionId } = parsed.data;
