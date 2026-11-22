@@ -1,0 +1,211 @@
+import { Hono } from 'hono';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { OwnedCloudflareError, type OwnedCloudflareClient } from '../../packages/platform/src/owned-machines/cloudflare.js';
+import type { OwnedMachinesConfig } from '../../packages/platform/src/owned-machines/config.js';
+import { createOwnedMachineRoutes } from '../../packages/platform/src/owned-machines/machine-routes.js';
+import { createOwnedOwnerRoutes } from '../../packages/platform/src/owned-machines/owner-routes.js';
+import { getOwnedMachineLink } from '../../packages/platform/src/owned-machines/repository.js';
+import { runOwnedTunnelWorkPass } from '../../packages/platform/src/owned-machines/tunnel-worker.js';
+import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+
+const SECRET = 's'.repeat(48);
+const CONFIG: OwnedMachinesConfig = {
+  cloudflare: { apiBase: 'https://cf.test', accountId: 'a'.repeat(32), zoneId: 'b'.repeat(32), apiToken: 't'.repeat(40) },
+  hostSuffix: 'm.example.net',
+  ingressService: 'http://127.0.0.1:8790',
+  access: { clientId: 'client-id-1', clientSecret: 'client-secret-123456' },
+  publicUrl: 'https://app.example.com',
+  platformInternalUrl: 'https://platform.example.com',
+  platformSecret: SECRET,
+  updateChannel: 'stable',
+  fundedAiEnabled: true,
+  fundedAiRelayUrl: 'https://relay.example.com',
+  platformSpeechEnabled: false,
+};
+const REPORT = { hostname: 'lab-box', os: 'Ubuntu 24.04', arch: 'x86_64', agentVersion: '2026.11.1' };
+
+function fakeCloudflare() {
+  const tunnels = new Map<string, { id: string; name: string }>();
+  const dns = new Set<string>();
+  const calls: string[] = [];
+  let failCreates = 0;
+  let n = 0;
+  const client: OwnedCloudflareClient = {
+    async findTunnelByName(name) {
+      calls.push(`find:${name}`);
+      const found = [...tunnels.values()].find((t) => t.name === name);
+      return found ? { ...found, createdAt: null } : null;
+    },
+    async createTunnel(name) {
+      calls.push('create');
+      if (failCreates > 0) { failCreates -= 1; throw new OwnedCloudflareError('tunnel_create', 503, true); }
+      n += 1;
+      const id = `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+      tunnels.set(id, { id, name });
+      return { id, name, createdAt: null };
+    },
+    async getTunnelToken(id) { calls.push(`token:${id}`); return `token-${id.slice(-4)}`; },
+    async configureTunnel(id, hostname, service) { calls.push(`config:${hostname}:${service}`); },
+    async ensureDnsRecord(hostname) { dns.add(hostname); },
+    async deleteDnsRecord(hostname) { dns.delete(hostname); calls.push('dns-delete'); },
+    async deleteTunnel(id) { tunnels.delete(id); calls.push(`delete:${id}`); },
+    async listTunnelsPage() { return [...tunnels.values()].map((t) => ({ ...t, createdAt: null })); },
+  };
+  return { client, tunnels, dns, calls, failNextCreates: (count: number) => { failCreates = count; } };
+}
+
+let clock = Date.now();
+const now = () => new Date(clock);
+function tick(ms = 6_000) { clock += ms; }
+
+function buildApp(db: PlatformDB, cloudflare: OwnedCloudflareClient, config: OwnedMachinesConfig | null = CONFIG) {
+  const app = new Hono();
+  const log = () => undefined;
+  app.route('/', createOwnedMachineRoutes({ db, config, cloudflare, log, now }));
+  app.route('/', createOwnedOwnerRoutes({
+    db, config, platformJwtSecret: 'jwt', publishableKey: null, log, now,
+    resolveHandle: async () => 'alice',
+    resolveIdentity: async (opts) => {
+      const auth = opts.authHeader ?? '';
+      if (auth === 'Bearer owner-token') return { userId: 'user_1' } as never;
+      if (auth === 'Bearer other-token') return { userId: 'user_2' } as never;
+      if (!auth && opts.cookieHeader?.includes('session=owner')) return { userId: 'user_1' } as never;
+      return null;
+    },
+  }));
+  return app;
+}
+
+function json(body: unknown, headers: Record<string, string> = {}) {
+  return { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) };
+}
+
+describe('owned machine enrollment and machine routes', () => {
+  let db: PlatformDB;
+  beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+
+  async function enrollAndApprove(app: Hono) {
+    const start = await app.request('/api/machines/enroll/start', json(REPORT));
+    expect(start.status).toBe(200);
+    const issued = await start.json() as { deviceCode: string; userCode: string; verificationUriComplete: string };
+    expect(issued.verificationUriComplete).toContain('/connect?code=');
+    const lookup = await app.request('/api/auth/owned-enrollments/lookup',
+      json({ userCode: issued.userCode }, { authorization: 'Bearer owner-token' }));
+    expect(await lookup.json()).toMatchObject({ report: REPORT });
+    const approved = await app.request('/api/auth/owned-enrollments/approve',
+      json({ userCode: issued.userCode, name: 'Lab' }, { authorization: 'Bearer owner-token' }));
+    expect(approved.status).toBe(201);
+    return { ...issued, ...(await approved.json() as { machineId: string }) };
+  }
+
+  it('enrolls, provisions a tunnel, delivers credentials once, heartbeats and revokes', async () => {
+    const cf = fakeCloudflare();
+    const app = buildApp(db, cf.client);
+    const { deviceCode, machineId } = await enrollAndApprove(app);
+
+    expect(await (await app.request('/api/machines/enroll/poll', json({ deviceCode }))).json()).toEqual({ status: 'pending' });
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    expect(cf.calls.some((call) => call.startsWith('config:') && call.endsWith(':http://127.0.0.1:8790'))).toBe(true);
+
+    tick();
+    const ready = await (await app.request('/api/machines/enroll/poll', json({ deviceCode }))).json() as {
+      status: string; env: Record<string, string>; tunnelToken: string;
+    };
+    expect(ready.status).toBe('ready');
+    expect(ready.tunnelToken).toMatch(/^token-/);
+    expect(ready.env.MATRIX_SUBSTRATE).toBe('owned');
+    expect(ready.env.UPGRADE_TOKEN).not.toBe(buildPlatformVerificationToken('alice', SECRET));
+    expect(Object.keys(ready.env)).not.toContain('DATABASE_URL');
+    tick();
+    expect(await (await app.request('/api/machines/enroll/poll', json({ deviceCode }))).json()).toEqual({ status: 'expired' });
+
+    const machineHeaders = { authorization: `Bearer ${ready.env.UPGRADE_TOKEN}`, 'x-matrix-machine-id': machineId };
+    const beat = await app.request('/api/machines/heartbeat',
+      json({ agentVersion: '2026.11.1', uptimeSec: 10, diskFreeBytes: 1_000_000, gatewayHealthy: true }, machineHeaders));
+    expect(await beat.json()).toMatchObject({ status: 'ok', tunnel: 'ok', autoSecurityUpdates: true, backupsEnabled: false });
+    const forged = await app.request('/api/machines/heartbeat',
+      json({ agentVersion: '1', uptimeSec: 1, diskFreeBytes: 1, gatewayHealthy: true },
+        { authorization: `Bearer ${buildPlatformVerificationToken('alice', SECRET)}`, 'x-matrix-machine-id': machineId }));
+    expect(forged.status).toBe(401);
+
+    const list = await (await app.request('/api/auth/owned-computers', { headers: { authorization: 'Bearer owner-token' } })).json() as {
+      computers: Array<{ status: string; name: string }>;
+    };
+    expect(list.computers).toMatchObject([{ status: 'online', name: 'Lab' }]);
+
+    const patched = await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json', authorization: 'Bearer owner-token' },
+      body: JSON.stringify({ backupsEnabled: true, name: 'Lab 2' }),
+    });
+    expect(await patched.json()).toMatchObject({ backupsEnabled: true, name: 'Lab 2' });
+
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'DELETE', headers: { authorization: 'Bearer other-token' },
+    })).status).toBe(404);
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'DELETE', headers: { cookie: 'session=owner' },
+    })).status).toBe(401);
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'DELETE', headers: { authorization: 'Bearer owner-token' },
+    })).status).toBe(204);
+
+    const afterRevoke = await app.request('/api/machines/heartbeat',
+      json({ agentVersion: '2026.11.1', uptimeSec: 10, diskFreeBytes: 1, gatewayHealthy: true }, machineHeaders));
+    expect(afterRevoke.status).toBe(401);
+    expect(cf.tunnels.size).toBe(1);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    expect(cf.tunnels.size).toBe(0);
+    expect(cf.dns.size).toBe(0);
+  });
+
+  it('cuts access at commit even when the Cloudflare delete fails', async () => {
+    const cf = fakeCloudflare();
+    const app = buildApp(db, cf.client);
+    const { machineId } = await enrollAndApprove(app);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    cf.client.deleteTunnel = async () => { throw new OwnedCloudflareError('tunnel_delete', 503, true); };
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'DELETE', headers: { authorization: 'Bearer owner-token' },
+    })).status).toBe(204);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    const link = await getOwnedMachineLink(db, machineId);
+    expect(link?.revokedAt).not.toBeNull();
+    expect(link?.machine.deletedAt).not.toBeNull();
+    expect(link?.tunnelState).toBe('deleting');
+  });
+
+  it('retries a failed tunnel create without leaving the machine routable', async () => {
+    const cf = fakeCloudflare();
+    cf.failNextCreates(1);
+    const app = buildApp(db, cf.client);
+    const { machineId, deviceCode } = await enrollAndApprove(app);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    expect((await getOwnedMachineLink(db, machineId))?.tunnelState).toBe('pending');
+    expect(await (await app.request('/api/machines/enroll/poll', json({ deviceCode }))).json()).toEqual({ status: 'pending' });
+    await runOwnedTunnelWorkPass({
+      db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService,
+      now: () => new Date(clock + 3_600_000),
+    });
+    expect((await getOwnedMachineLink(db, machineId))?.tunnelState).toBe('ready');
+    expect(cf.tunnels.size).toBe(1);
+  });
+
+  it('rejects unknown device codes, unauthenticated approval and oversized bodies', async () => {
+    const app = buildApp(db, fakeCloudflare().client);
+    const poll = await app.request('/api/machines/enroll/poll', json({ deviceCode: 'A'.repeat(43) }));
+    expect(await poll.json()).toEqual({ status: 'expired' });
+    const anon = await app.request('/api/auth/owned-enrollments/approve', json({ userCode: 'BCDF-GHJK', name: 'x' }));
+    expect(anon.status).toBe(401);
+    const big = await app.request('/api/machines/enroll/start', json({ ...REPORT, hostname: 'h'.repeat(20_000) }));
+    expect(big.status).toBe(413);
+  });
+
+  it('answers 503, not 404, when the feature is misconfigured', async () => {
+    const app = buildApp(db, fakeCloudflare().client, null);
+    expect((await app.request('/api/machines/enroll/start', json(REPORT))).status).toBe(503);
+    expect((await app.request('/api/auth/owned-computers', { headers: { authorization: 'Bearer owner-token' } })).status).toBe(503);
+  });
+});

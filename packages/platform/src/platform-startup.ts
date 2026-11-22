@@ -136,6 +136,8 @@ import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 import { appOrigin } from './origins.js';
+import { createOwnedMachinesRuntime, type OwnedMachinesRuntime } from './owned-machines/runtime.js';
+import { selectProvisionIdentityForClerkUser } from './provisioning-identity.js';
 import { createPreviewPairRuntimeOnlyService } from './preview-pair/candidate-runtime.js';
 
 interface GatewayPlatformUser {
@@ -298,6 +300,7 @@ type CreatePlatformApp = (deps: {
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
   freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
+  ownedMachineRoutes?: Hono;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -958,6 +961,7 @@ async function startPlatformServerWithCleanup(
     event: 'matrix_vps_suspended' | 'matrix_vps_resumed',
     options: { properties: Record<string, string | number | boolean | undefined> },
   ) => void) | undefined;
+  let ownedMachines: OwnedMachinesRuntime | null = null;
   if (runtimeConfig.customerVpsEnabled) {
     const [
       { createCustomerVpsService },
@@ -971,6 +975,22 @@ async function startPlatformServerWithCleanup(
       import('./customer-vps-cloud-init.js'),
     ]);
     const customerVpsConfig = loadCustomerVpsConfig();
+    ownedMachines = createOwnedMachinesRuntime({
+      db, env: process.env, clerkAuth, platformJwtSecret: process.env.PLATFORM_JWT_SECRET ?? '',
+      base: {
+        publicUrl: appOrigin(),
+        platformInternalUrl: new URL(customerVpsConfig.platformRegisterUrl).origin,
+        platformSecret: customerVpsConfig.platformSecret,
+        fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+        fundedAiRelayUrl: customerVpsConfig.fundedAiRelayUrl,
+        platformSpeechEnabled: customerVpsConfig.platformSpeechEnabled,
+      },
+      backgroundWorkersEnabled,
+      resolveHandle: async (clerkUserId) =>
+        (await selectProvisionIdentityForClerkUser(db, clerkUserId, process.env))?.handle ?? null,
+      log: logPlatformRouteError,
+    });
+    registerCustomMcpStartupCleanup(async () => { await ownedMachines?.shutdown(); });
     const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
     const baseHetzner = createHetznerClient(customerVpsConfig);
     const hetzner = createStorageGatedHetznerClient(baseHetzner, async () => {
@@ -1269,6 +1289,7 @@ async function startPlatformServerWithCleanup(
     assertSitesStorageReady: sitesStorageGate?.assertReady,
     substrateRegistry,
     freeTier,
+    ownedMachineRoutes: ownedMachines?.routes,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
