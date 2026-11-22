@@ -39,7 +39,8 @@ export interface TerminalStatusSidebarProps {
 
 const PRIMARY = "var(--text-primary, var(--foreground, #171717))";
 const SECONDARY = "var(--text-secondary, var(--muted-foreground, #737373))";
-const HOVER_BG = "var(--bg-hover, rgba(127,127,127,0.12))";
+// A clear tint in both themes, the same shape as the selected row's (some themes' --bg-hover is nearly invisible).
+const HOVER_BG = "rgba(127,127,127,0.14)";
 const SELECTED_BG = "var(--terminal-drawer-card-selected-bg, var(--bg-hover, rgba(127,127,127,0.18)))";
 const LINE = "var(--border-default, #d4d4d4)";
 const AMBER = "#d97706";
