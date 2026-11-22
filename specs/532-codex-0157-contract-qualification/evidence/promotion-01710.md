@@ -13,6 +13,10 @@ Same machine, same account, `app-server --stdio` `model/list`:
 
 `CODEX_VERIFIED_VERSION`, the scope-runtime harness pin (profile digest `98b24935…9e801f`), both customer-VPS installers, both Dockerfiles and the supervisor acceptance script. Provider contracts for 0.171.0 were already qualified in [qualification-01710.md](qualification-01710.md). The installer treats the pin as a minimum, so existing VPSes on an older managed Codex reinstall at the next boot/update reconciliation; healthy newer binaries are preserved.
 
+## Upgrade order
+
+The scope supervisor admits only the exact pinned Codex and reads the installed version once at start; the gateway derives shared-Chat eligibility from that at its own start. The background developer-tools service would upgrade Codex after both had started, leaving shared Codex Chat disabled until a restart. The updater now runs `matrix-install-developer-tools --codex-upgrade-only` after the new host binaries land and before it starts the supervisor. It is bounded to 10 minutes, never installs Codex for an owner without it, and a failure only logs a warning; the background service still retries. If that fallback is what lands the upgrade, shared Codex Chat returns at the next supervisor and gateway restart.
+
 ## Settings device login
 
 The exact-version allowlist adds 0.171.0. Against the retained 0.164.0 schema, the transitive public auth contract (32 definitions) differs only by an optional `requiredHumanApproval` capability, optional `GetAccountResponse.userId`, optional ChatGPT `workspaceName`, and a new `gcp` account kind. Matrix sends none of the first, reads none of the next two, and its bounded account reader rejects the last. The six consumed request variants and `account/login/completed` are identical. 0.165.0–0.170.0 stay unadmitted.
