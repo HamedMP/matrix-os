@@ -9,7 +9,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "@renderer/lib/hugeicons";
-import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
+import { taskPanelShortcutLabel } from "@renderer/lib/platform-labels";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
@@ -144,9 +144,12 @@ export default function TaskWorkspace({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
-      const index = Number.parseInt(e.key, 10);
-      if (Number.isInteger(index) && index >= 1 && index <= PANEL_SHORTCUT_ORDER.length) {
+      // Cmd/Ctrl+digit belongs to app switching; panels use Cmd/Ctrl+Alt+digit.
+      // With Alt held, mac reports a symbol in `key` ("¡"), so read the physical key.
+      if (!(e.metaKey || e.ctrlKey) || !e.altKey || e.shiftKey) return;
+      const digit = /^Digit([1-9])$/.exec(e.code);
+      const index = digit ? Number(digit[1]) : 0;
+      if (index >= 1 && index <= PANEL_SHORTCUT_ORDER.length) {
         e.preventDefault();
         togglePanel(taskId, PANEL_SHORTCUT_ORDER[index - 1]!);
       }
@@ -326,7 +329,7 @@ export default function TaskWorkspace({
           {PANEL_SHORTCUT_ORDER.map((panel, i) => (
             <IconButton
               key={panel}
-              label={`${PANEL_TITLES[panel]} (${desktopShortcutLabel(String(i + 1))})`}
+              label={`${PANEL_TITLES[panel]} (${taskPanelShortcutLabel(i + 1)})`}
               active={Boolean(layout.visible[panel])}
               onClick={() => togglePanel(taskId, panel)}
             >

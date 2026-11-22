@@ -44,10 +44,10 @@ function setup(terminalFocused: boolean) {
 describe("application menu routing", () => {
   it("sends menu events to the main window when it has focus", () => {
     const { main, terminal, focusMain, router } = setup(false);
-    router.send("menu:action", { action: "close-tab" });
+    router.send("shortcut:action", { id: "tabs.close" });
     router.adjustZoom("in");
     router.reload();
-    expect(main.webContents.send).toHaveBeenCalledWith("menu:action", { action: "close-tab" });
+    expect(main.webContents.send).toHaveBeenCalledWith("shortcut:action", { id: "tabs.close" });
     expect(main.webContents.send).toHaveBeenCalledWith("app:zoom-changed", { factor: expect.any(Number) });
     expect(main.webContents.reload).toHaveBeenCalledTimes(1);
     expect(terminal.close).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe("application menu routing", () => {
 
   it("closes, zooms and reloads the Terminal window itself when it has focus", () => {
     const { main, terminal, router } = setup(true);
-    router.send("menu:action", { action: "close-tab" });
+    router.send("shortcut:action", { id: "tabs.close" });
     router.adjustZoom("in");
     router.reload();
     expect(terminal.close).toHaveBeenCalledTimes(1);
@@ -72,19 +72,19 @@ describe("application menu routing", () => {
     terminal.isFocused.mockReturnValue(true);
     const restoreMain = vi.fn();
     const router = createMenuRouter({ mainWindow: () => null, terminalWindow: () => terminal, focusMain: vi.fn(), restoreMain });
-    router.send("menu:action", { action: "settings" });
+    router.send("shortcut:action", { id: "nav.settings" });
     expect(restoreMain).toHaveBeenCalledTimes(1);
     // Closing the Terminal window itself still works without a main window.
-    router.send("menu:action", { action: "close-tab" });
+    router.send("shortcut:action", { id: "tabs.close" });
     expect(terminal.close).toHaveBeenCalledTimes(1);
     expect(restoreMain).toHaveBeenCalledTimes(1);
   });
 
   it("brings the main window forward for main-window actions chosen from the Terminal window", () => {
     const { main, terminal, focusMain, router } = setup(true);
-    router.send("menu:action", { action: "palette" });
+    router.send("shortcut:action", { id: "nav.palette" });
     expect(focusMain).toHaveBeenCalledTimes(1);
-    expect(main.webContents.send).toHaveBeenCalledWith("menu:action", { action: "palette" });
+    expect(main.webContents.send).toHaveBeenCalledWith("shortcut:action", { id: "nav.palette" });
     expect(terminal.webContents.send).not.toHaveBeenCalled();
   });
 
@@ -116,7 +116,7 @@ describe("application menu routing", () => {
 
   it("does nothing when no window exists", () => {
     const router = createMenuRouter({ mainWindow: () => null, terminalWindow: () => null, focusMain: vi.fn(), restoreMain: vi.fn() });
-    expect(() => { router.send("menu:action", { action: "palette" }); router.adjustZoom("out"); router.reload(); }).not.toThrow();
+    expect(() => { router.send("shortcut:action", { id: "nav.palette" }); router.adjustZoom("out"); router.reload(); }).not.toThrow();
   });
 });
 

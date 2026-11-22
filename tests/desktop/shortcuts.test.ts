@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SHORTCUT_ACTION_IDS } from "@matrix-os/contracts/keyboard-shortcuts";
 import {
   handleCloseSelectedAppShortcut,
   handleCloseTopLevelTabShortcut,
-  handleCycleTabShortcut,
   handleMenuNavigate,
   handleNewContextShortcut,
   handleNewAgentRunShortcut,
   handleNewTopLevelTabShortcut,
   handleTerminalFocusShortcut,
-  isTerminalFocusShortcut,
+  runShortcutAction,
+  useGlobalShortcuts,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
+import { useClosedApps } from "@desktop/renderer/src/stores/closed-apps";
 import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -26,6 +29,28 @@ describe("handleCloseSelectedAppShortcut", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useClosedApps.setState(useClosedApps.getInitialState(), true);
+  });
+
+  it("closes like a click: records the app once for Reopen closed app", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: true });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(terminalId);
+    useDesktopSurfaces.getState().activateSurface(terminalId);
+    const tracked: string[] = [];
+    const onEvent = (event: Event) => tracked.push((event as CustomEvent<{ name: string }>).detail.name);
+    window.addEventListener("matrix:desktop-analytics", onEvent);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+    window.removeEventListener("matrix:desktop-analytics", onEvent);
+
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
+    expect(useClosedApps.getState().entries).toEqual([
+      expect.objectContaining({ kind: "terminals", title: "Terminal" }),
+    ]);
+    expect(tracked).toContain("desktop_app_closed");
+    expect(useTabs.getState().activeTabId).toBe(filesId);
   });
 
   it("closes the selected Matrix app surface and focuses the topmost remaining app", () => {
@@ -139,6 +164,8 @@ describe("handleCloseSelectedAppShortcut", () => {
     useTabs.getState().focusTab(terminalId);
 
     handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+    // The mounted shell reconciles surfaces with the remaining tabs.
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
 
     expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
     expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
@@ -218,10 +245,12 @@ describe("top-level app tab shortcuts", () => {
     expect(duplicateId).not.toBe(filesId);
 
     handleCloseTopLevelTabShortcut({ preventDefault: vi.fn() });
+    // The mounted shell reconciles surfaces with the remaining tabs.
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
 
     expect(useTabs.getState().tabs).toHaveLength(1);
     expect(useTabs.getState().activeTabId).toBe(filesId);
-    expect(useDesktopSurfaces.getState().surfaces[duplicateId!]?.mode).toBe("closed");
+    expect(useDesktopSurfaces.getState().surfaces[duplicateId!]).toBeUndefined();
   });
 
   it("does not invent a new top-level tab for unsupported apps", () => {
@@ -395,62 +424,7 @@ describe("handleNewContextShortcut", () => {
 
 });
 
-describe("handleCycleTabShortcut", () => {
-  it("focuses the first tab on forward cycle when no tab is active", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-
-    handleCycleTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: null,
-        tabs: [{ id: "one" }, { id: "two" }],
-        focusTab,
-      },
-      1,
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("one");
-  });
-
-  it("focuses the last tab on reverse cycle when no tab is active", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-
-    handleCycleTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: null,
-        tabs: [{ id: "one" }, { id: "two" }],
-        focusTab,
-      },
-      -1,
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("two");
-  });
-});
-
 describe("handleTerminalFocusShortcut", () => {
-  it("matches only the exact terminal focus modifier chord", () => {
-    expect(isTerminalFocusShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "t",
-      metaKey: true,
-      shiftKey: false,
-    })).toBe(true);
-    expect(isTerminalFocusShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "t",
-      metaKey: true,
-      shiftKey: true,
-    })).toBe(false);
-  });
-
   it("prevents default and focuses an existing terminal tab", () => {
     const preventDefault = vi.fn();
     const focusTab = vi.fn();
@@ -675,5 +649,92 @@ describe("handleMenuNavigate", () => {
       closable: false,
     });
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("runShortcutAction", () => {
+  let invoke: ReturnType<typeof vi.fn>;
+  let listeners: Map<string, (payload: unknown) => void>;
+
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
+    useClosedApps.setState(useClosedApps.getInitialState(), true);
+    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    listeners = new Map();
+    invoke = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("operator", {
+      invoke,
+      on: (channel: string, callback: (payload: unknown) => void) => {
+        listeners.set(channel, callback);
+        return () => listeners.delete(channel);
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function openTwoWindows(): [string, string] {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    return [filesId, terminalId];
+  }
+
+  it.each(SHORTCUT_ACTION_IDS)("runs %s against fresh stores", (id) => {
+    expect(() => runShortcutAction(id)).not.toThrow();
+  });
+
+  it("toggles the App Launcher", () => {
+    runShortcutAction("app.launcher");
+    expect(useUi.getState().appLauncherOpen).toBe(true);
+    runShortcutAction("app.launcher");
+    expect(useUi.getState().appLauncherOpen).toBe(false);
+  });
+
+  it("opens the Terminal window through main", () => {
+    runShortcutAction("terminal.window");
+    expect(invoke).toHaveBeenCalledWith("terminal-window:open", {});
+  });
+
+  it("opens Settings", () => {
+    runShortcutAction("nav.settings");
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)?.kind).toBe("settings");
+  });
+
+  it("dispatches shortcut:action events from main", () => {
+    const [, terminalId] = openTwoWindows();
+    const { unmount } = renderHook(() => useGlobalShortcuts());
+
+    listeners.get("shortcut:action")?.({ id: "app.next" });
+
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+    unmount();
+    expect(listeners.has("shortcut:action")).toBe(false);
+  });
+
+  it("no longer handles shortcut keys in the page: main dispatches them", () => {
+    const [filesId] = openTwoWindows();
+    renderHook(() => useGlobalShortcuts());
+
+    fireEvent.keyDown(window, { key: "q", code: "KeyQ", metaKey: true });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", metaKey: true });
+
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
+    expect(useUi.getState().paletteOpen).toBe(false);
+  });
+
+  it("still refreshes the Home app from menu:action", () => {
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    renderHook(() => useGlobalShortcuts());
+
+    listeners.get("menu:action")?.({ action: "refresh-home" });
+
+    expect(useUi.getState().homeRefreshRequest).toBe(1);
   });
 });
