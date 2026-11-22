@@ -163,7 +163,6 @@ export function useTerminalWindow() {
     });
   }, [clearActive, cloud, local]);
 
-  /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
   // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
   const spaceMachines = useMemo(() => [here.id, ...computers.filter((computer) => computer.availability === "available")
     .map((computer) => computerMachineId(computer.runtimeSlot))], [computers, here.id]);
@@ -176,6 +175,7 @@ export function useTerminalWindow() {
     select(key);
   }, [select, sidebar, status.rows]);
 
+  /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
   const requestClose = useCallback((key: string) => {
     if (isFinished(key, local.state, status.states)) { close(key); return; }
     setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
