@@ -224,6 +224,40 @@ describe("Terminal window computers", () => {
     await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/ensure`));
   });
 
+  // Fault detected (Greptile, #3569): closing a tab opened a hidden tab from another space, and a terminal
+  // that finished starting late took the screen from a newer choice.
+  it("closes a tab to its neighbour in the space, and keeps a newer choice over a late new terminal", async () => {
+    const WEB_WS = `tws_${"b".repeat(32)}`;
+    const TAB_3 = `tt_${"3".repeat(32)}`;
+    const TAB_4 = `tt_${"4".repeat(32)}`;
+    let finish: (value: unknown) => void = () => undefined;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).endsWith("/tabs")) return new Promise((resolve) => { finish = resolve; });
+      return json(workspace([]));
+    });
+    render(<TerminalWindowApp />);
+    await stream("primary", [
+      tabFacts(TAB_1, "build"),
+      { ...tabFacts(TAB_3, "site"), ref: { workspaceId: WEB_WS, tabId: TAB_3 }, projectId: "web" },
+      { ...tabFacts(TAB_4, "docs"), ref: { workspaceId: WEB_WS, tabId: TAB_4 }, projectId: "web" },
+    ]);
+    // Opened in this order, so the bar interleaves spaces: site, build, docs.
+    for (const name of [/site/, /build/, /docs/]) fireEvent.click(await within(sidebar()).findByRole("button", { name }));
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["site", "docs"]));
+    fireEvent.click(screen.getByRole("button", { name: "Close tab docs" }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_3}`));
+
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WEB_WS}/tabs`));
+    // While it starts, the person opens docs; the late terminal must not take the screen.
+    fireEvent.click(within(sidebar()).getByRole("button", { name: /docs/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`));
+    await act(async () => { finish(json({ tab: { id: `tt_${"5".repeat(32)}`, name: "Terminal" } }, 201)); });
+    expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`);
+  });
+
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
     render(<TerminalWindowApp />);
     await stream("primary", []);

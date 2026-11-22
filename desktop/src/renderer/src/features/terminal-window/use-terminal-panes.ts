@@ -197,7 +197,8 @@ export function useTerminalPanes(options: {
     const saved = tabWithTerminal(latest.current.layouts, machineId, key);
     const leaf = saved ? leaves(saved.root).find((candidate) => candidate.terminal === key) : undefined;
     if (!saved || !leaf) return null;
-    const next = closePane(saved, leaf.id);
+    // The closing pane is the focused one, so its neighbour (not the saved focus) takes over.
+    const next = closePane({ ...saved, focus: leaf.id }, leaf.id);
     saveTab(machineId, saved.id, next);
     return next ? leaves(next.root).find((candidate) => candidate.id === next.focus)?.terminal ?? null : null;
   }, [saveTab]);

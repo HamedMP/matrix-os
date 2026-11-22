@@ -416,6 +416,24 @@ describe("Terminal window panes", () => {
     expect(within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab")).toHaveLength(1);
   });
 
+  // Fault detected (Greptile, #3569): closing a pane picked the saved focus's neighbour, not the closed pane's.
+  it("focuses the closed pane's neighbour, not the pane last saved as focused", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    operator.command({ command: "split-down" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t11"));
+    // editor | shell t10 above shell t11; the saved focus is shell t11. Close editor instead.
+    operator.command({ command: "focus-pane", direction: "left" });
+    await waitFor(() => expect(focusedPane()).toBe("editor"));
+    operator.command({ command: "close-terminal" });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    await waitFor(() => expect(paneNames()).toEqual(["shell t10", "shell t11"]));
+    expect(focusedPane()).toBe("shell t10");
+  });
+
   // Hamed, 2026-11-22: Ctrl+Tab and Ctrl+Shift+Tab cycle the tab bar, wrapping around.
   it("cycles the open tabs in tab-bar order with Ctrl+Tab and back with Ctrl+Shift+Tab", async () => {
     const operator = installOperator([fact("t1", "editor"), fact("t2", "logs"), fact("t3", "build")]);

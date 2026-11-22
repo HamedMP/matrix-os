@@ -82,6 +82,9 @@ export function useTerminalWindow() {
     () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view, pinned: sidebar.prefs.pinned })),
     [visibleRows, sidebar.prefs.view, sidebar.prefs.pinned],
   );
+  // The signed-in session now, for work that finishes after it may have changed.
+  const sessionRef = useRef(ready?.sessionKey ?? "");
+  useEffect(() => { sessionRef.current = ready?.sessionKey ?? ""; }, [ready?.sessionKey]);
   const selectedRow: TerminalSidebarRow | undefined = status.rows.find((row) => row.key === selectedKey);
   // The selection when an end finishes, which may differ from when it started.
   const selectedRef = useRef(selectedKey);
@@ -212,7 +215,12 @@ export function useTerminalWindow() {
 
   /** A new terminal beside one of the active space's (same machine, workspace and folder), then shown. */
   const createInSpace = useCallback((neighbour: string) => {
-    void createBeside(neighbour).then((created) => { if (created) select(created); });
+    const chosen = localChoice.current;
+    const session = sessionRef.current;
+    void createBeside(neighbour).then((created) => {
+      // Shown only if the person chose nothing else meanwhile and is still signed in to the same session.
+      if (created && localChoice.current === chosen && sessionRef.current === session) select(created);
+    });
   }, [createBeside, select]);
 
   /** Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab in the tab bar, wrapping around. */
@@ -278,6 +286,8 @@ export function useTerminalWindow() {
    * in that space; otherwise the space's first open tab shows, or nothing.
    */
   const chooseSpace = useCallback((filter: SidebarFilter | null) => {
+    // A new choice: a terminal still starting elsewhere does not take the screen afterwards.
+    localChoice.current += 1;
     sidebar.setFilter(filter);
     if (!filter) return;
     const inSpace = new Set(filterRows(status.rows, filter).map((row) => row.key));
@@ -289,12 +299,15 @@ export function useTerminalWindow() {
 
   /** Takes a tab off the bar (its terminals keep running); the tab beside it opens when it was on screen. */
   const closeTab = useCallback((id: string) => {
-    const wasOnScreen = openTabs.tabs.find((tab) => tab.id === id)?.terminals.includes(selectedKey ?? "") ?? false;
-    const next = openTabs.closeTab(id);
+    const index = shownTabs.findIndex((tab) => tab.id === id);
+    const wasOnScreen = shownTabs[index]?.terminals.includes(selectedKey ?? "") ?? false;
+    openTabs.closeTab(id);
     if (!wasOnScreen) return;
+    // The tab beside it in the bar as shown (the active space), or nothing when the space has no other tab.
+    const next = shownTabs[index + 1] ?? shownTabs[index - 1];
     if (next) select(next.key);
     else deselect();
-  }, [deselect, openTabs, select, selectedKey]);
+  }, [deselect, openTabs, select, selectedKey, shownTabs]);
 
   /** A pane header button. */
   const paneButton = useCallback((leafId: string, button: PaneButton) => {
