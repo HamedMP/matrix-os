@@ -32,19 +32,29 @@ import { createTestConfig } from './customer-vps-service-test-helper.js';
 
 const GiB = 1024 ** 3;
 const MACHINE_ID = '6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e6f';
-const GOLDEN = 'golden-2026.11.20-1';
 const NOW = new Date('2026-11-21T12:00:00.000Z');
 const BUNDLE_VERSION = 'matrix-os-host-2026.11.20-1';
 const BUNDLE_SHA = 'c'.repeat(64);
+/** The golden disk is named after the bundle release it was built from (build-golden-disk.sh). */
+const GOLDEN = 'matrix-os-host-2026.11.19-1';
+const GOLDEN_SHA = 'd'.repeat(64);
 
-/** The stable channel points at a release with a known digest, as in production. */
-async function pinStableBundle(db: PlatformDB) {
+async function registerRelease(db: PlatformDB, version: string, sha256: string) {
   await upsertHostBundleRelease(db, {
-    version: BUNDLE_VERSION, gitCommit: '1234567', buildTime: NOW.toISOString(),
-    bundleKey: `system-bundles/${BUNDLE_VERSION}/matrix-host-bundle.tar.gz`, checksumKey: null,
-    sha256: BUNDLE_SHA, size: 100, createdAt: NOW.toISOString(),
+    version, gitCommit: '1234567', buildTime: NOW.toISOString(),
+    bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, checksumKey: null,
+    sha256, size: 100, createdAt: NOW.toISOString(),
   });
+}
+
+/**
+ * The stable channel points at a newer release than the golden disk, as after
+ * a release lands before the hosts' goldens are rebuilt.
+ */
+async function pinStableBundle(db: PlatformDB) {
+  await registerRelease(db, BUNDLE_VERSION, BUNDLE_SHA);
   await promoteHostBundleChannel(db, 'stable', BUNDLE_VERSION, NOW.toISOString());
+  await registerRelease(db, GOLDEN, GOLDEN_SHA);
 }
 
 /**
@@ -351,27 +361,38 @@ describe('metal provisioner', () => {
     expect(host.createVm).not.toHaveBeenCalled();
   });
 
-  it('pins the host bundle on the metal row so registration verifies it', async () => {
+  it('pins the golden disk\'s bundle, not the update channel\'s, on the metal row so registration verifies it', async () => {
     const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
 
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
 
     expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({
-      imageVersion: BUNDLE_VERSION,
-      targetBundleVersion: BUNDLE_VERSION,
-      targetBundleSha256: BUNDLE_SHA,
+      imageVersion: GOLDEN,
+      targetBundleVersion: GOLDEN,
+      targetBundleSha256: GOLDEN_SHA,
     });
     const spec = host.createVm.mock.calls[0]![0] as HostdCreateVmRequest;
-    expect(spec.userData).toMatch(new RegExp(`^\\s*MATRIX_TARGET_BUNDLE_SHA256=${BUNDLE_SHA}$`, 'm'));
+    expect(spec.userData).toMatch(new RegExp(`^\\s*MATRIX_TARGET_BUNDLE_SHA256=${GOLDEN_SHA}$`, 'm'));
+    expect(spec.userData).toMatch(new RegExp(`^\\s*MATRIX_IMAGE_VERSION=${GOLDEN}$`, 'm'));
   });
 
-  it('refuses to provision when the bundle channel has no pinned release', async () => {
+  it('provisions on a channel with no pinned release, since the golden pins the bundle', async () => {
     const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
 
     expect(await provisioner({ imageVersion: 'beta' }).provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: MACHINE_ID });
+    expect(host.createVm).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to provision when the golden disk\'s bundle is not a registered release', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await db.executor.deleteFrom('host_bundle_releases').where('version', '=', GOLDEN).execute();
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
       .toEqual({ error: 'unavailable' });
     expect(host.createVm).not.toHaveBeenCalled();
     expect(await getUserMachine(db, MACHINE_ID)).toBeUndefined();
+    expect(logs).toContain('golden_bundle_unpinned');
   });
 
   it('retries recording the created VM and keeps the runtime when a retry succeeds', async () => {

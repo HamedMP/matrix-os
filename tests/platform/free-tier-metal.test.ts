@@ -135,7 +135,8 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
       db,
       hosts: createMetalHostsRepository(db.kysely),
       clientFor: () => hostd.client,
-      goldenVersion: 'golden-2026.11.20-1',
+      // The golden disk is built from the pinned bundle and named after it.
+      goldenVersion: BUNDLE_VERSION,
       config: createTestConfig(),
       cloudInitTemplate: template,
       now: () => NOW,
