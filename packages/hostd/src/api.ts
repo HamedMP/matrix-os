@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { LifecycleError, type VmLifecycle } from "./vm-lifecycle.js";
+import { LifecycleError, type ThinPoolUsage, type VmLifecycle } from "./vm-lifecycle.js";
 import { VM_ID_PATTERN, type VmRecord, type VmStore } from "./vm-store.js";
 
 // The authenticated host API the platform calls (TLS port 8443). Every route
@@ -10,7 +10,15 @@ import { VM_ID_PATTERN, type VmRecord, type VmStore } from "./vm-store.js";
 // 64 KiB, and every input is validated with Zod. Clients only ever see the
 // typed error codes below: never messages, paths, provider names or IPs.
 
-export type ApiErrorCode = "unauthorized" | "bad_request" | "not_found" | "busy" | "pool_full" | "conflict" | "internal";
+export type ApiErrorCode =
+  | "unauthorized"
+  | "bad_request"
+  | "not_found"
+  | "busy"
+  | "capacity"
+  | "pool_full"
+  | "conflict"
+  | "internal";
 
 type ApiStatus = 400 | 401 | 404 | 409 | 413 | 500 | 503 | 507;
 
@@ -24,6 +32,8 @@ export interface HostApiDeps {
   pool: { freeBytes(): Promise<number> };
   hostAvailableMiB: (signal: AbortSignal) => Promise<number>;
   apiToken: string;
+  // Bound on each capacity probe; defaults to CAPACITY_TIMEOUT_MS.
+  capacityTimeoutMs?: number;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }
 
@@ -40,6 +50,8 @@ const STATUS: Record<ApiErrorCode, ApiStatus> = {
   not_found: 404,
   conflict: 409,
   busy: 503,
+  // The host's disk pool cannot take another VM: place it on another host.
+  capacity: 503,
   pool_full: 507,
   internal: 500,
 };
@@ -51,6 +63,7 @@ const LIFECYCLE_CODES: Record<LifecycleError["code"], ApiErrorCode> = {
   busy: "busy",
   pool_full: "pool_full",
   no_capacity: "busy",
+  capacity: "capacity",
   snapshot_failed: "internal",
   failed: "internal",
 };
@@ -229,15 +242,40 @@ export function createHostApi(deps: HostApiDeps): Hono {
     return c.json(publicVm(await lifecycle.setPolicy(id, policy)));
   });
 
+  async function thinPoolWithin(ms: number): Promise<ThinPoolUsage | null> {
+    const controller = new AbortController();
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve(null);
+      }, ms);
+    });
+    const read = lifecycle.thinPoolUsage(controller.signal).catch((error: unknown) => {
+      if (!(error instanceof LifecycleError)) throw error;
+      return null;
+    });
+    try {
+      return await Promise.race([read, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   app.get("/v1/capacity", async (c) => {
-    const [memoryAvailableMiB, poolFreeBytes, records] = await Promise.all([
-      deps.hostAvailableMiB(AbortSignal.timeout(CAPACITY_TIMEOUT_MS)),
+    const probeMs = deps.capacityTimeoutMs ?? CAPACITY_TIMEOUT_MS;
+    const [memoryAvailableMiB, poolFreeBytes, records, thinPool] = await Promise.all([
+      deps.hostAvailableMiB(AbortSignal.timeout(probeMs)),
       deps.pool.freeBytes(),
       store.list(),
+      // Unknown or slow pool use is reported as null (placement treats it as no
+      // room), so an LVM lock never makes the host look unreachable.
+      thinPoolWithin(probeMs),
     ]);
     return c.json({
       memoryAvailableMiB,
       poolFreeBytes,
+      thinPool,
       runningVms: records.filter((r) => r.state === "running").length,
       suspendedVms: records.filter((r) => r.state === "suspended").length,
     });

@@ -18,6 +18,11 @@ export interface HostdConfig {
   stateDir: string;
   // Holds <id>/ch.sock and <id>/vsock.sock for each VM.
   runDir: string;
+  // Thin pool admission thresholds (percent) for new VMs.
+  poolMaxDataPercent: number;
+  poolMaxMetadataPercent: number;
+  // Bound on one thin pool read (ms).
+  poolQueryTimeoutMs: number;
 }
 
 export class ConfigError extends Error {
@@ -31,6 +36,7 @@ const token = z.string().min(32).max(512);
 const absolutePath = z.string().min(1).max(4096).refine(isAbsolute);
 const port = z.coerce.number().int().min(1).max(65_535);
 const host = z.string().min(1).max(255);
+const percent = z.coerce.number().min(1).max(100);
 
 const Env = z.object({
   HOSTD_API_TOKEN: token,
@@ -43,6 +49,9 @@ const Env = z.object({
   HOSTD_INGRESS_PORT: port.default(443),
   HOSTD_STATE_DIR: absolutePath.default("/var/lib/matrix-hostd"),
   HOSTD_RUN_DIR: absolutePath.default("/run/matrix-vm"),
+  HOSTD_POOL_MAX_DATA_PERCENT: percent.default(85),
+  HOSTD_POOL_MAX_METADATA_PERCENT: percent.default(80),
+  HOSTD_POOL_QUERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(5_000),
 });
 
 export function loadConfig(env: Record<string, string | undefined>): HostdConfig {
@@ -64,5 +73,8 @@ export function loadConfig(env: Record<string, string | undefined>): HostdConfig
     ingressPort: e.HOSTD_INGRESS_PORT,
     stateDir: e.HOSTD_STATE_DIR,
     runDir: e.HOSTD_RUN_DIR,
+    poolMaxDataPercent: e.HOSTD_POOL_MAX_DATA_PERCENT,
+    poolMaxMetadataPercent: e.HOSTD_POOL_MAX_METADATA_PERCENT,
+    poolQueryTimeoutMs: e.HOSTD_POOL_QUERY_TIMEOUT_MS,
   };
 }

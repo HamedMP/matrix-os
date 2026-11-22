@@ -48,6 +48,7 @@ let t: number;
 
 const exec: Exec = async (argv) => {
   events.push(`exec:${argv.join(" ")}`);
+  if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (argv[1] === "is-active") return { code: active.has(argv[2]!) ? 0 : 3, stdout: "", stderr: "" };
   return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
@@ -165,6 +166,9 @@ beforeEach(async () => {
     ingressPort: 0,
     stateDir: join(root, "state"),
     runDir: join(root, "run"),
+    poolMaxDataPercent: 85,
+    poolMaxMetadataPercent: 80,
+    poolQueryTimeoutMs: 5_000,
   };
   events = [];
   trimGate = null;
@@ -189,6 +193,15 @@ describe("hostd main", () => {
     expect(capacity.status).toBe(200);
     expect(JSON.parse(capacity.body)).toMatchObject({ memoryAvailableMiB: 100_000, runningVms: 0, suspendedVms: 0 });
     expect(JSON.parse(capacity.body).poolFreeBytes).toBeGreaterThan(0);
+    expect(JSON.parse(capacity.body).thinPool).toEqual({ dataPercent: 10, metadataPercent: 5 });
+  });
+
+  it("applies the configured thin pool thresholds: create answers 503 capacity past them", async () => {
+    hostd = await startHostd({ ...config, poolMaxDataPercent: 9 }, overrides());
+    const refused = await apiCall("POST", "/v1/vms", createBody);
+    expect(refused.status).toBe(503);
+    expect(JSON.parse(refused.body)).toEqual({ error: "capacity" });
+    await expect(hostd.store.list()).resolves.toEqual([]);
   });
 
   it("shares one store: a VM created and suspended through the API is seen by the ingress at once", async () => {

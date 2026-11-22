@@ -37,6 +37,15 @@ export interface LifecycleConfig {
   serialLogDir: string;
   runDir: string;
   volumeGroup: string;
+  // The LVM thin pool in volumeGroup that holds every VM disk.
+  thinPool: string;
+  // Create refuses (capacity) while the thin pool's data or metadata use is
+  // above these percentages: a full thin pool hangs every guest writing to it.
+  poolMaxDataPercent: number;
+  poolMaxMetadataPercent: number;
+  // Bound on one thin pool read: create holds the host-wide allocation chain
+  // while it runs, so an LVM lock must not stall every create for execTimeoutMs.
+  poolQueryTimeoutMs: number;
   kernelPath: string;
   initramfsPath: string;
   kernelCmdline: string;
@@ -63,6 +72,10 @@ export const DEFAULT_LIFECYCLE_CONFIG: LifecycleConfig = {
   serialLogDir: "/var/log/matrix-vm",
   runDir: "/run/matrix-vm",
   volumeGroup: "vmvg",
+  thinPool: "pool",
+  poolMaxDataPercent: 85,
+  poolMaxMetadataPercent: 80,
+  poolQueryTimeoutMs: 5_000,
   kernelPath: "/var/lib/matrix-hostd/kernel/vmlinuz",
   initramfsPath: "/var/lib/matrix-hostd/kernel/initrd.img",
   kernelCmdline:
@@ -112,8 +125,16 @@ export interface SuspendOptions extends GenerationFence {
   onAccepted?: () => void;
 }
 
+export interface ThinPoolUsage {
+  dataPercent: number;
+  metadataPercent: number;
+}
+
 export interface VmLifecycle {
   create(spec: CreateVmSpec): Promise<VmRecord>;
+  // The thin pool's data and metadata use; rejects with capacity when unreadable
+  // or when it takes longer than poolQueryTimeoutMs or the caller's signal allows.
+  thinPoolUsage(signal?: AbortSignal): Promise<ThinPoolUsage>;
   start(id: string): Promise<VmRecord>;
   suspend(id: string, options?: SuspendOptions): Promise<VmRecord>;
   resume(id: string, budgetMs: number, options?: GenerationFence): Promise<ResumeResult>;
@@ -134,6 +155,7 @@ export type LifecycleErrorCode =
   | "busy"
   | "pool_full"
   | "no_capacity"
+  | "capacity"
   | "snapshot_failed"
   | "failed";
 
@@ -382,6 +404,34 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return bytes;
   }
 
+  async function thinPoolUsage(signal?: AbortSignal): Promise<ThinPoolUsage> {
+    const pool = `${cfg.volumeGroup}/${cfg.thinPool}`;
+    const timeout = AbortSignal.timeout(cfg.poolQueryTimeoutMs);
+    let result: { code: number; stdout: string };
+    try {
+      // Never pass --readonly: it skips the device-mapper status query, so on
+      // LVM 2.03.16 data_percent and metadata_percent print blank and every
+      // create would fail closed. A plain lvs answers in ~40 ms; the short
+      // poolQueryTimeoutMs bounds it if it waits on the LVM lock.
+      result = await exec(
+        ["lvs", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", pool],
+        { signal: signal ? AbortSignal.any([timeout, signal]) : timeout },
+      );
+    } catch (error: unknown) {
+      log("vm_thin_pool_unreadable", { pool, ...errorFields(error) });
+      throw new LifecycleError("capacity", "thin pool usage unreadable", { cause: error });
+    }
+    // Some locales print a decimal comma; the fields are whitespace separated.
+    const fields = result.stdout.trim().split(/\s+/).map((f) => Number(f.replace(",", ".")));
+    const valid = (n: number | undefined): n is number => n !== undefined && Number.isFinite(n) && n >= 0 && n <= 100;
+    const [dataPercent, metadataPercent] = fields;
+    if (result.code !== 0 || fields.length !== 2 || !valid(dataPercent) || !valid(metadataPercent)) {
+      log("vm_thin_pool_unreadable", { pool, exitCode: result.code });
+      throw new LifecycleError("capacity", "thin pool usage unreadable");
+    }
+    return { dataPercent, metadataPercent };
+  }
+
   async function create(spec: CreateVmSpec): Promise<VmRecord> {
     validateSpec(spec);
     // Allocation is serialized host-wide so two creates never share an address or a machine.
@@ -405,6 +455,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       const golden = await goldenBytes(spec.goldenVersion);
       if (spec.diskGiB * GiB < golden) {
         throw new LifecycleError("invalid", "requested disk is smaller than the golden image");
+      }
+      // Fail closed: a create on a nearly full (or unreadable) thin pool goes elsewhere.
+      const usage = await thinPoolUsage();
+      if (usage.dataPercent > cfg.poolMaxDataPercent || usage.metadataPercent > cfg.poolMaxMetadataPercent) {
+        log("vm_thin_pool_full", {
+          ...usage,
+          maxDataPercent: cfg.poolMaxDataPercent,
+          maxMetadataPercent: cfg.poolMaxMetadataPercent,
+        });
+        throw new LifecycleError("capacity", "thin pool is too full for a new VM");
       }
       const address = await allocateAddress();
       const record: VmRecord = {
@@ -670,6 +730,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
 
   return {
     create,
+    thinPoolUsage,
     resize: (id, targetMiB) => enqueue(id, `resize:${targetMiB}`, () => resize(id, targetMiB)),
     setPolicy: (id, policy) =>
       enqueue(id, `policy:${policy.tier}:${policy.maxMiB}`, () => setPolicy(id, policy)),

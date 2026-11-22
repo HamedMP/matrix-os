@@ -112,7 +112,15 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     gatewayHealth,
     trim: (id, signal) => guest(id).trim(signal),
     log,
-    config: { ...overrides.lifecycleConfig, vmsDir, snapshotsDir, runDir: config.runDir },
+    config: {
+      poolMaxDataPercent: config.poolMaxDataPercent,
+      poolMaxMetadataPercent: config.poolMaxMetadataPercent,
+      poolQueryTimeoutMs: config.poolQueryTimeoutMs,
+      ...overrides.lifecycleConfig,
+      vmsDir,
+      snapshotsDir,
+      runDir: config.runDir,
+    },
   });
 
   const ingress = createIngress({
