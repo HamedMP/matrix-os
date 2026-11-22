@@ -174,7 +174,7 @@ export class PlatformCollaborationRepository {
       // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
       // still absent, so two first-writers both pass the guard above and the loser's unconditional
       // DO UPDATE would replay its stale metadata over the winner's. The revision test belongs in
-      // the write statement itself.
+      // the write statement itself. Owner/runtime checks must fence that same first-writer race.
       const applied = await trx.insertInto("collaboration_directory").values({
         scope_id: input.scopeId,
         runtime_id: input.runtimeId,
@@ -220,10 +220,12 @@ export class PlatformCollaborationRepository {
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
         updated_at: now,
-      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision))
+      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision)
+        .where("collaboration_directory.runtime_id", "=", input.runtimeId)
+        .where("collaboration_directory.owner_id", "=", input.ownerId))
         .returning("collaboration_directory.scope_id")
         .executeTakeFirst();
-      // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
+      // A newer revision or different winning authority fences the whole event in the write itself.
       if (!applied) return false;
       // A project Chat has no recipients of its own; any left from a direct share no longer apply.
       if (input.parentScopeId) {

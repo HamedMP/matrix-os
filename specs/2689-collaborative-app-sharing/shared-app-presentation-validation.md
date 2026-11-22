@@ -19,7 +19,8 @@ and active-share state. Launcher components and their letter/image-error fallbac
   presentation failure cannot consume a share delivery retry. Older platforms rejecting additive
   fields receive a routing-only resend. Released strict clients still require `fields=display`.
 - Storage: row lock and revision-fenced upsert apply name/bytes/type/hash together. Replay/stale
-  events cannot replace newer presentation. Replacement clears previous artwork when omitted;
+  events cannot replace newer presentation. The write also predicates owner/runtime, fencing a
+  concurrent first insert from a different authority. Replacement clears previous artwork when omitted;
   stop clears its bytes/type/hash. Successful account erasure deletes the directory row and bytes.
 - Preview upgrade: convert referenced legacy uploads in batches of 25 before dropping the table.
   Preserve names/revisions and valid artwork, including source bytes above the new thumbnail cap.
@@ -55,14 +56,14 @@ repository's `--no-experimental-webstorage` option. No temporary React deduplica
 | --- | --- |
 | Shared-app contracts | 13 passed, including maximum complete-event byte budget |
 | Owner presentation resolver | 9 passed |
-| Platform icon routes/storage/erasure | 11 passed |
+| Platform icon routes/storage/erasure | 12 passed, including a deterministic competing first-writer authority race |
 | Platform directory repository | 10 passed; 2 real-Postgres tests skipped without `MATRIX_TEST_POSTGRES_URL` |
 | Preview thumbnail migration | 5 passed |
 | Changed outbox presentation cases | 6 passed; 9 unrelated cases filtered |
 | Changed launch target presentation case | 1 passed; 18 unrelated cases filtered |
 | Five renderer suites | 91 passed initially; one launcher refresh timing failure passed in isolation (92 unique cases) |
 
-Total: 147 distinct focused cases passed through these runs. This is not a full-suite pass.
+Total: 148 distinct focused cases passed through these runs. This is not a full-suite pass.
 
 - Platform package typecheck passed. Canonical full typecheck timed out at gateway; its bounded
   retry did not produce a completed result. Full typechecking remains a current-head CI gate.

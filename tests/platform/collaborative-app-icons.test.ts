@@ -214,6 +214,33 @@ describe("collaborative app icons", () => {
     expect((await repository.getDirectoryRoute(scopeId))?.runtimeId).toBe(runtimeId);
   });
 
+  it("fences another runtime's first-writer race in the write statement", async () => {
+    await share({ name: "Owner artwork", iconSha256: pngSha });
+    let hidExisting = false;
+    // Model READ COMMITTED: this reader saw no row, then the owner's first insert committed
+    // before its INSERT ON CONFLICT. The real database must still fence the losing authority.
+    const racingDatabase = fixture.collaborationDb.withPlugin({
+      transformQuery: ({ node }) => node,
+      transformResult: async ({ result }) => {
+        if (!hidExisting && result.rows.some((row) => row.scope_id === scopeId && row.runtime_id === runtimeId)) {
+          hidExisting = true;
+          return { ...result, rows: [] };
+        }
+        return result;
+      },
+    });
+    const racingRepository = new PlatformCollaborationRepository(racingDatabase, { now: () => now });
+    await expect(racingRepository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000002", scopeId, runtimeId: otherRuntimeId,
+      ownerId: "user_other", kind: "app", organizationId: "org_matrix_team", audience: "current_membership",
+      authorityGeneration: 1, metadataRevision: 2, recipients: [],
+      app: { ...app, shareRevision: 2, name: "Other runtime" },
+    })).resolves.toBe(false);
+    expect(hidExisting).toBe(true);
+    expect((await repository.getDirectoryRoute(scopeId))?.app?.name).toBe("Owner artwork");
+    expect((await iconRequest(member)).status).toBe(200);
+  });
+
   it("delivers routing metadata when optional thumbnail validation fails", async () => {
     const event = {
       eventId: "20000000-0000-4000-8000-000000000001", scopeId, runtimeId,
