@@ -159,6 +159,21 @@ describe("ShortcutSettings editing", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ version: 1, overrides: { "app.close": [] } }));
   });
 
+  it("drops an override that ends up equal to the row's defaults", async () => {
+    const { onChange, rerender } = renderSettings();
+    fireEvent.click(within(row("Close app")).getByRole("button", { name: "Remove ⌘Q" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    const removed = (onChange as ReturnType<typeof vi.fn>).mock.calls[0]![0] as ShortcutOverrides;
+    expect(removed.overrides["app.close"]).toEqual([]);
+    rerender(<ShortcutSettings platform="mac" overrides={removed} onChange={onChange} />);
+
+    record("Close app", { key: "q", code: "KeyQ", metaKey: true });
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    const readded = (onChange as ReturnType<typeof vi.fn>).mock.calls[1]![0] as ShortcutOverrides;
+    expect(readded).toEqual({ version: 1, overrides: {} });
+    expect(readded.overrides).not.toHaveProperty("app.close");
+  });
+
   it("resets an overridden row", async () => {
     const overrides: ShortcutOverrides = { version: 1, overrides: { "app.close": [] } };
     const { onChange } = renderSettings({ overrides });
