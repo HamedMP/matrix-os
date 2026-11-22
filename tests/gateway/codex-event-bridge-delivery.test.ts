@@ -1,6 +1,6 @@
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
@@ -66,6 +66,20 @@ describe("Codex event delivery", () => {
       await vi.waitFor(() => expect(f.ingest).toHaveBeenCalledTimes(2), { timeout: 2_000, interval: 20 });
     } finally { await f.bridge.shutdown(); }
   });
+
+  it("re-arms the event-driven drain when the event directory is recreated", async () => {
+    const f = await fixture(true);
+    try {
+      await f.bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      const directory = dirname(f.path);
+      await rm(directory, { recursive: true, force: true });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await mkdir(directory, { recursive: true });
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      await writeFile(f.path, lines([{ type: "thread.started", thread_id: "native_current" }]));
+      await vi.waitFor(() => expect(f.ingest).toHaveBeenCalledTimes(1), { timeout: 3_000, interval: 20 });
+    } finally { await f.bridge.shutdown(); }
+  }, 10_000);
 
   describe("checkpoint batches stay within the 100-event provider limit", () => {
     const deltaLines = (count: number) => Array.from({ length: count }, (_, index) =>

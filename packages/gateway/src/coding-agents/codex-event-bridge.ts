@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
-import { captureChatSendStage } from "../chat/send-timing.js";
+import { captureChatSendStage, outsideChatSendTiming } from "../chat/send-timing.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { watch as watchDirectory, type FSWatcher } from "node:fs";
@@ -409,21 +409,57 @@ export function createCodexEventBridge(options: {
   timer.unref();
   // Event-driven fast path: one directory watcher triggers a drain as soon as a
   // runner appends. Polling stays as the fallback if the watcher fails or misses.
-  let directoryWatcher: FSWatcher | undefined;
+  let directoryWatcher: { watcher: FSWatcher; ino: number } | undefined;
+  let rearmTimer: NodeJS.Timeout | undefined;
+  function closeDirectoryWatcher(): void {
+    directoryWatcher?.watcher.close();
+    directoryWatcher = undefined;
+  }
+  // A removed and recreated directory leaves the old watcher silent (no error).
+  // Re-check identity after rename events and retry once a second while it is
+  // missing and sessions are watched; polling covers the gap meanwhile.
+  function verifyDirectoryWatcher(): void {
+    if (rearmTimer || closed) return;
+    rearmTimer = setTimeout(() => {
+      rearmTimer = undefined;
+      void lstat(eventDir).then((info) => {
+        if (directoryWatcher && directoryWatcher.ino === info.ino) return;
+        closeDirectoryWatcher();
+        watchEventDirectory();
+      }, (error: unknown) => {
+        if (!(error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT")) {
+          console.warn("[coding-agents] Codex event directory check failed", error instanceof Error ? error.name : "UnknownError");
+        }
+        closeDirectoryWatcher();
+        if (watchers.size > 0) verifyDirectoryWatcher();
+      });
+    }, directoryWatcher ? 50 : 1_000);
+    rearmTimer.unref();
+  }
   function watchEventDirectory(): void {
     if (!eventDrivenDrain || directoryWatcher || closed) return;
-    try {
-      const watcher = watchDirectory(eventDir, { persistent: false }, () => { if (watchers.size > 0) scheduleDrain(); });
-      watcher.on("error", (error: unknown) => {
+    // Long-lived: never capture the timing context of the send that armed it.
+    outsideChatSendTiming(() => {
+      try {
+        const watcher = watchDirectory(eventDir, { persistent: false }, (eventType) => {
+          if (eventType === "rename") verifyDirectoryWatcher();
+          if (watchers.size > 0) scheduleDrain();
+        });
+        watcher.on("error", (error: unknown) => {
+          console.warn("[coding-agents] Codex event watcher unavailable; polling continues", error instanceof Error ? error.name : "UnknownError");
+          if (directoryWatcher?.watcher === watcher) closeDirectoryWatcher();
+          else watcher.close();
+          verifyDirectoryWatcher();
+        });
+        directoryWatcher = { watcher, ino: -1 };
+        void lstat(eventDir).then((info) => { if (directoryWatcher?.watcher === watcher) directoryWatcher.ino = info.ino; },
+          () => { verifyDirectoryWatcher(); });
+      } catch (error: unknown) {
         console.warn("[coding-agents] Codex event watcher unavailable; polling continues", error instanceof Error ? error.name : "UnknownError");
-        watcher.close();
-        if (directoryWatcher === watcher) directoryWatcher = undefined;
-      });
-      directoryWatcher = watcher;
-    } catch (error: unknown) {
-      console.warn("[coding-agents] Codex event watcher unavailable; polling continues", error instanceof Error ? error.name : "UnknownError");
-    }
+      }
+    });
   }
+
 
   return {
     attachThreadStore(nextStore: ProviderEventStore): void {
@@ -520,8 +556,9 @@ export function createCodexEventBridge(options: {
     async shutdown(): Promise<void> {
       if (closed) return;
       clearInterval(timer);
-      directoryWatcher?.close();
-      directoryWatcher = undefined;
+      closeDirectoryWatcher();
+      if (rearmTimer) clearTimeout(rearmTimer);
+      rearmTimer = undefined;
       await queue;
       queue = queue.then(drainAll, drainAll);
       await queue;

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { captureChatSendStage, createChatSendTimer, recordChatSendStage, recordCodexCatalogTiming, recordCodexRunnerLink, startChatSendStage, timeChatSendStage } from "../../packages/gateway/src/chat/send-timing.js";
+import { captureChatSendStage, outsideChatSendTiming, createChatSendTimer, recordChatSendStage, recordCodexCatalogTiming, recordCodexRunnerLink, startChatSendStage, timeChatSendStage } from "../../packages/gateway/src/chat/send-timing.js";
 import { codexCatalogFixture, codexProvider } from "../helpers/codex-model-catalog-fixture.js";
 import { createCodexSendTiming } from "../../packages/gateway/src/coding-agents/codex-send-timing.mjs";
 
@@ -178,5 +178,15 @@ describe("Chat send timings", () => {
       expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
       expect(capture.lines.join(" ")).not.toMatch(/req_private_substage/);
     } finally { capture.restore(); }
+  });
+
+  it("runs long-lived callbacks outside the active send so they never inherit its trace", async () => {
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+    const timer = createChatSendTimer("req_private_outside");
+    await timer.run(async () => {
+      expect(startChatSendStage()).toBeDefined();
+      expect(outsideChatSendTiming(() => startChatSendStage())).toBeUndefined();
+      expect(outsideChatSendTiming(() => captureChatSendStage())).toBeUndefined();
+    });
   });
 });

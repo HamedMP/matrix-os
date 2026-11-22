@@ -113,3 +113,8 @@ export function captureChatSendStage(): ((stage: ChatSendSubStage, startedAt: nu
   if (!active) return undefined;
   return (stage, startedAt) => emit({ ...active, stage, durationMs: elapsed(startedAt) });
 }
+
+/** Run a callback (e.g. one that creates a long-lived watcher) outside any timed send or dispatch. */
+export function outsideChatSendTiming<T>(callback: () => T): T {
+  return activeSend.exit(callback);
+}
