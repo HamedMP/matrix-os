@@ -220,6 +220,24 @@ describe("WS /ws/terminal/herdr", () => {
     expect(writer.frames.some((frame) => frame.type === "canonical-size")).toBe(false);
   });
 
+  it("tells a new observer the size a Matrix writer holds, not its own request, until that writer leaves", async () => {
+    const { core, connect } = await gateway();
+    core.add("t1");
+    const writer = connect(`id=t1&user=${OWNER}&lease=exclusive&cols=90&rows=30`);
+    await writer.until(() => writer.frames.some((frame) => frame.type === "attached"));
+    writer.send({ type: "resize", terminalRef: ref("t1"), mode: "hard", size: { cols: 92, rows: 31 } });
+    await writer.until(() => writer.frames.some((frame) => frame.type === "canonical-size"));
+    const observer = connect(`id=t1&user=${OWNER}&cols=120&rows=36`);
+    await observer.until(() => observer.frames.some((frame) => frame.type === "attached"));
+    expect(observer.frames[0]).toMatchObject({ type: "attached", ownership: "observer", canonicalSize: { cols: 92, rows: 31 } });
+
+    writer.send({ type: "detach", terminalRef: ref("t1") });
+    await writer.until(() => writer.isClosed());
+    const later = connect(`id=t1&user=${OWNER}&cols=120&rows=36`);
+    await later.until(() => later.frames.some((frame) => frame.type === "attached"));
+    expect(later.frames[0]).toMatchObject({ type: "attached", canonicalSize: { cols: 120, rows: 36 } });
+  });
+
   it("never resizes for an observer's early resize", async () => {
     const { core, connect } = await gateway({ attachDelayMs: 60 });
     core.add("t1");
