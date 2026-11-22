@@ -5,13 +5,13 @@ export type OwnedMachineSnapshot = RoutableMachine & { deletedAt: string | null 
 
 export interface OwnedSubstrateDeps {
   hostSuffix: string;
-  accessClientId: string;
-  accessClientSecret: string;
+  hostPrefix?: string;
+  /** Optional Cloudflare Access service token added to every tunnel request. */
+  access?: { clientId: string; clientSecret: string } | null;
   loadMachine(machineId: string): Promise<OwnedMachineSnapshot | undefined>;
   now?: () => number;
 }
 
-const HOST_LABEL = /^[0-9a-f]{16}$/;
 
 /**
  * Spec 2707: an owned machine is reached only through its Cloudflare tunnel
@@ -21,6 +21,10 @@ const HOST_LABEL = /^[0-9a-f]{16}$/;
  */
 export function createOwnedSubstrate(deps: OwnedSubstrateDeps): RuntimeSubstrate {
   const suffix = `.${deps.hostSuffix}`;
+  const prefix = deps.hostPrefix ?? '';
+  const accessHeaders = deps.access
+    ? { 'cf-access-client-id': deps.access.clientId, 'cf-access-client-secret': deps.access.clientSecret }
+    : undefined;
   const now = () => deps.now?.() ?? Date.now();
 
   function online(machine: RoutableMachine): boolean {
@@ -32,7 +36,8 @@ export function createOwnedSubstrate(deps: OwnedSubstrateDeps): RuntimeSubstrate
   function hostname(machine: RoutableMachine): string | null {
     const host = machine.privateAddress;
     if (!host || !host.endsWith(suffix)) return null;
-    return HOST_LABEL.test(host.slice(0, -suffix.length)) ? host : null;
+    const label = host.slice(0, -suffix.length);
+    return label.startsWith(prefix) && /^[0-9a-f]{16}$/.test(label.slice(prefix.length)) ? host : null;
   }
 
   return {
@@ -49,7 +54,7 @@ export function createOwnedSubstrate(deps: OwnedSubstrateDeps): RuntimeSubstrate
         url: url.toString(),
         hostHeader: host,
         tlsServerName: host,
-        headers: { 'cf-access-client-id': deps.accessClientId, 'cf-access-client-secret': deps.accessClientSecret },
+        ...(accessHeaders ? { headers: accessHeaders } : {}),
       };
     },
     async ensureRunning(ref, signal): Promise<EnsureRunningResult> {

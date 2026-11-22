@@ -945,15 +945,11 @@ async function startPlatformServerWithCleanup(
     fundedAiEnabled: false, fundedAiRelayUrl: '', platformSpeechEnabled: false,
   };
   const ownedSubstrateConfig = loadOwnedMachinesConfig(process.env, ownedFallbackBase);
-  const ownedAccess = ownedSubstrateConfig.status === 'ready' ? ownedSubstrateConfig.config.access : null;
+  const ownedConfig = ownedSubstrateConfig.status === 'ready' ? ownedSubstrateConfig.config : null;
   const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
     onMetalResumed: (ref) => activateResumedRuntime?.(ref),
-    ...(ownedSubstrateConfig.status === 'ready' && ownedAccess ? {
-      owned: {
-        hostSuffix: ownedSubstrateConfig.config.hostSuffix,
-        accessClientId: ownedAccess.clientId,
-        accessClientSecret: ownedAccess.clientSecret,
-      },
+    ...(ownedConfig ? {
+      owned: { hostSuffix: ownedConfig.hostSuffix, hostPrefix: ownedConfig.hostPrefix, access: ownedConfig.access },
     } : {}),
   });
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;

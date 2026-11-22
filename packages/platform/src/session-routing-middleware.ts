@@ -41,7 +41,7 @@ import { sendWithAsleepRetry } from './substrates/runtime-asleep.js';
 import { applyUpstreamCredentials, dispatcherForUpstream, stripUpstreamCredentials } from './substrates/upstream-transport.js';
 import { buildRuntimeUserProof } from './runtime-auth.js';
 import { buildRuntimeAuthToken } from './platform-token.js';
-import { ownedOfflineResponse } from './owned-machines/offline-page.js';
+import { isOwnedTunnelDown, ownedOfflineResponse } from './owned-machines/offline-page.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -873,6 +873,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);
         noteOwnerReachedRuntime(db, machine, identity);
 
+        if (isOwnedTunnelDown(machine, upstream.status)) {
+          await upstream.body?.cancel();
+          return ownedOfflineResponse(c, explicitVmRoute.upstreamPath, machine.lastSeenAt);
+        }
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         stripUpstreamCredentials(responseHeaders, resolution.upstream);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
@@ -891,6 +895,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError('app-domain explicit vps proxy', err);
+        if (machine.substrate === 'owned') return ownedOfflineResponse(c, explicitVmRoute.upstreamPath, machine.lastSeenAt);
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }
@@ -1080,6 +1085,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           });
         }
 
+        if (isOwnedTunnelDown(runningMachine, upstream.status)) {
+          await upstream.body?.cancel();
+          return ownedOfflineResponse(c, path, runningMachine.lastSeenAt);
+        }
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         stripUpstreamCredentials(responseHeaders, resolution.upstream);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
@@ -1129,6 +1138,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError(isCodeDomain ? 'code-domain vps proxy' : 'app-domain vps proxy', err);
+        if (runningMachine.substrate === 'owned') return ownedOfflineResponse(c, path, runningMachine.lastSeenAt);
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }

@@ -45,3 +45,12 @@ export function ownedOfflineResponse(c: Context, path: string, lastSeenAt: strin
   c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
   return c.html(ownedOfflinePage(lastSeenAt), 503);
 }
+
+/**
+ * Cloudflare answers 530 (error 1033) when a tunnel has no connected
+ * connector, and 502/504 when the connector cannot reach the machine's origin.
+ * For an owned machine those mean "offline", whatever the heartbeat said.
+ */
+export function isOwnedTunnelDown(machine: { substrate: string }, status: number): boolean {
+  return machine.substrate === 'owned' && (status === 530 || status === 502 || status === 504);
+}

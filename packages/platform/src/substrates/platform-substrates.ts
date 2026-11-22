@@ -10,7 +10,7 @@ import { createVpsSubstrate } from './vps-substrate.js';
 export interface PlatformSubstrateOptions {
   onMetalResumed?: (ref: RuntimeRef) => void;
   /** Spec 2707: present only when owned machines are fully configured. */
-  owned?: { hostSuffix: string; accessClientId: string; accessClientSecret: string };
+  owned?: { hostSuffix: string; hostPrefix?: string; access?: { clientId: string; clientSecret: string } | null };
 }
 
 /** Substrates whose config is incomplete are left out, so their runtimes resolve as unavailable. */

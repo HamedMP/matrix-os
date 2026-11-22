@@ -117,12 +117,12 @@ jobs:
       # Preview-only name, so a production key id can never be inherited from a repository variable.
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       MATRIX_INTERNAL_CLERK_ORG_ID: ${{ vars.MATRIX_INTERNAL_CLERK_ORG_ID }}
-      # Spec 2707: owned machines. Preview-only names; secrets live in Secret Manager.
+      # Spec 2707: owned machines. The token and zone id are the preview-only
+      # Secret Manager secrets cloudflare-tunnel-{api-token,zone-id}-preview.
       PREVIEW_OWNED_MACHINES_ENABLED: ${{ vars.PREVIEW_OWNED_MACHINES_ENABLED || 'false' }}
       PREVIEW_OWNED_CF_ACCOUNT_ID: ${{ vars.PREVIEW_OWNED_CF_ACCOUNT_ID }}
-      PREVIEW_OWNED_CF_ZONE_ID: ${{ vars.PREVIEW_OWNED_CF_ZONE_ID }}
       PREVIEW_OWNED_HOST_SUFFIX: ${{ vars.PREVIEW_OWNED_HOST_SUFFIX }}
-      PREVIEW_OWNED_ACCESS_CLIENT_ID: ${{ vars.PREVIEW_OWNED_ACCESS_CLIENT_ID }}
+      PREVIEW_OWNED_HOST_PREFIX: ${{ vars.PREVIEW_OWNED_HOST_PREFIX || 'eng524-preview-' }}
       CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
       CONNECT_SLACK_PILOT: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_slack_pilot && 'true' || 'false' }}
       CONNECT_SHARE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && 'true' || 'false' }}
@@ -537,13 +537,24 @@ jobs:
           owned_env_bindings=""
           owned_secret_bindings=""
           if [ "${PREVIEW_OWNED_MACHINES_ENABLED:-false}" = "true" ]; then
-            if ! [[ "${PREVIEW_OWNED_CF_ACCOUNT_ID:-}" =~ ^[0-9a-f]{32}$ && "${PREVIEW_OWNED_CF_ZONE_ID:-}" =~ ^[0-9a-f]{32}$ \
-              && "${PREVIEW_OWNED_HOST_SUFFIX:-}" =~ ^[a-z0-9.-]+$ && "${PREVIEW_OWNED_ACCESS_CLIENT_ID:-}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            if ! [[ "${PREVIEW_OWNED_CF_ACCOUNT_ID:-}" =~ ^[0-9a-f]{32}$ && "${PREVIEW_OWNED_HOST_SUFFIX:-}" =~ ^[a-z0-9.-]+$ \
+              && "${PREVIEW_OWNED_HOST_PREFIX:-}" =~ ^[a-z][a-z0-9-]{0,39}-$ ]]; then
               echo "Owned machine preview settings are incomplete." >&2
               exit 1
             fi
-            owned_env_bindings="|MATRIX_OWNED_MACHINES_ENABLED=true|MATRIX_OWNED_CF_ACCOUNT_ID=${PREVIEW_OWNED_CF_ACCOUNT_ID}|MATRIX_OWNED_CF_ZONE_ID=${PREVIEW_OWNED_CF_ZONE_ID}|MATRIX_OWNED_HOST_SUFFIX=${PREVIEW_OWNED_HOST_SUFFIX}|MATRIX_OWNED_ACCESS_CLIENT_ID=${PREVIEW_OWNED_ACCESS_CLIENT_ID}|MATRIX_OWNED_UPDATE_CHANNEL=dev"
-            owned_secret_bindings=",MATRIX_OWNED_CF_API_TOKEN=owned-machines-cf-api-token-preview:latest,MATRIX_OWNED_ACCESS_CLIENT_SECRET=owned-machines-access-client-secret-preview:latest"
+            for secret_name in cloudflare-tunnel-api-token-preview cloudflare-tunnel-zone-id-preview; do
+              gcloud secrets versions describe latest --secret "$secret_name" --project "$GCP_PROJECT_ID" >/dev/null
+              accessor_member="$(gcloud secrets get-iam-policy "$secret_name" --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' | head -1)"
+              if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+                echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
+                exit 1
+              fi
+            done
+            owned_env_bindings="|MATRIX_OWNED_MACHINES_ENABLED=true|CLOUDFLARE_ACCOUNT_ID=${PREVIEW_OWNED_CF_ACCOUNT_ID}|MATRIX_OWNED_HOST_SUFFIX=${PREVIEW_OWNED_HOST_SUFFIX}|MATRIX_OWNED_HOST_PREFIX=${PREVIEW_OWNED_HOST_PREFIX}|MATRIX_OWNED_UPDATE_CHANNEL=dev"
+            owned_secret_bindings=",CLOUDFLARE_TUNNEL_API_TOKEN=cloudflare-tunnel-api-token-preview:latest,CLOUDFLARE_TUNNEL_ZONE_ID=cloudflare-tunnel-zone-id-preview:latest"
           fi
           PREVIEW_SPEECH_NOT_AFTER="$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%S.000Z')"
           deploy_preview() {

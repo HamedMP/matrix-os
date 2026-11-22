@@ -13,7 +13,7 @@ import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
 const SECRET = 'platform-secret-123';
 const CLERK_SESSION = { host: 'app.matrix-os.com', authorization: 'Bearer clerk-session' };
-const OWNED = { hostSuffix: 'm.example.net', accessClientId: 'access-id', accessClientSecret: 'access-secret' };
+const OWNED = { hostSuffix: 'm.example.net', access: { clientId: 'access-id', clientSecret: 'access-secret' } };
 const HOST = '0123456789abcdef.m.example.net';
 const SLOT = 'owned-0a1b2c3d';
 
@@ -59,6 +59,18 @@ describe('owned substrate', () => {
     expect(substrate.resolveUpstream({ ...fresh, privateAddress: `x.${HOST}` }, { path: '/' })).toBeNull();
     expect(substrate.resolveUpstream({ ...fresh, status: 'enrolling' }, { path: '/' })).toBeNull();
   });
+
+  it('requires the environment prefix and omits Access headers when none are configured', () => {
+    const prefixed = createOwnedSubstrate({ hostSuffix: 'example.com', hostPrefix: 'eng524-preview-',
+      loadMachine: async () => undefined, now: () => Date.parse('2026-11-22T10:00:00Z') });
+    const machine = { ...base, lastSeenAt: '2026-11-22T09:59:30Z', privateAddress: 'eng524-preview-0123456789abcdef.example.com' };
+    expect(prefixed.resolveUpstream(machine, { path: '/' })).toEqual({
+      url: 'https://eng524-preview-0123456789abcdef.example.com/',
+      hostHeader: 'eng524-preview-0123456789abcdef.example.com',
+      tlsServerName: 'eng524-preview-0123456789abcdef.example.com',
+    });
+    expect(prefixed.resolveUpstream({ ...machine, privateAddress: '0123456789abcdef.example.com' }, { path: '/' })).toBeNull();
+  });
 });
 
 describe('session routing to owned machines', () => {
@@ -101,6 +113,18 @@ describe('session routing to owned machines', () => {
     expect(await api.json()).toEqual({ error: 'computer_offline' });
     expect(api.headers.get('retry-after')).toBe('30');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows the offline page when the tunnel is down or unreachable despite a fresh heartbeat', async () => {
+    await insertUserMachine(db, owned());
+    fetchMock.mockResolvedValueOnce(new Response('error code: 1033', { status: 530 }));
+    const down = await app(db).request(`/vm/alice/~runtime/${SLOT}/api/projects`, { headers: CLERK_SESSION });
+    expect(down.status).toBe(503);
+    expect(await down.json()).toEqual({ error: 'computer_offline' });
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+    const unreachable = await app(db).request(`/vm/alice/~runtime/${SLOT}/`, { headers: CLERK_SESSION });
+    expect(unreachable.status).toBe(503);
+    expect(await unreachable.text()).toContain('Your computer is offline');
   });
 
   it('lists owned computers only for clients that ask for them', async () => {
