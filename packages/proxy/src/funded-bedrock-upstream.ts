@@ -72,7 +72,10 @@ export function bedrockRuntimeClientConfig(route: BedrockRouteConfig) {
 function textParts(content: FundedOpenAiRequest["messages"][number]["content"]): string[] {
   if (content === null || content === undefined) return [];
   if (typeof content === "string") return content === "" ? [] : [content];
-  return content.map((part) => part.text).filter((text) => text !== "");
+  return content.map((part) => {
+    if (part.type !== "text") throw new Error("Unsupported Bedrock image input");
+    return part.text;
+  }).filter((text) => text !== "");
 }
 
 function toBedrockDocument(value: unknown): BedrockDocument {

@@ -90,6 +90,15 @@ function output(events: ConverseStreamOutput[], requestId = "aws-request-1"): Co
 }
 
 describe("AWS Bedrock funded upstream", () => {
+  it("rejects image parts even when the Bedrock translator is called directly", () => {
+    expect(() => translateOpenAiToBedrock({
+      ...request(),
+      messages: [{ role: "user", content: [
+        { type: "text", text: "Describe this" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AA==" } },
+      ] }],
+    }, route())).toThrow("Unsupported Bedrock image input");
+  });
   it("disables automatic SDK retries for paid dispatch", () => {
     expect(bedrockRuntimeClientConfig(route())).toMatchObject({ region: "eu-west-1", maxAttempts: 1 });
   });
