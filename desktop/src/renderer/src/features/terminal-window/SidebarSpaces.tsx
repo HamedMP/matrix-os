@@ -11,7 +11,8 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { SPACE_COLORS, type SpaceStyle } from "./use-sidebar-prefs";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
-const SELECTED_BG = "var(--terminal-drawer-card-selected-bg, rgba(127,127,127,0.18))";
+// The active space's tint: clear in both themes (the design tokens' --bg-selected is nearly invisible here).
+const SELECTED_BG = "rgba(127,127,127,0.18)";
 const smallButton = "no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
 const SPACE_COLOR_NAMES: Record<(typeof SPACE_COLORS)[number], string> = {
   "#6366f1": "Indigo", "#0ea5e9": "Sky", "#10b981": "Green", "#f59e0b": "Amber",
