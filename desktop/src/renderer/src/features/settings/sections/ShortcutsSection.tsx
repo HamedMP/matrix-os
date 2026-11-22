@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { ShortcutSettings } from "@matrix-os/ui/shortcuts";
 import { invoke } from "../../../lib/operator";
 import { useShortcuts } from "../../../stores/shortcuts";
+import { markShortcutsStepSeen } from "../../onboarding/shortcuts-step";
 import { Card, SettingsSectionHeader } from "./section-kit";
 import "./shortcuts-section.css";
 
@@ -22,6 +23,9 @@ export default function ShortcutsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Getting started's keyboard shortcuts step is done once this page has been opened.
+  useEffect(markShortcutsStepSeen, []);
 
   return (
     <div className="desktop-shortcuts">

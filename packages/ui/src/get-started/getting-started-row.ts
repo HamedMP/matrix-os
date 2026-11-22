@@ -17,6 +17,7 @@ export function gettingStartedRowView(
   failedServices: ReadonlySet<string> = NONE,
 ): GettingStartedRowView {
   const done = row.status === "complete";
+  if (row.kind === "shortcuts") return { label: row.label, done, struck: done, trailing: "icon" };
   if (done && row.kind !== "bot" && row.try) return { label: row.try.label, done, struck: false, trailing: "try" };
   if (row.kind !== "bot" && row.connect && row.connect === connectingService) {
     return { label: row.label, done, struck: false, detail: "Waiting for sign-in…", trailing: "waiting" };
@@ -36,9 +37,12 @@ export type GettingStartedRowAction =
   | { type: "settings" }
   | { type: "bot"; recipeId: GetStartedRecipeBotId }
   /** A chosen bot that failed to create: create the saved bot choices again. */
-  | { type: "create-bots" };
+  | { type: "create-bots" }
+  /** Electron Desktop: open Settings → Shortcuts. */
+  | { type: "shortcuts" };
 
 export function gettingStartedRowAction(row: GettingStartedRow, { canConnect }: { canConnect: boolean }): GettingStartedRowAction {
+  if (row.kind === "shortcuts") return { type: "shortcuts" };
   if (row.kind === "bot") return row.create ? { type: "create-bots" } : { type: "bot", recipeId: row.recipeId };
   if (row.status === "complete" && row.try) return { type: "try", prompt: row.try.prompt };
   if (row.connect && canConnect) return { type: "connect", service: row.connect };
