@@ -19,7 +19,7 @@ import {
   type MessagingBridgeClient,
   type MessagingBridgeFetch,
 } from "./bridge-client.js";
-import { deriveChatAppsSection, type ChatAppAccountRow, type ChatAppNetworkRow } from "./bridge-view.js";
+import { deriveChatAppsSection, type ChatAppAccountRow, type ChatAppNetworkRow, type ChatAppsSectionState } from "./bridge-view.js";
 import { chatAppsStyles as s } from "./chat-apps-styles.js";
 import { ChatInbox } from "./ChatInbox.js";
 import { LinkAccountDialog } from "./LinkAccountDialog.js";
@@ -144,30 +144,7 @@ function ChatAppsContent({
 
   return (
     <>
-      {view.kind === "loading" ? (
-        <div aria-busy="true" style={{ ...s.card, padding: 16, minHeight: 120 }}>
-          <p role="status" style={s.muted}>Checking your chat apps…</p>
-        </div>
-      ) : null}
-      {view.kind === "error" ? (
-        <div role="alert" style={s.alert}>
-          <span>{view.message}</span>
-          <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
-        </div>
-      ) : null}
-      {view.kind === "not_enabled" ? (
-        <div style={{ ...s.card, ...s.empty, minHeight: 120 }}>
-          <MessagesSquare size={22} aria-hidden="true" />
-          <p style={{ ...s.body, fontWeight: 600 }}>Not available yet</p>
-          <p style={s.muted}>Linking your own chat apps is in early access. It will appear here when your account is included.</p>
-        </div>
-      ) : null}
-      {view.kind === "unavailable" ? (
-        <div role="alert" style={s.alert}>
-          <span>Chat apps are unavailable right now. Your saved messages are safe.</span>
-          <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
-        </div>
-      ) : null}
+      <StatusNotice view={view} onRetry={() => { void loadStatus(true); }} />
       {view.kind === "ready" ? (
         <ul aria-label="Chat apps" style={{ ...s.card, listStyle: "none", margin: 0, padding: 0 }}>
           {view.rows.map((row, index) => (
@@ -262,5 +239,32 @@ function NetworkRow({
         </div>
       ))}
     </li>
+  );
+}
+
+/** The loading, error, early-access and outage notices above the account rows. */
+function StatusNotice({ view, onRetry }: { view: ChatAppsSectionState; onRetry: () => void }) {
+  if (view.kind === "loading") {
+    return (
+      <div aria-busy="true" style={{ ...s.card, padding: 16, minHeight: 120 }}>
+        <p role="status" style={s.muted}>Checking your chat apps…</p>
+      </div>
+    );
+  }
+  if (view.kind === "not_enabled") {
+    return (
+      <div style={{ ...s.card, ...s.empty, minHeight: 120 }}>
+        <MessagesSquare size={22} aria-hidden="true" />
+        <p style={{ ...s.body, fontWeight: 600 }}>Not available yet</p>
+        <p style={s.muted}>Linking your own chat apps is in early access. It will appear here when your account is included.</p>
+      </div>
+    );
+  }
+  if (view.kind !== "error" && view.kind !== "unavailable") return null;
+  return (
+    <div role="alert" style={s.alert}>
+      <span>{view.kind === "error" ? view.message : "Chat apps are unavailable right now. Your saved messages are safe."}</span>
+      <Button variant="secondary" size="sm" onClick={onRetry}>Try again</Button>
+    </div>
   );
 }
