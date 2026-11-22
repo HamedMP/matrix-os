@@ -29,11 +29,24 @@ export async function managedPiFixture(operation: RoutineCliOperation, options: 
   const model = fauxProvider({ models: [{ id: "claude-sonnet-5", input: ["text"], contextWindow: 128000, maxTokens: 8192 }] });
   model.setResponses([fauxAssistantMessage(fauxToolCall("matrix_routines", operation, { id: "call_managed_routine" }), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("Observed routine result."))]);
   const bindings: ManagedPiRuntimeBinding[] = [];
+  let runtime: { runtimeHandle: string; executionGeneration: string } | undefined;
+  const stopReceipts: { runtimeHandle: string; executionGeneration: string; state: "stopped" }[] = [];
   const controls: AbortController[] = [];
   const workerEvents: BotEvent["event"][] = []; // Named fixture observation only, capped256; actual managed sink always runs.
   const host: ScopeRuntimeHost = { available: true, client: {
-    createRuntime: async () => ({ runtimeHandle: `runtime_${randomBytes(16).toString("hex")}`, executionGeneration: "1" }),
-    renewRuntime: async () => undefined, stopRuntime: async () => undefined,
+    createRuntime: async () => {
+      if (runtime) throw new Error("Named supervisor fixture supports one runtime");
+      runtime = { runtimeHandle: `runtime_${randomBytes(16).toString("hex")}`, executionGeneration: "1" };
+      return runtime;
+    },
+    renewRuntime: async () => undefined,
+    stopRuntime: async ({ runtimeHandle }: { runtimeHandle: string }) => {
+      if (!runtime || runtime.runtimeHandle !== runtimeHandle) throw new Error("Unknown fixture runtime");
+      const receipt = { ...runtime, state: "stopped" as const };
+      if (stopReceipts.length >= 16) throw new Error("Named stop observation cap");
+      stopReceipts.push(receipt);
+      return receipt;
+    },
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
       if (request.command.kind !== "bot.run") { resolveWorker(); return { ok: true, reply: {} }; }
       const binding = f.f.registry.lookupRun({ ...request, runId: request.command.runId });
@@ -68,6 +81,10 @@ export async function managedPiFixture(operation: RoutineCliOperation, options: 
   const server = createScopeRuntimeBrokerServer({ socketPath, botImageFrames: true,
     broker: { handle: async () => { throw new Error("Unowned generic broker"); }, close() {} }, routeFrame: actions.handleFrame });
   await server.start(); f.setSourceAdapter(managed.adapter);
-  return { ...f, socketPath, managed, actions, host, bindings, controls, workerEvents, workerLoopSettled: () => workerLoopSettled, broker: (binding: ManagedPiRuntimeBinding) => createBotBrokerClient({ socketPath, ...binding }), result: () => result, finish: resolveWorker,
-    async close() { resolveWorker(); lifetime.abort(); await managed.close(); await server.close(); await f.close(); } };
+  return { ...f, socketPath, managed, actions, host, bindings, stopReceipts, controls, workerEvents, workerLoopSettled: () => workerLoopSettled, broker: (binding: ManagedPiRuntimeBinding) => createBotBrokerClient({ socketPath, ...binding }), result: () => result, finish: resolveWorker,
+    async close() {
+      resolveWorker(); lifetime.abort();
+      try { await managed.close(); }
+      finally { try { await server.close(); } finally { await f.close(); } }
+    } };
 }
