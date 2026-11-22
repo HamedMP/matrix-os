@@ -12,21 +12,40 @@ import { describeError } from "./describe-error";
 
 const FileSchema = z.object({
   version: z.literal(1),
-  machines: z.record(LocalMachineNameSchema, z.object({ target: SshTargetSchema, ssh: SshOptionsSchema.optional() }).strict()),
+  machines: z.record(LocalMachineNameSchema, z.strictObject({
+    target: SshTargetSchema, ssh: SshOptionsSchema.optional(), coreTarget: z.string().max(255).optional(),
+  })),
 });
-export interface MachineSsh { target: string; ssh?: SshOptions }
+export interface MachineSsh {
+  target: string;
+  ssh?: SshOptions;
+  /** The machine's target as the core reported it when the app added it, to tell a reused name apart. */
+  coreTarget?: string;
+}
+
+/** Whether saved settings still describe the core's machine of that name, not another host that took the name. */
+export function machineSshMatches(entry: MachineSsh, current: { target: string }): boolean {
+  return (entry.coreTarget ?? entry.target) === current.target;
+}
 
 export function createMachineSshStore(dataDir: string) {
   const path = join(dataDir, "machine-ssh.json");
   // Writes run one at a time, so two adds never lose each other's entry.
   let writes: Promise<unknown> = Promise.resolve();
 
-  async function read(): Promise<Record<string, MachineSsh>> {
+  /**
+   * The saved settings. A file that is missing is empty. One that exists but
+   * cannot be read is empty for display, but stops a write (`forWrite`), so a
+   * passing read error never replaces every machine's settings.
+   */
+  async function read(forWrite = false): Promise<Record<string, MachineSsh>> {
     let raw: string;
     try {
       raw = await readFile(path, "utf8");
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") console.warn("[local-terminals] machine ssh unreadable:", describeError(error));
+      if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return {};
+      console.warn("[local-terminals] machine ssh unreadable:", describeError(error));
+      if (forWrite) throw error;
       return {};
     }
     try {
@@ -40,7 +59,7 @@ export function createMachineSshStore(dataDir: string) {
 
   function change(update: (machines: Record<string, MachineSsh>) => void): Promise<void> {
     const next = writes.then(async () => {
-      const machines = await read();
+      const machines = await read(true);
       update(machines);
       const names = Object.keys(machines);
       for (const name of names.slice(0, Math.max(0, names.length - LOCAL_MACHINES_MAX))) delete machines[name];
@@ -58,7 +77,7 @@ export function createMachineSshStore(dataDir: string) {
 
   return {
     get: async (name: string): Promise<MachineSsh | undefined> => (await read())[name],
-    all: read,
+    all: () => read(),
     set: (name: string, entry: MachineSsh) => change((machines) => { machines[name] = entry; }),
     remove: (name: string) => change((machines) => { delete machines[name]; }),
   };

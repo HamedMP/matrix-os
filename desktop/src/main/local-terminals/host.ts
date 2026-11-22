@@ -6,7 +6,7 @@ import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
 import { sshLoginArgv, sshVia } from "./ssh-command";
-import { createMachineSshStore } from "./machine-ssh-store";
+import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
@@ -296,24 +296,43 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       const [machines, saved] = await Promise.all([ensure().then(listMachines), machineSsh.all()]);
       return machines.map((machine) => {
         const entry = saved[machine.name];
-        return entry ? { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) } : machine;
+        if (!entry) return machine;
+        if (!machineSshMatches(entry, machine)) {
+          // The name now belongs to another host: its old settings must not reach it.
+          void machineSsh.remove(machine.name).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
+          return machine;
+        }
+        return { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) };
       });
     },
 
     /** Open in terminal for an added machine, the way it was added. Null when the core does not know it. */
     async machineLogin(name: string, size: { cols: number; rows: number }): Promise<string | null> {
-      const entry = await machineSsh.get(name);
-      const target = entry?.target ?? (await listMachines(await ensure())).find((machine) => machine.name === name)?.target;
+      const [entry, current] = await Promise.all([
+        machineSsh.get(name), ensure().then(listMachines).then((machines) => machines.find((machine) => machine.name === name)),
+      ]);
+      if (!current) return null;
+      const saved = entry && machineSshMatches(entry, current) ? entry : undefined;
+      const target = saved?.target ?? current.target;
       // A machine added with a command (via) elsewhere has no target to ssh to.
       if (!target || !SshTargetSchema.safeParse(target).success) return null;
-      return this.sshLogin(target, size, entry?.ssh);
+      return this.sshLogin(target, size, saved?.ssh);
     },
 
     async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
       const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
       const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
       if (result.ok) {
-        await machineSsh.set(result.machine.name, { target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) });
+        try {
+          await machineSsh.set(result.machine.name, {
+            target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), coreTarget: result.machine.target,
+          });
+        } catch (error: unknown) {
+          // Without its settings the machine would be reached the wrong way later: take it back out so a retry starts clean.
+          await (await ensure()).call("machine.rm", { machine: result.machine.name })
+            .catch((rollback: unknown) => console.warn("[local-terminals] add rollback failed:", describeError(rollback)));
+          throw error;
+        }
         return { ok: true, machine: { ...result.machine, target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) } };
       }
       return result;
