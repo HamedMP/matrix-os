@@ -36,6 +36,14 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('qualified re
   async function issued() { return service.issue(auth(), { ...selector(), requestClass: 'interactive' }, signal()); }
   const authorization = (credential: string) => ({ ...selector(), credential, requestId: 'request_one', maxCostMicrousd: 100, billingMode: 'usage' as const });
   const rows = async () => (await db.executor.selectFrom('ai_funded_usage_reservations').selectAll().execute());
+  it('issues and authorizes a fresh credential at the current rotated runtime epoch', async () => {
+    await db.executor.updateTable('user_machines').set({ runtime_token_epoch: 2 }).where('machine_id', '=', identity.machineId).execute();
+    const authenticated = { ...auth(), authorization: `Bearer ${buildPlatformRuntimeVerificationToken({ handle: 'qualified-one', machineId: identity.machineId, runtimeSlot: 'primary' }, platformSecret, 2)}` };
+    const lease = await service.issue(authenticated, { ...selector(), requestClass: 'interactive' }, signal());
+    const stored = await db.executor.selectFrom('ai_runtime_credentials').select('runtime_token_epoch').where('token_id', '=', lease.lease.credential.tokenId).executeTakeFirstOrThrow();
+    expect(stored.runtime_token_epoch).toBe(2);
+    expect((await service.authorize(authorization(lease.lease.credential.token), signal())).authorization.authorized).toBe(true);
+  });
   it('reserves exact route atomically, retries idempotently, and never accepts the token through legacy authorize', async () => {
     const lease = await issued(); const input = authorization(lease.lease.credential.token);
     const first = await service.authorize(input, signal()); expect(first.binding).toEqual(lease.binding);
