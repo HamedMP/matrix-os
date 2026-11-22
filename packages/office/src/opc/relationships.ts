@@ -15,9 +15,21 @@ export const RELATIONSHIP_TYPE_OFFICE_DOCUMENT_STRICT =
 
 const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
 
-/** The relationships of one source, in document order. */
+function numberOfId(id: string): number {
+  const match = /^rId(\d{1,15})$/.exec(id);
+  return match ? Number(match[1]) : 0;
+}
+
+/**
+ * The relationships of one source, in document order. Lookups by id go through
+ * an index so a part with very many relationships still parses in linear time;
+ * both collections hold exactly the relationships of the part.
+ */
 export class RelationshipSet {
   private readonly items: Relationship[] = [];
+  private readonly byId = new Map<string, Relationship>();
+  /** Highest `rIdN` number ever seen, so an id is not handed out twice. */
+  private highest = 0;
 
   /** Parses the bytes of a relationships part. */
   static parse(bytes: Uint8Array): RelationshipSet {
@@ -34,11 +46,11 @@ export class RelationshipSet {
       if (!id || type === undefined || target === undefined) {
         throw fault("invalid_relationships", "Relationship entry lacks Id, Type or Target");
       }
-      if (set.get(id)) {
+      if (set.byId.has(id)) {
         throw fault("invalid_relationships", "relationships part repeats an Id");
       }
       const external = tag.attributes.get("TargetMode")?.toLowerCase() === "external";
-      set.items.push({ id, type, target, targetMode: external ? "External" : "Internal" });
+      set.insert({ id, type, target, targetMode: external ? "External" : "Internal" });
     }
     return set;
   }
@@ -53,7 +65,7 @@ export class RelationshipSet {
   }
 
   get(id: string): Relationship | null {
-    const found = this.items.find((item) => item.id === id);
+    const found = this.byId.get(id);
     return found ? { ...found } : null;
   }
 
@@ -61,14 +73,9 @@ export class RelationshipSet {
     return this.items.filter((item) => item.type === type).map((item) => ({ ...item }));
   }
 
-  /** The next unused `rIdN`: one above the highest number already in use. */
+  /** The next unused `rIdN`: one above the highest number this set has held. */
   nextId(): string {
-    let highest = 0;
-    for (const item of this.items) {
-      const match = /^rId(\d{1,15})$/.exec(item.id);
-      if (match) highest = Math.max(highest, Number(match[1]));
-    }
-    return `rId${highest + 1}`;
+    return `rId${this.highest + 1}`;
   }
 
   add(relationship: NewRelationship): Relationship {
@@ -87,20 +94,27 @@ export class RelationshipSet {
     if (!/^[A-Za-z_][\w.-]*$/.test(id)) {
       throw fault("invalid_value", "relationship id is not a valid XML id");
     }
-    if (this.get(id)) {
+    if (this.byId.has(id)) {
       throw fault("duplicate_relationship", `relationship id "${id}" is already in use`);
     }
     const added: Relationship = { id, type: relationship.type, target: relationship.target, targetMode };
-    this.items.push(added);
+    this.insert(added);
     return { ...added };
   }
 
   /** Returns false when the id did not exist. */
   remove(id: string): boolean {
-    const index = this.items.findIndex((item) => item.id === id);
-    if (index < 0) return false;
-    this.items.splice(index, 1);
+    const found = this.byId.get(id);
+    if (!found) return false;
+    this.byId.delete(id);
+    this.items.splice(this.items.indexOf(found), 1);
     return true;
+  }
+
+  private insert(relationship: Relationship): void {
+    this.items.push(relationship);
+    this.byId.set(relationship.id, relationship);
+    this.highest = Math.max(this.highest, numberOfId(relationship.id));
   }
 
   serialize(): Uint8Array {

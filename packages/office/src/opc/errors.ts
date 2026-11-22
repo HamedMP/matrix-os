@@ -3,7 +3,7 @@
  * {@link OfficeError} codes. The fault name travels in `details.reason` for logs.
  */
 
-import { OfficeError, type OfficeErrorCode, type OfficeErrorDetails } from "../errors.js";
+import { OfficeError, isOfficeError, type OfficeErrorCode, type OfficeErrorDetails } from "../errors.js";
 
 const FAULT_CODES = {
   // Not a ZIP container at all.
@@ -50,7 +50,7 @@ export function asPackageDamage<T>(reason: OpcFault, message: string, action: ()
   try {
     return action();
   } catch (error) {
-    if (error instanceof OfficeError && (error.code === "invalid_argument" || error.code === "corrupt_package")) {
+    if (isOfficeError(error, "invalid_argument", "corrupt_package")) {
       throw fault(reason, message, undefined, error);
     }
     throw error;
