@@ -1277,7 +1277,11 @@ install_bundle() {
 write_bundle_version() {
   local root="${1:-/opt/matrix}" owner="${2:-$MATRIX_RUN_USER}" version
   version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\{1,128\}\)".*/\1/p' "$root/release.json" | head -n 1)"
-  [[ "$version" =~ ^v[0-9A-Za-z._-]+$ ]] || fail "the host bundle has no valid version"
+  # Builder formats: a v-tag, or `git describe --always --dirty` (bare hash, maybe
+  # -dirty). The value becomes a file's contents and a path component elsewhere,
+  # so keep it a bounded, slash-free name that cannot start a flag or a dotfile.
+  { [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]{0,127}$ ]] && [[ "$version" != *..* ]]; } \
+    || fail "the host bundle has no valid version"
   printf '%s\n' "$version" >"$root/app/BUNDLE_VERSION"
   chown "$owner:" "$root/app/BUNDLE_VERSION"
   chmod 0644 "$root/app/BUNDLE_VERSION"

@@ -231,6 +231,32 @@ prepare_scope_runtime_roots "${home}" alice`,
     expect(readFileSync(join(opt, "app", "BUNDLE_VERSION"), "utf8")).toBe("v2026.11.21-pr3533-1-1-abc1234\n");
   });
 
+  it.each(["v2026.11.21", "3f9c2ab", "3f9c2ab-dirty", "v2026.11.21-4-g3f9c2ab-dirty"])(
+    "accepts the %s version format the bundle builder can produce",
+    (version) => {
+      // build-host-bundle.sh falls back to `git describe --tags --always --dirty`,
+      // which is a bare commit hash (maybe -dirty) when no tag is reachable.
+      const opt = join(dir, "opt");
+      spawnSync("mkdir", ["-p", join(opt, "app")]);
+      writeFileSync(join(opt, "release.json"), `{\n  "version": "${version}",\n  "channel": "none"\n}\n`);
+      const result = run(`write_bundle_version "${opt}" "$(id -un)"`);
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(opt, "app", "BUNDLE_VERSION"), "utf8")).toBe(`${version}\n`);
+    },
+  );
+
+  it.each(["../../etc/passwd", "v1/../x", "v1..2", ".hidden", "-rf", "v1 2", "v".repeat(129)])(
+    "refuses the unsafe release version %s",
+    (version) => {
+      const opt = join(dir, "opt");
+      spawnSync("mkdir", ["-p", join(opt, "app")]);
+      writeFileSync(join(opt, "release.json"), `{\n  "version": "${version}",\n  "channel": "none"\n}\n`);
+      const result = run(`write_bundle_version "${opt}" "$(id -un)"`);
+      expect(result.status).not.toBe(0);
+      expect(existsSync(join(opt, "app", "BUNDLE_VERSION"))).toBe(false);
+    },
+  );
+
   it("refuses a release version that is not a plain version string", () => {
     const opt = join(dir, "opt");
     spawnSync("mkdir", ["-p", join(opt, "app")]);
