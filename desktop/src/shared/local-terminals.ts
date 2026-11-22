@@ -94,6 +94,8 @@ export type LocalMachine = z.infer<typeof LocalMachineSchema>;
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
 export const LocalMachineAddFailureSchema = z.enum(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added", "invalid", "unavailable"]);
 export type LocalMachineAddFailure = z.infer<typeof LocalMachineAddFailureSchema>;
+/** At most this much of a terminal's screen crosses to the overview's preview. */
+export const LOCAL_TERMINAL_PREVIEW_MAX_CHARS = 8_000;
 const AttachIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const Size = { cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) };
 const Ok = z.strictObject({ ok: z.boolean() });
@@ -291,6 +293,14 @@ export const LOCAL_TERMINAL_INVOKE = {
   },
   // The person opened this terminal: herdr-core's `herdr.seen` label, shared with every client of the core.
   "local-terminal:seen": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
+  // The last lines on a terminal's screen, for the overview's preview (spec 2706).
+  "local-terminal:read": {
+    request: z.strictObject({ id: LocalTerminalAddressSchema }),
+    response: z.discriminatedUnion("ok", [
+      z.strictObject({ ok: z.literal(true), text: z.string().max(LOCAL_TERMINAL_PREVIEW_MAX_CHARS) }),
+      z.strictObject({ ok: z.literal(false) }),
+    ]),
+  },
 } as const;
 
 export const LOCAL_TERMINAL_EVENTS = {

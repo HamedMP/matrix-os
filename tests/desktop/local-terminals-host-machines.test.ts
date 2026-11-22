@@ -38,6 +38,18 @@ describe("added machines over ssh", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
+  // Spec 2706: the overview previews a terminal's screen, bounded.
+  it("reads a terminal's screen for a preview, keeping only its end when long", async () => {
+    const long = `${"x".repeat(9_000)}\nlast line`;
+    const { host, calls } = start((core, call) => {
+      if (call.method === "terminal.read") core.reply(call.id, { result: { text: long, complete: true, how: "screen" } });
+    });
+    const text = await host.read("vps/t4");
+    expect(calls.find((call) => call.method === "terminal.read")?.params).toEqual({ terminal: "vps/t4", lines: 0 });
+    expect(text.length).toBe(8_000);
+    expect(text.endsWith("last line")).toBe(true);
+  });
+
   // Fault detected (Greptile, #3570): settings saved by name reached another host that later took the name.
   it("drops saved settings once the name belongs to a different host", async () => {
     const { host, dataDir } = start((core, call) => {

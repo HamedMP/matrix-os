@@ -45,7 +45,7 @@ describe("IPC sender policy", () => {
       "local-terminal:machines", "local-terminal:machine-add", "local-terminal:machine-remove", "local-terminal:machine-connect",
       "local-terminal:ssh-login", "local-terminal:tailscale-peers", "local-terminal:machine-login",
       "local-terminal:machine-install", "local-terminal:machine-update",
-      "local-terminal:rename", "local-terminal:resize", "local-terminal:seen", "local-terminal:watch",
+      "local-terminal:read", "local-terminal:rename", "local-terminal:resize", "local-terminal:seen", "local-terminal:watch",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);

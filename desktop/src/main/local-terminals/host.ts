@@ -4,7 +4,10 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
+import { z } from "zod/v4";
+import {
+  LOCAL_TERMINAL_PREVIEW_MAX_CHARS, SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions,
+} from "../../shared/local-terminals";
 import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
@@ -395,6 +398,13 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * saw), so every client of this core agrees; a finished terminal gets
      * its own label, since its turn no longer changes.
      */
+    /** The terminal's screen as text, for a preview; the end of it when long. */
+    async read(id: string): Promise<string> {
+      const core = await ensure();
+      const result = z.object({ text: z.string() }).parse(await core.call("terminal.read", { terminal: id, lines: 0 }));
+      return result.text.slice(-LOCAL_TERMINAL_PREVIEW_MAX_CHARS);
+    },
+
     async seen(id: string): Promise<void> {
       const fact = events.fact(id);
       if (!fact) throw new LocalTerminalUnknownError();
