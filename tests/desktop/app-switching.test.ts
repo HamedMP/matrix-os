@@ -285,6 +285,20 @@ describe("openFilesApp", () => {
 });
 
 describe("reopenClosedApp", () => {
+  it("restores a separately opened tab as its own tab instead of reusing the one that is still open", () => {
+    const main = useTabs.getState().openTab({ kind: "files", title: "Docs", slug: "docs" });
+    const second = useTabs.getState().openTabInstance({ kind: "files", title: "Docs", slug: "docs" });
+    reconcile();
+    select(second);
+
+    handleCloseSelectedAppShortcut({ preventDefault: () => undefined });
+    expect(useTabs.getState().tabs.some((tab) => tab.id === second)).toBe(false);
+
+    reopenClosedApp();
+    expect(active()).not.toBe(main);
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "files" && tab.slug === "docs")).toHaveLength(2);
+  });
+
   it("reopens the last app closed with the Close app shortcut", () => {
     const docs = useTabs.getState().openTab({ kind: "files", title: "Docs", slug: "docs" });
     const notes = useTabs.getState().openTab({ kind: "notes", title: "Notes" });

@@ -211,5 +211,10 @@ export function openFilesApp(): void {
 export function reopenClosedApp(): void {
   const spec = useClosedApps.getState().pop();
   if (!spec) return;
-  openAndFocus(() => useTabs.getState().openTab(spec));
+  // An app that cannot be closed keeps its tab, so it is reused. Any other
+  // closed tab comes back as its own tab: openTab would fold it into a tab
+  // that is still open (a second Chat or Files tab) and replace its content.
+  openAndFocus(() => spec.closable === false
+    ? useTabs.getState().openTab(spec)
+    : useTabs.getState().openTabInstance(spec));
 }
