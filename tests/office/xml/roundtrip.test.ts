@@ -10,7 +10,7 @@ import {
   serializeXml,
   textContent,
 } from "../../../packages/office/src/xml/index.js";
-import { KITCHEN_SINK, SAMPLES, SHEET, UNICODE, WORD_DOCUMENT, seededRandom } from "./corpus.js";
+import { KITCHEN_SINK, SAMPLES, SHARED_STRINGS, SHEET, UNICODE, WORD_DOCUMENT, seededRandom } from "./corpus.js";
 
 describe("exact round-trip", () => {
   for (const sample of SAMPLES) {
@@ -215,6 +215,24 @@ describe("parsed tree", () => {
     expect(getAttr(multi, "gt")).toBe("a>b");
     const crlf = parseXml("<a>one\r\ntwo</a>");
     expect((crlf.root.children[0] as XmlText).value).toBe("one\r\ntwo");
+  });
+
+  it("keeps whitespace-only text, with or without xml:space", () => {
+    const strings = parseXml(SHARED_STRINGS);
+    const items = children(strings.root, "si");
+    const blank = child(items[1] as XmlElement, "t") as XmlElement;
+    expect(getAttr(blank, "xml:space")).toBe("preserve");
+    expect(blank.children).toHaveLength(1);
+    expect(textContent(blank)).toBe(" ");
+    expect(textContent(items[2] as XmlElement)).toBe("line one_x000D_\nline two");
+    expect(textContent(items[3] as XmlElement)).toBe("plain bold & red");
+
+    const padded = find(parseXml(SHEET), "is") as XmlElement;
+    expect(textContent(padded)).toBe("  padded  ");
+
+    const pretty = parseXml("<a>\n  <b/>\n</a>");
+    expect(pretty.root.children.map((node) => node.kind)).toEqual(["text", "element", "text"]);
+    expect((pretty.root.children[0] as XmlText).value).toBe("\n  ");
   });
 
   it("decodes characters outside the basic multilingual plane", () => {

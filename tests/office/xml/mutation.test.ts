@@ -340,6 +340,23 @@ describe("refused tree edits", () => {
     expect(serializeXml(doc)).toBe("<a><b/></a>");
   });
 
+  it("refuses arguments of the wrong kind", () => {
+    const doc = parseXml("<?xml version='1.0'?><a>t</a>");
+    const text = doc.root.children[0] as XmlText;
+    expectCode(() => appendChild(doc as never, createElement("b")), "invalid_argument");
+    expectCode(() => appendChild(text as never, createElement("b")), "invalid_argument");
+    expectCode(() => prependChild(doc.root, doc.children[0] as never), "invalid_argument");
+    expectCode(() => appendChild(doc.root, "text" as never), "invalid_argument");
+    expectCode(() => setAttr(doc.root, "a", 1 as never), "invalid_argument");
+    expectCode(() => setText(doc.root as never, "x"), "invalid_argument");
+    expectCode(() => setText(text, null as never), "invalid_argument");
+    expectCode(() => setTextContent(text as never, "x"), "invalid_argument");
+    expectCode(() => createText(7 as never), "invalid_argument");
+    expectCode(() => cloneNode(doc as never), "invalid_argument");
+    expectCode(() => serializeXml(text as never), "invalid_argument");
+    expect(serializeXml(doc)).toBe("<?xml version='1.0'?><a>t</a>");
+  });
+
   it("treats inserting a node next to itself as no change", () => {
     const doc = parseXml("<a><b/><c/></a>");
     const b = child(doc.root, "b") as XmlElement;

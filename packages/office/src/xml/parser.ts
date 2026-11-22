@@ -42,6 +42,17 @@ export const parseXml: ParseXml = (text, limits) => {
   }
 
   const doc: WritableDocument = { kind: "document", children: [], root: null as never, bom: false };
+
+  // Children are collected in one scratch buffer per nesting level and copied
+  // into an array of the exact size when their element closes. Appending to
+  // each element's own array instead would leave every array with spare
+  // capacity, which more than doubles the memory of a large tree.
+  const levels: XmlNode[][] = [[]];
+  const savedCounts: number[] = [];
+  let buffer = levels[0] as XmlNode[];
+  let count = 0;
+  const attrBuffer: XmlAttr[] = [];
+
   let pos = 0;
   if (text.charCodeAt(0) === 0xfeff) {
     doc.bom = true;
@@ -52,7 +63,7 @@ export const parseXml: ParseXml = (text, limits) => {
   if (startsDeclaration(text, pos)) {
     const declaration = parseDeclaration(text, pos, doc);
     if (++nodes > maxNodes) throw limitExceeded("maxNodes", maxNodes, pos);
-    doc.children.push(declaration.node);
+    buffer[count++] = declaration.node;
     pos = declaration.end;
   }
 
@@ -73,7 +84,6 @@ export const parseXml: ParseXml = (text, limits) => {
 
   /** The open element, or null at the top level of the document. */
   let open: WritableElement | null = null;
-  let siblings: XmlNode[] = doc.children;
   let depth = 0;
   let root: WritableElement | null = null;
 
@@ -85,10 +95,12 @@ export const parseXml: ParseXml = (text, limits) => {
         const stray = firstNonSpace(text, pos, end);
         if (stray !== -1) throw malformed(text, stray, "text outside the document element");
       }
+      // A literal `]]>` in text is tolerated: it is kept as written, and text
+      // written by a helper escapes `>` so it can never be produced here.
       const raw = text.slice(pos, end);
       const value = raw.indexOf("&") === -1 ? raw : decodeReferences(raw, text, pos);
       if (++nodes > maxNodes) throw limitExceeded("maxNodes", maxNodes, pos);
-      siblings.push({ kind: "text", value, raw, parent: open ?? doc });
+      buffer[count++] = { kind: "text", value, raw, parent: open ?? doc };
       if (lt === -1) break;
     }
 
@@ -115,14 +127,11 @@ export const parseXml: ParseXml = (text, limits) => {
         open.closeTagTail = text.slice(tailStart, at);
       }
       pos = at + 1;
+      if (count > 0) open.children = buffer.slice(0, count) as XmlChildNode[];
       depth--;
-      if (depth === 0) {
-        open = null;
-        siblings = doc.children;
-      } else {
-        open = open.parent as WritableElement;
-        siblings = open.children;
-      }
+      buffer = levels[depth] as XmlNode[];
+      count = savedCounts[depth] as number;
+      open = depth === 0 ? null : (open.parent as WritableElement);
       continue;
     }
 
@@ -132,14 +141,14 @@ export const parseXml: ParseXml = (text, limits) => {
         if (end === -1) throw malformed(text, lt, "comment is not terminated");
         if (text.charCodeAt(end + 2) !== 0x3e) throw malformed(text, end, "'--' is not allowed inside a comment");
         if (++nodes > maxNodes) throw limitExceeded("maxNodes", maxNodes, lt);
-        siblings.push({ kind: "comment", value: text.slice(lt + 4, end), parent: open ?? doc });
+        buffer[count++] = { kind: "comment", value: text.slice(lt + 4, end), parent: open ?? doc };
         pos = end + 3;
       } else if (text.startsWith("[CDATA[", lt + 2)) {
         if (open === null) throw malformed(text, lt, "CDATA section outside the document element");
         const end = text.indexOf("]]>", lt + 9);
         if (end === -1) throw malformed(text, lt, "CDATA section is not terminated");
         if (++nodes > maxNodes) throw limitExceeded("maxNodes", maxNodes, lt);
-        siblings.push({ kind: "cdata", value: text.slice(lt + 9, end), parent: open });
+        buffer[count++] = { kind: "cdata", value: text.slice(lt + 9, end), parent: open };
         pos = end + 3;
       } else if (text.startsWith("DOCTYPE", lt + 2)) {
         throw malformed(text, lt, "document type declarations are not supported", "doctype");
@@ -167,7 +176,7 @@ export const parseXml: ParseXml = (text, limits) => {
         throw malformed(text, at, "expected whitespace after the processing instruction target");
       }
       if (++nodes > maxNodes) throw limitExceeded("maxNodes", maxNodes, lt);
-      siblings.push({ kind: "pi", target, data: text.slice(at, end), parent: open ?? doc });
+      buffer[count++] = { kind: "pi", target, data: text.slice(at, end), parent: open ?? doc };
       pos = end + 2;
       continue;
     }
@@ -187,7 +196,7 @@ export const parseXml: ParseXml = (text, limits) => {
     while (code < 128 ? (ASCII_CLASS[code] as number) & NAME_CHAR : isHighNameChar(code)) code = text.charCodeAt(++at);
     const name = internName(lt + 1, at);
 
-    const attrs: XmlAttr[] = [];
+    let attrCount = 0;
     let seen: Set<string> | null = null;
     let openTagTail = "";
     let selfClosing = false;
@@ -255,10 +264,9 @@ export const parseXml: ParseXml = (text, limits) => {
       const raw = text.slice(valueStart, valueEnd);
       const value = hasReference ? decodeReferences(raw, text, valueStart) : raw;
 
-      const count = attrs.length;
-      if (count < DUPLICATE_SCAN_LIMIT) {
-        for (let index = 0; index < count; index++) {
-          if ((attrs[index] as XmlAttr).name === attrName) {
+      if (attrCount < DUPLICATE_SCAN_LIMIT) {
+        for (let index = 0; index < attrCount; index++) {
+          if ((attrBuffer[index] as XmlAttr).name === attrName) {
             throw malformed(text, nameStart, `duplicate attribute ${quoteName(attrName)}`, "duplicate_attribute");
           }
         }
@@ -266,7 +274,7 @@ export const parseXml: ParseXml = (text, limits) => {
         // Lives for one start tag; its size is bounded by that tag's attribute count.
         if (seen === null) {
           seen = new Set<string>();
-          for (let index = 0; index < count; index++) seen.add((attrs[index] as XmlAttr).name);
+          for (let index = 0; index < attrCount; index++) seen.add((attrBuffer[index] as XmlAttr).name);
         }
         if (seen.has(attrName)) {
           throw malformed(text, nameStart, `duplicate attribute ${quoteName(attrName)}`, "duplicate_attribute");
@@ -274,35 +282,36 @@ export const parseXml: ParseXml = (text, limits) => {
         seen.add(attrName);
       }
 
-      attrs.push({
+      attrBuffer[attrCount++] = {
         name: attrName,
         value,
         raw,
         quote: quoteCode === 0x22 ? '"' : "'",
         lead: nameStart - spaceStart === 1 && text.charCodeAt(spaceStart) === 0x20 ? " " : text.slice(spaceStart, nameStart),
         eq,
-      });
+      };
       at = valueEnd + 1;
       code = text.charCodeAt(at);
     }
 
-    const children: XmlChildNode[] = [];
     const element: WritableElement = {
       kind: "element",
       name,
-      attrs,
-      children,
+      attrs: attrCount === 0 ? [] : attrBuffer.slice(0, attrCount),
+      children: [],
       parent: open ?? doc,
       selfClosing,
       openTagTail,
       closeTagTail: "",
     };
-    siblings.push(element);
+    buffer[count++] = element;
     if (open === null) root = element;
     if (!selfClosing) {
       open = element;
-      siblings = children;
+      savedCounts[depth] = count;
       depth++;
+      buffer = levels[depth] ?? (levels[depth] = []);
+      count = 0;
     }
     pos = at;
   }
@@ -311,6 +320,7 @@ export const parseXml: ParseXml = (text, limits) => {
     throw malformed(text, length, `unexpected end of input: <${quoteName(open.name)}> is not closed`, "unclosed");
   }
   if (root === null) throw malformed(text, length, "the document has no element", "no_root");
+  doc.children = buffer.slice(0, count);
   doc.root = root;
   return doc;
 };

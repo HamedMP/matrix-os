@@ -53,11 +53,16 @@ function requireChildNode(node: XmlChildNode): void {
   }
 }
 
+function requireElement(element: XmlElement): void {
+  if ((element as { kind?: unknown } | null)?.kind !== "element") throw invalidArgument("expected an element");
+}
+
 function newAttr(name: string, value: string): XmlAttr {
   return { name, value, raw: null, quote: '"', lead: " ", eq: "=" };
 }
 
 export const setAttr: SetAttr = (element, name, value) => {
+  requireElement(element);
   requireName(name, "attribute name");
   requireString(value, "attribute value");
   const attrs = writableElement(element).attrs;
@@ -168,6 +173,7 @@ function insertAt(parent: WritableElement, index: number, node: XmlChildNode): v
 }
 
 export const appendChild: AppendChild = (parent, node) => {
+  requireElement(parent);
   requireChildNode(node);
   refuseCycle(parent, node);
   detach(node);
@@ -175,6 +181,7 @@ export const appendChild: AppendChild = (parent, node) => {
 };
 
 export const prependChild: PrependChild = (parent, node) => {
+  requireElement(parent);
   requireChildNode(node);
   refuseCycle(parent, node);
   detach(node);
@@ -308,6 +315,7 @@ export const cloneDocument: CloneDocument = (document) => {
 };
 
 export const setTextContent: SetTextContent = (element, text) => {
+  requireElement(element);
   requireString(text, "text");
   const target = writableElement(element);
   for (const entry of target.children) setParent(entry, null);
@@ -316,6 +324,7 @@ export const setTextContent: SetTextContent = (element, text) => {
 };
 
 export const setText: SetText = (node, value) => {
+  if ((node as { kind?: unknown } | null)?.kind !== "text") throw invalidArgument("setText expects a text node");
   requireString(value, "text");
   const target = node as WritableText;
   target.value = value;

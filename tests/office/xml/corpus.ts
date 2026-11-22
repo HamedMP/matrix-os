@@ -149,6 +149,8 @@ export const SAMPLES: readonly XmlSample[] = [
   { name: "empty root with end tag", xml: "<a></a>" },
   { name: "root with text", xml: "<a>text</a>" },
   { name: "whitespace around the root", xml: "\n\n  <a/>  \n" },
+  { name: "a CDATA terminator written in plain text", xml: "<a>x]]>y</a>" },
+  { name: "a byte order mark character inside text", xml: "<a>x\ufeffy</a>" },
   { name: "single-quoted declaration with standalone", xml: "<?xml version='1.1' standalone='no' ?><a/>" },
   { name: "style sheet instruction before the root", xml: '<?xml-stylesheet type="text/xsl" href="a.xsl"?><a/>' },
 ];
