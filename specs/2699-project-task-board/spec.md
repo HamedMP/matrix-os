@@ -10,10 +10,12 @@
 
 ## Goal
 
-Every project gets a **Board** view. A project holds tasks. A task has a status,
-priority, labels, assignee, comments and an activity log, and it owns the work
-done for it: one or more chats and terminals running in the task's own git
-worktree, plus the branch and pull request that come out of it. People and
+Every project gets a **Board** view. A project holds tasks, and **every task is
+a chat**: each task has exactly one chat, and every chat in a project is a task
+on its board. A task has a status, priority, labels, assignee, comments and an
+activity log. Its chat is where the work happens, optionally in the task's own
+git worktree, together with any terminals attached to it and the branch and
+pull request that come out of it. People and
 agents can create, move, comment on and close tasks. Tasks can be linked to
 Linear issues and kept in sync. When the project is shared with an
 organization, every member sees the same board and can work it.
@@ -42,11 +44,15 @@ opens from it.
    They are two fields and never overwrite each other silently. A card in
    `in_progress` shows its sessions' agent status as a badge. Only the explicit
    automation rules in this spec move a card.
-2. **A task owns sessions; it does not replace them.** A task's chats and
-   terminals are ordinary Matrix chats and terminal tabs, referenced by
-   `AgentSessionRef` (spec 2697). Chat, Terminal, attention and the inbox keep
-   working unchanged, and a session opened from a card looks the same as one
-   opened anywhere else.
+2. **A task is a chat.** (Amended 2026-11-22; this replaces "a task owns
+   sessions; it does not replace them".) Every task has exactly one chat and
+   every chat in a project has exactly one task, enforced in the store.
+   Creating either creates both, whichever path is used (Chat app, board, CLI,
+   agent tool). The chat stays an ordinary Matrix chat: Chat, attention and the
+   inbox keep working unchanged, and the Chat surface shows the task's
+   properties in an editable ticket header. Terminals may still attach to a
+   task as extra sessions; an extra chat would itself be a task, so there are
+   none.
 3. **The owner's Postgres is the source of truth.** Tasks move from files to
    owner-controlled Postgres through Kysely. Linear is a mirror the owner opts
    into, never the authority.
@@ -70,15 +76,47 @@ constraints mirror the Zod bounds in `packages/contracts/src/project-tasks.ts`.
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `project_tasks` | The card | `id` (`task_…`), `project_id` (`proj_…`), `number` (per-project sequence), `title`, `description` (Markdown), `status`, `priority`, `rank` (fractional index, text), `assignee` (actor ref or null), `parent_task_id`, `due_at`, `worktree_id`, `branch`, `pr_number`, `created_by` (actor ref), `revision`, `archived_at`, `deleted_at` |
-| `project_task_labels` | Labels on a task | `task_id`, `name`, unique per task |
+| `project_tasks` | The card | `id` (`task_…`), `project_id` (`proj_…`), `chat_id` (the task's chat; unique per owner), `number` (per-project sequence), `title`, `description` (Markdown), `status`, `priority`, `rank` (fractional index, text), `assignee` (actor ref or null), `labels`, `parent_task_id`, `due_at`, `worktree_id`, `branch`, `pr_number`, `created_by` (actor ref), `revision`, `archived_at`, `deleted_at`. `title` and `archived_at` mirror the chat (see "Every task is a chat" below). |
 | `project_task_relations` | `blocks` relations between tasks | `task_id`, `blocked_by_task_id` |
-| `project_task_sessions` | Sessions the task owns | `task_id`, `session_ref` (`chat_<id>` or `term.<ws>.<tab>`), `role` (`main` or `extra`), `created_by` |
+| `project_task_sessions` | Terminal tabs attached to the task | `task_id`, `session_ref` (`term.<ws>.<tab>`), `created_by` |
 | `project_task_comments` | Comments | `id`, `task_id`, `author` (actor ref), `body` (Markdown), `external_id`, `edited_at`, `deleted_at` |
 | `project_task_activity` | Append-only log: created, moved, assigned, session started, PR opened, synced | `seq`, `task_id`, `actor`, `kind`, `data` JSONB |
 | `project_task_external_links` | Link to a Linear issue | `task_id`, `provider`, `external_id`, `external_key`, `url`, `remote_updated_at`, `field_synced_at` JSONB |
 | `project_board_settings` | Per-project board settings | `project_id`, `task_key` (short prefix, for example `MOS`), automation flags, Linear link, sync cursor |
 | `project_task_operations` | Idempotency for creates | `client_request_id`, `payload_hash`, `result_ref` |
+
+**Every task is a chat** (amended 2026-11-22):
+
+- `project_tasks.chat_id` has a unique index on `(owner_id, chat_id)`, and
+  every create path sets it. It is nullable only for rows written before this
+  change (the file import); the backfill gives each of those a chat. A task
+  without a chat and a project chat without a task are both invalid states.
+- One creation path. The board registers a hook with the chat repository at
+  startup; the repository calls it inside the transaction that inserts a chat
+  with a `projectId`, so the chat row and its task row commit together. Every
+  path that creates a project chat goes through it. A board "New task" is a
+  chat create that carries ticket fields (title, description, status Backlog
+  or To do, priority, labels, assignee); a plain chat create gets
+  `in_progress`. The chat row is created eagerly with no turns, so a board task
+  starts its agent only when its first message is sent. Retries reuse the
+  chat's `clientRequestId` (`ON CONFLICT` on the chat's request key and on
+  `(owner_id, chat_id)`).
+- The chat is authoritative for the title and archived state. The task row
+  keeps a copy of both for search, sorting and the Linear mirror, written only
+  inside the same transaction as the chat change, so the two never diverge. A
+  title set on the board renames the chat and marks its title manual, so
+  generated titles never overwrite it (limit 160 characters). Archiving or
+  restoring either side changes both. Deleting the chat soft-deletes its task.
+- Personal-owner project chats only in stack 1; organization-owned chats get
+  tasks with organization sharing (section 7).
+- Moving a chat to another project moves its task (a new number on the target
+  board, history kept); removing a chat's project archives its task.
+- Backfill, once per chat, bounded per boot (500 rows) and safe to re-run:
+  project chats without a task become tasks in `done`; tasks without a chat
+  (for example from the file import) get an empty chat titled after the task.
+  Chats outside any project get no task.
+- The first turn on a `backlog` or `todo` task's chat moves it to
+  `in_progress` (automation flag `startMovesToInProgress`).
 
 **Statuses** are fixed in v1: `backlog`, `todo`, `in_progress`, `in_review`,
 `done`, `canceled`. The board shows the first five as columns; `canceled` and
@@ -135,6 +173,14 @@ transaction, then publishes on `/api/workspace/events` after commit:
 change signals. Clients refetch what changed.
 
 ### 3. Task sessions and worktrees
+
+> Amended 2026-11-22: a task's chat is created with the task, so Start work no
+> longer creates chats. `POST …/start` with `kind: "chat"` prepares the task's
+> own chat (worktree and branch per step 1, the chat's default execution root
+> bound to that worktree, the first message returned for the composer when no
+> model is selected); `kind: "terminal"` attaches a terminal as below. Attach
+> and detach accept terminal tabs only. The rest of this section describes the
+> terminal path.
 
 **Start work** (`POST …/start` with `{kind: "chat" | "terminal", harness?,
 template?, worktree: "new" | "existing" | "none", message?}`):
@@ -314,6 +360,17 @@ Backlog        To do          In progress        In review        Done
   **New task** plus **Import from Linear** when a connection exists.
 - Filters and the chosen view persist per project and per surface.
 
+**Opening a card opens its chat** (amended 2026-11-22). The Chat surface shows
+a shared ticket header from `packages/ui` above the conversation whenever the
+chat belongs to a project: key, title (the chat title), status, priority,
+labels and assignee, all editable, plus **Details** for the description,
+comments, activity, blockers, subtasks, due date, branch and pull request, and
+**Start terminal**. The same component ships on Web Desktop, Web Canvas and
+Electron Desktop. There is no sessions tab strip, no **Start chat** and no
+**Attach existing** for chats.
+
+The original task detail below describes the Details view:
+
 **Task detail** opens over the board (the board keeps its place):
 
 - left: title, description editor, comments and activity in one timeline,
@@ -376,9 +433,13 @@ whose home is another computer; see Risks.
 1. **Create and move.** On a project, open Board, create a task, drag it to To
    do. Reload: it is where it was left. A second window on the same project
    shows the move within 2 seconds without a reload.
-2. **Start work.** Open a task, choose Start chat. A worktree and branch
-   exist, the chat runs in that worktree, the first message carries the task,
-   and the card is In progress with a working badge.
+2. **Every task is a chat.** Create a task on the board: it sits in Backlog
+   with an empty chat. Open the card: its chat opens with the ticket header.
+   Send the first message: the agent starts and the card moves to In progress
+   with a working badge. Start a new chat in the project from the Chat app: a
+   card appears in In progress. Rename either the card or the chat: both show
+   the new title. Change the status from the chat's ticket header: the card
+   moves on the board.
 3. **Agent reports.** Inside that session the agent runs
    `matrix tasks comment "…"`. The comment appears on the task, attributed to
    the agent session.
@@ -486,6 +547,10 @@ secret is written to task rows, activity or logs.
 | Member's access is revoked mid-edit | Re-authorization inside the transaction fails; the client gets a generic access error |
 | Gateway restart | No in-memory authority. Sync resumes from the stored cursor; the outbox is durable. |
 | Task deleted while a session is running | The session keeps running as an ordinary chat or tab; the link row goes with the task |
+| Chat and task created at the same time from two paths | One transaction inserts both; the unique indexes on the chat request key and `(owner_id, chat_id)` make the loser return the existing pair |
+| The ticket hook fails inside a chat create | The whole chat create rolls back with a generic error; no chat without a task is committed |
+| Backfill interrupted or run by two gateways | Each row is inserted with `ON CONFLICT DO NOTHING` under the board schema lock; the next boot continues where it stopped, at most 500 rows per boot |
+| A chat is deleted | Its task is soft-deleted in the same transaction; terminals attached to it keep running |
 
 ## Resource management
 
