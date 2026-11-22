@@ -11,6 +11,8 @@ const projects = [
   ['packages/proxy', 'tsconfig.json', true],
   ['packages/edge-router', 'tsconfig.json', false],
   ['packages/pr-evidence-worker', 'tsconfig.json', false],
+  // Browser-and-Node engine: its tsconfig pins `types: []` so no Node built-in leaks in.
+  ['packages/office', 'tsconfig.json', false],
   ['desktop', 'tsconfig.json', false],
   ['desktop', 'tsconfig.node.json', false],
 ];

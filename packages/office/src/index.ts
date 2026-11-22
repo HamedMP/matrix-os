@@ -2,8 +2,9 @@
  * `@matrix-os/office`: lossless OOXML documents, tracked changes, workbooks
  * and formulas in pure TypeScript, for the browser and for Node.
  *
- * This file exports the error type and every contract type. The
- * implementations are separate modules, imported by path:
+ * This file exports the error type, every contract type, and each
+ * implementation module that has landed as a namespace (`opc.openPackage`).
+ * A module can also be imported on its own by path:
  *
  * | Module  | Path                         | Contract             |
  * | ------- | ---------------------------- | -------------------- |
@@ -30,3 +31,12 @@ export type * from "./api/formula.js";
 export type * from "./api/xlsx.js";
 export type * from "./api/redline.js";
 export type * from "./api/agent.js";
+
+// Implementations, one namespace per module. Add a line when a module lands:
+//   export * as xml from "./xml/index.js";
+//   export * as docx from "./docx/index.js";
+//   export * as xlsx from "./xlsx/index.js";
+//   export * as formula from "./xlsx/formula/index.js";
+//   export * as redline from "./redline/index.js";
+//   export * as agent from "./agent/index.js";
+export * as opc from "./opc/index.js";

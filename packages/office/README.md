@@ -1,0 +1,121 @@
+# @matrix-os/office
+
+The Matrix OS document engine: lossless OOXML packages, `.docx` documents with
+native tracked revisions and comments, `.xlsx` workbooks with a formula engine
+and a cell change journal, word-level redlines, and the bridge that lets the
+agent propose edits the owner accepts or rejects.
+
+Spec: `specs/2710-office-mail-suite/spec.md`.
+
+## Rules for code in `src/`
+
+- **Zero runtime dependencies.** `package.json` has no `dependencies`.
+- **No Node built-ins.** No `node:*` import, no `Buffer`, no `process`. The
+  same source runs in a browser and in Node 24. `tsconfig.json` enforces this
+  with `types: []` and `lib: ["ES2022", "WebWorker"]`: only what exists in both
+  environments type-checks (`Uint8Array`, `TextEncoder`, `TextDecoder`,
+  `CompressionStream`, `DecompressionStream`, `Blob`, `Response`).
+- **No clock and no ambient randomness in results.** Dates and authors are
+  arguments (`date` is an ISO 8601 string from the caller).
+- **Relative imports end in `.js`** (`import type { X } from "../api/docx.js"`),
+  type imports use `import type`. The gateway (NodeNext), Vitest and the app
+  builds (Vite) all resolve that form.
+- **One error type.** Throw `OfficeError` from `src/errors.ts` with a code from
+  `OFFICE_ERROR_CODES`. The code is safe to show a client; the message is for logs.
+- Document text, cell text and XML are untrusted input. Keep every loop and
+  buffer bounded (ZIP limits, XML depth, cell counts, diff tokens).
+- Files stay under 500 lines.
+
+## Layout and contracts
+
+`src/api/*.ts` are type-only contract files. Each module implements its
+contract exactly and exports the values named in the contract's `…Module`
+interface from its own `index.ts`:
+
+| Module  | Implementation index       | Contract (`src/api/`)                     | Module interface |
+| ------- | -------------------------- | ----------------------------------------- | ---------------- |
+| opc     | `src/opc/index.ts`         | `opc.ts`                                  | `OpcModule`      |
+| xml     | `src/xml/index.ts`         | `xml.ts`                                  | `XmlModule`      |
+| docx    | `src/docx/index.ts`        | `docx.ts`, `docx-model.ts`, `docx-ops.ts` | `DocxModule`     |
+| xlsx    | `src/xlsx/index.ts`        | `xlsx.ts`, `xlsx-model.ts`                | `XlsxModule`     |
+| formula | `src/xlsx/formula/index.ts`| `formula.ts`                              | `FormulaModule`  |
+| redline | `src/redline/index.ts`     | `redline.ts`                              | `RedlineModule`  |
+| agent   | `src/agent/index.ts`       | `agent.ts`                                | `AgentModule`    |
+
+A function contract is a function type in PascalCase (`OpenDocx`); the
+implementation exports the camelCase value (`openDocx`). To have the compiler
+check an export against its contract, type it with the contract:
+
+```ts
+import type { DocxModule } from "../api/docx.js";
+export const openDocx: DocxModule["openDocx"] = async (bytes, limits) => { /* … */ };
+```
+
+or assert the whole namespace in a test:
+
+```ts
+import type { DocxModule } from "../../packages/office/src/api/docx.js";
+import * as docx from "../../packages/office/src/docx/index.js";
+const contract: DocxModule = docx;
+```
+
+`src/index.ts` exports `OfficeError`, `isOfficeError`, `OFFICE_ERROR_CODES`,
+every contract type, and one namespace per implementation module that has
+landed (`opc` today; `xml`, `docx`, `xlsx`, `formula`, `redline` and `agent`
+are added there, one line each, as their `index.ts` lands). Namespaces keep
+short helper names such as the XML module's `find` and `remove` out of the
+root. A module can always be imported from its own index.
+
+Conventions shared by all contracts:
+
+- Spreadsheet rows and columns are zero-based (`A1` is row 0, column 0).
+- Text offsets count UTF-16 code units. `.docx` positions address the markup
+  text of a paragraph (pending insertions and deletions both included).
+- Lengths are points, colours are `#rrggbb` in lower case.
+- View models and results are plain JSON-safe data.
+
+## Using the engine
+
+From a workspace package (the gateway depends on `@matrix-os/office`):
+
+```ts
+import { isOfficeError, type DocxView } from "@matrix-os/office";
+import { openDocx } from "@matrix-os/office/docx";
+import { openXlsx } from "@matrix-os/office/xlsx";
+```
+
+Subpaths: `./errors`, `./opc`, `./xml`, `./docx`, `./xlsx`, `./formula`,
+`./redline`, `./agent`.
+
+From a test, by relative path: `../../packages/office/src/docx/index.js`.
+
+From a default app under `home/apps/**`, by relative path into the mirror:
+
+```ts
+import { openDocx } from "../../_shared/office-engine/docx/index.js";
+import type { DocxView } from "../../_shared/office-engine/index.js";
+```
+
+## The mirror
+
+Default apps are isolated pnpm projects that are rebuilt on the owner's
+machine, where this package does not exist. `scripts/sync-office-engine.mjs`
+copies `packages/office/src/**` byte for byte to
+`home/apps/_shared/office-engine/`.
+
+```bash
+node scripts/sync-office-engine.mjs          # after any change under src/
+node scripts/sync-office-engine.mjs --check  # exit 1 when the mirror is stale
+```
+
+Never edit the mirror. `tests/office/engine-mirror.test.ts` fails while it is
+stale, so run the sync and commit the mirror with the source change.
+
+## Checks
+
+```bash
+node_modules/.bin/tsc --noEmit -p packages/office/tsconfig.json
+NODE_OPTIONS=--no-experimental-webstorage node node_modules/vitest/vitest.mjs run tests/office
+```
+
+The package is also part of `bun run typecheck` (`scripts/typecheck.mjs`).

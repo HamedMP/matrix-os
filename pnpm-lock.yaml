@@ -772,6 +772,9 @@ importers:
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../observability
+      '@matrix-os/office':
+        specifier: workspace:*
+        version: link:../office
       '@matrix-os/scope-runtime':
         specifier: workspace:*
         version: link:../scope-runtime
@@ -1012,6 +1015,12 @@ importers:
       '@types/react':
         specifier: ~19.2.14
         version: 19.2.14
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/office:
+    devDependencies:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
