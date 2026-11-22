@@ -126,7 +126,9 @@ describe("Terminal window computers", () => {
     expect(within(sidebar()).getByRole("button", { name: /deploy/ })).toBeTruthy();
     fireEvent.click(within(machines).getByRole("button", { name: /^neo-extra/ }));
     fireEvent.click(within(machines).getByRole("button", { name: "Show neo spaces" }));
-    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getByRole("button", { name: /web/ }));
+    // The space itself, not its options button.
+    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getAllByRole("button", { name: /web/ })
+      .find((button) => button.hasAttribute("aria-pressed"))!);
     await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
   });

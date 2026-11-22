@@ -221,6 +221,10 @@ export default function TerminalWindowApp() {
           filter={prefs.filter}
           onFilter={view.sidebar.setFilter}
           onSettings={() => focusMainWindow("settings")}
+          spaceStyles={prefs.spaceStyles}
+          spaceOrder={prefs.spaceOrder}
+          onSpaceStyle={view.sidebar.setSpaceStyle}
+          onSpaceOrder={view.sidebar.setSpaceOrder}
           pinned={prefs.pinned}
           onTogglePin={view.sidebar.togglePin}
           onCloseTerminal={view.requestClose}

@@ -4,13 +4,14 @@
 // of its spaces opens it as its own tab: Agents shows only its terminals.
 // Below the rail width it is a numbered rail.
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Cloud, Laptop, ListTree, PanelLeftOpen, Plus, Rows3, Settings, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ListTree, PanelLeftOpen, Plus, Rows3, Settings, X } from "lucide-react";
 import {
   TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
 } from "@matrix-os/ui/terminal-status-sidebar";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
-import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "./use-sidebar-prefs";
+import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
+import { AllSpacesRow, MachineHeader, SpaceRows, orderedSpaces, spaceId } from "./SidebarSpaces";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const iconButton = "no-drag flex size-6 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -64,6 +65,11 @@ export interface TerminalWindowSidebarProps {
   notices?: ReactNode;
   /** The footer's Settings: the main window's settings. */
   onSettings(): void;
+  /** How the person dressed each space, and the order they dragged each machine's spaces into. */
+  spaceStyles: Readonly<Record<string, SpaceStyle>>;
+  spaceOrder: Readonly<Record<string, readonly string[]>>;
+  onSpaceStyle(id: string, style: SpaceStyle | null): void;
+  onSpaceOrder(machineId: string, order: readonly string[]): void;
   /** Terminals pinned to the top of the agents list. */
   pinned: readonly string[];
   onTogglePin(key: string): void;
@@ -83,56 +89,32 @@ export function filterRows(rows: readonly TerminalSidebarRow[], filter: SidebarF
   return rows.filter((row) => row.machine.id === filter.machineId && (!filter.space || row.space === filter.space));
 }
 
-function MachineRow({ machine, folded, onToggle, local, spaces, filter, onFilter }: {
+function MachineRow({ machine, folded, onToggle, local, spaces, props }: {
   machine: SidebarMachine; folded: boolean; onToggle(): void; local?: ReactNode;
   spaces: Array<{ space: string; count: number }>;
-  filter: SidebarFilter | null;
-  onFilter(filter: SidebarFilter | null): void;
+  props: TerminalWindowSidebarProps;
 }) {
-  const icon = machine.kind === "local" ? <Laptop size={14} /> : <Cloud size={14} />;
+  const { filter, onFilter } = props;
   const chosen = filter?.machineId === machine.id && !filter.space;
+  const items = orderedSpaces(spaces, machine.id, props.spaceOrder[machine.id]);
+  const create = local ?? (machine.onCreate && machine.available ? (
+    <button type="button" aria-label={`New terminal on ${machine.name}`} title="New terminal" disabled={machine.creating}
+      onClick={machine.onCreate} className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
+      style={secondaryText}>
+      <Plus size={12} aria-hidden="true" />
+    </button>
+  ) : null);
   return (
-    <li data-machine={machine.id}>
-      <div className="group flex items-center gap-0.5 rounded-md pr-1 hover:bg-black/5"
-        style={chosen ? { background: "var(--bg-hover, rgba(127,127,127,0.18))" } : undefined}>
-        <button type="button" aria-expanded={!folded} aria-label={`${folded ? "Show" : "Hide"} ${machine.name} spaces`}
-          disabled={!machine.available || spaces.length === 0} onClick={onToggle} className={iconButton} style={secondaryText}>
-          {folded ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
-        </button>
-        {/* Opens the machine as its own tab: the agents list shows only its terminals. */}
-        <button type="button" aria-pressed={chosen} disabled={!machine.available} onClick={() => onFilter(chosen ? null : { machineId: machine.id })}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-current disabled:opacity-70">
-          <span aria-hidden="true" style={secondaryText}>{icon}</span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium">{machine.name}</span>
-            <span className="block truncate text-[11px]" style={secondaryText}>{machine.detail}</span>
-          </span>
-          {machine.dotColor ? <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ background: machine.dotColor }} /> : null}
-        </button>
-        {local ?? (machine.onCreate && machine.available ? (
-          <button type="button" aria-label={`New terminal on ${machine.name}`} title="New terminal" disabled={machine.creating}
-            onClick={machine.onCreate} className={iconButton} style={secondaryText}>
-            <Plus size={13} aria-hidden="true" />
-          </button>
-        ) : null)}
-      </div>
+    <li data-machine={machine.id} className="pt-1">
+      <MachineHeader name={machine.name} detail={machine.detail} kind={machine.kind} dotColor={machine.dotColor} folded={folded}
+        canFold={machine.available && items.length > 0} chosen={chosen} available={machine.available}
+        onToggle={onToggle} onChoose={() => onFilter(chosen ? null : { machineId: machine.id })} create={create} />
       {machine.status ?? null}
-      {folded || spaces.length === 0 ? null : (
-        <ul aria-label={`${machine.name} spaces`} className="flex flex-col pl-7">
-          {spaces.map(({ space, count }) => {
-            const on = filter?.machineId === machine.id && filter.space === space;
-            return (
-              <li key={space}>
-                <button type="button" aria-pressed={on} onClick={() => onFilter(on ? null : { machineId: machine.id, space })}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
-                  style={on ? { background: "var(--bg-hover, rgba(127,127,127,0.18))" } : secondaryText}>
-                  <span className="min-w-0 flex-1 truncate">{space}</span>
-                  <span className="tabular-nums">{count}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+      {folded || items.length === 0 ? null : (
+        <SpaceRows machineName={machine.name} items={items} styles={props.spaceStyles}
+          selected={filter?.machineId === machine.id && filter.space ? spaceId(machine.id, filter.space) : null}
+          onSelect={(item) => onFilter(item ? { machineId: machine.id, space: item.space } : null)}
+          onStyle={props.onSpaceStyle} onReorder={(order) => props.onSpaceOrder(machine.id, order)} />
       )}
     </li>
   );
@@ -188,13 +170,13 @@ function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[]
 function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
   const machineRow = (machine: SidebarMachine, local?: ReactNode) => (
     <MachineRow key={machine.id} machine={machine} folded={props.machineFolded(machine.id)}
-      onToggle={() => props.onToggleMachine(machine.id)} local={local} spaces={machineSpaces(props.rows, machine.id)}
-      filter={props.filter} onFilter={props.onFilter} />
+      onToggle={() => props.onToggleMachine(machine.id)} local={local} spaces={machineSpaces(props.rows, machine.id)} props={props} />
   );
   const [local, ...others] = props.machines;
   return (
     // Its own scroll past a third of the window, so the terminals below stay in view.
-    <ul aria-label="Machines" className="flex max-h-[33vh] shrink-0 flex-col gap-0.5 overflow-y-auto">
+    <ul aria-label="Machines" className="flex max-h-[40vh] shrink-0 flex-col overflow-y-auto">
+      <li><AllSpacesRow chosen={props.filter === null} count={props.rows.length} onChoose={() => props.onFilter(null)} /></li>
       {local
         ? machineRow(local, local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null)
         : null}

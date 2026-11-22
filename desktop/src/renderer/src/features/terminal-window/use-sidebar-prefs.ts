@@ -13,6 +13,16 @@ export const SIDEBAR_MAX_WIDTH = 420;
 const DEFAULT_WIDTH = 260;
 const MAX_FOLDS = 200;
 const MAX_PINNED = 50;
+const MAX_SPACES = 200;
+/** The colors a space's avatar can take. */
+export const SPACE_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#64748b"] as const;
+const SpaceStyleSchema = z.strictObject({
+  name: z.string().trim().min(1).max(64).optional(),
+  color: z.enum(SPACE_COLORS).optional(),
+  // One emoji or a short symbol in place of the letter.
+  icon: z.string().min(1).max(8).optional(),
+});
+export type SpaceStyle = z.infer<typeof SpaceStyleSchema>;
 
 const PrefsSchema = z.object({
   folded: z.array(z.string().max(256)).max(MAX_FOLDS).catch([]),
@@ -25,9 +35,13 @@ const PrefsSchema = z.object({
   filter: z.object({ machineId: z.string().max(128), space: z.string().max(256).optional() }).nullable().catch(null),
   // Terminals pinned to the top of the agents list, by row key.
   pinned: z.array(z.string().max(512)).max(MAX_PINNED).catch([]),
+  // How the person dressed each space (`machineId|space`): a display name, color and icon.
+  spaceStyles: z.record(z.string().max(512), SpaceStyleSchema).refine((styles) => Object.keys(styles).length <= MAX_SPACES).catch({}),
+  // The order the person dragged each machine's spaces into.
+  spaceOrder: z.record(z.string().max(128), z.array(z.string().max(256)).max(MAX_SPACES)).refine((order) => Object.keys(order).length <= MAX_FOLDS).catch({}),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [] };
+const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {} };
 
 function read(): SidebarPrefs {
   try {
@@ -81,6 +95,18 @@ export function useSidebarPrefs() {
       : { ...current, rail: false, width: Math.min(SIDEBAR_MAX_WIDTH, Math.round(width)) })), [update]),
     toggleRail: useCallback(() => update((current) => ({ ...current, rail: !current.rail })), [update]),
     setFilter: useCallback((filter: SidebarPrefs["filter"]) => update((current) => ({ ...current, filter })), [update]),
+    /** Dresses a space, or puts it back as it was with `null`. */
+    setSpaceStyle: useCallback((id: string, style: SpaceStyle | null) => update((current) => {
+      const spaceStyles = { ...current.spaceStyles };
+      if (style && Object.keys(style).length > 0) spaceStyles[id] = style;
+      else delete spaceStyles[id];
+      const keys = Object.keys(spaceStyles);
+      for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SPACES))) delete spaceStyles[key];
+      return { ...current, spaceStyles };
+    }), [update]),
+    setSpaceOrder: useCallback((machineId: string, order: readonly string[]) => update((current) => ({
+      ...current, spaceOrder: { ...current.spaceOrder, [machineId]: order.slice(0, MAX_SPACES) },
+    })), [update]),
     togglePin: useCallback((key: string) => update((current) => ({
       ...current,
       pinned: current.pinned.includes(key) ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key].slice(-MAX_PINNED),
