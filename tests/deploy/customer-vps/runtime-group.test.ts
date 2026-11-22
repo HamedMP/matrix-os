@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -92,6 +92,8 @@ describe.each(RUNNERS)("%s runtime group", (script, runner) => {
 describe("host helpers", () => {
   it("never use the runtime account name as a group", () => {
     for (const name of readdirSync(hostBin)) {
+      // Only helper scripts; local caches such as __pycache__ are not shipped.
+      if (!statSync(join(hostBin, name)).isFile()) continue;
       const source = read(name);
       expect(source, name).not.toMatch(/--regid "\$\{?MATRIX_RUNTIME_USER/);
       expect(source, name).not.toMatch(/-g "\$\{?MATRIX_RUNTIME_USER/);
