@@ -55,6 +55,24 @@ Added 2026-11-22 (Hamed):
 
 ## Behaviour
 
+### Navigation model (agreed with Hamed, 2026-11-22)
+
+Three levels, each with its own keys; every key works while a terminal has
+focus.
+
+- **Space**: a project on a machine, or **All**. Every machine has a home
+  space (`home`; a Matrix computer's is its `main` workspace) for terminals in
+  no project, so every terminal belongs to a space. Spaces are the sidebar's
+  rows; the active one shows as a colored chip at the left of the top bar.
+  **Ctrl+1…9** switches space in the sidebar's order, **Ctrl+0** is All.
+- **Tab**: one terminal or a split layout. The top bar shows only the active
+  space's tabs. **Cmd+1…9** and **Ctrl+Tab / Ctrl+Shift+Tab** move among them;
+  **Cmd+T / Cmd+N** start a terminal in the active space (beside one of its
+  terminals, same machine, workspace and folder; in its machine's home when it
+  has none).
+- **Pane**: inside a tab. **Cmd+D / Cmd+Shift+D** split, **Cmd+W** closes the
+  focused pane (the last pane closes the tab), **Cmd+Alt+arrows** focus.
+
 ### Layout (Herdr, 2026-11-22)
 
 The window follows Herdr's layout: a left sidebar, a top tab bar, panes, and a
@@ -76,22 +94,25 @@ bottom status bar.
   only the focused one takes the keyboard.
 - **Status bar**: the machine on screen, its project and branch or folder, the
   agent count with how many work or need you, and "⌘⇧P commands".
-- **A machine as its own tab**: clicking a machine (or one of its spaces)
-  filters Agents to it, shown as a chip that clears the filter.
+- **Active space**: choosing a space filters the tab bar and the Agents list
+  to it; the Agents header shows a chip that returns to All.
 
 ### Sidebar
 
 - **Spaces** (top), as Herdr's: an **All** row (every terminal; the state with
   no filter), then each machine (This Mac, ssh machines, then Matrix computers)
-  as a compact muted header: icon, name, what it is and whether it can be used
-  now, then `+`, a status dot and a fold chevron. Under it, that machine's
-  spaces (projects or workspaces) as compact rows with a colored rounded letter
-  avatar, the name and a terminal count. Fold state persists per machine.
+  as a small muted group label: icon, name, what it is and whether it can be
+  used now, then `+` (a new terminal in its home space) and a status dot.
+  Under it, that machine's spaces (home first) as compact rows with a colored
+  rounded letter avatar, the name and a terminal count.
   Unavailable machines fold into **Unavailable (n)** at the end; the list
   scrolls on its own past 40% of the window. **Add machine…** sits at the foot
   beside Settings (see Ssh machines).
-- Choosing a machine or a space filters the Agents list and the tab bar (and
-  Ctrl+Tab) to it; the chosen row is highlighted, and **All** clears it.
+- Clicking a space's name makes it active (highlighted), which filters the tab
+  bar, Cmd+digits, Ctrl+Tab and the Agents list; **All** clears it. A space's
+  left chevron only lists its terminals inline under it; it never filters. A
+  terminal row's hover ↗ opens it as a tab of its space and makes that space
+  active.
 - A space's menu (hover `…` or right-click) renames it, picks one of eight
   colors, picks an icon in place of the letter, moves it up or down, or resets
   its look; spaces also reorder by drag. This dressing is kept per viewer and
@@ -111,16 +132,20 @@ bottom status bar.
   line names the machine (only where machines mix), what runs there, and a
   "Needs you" pill. Hover gives the row a rounded tint and shows pin and close
   in place of the time. Sub-agents hang from their parent on connector lines,
-  folded with a chevron; the parent takes their most urgent status. Child
-  processes and a muted mark follow once herdr-core reports them.
+  folded with a chevron; the parent takes their most urgent status.
+- **Needs core data** (deferred): child-process rows (Bun, Node, bash) under a
+  terminal need herdr-core to report a terminal's process tree (it reports only
+  the foreground program today); a muted (slashed-bell) mark needs a mute state
+  in herdr-core; a git ahead/behind badge on spaces needs git facts per space.
 - Below 160 px the sidebar becomes a numbered rail; Cmd+B toggles it.
 
 ### Shortcuts (macOS)
 
-Cmd+N (and Cmd+T) new terminal, Cmd+W close only the focused pane (it ends
+Cmd+N (and Cmd+T) new terminal in the active space, Ctrl+1…9 and Ctrl+0 space,
+Cmd+1…9 tab of the active space, Cmd+W close only the focused pane (it ends
 that pane's terminal, asking first while a program runs; the tab and its other
 panes stay and the pane beside it takes focus; closing the last pane closes the
-tab), Cmd+1..9 select, Cmd+] / Cmd+[ next and
+tab), Cmd+] / Cmd+[ next and
 previous terminal in sidebar order, Ctrl+Tab and Ctrl+Shift+Tab cycle the tab
 bar's open tabs (in bar order, wrapping),
 Cmd+D split right, Cmd+Shift+D split down, Cmd+Shift+W hide pane (its terminal
@@ -219,6 +244,15 @@ Added 2026-11-22 (Hamed):
 
 ### Remote speed
 
+- Measured 2026-11-22 on an ssh machine (herdr-core 0.1.19 in the app, 0.1.21
+  on the machine): 1.13 MB of output reaches the window at ~150 KB/s (166
+  chunks, one about every 44 ms) while the program finished in 0.04 s and raw
+  ssh moves ~7 MB/s; the same output from a local terminal takes 0.57 s. The
+  limit is in herdr-core's machine relay, not the window (it draws at 120 fps
+  and acknowledges per burst). Scrollback scrolls locally at 120 fps; a full
+  screen program (Claude Code) redraws on every wheel report (17 per 1 s
+  gesture) and each redraw crosses the relay, so its scrolling lags. Fixing
+  the relay belongs to herdr-core.
 - The runtime stops asking Zellij on a timer. Only command tabs (`new-tab --
   <cmd>`) are held after exit; a shell tab that exits closes its pane and
   Zellij reports that. `zellij subscribe` does not report a held pane's exit
