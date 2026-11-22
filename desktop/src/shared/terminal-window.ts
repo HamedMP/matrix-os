@@ -28,7 +28,7 @@ const Ok = z.object({ ok: z.boolean() }).strict();
 export const TERMINAL_WINDOW_COMMANDS = [
   "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
   "split-right", "split-down", "close-pane", "zoom-pane", "focus-pane", "swap-pane",
-  "space",
+  "next-tab", "previous-tab", "space",
 ] as const;
 export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
 const PaneDirectionSchema = z.enum(["left", "right", "up", "down"]);

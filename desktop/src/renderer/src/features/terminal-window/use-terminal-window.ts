@@ -204,6 +204,16 @@ export function useTerminalWindow() {
   const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
   const { forget: forgetTab } = openTabs;
 
+  /** Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab in the tab bar, wrapping around. */
+  const stepTab = useCallback((offset: number) => {
+    const tabs = openTabs.tabs;
+    if (tabs.length === 0) return;
+    const index = tabs.findIndex((tab) => selectedKey !== null && tab.terminals.includes(selectedKey));
+    const next = index < 0 ? (offset > 0 ? 0 : tabs.length - 1) : (index + offset + tabs.length) % tabs.length;
+    const tab = tabs[next];
+    if (tab && tab.key !== selectedKey) select(tab.key);
+  }, [openTabs.tabs, select, selectedKey]);
+
 
   /**
    * Ends a live terminal or removes a finished one. Its pane stays until that
@@ -300,6 +310,8 @@ export function useTerminalWindow() {
       }
       case "next": step(1); return;
       case "previous": step(-1); return;
+      case "next-tab": stepTab(1); return;
+      case "previous-tab": stepTab(-1); return;
       case "rename":
         if (selectedRow) setRenaming({ key: selectedRow.key, name: selectedRow.name });
         return;
@@ -307,7 +319,7 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
-  }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
+  }, [createCloud, createLocal, order, panes, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step, stepTab]);
   // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
   // right after a selection change must act on the new selection, not wait for a passive effect.
   const latestRun = useRef(run);

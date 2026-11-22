@@ -29,9 +29,9 @@ export function terminalWindowMenuItems(
     { ...item("Commands…", "Cmd+Shift+P", { command: "picker" }), visible: false, acceleratorWorksWhenHidden: true },
     item("Next Terminal", "Cmd+]", { command: "next" }),
     item("Previous Terminal", "Cmd+[", { command: "previous" }),
-    // Ctrl+Tab cycles like Herdr's; it is hidden so the menu shows one entry per action.
-    { ...item("Next Terminal", "Ctrl+Tab", { command: "next" }), visible: false, acceleratorWorksWhenHidden: true },
-    { ...item("Previous Terminal", "Ctrl+Shift+Tab", { command: "previous" }), visible: false, acceleratorWorksWhenHidden: true },
+    // Ctrl+Tab cycles the open tabs in the tab bar, as Herdr's does.
+    item("Next Tab", "Ctrl+Tab", { command: "next-tab" }),
+    item("Previous Tab", "Ctrl+Shift+Tab", { command: "previous-tab" }),
     {
       label: "Select Terminal",
       submenu: Array.from({ length: 9 }, (_, offset) => item(`Terminal ${offset + 1}`, `Cmd+${offset + 1}`, { command: "select", index: offset + 1 })),

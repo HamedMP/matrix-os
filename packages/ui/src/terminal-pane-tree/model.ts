@@ -85,8 +85,18 @@ export function closePane(tab: PaneTab, leafId: string): PaneTab | null {
   const root = replace(tab.root, leafId, () => null);
   if (!root) return null;
   const remaining = leaves(root);
-  const focus = tab.focus === leafId || !remaining.some((leaf) => leaf.id === tab.focus) ? remaining[0]!.id : tab.focus;
+  const focus = tab.focus === leafId || !remaining.some((leaf) => leaf.id === tab.focus)
+    ? neighbourAfterClose(tab.root, leafId) ?? remaining[0]!.id
+    : tab.focus;
   return { ...tab, root, focus, zoom: tab.zoom === leafId ? null : tab.zoom };
+}
+
+/** The pane next to a closed one: the nearest leaf of the sibling that takes its space. */
+function neighbourAfterClose(node: PaneNode, leafId: string): string | null {
+  if (node.type === "leaf") return null;
+  if (node.first.type === "leaf" && node.first.id === leafId) return leaves(node.second)[0]!.id;
+  if (node.second.type === "leaf" && node.second.id === leafId) return leaves(node.first).at(-1)!.id;
+  return neighbourAfterClose(node.first, leafId) ?? neighbourAfterClose(node.second, leafId);
 }
 
 /** Each leaf's place in a unit square. */

@@ -399,6 +399,43 @@ describe("Terminal window panes", () => {
     expect([renders.get("local:t1"), renders.get("local:t10")]).toEqual(before);
   });
 
+  // Hamed, 2026-11-22: Cmd+W closes only the focused pane; the tab and its other panes stay.
+  it("closes only the focused pane of a three-pane tab on Cmd+W and focuses its neighbour", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    operator.command({ command: "split-down" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t11"));
+    operator.command({ command: "close-terminal" });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
+    expect(focusedPane()).toBe("shell t10");
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t11" });
+    expect(within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab")).toHaveLength(1);
+  });
+
+  // Hamed, 2026-11-22: Ctrl+Tab and Ctrl+Shift+Tab cycle the tab bar, wrapping around.
+  it("cycles the open tabs in tab-bar order with Ctrl+Tab and back with Ctrl+Shift+Tab", async () => {
+    const operator = installOperator([fact("t1", "editor"), fact("t2", "logs"), fact("t3", "build")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    await openFirst("logs");
+    await openFirst("build");
+    const selected = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab")
+      .find((tab) => tab.getAttribute("aria-selected") === "true")?.textContent;
+    await waitFor(() => expect(selected()).toBe("build"));
+    operator.command({ command: "next-tab" });
+    await waitFor(() => expect(selected()).toBe("editor"));
+    operator.command({ command: "next-tab" });
+    await waitFor(() => expect(selected()).toBe("logs"));
+    operator.command({ command: "previous-tab" });
+    await waitFor(() => expect(selected()).toBe("editor"));
+    operator.command({ command: "previous-tab" });
+    await waitFor(() => expect(selected()).toBe("build"));
+  });
+
   it("picks the drop edge nearest the pointer", () => {
     const rect = { left: 0, top: 0, width: 100, height: 100 };
     expect([nearestEdge(rect, 5, 50), nearestEdge(rect, 95, 50), nearestEdge(rect, 50, 4), nearestEdge(rect, 50, 97)]).toEqual(["left", "right", "up", "down"]);

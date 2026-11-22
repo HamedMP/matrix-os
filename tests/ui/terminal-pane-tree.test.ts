@@ -77,6 +77,18 @@ describe("terminal pane tree", () => {
     expect(closePane(singlePaneTab("x", id), singlePaneTab("x", id).focus)).toBeNull();
   });
 
+  // Fault detected (Hamed, 2026-11-22): closing the focused pane jumped focus to the first pane.
+  it("focuses the pane next to the one it closes", () => {
+    const tab = grid();
+    const focusOf = (next: PaneTab) => leaves(next.root).find((leaf) => leaf.id === next.focus)!.terminal;
+    // c (focused, under b) closes: b takes its space and focus.
+    expect(focusOf(closePane(tab, tab.focus)!)).toBe("b");
+    const b = leaves(tab.root).find((leaf) => leaf.terminal === "b")!.id;
+    expect(focusOf(closePane({ ...tab, focus: b }, b)!)).toBe("c");
+    const a = leaves(tab.root).find((leaf) => leaf.terminal === "a")!.id;
+    expect(focusOf(closePane({ ...tab, focus: a }, a)!)).toBe("b");
+  });
+
   it("resizes a split within bounds and zooms the focused pane", () => {
     let tab = grid();
     const split = tab.root.type === "split" ? tab.root.id : "";
