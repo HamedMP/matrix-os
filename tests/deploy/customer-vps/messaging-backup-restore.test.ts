@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 
 describe("customer VPS messaging backup and restore helpers", () => {
@@ -48,7 +49,7 @@ describe("customer VPS messaging backup and restore helpers", () => {
     expect(restore).toContain("psql --set ON_ERROR_STOP=1 --single-transaction");
     expect(restore).toContain("restore_matrix_os_database");
     expect(restore).toContain("TRUNCATE TABLE");
-    expect(restore).toContain("-c '");
+    expect(restore).toContain('-c "$MATRIX_OS_TRUNCATE_SQL"');
     expect(restore).toContain("-f \"$file\"");
     expect(restore).toContain("messaging_event_cursors");
     expect(restore).toContain("messaging_hermes_work_items");
@@ -76,5 +77,43 @@ describe("customer VPS messaging backup and restore helpers", () => {
     expect(health).toContain("printf active");
     expect(health).toContain("printf unknown");
     expect(health).not.toContain("systemctl is-active \"$1\" 2>/dev/null || printf unknown");
+  });
+
+  it("backs up the bridge message store and sync position, not the removed setup sessions", async () => {
+    const backup = await readFile("distro/customer-vps/host-bin/matrix-messaging-backup", "utf8");
+    expect(backup).toContain("--table=messaging_messages");
+    expect(backup).toContain("--table=messaging_bridge_sync_state");
+    expect(backup).not.toContain("messaging_setup_sessions");
+  });
+
+  it("restore empties every messaging table that exists and skips tables the schema lacks", async () => {
+    const restore = await readFile("distro/customer-vps/host-bin/matrix-messaging-restore", "utf8");
+    expect(restore).not.toContain("messaging_setup_sessions");
+    const block = /# BEGIN MATRIX_OS_TRUNCATE_SQL\nMATRIX_OS_TRUNCATE_SQL='([\s\S]*?)'\n# END MATRIX_OS_TRUNCATE_SQL/.exec(restore);
+    expect(block).not.toBeNull();
+    const truncateSql = block![1]!;
+    expect(truncateSql).not.toContain("'");
+
+    const db = new PGlite();
+    try {
+      // A fresh database with only some of the tables, one of them referenced by another.
+      await db.exec(`
+        CREATE TABLE messaging_accounts (id TEXT PRIMARY KEY);
+        CREATE TABLE messaging_messages (id TEXT PRIMARY KEY, account_id TEXT REFERENCES messaging_accounts(id));
+        CREATE TABLE messaging_bridge_sync_state (owner_id TEXT PRIMARY KEY);
+        CREATE TABLE unrelated (id TEXT PRIMARY KEY);
+        INSERT INTO messaging_accounts VALUES ('a');
+        INSERT INTO messaging_messages VALUES ('m', 'a');
+        INSERT INTO messaging_bridge_sync_state VALUES ('o');
+        INSERT INTO unrelated VALUES ('u');
+      `);
+      await db.exec(truncateSql);
+      for (const table of ["messaging_accounts", "messaging_messages", "messaging_bridge_sync_state"]) {
+        expect((await db.query<{ count: number }>(`SELECT count(*)::int AS count FROM ${table}`)).rows[0]?.count, table).toBe(0);
+      }
+      expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM unrelated")).rows[0]?.count).toBe(1);
+    } finally {
+      await db.close();
+    }
   });
 });

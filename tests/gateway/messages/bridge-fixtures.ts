@@ -75,6 +75,9 @@ export function fakeHomeserver() {
   const joined: string[] = [];
   const sent: Array<{ roomId: string; txnId: string; body: unknown; token: string | null }> = [];
   const syncCalls: Array<{ since: string | null; token: string | null }> = [];
+  /** Queued `/messages` pages per room; an empty queue answers with no more history. */
+  const historyPages: Record<string, Array<Response | Record<string, unknown>>> = {};
+  const historyCalls: Array<{ roomId: string; from: string | null; to: string | null; dir: string | null }> = [];
   let sendHandler: Handler | null = null;
   let sendCounter = 0;
 
@@ -97,6 +100,14 @@ export function fakeHomeserver() {
     }
     const state = /^\/_matrix\/client\/v3\/rooms\/([^/]+)\/state$/.exec(path);
     if (state) return json(200, roomState[state[1]!] ?? []);
+    const history = /^\/_matrix\/client\/v3\/rooms\/([^/]+)\/messages$/.exec(path);
+    if (history) {
+      const roomId = history[1]!;
+      historyCalls.push({ roomId, from: url.searchParams.get("from"), to: url.searchParams.get("to"), dir: url.searchParams.get("dir") });
+      const next = historyPages[roomId]?.shift();
+      if (next instanceof Response) return next;
+      return json(200, next ?? { chunk: [], start: url.searchParams.get("from") });
+    }
     const join = /^\/_matrix\/client\/v3\/rooms\/([^/]+)\/join$/.exec(path);
     if (join) {
       joined.push(join[1]!);
@@ -119,6 +130,8 @@ export function fakeHomeserver() {
     joined,
     sent,
     syncCalls,
+    historyPages,
+    historyCalls,
     onSend(handler: Handler | null) {
       sendHandler = handler;
     },

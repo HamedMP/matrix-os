@@ -69,24 +69,43 @@ for name in synapse mautrix-telegram mautrix-whatsapp; do
   restore_tree "$name"
 done
 
+# Empties the Matrix OS messaging tables before the data-only dump is loaded.
+# Tables this database does not have (an older or newer schema) are skipped,
+# so restore never fails on a table the gateway no longer creates.
+# BEGIN MATRIX_OS_TRUNCATE_SQL
+MATRIX_OS_TRUNCATE_SQL='
+DO $truncate$
+DECLARE
+  existing TEXT;
+BEGIN
+  SELECT string_agg(format($fmt$%I$fmt$, name), $sep$, $sep$) INTO existing
+  FROM unnest(ARRAY[
+    $t$messaging_accounts$t$,
+    $t$messaging_conversations$t$,
+    $t$messaging_messages$t$,
+    $t$messaging_bridge_sync_state$t$,
+    $t$messaging_conversation_mappings$t$,
+    $t$messaging_permissions$t$,
+    $t$messaging_audit_events$t$,
+    $t$messaging_event_cursors$t$,
+    $t$messaging_outgoing_replies$t$,
+    $t$messaging_hermes_work_items$t$,
+    $t$messaging_automation_rules$t$
+  ]) AS name
+  WHERE to_regclass(name) IS NOT NULL;
+  IF existing IS NOT NULL THEN
+    EXECUTE $sql$TRUNCATE TABLE $sql$ || existing || $sql$ RESTART IDENTITY CASCADE$sql$;
+  END IF;
+END
+$truncate$;
+'
+# END MATRIX_OS_TRUNCATE_SQL
+
 restore_matrix_os_database() {
   url="$1"
   file="$BACKUP_DIR/matrix-os-messaging.sql"
   if [ -n "$url" ] && [ -f "$file" ]; then
-    psql --set ON_ERROR_STOP=1 --single-transaction "$url" -c '
-TRUNCATE TABLE
-  messaging_accounts,
-  messaging_setup_sessions,
-  messaging_conversations,
-  messaging_conversation_mappings,
-  messaging_permissions,
-  messaging_audit_events,
-  messaging_event_cursors,
-  messaging_outgoing_replies,
-  messaging_hermes_work_items,
-  messaging_automation_rules
-RESTART IDENTITY CASCADE;
-' -f "$file"
+    psql --set ON_ERROR_STOP=1 --single-transaction "$url" -c "$MATRIX_OS_TRUNCATE_SQL" -f "$file"
   fi
 }
 
