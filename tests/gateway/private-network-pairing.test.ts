@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { Kysely } from "kysely";
+import { Kysely, type KyselyPlugin } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { JoinCodeRegistry } from "../../packages/gateway/src/private-network/join-codes.js";
@@ -95,6 +95,35 @@ describe("private network pairing", () => {
     expect((await store.list(OWNER)).revision).toBe(2);
     const removed = await store.remove(OWNER, "aa".padEnd(32, "0"), 2);
     expect(removed).toEqual({ revision: 3, machines: [] });
+  });
+
+  it("lists the revision and the machines from one consistent read when a pairing lands in between", async () => {
+    const writer = new PairingStore(db, () => new Date(now));
+    await writer.pair(OWNER, 0, machine("aa"));
+    let armed = true;
+    // Runs a concurrent pairing as soon as the first statement of list() has returned.
+    const interleave: KyselyPlugin = {
+      transformQuery: (args) => args.node,
+      async transformResult(args) {
+        if (armed) {
+          armed = false;
+          await writer.pair(OWNER, 1, machine("bb"));
+        }
+        return args.result;
+      },
+    };
+    const reader = new PairingStore(db.withPlugin(interleave), () => new Date(now));
+    const snapshot = await reader.list(OWNER);
+    expect(armed).toBe(false);
+    const consistent = [
+      { revision: 1, ids: ["aa"] },
+      { revision: 2, ids: ["aa", "bb"] },
+    ];
+    expect(consistent).toContainEqual({
+      revision: snapshot.revision,
+      ids: snapshot.machines.map((entry) => entry.name),
+    });
+    expect((await writer.list(OWNER)).revision).toBe(2);
   });
 
   it("replaces a reinstalled machine with the same tailnet name and caps the list", async () => {

@@ -148,23 +148,32 @@ export class PairingStore {
     return Number(updated.revision);
   }
 
+  /**
+   * One statement, so the revision and the rows come from the same snapshot even
+   * under READ COMMITTED: a concurrent pair/remove cannot pair a new list with
+   * an old revision.
+   */
   private async read(db: Kysely<PrivateNetworkDatabase>, ownerId: string): Promise<PairingSnapshot> {
-    const state = await db.selectFrom("private_network_pairing_state").select("revision").where("owner_id", "=", ownerId).executeTakeFirst();
-    const rows = await db.selectFrom("private_network_machines")
-      .select(["machine_id", "name", "dns_name", "paired_at"])
-      .where("owner_id", "=", ownerId)
-      .orderBy("paired_at")
-      .orderBy("machine_id")
-      .limit(this.maxMachines)
-      .execute();
+    const result = await sql<{ revision: number | string | null; machine_id: string | null; name: string | null; dns_name: string | null; paired_at: Date | string | null }>`
+      SELECT
+        (SELECT revision FROM private_network_pairing_state WHERE owner_id = ${ownerId}) AS revision,
+        m.machine_id, m.name, m.dns_name, m.paired_at
+      FROM (SELECT 1) AS one
+      LEFT JOIN LATERAL (
+        SELECT machine_id, name, dns_name, paired_at
+        FROM private_network_machines
+        WHERE owner_id = ${ownerId}
+        ORDER BY paired_at, machine_id
+        LIMIT ${this.maxMachines}
+      ) AS m ON true
+      ORDER BY m.paired_at, m.machine_id
+    `.execute(db);
+    const rows = result.rows;
     return {
-      revision: Number(state?.revision ?? 0),
-      machines: rows.map((row) => ({
-        machineId: row.machine_id,
-        name: row.name,
-        dnsName: row.dns_name,
-        pairedAt: new Date(row.paired_at).toISOString(),
-      })),
+      revision: Number(rows[0]?.revision ?? 0),
+      machines: rows.flatMap((row) => row.machine_id === null || row.name === null || row.dns_name === null || row.paired_at === null
+        ? []
+        : [{ machineId: row.machine_id, name: row.name, dnsName: row.dns_name, pairedAt: new Date(row.paired_at).toISOString() }]),
     };
   }
 }
