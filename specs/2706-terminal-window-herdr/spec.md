@@ -70,6 +70,11 @@ Added 2026-11-22 (Hamed):
   "Needs you" pill, filled dot, ring). A parent agent folds its sub-agents and
   takes the most urgent status among them.
 - Below 160 px the sidebar becomes a numbered rail; Cmd+B toggles it.
+- Each machine's fold lists that machine's terminals (same rows, marks and
+  times). A computer row leads with its name (handle), the kind below it.
+  Unavailable machines fold into **Unavailable (n)** at the end. The machines
+  list scrolls on its own past a third of the window, and machines other than
+  this Mac and the one on screen start folded, so the status list stays in view.
 
 ### Shortcuts (macOS)
 
@@ -82,6 +87,11 @@ terminal editing keys. They are menu accelerators in the Terminal window only
 and reuse `packages/contracts/src/terminal-keyboard.ts`.
 
 ### Panes
+
+In the Terminal window the pane buttons (split, zoom, pane controls) and keys
+drive this tree, not Zellij panes. Zellij stays only as the per-tab session
+keeper on computers; it leaves the runtime once herdr-core runs on every
+computer (a later stack).
 
 A tab holds a tree of rows and columns. Each leaf is one terminal. Split
 creates a new terminal on the same machine (and folder when known), zoom shows
@@ -112,6 +122,43 @@ or `hc` is missing there, the form says so and offers **Open in terminal**: a
 local terminal running `ssh <target>` (fixed argv built in the main process),
 where the person checks the fingerprint or types their password themselves,
 then retries.
+
+Added 2026-11-22 (Hamed):
+
+- **Custom ssh**: besides `user@host[:port]` and a `~/.ssh/config` alias, the
+  form takes a port, an identity file (a path on this Mac, never uploaded) and
+  a jump host (ProxyJump). With any of them, the main process builds the
+  core's `via` line itself: `ssh -o BatchMode=yes [-p port] [-i path]
+  [-J jump] -- user@host`, every value checked against a strict pattern (no
+  leading `-`, no spaces, quotes or shell signs) and single-quoted. **Open in
+  terminal** runs the same argv without `BatchMode`, so OpenSSH shows a new
+  host key's fingerprint there; nothing ever accepts a key silently.
+- **Tailscale**: the form lists the person's tailnet peers from the local
+  `tailscale status --json` (online, OS, MagicDNS name), each addable in one
+  click. A peer that offers Tailscale SSH is reached with `tailscale ssh`, any
+  other with plain ssh to its MagicDNS name. Tailscale missing, stopped or
+  logged out shows a short note instead of the list. The CLI runs with a
+  timeout and a capped output; only peers' names, OS and online state are read.
+- **No mosh**: herdr-core needs a byte pipe for its RPC, and mosh only syncs a
+  screen. herdr-core already redials a lost machine on its own (`connecting`
+  until `connected`, retry interval `HC_RECONNECT_MS`); terminals keep running
+  there. Attachments end on a lost line; the window offers to attach again, and
+  refreshes each machine's line state while visible.
+- **Core on added machines** (layer 8): adding a machine installs the same
+  pinned herdr-core the app ships, if it has none or an older one, and every
+  connect keeps it current. `machine.add` over RPC does not install (only the
+  CLI's `--install` copies its own binary), so the app does it:
+  - over the same ssh options, into `~/.local/bin` (no sudo), choosing the
+    build by `uname -sm` (linux and macOS, x64 and arm64) from the pinned
+    `desktop/herdr-core.json`, verifying its SHA-256 before it runs;
+  - an upgrade writes to a temporary file in that directory, verifies it, and
+    renames it into place, then asks the remote core to restart; herdr-core
+    keeps terminals across `server restart`, otherwise the person is asked
+    first because their sessions would end;
+  - the previous binary is kept beside it for rollback; nothing outside that
+    install directory is touched;
+  - each machine row shows its core version and update state, with a clear
+    error when install fails.
 
 ### Remote speed
 
@@ -150,7 +197,8 @@ component lives in `packages/ui` so Web can adopt it later.
 | 4 | Status data: local `events.subscribe` and seen; computers subscribe to `/ws/terminal/events`, seen per tab | after ENG-519 |
 | 5 | Terminal window: sidebar wired in, Herdr shortcuts | after ENG-519 |
 | 6 | Panes: split tree, one terminal per pane, drag to rearrange | after ENG-519 |
-| 7 | Ssh machines: add, list, remove, terminals on them | after ENG-519 |
+| 7 | Ssh machines: add (custom ssh, Tailscale peers), list, remove, terminals on them | after ENG-519 |
+| 8 | Core on added machines: install, verify, keep current, roll back | after ENG-519 |
 | — | Public docs: Terminal window sidebar, shortcuts and panes (separate PR in `FinnaAI/matrix-os-site`, `content/docs/`) | site repo, after layer 6 |
 
 Binary frames, one connection per computer and Herdr-backed computer terminals
