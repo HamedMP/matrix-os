@@ -3,7 +3,7 @@
 // and every few seconds while a machine is still connecting.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, onEvent } from "../../lib/operator";
-import type { LocalMachine, LocalMachineAddFailure } from "../../../../shared/local-terminals";
+import type { LocalMachine, LocalMachineAddFailure, SshOptions, TailscalePeer } from "../../../../shared/local-terminals";
 
 const SETTLING_REFRESH_MS = 5_000;
 // A connected machine can drop, and an unreachable one come back, without anything here noticing.
@@ -11,6 +11,10 @@ const STEADY_REFRESH_MS = 20_000;
 
 export type SshMachinesState = { status: "loading" | "unavailable" } | { status: "ready"; machines: LocalMachine[] };
 export type AddMachineOutcome = { ok: true; machine: LocalMachine } | { ok: false; reason: LocalMachineAddFailure };
+export type TailscalePeersState =
+  | { status: "loading" }
+  | { status: "ready"; peers: TailscalePeer[] }
+  | { status: "missing" | "stopped" | "logged-out" | "unavailable" };
 
 export function useSshMachines() {
   const [state, setState] = useState<SshMachinesState>({ status: "loading" });
@@ -48,10 +52,10 @@ export function useSshMachines() {
     return () => clearInterval(timer);
   }, [any, refresh, settling]);
 
-  const add = useCallback(async (target: string, name?: string): Promise<AddMachineOutcome> => {
+  const add = useCallback(async (target: string, name?: string, ssh?: SshOptions): Promise<AddMachineOutcome> => {
     let outcome: AddMachineOutcome = { ok: false, reason: "unavailable" };
     try {
-      outcome = await invoke("local-terminal:machine-add", { target, ...(name ? { name } : {}) });
+      outcome = await invoke("local-terminal:machine-add", { target, ...(name ? { name } : {}), ...(ssh ? { ssh } : {}) });
     } catch (error: unknown) {
       console.warn("[terminal-window] add machine failed:", error instanceof Error ? error.name : "UnknownError");
     }
@@ -80,9 +84,9 @@ export function useSshMachines() {
   }, [refresh]);
 
   /** A terminal on this device running `ssh <target>`; its id, or null. */
-  const sshLogin = useCallback(async (target: string): Promise<string | null> => {
+  const sshLogin = useCallback(async (target: string, ssh?: SshOptions): Promise<string | null> => {
     try {
-      const result = await invoke("local-terminal:ssh-login", { target, cols: 100, rows: 30 });
+      const result = await invoke("local-terminal:ssh-login", { target, ...(ssh ? { ssh } : {}), cols: 100, rows: 30 });
       return result.status === "ready" ? result.id : null;
     } catch (error: unknown) {
       console.warn("[terminal-window] ssh login terminal failed:", error instanceof Error ? error.name : "UnknownError");
@@ -90,5 +94,15 @@ export function useSshMachines() {
     }
   }, []);
 
-  return { state, refresh, add, remove, connect, sshLogin };
+  /** This Mac's tailnet peers, read when Add machine opens. */
+  const tailscalePeers = useCallback(async (): Promise<TailscalePeersState> => {
+    try {
+      return await invoke("local-terminal:tailscale-peers", {});
+    } catch (error: unknown) {
+      console.warn("[terminal-window] tailscale peers unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return { status: "unavailable" };
+    }
+  }, []);
+
+  return { state, refresh, add, remove, connect, sshLogin, tailscalePeers };
 }

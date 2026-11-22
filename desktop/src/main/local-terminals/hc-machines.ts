@@ -3,7 +3,7 @@
 // `machine.connect`, `machine.rm`. The core dials with the system ssh in
 // batch mode, so keys stay in ~/.ssh, the ssh agent or the keychain, and
 // OpenSSH checks host keys against known_hosts. Nothing here passes ssh
-// options, and `via` (an arbitrary command) is never offered.
+// options of its own; a `via` line comes only from ssh-command.ts.
 import { z } from "zod/v4";
 import {
   LOCAL_MACHINE_NAME_PATTERN, LOCAL_MACHINES_MAX, LocalMachineStateSchema,
@@ -64,9 +64,11 @@ export async function listMachines(core: HcConnection): Promise<LocalMachine[]> 
 
 export type AddMachineResult = { ok: true; machine: LocalMachine } | { ok: false; reason: LocalMachineAddFailure };
 
-export async function addMachine(core: HcConnection, input: { target: string; name?: string }): Promise<AddMachineResult> {
+/** `via` is only ever a line the main process built (ssh-command.ts), never one a window sent. */
+export async function addMachine(core: HcConnection, input: { target: string; name?: string; via?: string }): Promise<AddMachineResult> {
   try {
-    const result = await core.call("machine.add", { target: input.target, name: input.name ?? machineNameFor(input.target) }, ADD_TIMEOUT_MS);
+    const name = input.name ?? machineNameFor(input.target);
+    const result = await core.call("machine.add", input.via ? { via: input.via, name } : { target: input.target, name }, ADD_TIMEOUT_MS);
     const machine = machineFrom(result, "connected");
     return machine ? { ok: true, machine } : { ok: false, reason: "invalid" };
   } catch (error: unknown) {

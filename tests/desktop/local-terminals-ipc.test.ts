@@ -29,6 +29,7 @@ function setup(authorized = true) {
     removeMachine: vi.fn(async () => undefined),
     connectMachine: vi.fn(async () => undefined),
     sshLogin: vi.fn(async (): Promise<string | null> => "t4"),
+    tailscalePeers: vi.fn(async () => ({ status: "ready", peers: [] })),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -56,6 +57,7 @@ describe("local terminal IPC", () => {
       "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:remove": { id: "t1" },
       "local-terminal:machines": {}, "local-terminal:machine-add": { target: "vps" }, "local-terminal:machine-remove": { name: "vps" },
       "local-terminal:machine-connect": { name: "vps" }, "local-terminal:ssh-login": { target: "vps", cols: 80, rows: 24 },
+      "local-terminal:tailscale-peers": {},
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
@@ -103,7 +105,7 @@ describe("local terminal IPC", () => {
     expect(host.create).toHaveBeenLastCalledWith({ cols: 80, rows: 24 }, { machine: "vps" });
     await expect(invoke("local-terminal:create", { cols: 80, rows: 24, machine: "vps", agent: "claude" })).rejects.toThrow("invalid request");
     expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
-    expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 });
+    expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined);
     await expect(invoke("local-terminal:ssh-login", { target: "-oProxyCommand=sh", cols: 80, rows: 24 })).rejects.toThrow("invalid request");
   });
 

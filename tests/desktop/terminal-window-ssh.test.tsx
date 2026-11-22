@@ -23,6 +23,7 @@ type Machine = { name: string; target: string; state: string; temporary: boolean
 const fact = (id: string, title: string) => ({ id, title, status: null, statusAt: Date.now(), turn: 0, seenTurn: null, finished: false });
 
 function installOperator(options: {
+  peers?: unknown;
   machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean;
 } = {}) {
   let machines = options.machines ?? [];
@@ -41,6 +42,7 @@ function installOperator(options: {
       case "local-terminal:machine-remove":
         if (options.refuseRemove) return { ok: false };
         machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
+      case "local-terminal:tailscale-peers": return options.peers ?? { status: "missing" };
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -80,7 +82,7 @@ describe("Terminal window ssh machines", () => {
     const dialog = await screen.findByRole("dialog", { name: "Add machine" });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "-oProxyCommand=sh" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(await within(dialog).findByText("Check the address: host, user@host or user@host:port.")).toBeTruthy();
+    expect(await within(dialog).findByText(/Check the address/)).toBeTruthy();
     expect(invoke).not.toHaveBeenCalledWith("local-terminal:machine-add", expect.anything());
   });
 
@@ -167,6 +169,55 @@ describe("Terminal window ssh machines", () => {
     dialog = await screen.findByRole("dialog", { name: "Add machine" });
     await act(async () => { finish({ ok: true, machine: { name: "slow-host", target: "slow-host", state: "connected", temporary: false } }); });
     expect(screen.getByRole("dialog", { name: "Add machine" })).toBeTruthy();
+  });
+
+  // Hamed, 2026-11-22: custom ssh options and Tailscale peers in one click.
+  it("adds with a port, identity file and jump host as fields, never as a command", async () => {
+    const invoke = installOperator({ add: ({ target }) => ({ ok: true, machine: { name: "box", target, state: "connected", temporary: false } }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@box" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Port" }), { target: { value: "2222" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Identity file" }), { target: { value: "~/.ssh/id_box" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Jump host" }), { target: { value: "me@bastion" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-add", {
+      target: "me@box", ssh: { port: 2222, identity: "~/.ssh/id_box", jump: "me@bastion" },
+    }));
+  });
+
+  it("refuses an identity file that could become an option", async () => {
+    const invoke = installOperator();
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@box" } });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Identity file" }), { target: { value: "-oProxyCommand=sh" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    expect(await within(dialog).findByText(/Check the address/)).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalledWith("local-terminal:machine-add", expect.anything());
+  });
+
+  it("lists tailnet peers and adds one in one click, with Tailscale SSH when it offers it", async () => {
+    const invoke = installOperator({
+      peers: { status: "ready", peers: [{ name: "Build Box", dnsName: "build-box.tail.ts.net", os: "linux", online: true, tailscaleSsh: true }] },
+      add: ({ target }) => ({ ok: true, machine: { name: "build-box", target, state: "connected", temporary: false } }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Add Build Box" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-add", {
+      target: "build-box.tail.ts.net", name: "build-box", ssh: { tailscaleSsh: true },
+    }));
+  });
+
+  it("says when Tailscale is logged out instead of listing peers", async () => {
+    installOperator({ peers: { status: "logged-out" } });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    expect(await within(await screen.findByRole("dialog", { name: "Add machine" })).findByText("Tailscale is logged out on this Mac.")).toBeTruthy();
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

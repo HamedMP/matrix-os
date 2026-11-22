@@ -41,6 +41,30 @@ export const SshTargetSchema = z.string().min(1).max(255).regex(SSH_TARGET_PATTE
     return port === undefined || (Number(port) >= 1 && Number(port) <= 65_535);
   });
 export const LOCAL_MACHINES_MAX = 64;
+/**
+ * How to reach a machine beyond its target (spec 2706 layer 7): a port, an
+ * identity file on this Mac (a path, never its contents), a jump host, or
+ * Tailscale SSH. The main process builds the ssh command from these; the
+ * renderer never sends a command.
+ */
+export const SshIdentityPathSchema = z.string().min(3).max(1024).regex(/^(?:~\/|\/)[A-Za-z0-9._/-]+$/)
+  .refine((path) => !path.split("/").includes(".."));
+export const SshOptionsSchema = z.strictObject({
+  port: z.number().int().min(1).max(65_535).optional(),
+  identity: SshIdentityPathSchema.optional(),
+  jump: SshTargetSchema.optional(),
+  tailscaleSsh: z.boolean().optional(),
+}).refine((options) => !options.tailscaleSsh || (!options.port && !options.identity && !options.jump));
+export type SshOptions = z.infer<typeof SshOptionsSchema>;
+/** A tailnet peer from `tailscale status`: names and state only. */
+export const TailscalePeerSchema = z.strictObject({
+  name: z.string().max(64),
+  dnsName: z.string().max(253).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/),
+  os: z.string().max(32),
+  online: z.boolean(),
+  tailscaleSsh: z.boolean(),
+});
+export type TailscalePeer = z.infer<typeof TailscalePeerSchema>;
 export const LocalMachineStateSchema = z.enum(["connecting", "connected", "needs_login", "unreachable"]);
 export const LocalMachineSchema = z.strictObject({
   name: LocalMachineNameSchema,
@@ -190,7 +214,7 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:machine-add": {
-    request: z.strictObject({ target: SshTargetSchema, name: LocalMachineNameSchema.optional() }),
+    request: z.strictObject({ target: SshTargetSchema, name: LocalMachineNameSchema.optional(), ssh: SshOptionsSchema.optional() }),
     response: z.union([
       z.strictObject({ ok: z.literal(true), machine: LocalMachineSchema }),
       z.strictObject({ ok: z.literal(false), reason: LocalMachineAddFailureSchema }),
@@ -200,10 +224,18 @@ export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:machine-connect": { request: z.strictObject({ name: LocalMachineNameSchema }), response: Ok },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
-    request: z.strictObject({ target: SshTargetSchema, ...Size }),
+    request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),
     response: z.discriminatedUnion("status", [
       z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
       z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
+    ]),
+  },
+  // This Mac's tailnet peers, for one-click Add machine; Tailscale missing, stopped or logged out says so.
+  "local-terminal:tailscale-peers": {
+    request: z.strictObject({}),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), peers: z.array(TailscalePeerSchema).max(256) }),
+      z.strictObject({ status: z.enum(["missing", "stopped", "logged-out", "unavailable"]) }),
     ]),
   },
   // The person opened this terminal: herdr-core's `herdr.seen` label, shared with every client of the core.

@@ -53,8 +53,8 @@ export function registerLocalTerminalIpc(
       try { return { status: "ready", machines: await host.machines() }; }
       catch (error: unknown) { logFailure("local-terminal:machines", error); return unavailable(); }
     },
-    "local-terminal:machine-add": async ({ target, name }) => {
-      try { return await host.addMachine({ target, ...(name ? { name } : {}) }); }
+    "local-terminal:machine-add": async ({ target, name, ssh }) => {
+      try { return await host.addMachine({ target, ...(name ? { name } : {}), ...(ssh ? { ssh } : {}) }); }
       catch (error: unknown) { logFailure("local-terminal:machine-add", error); return { ok: false, reason: "unavailable" }; }
     },
     "local-terminal:machine-remove": async ({ name }) => {
@@ -65,9 +65,13 @@ export function registerLocalTerminalIpc(
       try { await host.connectMachine(name); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:machine-connect", error); return { ok: false }; }
     },
-    "local-terminal:ssh-login": async ({ target, cols, rows }) => {
+    "local-terminal:tailscale-peers": async () => {
+      try { return await host.tailscalePeers(); }
+      catch (error: unknown) { logFailure("local-terminal:tailscale-peers", error); return { status: "unavailable" }; }
+    },
+    "local-terminal:ssh-login": async ({ target, ssh, cols, rows }) => {
       try {
-        const id = await host.sshLogin(target, { cols, rows });
+        const id = await host.sshLogin(target, { cols, rows }, ssh);
         return id && !id.includes("/") ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:ssh-login", error); return unavailable(); }
     },

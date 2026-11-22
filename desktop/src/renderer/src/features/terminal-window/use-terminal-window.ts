@@ -11,7 +11,7 @@ import {
 import type { TerminalEventsState } from "@matrix-os/ui/terminal-agents";
 import { onEvent } from "../../lib/operator";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
-import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
+import type { LocalTerminalAgent, SshOptions } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
 import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
 import { useTerminalPanes } from "./use-terminal-panes";
@@ -137,8 +137,8 @@ export function useTerminalWindow() {
     });
   }, [clearActive, cloud.active, local]);
   /** Opens the terminal running `ssh <target>`, for a host key or password only the person can answer. */
-  const openSshLogin = useCallback(async (target: string): Promise<boolean> => {
-    const id = await ssh.sshLogin(target);
+  const openSshLogin = useCallback(async (target: string, options?: SshOptions): Promise<boolean> => {
+    const id = await ssh.sshLogin(target, options);
     setSshLoginFailed(id ? null : target);
     if (!id) return false;
     localChoice.current += 1;

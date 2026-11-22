@@ -4,8 +4,10 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import type { LocalMachine, LocalTerminalAgent, LocalTerminalFact } from "../../shared/local-terminals";
-import { addMachine, listMachines, sshDestination, type AddMachineResult } from "./hc-machines";
+import type { LocalMachine, LocalTerminalAgent, LocalTerminalFact, SshOptions } from "../../shared/local-terminals";
+import { sshLoginArgv, sshVia } from "./ssh-command";
+import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
+import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
@@ -275,12 +277,11 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * a host key they have not accepted yet, or types a password, themselves.
      * The target was validated (never an option); `--` ends ssh's options anyway.
      */
-    sshLogin(target: string, size: { cols: number; rows: number }): Promise<string | null> {
+    sshLogin(target: string, size: { cols: number; rows: number }, ssh?: SshOptions): Promise<string | null> {
       const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
-      // `user@host:port` is herdr-core's form; OpenSSH takes the port as `-p`.
-      const { destination, port } = sshDestination(target);
+      // `user@host:port` is herdr-core's form; OpenSSH takes the port as `-p`. No BatchMode: the person answers here.
       return sessions.run({
-        argv: ["/usr/bin/env", ...unset, "ssh", ...(port ? ["-p", port] : []), "--", destination],
+        argv: ["/usr/bin/env", ...unset, ...sshLoginArgv(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)],
         cwd: options.home,
         env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
         labels: { [TERMINAL_TITLE_LABEL]: `ssh ${target}`.slice(0, 64) },
@@ -293,8 +294,14 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       return listMachines(await ensure());
     },
 
-    async addMachine(input: { target: string; name?: string }): Promise<AddMachineResult> {
-      return addMachine(await ensure(), input);
+    async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
+      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+      return addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
+    },
+
+    /** This Mac's tailnet peers, for one-click Add machine. */
+    tailscalePeers(): Promise<TailscalePeersResult> {
+      return tailscalePeers();
     },
 
     /** Forgets a machine; its terminals keep running there. */
