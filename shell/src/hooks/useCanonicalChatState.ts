@@ -508,6 +508,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     latestAdmissionId.current = undefined;
     setSubmitting(true);
     setSafeError(null);
+    let pendingRequestId: string | undefined;
     const send = async () => {
       const uploadedReferences: string[] = [];
       const removeUploads = () => Promise.allSettled(uploadedReferences.map(reference => client.deleteAttachment(reference)));
@@ -597,6 +598,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
+        pendingRequestId = input.clientRequestId;
         setPendingTurn({ requestId: input.clientRequestId, chatId: record.chat.id, parts, createdAt: new Date().toISOString() });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
@@ -648,7 +650,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
     };
     return send().finally(() => {
-      setPendingTurn(null);
+      // Clear only this send's message; a newer send may already show its own.
+      if (pendingRequestId) setPendingTurn(pending => pending?.requestId === pendingRequestId ? null : pending);
       if (!isCurrent()) return;
       submittingRef.current = false;
       setSubmitting(false);

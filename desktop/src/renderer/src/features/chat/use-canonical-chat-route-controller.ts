@@ -476,6 +476,7 @@ export function useCanonicalChatRouteController({
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
       && activeChatIdRef.current === selectedChatId && authority.valid && admissionAuthority.current === authority);
     if (!isCurrentScope()) return null;
+    let pendingRequestId: string | undefined;
     try {
       const current = detail;
       const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
@@ -488,7 +489,10 @@ export function useCanonicalChatRouteController({
         mayDispatch: isCurrentScope,
         onPrepared: id => {
           latestAdmissionId.current = id;
-          if (selectedChatId) setPendingTurn({ requestId: id, chatId: selectedChatId, parts: input.parts, createdAt: new Date().toISOString() });
+          if (selectedChatId) {
+            pendingRequestId = id;
+            setPendingTurn({ requestId: id, chatId: selectedChatId, parts: input.parts, createdAt: new Date().toISOString() });
+          }
         },
         onAccepted: () => onAccepted?.(), onRejected,
         onConfirmed: id => {
@@ -524,7 +528,8 @@ export function useCanonicalChatRouteController({
       return null;
     } finally {
       // Accepted turns now come from the detail; a rejected send keeps its draft.
-      if (admissionSequence.current === sequence) setPendingTurn(null);
+      // Clear only this send's message, even after a chat switch, never a newer one.
+      if (pendingRequestId) setPendingTurn(pending => pending?.requestId === pendingRequestId ? null : pending);
     }
   }, [client, detail, projectId, admissions, admissionIdentity]);
 

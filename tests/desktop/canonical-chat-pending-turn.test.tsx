@@ -38,3 +38,25 @@ it("exposes a sent follow-up as a pending turn until admission settles, on succe
     expect(hook.result.current.pendingTurn).toBeNull();
   } finally { hook.unmount(); }
 });
+
+it("clears a failed send's pending message even after switching chats mid-send", async () => {
+  const { snapshot } = createCanonicalChatFixture("completed");
+  const { project, providerBinding, activeRun: _activeRun, ...chat } = snapshot.chat;
+  const detail = { record: { chat, providerBinding, projectId: project.projectId }, messages: snapshot.messages,
+    turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities };
+  let fail!: (error: unknown) => void;
+  const client = { list: vi.fn(async () => ({ items: [detail.record] })), getDetail: vi.fn(async () => detail),
+    admitTurn: vi.fn(() => new Promise((_resolve, reject) => { fail = reject; })) } as unknown as CanonicalChatClient;
+  const input = { parts: [{ type: "text" as const, text: "Lost send" }],
+    selection: { instanceId: "codex_test", model: "test" }, interactionMode: "default", permissionMode: "supervised" };
+  const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: null, active: true, initialChatId: chat.id }));
+  try {
+    await act(async () => {});
+    let sending!: Promise<unknown>;
+    await act(async () => { sending = hook.result.current.submitTurn(input, "Lost"); });
+    expect(hook.result.current.pendingTurn?.parts).toEqual(input.parts);
+    await act(async () => { hook.result.current.startNewChat(); });
+    await act(async () => { fail(new Error("offline")); await sending; });
+    expect(hook.result.current.pendingTurn).toBeNull();
+  } finally { hook.unmount(); }
+});
