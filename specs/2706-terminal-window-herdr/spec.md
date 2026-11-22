@@ -44,12 +44,22 @@ to the network round trip and idle terminals send nothing.
    Herdr transport straight to computers is not in scope.
 3. This is a **new stack** after ENG-519, with its own ENG ticket.
 
+Added 2026-11-22 (Hamed):
+
+4. **Add an ssh machine** from the sidebar's machines list, as Herdr does. It
+   reuses herdr-core's machine model (`machine.add`, `machine.list`,
+   `machine.connect`, `machine.rm`) on the Terminal window's bundled core, so
+   the machine and its terminals behave like `hc machine add` ones.
+5. **Drag to rearrange panes**: drag a pane by its header onto another pane's
+   edge to split there.
+
 ## Behaviour
 
 ### Sidebar
 
-- Top: machines (This Mac, then Matrix computers), each foldable, with a `+`.
-  Fold state persists per machine.
+- Top: machines (This Mac, ssh machines, then Matrix computers), each
+  foldable, with a `+` for a new terminal there. Fold state persists per
+  machine. The list ends with **Add machine…** (see Ssh machines).
 - Below: terminals by status, in this order: **Needs you** (blocked or error),
   **Done** (finished and not yet seen), **Working**, **Idle**. Every section
   folds and shows a count when folded. A second view groups by machine.
@@ -77,7 +87,31 @@ A tab holds a tree of rows and columns. Each leaf is one terminal. Split
 creates a new terminal on the same machine (and folder when known), zoom shows
 one leaf, swap and focus move by direction, dividers resize. The layout is
 saved per machine and restored when the window opens; a leaf whose terminal is
-gone is dropped.
+gone is dropped. A tab holds at most 16 leaves; split is refused beyond that.
+
+Drag to rearrange: each pane has a thin header (its terminal's name and
+status). Dragging it over another pane of the same tab shows a drop zone for
+the nearest edge (left, right, top, bottom); dropping moves the pane there,
+splitting that pane in that direction. Dropping on the pane's own position, or
+outside any pane, changes nothing. Escape cancels a drag. Keyboard swap
+(Cmd+Alt+Shift+arrows) stays the non-mouse way to rearrange.
+
+### Ssh machines
+
+**Add machine…** opens a small form: the ssh target (`host`, `user@host`,
+`user@host:port`, or a `Host` alias from `~/.ssh/config`) and an optional name.
+The trusted main process validates both and calls `machine.add` on the bundled
+core. The machine then appears under machines with its line state
+(connecting, connected, needs login, unreachable); its terminals come through
+the same `events.subscribe` stream as `machine/t7` addresses, and `+` starts a
+shell there with `terminal.run` and `on`. Remove forgets the machine
+(`machine.rm`); its terminals keep running there.
+
+When the dial fails because ssh does not know the host's key, needs a password,
+or `hc` is missing there, the form says so and offers **Open in terminal**: a
+local terminal running `ssh <target>` (fixed argv built in the main process),
+where the person checks the fingerprint or types their password themselves,
+then retries.
 
 ### Remote speed
 
@@ -115,7 +149,8 @@ component lives in `packages/ui` so Web can adopt it later.
 | 3 | `packages/ui` status sidebar model and component | after ENG-519 |
 | 4 | Status data: local `events.subscribe` and seen; computers subscribe to `/ws/terminal/events`, seen per tab | after ENG-519 |
 | 5 | Terminal window: sidebar wired in, Herdr shortcuts | after ENG-519 |
-| 6 | Panes: split tree, one terminal per pane | after ENG-519 |
+| 6 | Panes: split tree, one terminal per pane, drag to rearrange | after ENG-519 |
+| 7 | Ssh machines: add, list, remove, terminals on them | after ENG-519 |
 | — | Public docs: Terminal window sidebar, shortcuts and panes (separate PR in `FinnaAI/matrix-os-site`, `content/docs/`) | site repo, after layer 6 |
 
 Binary frames, one connection per computer and Herdr-backed computer terminals
@@ -142,6 +177,26 @@ gateway's existing terminal status pipeline (2692) → `/ws/terminal/events` →
 the Terminal window's per-computer subscription → sidebar rows. Local
 terminals take the herdr-core `events.subscribe` path instead.
 
+Seen (layer 4):
+
+- Matrix computers: the gateway keeps the time each tab was last opened,
+  saved in `~/system/terminal-seen.json` (owner file, atomic write). The
+  events hub sends an `attention` frame after each snapshot and whenever it
+  changes: every done tab (finished, or reporting `done`) with when it became
+  done and whether it was opened since. A client marks a tab seen with a
+  `seen` frame naming its ref. Clients that do not know these frames ignore
+  `attention`, and a client sends `seen` only after it has received an
+  `attention` frame, so older gateways never see an unknown client frame.
+- This Mac and ssh machines: herdr-core's own `herdr.seen` label (the
+  terminal's `turn` when it was last looked at), as the Herdr app uses, so
+  seen is shared with every client of that core.
+
+Local events (layer 4): the main process opens one extra plain-mode
+connection to the bundled core, calls `events.subscribe`, keeps the facts it
+needs per terminal, and sends the Terminal window compact rows. It reconnects
+with backoff and replaces its state on every snapshot (including after
+`missed`).
+
 End-to-end checkpoint, added with layer 4 before the sidebar is wired in:
 create a command tab through the real runtime and wrapper (`/bin/sh`), let the
 program exit with code 4, and assert in one test: the stored tab is `exited`
@@ -159,15 +214,37 @@ event stream. Each layer's own tests do not replace this one.
   `zellij action` call while it runs.
 - Matrix tab switch among kept tabs: no WebSocket opened; shown within one frame.
 - Sidebar sections, counts, fold, seen and rail behave as above for local and
-  computer terminals; shortcuts work; panes split, zoom, swap, focus, resize and
-  restore.
+  computer terminals; shortcuts work; panes split, zoom, swap, focus, resize,
+  drag to a new edge and restore.
+- An ssh machine with a known host key and key-based login is added from the
+  sidebar, its terminals appear and a new one starts there; an unknown host key
+  is refused with the Open in terminal path.
 - Live evidence on Electron Desktop for every layer that changes UI.
 
 ## Security
 
 - No new endpoints in layers 2-3. Layer 4 reuses the authenticated
   `/ws/terminal/events` stream per computer (same auth as the main window) and
-  adds a bounded "mark seen" frame validated with Zod; only the owner's tabs.
+  adds a bounded "mark seen" frame validated with Zod; only the owner's tabs,
+  and only refs the hub currently lists are stored.
+- Ssh machines (layer 7):
+  - No private key, password or passphrase is uploaded to Matrix or stored by
+    the app. herdr-core dials with the system `ssh` in `BatchMode`, so keys
+    stay in `~/.ssh`, the ssh agent or the macOS keychain, and the core keeps
+    only the target and name in its own data directory (the app's userData).
+  - Host keys are verified by OpenSSH against `~/.ssh/known_hosts`; the app
+    never passes `StrictHostKeyChecking=no` or any other `-o` option. An
+    unknown or changed key fails the dial, and the person accepts a new key
+    only in a real terminal running `ssh <target>`, where OpenSSH shows the
+    fingerprint.
+  - The target is validated in the main process (letters, digits, `.`, `-`,
+    `_`, optional `user@` and `:port`, at most 255 characters, never starting
+    with `-`), the name with herdr-core's terminal-name rules. Only `target`
+    and `name` reach `machine.add`; `via` (an arbitrary command) is never
+    offered.
+  - New IPC: `local-terminal:machines`, `:machine-add`, `:machine-remove`,
+    `:machine-connect`, Terminal window only, each with a strict Zod schema.
+    Errors reach the window as herdr-core's stable kinds, never messages.
 - The exit record is written by the tab's launcher inside the owner's runtime
   directory (0700), named by tab id (validated), never by user input.
 - Shortcuts run only in the trusted Terminal window renderer; no new IPC
@@ -182,6 +259,11 @@ event stream. Each layer's own tests do not replace this one.
   window closes or the computer becomes unavailable; reconnect with backoff.
 - Seen map: bounded by the runtime's tab cap; finished history trimmed as today.
 - Layout store: one small record per machine, capped leaves per tab (16).
+- Local events connection: one per app; a snapshot line is capped (16 MiB)
+  and the facts map by the core's own terminal limits; reconnect with backoff
+  up to 30 s.
+- Machine dial: `machine.add` waits at most 30 s; the form stays usable and
+  can be retried.
 - Kept attachments stay capped at 6 per window (2701 layer 6).
 
 ## Risks
