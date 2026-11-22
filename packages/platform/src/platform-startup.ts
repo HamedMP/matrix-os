@@ -1392,7 +1392,7 @@ async function startPlatformServerWithCleanup(
         ]);
         await integrationShutdown?.();
         posthogProcessErrors.dispose();
-        await shutdownPlatformApp(app);
+        await shutdownPlatformApp(app, googleQualifiedRuntime);
         await processPosthogErrorTracker.shutdown();
         sitesObjectStore?.destroy();
         await Promise.all([closePrimaryDb(), atsDb?.destroy()]);
