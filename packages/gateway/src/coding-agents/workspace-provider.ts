@@ -1,4 +1,5 @@
 import { nativeCodexRoutineAdmission } from "../chat/codex-routine-source.js";
+import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "../chat/send-timing.js";
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
 import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import type { SessionStartScope } from "../session-start-guard.js";
@@ -272,24 +273,26 @@ export function createWorkspaceCodingAgentProvider(
         const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
         if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
         if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");
-        const nativeAccountBinding = agent === "codex" ? await options.codexAdmission?.start(principal.userId, sessionId) : undefined;
+        const nativeAccountBinding = agent === "codex" ? await timeChatSendStage("codex_admission_start", async () => options.codexAdmission?.start(principal.userId, sessionId)) : undefined;
         let result;
         let runtimeInvoked = false;
         let startup: ReturnType<typeof beginNativeBrowserBootstrap>;
         try {
           if (agent === "codex" && options.codexEvents) {
-            await options.codexEvents.watch({
+            const codexEvents = options.codexEvents;
+            await timeChatSendStage("codex_events_watch", () => codexEvents.watch({
               principal,
               threadId: thread.id,
               sessionId,
               ...(options.codexControl ? { checkpoint: true } : {}),
-            });
+            }));
           }
-          if (agent === "codex") await options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId);
+          if (agent === "codex") await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId));
           // Keep physical startup and MCP binding tracked without marking
           // manager-proved predispatch failures as uncertain processes.
           startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
           runtimeInvoked = true;
+          const sessionStartedAt = startChatSendStage();
           try {
             result = await (scope?.startSession ?? options.runtime.startSession)({
               ownerScope: { type: "user", id: principal.userId },
@@ -315,14 +318,14 @@ export function createWorkspaceCodingAgentProvider(
           } catch (error: unknown) {
             if (browser) markNativeBrowserCleanupUnconfirmed(principal.userId);
             throw error;
-          }
+          } finally { recordChatSendStage("session_start", sessionStartedAt); }
           if (!result.ok) {
             if (browser && result.error.code === "runtime_ownership_retained") markNativeBrowserCleanupUnconfirmed(principal.userId);
             if (agent === "codex") await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, result);
             throw new Error("Workspace provider start failed");
           }
-          if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser,
-            control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal });
+          if (browser) await timeChatSendStage("browser_prepare", () => prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser,
+            control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal }));
         } catch (error: unknown) {
           options.codexEvents?.unwatch(sessionId);
           // Only the manager-owned reservation can prove a settled predispatch
@@ -372,7 +375,7 @@ export function createWorkspaceCodingAgentProvider(
       signal.throwIfAborted();
       if (agent === "codex") {
         try {
-          await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
+          await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
         } catch (error: unknown) {
           const recovered = await recoverStoppedCodexContinuation(options, context, sessionId, workspaceTurnPrompt(turn.message, turn.attachments));
           if (recovered) return recovered;
@@ -384,7 +387,8 @@ export function createWorkspaceCodingAgentProvider(
         if (!options.codexEvents) {
           throw new Error("Codex structured events are unavailable");
         }
-        const observation = await options.codexEvents.watch({
+        const codexEvents = options.codexEvents;
+        const observation = await timeChatSendStage("codex_events_watch", () => codexEvents.watch({
           principal,
           threadId: thread.id,
           sessionId,
@@ -395,11 +399,12 @@ export function createWorkspaceCodingAgentProvider(
             runtime: options.runtime, control: options.codexControl, admission: options.codexAdmission,
             backgroundRuntime: options.backgroundRuntime,
           }) },
-        });
+        }));
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         const browser = nativeBrowserExecution(principal.userId);
         try {
-          await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
+          await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
+          const submitStartedAt = startChatSendStage();
           const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}) }, `req_${turn.turnId.slice("turn_".length)}`);
           if (!privateTurn) await options.codexControl.submitTurn({
@@ -410,6 +415,7 @@ export function createWorkspaceCodingAgentProvider(
             modelOptions: turn.modelOptions ?? [],
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}),
           });
+          recordChatSendStage("turn_submit", submitStartedAt);
         } catch (error: unknown) {
           signal.throwIfAborted();
           if (!(error instanceof Error) || error.name !== "CodexControlUnavailableError") {

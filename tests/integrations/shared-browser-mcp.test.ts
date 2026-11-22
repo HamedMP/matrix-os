@@ -102,3 +102,31 @@ it("exposes public context in native discovery and still validates fields per ac
     expect(fetcher).toHaveBeenCalledOnce();
   } finally { await client.close(); await server.close(); }
 });
+
+it("reads a renewed run bearer from the private token file on every action, failing closed when it is cleared", async () => {
+  const { mkdtemp, rm, writeFile, symlink } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { createSharedBrowserTokenFileReader } = await import("../../packages/integrations-mcp/src/shared-browser.js");
+  const dir = await mkdtemp(join(tmpdir(), "browser-token-"));
+  const path = join(dir, "token");
+  const fetcher = vi.fn(async () => Response.json({ success: true, observationId: "obs_1", elements: [] }));
+  expect(() => createSharedBrowserTokenFileReader("relative/token")).toThrow();
+  const server = createSharedBrowserMcpServer({ gatewayPort: 4000, token: createSharedBrowserTokenFileReader(path), fetcher });
+  const client = new Client({ name: "native-browser-renewal", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(b), client.connect(a)]);
+  const bearer = (index: number) => ((fetcher.mock.calls[index] as unknown[])[1] as { headers: Record<string, string> }).headers.authorization;
+  try {
+    expect((await client.callTool({ name: "shared_browser", arguments: { action: "status" } })).isError).toBe(true);
+    await writeFile(path, "a".repeat(43), { mode: 0o600 });
+    expect((await client.callTool({ name: "shared_browser", arguments: { action: "status" } })).isError).not.toBe(true);
+    await writeFile(path, "b".repeat(43), { mode: 0o600 });
+    expect((await client.callTool({ name: "shared_browser", arguments: { action: "status" } })).isError).not.toBe(true);
+    expect([bearer(0), bearer(1)]).toEqual(["Bearer " + "a".repeat(43), "Bearer " + "b".repeat(43)]);
+    await writeFile(path, "not a token", { mode: 0o600 });
+    expect((await client.callTool({ name: "shared_browser", arguments: { action: "status" } })).isError).toBe(true);
+    await rm(path); await writeFile(join(dir, "elsewhere"), "c".repeat(43), { mode: 0o600 }); await symlink(join(dir, "elsewhere"), path);
+    expect((await client.callTool({ name: "shared_browser", arguments: { action: "status" } })).isError).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  } finally { await client.close(); await server.close(); await rm(dir, { recursive: true, force: true }); }
+});
