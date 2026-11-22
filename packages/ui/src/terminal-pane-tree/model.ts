@@ -193,3 +193,25 @@ export function pruneTab(tab: PaneTab, alive: (terminal: string) => boolean): Pa
   const zoom = tab.zoom && remaining.some((leaf) => leaf.id === tab.zoom) ? tab.zoom : null;
   return { ...tab, root, focus, zoom };
 }
+
+const RESIZE_STEP = 0.05;
+
+/**
+ * Moves the divider nearest the focused pane on that axis (left/up shrink
+ * the first side, right/down grow it), as Zellij's resize keys did.
+ */
+export function resizeFocusedPane(tab: PaneTab, direction: PaneDirection): PaneTab {
+  const axis = direction === "left" || direction === "right" ? "row" : "column";
+  const path: PaneSplit[] = [];
+  const walk = (node: PaneNode): boolean => {
+    if (node.type === "leaf") return node.id === tab.focus;
+    path.push(node);
+    if (walk(node.first) || walk(node.second)) return true;
+    path.pop();
+    return false;
+  };
+  if (!walk(tab.root)) return tab;
+  const split = [...path].reverse().find((candidate) => candidate.axis === axis);
+  if (!split) return tab;
+  return resizeSplit(tab, split.id, split.ratio + (direction === "left" || direction === "up" ? -RESIZE_STEP : RESIZE_STEP));
+}

@@ -18,6 +18,7 @@ import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
 import { TerminalPaneTree } from "./TerminalPaneTree";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -143,12 +144,13 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-function TerminalPane({ sessionName, findRequest, ended }: {
+function TerminalPane({ sessionName, findRequest, ended, onPaneAction }: {
   sessionName: string; findRequest: number; ended?: { title: string; onClose(): void } | null;
+  onPaneAction(action: TerminalPaneAction): void;
 }) {
   return (
     <main aria-label="Terminal" className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <TerminalView key={sessionName} sessionName={sessionName} active findRequest={findRequest} />
+      <TerminalView key={sessionName} sessionName={sessionName} active findRequest={findRequest} onPaneAction={onPaneAction} />
       {ended ? (
         <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
           style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
@@ -180,7 +182,7 @@ function SplitPanes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         // Only the focused pane holds the live attachment; the others keep their last screen.
         return sessionName
           ? <TerminalView key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} active={focused}
-              findRequest={view.findRequestFor(leaf.terminal)} />
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={view.panes.paneAction} />
           : null;
       }} />
   );
@@ -192,10 +194,11 @@ function ActivePane({ view }: { view: TerminalWindowView }) {
   // local pane so it attaches again instead of staying on a disposed attachment.
   if (view.localTerminal) {
     return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)}
-      findRequest={view.findRequestFor(view.selectedKey)} ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
+      findRequest={view.findRequestFor(view.selectedKey)} onPaneAction={view.panes.paneAction}
+      ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
   }
   const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequestFor(view.selectedKey)} />;
+  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequestFor(view.selectedKey)} onPaneAction={view.panes.paneAction} />;
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 

@@ -5,8 +5,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName, active, findRequest }: { sessionName: string; active?: boolean; findRequest?: number }) => (
-    <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-find={findRequest ?? 0}>{sessionName}</div>
+  default: ({ sessionName, active, findRequest, onPaneAction }: {
+    sessionName: string; active?: boolean; findRequest?: number; onPaneAction?: (action: unknown) => void;
+  }) => (
+    <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-find={findRequest ?? 0}>
+      {sessionName}
+      {active !== false ? <button type="button" aria-label="Pane split right" onClick={() => onPaneAction?.({ type: "split", direction: "right" })} /> : null}
+    </div>
   ),
 }));
 
@@ -53,6 +58,7 @@ function installOperator(initial: Fact[], options: { hold?: () => Promise<void> 
 }
 
 const panes = () => screen.queryAllByRole("region").filter((element) => element.hasAttribute("data-pane"));
+const viewNames = () => screen.getAllByTestId("terminal-view").map((view) => view.firstChild?.textContent);
 const paneNames = () => panes().map((pane) => pane.getAttribute("aria-label"));
 const focusedPane = () => panes().find((pane) => pane.hasAttribute("data-focused"))?.getAttribute("aria-label");
 
@@ -219,6 +225,16 @@ describe("Terminal window panes", () => {
     expect(finds()).toEqual([["local:t1", "0"], ["local:t10", "1"]]);
     operator.command({ command: "focus-pane", direction: "left" });
     expect(finds()).toEqual([["local:t1", "0"], ["local:t10", "1"]]);
+  });
+
+  // Hamed, 2026-11-22: the terminal's own split buttons must drive this window's panes, not Zellij.
+  it("splits through the window's panes from the terminal's split button", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    fireEvent.click(await screen.findByRole("button", { name: "Pane split right" }));
+    await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
   });
 
   it("picks the drop edge nearest the pointer", () => {

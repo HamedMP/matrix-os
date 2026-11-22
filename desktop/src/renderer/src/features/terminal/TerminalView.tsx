@@ -44,6 +44,7 @@ import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
 import { useTerminalShortcutClaims } from "./use-terminal-shortcut-claims";
 import { NativeTerminalClipboardError, readNativeTerminalClipboardFiles } from "./terminal-native-clipboard";
 import { TerminalFindBar } from "./TerminalFindBar";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -116,6 +117,8 @@ interface TerminalViewProps {
   controlsHost?: HTMLElement | null;
   /** Changes each time the person asks to find text (Cmd+F in the Terminal window). */
   findRequest?: number;
+  /** The Terminal window's own panes take the pane buttons and keys instead of Zellij (spec 2706). */
+  onPaneAction?: (action: TerminalPaneAction) => void;
 }
 
 type ClipboardFeedback = {
@@ -159,6 +162,7 @@ export default function TerminalView({
   onRecreate,
   controlsHost,
   findRequest = 0,
+  onPaneAction,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
   const pasteApi = sessionName.startsWith("local:") ? null : api;
@@ -246,7 +250,7 @@ export default function TerminalView({
     api, sessionName, chatId, active, socketState,
     writable: liveOwnership === "writer",
     isMac,
-    attachmentRef, termRef,
+    attachmentRef, termRef, onPaneAction,
   });
   // The main and Terminal windows both host this view; either way, a focused
   // Terminal keeps the keys its profile binds.

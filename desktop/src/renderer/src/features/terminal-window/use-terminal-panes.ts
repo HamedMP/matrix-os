@@ -3,10 +3,11 @@
 // the sidebar selection, so the two never disagree.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  closePane, focusPane, leaves, movePane, pruneTab, resizeSplit, singlePaneTab, splitPane, swapPanes, toggleZoom,
+  closePane, focusPane, leaves, movePane, pruneTab, resizeFocusedPane, resizeSplit, singlePaneTab, splitPane, swapPanes, toggleZoom,
   type PaneDirection, type PaneTab,
 } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 import { tabWithTerminal, usePaneLayouts, type PaneLayouts } from "./use-pane-layouts";
 
 export type PaneCommand =
@@ -149,5 +150,20 @@ export function useTerminalPanes(options: {
     if (terminal) select(terminal);
   }, [save, select, tab]);
 
-  return { tab: tab?.tab ?? null, notice, run, focusLeaf, resize, move };
+  /**
+   * The pane buttons and keys inside a terminal (split, focus, resize, zoom,
+   * close), applied to this window's panes instead of the computer's Zellij panes.
+   */
+  const paneAction = useCallback((action: TerminalPaneAction) => {
+    switch (action.type) {
+      case "split": run({ command: action.direction === "right" ? "split-right" : "split-down" }); return;
+      case "focus": run({ command: "focus-pane", direction: action.direction }); return;
+      case "fullscreen": run({ command: "zoom-pane" }); return;
+      case "close": run({ command: "close-pane" }); return;
+      case "resize": if (tab) save(resizeFocusedPane(tab.tab, action.direction)); return;
+      default: return;
+    }
+  }, [run, save, tab]);
+
+  return { tab: tab?.tab ?? null, notice, run, focusLeaf, resize, move, paneAction };
 }

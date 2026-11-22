@@ -112,3 +112,17 @@ describe("terminal pane tree", () => {
     expect(pruneTab(tab, () => true)).toBe(tab);
   });
 });
+
+describe("resizing the focused pane by key", () => {
+  it("moves the nearest divider on that axis and leaves a tab without one alone", async () => {
+    const { resizeFocusedPane } = await import("../../packages/ui/src/terminal-pane-tree/index.js");
+    const tab = grid();
+    const narrower = resizeFocusedPane(tab, "left");
+    expect(narrower.root.type === "split" && narrower.root.ratio).toBeCloseTo(0.45);
+    const taller = resizeFocusedPane(tab, "down");
+    const column = taller.root.type === "split" && taller.root.second.type === "split" ? taller.root.second.ratio : 0;
+    expect(column).toBeCloseTo(0.55);
+    const single = singlePaneTab("x", id);
+    expect(resizeFocusedPane(single, "right")).toBe(single);
+  });
+});
