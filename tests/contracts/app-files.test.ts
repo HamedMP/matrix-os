@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   APP_FILES_BRIDGE_PATH,
@@ -400,5 +402,59 @@ describe("app files client", () => {
   it("names the route and the manifest permission", () => {
     expect(APP_FILES_BRIDGE_PATH).toBe("/api/bridge/files");
     expect(APP_FILES_PERMISSION).toBe("files");
+  });
+});
+
+describe("window.MatrixOS declaration for default apps", () => {
+  const root = process.cwd();
+  const declaration = readFileSync(join(root, "home/apps/_shared/matrix-os.d.ts"), "utf8");
+  const bridge = readFileSync(join(root, "shell/src/lib/os-bridge.ts"), "utf8");
+
+  function interfaceBody(name: string): string {
+    const start = declaration.indexOf(`export interface ${name} {`);
+    expect(start, `interface ${name}`).toBeGreaterThanOrEqual(0);
+    return declaration.slice(start, declaration.indexOf("\n}\n", start));
+  }
+  function declaredMembers(name: string): string[] {
+    return [...interfaceBody(name).matchAll(/^ {2}(\w+)[(<:?]/gm)].map((match) => match[1]!).sort();
+  }
+  /** Keys of an object literal in the injected script, found by their indentation. */
+  function scriptKeys(opening: string, indent: number): string[] {
+    const start = bridge.indexOf(opening);
+    expect(start, opening).toBeGreaterThanOrEqual(0);
+    const closing = new RegExp(`^\\t? {${indent - 2}}\\}`, "m");
+    const body = bridge.slice(start + opening.length);
+    const end = body.search(closing);
+    return [...body.slice(0, end).matchAll(new RegExp(`^\\t? {${indent}}(\\w+):`, "gm"))].map((match) => match[1]!);
+  }
+
+  it("declares exactly the members the injected bridge provides, plus files", () => {
+    const provided = scriptKeys("window.MatrixOS = {", 4);
+    expect(provided).toContain("readData");
+    expect(provided).toContain("collaboration");
+    expect(declaredMembers("MatrixOSBridge")).toEqual([...new Set([...provided, "files"])].sort());
+  });
+
+  it("declares exactly the database methods the injected bridge provides", () => {
+    const provided = scriptKeys("db: {", 6);
+    expect(provided).toContain("compareAndSwap");
+    expect(declaredMembers("MatrixOSDb")).toEqual([...provided].sort());
+  });
+
+  it("declares the files namespace of the contract client plus the open-request pair", () => {
+    const client = createAppFilesClient(async () => ({}));
+    expect(declaredMembers("MatrixOSFiles")).toEqual([...Object.keys(client), "onOpenRequest", "openRequest"].sort());
+  });
+
+  it("repeats the contract's error codes and reply fields", () => {
+    const union = declaration.slice(declaration.indexOf("export type BridgeFileErrorCode ="), declaration.indexOf(";", declaration.indexOf("export type BridgeFileErrorCode =")));
+    expect([...union.matchAll(/"(\w+)"/g)].map((match) => match[1]).sort()).toEqual([...APP_FILE_ERROR_CODES].sort());
+    expect(declaredMembers("BridgeFileEntry")).toEqual(Object.keys(AppFileListReplySchema.shape.entries.element.shape).sort());
+    expect(declaredMembers("BridgeFileListing")).toEqual(Object.keys(AppFileListReplySchema.shape).sort());
+    expect(declaredMembers("BridgeFileStat")).toEqual(Object.keys(AppFileStatReplySchema.shape).sort());
+    expect(declaredMembers("BridgeFileWriteResult")).toEqual(Object.keys(AppFileWriteReplySchema.shape).sort());
+    expect(declaredMembers("BridgeFileWriteOptions")).toEqual(["createParents", "ifVersion"]);
+    // The app sees decoded bytes where the wire carries base64.
+    expect(declaredMembers("BridgeFileContent")).toEqual(["bytes", "mimeType", "path", "size", "version"]);
   });
 });

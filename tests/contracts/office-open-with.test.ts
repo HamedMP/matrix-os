@@ -276,3 +276,15 @@ describe("open request inbox", () => {
     expect(callback).not.toHaveBeenCalled();
   });
 });
+
+describe("open request declaration for default apps", () => {
+  it("repeats the fields of the contract", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const declaration = readFileSync(join(process.cwd(), "home/apps/_shared/matrix-os.d.ts"), "utf8");
+    const start = declaration.indexOf("export interface OpenRequest {");
+    const body = declaration.slice(start, declaration.indexOf("\n}\n", start));
+    const fields = [...body.matchAll(/^ {2}(\w+): string;/gm)].map((match) => match[1]).sort();
+    expect(fields).toEqual(Object.keys(OpenRequestSchema.shape).sort());
+  });
+});
