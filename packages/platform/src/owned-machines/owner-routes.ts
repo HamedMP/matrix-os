@@ -13,6 +13,7 @@ import type { PlatformDB } from '../db.js';
 import { isPlatformHandleAvailableForClerkUser } from '../db.js';
 import { formatUserCode } from '../device-flow.js';
 import { createBoundedRateLimiter } from '../request-admission.js';
+import { AccountDeletionAdmissionError, withAccountDeletionAdmission } from '../account-deletion/admission.js';
 import { resolveAppDomainIdentity } from '../session-routing-identity.js';
 import type { OwnedMachinesConfig } from './config.js';
 import { ownedConnectPage } from './connect-page.js';
@@ -31,6 +32,7 @@ import {
 const OWNER_BODY_LIMIT = 4 * 1024;
 const MachineIdParamSchema = z.object({ machineId: z.string().uuid() });
 const LookupSchema = z.object({ userCode: OwnedMachineUserCodeSchema }).strict();
+const ConnectQuerySchema = z.object({ code: z.string().max(16).regex(/^[A-Za-z -]*$/).optional() });
 
 export interface OwnedOwnerRoutesDeps {
   db: PlatformDB;
@@ -100,7 +102,8 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
       `frame-ancestors 'none'; script-src 'self' 'nonce-${nonce}' https://clerk.matrix-os.com https://challenges.cloudflare.com; `
       + "worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; "
       + "img-src 'self' data: https://img.clerk.com; connect-src 'self' https://clerk.matrix-os.com; object-src 'none'; base-uri 'none'");
-    return c.html(ownedConnectPage({ code: c.req.query('code') ?? '', publishableKey: deps.publishableKey, nonce }));
+    const query = ConnectQuerySchema.safeParse({ code: c.req.query('code') });
+    return c.html(ownedConnectPage({ code: query.success ? query.data.code ?? '' : '', publishableKey: deps.publishableKey, nonce }));
   });
 
   routes.post('/api/auth/owned-enrollments/lookup', limit, async (c) => {
@@ -128,7 +131,9 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
       // The handle lookup may call Clerk; it stays outside the approval transaction.
       const handle = await deps.resolveHandle(userId);
       if (!handle) return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
-      const result = await approveOwnedEnrollment(deps.db, {
+      // Account deletion admission holds the owner lock through the approval writes,
+      // so a computer cannot be connected after erasure was scheduled.
+      const result = await withAccountDeletionAdmission(deps.db, userId, (trx) => approveOwnedEnrollment(trx, {
         userCode: parsed.data.userCode,
         clerkUserId: userId,
         handle,
@@ -137,7 +142,7 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
         runtimeSlot: `owned-${randomBytes(4).toString('hex')}`,
         now: now(),
         isHandleAvailable: isPlatformHandleAvailableForClerkUser,
-      });
+      }));
       if (!result.ok) {
         const status = result.reason === 'not_found' ? 404 : 409;
         return c.json({ error: 'Cannot connect computer', code: result.reason }, status);
@@ -148,6 +153,9 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
         runtimeSlot: result.machine.runtimeSlot,
       }, 201);
     } catch (err: unknown) {
+      if (err instanceof AccountDeletionAdmissionError) {
+        return c.json({ error: 'Cannot connect computer', code: 'account_deletion_pending' }, 409);
+      }
       deps.log('/api/auth/owned-enrollments/approve', err);
       return c.json({ error: 'Owned computers unavailable', code: 'unavailable' }, 503);
     }

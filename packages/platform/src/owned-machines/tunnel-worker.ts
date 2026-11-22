@@ -5,11 +5,13 @@ import {
   claimOwnedTunnelWork,
   deferOwnedTunnelWork,
   getOwnedMachineLink,
+  lapseUndeliveredOwnedEnrollments,
   markOwnedTunnelDeleted,
   markOwnedTunnelReady,
   purgeExpiredOwnedEnrollments,
   queueStaleOwnedTunnelReclaim,
   recordOwnedTunnelCreated,
+  type OwnedTunnelClaim,
   type OwnedTunnelWorkItem,
 } from './repository.js';
 
@@ -53,7 +55,7 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.name : 'UnknownError';
 }
 
-async function createTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkItem): Promise<void> {
+async function createTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkItem, claim: OwnedTunnelClaim): Promise<void> {
   const name = ownedTunnelName(item.machineId, deps.hostPrefix);
   let tunnelId = item.tunnelId;
   let hostname = item.tunnelHostname;
@@ -62,30 +64,37 @@ async function createTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkIt
     const tunnel = existing ?? await deps.cloudflare.createTunnel(name);
     tunnelId = tunnel.id;
     hostname = `${deps.hostPrefix ?? ''}${randomBytes(8).toString('hex')}.${deps.hostSuffix}`;
-    if (!(await recordOwnedTunnelCreated(deps.db, { machineId: item.machineId, tunnelId, tunnelHostname: hostname }))) {
-      // Revoked while creating: the reconciler deletes the unreferenced tunnel.
+    if (!(await recordOwnedTunnelCreated(deps.db, { machineId: item.machineId, tunnelId, tunnelHostname: hostname, claim }))) {
+      // Revoked, re-claimed or lease lost: the current claim holder or the reconciler owns it now.
       return;
     }
   }
   await deps.cloudflare.configureTunnel(tunnelId, hostname, deps.ingressService);
   await deps.cloudflare.ensureDnsRecord(hostname, tunnelId);
-  await markOwnedTunnelReady(deps.db, item.machineId);
+  await markOwnedTunnelReady(deps.db, item.machineId, claim);
 }
 
-async function deleteTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkItem): Promise<void> {
+async function deleteTunnel(deps: OwnedTunnelWorkerDeps, item: OwnedTunnelWorkItem, claim: OwnedTunnelClaim): Promise<void> {
   if (item.tunnelHostname) await deps.cloudflare.deleteDnsRecord(item.tunnelHostname);
   if (item.tunnelId) await deps.cloudflare.deleteTunnel(item.tunnelId);
-  await markOwnedTunnelDeleted(deps.db, item.machineId);
+  await markOwnedTunnelDeleted(deps.db, item.machineId, claim);
 }
 
-/** One pass over due tunnel work. Each item fails independently. */
+/**
+ * One pass over due tunnel work. Items are claimed one at a time as they
+ * start, so each lease covers only that item's provider calls. Each item
+ * fails independently.
+ */
 export async function runOwnedTunnelWorkPass(deps: OwnedTunnelWorkerDeps): Promise<number> {
-  const now = deps.now?.() ?? new Date();
-  const items = await claimOwnedTunnelWork(deps.db, { now, limit: BATCH, leaseMs: LEASE_MS });
-  for (const item of items) {
+  let handled = 0;
+  for (; handled < BATCH; handled += 1) {
+    const now = deps.now?.() ?? new Date();
+    const [item] = await claimOwnedTunnelWork(deps.db, { now, limit: 1, leaseMs: LEASE_MS });
+    if (!item) break;
+    const claim: OwnedTunnelClaim = { claimId: item.claimId, now: deps.now?.() ?? new Date() };
     try {
-      if (item.tunnelState === 'pending') await createTunnel(deps, item);
-      else await deleteTunnel(deps, item);
+      if (item.tunnelState === 'pending') await createTunnel(deps, item, { ...claim, now: deps.now?.() ?? new Date() });
+      else await deleteTunnel(deps, item, { ...claim, now: deps.now?.() ?? new Date() });
     } catch (err: unknown) {
       deps.log?.(`[owned-machines] tunnel ${item.tunnelState} failed (${describe(err)})`, err);
       const retryable = !(err instanceof OwnedCloudflareError) || err.retryable;
@@ -94,10 +103,11 @@ export async function runOwnedTunnelWorkPass(deps: OwnedTunnelWorkerDeps): Promi
         machineId: item.machineId,
         nextAttemptAt: new Date(now.getTime() + backoffMs(item.attempts)),
         failed: giveUp,
+        claim,
       });
     }
   }
-  return items.length;
+  return handled;
 }
 
 /**
@@ -109,6 +119,7 @@ export async function runOwnedTunnelReconcilePass(deps: OwnedTunnelWorkerDeps): 
   await queueStaleOwnedTunnelReclaim(deps.db, {
     offlineBefore: new Date(now.getTime() - OWNED_TUNNEL_RECLAIM_AFTER_MS), now, limit: 100,
   });
+  await lapseUndeliveredOwnedEnrollments(deps.db, now, 100);
   await purgeExpiredOwnedEnrollments(deps.db, new Date(now.getTime() - 2 * 86_400_000), 500);
   const namePrefix = ownedTunnelNamePrefix(deps.hostPrefix);
   for (let page = 1; page <= ORPHAN_SCAN_PAGES; page += 1) {

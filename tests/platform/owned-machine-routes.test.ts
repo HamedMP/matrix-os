@@ -229,4 +229,33 @@ describe('owned machine enrollment and machine routes', () => {
     expect(cf.tunnels.has(orphanId)).toBe(false);
     expect(cf.tunnels.has(created!.id)).toBe(true);
   });
+
+  it('refuses to connect a computer once account deletion is scheduled', async () => {
+    const { hashAccountDeletionOwner } = await import('../../packages/platform/src/account-deletion/repository.js');
+    const previous = process.env.ACCOUNT_DELETION_SECRET;
+    process.env.ACCOUNT_DELETION_SECRET = 'd'.repeat(40);
+    try {
+      const at = new Date(clock).toISOString();
+      await db.executor.insertInto('account_deletion_jobs').values({
+        owner_hash: hashAccountDeletionOwner('user_1', 'd'.repeat(40)), status: 'scheduled',
+        due_at: new Date(clock + 86_400_000).toISOString(), next_attempt_at: at, created_at: at, updated_at: at,
+      } as never).execute();
+      const app = buildApp(db, fakeCloudflare().client);
+      const start = await (await app.request('/api/machines/enroll/start', json(REPORT))).json() as { userCode: string };
+      const approved = await app.request('/api/auth/owned-enrollments/approve',
+        json({ userCode: start.userCode, name: 'Lab' }, { authorization: 'Bearer owner-token' }));
+      expect(approved.status).toBe(409);
+      expect(await approved.json()).toMatchObject({ code: 'account_deletion_pending' });
+    } finally {
+      if (previous === undefined) delete process.env.ACCOUNT_DELETION_SECRET;
+      else process.env.ACCOUNT_DELETION_SECRET = previous;
+    }
+  });
+
+  it('renders the connect page without echoing an invalid code', async () => {
+    const app = buildApp(db, fakeCloudflare().client);
+    const page = await (await app.request('/connect?code=%3Cscript%3E')).text();
+    expect(page).not.toContain('<script>alert');
+    expect(page).toContain('value=""');
+  });
 });

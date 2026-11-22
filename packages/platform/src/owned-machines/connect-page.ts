@@ -94,6 +94,7 @@ export function ownedConnectPage(input: { code: string; publishableKey: string |
         machine_limit: 'You already have 3 computers connected. Remove one in Settings first.',
         daily_limit: 'Too many computers connected today. Try again tomorrow.',
         handle_unavailable: 'Matrix could not set up your account name. Contact support.',
+        account_deletion_pending: 'Your account is scheduled for deletion, so new computers cannot be connected.',
         unavailable: 'Connecting computers is unavailable right now. Try again soon.'
       };
       function lookup(code) {
