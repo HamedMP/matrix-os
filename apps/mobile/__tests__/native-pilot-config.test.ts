@@ -1,3 +1,5 @@
+import resolveConfig from "../app.config.ts";
+
 const originalTarget = process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
 afterEach(() => {
   if (originalTarget === undefined) delete process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
@@ -6,7 +8,7 @@ afterEach(() => {
 
 it("preserves static production config and isolates pilot native identity and updates", () => {
   const base = require("../app.json").expo;
-  const config = require("../app.config");
+  const config = resolveConfig;
   delete process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
   expect(config({ config: base })).toEqual(base);
   process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = "https://gmail-pilot.matrix-os.com";

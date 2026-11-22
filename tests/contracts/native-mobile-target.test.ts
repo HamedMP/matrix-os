@@ -17,3 +17,25 @@ describe("fixed native mobile targets", () => {
     expect(() => nativeMobileTargetPolicy("unknown" as "production")).toThrow();
   });
 });
+
+it("resolves the real Expo TypeScript entry with pilot identity and Firebase settings intact", async () => {
+ const {createRequire} = await import("node:module"); const {resolve} = await import("node:path");
+ const root = resolve(process.cwd(), "apps/mobile");
+ const {getConfig} = createRequire(resolve(root, "package.json"))("@expo/config");
+ const saved = {...process.env};
+ try {
+  process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = "https://gmail-pilot.matrix-os.com";
+  process.env.GOOGLE_SERVICES_JSON = "/tmp/synthetic-google-services.json";
+  const result = getConfig(root, {skipSDKVersionRequirement: true});
+  expect(result.dynamicConfigPath).toBe(resolve(root, "app.config.ts"));
+  expect(result.exp).toMatchObject({scheme: "matrixos-gmail-pilot", ios: {bundleIdentifier: "com.matrixos.mobile.gmailpilot"},
+   android: {package: "com.matrixos.mobile.gmailpilot", googleServicesFile: "/tmp/synthetic-google-services.json"}, updates: {enabled: false}});
+  process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = "https://app.matrix-os.com";
+  const production = getConfig(root, {skipSDKVersionRequirement: true}).exp;
+  expect(production.scheme).toBe("matrixos"); expect(production.ios.bundleIdentifier).toBe("com.matrixos.mobile");
+ } finally {
+  for (const key of ["EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN", "GOOGLE_SERVICES_JSON"]) {
+   if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
+  }
+ }
+});
