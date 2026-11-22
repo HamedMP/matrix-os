@@ -234,11 +234,9 @@ describe("held-pane sweep only where a program can be held", () => {
     const runtime = new TerminalRuntime({ store, zellij });
     const workspace = await runtime.ensureWorkspace({ projectId: "app" });
     const tab = await runtime.createTab(workspace.id, { name: "older", cwd: "" });
-    // State written before tabs recorded whether they run a command.
-    const statePath = join(homePath, "system", "terminal-workspaces.json");
-    const state = JSON.parse(await readFile(statePath, "utf8"));
-    delete state.workspaces[workspace.id].tabs[tab.id].heldOnExit;
-    await writeFile(statePath, JSON.stringify(state));
+    // State written before tabs recorded whether they run a command: no launch facts.
+    await rm(join(homePath, "system", "terminal-workspaces", "launch-facts.json"));
+    expect((await store.getRuntimeWorkspace(workspace.id))!.tabs[tab.id]!.heldOnExit).toBeUndefined();
     await runtime.sweepHeldPaneExits();
     expect(zellij.listCalls).toBe(1);
   });
