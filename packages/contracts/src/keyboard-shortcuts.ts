@@ -202,7 +202,10 @@ export function heldModifiers(e: KeyEventLike, platform: ShortcutPlatform): stri
 
 export function bindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform): string | null {
   if (e.key === "Escape") return null;
-  const key = keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
+  // The digit row types punctuation on some layouts (AZERTY: Digit4 is "'"),
+  // so a digit key binds as its digit. Letters keep "character wins".
+  const digit = /^Digit([0-9])$/.exec(e.code)?.[1];
+  const key = digit ?? keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
   if (key === null) return null;
   return [...heldModifiers(e, platform), key].join("+");
 }

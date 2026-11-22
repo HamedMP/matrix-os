@@ -86,6 +86,12 @@ describe("bindingFromKeyEvent", () => {
     expect(bindingFromKeyEvent(keyEvent({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true }), "other")).toBe("Ctrl+Shift+1");
   });
 
+  it("uses the digit from e.code when the digit row types punctuation (AZERTY)", () => {
+    expect(bindingFromKeyEvent(keyEvent({ key: "'", code: "Digit4", metaKey: true }), "mac")).toBe("Cmd+4");
+    expect(bindingFromKeyEvent(keyEvent({ key: "-", code: "Digit6", ctrlKey: true }), "other")).toBe("Ctrl+6");
+    expect(bindingFromKeyEvent(keyEvent({ key: "-", code: "Minus", metaKey: true }), "mac")).toBe("Cmd+-");
+  });
+
   it("maps named keys", () => {
     expect(bindingFromKeyEvent({ key: " ", code: "Space", metaKey: false, ctrlKey: false, altKey: true, shiftKey: false }, "mac")).toBe("Alt+Space");
     expect(bindingFromKeyEvent(keyEvent({ key: "ArrowUp", code: "ArrowUp", ctrlKey: true }), "other")).toBe("Ctrl+Up");
