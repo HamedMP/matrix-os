@@ -176,6 +176,50 @@ describe("WS /ws/terminal/herdr", () => {
     expect(core.terminals.get("t1")!.resizes).toEqual([{ cols: 97, rows: 31 }]);
   });
 
+  it("tells every Matrix viewer the size a writer's resize put into effect", async () => {
+    // Found live: the core followed the writer to 82 columns while the pane's
+    // grid stayed at the attach-time 81, so every row wrapped.
+    const { core, connect } = await gateway();
+    core.add("t1");
+    const writer = connect(`id=t1&user=${OWNER}&lease=exclusive&cols=81&rows=37`);
+    await writer.until(() => writer.frames.some((frame) => frame.type === "attached"));
+    const observer = connect(`id=t1&user=${OWNER}&cols=81&rows=37`);
+    await observer.until(() => observer.frames.some((frame) => frame.type === "attached"));
+
+    writer.send({ type: "resize", terminalRef: ref("t1"), mode: "hard", size: { cols: 82, rows: 37 } });
+    await writer.until(() => writer.frames.some((frame) => frame.type === "canonical-size"));
+    await observer.until(() => observer.frames.some((frame) => frame.type === "canonical-size"));
+    const update = { type: "canonical-size", terminalRef: ref("t1"), canonicalSize: { cols: 82, rows: 37 } };
+    expect(writer.frames.find((frame) => frame.type === "canonical-size")).toMatchObject(update);
+    expect(observer.frames.find((frame) => frame.type === "canonical-size")).toMatchObject(update);
+    // Newer than anything a client saw before a reconnect.
+    expect(writer.frames.find((frame) => frame.type === "canonical-size")!.revision as number).toBeGreaterThan(1_000_000_000_000);
+    for (const frame of [...writer.frames, ...observer.frames]) expect(TerminalTabServerFrameSchema.safeParse(frame).success).toBe(true);
+
+    // The same size again says nothing new; an observer's resize changes nothing for anyone.
+    writer.send({ type: "resize", terminalRef: ref("t1"), mode: "hard", size: { cols: 82, rows: 37 } });
+    observer.send({ type: "resize", terminalRef: ref("t1"), mode: "soft", size: { cols: 60, rows: 20 } });
+    writer.send({ type: "ping", terminalRef: ref("t1") });
+    observer.send({ type: "ping", terminalRef: ref("t1") });
+    await writer.until(() => writer.frames.some((frame) => frame.type === "pong"));
+    await observer.until(() => observer.frames.some((frame) => frame.type === "pong"));
+    expect(writer.frames.filter((frame) => frame.type === "canonical-size")).toHaveLength(1);
+    expect(observer.frames.filter((frame) => frame.type === "canonical-size")).toHaveLength(1);
+    expect(core.terminals.get("t1")!.resizes).toEqual([{ cols: 82, rows: 37 }, { cols: 82, rows: 37 }]);
+  });
+
+  it("tells an open observer the size a newly attached writer brings", async () => {
+    const { core, connect } = await gateway();
+    core.add("t1");
+    const observer = connect(`id=t1&user=${OWNER}&cols=81&rows=37`);
+    await observer.until(() => observer.frames.some((frame) => frame.type === "attached"));
+    const writer = connect(`id=t1&user=${OWNER}&lease=exclusive&cols=90&rows=30`);
+    await writer.until(() => writer.frames.some((frame) => frame.type === "attached"));
+    await observer.until(() => observer.frames.some((frame) => frame.type === "canonical-size"));
+    expect(observer.frames.find((frame) => frame.type === "canonical-size")).toMatchObject({ canonicalSize: { cols: 90, rows: 30 } });
+    expect(writer.frames.some((frame) => frame.type === "canonical-size")).toBe(false);
+  });
+
   it("never resizes for an observer's early resize", async () => {
     const { core, connect } = await gateway({ attachDelayMs: 60 });
     core.add("t1");
