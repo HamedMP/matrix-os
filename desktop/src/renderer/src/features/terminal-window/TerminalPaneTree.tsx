@@ -176,7 +176,9 @@ function Pane({ leaf, props, drag, setDrag }: {
         opacity: dragging ? 0.55 : undefined,
       }}>
       <PaneHeader leaf={leaf} info={info} zoomed={zoomed} props={props} setDrag={setDrag} />
-      <div className="relative flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => { if (!focused) props.onFocus(leaf.id); }}>
+      {/* A click or keyboard focus (Tab, the find bar) inside a pane makes it the focused pane. */}
+      <div className="relative flex min-h-0 min-w-0 flex-1" onPointerDownCapture={() => { if (!focused) props.onFocus(leaf.id); }}
+        onFocusCapture={() => { if (!focused) props.onFocus(leaf.id); }}>
         {props.renderPane(leaf, focused)}
       </div>
       {dropEdge ? (

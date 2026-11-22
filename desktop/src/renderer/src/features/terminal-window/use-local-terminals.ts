@@ -22,6 +22,9 @@ export const localSessionName = (id: string) => `${LOCAL_TERMINAL_SESSION_PREFIX
  * trusted core (spec 2706), so a change, a completion included, shows as it
  * happens, whether or not the window has focus; nothing is polled.
  */
+
+const CLOSE_REMOVE_ATTEMPTS = 5;
+const CLOSE_REMOVE_DELAY_MS = 200;
 export function useLocalTerminals() {
   const { state: facts, retry } = useLocalTerminalFacts();
   const [creating, setCreating] = useState(false);
@@ -91,6 +94,25 @@ export function useLocalTerminals() {
     return removed;
   }, []);
 
+  /**
+   * Ends a terminal and takes it off the list, as closing its pane does.
+   * The core refuses to remove a terminal until its program has exited, so
+   * the removal is retried briefly. Resolves true once it has ended.
+   */
+  const close = useCallback(async (id: string): Promise<boolean> => {
+    if (!(await end(id))) return false;
+    for (let attempt = 0; attempt < CLOSE_REMOVE_ATTEMPTS; attempt += 1) {
+      try {
+        if ((await invoke("local-terminal:remove", { id })).ok) return true;
+      } catch (error: unknown) {
+        console.warn("[local-terminal] remove after end failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      await new Promise((resolve) => setTimeout(resolve, CLOSE_REMOVE_DELAY_MS));
+    }
+    // Ended but still listed as finished: it can be removed from the sidebar later.
+    return true;
+  }, [end]);
+
   /** Renames a terminal; the new name shows on every client of this core. */
   const rename = useCallback(async (id: string, name: string): Promise<boolean> => {
     let renamed = false;
@@ -103,5 +125,5 @@ export function useLocalTerminals() {
     return renamed;
   }, []);
 
-  return { state, creating, notice, retry, create, end, remove, rename };
+  return { state, creating, notice, retry, create, end, remove, close, rename };
 }

@@ -109,6 +109,7 @@ describe("This Computer terminals", () => {
     const operator = installOperator({
       "local-terminal:watch": watching([fact("t1", "zsh", { status: "working" })]),
       "local-terminal:kill": () => ({ ok: true }),
+      "local-terminal:remove": () => ({ ok: true }),
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await findRow(/zsh/));
@@ -119,6 +120,8 @@ describe("This Computer terminals", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t1" });
+    // Closing the pane takes the ended terminal off the list too.
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:remove", { id: "t1" });
     operator.push([]);
     expect(await screen.findByText(/No terminals yet/)).toBeTruthy();
   });

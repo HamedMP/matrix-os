@@ -59,11 +59,9 @@ export function useOpenTabs(options: {
   // The selected terminal joins the bar.
   useEffect(() => {
     if (!selectedKey) return;
-    setOpened((current) => {
-      if (current.includes(selectedKey)) return current;
-      changed.current = true;
-      return [...current, selectedKey].slice(-MAX_OPEN_TABS);
-    });
+    // At worst this saves an unchanged list once.
+    changed.current = true;
+    setOpened((current) => (current.includes(selectedKey) ? current : [...current, selectedKey].slice(-MAX_OPEN_TABS)));
   }, [selectedKey]);
 
   useEffect(() => {
@@ -90,5 +88,11 @@ export function useOpenTabs(options: {
     return tabs[index + 1] ?? tabs[index - 1] ?? null;
   }, [tabs]);
 
-  return { tabs, closeTab };
+  /** Takes one terminal off the bar, as when its pane is closed. */
+  const forget = useCallback((key: string) => {
+    changed.current = true;
+    setOpened((current) => (current.includes(key) ? current.filter((entry) => entry !== key) : current));
+  }, []);
+
+  return { tabs, closeTab, forget };
 }

@@ -34,7 +34,7 @@ function installOperator(initial: Fact[], options: { hold?: () => Promise<void> 
   const listeners = new Map<string, Array<(payload: unknown) => void>>();
   let facts = [...initial];
   let next = 10;
-  const invoke = vi.fn(async (channel: string) => {
+  const invoke = vi.fn(async (channel: string, payload?: unknown) => {
     if (channel === "auth:status") return { signedIn: false, platformHost: "https://app.matrix-os.com", authGeneration: 0 };
     if (channel === "state:get") return { value: null };
     if (channel === "app:get-zoom") return { factor: 1 };
@@ -45,6 +45,12 @@ function installOperator(initial: Fact[], options: { hold?: () => Promise<void> 
       facts = [...facts, fact(id, `shell ${id}`)];
       queueMicrotask(() => emit("local-terminal:facts", { terminals: facts }));
       return { status: "ready", id };
+    }
+    if (channel === "local-terminal:remove") {
+      const { id } = payload as { id: string };
+      facts = facts.filter((entry) => entry.id !== id);
+      queueMicrotask(() => emit("local-terminal:facts", { terminals: facts }));
+      return { ok: true };
     }
     return { ok: true };
   });
@@ -222,6 +228,21 @@ describe("Terminal window panes", () => {
     await waitFor(() => expect(paneNames()).toEqual(["editor"]));
     expect(focusedPane()).toBe("editor");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t10" });
+    // Fault detected (Mac, 2026-11-22): the closed terminal stayed listed and came back as a tab of its own.
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:remove", { id: "t10" }));
+    expect(within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["editor"]);
+    await waitFor(() => expect(within(screen.getByRole("navigation", { name: "Terminals" })).queryByRole("button", { name: /shell t10/ })).toBeNull());
+  });
+
+  // Fault detected (Mac, 2026-11-22): keyboard focus moved into a pane's terminal but the other pane stayed focused.
+  it("makes a pane the focused one when keyboard focus moves into it", async () => {
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(focusedPane()).toBe("shell t10"));
+    fireEvent.focus(within(panes()[0]!).getByTestId("terminal-view"));
+    await waitFor(() => expect(focusedPane()).toBe("editor"));
   });
 
   it("refuses a split past 16 panes", async () => {

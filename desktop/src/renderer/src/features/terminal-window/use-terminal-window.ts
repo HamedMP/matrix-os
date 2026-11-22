@@ -196,6 +196,15 @@ export function useTerminalWindow() {
   const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createBeside, listed });
   const { dropTerminal } = panes;
 
+  const rowKeys = useMemo(() => new Set(status.rows.map((row) => row.key)), [status.rows]);
+  const exists = useCallback((key: string) => {
+    if (rowKeys.has(key)) return true;
+    return listed(key.slice(0, Math.max(0, key.indexOf("|")))) ? false : null;
+  }, [listed, rowKeys]);
+  const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
+  const { forget: forgetTab } = openTabs;
+
+
   /**
    * Ends a live terminal or removes a finished one. Its pane stays until that
    * is confirmed, then leaves its tab, and the pane beside it takes focus.
@@ -204,13 +213,15 @@ export function useTerminalWindow() {
     const target = terminalRowTarget(key);
     if (!target) return;
     const ended = () => {
+      forgetTab(key);
       const successor = dropTerminal(key);
       if (successor && selectedRef.current === key) select(successor);
       return successor;
     };
     if (target.kind === "local") {
       const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
-      const ending = finished ? local.remove(target.id) : local.end(target.id);
+      // Closing a running terminal's pane ends it and takes it off the list, as Herdr does.
+      const ending = finished ? local.remove(target.id) : local.close(target.id);
       void ending.then((done) => {
         if (!done) return;
         if (!ended()) setLocalOpen((current) => (current?.id === target.id ? null : current));
@@ -226,20 +237,13 @@ export function useTerminalWindow() {
       console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
       setComputerNotice("end-failed");
     });
-  }, [clearActive, cloud, dropTerminal, local, select]);
+  }, [clearActive, cloud, dropTerminal, forgetTab, local, select]);
 
   /** Closes a terminal's pane by ending it: a finished one goes at once, a running program asks first. */
   const requestClose = useCallback((key: string) => {
     if (isFinished(key, local.state, status.states)) { close(key); return; }
     setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
   }, [close, local.state, status.rows, status.states]);
-
-  const rowKeys = useMemo(() => new Set(status.rows.map((row) => row.key)), [status.rows]);
-  const exists = useCallback((key: string) => {
-    if (rowKeys.has(key)) return true;
-    return listed(key.slice(0, Math.max(0, key.indexOf("|")))) ? false : null;
-  }, [listed, rowKeys]);
-  const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
 
   /** Shows nothing: the last tab on the bar was closed. */
   const deselect = useCallback(() => {
