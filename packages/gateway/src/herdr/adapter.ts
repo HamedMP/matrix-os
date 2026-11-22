@@ -9,7 +9,7 @@ import {
   HERDR_SESSION_LIST_MAX, HERDR_TERMINAL_WORKSPACE_ID,
   type HerdrAvailability, type HerdrSession, type HerdrSessionList,
 } from "@matrix-os/contracts/herdr-terminals";
-import type { HcSocket } from "@matrix-os/herdr-core-client/client";
+import { HcCallError, type HcSocket } from "@matrix-os/herdr-core-client/client";
 import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
 import { createHerdrSessionHost, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
@@ -243,6 +243,8 @@ export function createHerdrAdapter(options: {
       attachId = await host.attach(id, size, stream);
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "too many terminal attachments") throw new HerdrAdapterError("capacity");
+      // Listed a moment ago, but the core says it is gone or has finished.
+      if (error instanceof HcCallError && (error.kind === "not_found" || error.kind === "finished")) throw new HerdrAdapterError("not_found");
       throw error;
     }
     let ended = false;

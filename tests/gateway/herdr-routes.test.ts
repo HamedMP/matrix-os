@@ -217,7 +217,7 @@ describe("WS /ws/terminal/herdr", () => {
     await other.until(() => other.isClosed());
     await unknown.until(() => unknown.isClosed());
     expect(other.frames).toEqual([{ type: "error", code: "invalid_request", message: "Invalid request" }]);
-    expect(unknown.frames).toEqual([{ type: "error", code: "not_found", message: "Terminal unavailable" }]);
+    expect(unknown.frames).toEqual([{ type: "error", code: "session_not_found", message: "Terminal ended" }]);
   });
 
   it("lets an exclusive viewer type and resize", async () => {
@@ -279,6 +279,37 @@ describe("WS /ws/terminal/herdr", () => {
     }
   });
 
+  it("ends a pane whose terminal is gone with a final session_not_found, not a retryable error", async () => {
+    // Found live: an ended Herdr terminal answered every reconnect with a
+    // retryable "Terminal unavailable", so the pane printed it forever.
+    const { core, connect, http } = await gateway();
+    core.add("t1");
+    const gone = connect(`id=t2&user=${OWNER}`);
+    await gone.until(() => gone.isClosed());
+    expect(gone.frames).toEqual([{ type: "error", code: "session_not_found", message: "Terminal ended" }]);
+    expect(gone.closeCode()).toBe(1000);
+
+    // Listed a moment ago, ended before the core answered the attach.
+    expect((await http("/api/terminal/herdr")).status).toBe(200);
+    core.terminals.delete("t1");
+    const raced = connect(`id=t1&user=${OWNER}`);
+    await raced.until(() => raced.isClosed());
+    expect(raced.frames).toEqual([{ type: "error", code: "session_not_found", message: "Terminal ended" }]);
+    expect(raced.closeCode()).toBe(1000);
+  });
+
+  it("keeps a pane retrying while herdr-core cannot be reached", async () => {
+    const core = createFakeHerdrCore();
+    core.add("t1");
+    core.failList("unavailable");
+    const adapter = createHerdrAdapter({ open: async () => core.connect(), ttlMs: 0 });
+    const { connect } = await gateway({ adapter });
+    const client = connect(`id=t1&user=${OWNER}`);
+    await client.until(() => client.isClosed());
+    expect(client.frames).toEqual([{ type: "error", code: "unavailable", message: "Terminal unavailable" }]);
+    expect(client.closeCode()).toBe(1013);
+  });
+
   it("refuses non-owners, unknown terminals, bad requests and frames for another terminal", async () => {
     const { core, connect } = await gateway();
     core.add("t1");
@@ -289,7 +320,7 @@ describe("WS /ws/terminal/herdr", () => {
     await unknown.until(() => unknown.isClosed());
     await invalid.until(() => invalid.isClosed());
     expect(member.frames).toEqual([{ type: "error", code: "not_found", message: "Terminal unavailable" }]);
-    expect(unknown.frames).toEqual([{ type: "error", code: "not_found", message: "Terminal unavailable" }]);
+    expect(unknown.frames).toEqual([{ type: "error", code: "session_not_found", message: "Terminal ended" }]);
     expect(invalid.frames).toEqual([{ type: "error", code: "invalid_request", message: "Invalid request" }]);
 
     const client = connect(`id=t1&user=${OWNER}&lease=exclusive`);
