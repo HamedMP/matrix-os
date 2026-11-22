@@ -28,7 +28,7 @@ const Ok = z.object({ ok: z.boolean() }).strict();
 export const TERMINAL_WINDOW_COMMANDS = [
   "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
   "split-right", "split-down", "close-pane", "zoom-pane", "focus-pane", "swap-pane",
-  "next-tab", "previous-tab", "space",
+  "next-tab", "previous-tab", "space", "overview",
 ] as const;
 export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
 const PaneDirectionSchema = z.enum(["left", "right", "up", "down"]);
@@ -49,7 +49,7 @@ export interface ShortcutKeyEvent {
   shiftKey: boolean;
 }
 
-const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "o", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
 
 /**

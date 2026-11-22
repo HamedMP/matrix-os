@@ -367,7 +367,7 @@ describe("Terminal window menu", () => {
     const expected: Array<[string, unknown]> = [
       ["Cmd+N", { command: "new-terminal" }], ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }],
       ["Cmd+Shift+P", { command: "picker" }], ["F2", { command: "rename" }],
-      ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
+      ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+Shift+O", { command: "overview" }], ["Cmd+]", { command: "next" }],
       ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next-tab" }], ["Ctrl+Shift+Tab", { command: "previous-tab" }],
       ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
       ["Cmd+D", { command: "split-right" }], ["Cmd+Shift+D", { command: "split-down" }], ["Cmd+Shift+W", { command: "close-pane" }],

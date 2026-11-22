@@ -2,7 +2,7 @@
 // each tab shows its agent's icon and name, a spinner while it works, how
 // many panes it holds, a close button, and + for a new terminal.
 import type { ReactNode } from "react";
-import { Loader2, Plus, X } from "lucide-react";
+import { LayoutGrid, Loader2, Plus, X } from "lucide-react";
 import { Button } from "../../design/primitives";
 import { COMPACT_ICON_BUTTON, COMPACT_ICON_BUTTON_CLASS } from "./compact-icon-button";
 import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
@@ -52,6 +52,8 @@ function SpaceChip({ space }: { space: ActiveSpaceChip | null }) {
 export interface TerminalTabBarProps {
   /** The active space; its tabs are the ones listed. */
   space: ActiveSpaceChip | null;
+  /** The overview of every terminal in the space, its own entry in the bar (Cmd+Shift+O). */
+  overview: { open: boolean; onToggle(): void };
   tabs: readonly OpenTab[];
   /** The tab on screen: the one holding the selected terminal. */
   selectedKey: string | null;
@@ -62,11 +64,16 @@ export interface TerminalTabBarProps {
   onNew(): void;
 }
 
-export function TerminalTabBar({ space, tabs, selectedKey, row, icon, onSelect, onClose, onNew }: TerminalTabBarProps) {
+export function TerminalTabBar({ space, overview, tabs, selectedKey, row, icon, onSelect, onClose, onNew }: TerminalTabBarProps) {
   return (
     <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b px-1.5 pt-1.5"
       style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
       <SpaceChip space={space} />
+      <button type="button" aria-pressed={overview.open} aria-label="Overview" title="Overview of every terminal here (⌘⇧O)" onClick={overview.onToggle}
+        className="mb-1 flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[12px] outline-none hover:bg-[var(--border-subtle)] focus-visible:ring-2 focus-visible:ring-current"
+        style={{ ...secondaryText, ...(overview.open ? { background: "var(--bg-surface)", color: "var(--text-primary)" } : {}) }}>
+        <LayoutGrid size={13} aria-hidden="true" />
+      </button>
       <div role="tablist" aria-label="Open terminals" className="flex min-w-0 items-end gap-1">
         {tabs.map((tab) => {
           const shown = row(tab.key);

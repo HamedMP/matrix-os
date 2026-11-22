@@ -55,6 +55,8 @@ export function useTerminalWindow() {
   // Each Cmd+F belongs to the terminal it was pressed on.
   const [find, setFind] = useState<{ request: number; key: string | null }>({ request: 0, key: null });
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The overview of every terminal in the active space, in place of the panes.
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
   const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
   // The last computer action that did not take effect, shown until the next one.
@@ -411,6 +413,7 @@ export function useTerminalWindow() {
         return;
       case "toggle-sidebar": sidebar.toggleRail(); return;
       case "picker": setPickerOpen(true); return;
+      case "overview": setOverviewOpen((open) => !open); return;
       case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
   }, [chooseSpace, createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
@@ -429,6 +432,12 @@ export function useTerminalWindow() {
     renaming, setRenaming, closing, setClosing,
     select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
     tabs: shownTabs, closeTab, chooseSpace,
+    overview: {
+      open: overviewOpen,
+      toggle: () => setOverviewOpen((open) => !open),
+      /** A card's click: show that terminal and leave the overview. */
+      openTerminal: (key: string) => { setOverviewOpen(false); select(key); },
+    },
     /** The bar's +: a new terminal on the machine on screen. */
     newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },

@@ -26,6 +26,7 @@ export function terminalWindowMenuItems(
     item("Find…", "Cmd+F", { command: "find" }),
     { type: "separator" },
     item("Go to Terminal…", "Cmd+P", { command: "picker" }),
+    item("Overview", "Cmd+Shift+O", { command: "overview" }),
     { ...item("Commands…", "Cmd+Shift+P", { command: "picker" }), visible: false, acceleratorWorksWhenHidden: true },
     item("Next Terminal", "Cmd+]", { command: "next" }),
     item("Previous Terminal", "Cmd+[", { command: "previous" }),

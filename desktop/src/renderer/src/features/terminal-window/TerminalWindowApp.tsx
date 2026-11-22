@@ -17,7 +17,7 @@ import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import type { TerminalMachinesState } from "./use-terminal-machines";
 import { localSessionName, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import { LocalTerminalAttention } from "./LocalTerminalAttention";
-import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
+import { TerminalWindowSidebar, filterRows, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
 import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
@@ -26,6 +26,8 @@ import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
 import { compareCoreVersions, LOCAL_TERMINAL_VERSION, type LocalCreateFailure, type LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
+import { TerminalOverview } from "./TerminalOverview";
+import { useTerminalPreviews } from "./use-terminal-previews";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
 import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
@@ -360,6 +362,8 @@ export default function TerminalWindowApp() {
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
+  const overviewRows = useMemo(() => filterRows(view.status.rows, prefs.filter), [prefs.filter, view.status.rows]);
+  const previews = useTerminalPreviews({ rows: overviewRows, enabled: view.overview.open, api: view.cloud.api });
   const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
     const filter = prefs.filter;
     if (!filter) return null;
@@ -431,9 +435,12 @@ export default function TerminalWindowApp() {
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+          <TerminalTabBar space={activeSpace} overview={{ open: view.overview.open, onToggle: view.overview.toggle }} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
             icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
-          <ActivePane view={view} />
+          {view.overview.open ? (
+            <TerminalOverview rows={overviewRows} previews={previews} selectedKey={view.selectedKey} now={view.now}
+              spaceLabel={activeSpace?.label ?? null} onOpen={view.overview.openTerminal} onRename={view.rename} />
+          ) : <ActivePane view={view} />}
         </div>
       </div>
       <StatusBar view={view} />
