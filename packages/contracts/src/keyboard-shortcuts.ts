@@ -230,9 +230,12 @@ function reservedMenu(platform: ShortcutPlatform): ReadonlyMap<string, string> {
   ];
   for (let n = 1; n <= 7; n++) entries.push([`${m}+Alt+${n}`, "Task panels"]);
   if (platform === "mac") {
-    entries.push(["Cmd+H", "Hide"], ["Cmd+Alt+H", "Hide Others"], ["Cmd+Ctrl+F", "Full Screen"]);
+    entries.push(
+      ["Cmd+H", "Hide"], ["Cmd+Alt+H", "Hide Others"], ["Cmd+Ctrl+F", "Full Screen"],
+      ["Cmd+Alt+I", "Developer Tools"], ["Cmd+Alt+Shift+V", "Paste and Match Style"],
+    );
   } else {
-    entries.push(["F11", "Full Screen"]);
+    entries.push(["F11", "Full Screen"], ["Ctrl+Shift+I", "Developer Tools"]);
   }
   return new Map(entries);
 }
@@ -351,6 +354,7 @@ export function removeBinding(
   platform: ShortcutPlatform,
 ): ShortcutOverrides {
   const current = resolveShortcuts(overrides, platform)[id];
+  if (!current.includes(binding)) return overrides;
   return withOverride(overrides, { [id]: current.filter((held) => held !== binding) });
 }
 

@@ -133,6 +133,9 @@ describe("validateBinding", () => {
     expect(validateBinding("F11", "other")).toEqual({ ok: false, reason: "reserved-menu", role: "Full Screen" });
     expect(validateBinding("Ctrl+Alt+7", "other")).toMatchObject({ ok: false, reason: "reserved-menu" });
     expect(validateBinding("Ctrl+H", "other")).toEqual({ ok: true });
+    expect(validateBinding("Cmd+Alt+I", "mac")).toEqual({ ok: false, reason: "reserved-menu", role: "Developer Tools" });
+    expect(validateBinding("Ctrl+Shift+I", "other")).toEqual({ ok: false, reason: "reserved-menu", role: "Developer Tools" });
+    expect(validateBinding("Cmd+Alt+Shift+V", "mac")).toEqual({ ok: false, reason: "reserved-menu", role: "Paste and Match Style" });
   });
 
   it("rejects malformed bindings", () => {
@@ -279,6 +282,12 @@ describe("removeBinding", () => {
     const next = removeBinding(EMPTY_SHORTCUT_OVERRIDES, "nav.palette", "Cmd+K", "mac");
     expect(next.overrides["nav.palette"]).toEqual([]);
     expect(resolveShortcuts(next, "mac")["nav.palette"]).toEqual([]);
+  });
+
+  it("leaves overrides unchanged when the action does not hold the binding", () => {
+    const next = removeBinding(EMPTY_SHORTCUT_OVERRIDES, "app.next", "Alt+X", "mac");
+    expect(next).toEqual(EMPTY_SHORTCUT_OVERRIDES);
+    expect(isOverridden(next, "app.next")).toBe(false);
   });
 
   it("removes one binding from an override", () => {
