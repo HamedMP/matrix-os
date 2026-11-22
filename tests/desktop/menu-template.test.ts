@@ -151,6 +151,25 @@ describe("createAppMenuTemplate", () => {
     expect(all).not.toContain("F6");
   });
 
+  it("adds hidden items for every later binding of an action outside the Apps group", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "nav.palette": ["Cmd+K", "F6", "Ctrl+E"] };
+    const opts = options({ shortcuts });
+    const items = submenu(createAppMenuTemplate(opts), "View").filter((item) => item.label === "Command Palette");
+    expect(items.map((item) => [item.accelerator, item.visible])).toEqual([
+      ["Cmd+K", undefined], ["F6", false], ["Ctrl+E", false],
+    ]);
+    click(items[1]);
+    expect(opts.runShortcut).toHaveBeenCalledWith("nav.palette");
+  });
+
+  it("adds hidden items only for control-chord later bindings of an Apps action", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "app.close": ["Cmd+Q", "F6", "Ctrl+E"] };
+    const template = createAppMenuTemplate(options({ shortcuts }));
+    const items = submenu(template, "Matrix OS").filter((item) => item.label === "Close Selected App");
+    expect(items.map((item) => [item.accelerator, item.visible])).toEqual([["Cmd+Q", undefined], ["Ctrl+E", false]]);
+    expect(accelerators(template, "darwin")).not.toContain("F6");
+  });
+
   it("adds hidden items for later bindings that are terminal control chords", () => {
     const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "other"), "app.close": ["Ctrl+Q", "Ctrl+E", "F6"] };
     const opts = options({ platform: "linux", shortcuts });

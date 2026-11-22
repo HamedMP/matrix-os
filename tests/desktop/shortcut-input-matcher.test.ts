@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
 import {
   createShortcutInputMatcher,
+  isMainProcessShortcut,
   isTerminalControlChord,
   type ShortcutInput,
 } from "@desktop/main/shortcuts/input-matcher";
@@ -96,7 +97,7 @@ describe("shortcut input matcher", () => {
 
   it("leaves terminal control chords to the page", () => {
     const { run, press } = setup({ platform: "other" });
-    expect(press({ key: "w", code: "KeyW", control: true })).not.toHaveBeenCalled();
+    expect(press({ key: "q", code: "KeyQ", control: true })).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
     expect(press(CTRL_TAB)).toHaveBeenCalledTimes(1);
     expect(press({ key: "T", code: "KeyT", control: true, shift: true })).toHaveBeenCalledTimes(1);
@@ -105,16 +106,39 @@ describe("shortcut input matcher", () => {
   });
 
   it("skips a control-chord binding on mac but matches the Cmd one", () => {
-    const { run, press } = setup({ effective: { ...MAC_DEFAULTS, "nav.palette": ["Cmd+K", "Ctrl+K"] } });
+    const { run, press } = setup({ effective: { ...MAC_DEFAULTS, "app.close": ["Cmd+Q", "Ctrl+K"] } });
     expect(press({ key: "k", code: "KeyK", control: true })).not.toHaveBeenCalled();
-    expect(press({ key: "k", code: "KeyK", meta: true })).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls).toEqual([["nav.palette"]]);
+    expect(press({ key: "q", code: "KeyQ", meta: true })).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["app.close"]]);
   });
 
   it("never matches an action that is unavailable on this platform", () => {
-    const { run, press } = setup({ platform: "other", isAvailable: (id) => id !== "terminal.window" });
-    expect(press({ key: "T", code: "KeyT", control: true, alt: true, shift: true })).not.toHaveBeenCalled();
+    const { run, press } = setup({ isAvailable: (id) => id !== "app.close" });
+    expect(press({ key: "q", code: "KeyQ", meta: true })).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("leaves actions outside the Apps group to the page and the menu", () => {
+    const { run, press } = setup();
+    for (const key of ["n", "k", "w", "j"]) {
+      expect(press({ key, code: `Key${key.toUpperCase()}`, meta: true }), `Cmd+${key}`).not.toHaveBeenCalled();
+    }
+    expect(press({ key: "T", code: "KeyT", meta: true, alt: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("still matches every Apps action with focus anywhere", () => {
+    const { run, press } = setup();
+    const keys: Array<Partial<ShortcutInput>> = [
+      CTRL_TAB,
+      { key: " ", code: "Space", alt: true },
+      { key: "q", code: "KeyQ", meta: true },
+      { key: "m", code: "KeyM", meta: true },
+      { key: "3", code: "Digit3", meta: true },
+      { key: "T", code: "KeyT", meta: true, shift: true },
+    ];
+    for (const key of keys) expect(press(key)).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["app.next"], ["app.launcher"], ["app.close"], ["app.minimize"], ["app.switch-3"], ["app.reopen"]]);
   });
 
   it("repeats Next app and Previous app while the key is held", () => {
@@ -126,9 +150,20 @@ describe("shortcut input matcher", () => {
 
   it("swallows auto-repeat of other bound keys without running them again", () => {
     const { run, press } = setup();
-    expect(press({ key: "w", code: "KeyW", meta: true, isAutoRepeat: true })).toHaveBeenCalledTimes(1);
+    expect(press({ key: "q", code: "KeyQ", meta: true, isAutoRepeat: true })).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
     expect(press({ key: "a", code: "KeyA", isAutoRepeat: true })).not.toHaveBeenCalled();
+  });
+});
+
+describe("isMainProcessShortcut", () => {
+  it("is true exactly for the Apps group", () => {
+    expect(isMainProcessShortcut("app.next")).toBe(true);
+    expect(isMainProcessShortcut("app.switch-9")).toBe(true);
+    expect(isMainProcessShortcut("app.open-files")).toBe(true);
+    for (const id of ["nav.palette", "tabs.new-context", "chat.new-thread", "terminal.focus", "terminal.window"] as const) {
+      expect(isMainProcessShortcut(id), id).toBe(false);
+    }
   });
 });
 

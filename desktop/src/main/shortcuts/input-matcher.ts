@@ -1,11 +1,12 @@
 // Runs keyboard shortcuts from `before-input-event` (specs/653). The event
 // fires before the page sees the key, so a page that swallows keys (xterm)
 // cannot block a shortcut, and preventDefault() also stops the matching menu
-// accelerator, so the action runs once. Terminal control chords are the
-// exception: they are left to the page and the menu (see isTerminalControlChord).
+// accelerator, so the action runs once. It carries only the Apps group, and
+// never terminal control chords; everything else is left to the page and the
+// menu, so apps inside Matrix can still claim keys such as Cmd+N.
 import {
   bindingFromKeyEvent,
-  SHORTCUT_ACTION_IDS,
+  SHORTCUT_ACTIONS,
   type EffectiveShortcuts,
   type ShortcutActionId,
   type ShortcutPlatform,
@@ -37,6 +38,24 @@ export function isTerminalControlChord(binding: string): boolean {
   return /^[A-Z]$/.test(key) || key === "[" || key === "\\" || key === "]";
 }
 
+const MAIN_PROCESS_ACTIONS: ReadonlySet<ShortcutActionId> = new Set(
+  SHORTCUT_ACTIONS.filter((action) => action.group === "apps").map((action) => action.id),
+);
+
+/**
+ * Apps-group actions must work with focus anywhere, so the main process runs
+ * them before the page. Other groups run only through menu accelerators, which
+ * a focused page can claim by cancelling the key.
+ */
+export function isMainProcessShortcut(id: ShortcutActionId): boolean {
+  return MAIN_PROCESS_ACTIONS.has(id);
+}
+
+/** Whether the matcher runs this binding; the menu adds hidden items for the rest. */
+export function isCarriedByMatcher(id: ShortcutActionId, binding: string): boolean {
+  return isMainProcessShortcut(id) && !isTerminalControlChord(binding);
+}
+
 export function createShortcutInputMatcher(deps: {
   effective(): EffectiveShortcuts;
   platform: ShortcutPlatform;
@@ -54,10 +73,10 @@ export function createShortcutInputMatcher(deps: {
     if (effective !== indexed) {
       // Bounded by the registry: at most MAX_BINDINGS_PER_ACTION per action.
       actionByBinding = new Map();
-      for (const id of SHORTCUT_ACTION_IDS) {
+      for (const id of MAIN_PROCESS_ACTIONS) {
         if (!deps.isAvailable(id)) continue;
         for (const bound of effective[id] ?? []) {
-          if (!isTerminalControlChord(bound)) actionByBinding.set(bound, id);
+          if (isCarriedByMatcher(id, bound)) actionByBinding.set(bound, id);
         }
       }
       indexed = effective;

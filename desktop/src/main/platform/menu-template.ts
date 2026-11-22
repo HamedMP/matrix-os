@@ -1,6 +1,6 @@
 import type { MenuItemConstructorOptions } from "electron";
 import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
-import { isTerminalControlChord } from "../shortcuts/input-matcher";
+import { isCarriedByMatcher } from "../shortcuts/input-matcher";
 import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ZoomAction } from "./zoom";
 
@@ -10,9 +10,9 @@ type ShortcutItemFactory = (id: ShortcutActionId, label: string) => MenuItemCons
 const SWITCH_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 /**
- * The visible item carries the first binding. The before-input-event matcher
- * handles bindings 2-4, except terminal control chords, which it leaves to the
- * page; those get hidden items so their accelerators still work.
+ * The visible item carries the first binding. Bindings 2-4 that the
+ * before-input-event matcher does not carry (every one outside the Apps group,
+ * and terminal control chords) get hidden items so their accelerators work.
  */
 function createShortcutItems(
   shortcuts: EffectiveShortcuts,
@@ -22,7 +22,7 @@ function createShortcutItems(
 ): MenuItemConstructorOptions[] {
   const [first, ...rest] = shortcuts[id] ?? [];
   const hidden = rest
-    .filter(isTerminalControlChord)
+    .filter((binding) => !isCarriedByMatcher(id, binding))
     .map((accelerator): MenuItemConstructorOptions => ({ label, accelerator, visible: false, click }));
   return [{ label, ...(first ? { accelerator: first } : {}), click }, ...hidden];
 }

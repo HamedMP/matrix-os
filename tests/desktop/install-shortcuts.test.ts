@@ -216,19 +216,22 @@ describe("installShortcuts", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("does not run the Terminal window shortcut on Windows", async () => {
-    const terminalWindowKey = { ...CTRL_TAB, key: "T", code: "KeyT", alt: true, shift: true };
-    const windows = await setup({ platform: "win32" });
+  it("leaves keys outside the Apps group to the page, so an app can claim Cmd+N", async () => {
+    const { app, run } = await setup();
     const contents = fakeContents();
-    windows.app.createContents(contents);
-    expect(press(contents, terminalWindowKey)).not.toHaveBeenCalled();
-    expect(windows.run).not.toHaveBeenCalled();
+    app.createContents(contents);
+    expect(press(contents, { ...CTRL_TAB, key: "n", code: "KeyN", meta: true, control: false })).not.toHaveBeenCalled();
+    expect(press(contents, { ...CTRL_TAB, key: "T", code: "KeyT", meta: true, control: false, alt: true, shift: true }))
+      .not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
 
-    const linux = await setup({ platform: "linux" });
-    const linuxContents = fakeContents();
-    linux.app.createContents(linuxContents);
-    expect(press(linuxContents, terminalWindowKey)).toHaveBeenCalledTimes(1);
-    expect(linux.run).toHaveBeenCalledWith("terminal.window");
+  it("does not take the Terminal window key on Windows", async () => {
+    const { app, run } = await setup({ platform: "win32" });
+    const contents = fakeContents();
+    app.createContents(contents);
+    expect(press(contents, { ...CTRL_TAB, key: "T", code: "KeyT", alt: true, shift: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("matches the bindings saved after install", async () => {
