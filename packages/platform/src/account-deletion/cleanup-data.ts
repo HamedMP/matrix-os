@@ -104,6 +104,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string,
     if (await hasTable(trx, 'preview_pair_members')) await eraseRetiredPreviewPairBindings(trx, owner);
     // Host deletion and pending provider cleanup have been verified above. Erase private Google
     // authority/transport metadata too; pending commands cannot be delivered to a destroyed host.
+    await sql`SELECT pg_advisory_xact_lock(5510356)`.execute(trx.executor);
     for(const table of ['google_processing_requests','google_data_profiles','google_data_purge_commands','google_data_purge_runtime_pins']) {
       if(await hasTable(trx,table)) await sql`DELETE FROM ${sql.table(table)} WHERE owner_id=${owner}`.execute(trx.executor);
     }
