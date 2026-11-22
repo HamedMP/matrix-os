@@ -1546,6 +1546,7 @@ export class ChatRepository {
       .select(["cursor", "owner_type", "owner_id", "chat_id", "revision", "event_type", "created_at",
         sql<Record<string, never>>`'{}'::jsonb`.as("payload")])
       .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+      .where(publicChatIdPredicate(sql.ref("chat_id")))
       .where("cursor", ">", afterCursor ?? 0).orderBy("cursor")
       .limit(Math.max(1, Math.min(100, Math.trunc(input.limit)))).execute();
     const events = rows.map(toOutbox);
