@@ -7,6 +7,9 @@ import SettingsView from "../../desktop/src/renderer/src/features/settings/Setti
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
+import { resolveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+
+const EMPTY_SHORTCUT_DOCUMENT = { version: 1 as const, overrides: {} };
 
 describe("SettingsView", () => {
   beforeEach(() => {
@@ -19,6 +22,9 @@ describe("SettingsView", () => {
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "state:get") return Promise.resolve({ value: { theme: "light" } });
+        if (channel === "shortcuts:get") {
+          return Promise.resolve({ platform: "mac", overrides: EMPTY_SHORTCUT_DOCUMENT, effective: resolveShortcuts(EMPTY_SHORTCUT_DOCUMENT, "mac") });
+        }
         return Promise.resolve({});
       }),
       on: vi.fn(() => () => undefined),
@@ -48,7 +54,7 @@ describe("SettingsView", () => {
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Agents & providers", "AI usage", "Messaging", "Connect Apps", "MCPs", "Skills", "Import chats", "CLI",
-      "Appearance", "Account", "Billing", "Organization", "Identity & personality",
+      "Appearance", "Shortcuts", "Account", "Billing", "Organization", "Identity & personality",
       "Computers", "Schedules", "System",
     ]);
     expect(within(nav).getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
@@ -149,6 +155,13 @@ describe("SettingsView", () => {
     expect(screen.getByRole("heading", { name: "Agents & providers" })).not.toBeNull();
   });
 
+  it("opens the Shortcuts section from the You group in Electron Settings", async () => {
+    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "Shortcuts" }));
+    expect(await screen.findByRole("heading", { name: "Shortcuts" })).toBeTruthy();
+    const row = await screen.findByRole("group", { name: "Next app" });
+    expect(within(row).getByRole("group", { name: "Control Tab" }).textContent).toBe("⌃⇥");
+  });
 });
 
 it("opens the shared AI usage panel from Electron Settings", async () => {
