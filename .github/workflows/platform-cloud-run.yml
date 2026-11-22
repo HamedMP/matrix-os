@@ -1458,16 +1458,25 @@ jobs:
 
       - name: Deploy dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
+        env:
+          # Off until enabled: 'true' runs the worker as PLATFORM_ROLE=worker
+          # (background workers only, health endpoint only; spec 2691 metal
+          # sleeper, reaper and drainer included).
+          PLATFORM_WORKER_ROLE_ENABLED: ${{ vars.PLATFORM_WORKER_ROLE_ENABLED || 'false' }}
         run: |
           set -euo pipefail
           worker_service="${CLOUD_RUN_SERVICE}-worker"
           worker_manifest="$(mktemp --suffix=.yaml)"
           trap 'rm -f "$worker_manifest"' EXIT
+          role_flag=()
+          if [ "$PLATFORM_WORKER_ROLE_ENABLED" = "true" ]; then
+            role_flag=(--role-worker)
+          fi
           gcloud run revisions describe "$CANDIDATE_REVISION" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json \
-            | node scripts/render-platform-worker-service.mjs "$worker_service" > "$worker_manifest"
+            | node scripts/render-platform-worker-service.mjs "$worker_service" "${role_flag[@]}" > "$worker_manifest"
           if gcloud run services describe "$worker_service" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json >/dev/null 2>&1; then
             existing_iam="$(gcloud run services get-iam-policy "$worker_service" \

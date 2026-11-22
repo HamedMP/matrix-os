@@ -14,7 +14,7 @@ import { Hono, type Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
-import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { createWorkerHealthApp, platformRole, shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
 import { resolvePlatformObjectStorage } from './object-storage-config.js';
 import { resolveSitesObjectStorage } from './sites/storage-config.js';
 import { createPlatformStartupWorkerCleanup, runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
@@ -1263,8 +1263,12 @@ async function startPlatformServerWithCleanup(
     service: 'matrix-platform',
   });
 
-  const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
-    console.log(`Platform listening on :${port}`);
+  // A worker-role replica runs the background workers and serves only a
+  // health check: none of the platform's routes are reachable on it.
+  const role = platformRole(process.env);
+  const fetchHandler = role === 'worker' ? createWorkerHealthApp().fetch : app.fetch;
+  const server = serve({ fetch: fetchHandler, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
+    console.log(`Platform (${role}) listening on :${port}`);
   });
   configureEdgeRequestDeadlines(server);
   if (backgroundWorkersEnabled) { whatsappRuntime?.start(); previewPairRuntime?.start(); }

@@ -377,6 +377,8 @@ export function startMetalSleeperWorker(input: {
   sleeper: MetalSleeper;
   intervalMs?: number;
   now?: () => Date;
+  /** Runs a tick only while holding a cluster-wide lock (see metal-singleton.ts). */
+  singleton?: (run: () => Promise<void>) => Promise<unknown>;
   log?: Log;
 }): MetalSleeperWorker {
   const log = input.log ?? defaultLog;
@@ -386,7 +388,8 @@ export function startMetalSleeperWorker(input: {
 
   const tick = (): void => {
     if (controller.signal.aborted || inFlight) return;
-    const current = input.sleeper.tick(now(), controller.signal)
+    const run = async (): Promise<void> => { await input.sleeper.tick(now(), controller.signal); };
+    const current = (input.singleton ? input.singleton(run).then(() => undefined) : run())
       .catch((error: unknown) => {
         if (!controller.signal.aborted) log('sleeper_tick_failed', { code: errorCode(error) });
       })

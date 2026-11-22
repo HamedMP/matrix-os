@@ -7,6 +7,7 @@ import { createMetalProvisioner, type MetalProvisioner } from './metal-provision
 import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
 import { createLifecycleReader } from './metal-lifecycle-reader.js';
 import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
+import { METAL_MAINTENANCE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -49,6 +50,12 @@ export function startMetalMaintenanceWorker(input: {
   reconcileStale: () => Promise<unknown>;
   drainOnce: () => Promise<unknown>;
   intervalMs?: number;
+  /**
+   * Runs a pass only while holding a cluster-wide lock, so two worker
+   * instances (a deploy overlap) never run the same pass; resolves without
+   * running it when another instance holds the lock.
+   */
+  singleton?: (run: () => Promise<void>) => Promise<unknown>;
   log?: Log;
 }): MetalMaintenanceWorker {
   const log = input.log ?? defaultLog;
@@ -65,9 +72,17 @@ export function startMetalMaintenanceWorker(input: {
 
   const tick = (): void => {
     if (stopped || running) return;
-    const pass = (async () => {
+    const run = async () => {
       await step('reconcile_stale', input.reconcileStale);
       if (!stopped) await step('drain_deletions', input.drainOnce);
+    };
+    const pass = (async () => {
+      if (!input.singleton) return run();
+      try {
+        await input.singleton(run);
+      } catch (error: unknown) {
+        log('maintenance_lock_failed', { code: errorCode(error) });
+      }
     })().finally(() => {
       if (running === pass) running = undefined;
     });
@@ -134,6 +149,7 @@ export function createConfiguredMetalRuntime(input: {
     ? startMetalMaintenanceWorker({
       reconcileStale: () => provisioner.reconcileStale(),
       drainOnce: () => drainer.drainOnce(),
+      singleton: (run) => runAsSingleton(input.db, METAL_MAINTENANCE_LOCK_KEY, run),
       log,
     })
     : undefined;
@@ -179,5 +195,5 @@ function startConfiguredSleeper(
     substrate: metal as OnDemandRuntimeSubstrate,
     readLifecycle: createLifecycleReader({ substrates, platformSecret }),
   });
-  return startMetalSleeperWorker({ sleeper });
+  return startMetalSleeperWorker({ sleeper, singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run) });
 }
