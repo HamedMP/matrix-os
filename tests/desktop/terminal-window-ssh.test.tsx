@@ -44,6 +44,12 @@ function installOperator(options: {
         machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
       case "local-terminal:tailscale-peers": return options.peers ?? { status: "missing" };
       case "local-terminal:machine-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t8" };
+      case "local-terminal:machine-install": {
+        const { target, name } = payload as { target: string; name: string };
+        machines = [...machines, { name, target, state: "connected", temporary: false }];
+        return { ok: true };
+      }
+      case "local-terminal:machine-update": return { ok: true };
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -244,6 +250,28 @@ describe("Terminal window ssh machines", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
     expect(await within(await screen.findByRole("dialog", { name: "Add machine" })).findByText("Tailscale is logged out on this Mac.")).toBeTruthy();
+  });
+
+  // Spec 2706 layer 8: install and keep current the app's core on added machines.
+  it("installs the app's core on a machine that has none", async () => {
+    const invoke = installOperator({ add: () => ({ ok: false, reason: "hc_missing" }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@fresh-box:2222" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Install core there" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-install", { target: "me@fresh-box:2222", name: "fresh-box" }));
+    expect(await within(machinesList()).findByText(/me@fresh-box:2222 · Connected/)).toBeTruthy();
+  });
+
+  it("shows a machine's core version and updates an older one", async () => {
+    const invoke = installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    expect(await within(machines).findByText("can@10.0.0.7 · Connected · core 0.1.14")).toBeTruthy();
+    fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps" }));
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

@@ -115,5 +115,27 @@ export function useSshMachines() {
     }
   }, []);
 
-  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers };
+  // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
+  const [coreBusy, setCoreBusy] = useState<string[]>([]);
+  const [coreFailed, setCoreFailed] = useState<string | null>(null);
+  const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean }>): Promise<boolean> => {
+    setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
+    let ok = false;
+    try {
+      ok = (await job()).ok;
+    } catch (error: unknown) {
+      console.warn("[terminal-window] machine core failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    setCoreBusy((current) => current.filter((entry) => entry !== name));
+    setCoreFailed(ok ? null : name);
+    await refresh();
+    return ok;
+  }, [refresh]);
+  /** Adds a machine with no core (or an old one), installing the app's core there. */
+  const install = useCallback((target: string, name: string, ssh?: SshOptions) => coreJob(name,
+    () => invoke("local-terminal:machine-install", { target, name, ...(ssh ? { ssh } : {}) })), [coreJob]);
+  /** Brings a machine's core to the app's version; its terminals keep running. */
+  const update = useCallback((name: string) => coreJob(name, () => invoke("local-terminal:machine-update", { name })), [coreJob]);
+
+  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed };
 }

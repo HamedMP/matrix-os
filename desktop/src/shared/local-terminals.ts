@@ -4,6 +4,16 @@
 import { z } from "zod/v4";
 
 export const LOCAL_TERMINAL_VERSION = "0.1.19";
+
+/** Compares herdr-core versions (`x.y.z`); null when either cannot be read. */
+export function compareCoreVersions(left: string, right: string): number | null {
+  const parse = (value: string) => /^(\d+)\.(\d+)\.(\d+)$/.exec(value)?.slice(1).map(Number);
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index]! - b[index]!;
+  return 0;
+}
 export const LOCAL_TERMINAL_SESSION_PREFIX = "local:";
 // Terminals are not count-capped. This bounds one listing, and matches the
 // most the core reports.
@@ -73,6 +83,8 @@ export const LocalMachineSchema = z.strictObject({
   temporary: z.boolean(),
   /** How the app reaches it, when it was added here: shown, and reused by Open in terminal. */
   ssh: z.lazy(() => SshOptionsSchema).optional(),
+  /** Its core's version when last seen (spec 2706 layer 8). */
+  version: z.string().max(32).regex(/^[0-9A-Za-z.+-]*$/).optional(),
 });
 export type LocalMachine = z.infer<typeof LocalMachineSchema>;
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
@@ -141,6 +153,11 @@ export const LocalTerminalNameSchema = z.string().min(1).max(64).regex(/^[^\u000
 export const LOCAL_TERMINAL_PUT_MAX_BYTES = 8 * 1024 * 1024;
 const PUT_BASE64_MAX = Math.ceil(LOCAL_TERMINAL_PUT_MAX_BYTES / 3) * 4;
 const PutFileNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._ -]+$/).refine((name) => name !== "." && name !== "..");
+
+const MachineCoreResponse = z.union([
+  z.strictObject({ ok: z.literal(true) }),
+  z.strictObject({ ok: z.literal(false), reason: z.enum(["failed", "busy", "unavailable"]) }),
+]);
 
 export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:list": {
@@ -237,6 +254,13 @@ export const LOCAL_TERMINAL_INVOKE = {
       z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
     ]),
   },
+  // Adds a machine that has no core (or an old one), installing the app's own core there (spec 2706 layer 8).
+  "local-terminal:machine-install": {
+    request: z.strictObject({ target: SshTargetSchema, name: LocalMachineNameSchema, ssh: SshOptionsSchema.optional() }),
+    response: MachineCoreResponse,
+  },
+  // Replaces an added machine's core with the app's version; its terminals keep running.
+  "local-terminal:machine-update": { request: z.strictObject({ name: LocalMachineNameSchema }), response: MachineCoreResponse },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
     request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),

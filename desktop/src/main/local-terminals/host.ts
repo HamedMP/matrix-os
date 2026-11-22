@@ -8,6 +8,7 @@ import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type Local
 import { sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
+import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
@@ -82,6 +83,8 @@ export interface LocalTerminalHostOptions {
   now?: () => number;
   /** Follows status changes; replaced in tests. */
   createEvents?: (options: LocalTerminalEventsOptions) => LocalTerminalEvents;
+  /** Runs the bundled core's CLI (machine install and update); replaced in tests. */
+  runCoreCli?: MachineCoreRunner;
 }
 
 export class LocalTerminalUnknownError extends Error {
@@ -186,6 +189,18 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
 
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
   const machineSsh = createMachineSshStore(options.dataDir);
+  // The app's own core on added machines, through the bundled core's CLI.
+  const machineCore = createMachineCore({
+    cli: async () => {
+      try {
+        return { binary: await prepare(), env: coreEnv() };
+      } catch (error: unknown) {
+        if (error instanceof LocalRuntimeMissingError) return null;
+        throw error;
+      }
+    },
+    ...(options.runCoreCli ? { run: options.runCoreCli } : {}),
+  });
   // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
   let watchEpoch = 0;
   const events = (options.createEvents ?? createLocalTerminalEvents)({
@@ -342,6 +357,17 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** This Mac's tailnet peers, for one-click Add machine. */
     tailscalePeers(): Promise<TailscalePeersResult> {
       return tailscalePeers();
+    },
+
+    /** Adds a machine that has no core or an old one, installing the app's own core there. */
+    installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
+      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+      return machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
+    },
+
+    /** Brings an added machine's core to the app's version; its terminals keep running. */
+    updateMachine(name: string): Promise<MachineCoreResult> {
+      return machineCore.update(name);
     },
 
     /** Forgets a machine; its terminals keep running there. */

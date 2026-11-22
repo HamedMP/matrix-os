@@ -15,8 +15,8 @@ const secondaryText = { color: "var(--text-secondary, var(--color-muted-foregrou
 
 export const ADD_MACHINE_FAILURE: Record<LocalMachineAddFailure, string> = {
   unreachable: "Couldn't reach it over ssh. If ssh doesn't know this host's key yet, or asks for a password, open it in a terminal to check, then add it again.",
-  hc_missing: "hc isn't installed on that machine. Install it there, then add it again.",
-  incompatible: "That machine runs a version of hc this app can't use.",
+  hc_missing: "That machine has no Matrix terminal core yet. Install this app's core there (into ~/.local/bin, no sudo).",
+  incompatible: "That machine runs an older or newer core than this app. Install this app's core there to use it.",
   name_taken: "Another machine already has that name.",
   already_added: "That machine is already added.",
   invalid: "Check the address (host, user@host or user@host:port) and the advanced fields.",
@@ -37,6 +37,8 @@ export interface AddMachineDialogProps {
   onOpenSsh(target: string, ssh?: SshOptions): Promise<boolean>;
   /** This Mac's tailnet peers. */
   loadPeers(): Promise<TailscalePeersState>;
+  /** Adds the machine and installs the app's core there (spec 2706 layer 8). */
+  onInstall(target: string, name: string, ssh?: SshOptions): Promise<boolean>;
   onClose(): void;
 }
 
@@ -72,7 +74,7 @@ function TailscalePeers({ state, busy, onAdd }: { state: TailscalePeersState; bu
   );
 }
 
-function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDialogProps) {
+function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onInstall, onClose }: AddMachineDialogProps) {
   const [target, setTarget] = useState("");
   const [name, setName] = useState("");
   const [port, setPort] = useState("");
@@ -83,7 +85,9 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
   const [openFailed, setOpenFailed] = useState(false);
   const [peers, setPeers] = useState<TailscalePeersState>({ status: "loading" });
   // The last attempt, so Open in terminal uses exactly what was tried.
-  const [tried, setTried] = useState<{ target: string; ssh?: SshOptions } | null>(null);
+  const [tried, setTried] = useState<{ target: string; name?: string; ssh?: SshOptions } | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installFailed, setInstallFailed] = useState(false);
   // A request still running when this form closes must not touch the next one.
   const alive = useRef(true);
   useEffect(() => {
@@ -96,7 +100,7 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
   const attempt = async (address: string, label: string | undefined, ssh: SshOptions | undefined) => {
     setAdding(true);
     setFailure(null);
-    setTried({ target: address, ...(ssh ? { ssh } : {}) });
+    setTried({ target: address, ...(label ? { name: label } : {}), ...(ssh ? { ssh } : {}) });
     const outcome = await onAdd(address, label, ssh);
     if (!alive.current) return;
     setAdding(false);
@@ -122,6 +126,18 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
 
   const addPeer = (peer: TailscalePeer) => {
     void attempt(peer.dnsName, peerMachineName(peer), peer.tailscaleSsh ? { tailscaleSsh: true } : undefined);
+  };
+
+  const install = async () => {
+    if (!tried) return;
+    setInstalling(true);
+    setInstallFailed(false);
+    const fallback = tried.target.replace(/^[^@]*@/, "").replace(/:\d+$/, "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 32);
+    const installed = await onInstall(tried.target, tried.name ?? (fallback || "machine"), tried.ssh);
+    if (!alive.current) return;
+    setInstalling(false);
+    if (installed) onClose();
+    else setInstallFailed(true);
   };
 
   const openSsh = async () => {
@@ -164,9 +180,15 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
       </details>
       {failure ? <p role="alert" className="text-[12px]">{ADD_MACHINE_FAILURE[failure]}</p> : null}
       {openFailed ? <p role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</p> : null}
+      {installFailed ? <p role="alert" className="text-[12px]">Couldn't install the core there. Check that ssh works, then try again.</p> : null}
       <div className="flex flex-wrap justify-end gap-2">
         {failure === "unreachable" && tried ? (
           <Button type="button" variant="secondary" size="sm" onClick={() => { void openSsh(); }}>Open in terminal</Button>
+        ) : null}
+        {(failure === "hc_missing" || failure === "incompatible") && tried ? (
+          <Button type="button" variant="secondary" size="sm" disabled={installing} onClick={() => { void install(); }}>
+            {installing ? "Installing…" : "Install core there"}
+          </Button>
         ) : null}
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
         <Button type="submit" size="sm" disabled={adding || !target.trim()}>{adding ? "Adding…" : "Add"}</Button>
