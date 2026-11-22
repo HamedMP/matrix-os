@@ -1778,15 +1778,20 @@ pair_client_source() {
   cat <<'EOF'
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { lookup } from "node:dns/promises";
+import { request } from "node:http";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 const env = process.env;
 const parsed = new URL(env.MATRIX_JOIN_URL ?? "");
-// Plain HTTP is only for Headscale tailnets: the address must be loopback or on the tailnet.
+// Plain HTTP is only for Headscale tailnets: the address must be loopback or on
+// the tailnet, and both requests connect to that checked address (no second DNS
+// answer can redirect the join code).
+let pinned = null;
 if (parsed.protocol === "http:") {
-  const { address } = await lookup(parsed.hostname);
+  const { address, family } = await lookup(parsed.hostname);
   const tailnet = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address) || /^fd7a:115c:a1e0:/i.test(address);
   if (!tailnet && address !== "127.0.0.1" && address !== "::1") throw new Error("join URL is not on the private network");
+  pinned = { address, family };
 } else if (parsed.protocol !== "https:") {
   throw new Error("join URL");
 }
@@ -1802,13 +1807,40 @@ try {
   privateKey = pair.privateKey;
 }
 const publicKey = createPublicKey(privateKey).export({ format: "jwk" }).x;
-async function call(path, body) {
-  const response = await fetch(`${parsed.origin}/api/system/private-network/pairing/${path}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    redirect: "error", signal: AbortSignal.timeout(10_000),
+function postPinned(url, payload) {
+  return new Promise((resolve, reject) => {
+    const req = request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+      lookup: (_host, options, callback) => (options?.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family)),
+      timeout: 10_000,
+    }, (res) => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { text += chunk; if (text.length > 16_384) req.destroy(new Error("pairing response too large")); });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+    });
+    req.on("timeout", () => req.destroy(new Error("pairing timed out")));
+    req.on("error", reject);
+    req.end(payload);
   });
-  if (!response.ok) throw new Error(`pairing ${path} ${response.status}`);
-  const text = await response.text();
+}
+async function call(path, body) {
+  const url = `${parsed.origin}/api/system/private-network/pairing/${path}`;
+  const payload = JSON.stringify(body);
+  let status, text;
+  if (pinned) {
+    // A redirect is a non-2xx status here and fails like any other.
+    ({ status, text } = await postPinned(url, payload));
+  } else {
+    const response = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json" }, body: payload,
+      redirect: "error", signal: AbortSignal.timeout(10_000),
+    });
+    status = response.status;
+    text = await response.text();
+  }
+  if (status < 200 || status >= 300) throw new Error(`pairing ${path} ${status}`);
   if (text.length > 16_384) throw new Error("pairing response too large");
   return JSON.parse(text);
 }
