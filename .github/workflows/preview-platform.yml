@@ -718,6 +718,67 @@ jobs:
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
           echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
           echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
+          echo "PREVIEW_REVISION=$revision" >> "$GITHUB_ENV"
+          echo "PREVIEW_IMAGE_DIGEST=$expected_digest_image" >> "$GITHUB_ENV"
+
+      # Spec 2691 metal: the sleeper, stale-provisioning reaper and VM teardown
+      # drainer run only in a background-worker process, and preview web
+      # revisions run with workers off. When this revision enables metal and the
+      # free-tier sleeper, run a private singleton worker for this PR
+      # (PLATFORM_ROLE=worker, PLATFORM_WORKER_SCOPE=metal: only the metal passes,
+      # /health only) from the exact same revision configuration. A redeploy
+      # without them removes this PR's worker.
+      - name: Deploy preview metal maintenance worker
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          worker_service="${CLOUD_RUN_PREVIEW_SERVICE}-worker-pr${PR_NUMBER}"
+          worker_exists() {
+            # Errors other than "not found" fail the step: never leak a worker silently.
+            [ -n "$(gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+              --filter="metadata.name=${worker_service}" --format='value(metadata.name)')" ]
+          }
+          revision_json="$(gcloud run revisions describe "$PREVIEW_REVISION" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          env_enabled() {
+            jq -e --arg name "$1" '[.spec.containers[0].env[]? | select(.name == $name) | .value] | any(. == "1" or . == "true")' \
+              <<< "$revision_json" >/dev/null
+          }
+          if ! env_enabled METAL_HOSTS_ENABLED || ! env_enabled MATRIX_FREE_TIER_SLEEP_ENABLED; then
+            echo "Metal or the free-tier sleeper is off on this preview revision; no maintenance worker."
+            if worker_exists; then
+              gcloud run services delete "$worker_service" \
+                --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+              echo "Deleted this PR's previous preview metal worker."
+            fi
+            exit 0
+          fi
+          worker_manifest="$(mktemp --suffix=.json)"
+          trap 'rm -f "$worker_manifest"' EXIT
+          jq --arg image "$PREVIEW_IMAGE_DIGEST" '.spec.containers[0].image = $image' <<< "$revision_json" \
+            | node scripts/render-platform-worker-service.mjs "$worker_service" --role-worker --metal-scope \
+            | jq --arg pr "$PR_NUMBER" '.metadata.labels = ((.metadata.labels // {}) + {"matrix-preview-pr": $pr})' \
+            > "$worker_manifest"
+          if worker_exists; then
+            existing_iam="$(gcloud run services get-iam-policy "$worker_service" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+            if jq -e 'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' \
+              <<< "$existing_iam" >/dev/null; then
+              echo "Preview worker service unexpectedly permits public invocation." >&2
+              exit 1
+            fi
+          fi
+          gcloud run services replace "$worker_manifest" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null
+          worker_json="$(gcloud run services describe "$worker_service" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          if [ "$(jq -r '.metadata.annotations["run.googleapis.com/ingress"] // empty' <<< "$worker_json")" != "internal" ] || \
+             [ "$(jq -r '.metadata.annotations["run.googleapis.com/minScale"] // empty' <<< "$worker_json")" != "1" ] || \
+             [ "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' <<< "$worker_json")" != "1" ] || \
+             [ "$(jq -r 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' <<< "$worker_json")" != "true" ]; then
+            echo "Preview metal worker is not ready as a private singleton." >&2
+            exit 1
+          fi
 
       - name: Comment preview URL on PR
         if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
@@ -778,6 +839,15 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
+          # This PR's preview metal worker goes with its revisions. Listing errors
+          # fail the step instead of leaking an always-on worker.
+          worker_service="${CLOUD_RUN_PREVIEW_SERVICE}-worker-pr${PR_NUMBER}"
+          if [ -n "$(gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --filter="metadata.name=${worker_service}" --format='value(metadata.name)')" ]; then
+            gcloud run services delete "$worker_service" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+            echo "Deleted preview metal worker for PR ${PR_NUMBER}"
+          fi
           revisions="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json |
             jq -r --arg tag "pr-${PR_NUMBER}" \

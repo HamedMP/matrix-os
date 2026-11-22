@@ -42,6 +42,23 @@ describe('metal maintenance worker', () => {
     worker.stop();
   });
 
+  it('runs a pass only while holding the cluster-wide singleton, so overlapping workers never both run it', async () => {
+    vi.useFakeTimers();
+    const reconcile = vi.fn(async () => {});
+    const drain = vi.fn(async () => {});
+    let held = true; // another worker instance holds the lock
+    const singleton = vi.fn(async (run: () => Promise<void>) => { if (!held) await run(); });
+    const worker = startMetalMaintenanceWorker({ reconcileStale: reconcile, drainOnce: drain, intervalMs: 1_000, singleton, log: () => {} });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(singleton).toHaveBeenCalledTimes(1);
+    expect(reconcile).not.toHaveBeenCalled();
+    held = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(drain).toHaveBeenCalledTimes(1);
+    worker.stop();
+  });
+
   it('skips a tick while the previous pass is still running', async () => {
     vi.useFakeTimers();
     const slow = deferred();
