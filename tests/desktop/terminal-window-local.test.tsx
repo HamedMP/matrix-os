@@ -476,12 +476,14 @@ describe("local terminal socket", () => {
   it("attaches at the requested size, relays output in order and forwards input and resize", async () => {
     const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 5 }), "local-terminal:ack": () => ({ ok: true }),
       "local-terminal:input": () => ({ ok: true }), "local-terminal:resize": () => ({ ok: true }), "local-terminal:detach": () => ({ ok: true }) });
-    const handlers = events();
+    const handlers = { ...events(), onCanonicalSize: vi.fn() };
     const socket = createLocalTerminalSocket("local:t3", handlers);
     socket.resize(132, 43);
     socket.connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:attach", { id: "t3", cols: 132, rows: 43 });
+    // Fault detected (Mac, 2026-11-22): a local pane never took a new grid after a split, only scaled.
+    expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 132, rows: 43 });
 
     operator.emit("local-terminal:output", { attachId: 9, data: "someone else" });
     operator.emit("local-terminal:output", { attachId: 5, data: "one" });
@@ -497,6 +499,7 @@ describe("local terminal socket", () => {
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "ls\r" });
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "\x1b[M", binary: true });
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:resize", { attachId: 5, cols: 80, rows: 24 });
+    await waitFor(() => expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 80, rows: 24 }));
 
     socket.detach();
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:detach", { attachId: 5 });
