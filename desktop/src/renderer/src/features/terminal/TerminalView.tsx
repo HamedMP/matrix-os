@@ -181,6 +181,17 @@ export default function TerminalView({
   focused,
   reservedKeys,
 }: TerminalViewProps) {
+  // The size last sent to the attachment: a pixel change that keeps the grid, or a focus change, sends nothing,
+  // so the program never gets a resize (and redraws its prompt) for nothing.
+  const sentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const sendSize = useCallback((size: { cols: number; rows: number }) => {
+    const sent = sentSizeRef.current;
+    if (sent && sent.cols === size.cols && sent.rows === size.rows) return;
+    const attachment = attachmentRef.current;
+    if (!attachment) return;
+    attachment.resize(size.cols, size.rows);
+    sentSizeRef.current = { ...size };
+  }, []);
   const reservedKeysRef = useRef(reservedKeys);
   useEffect(() => { reservedKeysRef.current = reservedKeys; }, [reservedKeys]);
   const takesFocus = focused ?? active;
@@ -530,7 +541,7 @@ export default function TerminalView({
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
         const proposed = proposedTerminalDimensions(fit, terminal, host);
-        attachmentRef.current?.resize(proposed.cols, proposed.rows);
+        sendSize(proposed);
         presentation.schedule();
       });
     });
@@ -573,7 +584,7 @@ export default function TerminalView({
       termRef.current = null;
       setSearch(null);
     };
-  }, [attachManagerProp, copyTerminalTextWithFeedback, sessionName]);
+  }, [attachManagerProp, copyTerminalTextWithFeedback, sendSize, sessionName]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -637,7 +648,8 @@ export default function TerminalView({
       attachment.writeBinary(data);
     });
     const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
-    attachment.resize(proposed.cols, proposed.rows);
+    sentSizeRef.current = null;
+    sendSize(proposed);
     if (takesFocusRef.current) terminal.focus();
 
     return () => {
@@ -647,7 +659,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp]);
+  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, sendSize]);
 
   // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
   const takesFocusRef = useRef(takesFocus);

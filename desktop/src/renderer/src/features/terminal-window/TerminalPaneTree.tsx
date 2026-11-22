@@ -3,9 +3,11 @@
 // name, where it runs, and split / zoom / close buttons), a blue outline on
 // the focused pane, draggable gaps to resize, and drag a pane by its header
 // onto another pane's edge to split there.
-import { useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
-import type { PaneDirection, PaneLeaf, PaneNode, PaneTab } from "@matrix-os/ui/terminal-pane-tree";
+import {
+  leaves, paneRects, splitFrames, type PaneDirection, type PaneLeaf, type PaneRect, type PaneTab, type SplitFrame,
+} from "@matrix-os/ui/terminal-pane-tree";
 
 export interface PaneInfo {
   title: string;
@@ -31,6 +33,9 @@ export interface TerminalPaneTreeProps {
 
 export const FOCUS_OUTLINE = "#3b82f6";
 const KEYBOARD_STEP = 0.05;
+const GAP_PX = 6;
+const EPSILON = 1e-6;
+const FULL: PaneRect = { x: 0, y: 0, width: 1, height: 1 };
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 
 /** The edge of a pane nearest to a point inside it. */
@@ -55,24 +60,47 @@ interface DragState {
   target: { id: string; edge: PaneDirection } | null;
 }
 
-function Divider({ axis, ratio, covered, onResize }: {
-  axis: "row" | "column"; ratio: number; covered: boolean; onResize(ratio: number): void;
+/** Where a unit-square rectangle sits in the panes area, leaving a gap between neighbours. */
+function placed(rect: PaneRect): CSSProperties {
+  const half = GAP_PX / 2;
+  const startX = rect.x > EPSILON ? half : 0;
+  const endX = rect.x + rect.width < 1 - EPSILON ? half : 0;
+  const startY = rect.y > EPSILON ? half : 0;
+  const endY = rect.y + rect.height < 1 - EPSILON ? half : 0;
+  return {
+    position: "absolute",
+    left: `calc(${rect.x * 100}% + ${startX}px)`,
+    top: `calc(${rect.y * 100}% + ${startY}px)`,
+    width: `calc(${rect.width * 100}% - ${startX + endX}px)`,
+    height: `calc(${rect.height * 100}% - ${startY + endY}px)`,
+  };
+}
+
+function Divider({ frame, area, covered, onResize }: {
+  frame: SplitFrame; area: RefObject<HTMLDivElement | null>; covered: boolean; onResize(ratio: number): void;
 }) {
-  const dragging = useRef<HTMLElement | null>(null);
+  const { axis, ratio, rect } = frame;
+  const dragging = useRef(false);
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dragging.current = event.currentTarget.parentElement;
+    dragging.current = true;
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const container = dragging.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const next = axis === "row" ? (event.clientX - rect.left) / Math.max(1, rect.width) : (event.clientY - rect.top) / Math.max(1, rect.height);
+    const box = area.current?.getBoundingClientRect();
+    if (!dragging.current || !box) return;
+    // The pointer's place within this split's own rectangle.
+    const next = axis === "row"
+      ? ((event.clientX - box.left) / Math.max(1, box.width) - rect.x) / Math.max(EPSILON, rect.width)
+      : ((event.clientY - box.top) / Math.max(1, box.height) - rect.y) / Math.max(EPSILON, rect.height);
     onResize(next);
   };
-  const onPointerUp = () => { dragging.current = null; };
+  const onPointerUp = () => { dragging.current = false; };
   const back = axis === "row" ? "ArrowLeft" : "ArrowUp";
   const forward = axis === "row" ? "ArrowRight" : "ArrowDown";
+  const at = axis === "row" ? rect.x + rect.width * ratio : rect.y + rect.height * ratio;
+  const style: CSSProperties = axis === "row"
+    ? { position: "absolute", left: `calc(${at * 100}% - ${GAP_PX / 2}px)`, width: GAP_PX, top: `${rect.y * 100}%`, height: `${rect.height * 100}%` }
+    : { position: "absolute", top: `calc(${at * 100}% - ${GAP_PX / 2}px)`, height: GAP_PX, left: `${rect.x * 100}%`, width: `${rect.width * 100}%` };
   return (
     // The gap between two panes is the divider.
     // Under a zoomed pane it takes no focus, keys or pointer, so the hidden layout cannot change.
@@ -85,7 +113,8 @@ function Divider({ axis, ratio, covered, onResize }: {
         if (event.key === back) { event.preventDefault(); onResize(ratio - KEYBOARD_STEP); }
         if (event.key === forward) { event.preventDefault(); onResize(ratio + KEYBOARD_STEP); }
       }}
-      className={`shrink-0 rounded outline-none hover:bg-[var(--border-default)] focus-visible:bg-[var(--border-default)] ${axis === "row" ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"}`} />
+      style={style}
+      className={`rounded outline-none hover:bg-[var(--border-default)] focus-visible:bg-[var(--border-default)] ${axis === "row" ? "cursor-col-resize" : "cursor-row-resize"}`} />
   );
 }
 
@@ -146,8 +175,8 @@ function PaneHeader({ leaf, info, zoomed, props, setDrag }: {
   );
 }
 
-function Pane({ leaf, props, drag, setDrag }: {
-  leaf: PaneLeaf; props: TerminalPaneTreeProps; drag: DragState; setDrag(next: DragState): void;
+function Pane({ leaf, rect, props, drag, setDrag }: {
+  leaf: PaneLeaf; rect: PaneRect; props: TerminalPaneTreeProps; drag: DragState; setDrag(next: DragState): void;
 }) {
   const focused = props.tab.focus === leaf.id;
   const info = props.paneInfo(leaf);
@@ -173,8 +202,9 @@ function Pane({ leaf, props, drag, setDrag }: {
       onDragLeave={(event) => {
         if (dropEdge && !event.currentTarget.contains(event.relatedTarget as Node | null)) setDrag({ ...drag, target: null });
       }}
-      className={`${zoomed ? "absolute inset-1.5 z-10" : "relative"} flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border`}
+      className={`${zoomed ? "z-10" : ""} flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border`}
       style={{
+        ...placed(zoomed ? FULL : rect),
         borderColor: focused ? FOCUS_OUTLINE : "var(--border-subtle)",
         boxShadow: focused ? `0 0 0 1px ${FOCUS_OUTLINE}` : undefined,
         background: "var(--bg-surface)",
@@ -203,28 +233,24 @@ function Pane({ leaf, props, drag, setDrag }: {
   );
 }
 
-function Node({ node, props, drag, setDrag }: { node: PaneNode; props: TerminalPaneTreeProps; drag: DragState; setDrag(next: DragState): void }) {
-  if (node.type === "leaf") return <Pane leaf={node} props={props} drag={drag} setDrag={setDrag} />;
-  return (
-    <div className={`flex min-h-0 min-w-0 flex-1 ${node.axis === "row" ? "flex-row" : "flex-col"}`}>
-      <div className="flex min-h-0 min-w-0" style={{ flex: `${node.ratio} 1 0` }}>
-        <Node node={node.first} props={props} drag={drag} setDrag={setDrag} />
-      </div>
-      <Divider axis={node.axis} ratio={node.ratio} covered={props.tab.zoom !== null} onResize={(ratio) => props.onResize(node.id, ratio)} />
-      <div className="flex min-h-0 min-w-0" style={{ flex: `${1 - node.ratio} 1 0` }}>
-        <Node node={node.second} props={props} drag={drag} setDrag={setDrag} />
-      </div>
-    </div>
-  );
-}
-
 export function TerminalPaneTree(props: TerminalPaneTreeProps) {
   const [drag, setDrag] = useState<DragState>({ source: null, target: null });
-  // Zoom lays the zoomed pane over the others instead of unmounting them, so
-  // every pane keeps its terminal and screen.
+  const area = useRef<HTMLDivElement>(null);
+  const rects = paneRects(props.tab.root);
+  // Every pane is a keyed child of one area, placed from the tree: a split,
+  // close or move changes only its place, so its terminal is never remounted
+  // (a remount would drop its screen). Zoom lays the zoomed pane over the others.
   return (
     <main aria-label="Terminal" className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden p-1.5" style={{ background: "var(--bg-app, var(--bg-sunken))" }}>
-      <Node node={props.tab.root} props={props} drag={drag} setDrag={setDrag} />
+      <div ref={area} className="relative min-h-0 min-w-0 flex-1">
+        {leaves(props.tab.root).map((leaf) => (
+          // Keyed by terminal, which a tab holds at most once: leaf ids change when a lone terminal first splits.
+          <Pane key={leaf.terminal} leaf={leaf} rect={rects.get(leaf.id) ?? FULL} props={props} drag={drag} setDrag={setDrag} />
+        ))}
+        {splitFrames(props.tab.root).map((frame) => (
+          <Divider key={frame.id} frame={frame} area={area} covered={props.tab.zoom !== null} onResize={(ratio) => props.onResize(frame.id, ratio)} />
+        ))}
+      </div>
     </main>
   );
 }

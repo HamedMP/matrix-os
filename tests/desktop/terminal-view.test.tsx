@@ -308,13 +308,41 @@ describe("TerminalView session switching", () => {
     const fitCallsBeforeResize = fit.fitCalls;
     attachmentResize.mockClear();
 
+    // A host change that keeps the grid sends nothing.
     act(() => {
+      resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
+    });
+    expect(attachmentResize).not.toHaveBeenCalled();
+
+    const terminal = createdTerminals.at(-1)! as unknown as { cols: number; rows: number };
+    terminal.cols = 100;
+    terminal.rows = 30;
+    act(() => {
+      resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
       resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
     });
 
     expect(fit.fitCalls).toBe(fitCallsBeforeResize);
     expect(attachmentResize).toHaveBeenCalledOnce();
-    expect(attachmentResize).toHaveBeenCalledWith(80, 24);
+    expect(attachmentResize).toHaveBeenCalledWith(100, 30);
+  });
+
+  // Fault detected (Hamed, 2026-11-22): clicking between panes redrew the prompt each time,
+  // because a focus change reached the program as a resize.
+  it("sends no resize and no input when focus moves between live panes", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const { rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    attachmentResize.mockClear();
+    attachmentWrite.mockClear();
+    const attaches = attachMock.mock.calls.length;
+    for (let round = 0; round < 10; round += 1) {
+      rerender(<TerminalView sessionName="alpha" active focused={round % 2 === 0} />);
+      act(() => { resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver); });
+    }
+    expect(attachmentResize).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+    expect(attachMock.mock.calls.length).toBe(attaches);
   });
 
   it("keeps xterm mounted and asks the authority for its grid when it becomes active again", () => {

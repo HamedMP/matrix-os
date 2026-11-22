@@ -6,12 +6,16 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 // The attach managers the panes' terminals were given, to check each pane streams on its own.
 const managers = vi.hoisted(() => new Map<string, unknown>());
+// How many times each terminal's view was mounted, to catch a pane that remounts (and loses its screen).
+const mounts = vi.hoisted(() => new Map<string, number>());
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
   default: ({ sessionName, active, focused, attachManager, findRequest, onPaneAction }: {
     sessionName: string; active?: boolean; focused?: boolean; attachManager?: unknown; findRequest?: number; onPaneAction?: (action: unknown) => void;
   }) => {
     managers.set(sessionName, attachManager);
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- a test double counting its own mounts
+    React.useEffect(() => { mounts.set(sessionName, (mounts.get(sessionName) ?? 0) + 1); }, [sessionName]);
     return (
       <div data-testid="terminal-view" data-active={active === false ? "false" : "true"} data-focused={focused ? "true" : "false"} data-find={findRequest ?? 0}>
         {sessionName}
@@ -353,6 +357,26 @@ describe("Terminal window panes", () => {
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "New terminal tab" }));
     await waitFor(() => expect(tabNames().map(([name]) => name)).toEqual(["logs", "shell t11"]));
+  });
+
+  // Fault detected (Hamed, 2026-11-22): splitting a pane remounted the existing one and blanked its screen.
+  it("never remounts a pane's terminal when panes split, close, move or change focus", async () => {
+    mounts.clear();
+    const operator = installOperator([fact("t1", "editor")]);
+    render(<TerminalWindowApp />);
+    await openFirst("editor");
+    await waitFor(() => expect(mounts.get("local:t1")).toBe(1));
+    operator.command({ command: "split-right" });
+    await waitFor(() => expect(mounts.get("local:t10")).toBe(1));
+    operator.command({ command: "split-down" });
+    await waitFor(() => expect(mounts.get("local:t11")).toBe(1));
+    for (const direction of ["left", "right", "up", "down", "left"] as const) operator.command({ command: "focus-pane", direction });
+    operator.command({ command: "swap-pane", direction: "right" });
+    operator.command({ command: "zoom-pane" });
+    operator.command({ command: "zoom-pane" });
+    operator.command({ command: "close-pane" });
+    await waitFor(() => expect(paneNames()).toHaveLength(2));
+    expect([mounts.get("local:t1"), mounts.get("local:t10"), mounts.get("local:t11")]).toEqual([1, 1, 1]);
   });
 
   it("picks the drop edge nearest the pointer", () => {

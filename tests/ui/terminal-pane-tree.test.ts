@@ -126,3 +126,21 @@ describe("resizing the focused pane by key", () => {
     expect(resizeFocusedPane(single, "right")).toBe(single);
   });
 });
+
+describe("splitFrames", () => {
+  it("places each split's divider within its own rectangle", async () => {
+    const { splitFrames } = await import("@matrix-os/ui/terminal-pane-tree");
+    const root = {
+      type: "split" as const, id: "s1", axis: "row" as const, ratio: 0.5,
+      first: { type: "leaf" as const, id: "a", terminal: "ta" },
+      second: {
+        type: "split" as const, id: "s2", axis: "column" as const, ratio: 0.25,
+        first: { type: "leaf" as const, id: "b", terminal: "tb" }, second: { type: "leaf" as const, id: "c", terminal: "tc" },
+      },
+    };
+    expect(splitFrames(root)).toEqual([
+      { id: "s1", axis: "row", ratio: 0.5, rect: { x: 0, y: 0, width: 1, height: 1 } },
+      { id: "s2", axis: "column", ratio: 0.25, rect: { x: 0.5, y: 0, width: 0.5, height: 1 } },
+    ]);
+  });
+});

@@ -107,6 +107,24 @@ export function paneRects(node: PaneNode, rect: PaneRect = { x: 0, y: 0, width: 
   return out;
 }
 
+export interface SplitFrame { id: string; axis: "row" | "column"; ratio: number; rect: PaneRect }
+
+/** Each split's place in a unit square, for drawing its divider. */
+export function splitFrames(node: PaneNode, rect: PaneRect = { x: 0, y: 0, width: 1, height: 1 }, out: SplitFrame[] = []): SplitFrame[] {
+  if (node.type === "leaf") return out;
+  out.push({ id: node.id, axis: node.axis, ratio: node.ratio, rect });
+  if (node.axis === "row") {
+    const width = rect.width * node.ratio;
+    splitFrames(node.first, { ...rect, width }, out);
+    splitFrames(node.second, { ...rect, x: rect.x + width, width: rect.width - width }, out);
+  } else {
+    const height = rect.height * node.ratio;
+    splitFrames(node.first, { ...rect, height }, out);
+    splitFrames(node.second, { ...rect, y: rect.y + height, height: rect.height - height }, out);
+  }
+  return out;
+}
+
 const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0);
 
 /** The nearest leaf in a direction that shares an edge span with this one, or null. */
