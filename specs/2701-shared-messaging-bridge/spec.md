@@ -261,8 +261,10 @@ in an error body.
 
 Platform Postgres: `messaging_bridge_identities`: `owner_id` (pk), `matrix_user_id`,
 `created_at`. `messaging_bridge_logins`: `process_id` (pk), `owner_id`, `network`,
-`matrix_user_id`, `pending_step`, `expires_at`, so any platform instance can advance or
-cancel a pending login it did not start. `pending_step` is the current step the platform
+`matrix_user_id`, `pending_step`, `expires_at`, `revision`, so any platform instance can
+advance or cancel a pending login it did not start. Every step write and expiry delete is
+conditional on the `revision` it read, so a delayed step never overwrites a newer one or
+recreates a cancelled login. `pending_step` is the current step the platform
 submits next (step id, field ids and the prompt, which can include a QR or pairing code); it
 is AES-256-GCM encrypted with a key derived from the user-id key and bound to its row.
 Rows are capped per owner, ownership is enforced in every `WHERE` clause, rows are deleted
@@ -277,6 +279,7 @@ login field values or message data are stored on the platform.
 | Bridge host down | Sync backs off (1 s to 60 s, jittered). Status shows "Unavailable". Stored messages stay readable. |
 | Limited sync timeline | Before advancing `next_batch`, sync backfills the gap with `/messages` from `prev_batch`, at most 10 pages of 100 events per room, each request with a timeout. A gap beyond that cap is logged and skipped. |
 | Sync batch partly applied | Messages and `next_batch` commit in one transaction; replay is safe because inserts use `ON CONFLICT DO NOTHING`. |
+| Echo arrives while a send is confirmed | Sync batches and send confirmations take a per-owner transaction lock, so the confirmation always sees a committed echo and merges it instead of failing on the event-id index. |
 | Send times out | Message stays `failed`; retry reuses `client_txn_id`, which is also the Matrix transaction id, so no duplicate is delivered. |
 | Access token rejected | Gateway requests a new session once, then marks availability "unavailable". |
 | Link flow abandoned | Gateway link sessions are memory-only and expire after 10 minutes. The platform's pending-login row expires 10 minutes after its last step and is claimed by one instance (on read, or by a sweep of at most 100 rows per minute per instance) and deleted. Dismissal, expiry and eviction also cancel the login at the bridge. |
