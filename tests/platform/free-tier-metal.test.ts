@@ -356,6 +356,18 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     });
   });
 
+  it('gives a former paid owner with an open paid checkout no free admission', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertCheckoutAttempt(db, { id: 'att-resub', clerkUserId: OWNER, stripeSessionId: 'cs_resub', createdAt: new Date(Date.now() - 60_000).toISOString() });
+    const explicit = await request(routesFor().routes, FREE);
+    expect(explicit.status).toBe(409);
+    expect(await explicit.json()).toMatchObject({ code: 'checkout_pending' });
+    expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_old' });
+    expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
+    expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
   it('offers the free plan to a former paid owner on the implicit path as well', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     await upsertBillingEntitlement(db, endedPaid());

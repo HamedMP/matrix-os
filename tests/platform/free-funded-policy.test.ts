@@ -3,7 +3,8 @@ import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
 import { buildPlatformRuntimeVerificationToken } from '../../packages/platform/src/platform-token.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AiFundedPolicyError } from '../../packages/platform/src/ai-funded-policy-errors.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
@@ -194,6 +195,31 @@ describe('free funded policy', () => {
     await expect(free.authorize(credential, 1)).rejects.toThrow(refusal('unavailable'));
   });
 
+  // ENG-520 P7 fix round 1: readiness must match admission when no daily ceiling is configured.
+  it('reports a free runtime as not ready when no daily ceiling is configured', async () => {
+    const free = harness(db, undefined, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const summary = await free.repo.getRuntimeFundingSummary(identity, { includeChatAvailability: true });
+    expect(summary.policy).toMatchObject({ enabled: false, allowedModelIds: [] });
+    expect(summary.chatAvailability).toMatchObject({ eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 });
+    const checkout = await free.repo.getCheckoutFundingSummary(identity, Date.now() + 5_000, { includeChatAvailability: true });
+    expect(checkout.policy).toMatchObject({ enabled: false, allowedModelIds: [] });
+    expect(checkout.chatAvailability).toMatchObject({ eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 });
+    // A paid runtime is unaffected by the free ceiling setting.
+    const paid = await addRuntime(db, 1, 'customer', NOV);
+    expect((await free.repo.getRuntimeFundingSummary(paid)).policy.enabled).toBe(true);
+  });
+
+  it('grants no monthly allowance on a funding read while the free runtime is disabled', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ enabled: false })
+      .where('machine_id', '=', identity.machineId).execute();
+    await free.repo.getRuntimeFundingSummary(identity);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', 'like', 'free-monthly:%').execute()).toEqual([]);
+  });
+
   it('never applies the free ceiling, allowance, or model limit to a paid owner', async () => {
     const free = harness(db, USD, clock);
     const freeCredential = await free.credential(await addRuntime(db, 1, 'free', NOV));
@@ -280,5 +306,28 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
     expect(Number(balance.month_reserved_microusd)).toBe(6 * USD);
     expect(Number(balance.credit_balance_microusd)).toBe(10 * USD);
     expect(await a.executor.selectFrom('ai_funded_credit_ledger').select('entry_id').execute()).toHaveLength(2);
+  });
+
+  // ENG-520 P7 fix round 1: with account deletion configured, admission takes the deletion fence. A free
+  // authorize that grants the monthly allowance must take it exclusively up front; upgrading a shared fence
+  // under the billing owner lock deadlocks two admissions for one owner.
+  it('never deadlocks when one owner races itself with account deletion configured', async () => {
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', 'd'.repeat(40));
+    try {
+      const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+      const clock = { now: NOV };
+      const apps = [harness(a, 100 * USD, clock), harness(b, 100 * USD, clock)];
+      const credential = await apps[0]!.credential(await addRuntime(a, 2, 'free', NOV));
+      const results = await Promise.allSettled(Array.from({ length: 10 }, (_, index) => apps[index % 2]!.authorize(credential, 6 * USD)));
+      // Every refusal is a policy answer; a deadlock surfaces as a raw database error.
+      for (const result of results) {
+        if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(AiFundedPolicyError);
+      }
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(await a.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+        .where('owner_id', '=', 'user_free2').execute()).toHaveLength(2);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

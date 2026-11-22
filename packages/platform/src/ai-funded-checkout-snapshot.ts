@@ -36,6 +36,8 @@ export async function readCheckoutFundingSnapshot(input: {
   deadlineAtMs: number;
   includeChatAvailability?: true;
   projectExpiredCredit?: true;
+  /** False when free runtimes have no daily ceiling, so every free admission is refused. */
+  freeFundingConfigured?: boolean;
 }) {
   const { db, identity, checked, deadlineAtMs } = input;
   const checkedAt = checked.toISOString();
@@ -111,7 +113,8 @@ export async function readCheckoutFundingSnapshot(input: {
     }
     const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
     const previewRequestsAvailable = preview === undefined || preview.requestsUsed < preview.requestLimit;
-    const enabled = row.global_enabled && row.runtime_enabled && previewRequestsAvailable
+    const fundable = previewRequestsAvailable && (!free || input.freeFundingConfigured === true);
+    const enabled = row.global_enabled && row.runtime_enabled && fundable
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
     const allowedModelIds = enabled
       ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
@@ -136,9 +139,9 @@ export async function readCheckoutFundingSnapshot(input: {
     const sources = input.includeChatAvailability ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt, { readOnly: true }) : undefined;
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({ contractVersion: 1, asOf: checkedAt,
-      eligibleBalanceMicrousd: previewRequestsAvailable
+      eligibleBalanceMicrousd: fundable
         ? Math.min(sources.ceilingMicrousd, Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))) : 0,
-      availableBalanceMicrousd: previewRequestsAvailable
+      availableBalanceMicrousd: fundable
         ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd) : 0,
     }) : undefined;
     return {

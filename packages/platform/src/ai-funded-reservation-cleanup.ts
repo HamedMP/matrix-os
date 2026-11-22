@@ -9,9 +9,20 @@ export interface AiFundedReservationCleanupOptions { db: PlatformDB; now: () => 
 export async function cleanupExpiredReservations(options: AiFundedReservationCleanupOptions, input: z.input<typeof CleanupSchema>): Promise<number> {
   const { limit } = CleanupSchema.parse(input);
   await options.db.ready;
-  // Free prepaid holds with unknown usage are released only once their grace has passed.
-  const released = await releaseUnknownFreeHolds(options, limit);
+  // Free prepaid holds with unknown usage are released only once their grace has passed. A failed free
+  // sweep must not starve paid cleanup: it is logged, paid cleanup runs, and the failure is rethrown after.
+  let released = 0;
+  let freeSweepFailure: { error: unknown } | undefined;
+  try {
+    released = await releaseUnknownFreeHolds(options, limit);
+  } catch (error: unknown) {
+    console.warn("[funded-ai] Free prepaid hold sweep failed; paid cleanup continues", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+    freeSweepFailure = { error };
+  }
   const cleaned = released + await cleanupExpiredCustomerCharges(options, { limit });
   await deleteExpiredPriorityClaims(options.db.executor, options.now().toISOString(), MAX_EXPIRED_CLAIM_DELETES);
+  if (freeSweepFailure) throw freeSweepFailure.error;
   return cleaned;
 }

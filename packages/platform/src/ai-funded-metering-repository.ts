@@ -141,9 +141,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     // account-deletion and billing owner locks; admission takes those before the funded owner lock,
     // so this read takes them first too. Paid reads keep their original single lock.
     const free = await isFreeMetalRuntime(options.db.executor, identity.machineId);
-    const inAdmissionOrder = <T>(outer: PlatformDB, work: (trx: PlatformDB) => Promise<T>) => free
-      ? withAccountDeletionOwnerLock(outer, identity.ownerId, (trx) => work(trx)) : work(outer);
-    return options.db.transaction(async (outer) => inAdmissionOrder(outer, async (trx) => {
+    const inAdmissionOrder = <T>(outer: PlatformDB, work: (trx: PlatformDB, newWorkAllowed: boolean) => Promise<T>) => free
+      ? withAccountDeletionOwnerLock(outer, identity.ownerId, (trx, admission) => work(trx, admission.newWorkAllowed))
+      : work(outer, true);
+    // A free runtime with no daily ceiling configured is refused every funded request, so it reads as not ready.
+    const freeFundable = !free || options.freeFunding?.dailyFundedSpendMicrousd !== undefined;
+    return options.db.transaction(async (outer) => inAdmissionOrder(outer, async (trx, newWorkAllowed) => {
       // Match admission lock order before machine, balance, and grant row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       await readUnknownUsageWaivers(trx.executor, identity.ownerId);
@@ -173,8 +176,14 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("expires_at", ">", checkedAt).executeTakeFirst()
         : undefined;
       if (machine.provisioning_class !== "customer" && !preview) throw new AiFundedPolicyError("access_disabled");
-      // A free runtime reads its funding under the same model and allowance rules its admission uses.
-      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, grantCreditInTransaction);
+      const previewRequestsAvailable = preview === undefined
+        || preview.ai_requests_used < preview.ai_request_limit;
+      const fundable = previewRequestsAvailable && freeFundable;
+      const enabled = global.enabled && runtime.enabled && fundable
+        && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
+      // A free runtime reads its funding under the same model and allowance rules its admission uses. The
+      // allowance is granted only while the runtime is fundable and its owner may start new work.
+      if (free && enabled && newWorkAllowed) await grantFreeMonthlyAllowance(trx, identity, checked, grantCreditInTransaction);
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: currentPeriod,
         month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
@@ -185,10 +194,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("runtime_slot", "=", identity.runtimeSlot).execute();
       const balance = await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
       const monthlyBudgetMicrousd = exactInteger(runtime.monthly_budget_microusd);
-      const previewRequestsAvailable = preview === undefined
-        || preview.ai_requests_used < preview.ai_request_limit;
-      const enabled = global.enabled && runtime.enabled && previewRequestsAvailable
-        && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
           .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
@@ -208,11 +213,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt) : undefined;
       const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({
         contractVersion: 1, asOf: checkedAt,
-        eligibleBalanceMicrousd: previewRequestsAvailable
+        eligibleBalanceMicrousd: fundable
           ? Math.min(sources.ceilingMicrousd,
             Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0)))
           : 0,
-        availableBalanceMicrousd: previewRequestsAvailable
+        availableBalanceMicrousd: fundable
           ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd)
           : 0,
       }) : undefined;
@@ -240,6 +245,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const identity = IdentitySchema.parse(identityInput);
     return readCheckoutFundingSnapshot({
       db: options.db, identity, checked: options.now(),
+      freeFundingConfigured: options.freeFunding?.dailyFundedSpendMicrousd !== undefined,
       policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs, ...projection,
     });
   }
