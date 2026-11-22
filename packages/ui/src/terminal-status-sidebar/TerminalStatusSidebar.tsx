@@ -106,8 +106,7 @@ function RowActions({ entry, pinned, props }: { entry: TerminalSidebarEntry; pin
   const button = "flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current";
   return (
     <span role="group" aria-label={`${entry.name} actions`}
-      className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-      style={{ background: "var(--bg-sunken, var(--background, #fafafa))" }}>
+      className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
       {props.onTogglePin ? (
         <button type="button" aria-label={pinned ? "Unpin terminal" : "Pin terminal"} title={pinned ? "Unpin" : "Pin"}
           onClick={() => props.onTogglePin?.(entry.key)} className={button} style={{ color: SECONDARY }}>
@@ -145,6 +144,7 @@ function Row({ entry, depth, inset, props }: {
   const pinned = props.pinned?.includes(entry.key) ?? false;
   const since = terminalSinceLabel(entry.statusAt, props.now);
   const indent = depth * INDENT_PX + (inset ? INDENT_PX : 0);
+  const actions = Boolean(props.onTogglePin || props.onClose);
   const rowStyle = {
     paddingLeft: 2 + indent,
     background: selected ? SELECTED_BG : undefined,
@@ -164,8 +164,11 @@ function Row({ entry, depth, inset, props }: {
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1">
             <RowTitle entry={entry} />
-            <span className={`${TIME_COLUMN} shrink-0 text-right text-[11px] tabular-nums`} style={{ color: SECONDARY }}>{since ?? ""}</span>
-            <StatusMark status={entry.status} />
+            {/* While the row's actions show, they take the time and mark's place. */}
+            <span className={`${actions ? "group-hover:invisible group-focus-within:invisible " : ""}flex shrink-0 items-center`}>
+              <span className={`${TIME_COLUMN} shrink-0 text-right text-[11px] tabular-nums`} style={{ color: SECONDARY }}>{since ?? ""}</span>
+              <StatusMark status={entry.status} />
+            </span>
           </span>
           <RowDetail entry={entry} showMachine={!inset && !props.oneMachine} />
         </span>
