@@ -64,7 +64,7 @@ export type FreeProvisionOutcome =
 export interface FreeRuntimeProvisionerDeps {
   db: PlatformDB;
   config: FreeTierConfig;
-  metal: Pick<MetalProvisioner, 'provision'>;
+  metal: Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
 }
@@ -174,6 +174,15 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       return Boolean(invite && !invite.consumedAt);
     },
 
+    /**
+     * Fails the owner's free runtime if its first boot never registered within
+     * the registration window (journey read path); see failExpiredProvisioning.
+     */
+    async reconcileStaleRuntime(clerkUserId: string, runtimeSlot: string = FREE_RUNTIME_SLOT): Promise<void> {
+      if (runtimeSlot !== FREE_RUNTIME_SLOT || !deps.metal.failExpiredProvisioning) return;
+      await deps.metal.failExpiredProvisioning(clerkUserId, runtimeSlot);
+    },
+
     async provision(input: { clerkUserId: string; handle: string }): Promise<FreeProvisionOutcome> {
       const admission = await admitOrRefuse(input.clerkUserId);
       if (admission.kind !== 'admitted') return admission;
@@ -194,7 +203,7 @@ export type FreeRuntimeProvisioner = ReturnType<typeof createFreeRuntimeProvisio
 export function createFreeTierRuntime(input: {
   db: PlatformDB;
   config: FreeTierConfig | undefined;
-  metal: Pick<MetalProvisioner, 'provision'> | undefined;
+  metal: (Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>) | undefined;
   env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
 }): { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner } | undefined {

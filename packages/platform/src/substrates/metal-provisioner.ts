@@ -20,6 +20,7 @@ import {
 import { HOSTD_CREATE_TIMEOUT_MS, HostdError, type HostdClient } from './hostd-client.js';
 import type { MetalHost, MetalHostsRepository } from './metal-hosts-repository.js';
 import { enqueueMetalVmDeletion } from './metal-vm-deletions.js';
+import { isMetalRegistrationExpired } from './metal-registration-window.js';
 
 /**
  * Provisions owner runtimes as VMs on Matrix-operated metal hosts (spec 2691,
@@ -450,6 +451,32 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     });
   }
 
+  /**
+   * Fails an expired metal provisioning row (failStale's SQL guards keep a late
+   * /vps/register safe) and, after the commit, destroys its VM inline as a best
+   * effort; the queued teardown stays the durable fallback.
+   */
+  async function failExpired(
+    row: { machineId: string; metalHostId: string | null; generation: number; metalVmId: string | null },
+  ): Promise<'failed' | 'unchanged' | 'error'> {
+    const at = now();
+    let failed: boolean;
+    try {
+      failed = await failStale(row, at);
+    } catch (error: unknown) {
+      log('stale_fail_failed', { machineId: row.machineId, code: errorCode(error) });
+      return 'error';
+    }
+    if (failed && deps.drainMachineDeletions) {
+      try {
+        await deps.drainMachineDeletions(row.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
+      } catch (error: unknown) {
+        log('stale_inline_destroy_failed', { machineId: row.machineId, code: errorCode(error) });
+      }
+    }
+    return failed ? 'failed' : 'unchanged';
+  }
+
   return {
     async provision(input: { clerkUserId: string; handle: string; tier: MetalTier; runtimeSlot?: string }): Promise<MetalProvisionResult> {
       const parsed = ProvisionInputSchema.safeParse(input);
@@ -460,25 +487,8 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       let existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       // A guest that never registered (its first boot failed) would otherwise be
       // returned forever wherever no maintenance worker runs reconcileStale.
-      const startedAt = now();
-      if (existing?.substrate === 'metal' && existing.status === 'provisioning'
-        && existing.registrationTokenExpiresAt !== null
-        && Date.parse(existing.registrationTokenExpiresAt) < startedAt.getTime()) {
-        let failed: boolean;
-        try {
-          failed = await failStale(existing, startedAt);
-        } catch (error: unknown) {
-          log('stale_fail_failed', { machineId: existing.machineId, code: errorCode(error) });
-          return { error: 'unavailable' };
-        }
-        // Best effort after the commit: the queued teardown stays the durable fallback.
-        if (failed && deps.drainMachineDeletions) {
-          try {
-            await deps.drainMachineDeletions(existing.machineId, AbortSignal.timeout(METAL_INLINE_DESTROY_TIMEOUT_MS));
-          } catch (error: unknown) {
-            log('stale_inline_destroy_failed', { machineId: existing.machineId, code: errorCode(error) });
-          }
-        }
+      if (existing && isMetalRegistrationExpired(existing, now())) {
+        if (await failExpired(existing) === 'error') return { error: 'unavailable' };
         existing = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
       }
       if (existing && (existing.substrate !== 'metal' || existing.status !== 'failed')) {
@@ -519,6 +529,18 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         return failCreate(machineId, host, error);
       }
       return recordCreated(machineId, host, vm);
+    },
+
+    /**
+     * Read-path reconciliation for one owner slot: fails the active metal row
+     * if its registration window closed with the guest never registered, so
+     * the journey shows provisioning_failed and its retry instead of waiting
+     * forever where no maintenance worker runs.
+     */
+    async failExpiredProvisioning(clerkUserId: string, runtimeSlot: string): Promise<'failed' | 'unchanged' | 'error'> {
+      const row = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+      if (!row || !isMetalRegistrationExpired(row, now())) return 'unchanged';
+      return failExpired(row);
     },
 
     /**

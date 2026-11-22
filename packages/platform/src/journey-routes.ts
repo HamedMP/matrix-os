@@ -117,6 +117,12 @@ export interface JourneyRoutesOptions {
   resolveReadiness?: (clerkUserId: string) => Promise<JourneyReadinessAnnotation | undefined>;
   /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
   resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
+  /**
+   * Fails a runtime whose first boot never registered within its window
+   * (spec 2691 metal), before the journey is derived, so the owner sees
+   * provisioning_failed and can retry where no maintenance worker runs.
+   */
+  reconcileStaleRuntime?: (clerkUserId: string, runtimeSlot: string) => Promise<unknown>;
 }
 
 function applyNoStore(c: Context): void {
@@ -128,6 +134,16 @@ const LIVE_MACHINE_STATUSES = new Set(['provisioning', 'recovering', 'running'])
 export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+
+  async function reconcileStale(clerkUserId: string, runtimeSlot: string): Promise<void> {
+    if (!options.reconcileStaleRuntime) return;
+    try {
+      await options.reconcileStaleRuntime(clerkUserId, runtimeSlot);
+    } catch (err: unknown) {
+      // The journey still answers from current state; the next read retries.
+      console.error('[journey] stale runtime reconciliation failed:', err instanceof Error ? err.name : typeof err);
+    }
+  }
 
   async function buildJourney(clerkUserId: string, runtimeSlot?: string) {
     const readiness = options.resolveReadiness ? await options.resolveReadiness(clerkUserId) : undefined;
@@ -151,6 +167,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     const parsedQuery = JourneyQuerySchema.safeParse(c.req.query());
     if (!parsedQuery.success) return c.json({ error: 'Invalid request' }, 400);
     try {
+      await reconcileStale(clerkUserId, parsedQuery.data.runtimeSlot ?? 'primary');
       return c.json(await buildJourney(clerkUserId, parsedQuery.data.runtimeSlot), 200);
     } catch (err: unknown) {
       console.error('[journey] state derivation failed:', err instanceof Error ? err.message : String(err));
@@ -183,6 +200,7 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     }
 
     try {
+      await reconcileStale(clerkUserId, runtimeSlot);
       // Converge on an in-flight attempt rather than starting a duplicate (FR-028).
       const existing = await getActiveUserMachineByClerkId(options.db, clerkUserId, runtimeSlot);
       if (existing && LIVE_MACHINE_STATUSES.has(existing.status)) {
