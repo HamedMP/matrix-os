@@ -95,6 +95,9 @@ describe("Terminal window", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
     expect(operator.invoke).toHaveBeenCalledWith("terminal-window:focus-main", {});
     expect(within(screen.getByRole("list", { name: "Machines" })).getByText("This Computer")).toBeTruthy();
+    // Fault detected (Greptile, #3567): Settings only raised the main window, wherever it was.
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(operator.invoke).toHaveBeenCalledWith("terminal-window:focus-main", { to: "settings" });
     expect(operator.invoke).not.toHaveBeenCalledWith("runtime:list-computers", {});
   });
 

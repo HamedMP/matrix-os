@@ -373,6 +373,22 @@ describe("Terminal window shortcuts", () => {
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
   });
 
+  // Fault detected (Greptile, #3567): ArrowDown moved the highlight below the visible list.
+  it("keeps the picker's highlighted match in view", async () => {
+    const scrolled: string[] = [];
+    const scrollIntoView = vi.fn(function (this: HTMLElement) { scrolled.push(this.textContent ?? ""); });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "picker" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to terminal" });
+    fireEvent.keyDown(within(dialog).getByRole("textbox", { name: "Terminal name" }), { key: "ArrowDown" });
+    expect(scrolled.at(-1)).toContain(within(dialog).getAllByRole("button")[1]!.textContent!.slice(0, 4));
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
   it("toggles the numbered rail, remembers it, and asks the terminal on screen to find", async () => {
     const operator = installOperator({ "local-terminal:watch": watching(three) });
     const first = render(<TerminalWindowApp />);

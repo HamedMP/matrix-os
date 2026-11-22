@@ -1,6 +1,6 @@
 // The Terminal window's small dialogs (spec 2706): the Cmd+P picker, F2
 // rename, and the confirmation before Cmd+W ends a running program.
-import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button, Dialog, Input } from "@matrix-os/ui";
 import type { TerminalSidebarEntry } from "@matrix-os/ui/terminal-status-sidebar";
 
@@ -21,6 +21,11 @@ export function TerminalPicker({ open, entries, onPick, onClose }: {
     return entries.filter((entry) => !needle || entry.name.toLowerCase().includes(needle)
       || entry.machine.name.toLowerCase().includes(needle)).slice(0, MAX_PICKER_ROWS);
   }, [entries, query]);
+  // The highlighted match stays in view as the arrow keys move it.
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    list.current?.querySelector<HTMLElement>("[aria-current=true]")?.scrollIntoView?.({ block: "nearest" });
+  }, [active, matches]);
   const close = () => { setQuery(""); setActive(0); onClose(); };
   const pick = (key: string) => { setQuery(""); setActive(0); onPick(key); };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -32,7 +37,7 @@ export function TerminalPicker({ open, entries, onPick, onClose }: {
     <Dialog open={open} onClose={close} aria-label="Go to terminal" style={{ padding: 12, maxWidth: 520 }}>
       <Input aria-label="Terminal name" placeholder="Go to terminal…" value={query} autoFocus
         onChange={(event) => { setQuery(event.target.value); setActive(0); }} onKeyDown={onKeyDown} />
-      <ul aria-label="Terminals" className="mt-2 flex max-h-80 flex-col gap-0.5 overflow-y-auto">
+      <ul ref={list} aria-label="Terminals" className="mt-2 flex max-h-80 flex-col gap-0.5 overflow-y-auto">
         {matches.length === 0 ? <li className="px-2 py-1.5 text-[13px]" style={secondaryText}>No terminal matches.</li> : null}
         {matches.map((entry, index) => (
           <li key={entry.key}>

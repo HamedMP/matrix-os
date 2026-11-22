@@ -180,13 +180,15 @@ function isMatrixOsDeepLink(value: string): boolean {
   return isDesktopDeepLink(value, channelIdentity);
 }
 
-function focusMainWindow(): void {
+function focusMainWindow(to?: "settings"): void {
   // Never fall back to "any window": the Terminal window is not the main one.
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  // The same route as the application menu's Settings… item.
+  if (to === "settings") sendEvent("menu:navigate", { kind: "settings" });
 }
 
 // Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.

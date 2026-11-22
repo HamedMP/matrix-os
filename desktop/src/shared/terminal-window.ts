@@ -41,7 +41,8 @@ export const TERMINAL_WINDOW_EVENTS = {
 
 export const TERMINAL_WINDOW_INVOKE = {
   "terminal-window:open": { request: Empty, response: Ok },
-  "terminal-window:focus-main": { request: Empty, response: Ok },
+  // `to: "settings"` also opens Settings there (the sidebar's Settings button).
+  "terminal-window:focus-main": { request: z.strictObject({ to: z.literal("settings").optional() }), response: Ok },
 } as const;
 
 /** Channels only the Terminal window may call. */

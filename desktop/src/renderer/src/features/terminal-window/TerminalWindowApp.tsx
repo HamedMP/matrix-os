@@ -37,8 +37,8 @@ const secondaryText = { color: "var(--text-secondary, var(--color-muted-foregrou
 const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
 const outlined = { borderColor: "var(--border-default)" };
 
-function focusMainWindow(): void {
-  void invoke("terminal-window:focus-main", {}).catch((error: unknown) => {
+function focusMainWindow(to?: "settings"): void {
+  void invoke("terminal-window:focus-main", to ? { to } : {}).catch((error: unknown) => {
     console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
   });
 }
@@ -72,7 +72,7 @@ function MatrixStatus({ state, onRetry }: { state: TerminalMachinesState; onRetr
       <li className="flex flex-col items-start gap-2 px-3 py-2">
         <p className="text-[13px] font-medium">Sign in to see your Matrix computers</p>
         <p className="text-[12px]" style={secondaryText}>Your cloud terminals appear here once you sign in from the main window.</p>
-        <button type="button" className={buttonClass} style={outlined} onClick={focusMainWindow}>Sign in</button>
+        <button type="button" className={buttonClass} style={outlined} onClick={() => focusMainWindow()}>Sign in</button>
       </li>
     );
   }
@@ -130,7 +130,7 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
       <p className="max-w-sm text-[13px]" style={secondaryText}>
         Pick a terminal on the left, or start one with + next to a machine. Each terminal keeps running on its computer when you close this window.
       </p>
-      {signedIn ? null : <button type="button" className={buttonClass} style={outlined} onClick={focusMainWindow}>Go to main window</button>}
+      {signedIn ? null : <button type="button" className={buttonClass} style={outlined} onClick={() => focusMainWindow()}>Go to main window</button>}
     </main>
   );
 }
@@ -220,7 +220,7 @@ export default function TerminalWindowApp() {
           machineFolded={view.machineFolded}
           filter={prefs.filter}
           onFilter={view.sidebar.setFilter}
-          onSettings={focusMainWindow}
+          onSettings={() => focusMainWindow("settings")}
           onToggleMachine={(id) => view.sidebar.setMachineFolded(id, !view.machineFolded(id))}
           localCreating={view.local.creating}
           onCreateLocal={view.createLocal}
