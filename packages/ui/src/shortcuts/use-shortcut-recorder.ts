@@ -5,6 +5,13 @@ import {
   type ShortcutPlatform,
 } from "@matrix-os/contracts/keyboard-shortcuts";
 
+/**
+ * Recording cancels itself after this long, ahead of the main process's 30 s
+ * guard that re-enables shortcuts, so a stale "Press keys…" chip never lets
+ * the next press run its action instead of being recorded.
+ */
+export const RECORDING_TIMEOUT_MS = 25_000;
+
 export interface ShortcutRecorderOptions<T> {
   platform: ShortcutPlatform;
   /** Called with the first complete binding pressed while recording `target`. */
@@ -89,14 +96,18 @@ export function useShortcutRecorder<T>({
     setHeld(heldModifiers(event, platform));
   });
 
+  const handleTimeout = useEffectEvent(() => finish(true));
+
   const recording = target !== null;
   useEffect(() => {
     if (!recording) return;
+    const timeout = window.setTimeout(() => handleTimeout(), RECORDING_TIMEOUT_MS);
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
     const onKeyUp = (event: KeyboardEvent) => handleKeyUp(event);
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     return () => {
+      window.clearTimeout(timeout);
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };

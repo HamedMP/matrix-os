@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_SHORTCUT_OVERRIDES } from "@matrix-os/contracts/keyboard-shortcuts";
-import { ShortcutSettings } from "@matrix-os/ui/shortcuts";
+import { RECORDING_TIMEOUT_MS, ShortcutSettings } from "@matrix-os/ui/shortcuts";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 function setup() {
@@ -89,6 +90,21 @@ describe("shortcut recorder", () => {
     fireEvent.keyDown(recordingChip()!, { key: "Escape", code: "Escape", shiftKey: true });
     expect(recordingChip()).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
+    expect(onRecordingChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("cancels itself before main's 30 s guard re-enables shortcuts", () => {
+    vi.useFakeTimers();
+    const { startRecording, recordingChip, onChange, onRecordingChange } = setup();
+    startRecording();
+    expect(RECORDING_TIMEOUT_MS).toBe(25_000);
+    act(() => { vi.advanceTimersByTime(RECORDING_TIMEOUT_MS - 1); });
+    expect(recordingChip()).not.toBeNull();
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(recordingChip()).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onRecordingChange.mock.calls).toEqual([[true], [false]]);
+    act(() => { vi.advanceTimersByTime(RECORDING_TIMEOUT_MS); });
     expect(onRecordingChange.mock.calls).toEqual([[true], [false]]);
   });
 
