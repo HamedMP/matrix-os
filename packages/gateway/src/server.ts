@@ -269,7 +269,7 @@ import { createManagedFeatureRestartCoordinator } from "./managed-feature-restar
 import { registerTerminalSockets } from "./server/terminal-sockets.js";
 import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
-import { createHerdrSessionsFromEnv } from "./herdr/register.js";
+import { createHerdrSessionsFromEnv, herdrTerminalLookup } from "./herdr/register.js";
 import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -1705,6 +1705,7 @@ export async function createGateway(config: GatewayConfig) {
     app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission, terminalAgentServices: terminalAgents,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
     canonicalChatExecutionRoots, gatewayCollaboration,
+    ...(herdrSessions ? { herdrTerminals: herdrTerminalLookup(herdrSessions) } : {}),
   });
 
   herdrViewers = registerTerminalSockets({

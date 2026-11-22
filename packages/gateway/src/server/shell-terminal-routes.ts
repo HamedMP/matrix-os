@@ -1,4 +1,5 @@
 /** Register shell, system activity and terminal workspace routes after auth. */
+import type { TerminalRef } from "@matrix-os/contracts";
 import type { CanonicalTerminalLaunch } from "../terminal/canonical-launch.js";
 import type { Context, Hono } from "hono";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
@@ -35,6 +36,8 @@ export interface ShellTerminalRouteOptions {
   canonicalChatExecutionRoots: ChatExecutionRootResolver | null;
   gatewayCollaboration: GatewayCollaborationRuntime | null;
   terminalAgentServices: TerminalAgentServices;
+  /** The owner's Herdr terminals, so pasted files reach Herdr panes too (spec 2701). */
+  herdrTerminals?: { listed(ref: TerminalRef): Promise<boolean> };
 }
 
 export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) {
@@ -175,6 +178,7 @@ export function registerShellTerminalRoutes(options: ShellTerminalRouteOptions) 
     getPreviewTerminalOwner: readPreviewTerminalOwner,
     terminalOwnerIds: terminalRuntimeOwnerIds,
     chatTerminals: shellRouteDeps.chatTerminals,
+    ...(options.herdrTerminals ? { herdrTerminals: options.herdrTerminals } : {}),
     ...(gatewayCollaboration ? {
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
     } : {}),
