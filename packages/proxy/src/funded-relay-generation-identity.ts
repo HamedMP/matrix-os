@@ -10,6 +10,8 @@ type GenerationIdentity = {
   identity: VerifiedIdentity;
   /** "prepaid" for a free runtime's prepaid usage hold (ENG-520 P7); absent means postpaid. */
   customerBilling?: CustomerBilling;
+  upstreamSelection?: FundedAiPolicyCheckResponse["upstreamSelection"];
+  upstreamSelectionVersion?: FundedAiPolicyCheckResponse["upstreamSelectionVersion"];
   discardCachedIdentity?: () => void;
 };
 
@@ -33,9 +35,8 @@ export function createGenerationIdentityReader(options: {
   secret: string;
   now: () => Date;
 }) {
-  const cache = new Map<string, {
-    identity: VerifiedIdentity; readAt: number; validUntil: number;
-  }>();
+  const cache = new Map<string, { identity: VerifiedIdentity; readAt: number; validUntil: number;
+    upstreamSelectionVersion?: GenerationIdentity["upstreamSelectionVersion"] }>();
   return async function readIdentity(
     input: Parameters<FundedPlatformClient["check"]>[0],
     signal: AbortSignal,
@@ -45,7 +46,8 @@ export function createGenerationIdentityReader(options: {
     // the current entitlement even when the credential and model are unchanged.
     if (!allowReuse || input.modelId === FREE_MANAGED_MODEL_ID) {
       const checked = await options.platform.check(input, signal);
-      return { identity: checked.identity, ...billingOf(checked.customerBilling) };
+      return { identity: checked.identity, ...billingOf(checked.customerBilling),
+        upstreamSelection: checked.upstreamSelection, upstreamSelectionVersion: checked.upstreamSelectionVersion };
     }
     signal.throwIfAborted();
     const key = createHmac("sha256", options.secret)
@@ -53,20 +55,20 @@ export function createGenerationIdentityReader(options: {
     const at = options.now().getTime();
     const previous = cache.get(key);
     if (previous && at >= previous.readAt && at < previous.validUntil) {
-      return { identity: previous.identity, discardCachedIdentity: () => {
+      return { identity: previous.identity, upstreamSelectionVersion: previous.upstreamSelectionVersion, discardCachedIdentity: () => {
         if (cache.get(key) === previous) cache.delete(key);
       } };
     }
     cache.delete(key);
-    const { identity, customerBilling } = await options.platform.check(input, signal);
+    const { identity, customerBilling, upstreamSelectionVersion } = await options.platform.check(input, signal);
     const validUntil = Math.min(at + IDENTITY_TTL_MS, Date.parse(identity.expiresAt));
     if (customerBilling !== "prepaid" && validUntil > options.now().getTime()) {
       if (cache.size >= MAX_CACHED_IDENTITIES) {
         const oldest = cache.keys().next();
         if (!oldest.done) cache.delete(oldest.value);
       }
-      cache.set(key, { identity, readAt: at, validUntil });
+      cache.set(key, { identity, upstreamSelectionVersion, readAt: at, validUntil });
     }
-    return { identity, ...billingOf(customerBilling) };
+    return { identity, upstreamSelectionVersion, ...billingOf(customerBilling) };
   };
 }

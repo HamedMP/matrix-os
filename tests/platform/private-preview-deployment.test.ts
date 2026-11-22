@@ -35,6 +35,8 @@ function deploy(job: typeof production, value: string) {
     ...Object.fromEntries(Object.keys(job.env).map((key) => [key, "fixture"])),
     MATRIX_INTERNAL_CLERK_ORG_ID: value, DEPLOY_ENVIRONMENT: "staging",
     MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
+    AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED: "false", AI_FUNDED_BEDROCK_MODEL_IDS: "",
+    AI_FUNDED_UPSTREAM_PREFERENCE_VALID_THROUGH: "",
     MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_HOST_CONFIG_ENABLED: "false",
     CUSTOM_MCP_ENABLED: "false", PLATFORM_SPEECH_ENABLED: "false", WHATSAPP_ENABLED: "false",
     ACCOUNT_DELETION_CONFIGURED: "false", ACCOUNT_DELETION_ENABLED: "false",
@@ -105,6 +107,7 @@ describe("Private Preview organization deployment contract", () => {
       "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID", "MATRIX_COLLABORATION_ALLOWED_ORIGINS"];
     const base = [
       ...provisioningNames.map((name) => ({ name, value: values[name] })),
+      { name: "AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED", value: "false" },
       { name: "MATRIX_COLLABORATION_TICKET_KEYS", valueFrom: { secretKeyRef: { name: "collaboration-ticket-keys", key: "latest" } } },
       ...["STARTER", "BUILDER", "MAX"].map((plan) => ({ name: `STRIPE_PRICE_MATRIX_${plan}_MONTHLY`,
         valueFrom: { secretKeyRef: { name: `stripe-price-matrix-${plan.toLowerCase()}-monthly-2026-08-31`, key: "1" } } })),
@@ -114,6 +117,7 @@ describe("Private Preview organization deployment contract", () => {
       const result = spawnSync("bash", ["-euc", `gcloud() { printf '%s' "$REVISION_JSON"; }\n${run(production, "Verify deployed provisioning contract")}`], {
         encoding: "utf8", timeout: 5_000, env: { PATH: process.env.PATH, ...values,
           CANDIDATE_REVISION: "synthetic-revision", MATRIX_INTERNAL_CLERK_ORG_ID: org,
+          AI_FUNDED_UPSTREAM_PREFERENCE_ENABLED: "false",
           GITHUB_SHA: sourceSha,
           REVISION_JSON: JSON.stringify({
             metadata: { labels: { "matrix-source-sha": sourceSha } },

@@ -11,6 +11,7 @@ import {
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
   type FundedAiRequestClass,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { sql } from "kysely";
@@ -63,6 +64,7 @@ export interface AiFundedPolicyRepositoryOptions {
   reservationIdFactory?: () => string;
   /** Free metal runtimes' funded admission settings (ENG-520 P7); unset refuses free funded work. */
   freeFunding?: FreeFundingConfig;
+  verifyUpstream?: (input: { ownerId: string; modelId: string; selection: FundedAiUpstreamSelection }) => Promise<boolean>;
 }
 
 export type SetRuntimePolicyInput = z.infer<typeof RuntimePolicyUpdateSchema>;
@@ -421,6 +423,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     inFlightTtlMs,
     reservationIdFactory: options.reservationIdFactory,
     freeFunding: options.freeFunding,
+    verifyUpstream: options.verifyUpstream,
   });
   return {
     getGlobalPolicy,
