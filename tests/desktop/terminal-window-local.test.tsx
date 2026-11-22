@@ -171,6 +171,15 @@ describe("This Computer terminals", () => {
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 
+  // Fault detected (Greptile, #3567): a running terminal on an added machine read as ended.
+  it("keeps a running terminal on an added machine live", async () => {
+    installOperator({ "local-terminal:watch": watching([fact("vps/t4", "deploy")]) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/deploy/));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:vps/t4");
+    expect(screen.queryByText("deploy ended")).toBeNull();
+  });
+
   it("reattaches the open local terminal after a sign-in change resets attachments", async () => {
     let status: unknown = { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
     const mounts: string[] = [];

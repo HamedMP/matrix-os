@@ -158,6 +158,20 @@ describe("Terminal window computers", () => {
     expect(within(sidebar()).getByRole("button", { name: /build/ })).toBeTruthy();
   });
 
+  // Fault detected (Greptile, #3567): a refused credential while starting a terminal failed silently.
+  it("asks to reconnect when a computer refuses the credential for a new terminal, and retries", async () => {
+    let refuse = true;
+    fetchMock.mockImplementation(async () => (refuse ? json({ error: "jwt expired at db01.internal" }, 401) : json(workspace([]))));
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on Main Computer" }));
+    const reconnect = await screen.findByRole("button", { name: "Reconnect" });
+    expect(screen.getByText("This computer needs you to reconnect.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("db01");
+    refuse = false;
+    fireEvent.click(reconnect);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Reconnect" })).toBeNull());
+  });
+
   it("does not take the pane from a terminal the user opened while another was being created", async () => {
     let finishCreate!: (response: Response) => void;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {

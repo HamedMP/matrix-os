@@ -84,6 +84,15 @@ function MatrixStatus({ state, onRetry }: { state: TerminalMachinesState; onRetr
   );
 }
 
+function ComputerFailure({ reason, onRetry }: { reason: "reconnect" | "unavailable"; onRetry(): void }) {
+  return (
+    <div role="alert" className="flex flex-col items-start gap-1.5 px-3 pb-1.5 pl-9">
+      <p className="text-[12px]">{reason === "reconnect" ? "This computer needs you to reconnect." : "Couldn't reach this computer."}</p>
+      <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>{reason === "reconnect" ? "Reconnect" : "Retry"}</button>
+    </div>
+  );
+}
+
 function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
   const local: SidebarMachine = {
     id: view.here.id, name: view.here.name, kind: "local", detail: "Terminals on this device",
@@ -101,8 +110,12 @@ function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
     available: computer.availability === "available",
     creating: view.cloud.creating === computer.runtimeSlot,
     onCreate: () => view.createCloud(computer.runtimeSlot),
-    ...(view.cloud.createFailed === computer.runtimeSlot
-      ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">Couldn't start a terminal. Try again.</p> } : {}),
+    ...(view.cloud.terminals[computer.runtimeSlot]?.status === "failed"
+      // A refused credential or an unreachable computer, from starting a terminal there.
+      ? { status: <ComputerFailure reason={(view.cloud.terminals[computer.runtimeSlot] as { reason: "reconnect" | "unavailable" }).reason}
+          onRetry={() => { void view.cloud.load(computer.runtimeSlot); }} /> }
+      : view.cloud.createFailed === computer.runtimeSlot
+        ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">Couldn't start a terminal. Try again.</p> } : {}),
   }));
   return [local, ...computers];
 }

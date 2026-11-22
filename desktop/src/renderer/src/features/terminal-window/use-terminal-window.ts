@@ -58,7 +58,9 @@ export function useTerminalWindow() {
   // Counts the person's choices. A terminal that finishes starting is opened only if nothing was chosen since.
   const localChoice = useRef(0);
   const listedLocal = localTerminals.find((terminal) => terminal.id === localOpen?.id);
-  const endedLocal = localOpen && !listedLocal && local.state.status === "ready" ? localOpen : null;
+  // Still running here or on an added machine (`vps/t5`): only a terminal no longer live has ended.
+  const liveLocal = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === localOpen?.id && !fact.finished);
+  const endedLocal = localOpen && !liveLocal && local.state.status === "ready" ? localOpen : null;
   const localTerminal = listedLocal ?? localOpen ?? undefined;
   const { clearActive, open, create } = cloud;
   const cloudActive = useRef(cloud.active);
