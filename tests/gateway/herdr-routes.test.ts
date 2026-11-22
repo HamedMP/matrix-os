@@ -415,3 +415,43 @@ describe("WS /ws/terminal/herdr", () => {
     await client.until(() => core.viewers.length === 0);
   });
 });
+
+describe("WS /ws/terminal/herdr send failures", () => {
+  // Fault detected: a socket whose send fails stayed registered, so later
+  // output and size broadcasts kept retrying it and it held its attachment.
+  it("drops a viewer whose socket send fails and releases its attachment", async () => {
+    const core = createFakeHerdrCore();
+    core.add("t1", { screen: "hello" });
+    const adapter = createHerdrAdapter({ open: async () => core.connect(), captureQuietMs: 5, captureMaxMs: 100 });
+    cleanup.push(() => adapter.close());
+    const ownership = createTerminalLiveOwnership();
+    cleanup.push(() => ownership.close());
+    let events: ((c: Context) => { onOpen(event: unknown, ws: unknown): void }) | null = null;
+    const upgradeWebSocket = ((create: typeof events) => { events = create; return () => undefined; }) as never;
+    const viewers = registerHerdrTerminalWebSocket({
+      app: new Hono(), upgradeWebSocket, adapter, getPrincipal: () => ({ userId: OWNER, source: "test" as never }),
+      terminalOwnerIds: [OWNER], terminalLiveOwnership: ownership,
+    });
+    cleanup.push(() => viewers.drain());
+    const query: Record<string, string> = { id: "t1" };
+    const context = { req: { query: (name: string) => query[name] } } as unknown as Context;
+    let sends = 0;
+    const closes: number[] = [];
+    const ws = {
+      raw: {},
+      send: () => { sends += 1; if (sends > 1) throw new Error("socket gone"); },
+      close: (code: number) => { closes.push(code); },
+    };
+    events!(context).onOpen({}, ws);
+    const start = Date.now();
+    while (closes.length === 0 && Date.now() - start < 2_000) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(closes.length).toBeGreaterThan(0);
+    expect(viewers.size()).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(core.viewers).toHaveLength(0);
+    const sentBefore = sends;
+    core.output("t1", "more");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sends).toBe(sentBefore);
+  });
+});
