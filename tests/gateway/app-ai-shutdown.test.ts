@@ -83,11 +83,11 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
   expect(shutdown.calls.indexOf("chats.close")).toBeLessThan(shutdown.calls.indexOf("native Claude.close"));
   expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
-  // The hourly push token sweep stops before the owner database closes.
   expect(shutdown.calls).toContain("private network.close");
   // Herdr viewers are drained before the herdr-core connection closes.
   expect(shutdown.calls.indexOf("herdr viewers.drain")).toBeGreaterThan(-1);
   expect(shutdown.calls.indexOf("herdr viewers.drain")).toBeLessThan(shutdown.calls.indexOf("herdr sessions.close"));
+  // The hourly push token sweep stops before the owner database closes.
   expect(shutdown.calls.indexOf("push.dispose")).toBeGreaterThan(-1);
   expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");

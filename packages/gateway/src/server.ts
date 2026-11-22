@@ -1864,10 +1864,10 @@ export async function createGateway(config: GatewayConfig) {
     hookRunner,
     async close() {
       nativeClaudeRecovery = undefined;
-      privateNetwork.close();
       nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
+      privateNetwork.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
