@@ -1053,6 +1053,10 @@ describe("Funded AI pricing registry admission", () => {
           mode: "exact",
           actualCostMicrousd: phase === "before dispatch" ? 0 : 2_100,
           ...(phase === "before dispatch" ? { customerCharge: "waived" } : {}),
+          upstreamProvenance: {
+            upstream: "cloudflare_anthropic", routeId: "cloudflare-anthropic",
+            resolvedModel: NATIVE_MODEL, pricingVersion: "anthropic-2026-08-31-standard",
+          },
         });
         events.push("finalize");
         return json(finalizationResponse({

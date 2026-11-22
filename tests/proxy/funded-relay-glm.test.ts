@@ -41,7 +41,7 @@ function tracker() {
 }
 function platform() {
   return {
-    check: vi.fn(async () => ({ identity: IDENTITY })),
+    check: vi.fn(async () => ({ identity: IDENTITY, upstreamSelectionVersion: 1 as const })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd },

@@ -674,6 +674,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       redirect: "error",
       signal: generationSignal,
     };
+    const cloudflareProvenance: FundedUpstreamProvenance | undefined = !isBedrock && supportsUpstreamSelection
+      ? { upstream: isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic",
+        routeId: isOpenAi ? "cloudflare-workers-ai" : "cloudflare-anthropic",
+        resolvedModel: model.nativeModelId, pricingVersion: estimate.pricingVersion }
+      : undefined;
     let dispatched = false;
     try {
       const started = await platform.start(
@@ -694,7 +699,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           clearTimeout(firstResponseTimer);
           // Platform started this reservation. Relay can attest zero provider cost
           // because the generation request has not been dispatched.
-          await enqueueFinalization({ mode: "exact", actualCostMicrousd: 0 }, "failed");
+          await enqueueFinalization({ mode: "exact", actualCostMicrousd: 0,
+            ...(cloudflareProvenance ? { upstreamProvenance: cloudflareProvenance } : {}) }, "failed");
           resourceLease.release();
           state.resourceLease = null;
           return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
@@ -713,12 +719,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         upstreamProvenance = dispatchedResult.provenance;
       } else {
         const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
-        upstreamProvenance = {
-          upstream: isOpenAi ? "cloudflare_workers_ai" : "cloudflare_anthropic",
-          routeId: isOpenAi ? "cloudflare-workers-ai" : "cloudflare-anthropic",
-          resolvedModel: model.nativeModelId,
-          pricingVersion: estimate.pricingVersion,
-        };
+        upstreamProvenance = cloudflareProvenance;
         upstream = isOpenAi && fetched.ok
           ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       }
