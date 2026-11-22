@@ -582,6 +582,56 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_SYSTEMD_UNIT_DIR="${units}" OPT_BROWSER=off 
     ]);
   });
 
+  describe("browser account session", () => {
+    // Found in review: with --user alice only alice's user manager runs, but the
+    // browser desktop runs as matrix and its Files/Terminal buttons need matrix's
+    // own user bus (/run/user/<uid>/bus) and its /home/matrix/home working dir.
+    function prepare(runUser: string, existingHome = false) {
+      const root = join(dir, "root");
+      spawnSync("mkdir", ["-p", join(root, "home/matrix")]);
+      if (existingHome) spawnSync("mkdir", ["-p", join(root, "home/matrix/home/kept")]);
+      const result = run(
+        `install() { printf 'install %s\\n' "$*" >>"${join(dir, "calls")}"; }
+loginctl() { printf 'loginctl %s\\n' "$*" >>"${join(dir, "calls")}"; }
+systemctl() { printf 'systemctl %s\\n' "$*" >>"${join(dir, "calls")}"; }
+id() { if [ "$*" = "-u matrix" ]; then echo 998; else command id "$@"; fi; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=${runUser} MATRIX_BROWSER_ACCOUNT_HOME="${root}/home/matrix/home" prepare_browser_account`,
+      );
+      const calls = existsSync(join(dir, "calls")) ? readFileSync(join(dir, "calls"), "utf8").trim().split("\n") : [];
+      return { result, root, calls };
+    }
+
+    it("gives the matrix browser account its own lingering user manager and private home", () => {
+      const { result, root, calls } = prepare("alice");
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual([
+        `install -d -o matrix -g matrix -m 0700 ${root}/home/matrix/home`,
+        "loginctl enable-linger matrix",
+        "systemctl start user@998.service",
+      ]);
+      // The owner's private home is never shared with the browser account.
+      expect(calls.join("\n")).not.toMatch(/alice/);
+    });
+
+    it("keeps an existing browser account home as it is", () => {
+      const { result, calls } = prepare("alice", true);
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(["loginctl enable-linger matrix", "systemctl start user@998.service"]);
+    });
+
+    it("changes nothing when Matrix itself runs as matrix", () => {
+      const { result, calls } = prepare("matrix");
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual([]);
+    });
+
+    it("prepares the account before installing the browser desktop", () => {
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("prepare_browser_account")).toBeGreaterThan(-1);
+      expect(body.indexOf("prepare_browser_account")).toBeLessThan(body.indexOf("/opt/matrix/bin/matrix-install-browser"));
+    });
+  });
+
   it("leaves systemd alone on --no-browser when browser use was never installed", () => {
     const result = run(
       `systemctl() { printf '%s\\n' "$*" >>"${join(dir, "calls")}"; }

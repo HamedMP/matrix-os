@@ -1035,6 +1035,19 @@ stop_browser_use() {
   return 0
 }
 
+# The browser desktop always runs as the matrix account. When Matrix itself runs as
+# a separate owner, only the owner's user manager lingers, so the desktop's
+# Files/Terminal buttons had no /run/user/<matrix uid>/bus to launch into. Give the
+# matrix account its own lingering manager and a private working home; it never
+# gains access to the owner's home.
+prepare_browser_account() {
+  local home="${MATRIX_BROWSER_ACCOUNT_HOME:-/home/matrix/home}"
+  [ "$MATRIX_RUN_USER" != "matrix" ] || return 0
+  [ -d "$home" ] || install -d -o matrix -g matrix -m 0700 "$home"
+  run_required "keeping the browser account's session" loginctl enable-linger matrix
+  run_required "starting the browser account's session" systemctl start "user@$(id -u matrix).service"
+}
+
 configure_browser() {
   if [ "$OPT_BROWSER" != "on" ]; then
     rm -f /etc/sudoers.d/matrix-browser-runtime
@@ -1059,6 +1072,7 @@ configure_browser() {
   fi
   run_required "reloading systemd" systemctl daemon-reload
   systemctl enable matrix-browser-runtime >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+  prepare_browser_account
   log "Installing Chrome and the browser desktop (this can take several minutes)"
   if timeout 1800 /opt/matrix/bin/matrix-install-browser >>"$MATRIX_INSTALL_LOG" 2>&1 \
     && timeout 60 /opt/matrix/bin/matrix-install-browser --health-check >>"$MATRIX_INSTALL_LOG" 2>&1; then
