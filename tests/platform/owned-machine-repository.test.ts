@@ -193,7 +193,8 @@ describe('owned machine repository', () => {
     const late = new Date(NOW.getTime() + 16 * 60_000);
     const poll = await pollOwnedEnrollment(db, codes[0]!.deviceCodeHash, late, 0);
     expect(poll).toEqual({ status: 'expired' });
-    expect(await lapseUndeliveredOwnedEnrollments(db, late, 10)).toBe(2);
+    expect(await lapseUndeliveredOwnedEnrollments(db, late, 10)).toBe(3);
+    expect(await lapseUndeliveredOwnedEnrollments(db, late, 10)).toBe(0);
     expect(await listOwnedMachineLinks(db, 'user_1')).toEqual([]);
     const fresh = await createOwnedEnrollment(db, {
       enrollmentId: randomUUID(), deviceCodeHash: 'late', userCode: code(), report: REPORT, sourceKey: 'late',

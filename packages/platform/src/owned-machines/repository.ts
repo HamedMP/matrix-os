@@ -182,8 +182,8 @@ export async function pollOwnedEnrollment(
     if (new Date(row.expires_at).getTime() <= now.getTime()) {
       await trx.executor.updateTable('owned_machine_enrollments').set({ status: 'expired' })
         .where('enrollment_id', '=', row.enrollment_id).execute();
-      // An approval nobody collected must not hold one of the owner's three slots.
-      if (row.status === 'approved' && row.machine_id) await lapseUndeliveredMachine(trx, row.machine_id, now);
+      // An uncollected approval's machine is released by the sweep, which takes
+      // the link lock before the enrollment lock, the same order as removal.
       return { status: 'expired' };
     }
     const tooFast = row.last_polled_at && now.getTime() - new Date(row.last_polled_at).getTime() < minIntervalMs;
@@ -208,34 +208,47 @@ export async function markOwnedEnrollmentDelivered(db: PlatformDB, enrollmentId:
   return Boolean(result);
 }
 
-async function lapseUndeliveredMachine(trx: PlatformDB, machineId: string, now: Date): Promise<void> {
-  const link = await trx.executor.updateTable('owned_machine_links')
-    .set({
-      revoked_at: now,
-      tunnel_state: sql<OwnedTunnelState>`CASE WHEN tunnel_id IS NULL THEN 'deleted' ELSE 'deleting' END`,
-      tunnel_next_attempt_at: now, tunnel_attempts: 0, tunnel_claim_id: null,
-    })
-    .where('machine_id', '=', machineId).where('revoked_at', 'is', null)
-    .returning('machine_id').executeTakeFirst();
-  if (!link) return;
-  await trx.executor.updateTable('user_machines').set({
-    status: 'deleted', deleted_at: now.toISOString(), runtime_token_epoch: sql`runtime_token_epoch + 1`,
-  }).where('machine_id', '=', machineId).where('substrate', '=', 'owned').where('deleted_at', 'is', null).execute();
-}
-
-/** Sweeps approvals whose machine never collected its credentials. */
+/**
+ * Sweeps approvals whose machine never collected its credentials and releases
+ * the machine so it does not hold one of the owner's three slots. Locks the
+ * link before the enrollment, the same order as `revokeOwnedMachine`.
+ */
 export async function lapseUndeliveredOwnedEnrollments(db: PlatformDB, now: Date, limit: number): Promise<number> {
-  return db.transaction(async (trx) => {
-    const rows = await trx.executor.selectFrom('owned_machine_enrollments').select(['enrollment_id', 'machine_id'])
-      .where('status', '=', 'approved').where('expires_at', '<=', now)
-      .orderBy('expires_at').limit(limit).forUpdate().skipLocked().execute();
-    for (const row of rows) {
+  await db.ready;
+  const candidates = await db.executor.selectFrom('owned_machine_enrollments')
+    .select(['enrollment_id', 'machine_id'])
+    .where('status', 'in', ['approved', 'expired']).where('machine_id', 'is not', null)
+    .where('delivered_at', 'is', null).where('expires_at', '<=', now)
+    .where(({ exists, selectFrom }) => exists(selectFrom('owned_machine_links').select('owned_machine_links.machine_id')
+      .whereRef('owned_machine_links.machine_id', '=', 'owned_machine_enrollments.machine_id')
+      .where('owned_machine_links.revoked_at', 'is', null)))
+    .orderBy('expires_at').limit(limit).execute();
+  let lapsed = 0;
+  for (const candidate of candidates) {
+    const machineId = candidate.machine_id!;
+    const released = await db.transaction(async (trx) => {
+      const link = await trx.executor.selectFrom('owned_machine_links').select(['machine_id', 'tunnel_id', 'revoked_at'])
+        .where('machine_id', '=', machineId).forUpdate().executeTakeFirst();
+      const enrollment = await trx.executor.selectFrom('owned_machine_enrollments').select(['status', 'delivered_at', 'expires_at'])
+        .where('enrollment_id', '=', candidate.enrollment_id).forUpdate().executeTakeFirst();
+      if (!link || link.revoked_at || !enrollment || enrollment.delivered_at
+        || new Date(enrollment.expires_at).getTime() > now.getTime()) return false;
+      await trx.executor.updateTable('owned_machine_links').set({
+        revoked_at: now,
+        tunnel_state: link.tunnel_id ? 'deleting' : 'deleted',
+        tunnel_next_attempt_at: now, tunnel_attempts: 0, tunnel_claim_id: null,
+      }).where('machine_id', '=', machineId).execute();
+      await trx.executor.updateTable('user_machines').set({
+        status: 'deleted', deleted_at: now.toISOString(), private_address: null,
+        runtime_token_epoch: sql`runtime_token_epoch + 1`,
+      }).where('machine_id', '=', machineId).where('substrate', '=', 'owned').where('deleted_at', 'is', null).execute();
       await trx.executor.updateTable('owned_machine_enrollments').set({ status: 'expired' })
-        .where('enrollment_id', '=', row.enrollment_id).execute();
-      if (row.machine_id) await lapseUndeliveredMachine(trx, row.machine_id, now);
-    }
-    return rows.length;
-  });
+        .where('enrollment_id', '=', candidate.enrollment_id).execute();
+      return true;
+    });
+    if (released) lapsed += 1;
+  }
+  return lapsed;
 }
 
 export interface OwnedMachineLink {
