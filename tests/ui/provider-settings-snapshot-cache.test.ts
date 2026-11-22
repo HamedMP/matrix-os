@@ -122,3 +122,17 @@ it("never lets an older shared read replace a newer saved snapshot", async () =>
   expect(reader.getState().snapshot?.revision).toBe(base.revision + 6);
   reader.dispose();
 });
+
+it("starts a fresh read after every caller of a hung shared read has left", async () => {
+  const cache = createProviderSettingsSnapshotCache();
+  const transport = { getSnapshot: vi.fn(() => new Promise<ProviderSettingsSnapshot>(() => undefined)), mutate: vi.fn() };
+  const first = new ProviderSettingsController({ identityKey: "owner/main", transport, snapshotCache: cache });
+  void first.refresh({ refresh: false });
+  first.dispose();
+  transport.getSnapshot.mockImplementation(async () => snapshot());
+  const second = new ProviderSettingsController({ identityKey: "owner/main", transport, snapshotCache: cache });
+  await second.refresh({ refresh: false });
+  expect(transport.getSnapshot).toHaveBeenCalledTimes(2);
+  expect(second.getState().snapshot).not.toBeNull();
+  second.dispose();
+});

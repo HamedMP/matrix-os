@@ -85,7 +85,7 @@ export function createProviderSettingsSnapshotCache(): ProviderSettingsSnapshotC
   const reads = new Map<string, { promise: Promise<unknown>; controller: AbortController; waiting: number }>();
   return {
     get: identityKey => snapshots.get(identityKey),
-    clear: () => snapshots.clear(),
+    clear: () => { snapshots.clear(); for (const entry of reads.values()) entry.controller.abort(); reads.clear(); },
     set(identityKey, snapshot) {
       // A read that started before a newer save (for example another window's
       // mutation) must never move the shown state backward.
@@ -118,7 +118,11 @@ export function createProviderSettingsSnapshotCache(): ProviderSettingsSnapshotC
           if (settled) return;
           settled = true;
           entry.waiting -= 1;
-          if (entry.waiting === 0) entry.controller.abort();
+          if (entry.waiting === 0) {
+            entry.controller.abort();
+            // A transport that ignores the abort must not leave a dead read for later callers to join.
+            if (reads.get(identityKey) === entry) reads.delete(identityKey);
+          }
           reject(new DOMException("Aborted", "AbortError"));
         };
         if (signal.aborted) { leave(); return; }
