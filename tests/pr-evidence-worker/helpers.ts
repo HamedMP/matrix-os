@@ -26,14 +26,15 @@ export class FakeBucket {
     const stored = this.objects.get(key);
     if (!stored) return null;
     let bytes = stored.bytes;
-    let range: { offset: number; length: number } | undefined;
+    let range: { offset: number; length?: number } | undefined;
     const header = options?.range?.get("range");
     if (header) {
-      const match = /^bytes=(\d+)-(\d+)$/.exec(header)!;
+      // Mirrors R2: open-ended ranges come back as { offset } without a length.
+      const match = /^bytes=(\d+)-(\d*)$/.exec(header);
+      if (!match) throw new RangeError("unsupported range");
       const offset = Number(match[1]);
-      const length = Number(match[2]) - offset + 1;
-      range = { offset, length };
-      bytes = bytes.slice(offset, offset + length);
+      range = match[2] ? { offset, length: Number(match[2]) - offset + 1 } : { offset };
+      bytes = bytes.slice(offset, range.length === undefined ? undefined : offset + range.length);
     }
     return {
       key,

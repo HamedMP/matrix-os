@@ -70,7 +70,10 @@ returned. No CORS headers: the API is for the CLI, not browsers.
 
 `Content-Type` from the key extension, `X-Content-Type-Options: nosniff`,
 `Content-Disposition: inline`, `Content-Security-Policy: default-src 'none';
-sandbox`, `Cache-Control: public, max-age=31536000, immutable`. No listing.
+sandbox` for images and `default-src 'none'; media-src 'self'; sandbox` for
+videos (opening a video URL builds a media document that must load the same
+URL; nothing else is allowed), `Cache-Control: public, max-age=31536000,
+immutable`. No listing.
 
 ## Integration wiring
 

@@ -32,7 +32,7 @@ scripts/pr-evidence upload 1234 web-desktop.png electron-desktop.png journey.mp4
 | --- | --- | --- |
 | `POST /uploads` | `Authorization: Bearer <GitHub token>` | Body `{ pr, commit, files: [{ name, contentType, size }] }` (16 KB cap, 1-10 files). Checks the token with GitHub (`/user`, collaborator permission must be write/maintain/admin, PR must exist). Returns per file `{ key, url, uploadUrl, ticket, expiresAt }`. |
 | `PUT /uploads/<key>` | `Authorization: Bearer <ticket>` | Streams the body to R2. The ticket is an HMAC-signed, 5-minute grant bound to the exact key, content type, and byte length. No overwrites. |
-| `GET`/`HEAD /<key>` | none | Serves the object with immutable caching, `nosniff`, `Content-Disposition: inline`, `CSP: default-src 'none'; sandbox`. Content type comes from the key's extension, never from stored metadata. Supports `Range`. Unknown keys 404; nothing is listable. |
+| `GET`/`HEAD /<key>` | none | Serves the object with immutable caching, `nosniff`, `Content-Disposition: inline`, CSP `default-src 'none'; sandbox` for images and `default-src 'none'; media-src 'self'; sandbox` for videos (the browser's media document must load the file itself to play it). Content type comes from the key's extension, never from stored metadata. Supports `Range`. Unknown keys 404; nothing is listable. |
 
 Keys are `pr-<n>/<commit7>/<26-char base32 of 128 random bits>.<ext>`. Reads are
 public to anyone holding the URL, which is unguessable.

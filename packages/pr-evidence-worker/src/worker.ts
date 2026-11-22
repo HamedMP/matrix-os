@@ -14,6 +14,12 @@ export const DEFAULT_PUBLIC_ORIGIN = "https://evidence.matrix-os.com";
 const UPLOADS_PATH = "/uploads";
 const UPLOAD_PATH_PREFIX = "/uploads/";
 export const SERVED_CSP = "default-src 'none'; sandbox";
+/**
+ * Opening a video URL makes the browser build a media document whose <video>
+ * loads the same URL; `default-src 'none'` alone blocks that load. Allow media
+ * from this origin only; scripts, styles, frames and everything else stay blocked.
+ */
+export const SERVED_MEDIA_CSP = "default-src 'none'; media-src 'self'; sandbox";
 
 export interface EvidenceEnv {
   EVIDENCE?: R2Bucket;
@@ -213,7 +219,7 @@ export function servedHeaders(contentType: MediaType): Headers {
     "Content-Type": contentType,
     "Cache-Control": "public, max-age=31536000, immutable",
     "Content-Disposition": "inline",
-    "Content-Security-Policy": SERVED_CSP,
+    "Content-Security-Policy": contentType.startsWith("video/") ? SERVED_MEDIA_CSP : SERVED_CSP,
     "X-Content-Type-Options": "nosniff",
     "Cross-Origin-Resource-Policy": "cross-origin",
     "Referrer-Policy": "no-referrer",

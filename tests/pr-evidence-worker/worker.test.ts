@@ -330,7 +330,7 @@ describe("GET /<key>", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("content-disposition")).toBe("inline");
     expect(response.headers.get("content-security-policy")).toBe(SERVED_CSP);
-    expect(SERVED_CSP).toContain("default-src 'none'");
+    expect(SERVED_CSP).toBe("default-src 'none'; sandbox");
   });
 
   it("returns 503, not 404, for a valid key when the bucket binding is missing", async () => {
@@ -338,6 +338,23 @@ describe("GET /<key>", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await worker.handle(new Request(`https://evidence.matrix-os.com/${key}`), { ...worker.env, EVIDENCE: undefined });
     expect(response.status).toBe(503);
+  });
+
+  it.each(["video/mp4", "video/webm", "video/quicktime"] as const)(
+    "lets the browser media document load %s from its own origin while blocking everything else",
+    async (type) => {
+      const { servedHeaders } = await import("../../packages/pr-evidence-worker/src/worker.js");
+      const csp = servedHeaders(type).get("content-security-policy")!;
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("media-src 'self'");
+      expect(csp).toContain("sandbox");
+      expect(csp).not.toMatch(/script-src|'unsafe|\*/);
+    },
+  );
+
+  it.each(["image/png", "image/jpeg", "image/webp", "image/gif"] as const)("keeps %s on the fully locked policy", async (type) => {
+    const { servedHeaders } = await import("../../packages/pr-evidence-worker/src/worker.js");
+    expect(servedHeaders(type).get("content-security-policy")).toBe("default-src 'none'; sandbox");
   });
 
   it("supports byte ranges for video seeking", async () => {
@@ -349,6 +366,17 @@ describe("GET /<key>", () => {
     expect(response.status).toBe(206);
     expect(response.headers.get("content-range")).toBe("bytes 1-2/5");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([2, 3]));
+  });
+
+  it("serves open-ended byte ranges the way browsers request them", async () => {
+    const { worker, key } = await stored();
+    const response = await worker.handle(
+      new Request(`https://evidence.matrix-os.com/${key}`, { headers: { Range: "bytes=2-" } }),
+      worker.env,
+    );
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe("bytes 2-4/5");
+    expect(response.headers.get("content-length")).toBe("3");
   });
 
   it.each([
