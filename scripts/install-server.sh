@@ -784,10 +784,24 @@ EOF
 EOF
 }
 
+# run_user_login_shell: the run user's own login shell, so its PATH setup
+# (~/.zprofile, ~/.bash_profile, fish config) applies; Bash when the entry is
+# missing, not an executable absolute path, or a no-login shell.
+run_user_login_shell() {
+  local shell
+  shell="$(getent passwd "$MATRIX_RUN_USER" 2>/dev/null | cut -d: -f7 || true)"
+  case "$shell" in
+    */nologin | */false | "") printf 'bash\n' ;;
+    /*) if [ -x "$shell" ]; then printf '%s\n' "$shell"; else printf 'bash\n'; fi ;;
+    *) printf 'bash\n' ;;
+  esac
+}
+
 detect_herdr() {
-  local found
+  local found shell
   MATRIX_HERDR_CORE_BIN=""
-  found="$(timeout 15 runuser -u "$MATRIX_RUN_USER" -- bash -lc 'command -v herdr-core' 2>/dev/null | head -n1 || true)"
+  shell="$(run_user_login_shell)"
+  found="$(timeout 15 runuser -u "$MATRIX_RUN_USER" -- "$shell" -lc 'command -v herdr-core' 2>/dev/null | head -n1 || true)"
   if [[ "$found" =~ ^/[A-Za-z0-9._/+-]{1,240}$ ]] && [ -x "$found" ]; then
     MATRIX_HERDR_CORE_BIN="$found"
   fi
@@ -978,7 +992,9 @@ tailscale_login() {
     ok "This machine joined your private network"
     return 0
   fi
-  warn "Not signed in to the private network yet. Finish later with: sudo tailscale up$( [ -z "$login_args" ] || printf ' %s' "$login_args")"
+  # Signing in later is not enough: serving, the tailnet address and the
+  # browser origin are recorded by the installer after login.
+  warn "Not signed in to the private network yet. Sign in with: sudo tailscale up$( [ -z "$login_args" ] || printf ' %s' "$login_args"), then rerun this installer with the same options to finish private-network setup"
   return 0
 }
 

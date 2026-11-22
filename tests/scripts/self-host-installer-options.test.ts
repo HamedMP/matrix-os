@@ -497,6 +497,54 @@ esac
     expect(readFileSync(marker, "utf8")).toContain("done");
   });
 
+  it("finds herdr-core through the run user's own login shell, not always Bash", () => {
+    // Found in review: an owner on Zsh adds herdr-core to PATH in ~/.zprofile,
+    // which a Bash login shell never reads, so Herdr sessions were turned off.
+    const herdr = join(dir, "herdr-core");
+    writeFileSync(herdr, "#!/bin/sh\nexit 0\n");
+    chmodSync(herdr, 0o755);
+    const shell = join(dir, "zsh");
+    writeFileSync(shell, `#!/bin/sh\necho "$*" >> "${join(dir, "shell-calls")}"\n[ "$1" = -lc ] && echo "${herdr}"\n`);
+    chmodSync(shell, 0o755);
+    // runuser runs under timeout, so it is a program on PATH, not a function.
+    const bin = join(dir, "bin");
+    spawnSync("mkdir", ["-p", bin]);
+    writeFileSync(join(bin, "runuser"), "#!/bin/sh\nshift 3\nexec \"$@\"\n");
+    chmodSync(join(bin, "runuser"), 0o755);
+    const result = run(`getent() { printf 'alice:x:1000:1000::/home/alice:%s\\n' "${shell}"; }
+MATRIX_RUN_USER=alice OPT_HERDR=on
+detect_herdr >/dev/null 2>&1
+printf '%s|%s\\n' "$MATRIX_HERDR_CORE_BIN" "$OPT_HERDR"`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(`${herdr}|on`);
+    expect(readFileSync(join(dir, "shell-calls"), "utf8")).toContain("-lc command -v herdr-core");
+  });
+
+  it("uses Bash when the run user's login shell is missing or a no-login shell", () => {
+    for (const shell of ["/usr/sbin/nologin", "/bin/false", "relative/zsh", join(dir, "missing-shell")]) {
+      const result = run(`getent() { printf 'alice:x:1000:1000::/home/alice:%s\\n' "${shell}"; }
+MATRIX_RUN_USER=alice; run_user_login_shell`);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim(), shell).toBe("bash");
+    }
+  });
+
+  it("tells the owner to rerun the installer after a late private-network login", () => {
+    // Found in review: "finish later with tailscale up" left serving, the
+    // tailnet URL and the browser origin unset, so browser sockets were refused.
+    const bin = join(dir, "bin");
+    spawnSync("mkdir", ["-p", bin]);
+    writeFileSync(join(bin, "tailscale"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(bin, "tailscale"), 0o755);
+    const result = run(`tailscale_wait_running() { return 1; }
+MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale MATRIX_TAILSCALE_LOGIN_WAIT=1 tailscale_login`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+    expect(result.status, result.stderr).toBe(0);
+    const said = result.stdout + result.stderr;
+    expect(said).toMatch(/sudo tailscale up/);
+    expect(said).toMatch(/then rerun this installer/);
+    expect(said).not.toMatch(/Finish later with/);
+  });
+
   it("falls back to tailnet-only HTTP when the tailnet has no HTTPS certificates", () => {
     // Found on a live VPS: with certificates off, serve failed and the printed
     // https link never opened. Tailnet traffic is already encrypted end to end.
