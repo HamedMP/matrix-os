@@ -516,3 +516,32 @@ describe("bootstrap.sh pending restarts", () => {
     }
   });
 });
+
+describe("bootstrap.sh ownership of unchanged configs", () => {
+  it("fixes owner and mode of configs a non-root render left behind when the content is unchanged", () => {
+    const state = makeStateDir();
+    try {
+      expect(runBootstrap(state).status).toBe(0);
+      chmodSync(join(state, "synapse/homeserver.yaml"), 0o644);
+
+      // Second run as "root": a fake id reports uid 0 and a fake chown records its calls.
+      const bin = join(state, "fake-root-bin");
+      mkdirSync(bin);
+      const log = join(state, "chown.log");
+      writeFileSync(join(bin, "id"), '#!/usr/bin/env bash\n[ "$1" = "-u" ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n');
+      writeFileSync(join(bin, "chown"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`);
+      chmodSync(join(bin, "id"), 0o755);
+      chmodSync(join(bin, "chown"), 0o755);
+      const rerun = runBootstrap(state, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+      expect(rerun.status).toBe(0);
+
+      const calls = readFileSync(log, "utf8").split("\n");
+      expect(calls).toContain(`991:991 ${join(state, "synapse/homeserver.yaml")}`);
+      expect(calls).toContain(`1337:1337 ${join(state, "bridges/telegram/config.yaml")}`);
+      expect(calls).toContain(`70:70 ${join(state, "postgres/superuser-password")}`);
+      expect(mode(join(state, "synapse/homeserver.yaml"))).toBe(0o600);
+    } finally {
+      removeDir(state);
+    }
+  });
+});

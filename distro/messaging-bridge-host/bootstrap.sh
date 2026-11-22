@@ -198,6 +198,12 @@ install_rendered() {
   fi
   if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then
     rm -f "$tmp"
+    # Unchanged content can still carry an earlier run's owner or mode (for
+    # example a non-root MBH_RENDER_ONLY=1 run); the service must read it.
+    chmod 0600 "$dest"
+    if [ -n "$owner" ] && is_root; then
+      chown "$owner:$owner" "$dest"
+    fi
     return 0
   fi
   mv -f "$tmp" "$dest"
