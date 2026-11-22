@@ -177,7 +177,14 @@ export function registerHerdrTerminalWebSocket(options: {
     const send = (frame: unknown) => {
       if (closed || !socket) return;
       try { socket.send(JSON.stringify(frame)); }
-      catch (error: unknown) { console.warn("[herdr] terminal viewer send failed", error instanceof Error ? error.name : "unknown_error"); }
+      catch (error: unknown) {
+        // A socket that cannot take a frame is gone: stop broadcasting to it and free its attachment.
+        console.warn("[herdr] terminal viewer send failed", error instanceof Error ? error.name : "unknown_error");
+        closed = true;
+        release();
+        try { socket.close(1011, "Terminal viewer send failed"); }
+        catch (closeError: unknown) { console.warn("[herdr] terminal viewer close failed", closeError instanceof Error ? closeError.name : "unknown_error"); }
+      }
     };
     const fail = (code: string, message: string, closeCode = 1008) => {
       send({ type: "error", code, message });
