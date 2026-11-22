@@ -19,7 +19,8 @@ export interface ActiveSpaceChip {
 function SpaceChip({ space }: { space: ActiveSpaceChip | null }) {
   const label = space ? space.label : "All";
   return (
-    <span role="status" aria-label={space ? `Space ${space.label} on ${space.machine}` : "All spaces"} title={space ? `${space.label} · ${space.machine} (Ctrl+0 shows all)` : "All spaces (Ctrl+1…9 picks one)"}
+    <span role="status" aria-label={!space ? "All spaces" : space.label === space.machine ? `Space ${space.label}` : `Space ${space.label} on ${space.machine}`}
+      title={!space ? "All spaces (Ctrl+1…9 picks one)" : `${space.label === space.machine ? space.label : `${space.label} · ${space.machine}`} (Ctrl+0 shows all)`}
       className="mb-1 flex h-6 max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-[12px] font-medium"
       style={{ borderColor: space ? space.color : "var(--border-default)", background: space ? `color-mix(in srgb, ${space.color} 14%, transparent)` : undefined }}>
       <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center rounded-[4px] text-[9px] font-bold text-white"

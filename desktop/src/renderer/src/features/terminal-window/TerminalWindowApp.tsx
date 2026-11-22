@@ -275,12 +275,14 @@ export default function TerminalWindowApp() {
   const { prefs } = view.sidebar;
   const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
     const filter = prefs.filter;
-    if (!filter?.space) return null;
-    const style = prefs.spaceStyles[spaceId(filter.machineId, filter.space)];
-    const label = style?.name ?? filter.space;
+    if (!filter) return null;
+    // A machine is a space itself; a project is a space under it.
+    const machineName = prefs.spaceStyles[filter.machineId]?.name ?? machines.find((machine) => machine.id === filter.machineId)?.name ?? "";
+    const style = prefs.spaceStyles[filter.space ? spaceId(filter.machineId, filter.space) : filter.machineId];
+    const label = style?.name ?? filter.space ?? machineName;
     return {
       label,
-      machine: machines.find((machine) => machine.id === filter.machineId)?.name ?? "",
+      machine: machineName,
       color: style?.color ?? defaultSpaceColor(label),
       ...(style?.icon ? { icon: style.icon } : {}),
     };

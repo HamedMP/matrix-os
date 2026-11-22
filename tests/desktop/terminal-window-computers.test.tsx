@@ -134,7 +134,7 @@ describe("Terminal window computers", () => {
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
 
     // The tab bar follows the chosen space too; All shows every open tab again.
-    fireEvent.click(within(machines).getByRole("button", { name: /^All/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
     fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
     fireEvent.click(within(sidebar()).getByRole("button", { name: /site/ }));
     const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
@@ -142,7 +142,7 @@ describe("Terminal window computers", () => {
     fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getAllByRole("button", { name: /web/ })
       .find((button) => button.hasAttribute("aria-pressed"))!);
     await waitFor(() => expect(tabNames()).toEqual(["site"]));
-    fireEvent.click(within(machines).getByRole("button", { name: /^All/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
     await waitFor(() => expect(tabNames()).toEqual(["build", "site"]));
   });
 
@@ -215,6 +215,13 @@ describe("Terminal window computers", () => {
     await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WEB_WS}/tabs`));
     const createCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/tabs") && (init as RequestInit).method === "POST")!;
     expect(JSON.parse(String((createCall[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "/srv/web" });
+
+    // A computer is a space itself: its chip names it, and Cmd+T starts the terminal on it (its main workspace).
+    act(() => emit("terminal-window:command", { command: "space", index: 2 }));
+    await waitFor(() => expect(screen.getByRole("status", { name: "Space neo" })).toBeTruthy());
+    fetchMock.mockClear();
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/ensure`));
   });
 
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {

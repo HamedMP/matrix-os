@@ -312,10 +312,11 @@ export function useTerminalWindow() {
         panes.run({ command: command.command, direction: command.direction });
         return;
       case "new-terminal": {
-        // Cmd+T / Cmd+N start the terminal in the active space, beside one of its terminals when it has any.
+        // Cmd+T / Cmd+N start the terminal in the active space: in a project, beside one of its terminals
+        // (same workspace and folder); on a machine, on that machine.
         const space = sidebar.prefs.filter;
         if (space) {
-          const neighbour = visibleRows[0];
+          const neighbour = space.space ? visibleRows[0] : undefined;
           if (neighbour) { createInSpace(neighbour.key); return; }
           if (space.machineId.startsWith("computer:")) { createCloud(space.machineId.slice("computer:".length)); return; }
           createLocal({});
