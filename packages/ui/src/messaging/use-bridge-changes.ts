@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import {
   MESSAGING_BRIDGE_CHANGED_EVENT,
   MessagingBridgeChangedEventSchema,
@@ -24,24 +24,37 @@ export function parseBridgeChange(frame: unknown): MessagingBridgeChangedEvent |
 /**
  * Calls `onChange` for each valid `messages:changed` event, or with `null`
  * (refresh everything) every 10 s while the tab is visible when no socket is
- * available.
+ * available or the surface reports it disconnected (`connected === false`).
+ * Change events sent during a disconnect are lost, so reconnecting refreshes
+ * everything once.
  */
 export function useMessagingBridgeChanges(
   subscribe: MessagingBridgeSubscribe | undefined,
   onChange: (event: MessagingBridgeChangedEvent | null) => void,
   enabled = true,
+  connected = true,
 ): void {
   const notify = useEffectEvent((event: MessagingBridgeChangedEvent | null) => onChange(event));
+  const missedEvents = useRef(false);
   useEffect(() => {
     if (!enabled) return;
-    const unsubscribe = subscribe?.((frame) => {
-      const event = parseBridgeChange(frame);
-      if (event) notify(event);
-    }) ?? null;
-    if (unsubscribe) return unsubscribe;
+    const unsubscribe = connected
+      ? subscribe?.((frame) => {
+        const event = parseBridgeChange(frame);
+        if (event) notify(event);
+      }) ?? null
+      : null;
+    if (unsubscribe) {
+      if (missedEvents.current) {
+        missedEvents.current = false;
+        notify(null);
+      }
+      return unsubscribe;
+    }
+    if (!connected) missedEvents.current = true;
     const timer = setInterval(() => {
       if (typeof document === "undefined" || document.visibilityState === "visible") notify(null);
     }, MESSAGING_BRIDGE_FALLBACK_POLL_MS);
     return () => clearInterval(timer);
-  }, [subscribe, enabled]);
+  }, [subscribe, enabled, connected]);
 }

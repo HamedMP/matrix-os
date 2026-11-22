@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ChatAppsPanel } from "../../../packages/ui/src/messaging/ChatAppsPanel";
 import type { MessagingBridgeSubscribe } from "../../../packages/ui/src/messaging/use-bridge-changes";
-import { conversations, deferred, fakeGateway, readyNoAccounts, readyWithAccounts, status } from "./fixtures";
+import { conversation, conversations, deferred, fakeGateway, readyNoAccounts, readyWithAccounts, status } from "./fixtures";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute("open", ""); };
@@ -43,11 +43,12 @@ describe("chat apps panel", () => {
         calls += 1;
         return { body: calls === 1 ? status({ availability: "unavailable", networks: [] }) : readyNoAccounts() };
       },
+      [CONVERSATIONS]: () => ({ body: conversations([]) }),
     });
     render(<ChatAppsPanel scope="owner" fetch={gateway.fetch} />);
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("button", { name: "Connect WhatsApp" })).toBeTruthy();
-    expect(screen.getByText("No conversations yet")).toBeTruthy();
+    expect(await screen.findByText("No conversations yet")).toBeTruthy();
   });
 
   it("lists each network with its accounts and opens the link dialog from Connect", async () => {
@@ -129,6 +130,50 @@ describe("chat apps panel", () => {
     expect(calls).toBe(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(calls).toBe(2);
+  });
+
+  it("keeps saved conversations readable with no linked account and while the bridge is unavailable", async () => {
+    for (const current of [readyNoAccounts(), status({ availability: "unavailable", networks: [] })]) {
+      const gateway = fakeGateway({
+        [STATUS]: () => ({ body: current }),
+        [CONVERSATIONS]: () => ({ body: conversations([conversation({ roomId: "!saved:bridge.example", displayName: "Saved chat" })]) }),
+      });
+      const view = render(<ChatAppsPanel scope="owner" fetch={gateway.fetch} />);
+      expect(await screen.findByText("Saved chat")).toBeTruthy();
+      view.unmount();
+    }
+  });
+
+  it("polls while the owner socket is down and refreshes once when it reconnects", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let statusCalls = 0;
+    let listCalls = 0;
+    const gateway = fakeGateway({
+      [STATUS]: () => {
+        statusCalls += 1;
+        return { body: readyWithAccounts() };
+      },
+      [CONVERSATIONS]: () => {
+        listCalls += 1;
+        return { body: conversations([]) };
+      },
+    });
+    const ws = socket();
+    const view = render(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} connected={false} />);
+    await screen.findByText("+46 70 000 0000");
+    await waitFor(() => expect(listCalls).toBe(1));
+    expect(ws.listeners.size).toBe(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(statusCalls).toBe(2);
+    expect(listCalls).toBe(2);
+
+    view.rerender(<ChatAppsPanel scope="owner" fetch={gateway.fetch} subscribe={ws.subscribe} connected />);
+    await waitFor(() => expect(statusCalls).toBe(3));
+    await waitFor(() => expect(listCalls).toBe(3));
+    expect(ws.listeners.size).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(statusCalls).toBe(3);
+    expect(listCalls).toBe(3);
   });
 
   it("asks for a computer connection when the surface has no transport", () => {

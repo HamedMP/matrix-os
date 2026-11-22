@@ -21,9 +21,11 @@ export interface ConversationListProps {
   onOpen: (conversation: MessagingBridgeConversation) => void;
   onRetry: () => void;
   onMore: () => void;
+  /** No linked account yet: the empty state points at linking. */
+  hasAccounts?: boolean;
 }
 
-export function ConversationList({ networks, filter, list, onFilter, onOpen, onRetry, onMore }: ConversationListProps) {
+export function ConversationList({ networks, filter, list, onFilter, onOpen, onRetry, onMore, hasAccounts = true }: ConversationListProps) {
   const visible = filterConversations(list.items, filter);
   const filterLabel = filter === "all" ? "" : `${networkLabel(filter)} `;
   return (
@@ -43,7 +45,11 @@ export function ConversationList({ networks, filter, list, onFilter, onOpen, onR
           <div style={s.empty}>
             <MessagesSquare size={22} aria-hidden="true" />
             <p style={{ ...s.body, fontWeight: 600 }}>No {filterLabel}conversations yet</p>
-            <p style={s.muted}>New chats from your connected apps appear here as messages arrive. Send or receive a message in the app to start.</p>
+            <p style={s.muted}>
+              {hasAccounts
+                ? "New chats from your connected apps appear here as messages arrive. Send or receive a message in the app to start."
+                : "Connect an app above. Your conversations from it will appear here."}
+            </p>
           </div>
         ) : null}
         {list.error ? (

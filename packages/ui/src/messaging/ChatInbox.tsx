@@ -11,6 +11,7 @@ import {
   deriveThreadEntries,
   mergeConversations,
   mergeMessages,
+  mergeRefreshedMessages,
   type ConversationFilter,
   type PendingSend,
 } from "./bridge-view.js";
@@ -35,9 +36,13 @@ export interface ChatInboxProps {
   client: MessagingBridgeClient;
   networks: MessagingBridgeNetwork[];
   subscribe?: MessagingBridgeSubscribe;
+  /** Whether the owner socket is live; `false` polls and refreshes on reconnect. */
+  connected?: boolean;
+  /** No linked account yet: the empty state points at linking. */
+  hasAccounts?: boolean;
 }
 
-export function ChatInbox({ client, networks, subscribe }: ChatInboxProps) {
+export function ChatInbox({ client, networks, subscribe, connected = true, hasAccounts = true }: ChatInboxProps) {
   const [filter, setFilter] = useState<ConversationFilter>("all");
   const [list, setList] = useState<ListState>(EMPTY_LIST);
   const [active, setActive] = useState<MessagingBridgeConversation | null>(null);
@@ -97,15 +102,10 @@ export function ChatInbox({ client, networks, subscribe }: ChatInboxProps) {
       if (threadRequest.current.generation !== generation || activeRoom.current !== roomId) return;
       setThread((prev) => {
         const base = prev && prev.roomId === roomId ? prev : { roomId, items: [], loading: false, loadingOlder: false, error: null };
-        const keepCursor = mode === "refresh" && base.items.length > page.items.length;
-        return {
-          roomId,
-          items: mergeMessages(base.items, page.items),
-          nextCursor: keepCursor ? base.nextCursor : page.nextCursor,
-          loading: false,
-          loadingOlder: false,
-          error: null,
-        };
+        const merged = mode === "refresh"
+          ? mergeRefreshedMessages(base, page)
+          : { items: mergeMessages(base.items, page.items), nextCursor: page.nextCursor };
+        return { roomId, items: merged.items, nextCursor: merged.nextCursor, loading: false, loadingOlder: false, error: null };
       });
     } catch (error: unknown) {
       if (isBridgeAbort(error) || threadRequest.current.generation !== generation || activeRoom.current !== roomId) return;
@@ -126,7 +126,7 @@ export function ChatInbox({ client, networks, subscribe }: ChatInboxProps) {
     if (event === null || (event.scope === "messages" && (!event.roomId || event.roomId === roomId))) {
       void loadThread(roomId, "refresh");
     }
-  });
+  }, true, connected);
 
   const chooseFilter = (next: ConversationFilter) => {
     if (next === filter) return;
@@ -209,6 +209,7 @@ export function ChatInbox({ client, networks, subscribe }: ChatInboxProps) {
   return (
     <ConversationList
       networks={networks}
+      hasAccounts={hasAccounts}
       filter={filter}
       list={list}
       onFilter={chooseFilter}

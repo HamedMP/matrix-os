@@ -3,6 +3,7 @@ import {
   chatAccountLabel,
   deriveChatAppsSection,
   deriveThreadEntries,
+  mergeRefreshedMessages,
   filterConversations,
   linkFailureMessage,
   mergeConversations,
@@ -106,6 +107,25 @@ describe("thread helpers", () => {
       "local:failed one:sending",
       "local:new:failed",
     ]);
+  });
+
+  it("keeps a failed local send in its place when a newer reply arrives", () => {
+    const reply = message({ eventId: "$reply", occurredAt: "2026-11-22T10:05:00.000Z", body: "later reply" });
+    const entries = deriveThreadEntries([m1, reply], [
+      { clientTxnId: "txn-fail-0002", body: "my failed send", state: "failed", createdAt: "2026-11-22T10:03:00.000Z" },
+    ]);
+    expect(entries.map((e) => (e.kind === "message" ? e.message.body : e.pending.body))).toEqual(["hello", "my failed send", "later reply"]);
+  });
+
+  it("replaces loaded history and its cursor when a refreshed page does not reach it", () => {
+    const loaded = { items: [m1, m2], nextCursor: "c-old" };
+    const newer = Array.from({ length: 3 }, (_unused, index) => message({ eventId: `$n${index}`, occurredAt: `2026-11-22T11:0${index}:00.000Z` }));
+    // More arrived than one page holds: the page does not overlap, so keeping c-old would skip the gap.
+    expect(mergeRefreshedMessages(loaded, { items: newer, nextCursor: "c-gap" })).toEqual({ items: newer, nextCursor: "c-gap" });
+    // Overlapping page: merged, and the cursor of the older loaded history is kept.
+    expect(mergeRefreshedMessages(loaded, { items: [m2, m3], nextCursor: "c-page" })).toEqual({ items: [m1, m2, m3], nextCursor: "c-old" });
+    // A page that reaches the start of history has no cursor and still merges.
+    expect(mergeRefreshedMessages(loaded, { items: [m3] }).items).toEqual([m1, m2, m3]);
   });
 
   it("offers retry only for outgoing Matrix sends the server recorded as failed", () => {

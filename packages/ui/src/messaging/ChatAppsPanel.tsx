@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { MessagesSquare } from "lucide-react";
-import type { MessagingBridgeChangedEvent, MessagingBridgeNetwork, MessagingBridgeStatus } from "@matrix-os/contracts/messaging-bridge";
+import {
+  MESSAGING_BRIDGE_NETWORKS,
+  type MessagingBridgeChangedEvent,
+  type MessagingBridgeNetwork,
+  type MessagingBridgeStatus,
+} from "@matrix-os/contracts/messaging-bridge";
 import { Badge } from "../Badge.js";
 import { Button } from "../Button.js";
 import { Dialog } from "../Dialog.js";
@@ -27,6 +32,8 @@ export interface ChatAppsPanelProps {
   fetch: MessagingBridgeFetch | null;
   /** Surface adapter: owner WebSocket subscription. Omitted or `null` result falls back to polling. */
   subscribe?: MessagingBridgeSubscribe;
+  /** Surface adapter: whether the owner WebSocket is live right now; `false` polls and refreshes on reconnect. */
+  connected?: boolean;
   onOpenExternal?: (url: string) => Promise<void> | void;
 }
 
@@ -41,7 +48,13 @@ export function ChatAppsPanel(props: ChatAppsPanelProps) {
         <p style={s.muted}>Link your own WhatsApp, Telegram and LinkedIn accounts to read and answer your conversations in Matrix.</p>
       </div>
       {props.fetch ? (
-        <ChatAppsContent key={props.scope} fetch={props.fetch} subscribe={props.subscribe} onOpenExternal={props.onOpenExternal} />
+        <ChatAppsContent
+          key={props.scope}
+          fetch={props.fetch}
+          subscribe={props.subscribe}
+          connected={props.connected ?? true}
+          onOpenExternal={props.onOpenExternal}
+        />
       ) : (
         <div role="alert" style={s.alert}><span>Connect to your Matrix computer to manage chat apps.</span></div>
       )}
@@ -54,10 +67,12 @@ type RemoveTarget = { network: MessagingBridgeNetwork; account: ChatAppAccountRo
 function ChatAppsContent({
   fetch,
   subscribe,
+  connected,
   onOpenExternal,
 }: {
   fetch: MessagingBridgeFetch;
   subscribe?: MessagingBridgeSubscribe;
+  connected: boolean;
   onOpenExternal?: (url: string) => Promise<void> | void;
 }) {
   const fetchRef = useRef(fetch);
@@ -100,7 +115,7 @@ function ChatAppsContent({
 
   useMessagingBridgeChanges(subscribe, (event: MessagingBridgeChangedEvent | null) => {
     if (event === null || event.scope === "accounts") void loadStatus(false);
-  });
+  }, true, connected);
 
   const confirmRemove = async (target: RemoveTarget) => {
     setRemoving({ ...target, busy: true, error: null });
@@ -148,10 +163,14 @@ function ChatAppsContent({
         </div>
       ) : null}
       {view.kind === "unavailable" ? (
-        <div role="alert" style={s.alert}>
-          <span>Chat apps are unavailable right now. Your saved messages are safe.</span>
-          <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
-        </div>
+        <>
+          <div role="alert" style={s.alert}>
+            <span>Chat apps are unavailable right now. Your saved messages are safe.</span>
+            <Button variant="secondary" size="sm" onClick={() => { void loadStatus(true); }}>Try again</Button>
+          </div>
+          {/* Saved conversations stay readable while the bridge is down. */}
+          <ChatInbox client={client} networks={[...MESSAGING_BRIDGE_NETWORKS]} subscribe={subscribe} connected={connected} />
+        </>
       ) : null}
       {view.kind === "ready" ? (
         <>
@@ -166,15 +185,14 @@ function ChatAppsContent({
               />
             ))}
           </ul>
-          {view.hasAccounts ? (
-            <ChatInbox client={client} networks={view.rows.map((row) => row.network)} subscribe={subscribe} />
-          ) : (
-            <div style={{ ...s.card, ...s.empty }}>
-              <MessagesSquare size={22} aria-hidden="true" />
-              <p style={{ ...s.body, fontWeight: 600 }}>No conversations yet</p>
-              <p style={s.muted}>Connect an app above. Your conversations from it will appear here.</p>
-            </div>
-          )}
+          {/* Conversations stay readable after their account is removed. */}
+          <ChatInbox
+            client={client}
+            networks={view.rows.map((row) => row.network)}
+            subscribe={subscribe}
+            connected={connected}
+            hasAccounts={view.hasAccounts}
+          />
         </>
       ) : null}
       {linking ? (

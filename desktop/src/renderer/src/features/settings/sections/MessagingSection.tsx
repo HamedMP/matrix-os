@@ -5,6 +5,7 @@ import { useConnection } from "../../../stores/connection";
 import { invoke } from "../../../lib/operator";
 import { buildGatewayUrl } from "../../../lib/api";
 import { getKernelSocket } from "../../../lib/kernel-wiring";
+import { useSyncExternalStore } from "react";
 
 // The trusted core injects the gateway Authorization header at the network
 // layer for the active gateway origin, exactly as it does for the api client.
@@ -19,7 +20,22 @@ const subscribeOwnerEvents: MessagingBridgeSubscribe = (listener) => {
   }
 };
 
+// Live state of the owner socket, so the shared panel polls while it is down
+// and refreshes once it reconnects.
+const subscribeKernelState = (onChange: () => void) => {
+  const socket = getKernelSocket();
+  if (!socket) return () => {};
+  try {
+    return socket.onStateChange(onChange);
+  } catch (error: unknown) {
+    console.warn("[messaging] Owner socket state unavailable", error instanceof Error ? error.name : "UnknownError");
+    return () => {};
+  }
+};
+const kernelConnected = () => getKernelSocket()?.state === "connected";
+
 export default function MessagingSection() {
+  const connected = useSyncExternalStore(subscribeKernelState, kernelConnected, kernelConnected);
   const api = useConnection((s) => s.api);
   const userId = useConnection((s) => s.userId);
   const generation = useConnection((s) => s.authGeneration);
@@ -54,6 +70,7 @@ export default function MessagingSection() {
         scope={JSON.stringify([userId, generation, platformOrigin, runtimeSlot])}
         fetch={bridgeFetch}
         subscribe={subscribeOwnerEvents}
+        connected={connected}
         onOpenExternal={open}
       />
     </>

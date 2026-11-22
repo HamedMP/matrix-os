@@ -17,8 +17,10 @@ const ownerSubscribe = (listener: (frame: unknown) => void) => {
 };
 vi.mock("../../desktop/src/renderer/src/stores/connection", () => ({ useConnection: (select: (value: typeof state) => unknown) => select(state) }));
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({ getKernelSocket: () => ({ subscribe: ownerSubscribe }) }));
-vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ subscribe: ownerSubscribe }) }));
+vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
+  getKernelSocket: () => ({ subscribe: ownerSubscribe, state: "connected", onStateChange: () => () => {} }),
+}));
+vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ subscribe: ownerSubscribe, connected: true }) }));
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ userId: "synthetic-owner", sessionId: "synthetic-session", getToken: async () => "synthetic-token" }) }));
 vi.mock("@/lib/self-host-mode", () => ({ isSelfHostedRuntime: () => false }));
 

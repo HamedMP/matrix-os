@@ -135,6 +135,29 @@ export function mergeMessages(existing: MessagingBridgeMessage[], incoming: Mess
   return [...byKey.values()].sort((a, b) => eventTime(a.occurredAt) - eventTime(b.occurredAt));
 }
 
+export interface MessagePage {
+  items: MessagingBridgeMessage[];
+  nextCursor?: string;
+}
+
+/**
+ * Merges a refreshed newest page into loaded history. When the page does not
+ * reach the loaded messages (more arrived than one page holds), keeping the
+ * old cursor would leave a permanent hole, so the loaded history and its
+ * cursor are replaced together and older messages page in again from there.
+ */
+export function mergeRefreshedMessages(loaded: MessagePage, page: MessagePage): MessagePage {
+  if (loaded.items.length === 0) return page;
+  const loadedKeys = new Set(loaded.items.map(messageKey));
+  const overlaps = page.items.some((item) => loadedKeys.has(messageKey(item)));
+  if (!overlaps && page.nextCursor) return page;
+  const items = mergeMessages(loaded.items, page.items);
+  const oldestLoaded = eventTime(loaded.items[0]?.occurredAt);
+  const oldestPage = page.items.length > 0 ? Math.min(...page.items.map((item) => eventTime(item.occurredAt))) : Number.POSITIVE_INFINITY;
+  const nextCursor = oldestLoaded < oldestPage ? loaded.nextCursor : page.nextCursor;
+  return { items, ...(nextCursor ? { nextCursor } : {}) };
+}
+
 export interface PendingSend {
   clientTxnId: string;
   body: string;
@@ -147,16 +170,17 @@ export type ThreadEntry =
   | { kind: "pending"; key: string; pending: PendingSend };
 
 /**
- * Server messages plus local sends. A local send yields to the server copy
- * once the server has it, except while the owner retries a send the server
- * recorded as failed: then the local retry state is shown instead.
+ * Server messages plus local sends, oldest first. A local send yields to the
+ * server copy once the server has it, except while the owner retries a send
+ * the server recorded as failed: then the local retry state is shown instead.
+ * Local sends sit at their own time, so a failed send stays above later replies.
  */
 export function deriveThreadEntries(serverMessages: MessagingBridgeMessage[], pending: PendingSend[]): ThreadEntry[] {
   const pendingIds = new Set(pending.map((item) => item.clientTxnId));
   const serverDelivery = new Map(
     serverMessages.filter((item) => item.clientTxnId).map((item) => [item.clientTxnId as string, item.delivery]),
   );
-  return [
+  const entries: ThreadEntry[] = [
     ...serverMessages
       .filter((item) => !(item.clientTxnId && item.delivery === "failed" && pendingIds.has(item.clientTxnId)))
       .map((item): ThreadEntry => ({ kind: "message", key: messageKey(item), message: item })),
@@ -164,6 +188,9 @@ export function deriveThreadEntries(serverMessages: MessagingBridgeMessage[], pe
       .filter((item) => !serverDelivery.has(item.clientTxnId) || serverDelivery.get(item.clientTxnId) === "failed")
       .map((item): ThreadEntry => ({ kind: "pending", key: `txn:${item.clientTxnId}`, pending: item })),
   ];
+  const at = (entry: ThreadEntry) => eventTime(entry.kind === "message" ? entry.message.occurredAt : entry.pending.createdAt);
+  // Array.prototype.sort is stable: equal times keep server copies before local sends.
+  return entries.sort((a, b) => at(a) - at(b));
 }
 
 /** A server message the owner can retry: sent from Matrix and recorded as failed. */
