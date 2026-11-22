@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
@@ -9,6 +9,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
+import { useSshMachines } from "@desktop/renderer/src/features/terminal-window/use-ssh-machines";
 
 // Spec 2706 layer 7: add a machine reached over ssh from the sidebar, as in
 // Herdr; its terminals show under it, and a host key or password only the
@@ -315,6 +316,16 @@ describe("Terminal window ssh machines", () => {
     fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
     await waitFor(() => expect(within(machines).getAllByText("Couldn't update its core.")).toHaveLength(1));
     expect(within(machines).getByRole("button", { name: "Open in terminal" })).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3579): a removed machine's update error came back on another machine that took its name.
+  it("forgets a machine's core update error once it is removed", async () => {
+    installOperator({ failUpdate: ["vps"], machines: [{ name: "vps", target: "me@old", state: "connected", temporary: false }] });
+    const { result } = renderHook(() => useSshMachines());
+    await act(async () => { await result.current.update("vps"); });
+    expect(result.current.coreFailed).toEqual(["vps"]);
+    await act(async () => { await result.current.remove("vps"); });
+    expect(result.current.coreFailed).toEqual([]);
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

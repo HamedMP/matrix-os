@@ -63,10 +63,16 @@ export function useSshMachines() {
     return outcome;
   }, [refresh]);
 
+  // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
+  const [coreBusy, setCoreBusy] = useState<string[]>([]);
+  const [coreFailed, setCoreFailed] = useState<string[]>([]);
+
   const remove = useCallback(async (name: string): Promise<boolean> => {
     let removed = false;
     try {
       removed = (await invoke("local-terminal:machine-remove", { name })).ok;
+      // A failure belongs to the machine it happened on, not to the next one that takes its name.
+      if (removed) setCoreFailed((current) => current.filter((entry) => entry !== name));
     } catch (error: unknown) {
       console.warn("[terminal-window] remove machine failed:", error instanceof Error ? error.name : "UnknownError");
     }
@@ -115,9 +121,6 @@ export function useSshMachines() {
     }
   }, []);
 
-  // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
-  const [coreBusy, setCoreBusy] = useState<string[]>([]);
-  const [coreFailed, setCoreFailed] = useState<string[]>([]);
   const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean }>): Promise<boolean> => {
     setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
     let ok = false;
