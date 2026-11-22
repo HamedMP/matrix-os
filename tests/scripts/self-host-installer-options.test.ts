@@ -230,6 +230,38 @@ prepare_scope_runtime_roots "${home}" ${owner}`,
       expect(ensure).toMatch(/if \[ "\$MATRIX_RUN_USER" = "matrix" \]; then\n\s+install -d [^\n]*-m 0755 "\$MATRIX_HOME_DIR\/projects"/);
     });
 
+    it("moves Pi workspaces an earlier install created into group matrix, and nothing else", () => {
+      // Found in review: an upgraded install already had
+      // agent-workspaces/<owner-key>/<chat> in the owner's group, so setgid on the
+      // root alone left Pi Chats unable to start. Only those two gateway-managed
+      // levels are fixed; chat contents and anything else stay as they were.
+      const home = join(dir, "home");
+      const key = "a".repeat(64);
+      const workspaces = join(home, "agent-workspaces");
+      for (const path of [
+        join(workspaces, key, "chat_abc123", "src"),
+        join(workspaces, key, "notes"),
+        join(workspaces, "b".repeat(64), "chat_foreign"),
+        join(workspaces, "owner-data"),
+      ]) spawnSync("mkdir", ["-p", path]);
+      spawnSync("ln", ["-s", dir, join(workspaces, key, "chat_link")]);
+      for (const root of ["bots", "projects", "worktrees"]) spawnSync("mkdir", ["-p", join(home, root)]);
+      const result = run(
+        `chgrp() { printf 'chgrp %s\\n' "$*" >>"${join(dir, "calls")}"; }
+chmod() { printf 'chmod %s\\n' "$*" >>"${join(dir, "calls")}"; }
+install() { printf 'install %s\\n' "$*" >>"${join(dir, "calls")}"; }
+stat() { case "\${@: -1}" in *chat_foreign) echo root ;; *) echo alice ;; esac; }
+prepare_scope_runtime_roots "${home}" alice`,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
+      expect(calls).toContain(`chgrp matrix ${workspaces}/${key}`);
+      expect(calls).toContain(`chmod g+s ${workspaces}/${key}`);
+      expect(calls).toContain(`chgrp matrix ${workspaces}/${key}/chat_abc123`);
+      expect(calls).toContain(`chmod g+s ${workspaces}/${key}/chat_abc123`);
+      expect(calls.join("\n")).not.toMatch(/chat_abc123\/src|notes|chat_foreign|chat_link|owner-data|-R/);
+    });
+
     it("keeps the legacy matrix layout exactly as before", () => {
       const { result, home, calls } = prepare("matrix", { projects: "matrix" });
       expect(result.status, result.stderr).toBe(0);

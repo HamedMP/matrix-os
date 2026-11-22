@@ -535,8 +535,31 @@ prepare_scope_runtime_roots() {
     elif [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %U -- "$path")" = "$2" ]; then
       chgrp matrix "$path"
       chmod g+s,o-rwx "$path"
+      [ "$root" != "agent-workspaces" ] || adopt_managed_pi_workspaces "$path" "$2"
     fi
   done
+}
+
+# adopt_managed_pi_workspaces <agent-workspaces> <owner>: an earlier install left the
+# gateway's agent-workspaces/<owner key>/<chat id> directories in the owner's own
+# group, which the supervisor cannot traverse even under a setgid root. Moves just
+# those two gateway-managed levels (sha256 owner key, chat_ id) into setgid group
+# matrix. Chat contents, other names, other owners' directories and symlinks stay.
+adopt_managed_pi_workspaces() {
+  local key chat
+  for key in "$1"/*; do
+    [[ "${key##*/}" =~ ^[0-9a-f]{64}$ ]] && [ -d "$key" ] && [ ! -L "$key" ] || continue
+    [ "$(stat -c %U -- "$key")" = "$2" ] || continue
+    chgrp matrix "$key"
+    chmod g+s "$key"
+    for chat in "$key"/*; do
+      [[ "${chat##*/}" =~ ^chat_[A-Za-z0-9_-]{1,128}$ ]] && [ -d "$chat" ] && [ ! -L "$chat" ] || continue
+      [ "$(stat -c %U -- "$chat")" = "$2" ] || continue
+      chgrp matrix "$chat"
+      chmod g+s "$chat"
+    done
+  done
+  return 0
 }
 
 render_browser_sudoers() {
