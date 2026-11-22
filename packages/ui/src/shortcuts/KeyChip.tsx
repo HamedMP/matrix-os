@@ -19,14 +19,16 @@ export interface KeyChipProps {
   label: string;
   onRemove?: () => void;
   removeDisabled?: boolean;
+  /** Smaller chip for inline hints, without the space a remove control would take. */
+  compact?: boolean;
 }
 
 /** Keys for one binding in a single chip, with an optional remove control. */
-export function KeyChip({ binding, platform, label, onRemove, removeDisabled }: KeyChipProps) {
+export function KeyChip({ binding, platform, label, onRemove, removeDisabled, compact = false }: KeyChipProps) {
   const parts = formatBinding(binding, platform);
   return (
     <span className="mxs-chip-line">
-      <span className="mxs-chip" role="group" aria-label={label}>
+      <span className={compact ? "mxs-chip mxs-chip-compact" : "mxs-chip"} role="group" aria-label={label}>
         {parts.map((part, index) => (
           // A binding never repeats a part, but the index keeps keys unique regardless.
           <kbd key={`${index}-${part}`} className="mxs-key">
@@ -46,7 +48,7 @@ export function KeyChip({ binding, platform, label, onRemove, removeDisabled }: 
         >
           <X size={14} strokeWidth={2} aria-hidden="true" />
         </Button>
-      ) : (
+      ) : compact ? null : (
         <span className="mxs-chip-remove-space" aria-hidden="true" />
       )}
     </span>

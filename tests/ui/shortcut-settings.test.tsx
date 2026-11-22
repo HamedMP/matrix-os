@@ -371,6 +371,14 @@ describe("KeyChip and copy", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
+  it("renders a compact chip for inline hints without reserving remove space", () => {
+    const { container } = render(<KeyChip binding="Alt+Space" platform="mac" label="Option Space" compact />);
+    const chip = screen.getByRole("group", { name: "Option Space" });
+    expect(chip).toHaveClass("mxs-chip-compact");
+    expect(chip).toHaveTextContent("⌥Space");
+    expect(container.querySelector(".mxs-chip-remove-space")).toBeNull();
+  });
+
   it("words rejections per platform", () => {
     expect(rejectionMessage("Cmd+Space", { reason: "reserved-system" }, "mac")).toBe("⌘Space is reserved by macOS.");
     expect(rejectionMessage("Alt+F4", { reason: "reserved-system" }, "other")).toBe("Alt+F4 is reserved by the system.");

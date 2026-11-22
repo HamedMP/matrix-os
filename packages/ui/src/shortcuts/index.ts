@@ -2,5 +2,5 @@ export { ShortcutSettings } from "./ShortcutSettings.js";
 export type { ShortcutSettingsProps } from "./ShortcutSettings.js";
 export { KeyChip } from "./KeyChip.js";
 export type { KeyChipProps } from "./KeyChip.js";
-export { rejectionMessage } from "./shortcut-copy.js";
+export { rejectionMessage, spokenBinding } from "./shortcut-copy.js";
 export { RECORDING_TIMEOUT_MS } from "./use-shortcut-recorder.js";
