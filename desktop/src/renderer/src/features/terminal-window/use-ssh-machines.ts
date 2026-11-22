@@ -21,11 +21,13 @@ export function useSshMachines() {
     try {
       const result = await invoke("local-terminal:machines", {});
       if (current !== generation.current) return;
-      setState(result.status === "ready" ? { status: "ready", machines: result.machines } : { status: "unavailable" });
+      // A failed look keeps the last list (and the timer that looks again) instead of hiding the machines.
+      setState((previous) => (result.status === "ready" ? { status: "ready", machines: result.machines }
+        : previous.status === "ready" ? previous : { status: "unavailable" }));
     } catch (error: unknown) {
       if (current !== generation.current) return;
       console.warn("[terminal-window] machines unavailable:", error instanceof Error ? error.name : "UnknownError");
-      setState({ status: "unavailable" });
+      setState((previous) => (previous.status === "ready" ? previous : { status: "unavailable" }));
     }
   }, []);
 

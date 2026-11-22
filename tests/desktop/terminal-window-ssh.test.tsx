@@ -22,7 +22,9 @@ beforeAll(() => {
 type Machine = { name: string; target: string; state: string; temporary: boolean };
 const fact = (id: string, title: string) => ({ id, title, status: null, statusAt: Date.now(), turn: 0, seenTurn: null, finished: false });
 
-function installOperator(options: { machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[] } = {}) {
+function installOperator(options: {
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean;
+} = {}) {
   let machines = options.machines ?? [];
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
     switch (channel) {
@@ -30,20 +32,26 @@ function installOperator(options: { machines?: Machine[]; add?: (payload: { targ
       case "state:get": return { value: null };
       case "app:get-zoom": return { factor: 1 };
       case "local-terminal:watch": return { status: "ready", terminals: [...(options.facts ?? []), fact("vps/t5", "Terminal")] };
-      case "local-terminal:machines": return { status: "ready", machines };
+      case "local-terminal:machines": if (options.failList?.()) throw new Error("timed out"); return { status: "ready", machines };
       case "local-terminal:machine-add": {
         const result = options.add?.(payload as { target: string; name?: string }) ?? { ok: false, reason: "unavailable" };
         if ((result as { ok: boolean }).ok) machines = [...machines, (result as { machine: Machine }).machine];
         return result;
       }
-      case "local-terminal:machine-remove": machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
+      case "local-terminal:machine-remove":
+        if (options.refuseRemove) return { ok: false };
+        machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
       case "local-terminal:ssh-login": return { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
     }
   });
-  window.operator = { invoke, on: () => () => undefined };
-  return invoke;
+  const listeners: Array<(payload: unknown) => void> = [];
+  window.operator = { invoke, on: (channel: string, callback: (payload: unknown) => void) => {
+    if (channel === "window:focus-changed") listeners.push(callback);
+    return () => undefined;
+  } };
+  return Object.assign(invoke, { focus: () => act(() => { for (const listener of listeners) listener({ focused: true }); }) });
 }
 
 const machinesList = () => screen.getByRole("list", { name: "Machines" });
@@ -111,6 +119,29 @@ describe("Terminal window ssh machines", () => {
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove machine" })).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-remove", { name: "vps" }));
     await waitFor(() => expect(within(machinesList()).queryByText(/can@10.0.0.7/)).toBeNull());
+  });
+
+  // Fault detected (Greptile, #3570): a refused removal closed the dialog and said nothing.
+  it("keeps the remove dialog open with an error when the core refuses", async () => {
+    installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false }], refuseRemove: true });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await within(await screen.findByRole("list", { name: "Machines" })).findByRole("button", { name: "Remove vps" }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove machine" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
+    expect(await within(dialog).findByText("Couldn't remove it. Try again.")).toBeTruthy();
+    expect(within(machinesList()).getByText("can@10.0.0.7 · Connected")).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3570): one failed look hid every machine until the window was refocused.
+  it("keeps the machines listed when a later look fails", async () => {
+    let fail = false;
+    const invoke = installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false }], failList: () => fail });
+    render(<TerminalWindowApp />);
+    expect(await within(await screen.findByRole("list", { name: "Machines" })).findByText("can@10.0.0.7 · Connected")).toBeTruthy();
+    fail = true;
+    invoke.focus();
+    await waitFor(() => expect(invoke.mock.calls.filter(([channel]) => channel === "local-terminal:machines").length).toBeGreaterThan(1));
+    expect(within(machinesList()).getByText("can@10.0.0.7 · Connected")).toBeTruthy();
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

@@ -91,20 +91,39 @@ function AddMachineForm({ onAdd, onOpenSsh, onClose }: {
   );
 }
 
-/** Forgetting a machine keeps its terminals running there. */
-export function RemoveMachineDialog({ name, onConfirm, onClose }: { name: string | null; onConfirm(name: string): void; onClose(): void }) {
+/** Forgetting a machine keeps its terminals running there. The dialog stays until the core confirms. */
+export function RemoveMachineDialog({ name, onConfirm, onClose }: {
+  name: string | null; onConfirm(name: string): Promise<boolean>; onClose(): void;
+}) {
   return (
     <Dialog open={name !== null} onClose={onClose} aria-label="Remove machine" style={{ maxWidth: 400 }}>
-      {name ? (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-[15px] font-semibold">Remove “{name}”?</h2>
-          <p className="text-[13px]" style={secondaryText}>This window forgets the machine. Its terminals keep running there.</p>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            <Button type="button" variant="destructive" size="sm" onClick={() => { onConfirm(name); onClose(); }}>Remove</Button>
-          </div>
-        </div>
-      ) : null}
+      {name ? <RemoveMachineBody key={name} name={name} onConfirm={onConfirm} onClose={onClose} /> : null}
     </Dialog>
+  );
+}
+
+function RemoveMachineBody({ name, onConfirm, onClose }: { name: string; onConfirm(name: string): Promise<boolean>; onClose(): void }) {
+  const [removing, setRemoving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const remove = async () => {
+    setRemoving(true);
+    setFailed(false);
+    const removed = await onConfirm(name);
+    setRemoving(false);
+    if (removed) onClose();
+    else setFailed(true);
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="text-[15px] font-semibold">Remove “{name}”?</h2>
+      <p className="text-[13px]" style={secondaryText}>This window forgets the machine. Its terminals keep running there.</p>
+      {failed ? <p role="alert" className="text-[12px]">Couldn't remove it. Try again.</p> : null}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+        <Button type="button" variant="destructive" size="sm" disabled={removing} onClick={() => { void remove(); }}>
+          {removing ? "Removing…" : "Remove"}
+        </Button>
+      </div>
+    </div>
   );
 }

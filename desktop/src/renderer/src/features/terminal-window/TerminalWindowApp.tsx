@@ -392,7 +392,7 @@ export default function TerminalWindowApp() {
       <RenameTerminalDialog target={view.renaming} onRename={view.rename} onClose={() => view.setRenaming(null)} />
       <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
       <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} onClose={() => setAdding(false)} />
-      <RemoveMachineDialog name={removing} onConfirm={(name) => { void view.ssh.remove(name); }} onClose={() => setRemoving(null)} />
+      <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
     </div>
   );
 }
