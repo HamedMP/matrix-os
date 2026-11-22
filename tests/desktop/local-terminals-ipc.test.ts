@@ -58,6 +58,16 @@ describe("local terminal IPC", () => {
     }
   });
 
+  // Fault detected (Greptile, #3567): terminals on added machines were listed but could not be opened, renamed or ended.
+  it("takes the same actions on a terminal of an added machine", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:attach", { id: "vps/t7", cols: 80, rows: 24 })).toEqual({ ok: true, attachId: 5 });
+    expect(await invoke("local-terminal:rename", { id: "vps/t7", name: "deploy" })).toEqual({ ok: true });
+    expect(await invoke("local-terminal:kill", { id: "vps/t7" })).toEqual({ ok: true });
+    expect(host.attach).toHaveBeenCalledWith("vps/t7", { cols: 80, rows: 24 });
+    await expect(invoke("local-terminal:kill", { id: "-vps/t7" })).rejects.toThrow("invalid request");
+  });
+
   it("removes a finished terminal, and reports a refusal as not done", async () => {
     const { host, invoke } = setup();
     expect(await invoke("local-terminal:remove", { id: "vps/t3" })).toEqual({ ok: true });

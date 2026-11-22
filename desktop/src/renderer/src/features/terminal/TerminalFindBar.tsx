@@ -9,12 +9,12 @@ export type TerminalSearch = Pick<SearchAddon, "findNext" | "findPrevious" | "cl
 const DECORATIONS = { matchOverviewRuler: "#888888", activeMatchColorOverviewRuler: "#ffcc00", activeMatchBackground: "#ffcc0066" };
 const buttonClass = "flex size-6 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-40";
 
-export function TerminalFindBar({ search, onClose }: { search: TerminalSearch; onClose(): void }) {
+export function TerminalFindBar({ search, request, onClose }: { search: TerminalSearch; request: number; onClose(): void }) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<{ index: number; count: number } | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  // The person just pressed Cmd+F: typing goes to the find field.
-  useEffect(() => { input.current?.focus(); }, []);
+  // The person just pressed Cmd+F (again): typing goes to the find field.
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, [request]);
   useEffect(() => {
     const subscription = search.onDidChangeResults(({ resultIndex, resultCount }) => setResult({ index: resultIndex, count: resultCount }));
     return () => { subscription.dispose(); search.clearDecorations(); };

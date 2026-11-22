@@ -171,7 +171,9 @@ export default function TerminalView({
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [search, setSearch] = useState<SearchAddon | null>(null);
-  const [findOpenFor, setFindOpenFor] = useState(0);
+  // A request made before this view mounted was for another terminal.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- seeds the last handled request; later requests are compared against it
+  const [findOpenFor, setFindOpenFor] = useState(findRequest);
   const nativeHistoryRef = useRef<ReturnType<typeof createTerminalNativeHistory> | null>(null);
   const nativeHistoryWriterRef = useRef(false);
   const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
@@ -845,7 +847,7 @@ export default function TerminalView({
         data-selectable
       />
       {findOpen && search ? (
-        <TerminalFindBar search={search} onClose={() => { setFindOpenFor(findRequest); termRef.current?.focus(); }} />
+        <TerminalFindBar search={search} request={findRequest} onClose={() => { setFindOpenFor(findRequest); termRef.current?.focus(); }} />
       ) : null}
       {clipboardError ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-3" aria-live="polite">

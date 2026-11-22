@@ -46,6 +46,8 @@ export function useTerminalWindow() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
   const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
+  // The last computer action that did not take effect, shown until the next one.
+  const [computerNotice, setComputerNotice] = useState<"rename-failed" | "end-failed" | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), CLOCK_MS);
@@ -132,9 +134,10 @@ export function useTerminalWindow() {
       return;
     }
     const api = cloud.api(target.slot);
-    if (!api) return;
-    void renameComputerTab(api, target.ref, name).catch((error: unknown) => {
+    if (!api) { setComputerNotice("rename-failed"); return; }
+    void renameComputerTab(api, target.ref, name).then(() => setComputerNotice(null), (error: unknown) => {
       console.warn("[terminal-window] rename failed:", error instanceof Error ? error.name : "UnknownError");
+      setComputerNotice("rename-failed");
     });
   }, [cloud, local]);
 
@@ -149,11 +152,13 @@ export function useTerminalWindow() {
       return;
     }
     const api = cloud.api(target.slot);
-    if (!api) return;
+    if (!api) { setComputerNotice("end-failed"); return; }
     void closeComputerTab(api, target.ref).then(() => {
+      setComputerNotice(null);
       if (cloudActive.current?.refKey === terminalRefKey(target.ref)) clearActive();
     }, (error: unknown) => {
       console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
+      setComputerNotice("end-failed");
     });
   }, [clearActive, cloud, local]);
 
@@ -196,7 +201,7 @@ export function useTerminalWindow() {
   useEffect(() => onEvent("terminal-window:command", run), [run]);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,

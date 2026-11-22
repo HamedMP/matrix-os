@@ -94,7 +94,9 @@ function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
     id: computerMachineId(computer.runtimeSlot),
     name: computer.label,
     kind: "computer",
-    detail: `${computer.handle} · ${AVAILABILITY_LABEL[computer.availability]}`,
+    // An available computer whose stream has not connected says so, instead of looking empty.
+    detail: `${computer.handle} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
+      ? "Connecting…" : AVAILABILITY_LABEL[computer.availability]}`,
     dotColor: AVAILABILITY_COLOR[computer.availability],
     available: computer.availability === "available",
     creating: view.cloud.creating === computer.runtimeSlot,
@@ -166,7 +168,8 @@ export default function TerminalWindowApp() {
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
 
-  const notice = view.local.notice ? <p role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[view.local.notice]}</p> : null;
+  const failed = view.local.notice ?? view.computerNotice;
+  const notice = failed ? <p role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[failed]}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
       <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(`${view.here.id}|${id}`)} />

@@ -221,6 +221,30 @@ describe("Terminal window computers", () => {
     expect(JSON.parse(String((patch[1] as RequestInit).body))).toEqual({ name: "renamed", baseRevision: 7 });
   });
 
+  // Fault detected (Greptile, #3567): failed computer actions only reached the console.
+  it("says so when renaming or ending a computer terminal did not work", async () => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => (init?.method === "GET" || !init?.method
+      ? json(workspace([{ id: TAB_1, name: "build" }]))
+      : json({ error: "conflict at db01.internal" }, 409)));
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build")]);
+    fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
+    act(() => emit("terminal-window:command", { command: "rename" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Terminal name" }), { target: { value: "renamed" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(await screen.findByText("Couldn't rename that terminal. Try again.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("db01");
+  });
+
+  // Fault detected (Greptile, #3567): an available computer whose stream never connected looked like one with no terminals.
+  it("shows an available computer as connecting until its stream connects", async () => {
+    render(<TerminalWindowApp />);
+    expect(await screen.findByText("neo · Connecting…")).toBeTruthy();
+    await stream("primary", []);
+    expect(await screen.findByText("neo · Available")).toBeTruthy();
+  });
+
   it("asks before Cmd+W ends a running computer terminal, and removes a finished one at once", async () => {
     fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
     render(<TerminalWindowApp />);
