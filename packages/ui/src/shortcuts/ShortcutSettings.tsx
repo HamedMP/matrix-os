@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type CSSProperties } from "react";
+import { useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ChevronRight, Search } from "lucide-react";
 import {
   EMPTY_SHORTCUT_OVERRIDES,
@@ -76,6 +76,20 @@ const confirmStyle: CSSProperties = {
   color: "var(--mxs-on-accent)",
 };
 
+/**
+ * Restores an action's defaults, taking back any default binding that another
+ * action's override still holds, so the row never resets to nothing.
+ */
+function resetToDefaults(overrides: ShortcutOverrides, id: ShortcutActionId, platform: ShortcutPlatform): ShortcutOverrides {
+  let next = resetAction(overrides, id);
+  const defaults = SHORTCUT_ACTIONS.find((action) => action.id === id)?.defaults[platform] ?? [];
+  for (const binding of defaults) {
+    const holder = findConflict(resolveShortcuts(next, platform), binding, id);
+    if (holder !== null && isOverridden(next, holder)) next = removeBinding(next, holder, binding, platform);
+  }
+  return next;
+}
+
 function matchesQuery(action: ShortcutActionDefinition, bindings: readonly string[], query: string, platform: ShortcutPlatform) {
   if (query === "") return true;
   const compact = query.replace(/\s+/g, "");
@@ -102,18 +116,42 @@ export function ShortcutSettings({
   const [failedScope, setFailedScope] = useState<SaveScope | null>(null);
   const [switchOpen, setSwitchOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  // Each save is built from the current `overrides` prop, so a second save
+  // started before the host re-renders would revert the first one.
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const busy = saving || pending;
+
+  // A notice belongs to the overrides it was computed from.
+  const [noticeOverrides, setNoticeOverrides] = useState(overrides);
+  if (noticeOverrides !== overrides) {
+    setNoticeOverrides(overrides);
+    setNotice(null);
+  }
 
   const effective = useMemo(() => resolveShortcuts(overrides, platform), [overrides, platform]);
 
   const save = async (scope: SaveScope, next: ShortcutOverrides) => {
+    if (pendingRef.current || saving) return;
+    pendingRef.current = true;
+    setPending(true);
     let saved = false;
     try {
       saved = await onChange(next);
     } catch (cause: unknown) {
       console.error("[shortcuts] saving shortcut overrides failed", cause);
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
     }
     setFailedScope(saved ? null : scope);
   };
+
+  const changeQuery = (value: string) => {
+    setQuery(value);
+    setNotice(null);
+  };
+  const failureText = error ?? SHORTCUT_COPY.saveFailed;
 
   const handleCapture = (id: ShortcutActionId, binding: string) => {
     setNotice(null);
@@ -166,18 +204,18 @@ export function ShortcutSettings({
       platform={platform}
       bindings={effective[action.id]}
       overridden={isOverridden(overrides, action.id)}
-      busy={saving}
+      busy={busy}
       recording={recorder.target === action.id}
       held={recorder.target === action.id ? recorder.held : []}
       notice={rowNotice(action.id)}
-      error={failedScope === action.id ? error : null}
+      error={failedScope === action.id ? failureText : null}
       onStartRecording={(trigger) => {
         setNotice(null);
         recorder.start(action.id, trigger);
       }}
       onCancelRecording={recorder.cancel}
       onRemove={(binding) => void save(action.id, removeBinding(overrides, action.id, binding, platform))}
-      onReset={() => void save(action.id, resetAction(overrides, action.id))}
+      onReset={() => void save(action.id, resetToDefaults(overrides, action.id, platform))}
     />
   );
 
@@ -238,21 +276,21 @@ export function ShortcutSettings({
           autoComplete="off"
           spellCheck={false}
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => changeQuery(event.target.value)}
           style={searchInputStyle}
         />
       </div>
 
-      {error !== null && failedScope === SECTION ? (
+      {failedScope === SECTION ? (
         <p className="mxs-section-error" role="alert">
-          {error}
+          {failureText}
         </p>
       ) : null}
 
       {visible.length === 0 ? (
         <div className="mxs-empty">
           <p>{emptySearchMessage(query.trim())}</p>
-          <Button variant="secondary" size="sm" className="mxs-outline" onClick={() => setQuery("")}>
+          <Button variant="secondary" size="sm" className="mxs-outline" onClick={() => changeQuery("")}>
             {SHORTCUT_COPY.clearSearch}
           </Button>
         </div>
@@ -266,7 +304,7 @@ export function ShortcutSettings({
           size="sm"
           className="mxs-quiet"
           style={quietButtonStyle}
-          disabled={saving || !hasOverrides}
+          disabled={busy || !hasOverrides}
           onClick={() => setRestoreOpen(true)}
         >
           {SHORTCUT_COPY.restoreAll}
@@ -286,7 +324,7 @@ export function ShortcutSettings({
             variant="primary"
             size="sm"
             style={confirmStyle}
-            disabled={saving}
+            disabled={busy}
             onClick={() => {
               setRestoreOpen(false);
               setNotice(null);

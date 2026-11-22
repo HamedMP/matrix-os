@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   EMPTY_SHORTCUT_OVERRIDES,
+  resolveShortcuts,
   type ShortcutOverrides,
 } from "@matrix-os/contracts/keyboard-shortcuts";
 import {
@@ -204,6 +205,90 @@ describe("ShortcutSettings editing", () => {
   });
 });
 
+describe("ShortcutSettings save safety", () => {
+  const SAVE_FAILED = "Could not save shortcut. Please try again.";
+
+  function deferred() {
+    let resolve!: (value: boolean) => void;
+    const promise = new Promise<boolean>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("shows the save-failed message and logs when onChange rejects", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = new Error("disk full");
+    const onChange = vi.fn(async () => {
+      throw failure;
+    });
+    renderSettings({ onChange });
+    fireEvent.click(within(row("Close app")).getByRole("button", { name: "Remove ⌘Q" }));
+    expect(await within(row("Close app")).findByText(SAVE_FAILED)).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), failure);
+    consoleError.mockRestore();
+  });
+
+  it("shows the save-failed message when onChange resolves false without an error prop", async () => {
+    renderSettings({ onChange: vi.fn(async () => false) });
+    fireEvent.click(within(row("Close app")).getByRole("button", { name: "Remove ⌘Q" }));
+    expect(await within(row("Close app")).findByText(SAVE_FAILED)).toBeInTheDocument();
+  });
+
+  it("shows the save-failed message at section level when Restore all fails", async () => {
+    const overrides: ShortcutOverrides = { version: 1, overrides: { "app.close": [] } };
+    renderSettings({ overrides, onChange: vi.fn(async () => false) });
+    fireEvent.click(screen.getByRole("button", { name: "Restore all defaults" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(SAVE_FAILED);
+  });
+
+  it("blocks overlapping saves until the pending save settles", async () => {
+    const pending = deferred();
+    const onChange = vi.fn(() => pending.promise);
+    const overrides: ShortcutOverrides = { version: 1, overrides: { "app.show-desktop": ["Cmd+Shift+D"] } };
+    renderSettings({ overrides, onChange });
+    fireEvent.click(within(row("Close app")).getByRole("button", { name: "Remove ⌘Q" }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(row("Minimize app")).getByRole("button", { name: "Remove ⌘M" }));
+    fireEvent.click(within(row("Show desktop")).getByRole("button", { name: "Reset" }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(within(row("Minimize app")).getByRole("button", { name: "Remove ⌘M" })).toBeDisabled();
+    expect(within(row("Minimize app")).getByRole("button", { name: "Add shortcut" })).toBeDisabled();
+    expect(within(row("Show desktop")).getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore all defaults" })).toBeDisabled();
+
+    await act(async () => {
+      pending.resolve(true);
+      await pending.promise;
+    });
+    expect(within(row("Minimize app")).getByRole("button", { name: "Add shortcut" })).toBeEnabled();
+    expect(within(row("Minimize app")).getByRole("button", { name: "Remove ⌘M" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Restore all defaults" })).toBeEnabled();
+  });
+
+  it("disables row controls and Restore all while the host is saving", () => {
+    const overrides: ShortcutOverrides = { version: 1, overrides: { "app.show-desktop": ["Cmd+Shift+D"] } };
+    renderSettings({ overrides, saving: true });
+    expect(within(row("Show desktop")).getByRole("button", { name: "Remove ⌘⇧D" })).toBeDisabled();
+    expect(within(row("Show desktop")).getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(within(row("Show desktop")).getByRole("button", { name: "Add shortcut" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restore all defaults" })).toBeDisabled();
+  });
+
+  it("Reset takes the row's default bindings back from other actions", async () => {
+    const overrides: ShortcutOverrides = { version: 1, overrides: { "app.next": [], "app.close": ["Cmd+Q", "Ctrl+Tab"] } };
+    const { onChange } = renderSettings({ overrides });
+    fireEvent.click(within(row("Next app")).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    const next = (onChange as ReturnType<typeof vi.fn>).mock.calls[0]![0] as ShortcutOverrides;
+    const effective = resolveShortcuts(next, "mac");
+    expect(effective["app.next"]).toEqual(["Ctrl+Tab"]);
+    expect(effective["app.close"]).toEqual(["Cmd+Q"]);
+  });
+});
+
 describe("ShortcutSettings search", () => {
   function search(value: string) {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search shortcuts" }), { target: { value } });
@@ -229,6 +314,26 @@ describe("ShortcutSettings search", () => {
     search("app 4");
     expect(screen.getByRole("button", { name: /Switch to app 1–9/ })).toHaveAttribute("aria-expanded", "true");
     expect(row("Switch to app 4")).toBeInTheDocument();
+  });
+
+  it("clears a pending conflict when the search changes", () => {
+    renderSettings();
+    record("Close app", { key: "Tab", code: "Tab", ctrlKey: true });
+    expect(screen.getByText("⌃⇥ is used by Next app.")).toBeInTheDocument();
+    search("close");
+    expect(screen.queryByText("⌃⇥ is used by Next app.")).toBeNull();
+    search("");
+    expect(screen.queryByText("⌃⇥ is used by Next app.")).toBeNull();
+  });
+
+  it("clears a pending rejection when overrides change from outside", () => {
+    const { rerender, onChange } = renderSettings();
+    record("Show desktop", { key: "c", code: "KeyC", metaKey: true });
+    expect(screen.getByText("⌘C is reserved for Copy.")).toBeInTheDocument();
+    rerender(
+      <ShortcutSettings platform="mac" overrides={{ version: 1, overrides: { "app.close": [] } }} onChange={onChange} />,
+    );
+    expect(screen.queryByText("⌘C is reserved for Copy.")).toBeNull();
   });
 
   it("shows an empty state that clears the search", () => {

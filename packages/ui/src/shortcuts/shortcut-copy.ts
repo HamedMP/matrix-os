@@ -16,6 +16,7 @@ export const SHORTCUT_COPY = {
   restoreAll: "Restore all defaults",
   recording: "Press keys…",
   limit: "An action can have up to 4 shortcuts.",
+  saveFailed: "Could not save shortcut. Please try again.",
   switchGroupTitle: "Switch to app 1–9",
   switchGroupDescription: "Go to an app by its place in the taskbar.",
   restoreTitle: "Restore all default shortcuts?",
