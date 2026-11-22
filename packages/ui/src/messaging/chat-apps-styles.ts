@@ -1,0 +1,50 @@
+import type { CSSProperties } from "react";
+
+/** Inline theme-token styles shared by the chat apps components (no Tailwind source scan needed). */
+export const chatAppsStyles = {
+  muted: { color: "var(--matrix-muted-fg, var(--muted-foreground))", fontSize: "0.8125rem", lineHeight: 1.5, margin: 0 },
+  body: { fontSize: "0.875rem", lineHeight: 1.6, margin: 0 },
+  card: {
+    border: "1px solid var(--matrix-border, var(--border))",
+    borderRadius: "var(--matrix-radius-lg, 12px)",
+    background: "var(--matrix-card, var(--card))",
+    color: "var(--matrix-card-fg, var(--card-foreground))",
+  },
+  row: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" },
+  stack: { display: "flex", flexDirection: "column", gap: 8 },
+  alert: {
+    border: "1px solid var(--matrix-destructive, var(--destructive))",
+    borderRadius: "var(--matrix-radius-md, 8px)",
+    padding: "10px 12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    fontSize: "0.8125rem",
+  },
+  empty: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    gap: 6,
+    padding: "28px 16px",
+    minHeight: 200,
+  },
+  textarea: {
+    width: "100%",
+    minHeight: 44,
+    maxHeight: 160,
+    resize: "vertical",
+    padding: "10px 12px",
+    background: "var(--matrix-card, var(--card))",
+    color: "var(--matrix-fg, var(--foreground))",
+    border: "1px solid var(--matrix-input, var(--input))",
+    borderRadius: "var(--matrix-radius-md, 8px)",
+    fontFamily: "var(--matrix-font-sans)",
+    fontSize: "0.875rem",
+    lineHeight: 1.5,
+  },
+} satisfies Record<string, CSSProperties>;

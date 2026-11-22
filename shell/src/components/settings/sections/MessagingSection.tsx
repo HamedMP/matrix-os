@@ -1,14 +1,22 @@
 "use client";
 import { WhatsAppSettingsPanel } from "@matrix-os/ui";
+import { ChatAppsPanel, type MessagingBridgeFetch } from "@matrix-os/ui/messaging";
 import { useAuth } from "@clerk/nextjs";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
+import { useSocket } from "@/hooks/useSocket";
 import { WHATSAPP_SETTINGS_PATH } from "@matrix-os/contracts";
 import { useSyncExternalStore } from "react";
 const subscribeRuntime = () => () => {};
 const serverRuntime = () => null;
 const platformOrigin = process.env.NEXT_PUBLIC_MATRIX_APP_URL;
 const allowDevelopmentOrigin = process.env.NODE_ENV === "development";
-export function MessagingSection() {
+const signInRequired = () =>
+  new Response(JSON.stringify({ error: { code: "unauthorized", message: "Sign in required" } }), {
+    status: 401,
+    headers: { "content-type": "application/json" },
+  });
+/** `mobile` hides Your chat apps: Web Mobile is out of scope for spec 2701 phase 0. */
+export function MessagingSection({ mobile = false }: { mobile?: boolean }) {
   const selfHosted = useSyncExternalStore(subscribeRuntime, isSelfHostedRuntime, serverRuntime);
   if (selfHosted === null) return <MessagingContent><p>Checking connection…</p></MessagingContent>;
   return selfHosted ? (
@@ -19,7 +27,7 @@ export function MessagingSection() {
       </p>
     </MessagingContent>
   ) : (
-    <ManagedMessaging />
+    <ManagedMessaging mobile={mobile} />
   );
 }
 function MessagingContent({ children }: { children: React.ReactNode }) {
@@ -33,14 +41,24 @@ function MessagingContent({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-function ManagedMessaging() {
+function ManagedMessaging({ mobile }: { mobile: boolean }) {
   const { userId, sessionId, getToken } = useAuth();
+  const { subscribe } = useSocket();
+  const scope = JSON.stringify([userId, sessionId]);
+  const bridgeFetch: MessagingBridgeFetch = async (path, init) => {
+    if (!userId) return signInRequired();
+    const token = await getToken();
+    if (!token) return signInRequired();
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    return fetch(path, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(10_000) });
+  };
   return (
     <MessagingContent>
       <WhatsAppSettingsPanel
         platformOrigin={platformOrigin}
         allowDevelopmentOrigin={allowDevelopmentOrigin}
-        scope={JSON.stringify([userId, sessionId])}
+        scope={scope}
         load={async () => {
           if (!userId) throw new Error("Sign in required");
           const token = await getToken();
@@ -55,6 +73,7 @@ function ManagedMessaging() {
           return res.json();
         }}
       />
+      {mobile ? null : <ChatAppsPanel scope={scope} fetch={bridgeFetch} subscribe={subscribe} />}
     </MessagingContent>
   );
 }
