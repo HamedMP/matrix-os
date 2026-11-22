@@ -374,6 +374,8 @@ export function useTerminalWindow() {
           const neighbour = space.space ? visibleRows[0] : undefined;
           if (neighbour) { createInSpace(neighbour.key); return; }
           if (space.machineId.startsWith("computer:")) { createCloud(space.machineId.slice("computer:".length)); return; }
+          // An ssh machine's home space starts the terminal on that machine.
+          if (space.machineId.startsWith("ssh:")) { createLocal({ machine: space.machineId.slice("ssh:".length) }); return; }
           createLocal({});
           return;
         }
