@@ -14,6 +14,8 @@ export interface TerminalPaneProps {
   compatMode?: TerminalCompatMode;
   onFocus?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
+  /** The server said this terminal is gone for good (session_not_found); the pane stopped reconnecting. */
+  onSessionEnded?: (sessionId: string) => void;
   isClosing?: boolean;
   shouldCacheOnUnmount?: (paneId: string) => boolean;
   shouldDestroyOnUnmount?: (paneId: string) => boolean | string;

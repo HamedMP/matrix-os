@@ -5,8 +5,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PaneGrid } from "../../shell/src/components/terminal/PaneGrid.js";
 
+const terminalPaneProps = vi.hoisted(() => [] as Array<{ onSessionEnded?: (sessionId: string) => void }>);
+
 vi.mock("../../shell/src/components/terminal/TerminalPane.js", () => ({
-  TerminalPane: () => <div>Live terminal</div>,
+  TerminalPane: (props: { onSessionEnded?: (sessionId: string) => void }) => {
+    terminalPaneProps.push(props);
+    return <div>Live terminal</div>;
+  },
 }));
 
 const theme = {
@@ -66,5 +71,16 @@ describe("PaneGrid missing session recovery", () => {
     expect(screen.queryByText("Session is unavailable")).toBeNull();
     expect(screen.queryByRole("button", { name: /Recover/ })).toBeNull();
     expect(onRecoverSession).not.toHaveBeenCalled();
+  });
+
+  it("tells the app when a live pane's terminal has ended", () => {
+    const onSessionEnded = vi.fn();
+    render(<PaneGrid
+      paneTree={{ type: "pane", id: "pane-one", cwd: "~", sessionId: "bench" }}
+      theme={theme}
+      onSessionEnded={onSessionEnded}
+    />);
+    terminalPaneProps.at(-1)?.onSessionEnded?.("bench");
+    expect(onSessionEnded).toHaveBeenCalledWith("bench");
   });
 });

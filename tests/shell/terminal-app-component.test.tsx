@@ -1010,6 +1010,14 @@ describe("TerminalApp workspace contract", () => {
     await act(async () => {
       await expect(props.onRecoverSession?.(goneHerdrRef, "~")).resolves.toBe(false);
     });
+
+    // A live Herdr pane whose terminal later ends shows the same ended state.
+    await act(async () => {
+      (props as { onSessionEnded?: (sessionId: string) => void }).onSessionEnded?.(liveHerdrRef);
+      (props as { onSessionEnded?: (sessionId: string) => void }).onSessionEnded?.(REF_KEY);
+    });
+    const endedProps = paneGridSpy.mock.lastCall?.[0] as { unavailableSessionIds?: string[] };
+    expect(endedProps.unavailableSessionIds).toEqual([goneHerdrRef, liveHerdrRef]);
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
       String(input).includes(`/api/terminal/workspaces/${HERDR_WORKSPACE_ID}/tabs`) && init?.method === "POST"
     ))).toBe(false);

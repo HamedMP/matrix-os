@@ -158,6 +158,7 @@ export function TerminalPane({
   compatMode,
   onFocus,
   onSessionAttached,
+  onSessionEnded,
   isClosing,
   shouldCacheOnUnmount,
   shouldDestroyOnUnmount,
@@ -196,6 +197,7 @@ export function TerminalPane({
   const pasteOperationGenerationRef = useRef(0);
   const clipboardOperationSequenceRef = useRef(0);
   const onSessionAttachedRef = useRef(onSessionAttached);
+  const onSessionEndedRef = useRef(onSessionEnded);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
   const webglAddonRef = useRef<DisposableWebglAddon | null>(null);
@@ -324,6 +326,8 @@ export function TerminalPane({
   // values are current before any event handler or the cleanup closure reads them.
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync (see comment above); moving to an effect would expose stale values to synchronous reads.
   onSessionAttachedRef.current = onSessionAttached;
+  // react-doctor-disable-next-line react-hooks-js/refs, react-doctor/no-ref-current-in-render -- latest-value ref read by the long-lived WebSocket error handler without reconnecting when the callback changes.
+  onSessionEndedRef.current = onSessionEnded;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   shouldCacheOnUnmountRef.current = shouldCacheOnUnmount;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
@@ -515,6 +519,9 @@ export function TerminalPane({
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/exhaustive-deps -- cleanup is returned via init()'s awaited promise (see outer return), and reading the live heartbeatRef.current in cleanup is required to stop the most recent heartbeat instance.
   useEffect(() => {
     let disposed = false;
+    // The server said this terminal is gone for good (session_not_found):
+    // the pane keeps what it shows and stops reconnecting.
+    let sessionEnded = false;
     let lastRevision = -1;
     let lastWorkspaceRevision = -1;
     let destroyRequested = false;
@@ -1097,6 +1104,10 @@ export function TerminalPane({
             isClosing: isClosingRef.current,
           });
           if (disposed || isClosingRef.current) return;
+          if (sessionEnded) {
+            setConnectionNotice(null);
+            return;
+          }
 
           // Attempt reconnection with exponential backoff
           const attempt = reconnectAttemptRef.current;
@@ -1307,6 +1318,10 @@ export function TerminalPane({
               });
               term.write(`\r\n\x1b[31m[Error: ${safeMsg}]\x1b[0m\r\n`);
               replayVisibility.revealAfterWrites();
+              if (msg.code === "session_not_found" && !sessionEnded) {
+                sessionEnded = true;
+                if (sessionIdRef.current) onSessionEndedRef.current?.(sessionIdRef.current);
+              }
               break;
             }
           }
@@ -1339,6 +1354,7 @@ export function TerminalPane({
         if (
           disposed
           || isClosingRef.current
+          || sessionEnded
           || webSocketConnectPending
           || wsRef.current?.readyState === WebSocket.CONNECTING
           || wsRef.current?.readyState === WebSocket.OPEN
