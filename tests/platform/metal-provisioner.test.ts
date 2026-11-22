@@ -240,7 +240,8 @@ describe('metal provisioner', () => {
       tier: 'free',
       bootMiB: 2048,
       maxMiB: 8192,
-      diskGiB: 20,
+      // The free shape's disk: room for the golden (~17 GB) plus Browser and owner data.
+      diskGiB: 40,
       goldenVersion: GOLDEN,
     });
     expect(spec.userData).toContain(`MATRIX_MACHINE_ID=${MACHINE_ID}`);
@@ -263,6 +264,20 @@ describe('metal provisioner', () => {
       hetznerServerId: null,
       publicIPv4: null,
     });
+  });
+
+  it('preinstalls only Claude Code and Codex on a free VM, and the default set on a paid one', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    const free = host.createVm.mock.calls[0]![0] as HostdCreateVmRequest;
+    expect(free.userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code'$/m);
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ developerTools: ['codex', 'claude-code'] });
+
+    await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
+      .provision({ clerkUserId: 'user_other', handle: 'bob', tier: 'paid' });
+    const paid = host.createVm.mock.calls[1]![0] as HostdCreateVmRequest;
+    expect(paid.userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code opencode pi'$/m);
   });
 
   it('breaks a headroom tie by the fewest running VMs', async () => {

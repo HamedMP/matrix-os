@@ -213,7 +213,9 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ machine_id: body.machineId, substrate: 'metal', metal_host_id: 'host-a', status: 'provisioning' });
     expect(hostd.createVm).toHaveBeenCalledTimes(1);
-    expect(hostd.createVm.mock.calls[0]![0]).toMatchObject({ tier: 'free', bootMiB: 2048, maxMiB: 8192, diskGiB: 20 });
+    expect(hostd.createVm.mock.calls[0]![0]).toMatchObject({ tier: 'free', bootMiB: 2048, maxMiB: 8192, diskGiB: 40 });
+    // Free owners get only Claude Code and Codex preinstalled; the request names no tools.
+    expect((hostd.createVm.mock.calls[0]![0] as { userData: string }).userData).toMatch(/^\s*MATRIX_DEVELOPER_TOOLS='codex claude-code'$/m);
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeInstanceOf(Date);
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'free', planSlug: 'matrix_free', maxRuntimeSlots: 1 });
     // No Stripe checkout and no VPS: the paid provisioning path is never entered.
