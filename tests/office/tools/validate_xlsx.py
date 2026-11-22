@@ -98,7 +98,10 @@ def validate(path: str, max_formulas: int) -> dict:
         formulas_wb = openpyxl.load_workbook(path, data_only=False)
         values_wb = openpyxl.load_workbook(path, data_only=True)
     except Exception as exc:  # noqa: BLE001 - any reader failure means the file is invalid
-        raise PackageError(f"openpyxl could not open the file: {type(exc).__name__}: {exc}") from exc
+        reason = f"openpyxl could not open the file: {type(exc).__name__}: {exc}"
+        if raw["errors"]:  # report the specific XML problems first, then the reader failure
+            return {"file": Path(path).name, "valid": False, "errors": [*raw["errors"], reason]}
+        raise PackageError(reason) from exc
 
     errors = list(raw["errors"])
     names = [s["name"] for s in raw["sheets"]]

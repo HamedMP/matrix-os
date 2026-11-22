@@ -12,6 +12,7 @@ from xml.sax.saxutils import escape
 from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.oxml import parse_xml
+from lxml import etree
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -67,6 +68,7 @@ def append_xml(doc, xml: str):
     """Append a block-level element before the final section properties."""
     body = doc.element.body
     element = parse_xml(xml)
+    etree.cleanup_namespaces(element)
     sect = body.find(f"{{{W_NS}}}sectPr")
     if sect is not None:
         sect.addprevious(element)
@@ -125,21 +127,22 @@ def docx_bytes(doc) -> bytes:
 _CORE_DATE = re.compile(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*(</dcterms:)")
 
 
-def normalize_zip(data: bytes, transform=None) -> bytes:
+def normalize_zip(data: bytes, transform=None, extra: dict[str, bytes] | None = None) -> bytes:
     """Rewrite a ZIP with fixed timestamps and attributes so output is byte-stable.
 
-    ``transform(name, data) -> data`` may rewrite individual parts.
+    ``transform(name, data) -> data`` may rewrite individual parts; ``extra`` adds parts.
     """
     source = zipfile.ZipFile(io.BytesIO(data))
     out = io.BytesIO()
+    entries = [(info.filename, source.read(info)) for info in source.infolist()]
+    entries += sorted((extra or {}).items())
     with zipfile.ZipFile(out, "w") as target:
-        for info in source.infolist():
-            payload = source.read(info)
-            if info.filename == "docProps/core.xml":
+        for filename, payload in entries:
+            if filename == "docProps/core.xml":
                 payload = _CORE_DATE.sub(rb"\g<1>" + FIXED_ISO.encode() + rb"\g<2>", payload)
             if transform is not None:
-                payload = transform(info.filename, payload)
-            entry = zipfile.ZipInfo(info.filename, date_time=ZIP_TIME)
+                payload = transform(filename, payload)
+            entry = zipfile.ZipInfo(filename, date_time=ZIP_TIME)
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.external_attr = 0o644 << 16
             entry.create_system = 0

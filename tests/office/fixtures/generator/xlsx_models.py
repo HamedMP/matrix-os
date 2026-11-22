@@ -9,7 +9,8 @@ import io
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from .xlsx_fixtures import _new_workbook, save
+from .xlsx_fixtures import _new_workbook
+from .xlsx_package import save
 
 MODEL = {
     "start_revenue": 50000,

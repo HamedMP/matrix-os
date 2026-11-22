@@ -2,13 +2,13 @@
   "file": "model.xlsx",
   "valid": true,
   "errors": [],
-  "parts": 11,
+  "parts": 12,
   "sheetNames": [
     "Assumptions",
     "Projection",
     "Summary"
   ],
-  "sharedStrings": 0,
+  "sharedStrings": 28,
   "definedNames": {},
   "totalCells": 146,
   "totalFormulas": 94,
@@ -52,14 +52,14 @@
           "formula": "B4*(1+Assumptions!$B$3)",
           "type": "normal",
           "ref": null,
-          "cached": "51500.0"
+          "cached": "51500"
         },
         {
           "cell": "D4",
           "formula": "C4*(1+Assumptions!$B$3)",
           "type": "normal",
           "ref": null,
-          "cached": "53045.0"
+          "cached": "53045"
         },
         {
           "cell": "E4",
@@ -136,21 +136,21 @@
           "formula": "B4*Assumptions!$B$4",
           "type": "normal",
           "ref": null,
-          "cached": "20000.0"
+          "cached": "20000"
         },
         {
           "cell": "C5",
           "formula": "C4*Assumptions!$B$4",
           "type": "normal",
           "ref": null,
-          "cached": "20600.0"
+          "cached": "20600"
         },
         {
           "cell": "D5",
           "formula": "D4*Assumptions!$B$4",
           "type": "normal",
           "ref": null,
-          "cached": "21218.0"
+          "cached": "21218"
         },
         {
           "cell": "E5",
@@ -227,21 +227,21 @@
           "formula": "B4-B5",
           "type": "normal",
           "ref": null,
-          "cached": "30000.0"
+          "cached": "30000"
         },
         {
           "cell": "C6",
           "formula": "C4-C5",
           "type": "normal",
           "ref": null,
-          "cached": "30900.0"
+          "cached": "30900"
         },
         {
           "cell": "D6",
           "formula": "D4-D5",
           "type": "normal",
           "ref": null,
-          "cached": "31827.0"
+          "cached": "31827"
         },
         {
           "cell": "E6",
@@ -409,21 +409,21 @@
           "formula": "B6-B7",
           "type": "normal",
           "ref": null,
-          "cached": "12000.0"
+          "cached": "12000"
         },
         {
           "cell": "C8",
           "formula": "C6-C7",
           "type": "normal",
           "ref": null,
-          "cached": "12900.0"
+          "cached": "12900"
         },
         {
           "cell": "D8",
           "formula": "D6-D7",
           "type": "normal",
           "ref": null,
-          "cached": "13827.0"
+          "cached": "13827"
         },
         {
           "cell": "E8",
@@ -500,14 +500,14 @@
           "formula": "MAX(0,B8*Assumptions!$B$6)",
           "type": "normal",
           "ref": null,
-          "cached": "3000.0"
+          "cached": "3000"
         },
         {
           "cell": "C9",
           "formula": "MAX(0,C8*Assumptions!$B$6)",
           "type": "normal",
           "ref": null,
-          "cached": "3225.0"
+          "cached": "3225"
         },
         {
           "cell": "D9",
@@ -591,14 +591,14 @@
           "formula": "B8-B9",
           "type": "normal",
           "ref": null,
-          "cached": "9000.0"
+          "cached": "9000"
         },
         {
           "cell": "C10",
           "formula": "C8-C9",
           "type": "normal",
           "ref": null,
-          "cached": "9675.0"
+          "cached": "9675"
         },
         {
           "cell": "D10",
@@ -683,8 +683,8 @@
       "columnWidths": {},
       "valueTypes": {
         "datetime": 12,
-        "float": 77,
-        "int": 14,
+        "float": 62,
+        "int": 29,
         "str": 10
       },
       "maxRow": 10,

@@ -2,7 +2,7 @@
   "file": "multi-sheet.xlsx",
   "valid": true,
   "errors": [],
-  "parts": 13,
+  "parts": 14,
   "sheetNames": [
     "Summary",
     "Q1 Sales",
@@ -10,7 +10,7 @@
     "O'Brien Notes",
     "Hidden Lookup"
   ],
-  "sharedStrings": 0,
+  "sharedStrings": 22,
   "definedNames": {},
   "totalCells": 50,
   "totalFormulas": 8,

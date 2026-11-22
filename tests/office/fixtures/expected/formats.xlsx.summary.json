@@ -2,20 +2,20 @@
   "file": "formats.xlsx",
   "valid": true,
   "errors": [],
-  "parts": 9,
+  "parts": 10,
   "sheetNames": [
     "Formats"
   ],
-  "sharedStrings": 0,
+  "sharedStrings": 36,
   "definedNames": {},
-  "totalCells": 56,
+  "totalCells": 49,
   "totalFormulas": 0,
   "sheets": [
     {
       "name": "Formats",
       "state": "visible",
       "dimension": "A1:F14",
-      "cells": 56,
+      "cells": 49,
       "formulaCount": 0,
       "formulasWithoutCachedValue": 0,
       "formulas": [],

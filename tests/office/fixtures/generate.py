@@ -70,24 +70,23 @@ def build() -> dict[str, bytes]:
         expected: dict[str, bytes] = {}
         for name in FIXTURES:
             path = str(Path(tmp) / name)
-            stem = name.rsplit(".", 1)[0]
             if name.endswith(".docx"):
                 summary = validate_docx.validate(path)
                 texts = accept_all.resolve(path)
-                expected[f"expected/{stem}.txt"] = (texts["accept"] + "\n").encode("utf-8")
+                expected[f"expected/{name}.txt"] = (texts["accept"] + "\n").encode("utf-8")
                 if summary["revisions"]["total"]:
-                    expected[f"expected/{stem}.reject.txt"] = (texts["reject"] + "\n").encode("utf-8")
+                    expected[f"expected/{name}.reject.txt"] = (texts["reject"] + "\n").encode("utf-8")
             elif name.endswith(".xlsx"):
                 summary = validate_xlsx.validate(path, max_formulas=500)
             else:
                 continue
             if not summary["valid"]:
                 raise SystemExit(f"{name} failed validation: {summary['errors']}")
-            expected[f"expected/{stem}.summary.json"] = _json(summary)
+            expected[f"expected/{name}.summary.json"] = _json(summary)
 
     v1_text, v2_text = docx_contract.contract_texts()
     for stem, text in (("contract", v1_text), ("contract-v2", v2_text)):
-        extracted = expected[f"expected/{stem}.txt"].decode("utf-8").rstrip("\n")
+        extracted = expected[f"expected/{stem}.docx.txt"].decode("utf-8").rstrip("\n")
         if extracted != text:
             raise SystemExit(f"{stem}.docx text does not match its source text")
     expected["expected/contract-edits.json"] = _json(V2_EDITS)

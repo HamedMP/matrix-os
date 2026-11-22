@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from docx.enum.style import WD_STYLE_TYPE
+from lxml import etree
 from docx.shared import Pt, RGBColor
 
 from .ooxml import (CT_WML, NSDECL, RT_BASE, add_part, append_xml, del_run, docx_bytes, field,
@@ -122,6 +123,7 @@ def _append_children(target, xml: str) -> None:
     from docx.oxml import parse_xml
 
     holder = parse_xml(f"<w:p {NSDECL}>{xml}</w:p>")
+    etree.cleanup_namespaces(holder)
     for child in list(holder):
         target.append(child)
 

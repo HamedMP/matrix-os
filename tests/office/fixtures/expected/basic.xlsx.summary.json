@@ -2,20 +2,20 @@
   "file": "basic.xlsx",
   "valid": true,
   "errors": [],
-  "parts": 9,
+  "parts": 10,
   "sheetNames": [
     "Basics"
   ],
-  "sharedStrings": 0,
+  "sharedStrings": 29,
   "definedNames": {},
-  "totalCells": 44,
+  "totalCells": 47,
   "totalFormulas": 0,
   "sheets": [
     {
       "name": "Basics",
       "state": "visible",
-      "dimension": "A1:E20",
-      "cells": 44,
+      "dimension": "A1:E21",
+      "cells": 47,
       "formulaCount": 0,
       "formulasWithoutCachedValue": 0,
       "formulas": [],
@@ -27,9 +27,9 @@
         "datetime": 2,
         "float": 1,
         "int": 3,
-        "str": 36
+        "str": 39
       },
-      "maxRow": 20,
+      "maxRow": 21,
       "maxColumn": 5
     }
   ]

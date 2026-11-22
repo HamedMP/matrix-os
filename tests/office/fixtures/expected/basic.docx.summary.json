@@ -1,0 +1,56 @@
+{
+  "file": "basic.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 17,
+  "document": {
+    "bodyParagraphs": 12,
+    "allParagraphs": 12,
+    "tables": 0,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "CalloutNote": 1,
+      "Heading1": 2,
+      "Heading2": 2,
+      "Quote": 1,
+      "Title": 1
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 0,
+    "characters": 490,
+    "pythonDocx": {
+      "paragraphs": 12,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "Quarterly Operations Review",
+        "Summary",
+        "Details",
+        "Revenue",
+        "Costs"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 0
+}

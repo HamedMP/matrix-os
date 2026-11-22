@@ -1,26 +1,20 @@
-"""basic.xlsx, formulas.xlsx, formats.xlsx, multi-sheet.xlsx, model.xlsx and data.csv.
+"""basic.xlsx, formulas.xlsx and formats.xlsx.
 
-openpyxl writes formulas without cached results, so every formula's value is computed
-here and injected as <v> afterwards, as a spreadsheet application would store it.
+Every formula's result is computed here and passed to ``save``, which stores it as the
+cached value, as a spreadsheet application would.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-import io
-import posixpath
 
-from lxml import etree
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.formula import ArrayFormula
 
-from .ooxml import FIXED_DATE, normalize_zip
-
-S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-PR = "http://schemas.openxmlformats.org/package/2006/relationships"
+from .ooxml import FIXED_DATE
+from .xlsx_package import save
 
 
 def _new_workbook() -> Workbook:
@@ -30,58 +24,6 @@ def _new_workbook() -> Workbook:
     wb.properties.modified = FIXED_DATE
     wb.properties.lastModifiedBy = "Matrix OS fixtures"
     return wb
-
-
-def _cached_value_element(value):
-    if isinstance(value, bool):
-        return "b", "1" if value else "0"
-    if isinstance(value, str) and value.startswith("#"):
-        return "e", value
-    if isinstance(value, str):
-        return "str", value
-    return None, repr(float(value)) if isinstance(value, float) else str(value)
-
-
-def save(wb: Workbook, cached: dict[str, dict[str, object]]) -> bytes:
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    import zipfile
-
-    archive = zipfile.ZipFile(io.BytesIO(buffer.getvalue()))
-    workbook = etree.fromstring(archive.read("xl/workbook.xml"))
-    rels = etree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
-    targets = {rel.get("Id"): rel.get("Target") for rel in rels.iter(f"{{{PR}}}Relationship")}
-    part_for_sheet = {}
-    for sheet in workbook.iter(f"{{{S}}}sheet"):
-        target = targets[sheet.get(f"{{{R}}}id")]
-        part_for_sheet[sheet.get("name")] = posixpath.normpath(
-            target.lstrip("/") if target.startswith("/") else posixpath.join("xl", target))
-    by_part = {part_for_sheet[name]: values for name, values in cached.items()}
-
-    def transform(name: str, data: bytes) -> bytes:
-        if not name.startswith("xl/worksheets/"):
-            return data
-        root = etree.fromstring(data)
-        values = by_part.get(name, {})
-        for cell in root.iter(f"{{{S}}}c"):
-            formula = cell.find(f"{{{S}}}f")
-            if formula is None:
-                continue
-            ref = cell.get("r")
-            if ref not in values:
-                raise ValueError(f"{name} {ref} has a formula but no cached value")
-            kind, text = _cached_value_element(values[ref])
-            v = cell.find(f"{{{S}}}v")
-            if v is None:
-                v = etree.SubElement(cell, f"{{{S}}}v")
-            v.text = text
-            if kind:
-                cell.set("t", kind)
-            elif "t" in cell.attrib:
-                del cell.attrib["t"]
-        return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-    return normalize_zip(buffer.getvalue(), transform)
 
 
 def basic() -> bytes:
@@ -101,7 +43,8 @@ def basic() -> bytes:
         ws.append(list(row))
     ws["E2"] = "Gap after an empty column"
     ws["A20"] = "Isolated cell below empty rows"
-    return save(wb, {})
+    ws.append(["Inline", "Inline string cell", "inline string"])
+    return save(wb, {}, keep_inline={"Inline string cell"})
 
 
 def formulas() -> bytes:
@@ -179,7 +122,7 @@ def formats() -> bytes:
     ]
     thin = Side(style="thin", color="999999")
     for kind, value, fmt in samples:
-        ws.append([kind, value, fmt, ""])
+        ws.append([kind, value, fmt, None])
         cell = ws.cell(row=ws.max_row, column=2)
         cell.number_format = fmt
         cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
