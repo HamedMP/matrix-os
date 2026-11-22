@@ -34,7 +34,9 @@ platform infrastructure:
 
 - the bridge login sessions for each linked chat account (WhatsApp device keys, Telegram
   session, LinkedIn cookies), and
-- a transient copy of bridged messages in the shared homeserver database.
+- a transient copy of bridged messages in the shared homeserver database, and
+- in platform Postgres, while a link is in progress, the current login step, which can
+  contain a QR or pairing code (encrypted at rest, deleted when the link ends).
 
 Phase 0 accepts this for allowlisted owners who opt in, with these limits:
 
@@ -208,8 +210,14 @@ by tests of the real link flow.
 - The owner access token is stored on the VPS in the owner secret store with mode 0600. It is
   never returned to a renderer, logged, or written to audit.
 - Login field values and cookies pass through and are never logged or stored by the gateway
-  or platform. QR and pairing codes are never logged; the platform keeps the current one only
-  encrypted in the pending-login row until the flow ends or expires.
+  or platform.
+- QR and pairing codes are never logged, but they are stored at rest: the platform keeps the
+  current login step, including any QR or pairing code, in the `messaging_bridge_logins` row
+  in platform Postgres, AES-256-GCM encrypted with a key derived from the user-id key and
+  bound to that row. The row is deleted when the link completes, fails or is cancelled. It
+  expires 10 minutes after the last step, is never read after that, and is deleted by the next
+  read or the next sweep (about a minute). Every owner-facing
+  read, update and delete of that row filters on the owner id.
 - The bridge host accepts only HTTPS. The reverse proxy exposes the client API paths the
   gateway needs, and exposes admin and provisioning paths only to callers presenting the
   platform secret. Federation ports are closed.
@@ -271,7 +279,7 @@ login field values or message data are stored on the platform.
 | Sync batch partly applied | Messages and `next_batch` commit in one transaction; replay is safe because inserts use `ON CONFLICT DO NOTHING`. |
 | Send times out | Message stays `failed`; retry reuses `client_txn_id`, which is also the Matrix transaction id, so no duplicate is delivered. |
 | Access token rejected | Gateway requests a new session once, then marks availability "unavailable". |
-| Link flow abandoned | In-memory link sessions expire after 10 minutes and are swept; nothing is persisted. Dismissal, expiry and eviction also cancel the login at the bridge. |
+| Link flow abandoned | Gateway link sessions are memory-only and expire after 10 minutes. The platform's pending-login row expires 10 minutes after its last step and is claimed by one instance (on read, or by a sweep of at most 100 rows per minute per instance) and deleted. Dismissal, expiry and eviction also cancel the login at the bridge. |
 | Bridge reports logged out | Account state becomes `needs_relink`; the inbox stays readable. |
 | Gateway shutdown | Sync aborts its in-flight request and stops before the database is destroyed. |
 | Two gateway processes | A Postgres advisory lock on the owner id ensures one sync loop. |
@@ -283,9 +291,11 @@ login field values or message data are stored on the platform.
 - Sync: one loop per owner, one request in flight, timeline limit 50 events per room per
   batch, limited-timeline backfill capped at 10 pages of 100 events per room, bodies
   truncated to the contract maximum.
-- Platform pending logins: Postgres rows, cap 16 per owner, 10-minute expiry; expired rows
-  are claimed when read and by a 60-second sweep on every instance, and cancelled at the
-  bridge once. Login starts are rate limited per owner from `messaging_bridge_login_starts`.
+- Platform pending logins (data retention): Postgres rows holding the encrypted current step,
+  including any QR or pairing code; cap 16 per owner (oldest evicted and cancelled), deleted on
+  completion, failure or cancel; a row expires 10 minutes after the last step and is then
+  claimed when read or by the 60-second sweep on every instance (at most 100 rows per run),
+  deleted, and cancelled at the bridge once. Login starts are rate limited per owner from `messaging_bridge_login_starts`.
 - Message retention in owner Postgres: unlimited in phase 0; measured and reported.
 - Bridge host: homeserver retention purge after 7 days; media cache capped; nightly database
   backup with 7-day rotation.
