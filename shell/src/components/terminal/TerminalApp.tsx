@@ -1091,6 +1091,13 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
     return pendingPaneSessionsRef.current!.get(paneId) ?? true;
   };
 
+  // A Herdr terminal that ends while shown gets the same ended state as one found
+  // ended on restore. Matrix tabs keep their own exit and reconnect handling.
+  const markHerdrSessionEnded = (sessionId: string) => {
+    if (!isHerdrRefKey(sessionId)) return;
+    setUnavailableSessionIds((current) => (current.includes(sessionId) ? current : [...current, sessionId]));
+  };
+
   const recoverShellSession = async (sessionId: string, cwd: string): Promise<boolean> => {
     const ref = parseTerminalRefKey(sessionId);
     // A Herdr terminal is owned by herdr-core; Matrix never creates a tab in its workspace.
@@ -1297,6 +1304,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
                     onSessionAttached={handleSessionAttached}
                     unavailableSessionIds={unavailableSessionIds}
                     onRecoverSession={recoverShellSession}
+                    onSessionEnded={markHerdrSessionEnded}
                     shouldCachePane={shouldCachePane}
                     shouldDestroyPane={shouldDestroyPane}
                     allowRemoteResize={!mobile}
