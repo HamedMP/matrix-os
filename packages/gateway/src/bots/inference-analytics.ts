@@ -1,3 +1,4 @@
+import { isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
 import { SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "@matrix-os/scope-runtime/bot-profile";
 import type { ClassificationApi, GenerationFacts } from "../chat-analytics/contracts.js";
 import type { OrdinaryGenerationReceipt, createTransientChatClassifier } from "../chat-analytics/index.js";
@@ -65,7 +66,7 @@ export function measuredInferenceTokens(api: ClassificationApi, body: string, mo
         const usage = record(response.usage);
         const input = api === "openai-completions" ? usage?.prompt_tokens : usage?.input_tokens;
         const output = api === "openai-completions" ? usage?.completion_tokens : usage?.output_tokens;
-        if (result || response.model !== modelId || !usage || !count(input) || !count(output)
+        if (result || (response.model !== modelId && !(api === "openai-completions" && isManagedWorkersAiResponseModel(modelId, response.model))) || !usage || !count(input) || !count(output)
           || api === "openai-responses" && response.status !== "completed") return unknownTokens();
         const details = record(api === "openai-completions" ? usage.prompt_tokens_details : usage.input_tokens_details);
         const cached = cache(details?.cached_tokens, input);

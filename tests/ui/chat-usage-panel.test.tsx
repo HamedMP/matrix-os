@@ -4,9 +4,19 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatUsagePanel } from "../../packages/ui/src/chat-usage/ChatUsagePanel.js";
+import { chatUsageGroups } from "../../packages/ui/src/chat-usage/client.js";
 import type { ChatUsageClient, ChatUsagePolicy, ChatUsageSummary } from "../../packages/ui/src/chat-usage/client.js";
 
 afterEach(cleanup);
+Element.prototype.scrollIntoView = vi.fn();
+Element.prototype.hasPointerCapture = vi.fn(() => false);
+Element.prototype.setPointerCapture = vi.fn();
+Element.prototype.releasePointerCapture = vi.fn();
+async function choose(label: string, option: string) {
+ fireEvent.keyDown(screen.getByRole("combobox", {name: label}), {key: "Enter"});
+ fireEvent.click(await screen.findByRole("option", {name: option}));
+}
+
 const policy: ChatUsagePolicy = { enabled: false, sampleRateBps: 1000, modelId: "@cf/meta/classifier", recipient: "Cloudflare Workers AI",
   disclosureVersion: "chat-usage-v1", retentionDays: 30 };
 const summary: ChatUsageSummary = { from: "2026-10-18T12:00:00.000Z", to: "2026-10-25T12:00:00.000Z", groupLimit: 100,
@@ -68,7 +78,7 @@ it("requires explicit normal in-app consent with exact scope and recipient befor
   expect(screen.getByText(/Gmail, shared, imported and unknown/)).toBeVisible();
   expect(screen.getByText(/Matrix Pi Chat and Bots/)).toBeVisible();
   expect(screen.getByText(/30 days/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Sampling"), { target: { value: "2500" } });
+  await choose("Sampling", "25%");
   fireEvent.click(screen.getByRole("checkbox", { name: /I agree/ })); fireEvent.click(enable);
   await waitFor(() => expect(api.configure).toHaveBeenCalledWith({ enabled: true, sampleRateBps: 2500, disclosureVersion: "chat-usage-v1" }, expect.any(AbortSignal)));
 });
@@ -84,7 +94,7 @@ it("reports sample coverage and partial known measurements without treating unkn
 it("changes grouping and labels a potentially truncated report", async () => {
   const api = client(); render(<ChatUsagePanel client={api} identityKey="owner/runtime" />); await ready();
   api.summary.mockResolvedValue({ ...summary, mayBeTruncated: true, buckets: [{ ...summary.buckets[0], dimensions: { modelId: "actual-model" } }] });
-  fireEvent.change(screen.getByLabelText("Group usage by"), { target: { value: "modelId" } });
+  await choose("Group usage by", chatUsageGroups.modelId);
   await screen.findByText("actual-model");
   expect(api.summary).toHaveBeenLastCalledWith("modelId", expect.any(AbortSignal));
   expect(screen.getByText(/first 100 groups/)).toBeVisible();
@@ -92,7 +102,7 @@ it("changes grouping and labels a potentially truncated report", async () => {
 it("does not relabel stale groups as a successful report after grouping fails", async () => {
   const api = client(); render(<ChatUsagePanel client={api} identityKey="owner/runtime" />); await ready();
   api.summary.mockRejectedValue(new Error("temporary unavailable"));
-  fireEvent.change(screen.getByLabelText("Group usage by"), { target: { value: "modelId" } });
+  await choose("Group usage by", chatUsageGroups.modelId);
   await screen.findByRole("alert");
   expect(screen.queryByRole("table", { name: "Chat usage by model" })).toBeNull();
   expect(screen.queryByText("No recorded generations")).toBeNull();

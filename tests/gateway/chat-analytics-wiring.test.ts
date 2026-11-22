@@ -198,3 +198,12 @@ describe("ordinary Chat analytics actual inference wiring", () => {
     expect(f.analytics.completed.mock.calls[0]![1]).toMatchObject({ inputTokens: null, outputTokens: null, cachedInputTokens: null, costUsd: null });
   });
 });
+
+it("recognizes only the exact managed Gemma response alias for measured counters", async () => {
+ const { measuredInferenceTokens } = await import("../../packages/gateway/src/bots/inference-analytics.js");
+ const requested = "@cf/google/gemma-4-26b-a4b-it";
+ const body = JSON.stringify({model: requested + "-external", usage: {prompt_tokens: 11, completion_tokens: 7}});
+ expect(measuredInferenceTokens("openai-completions", body, requested)).toMatchObject({inputTokens: 11, outputTokens: 7});
+ expect(measuredInferenceTokens("openai-completions", body, "other-model").inputTokens).toBeNull();
+ expect(measuredInferenceTokens("openai-completions", body.replace("-external", "-other"), requested).inputTokens).toBeNull();
+});

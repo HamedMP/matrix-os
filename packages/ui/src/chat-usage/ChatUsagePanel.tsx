@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
+import { Button } from "../Button.js";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../Select.js";
 import { chatUsageGroups, type ChatUsageClient, type ChatUsageGroup, type ChatUsagePolicy, type ChatUsageSummary } from "./client.js";
 
 const ERROR = "Chat usage is unavailable. Retry when this computer is connected and signed in.";
@@ -101,36 +103,39 @@ function OwnerChatUsagePanel({ client }: { client: ChatUsageClient }) {
       <p>Gmail, shared, imported and unknown contexts are excluded. Task tags and complexity are estimates, not quality scores.</p>
       {policyLoading || reportLoading ? <p role="status">{policyLoading ? "Loading Chat usage…" : "Loading Chat usage report…"}</p> : null}
       {policyError || reportError || actionError ? <div className="matrix-ap-notice" role="alert"><div>{policyError || actionError ? ERROR : REPORT_ERROR}</div>
-        <button type="button" className="matrix-ap-button" disabled={busy} onClick={() => setRevision(value => value + 1)} aria-label="Retry Chat usage">Retry</button></div> : null}
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => setRevision(value => value + 1)} aria-label="Retry Chat usage">Retry</Button></div> : null}
       {policy ? <>
         <p>When enabled, sampled ordinary conversation text is sent transiently to Cloudflare Workers AI using Matrix AI credits.
           Model: <code style={{ overflowWrap: "anywhere" }}>{policy.modelId}</code>. Only tags and measured usage metadata are saved in your database. Reports cover up to 30 days.
           Expired metadata is hidden and removed by periodic cleanup while this computer is running. Separate backups and provider records are not erased by these controls.
           Conversation text is not saved by this analytics feature.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end", marginBottom: 12 }}>
-          <label className="matrix-ap-field">Sampling<select aria-label="Sampling" value={sample} disabled={busy || policyLoading} onChange={event => { setSample(Number(event.target.value)); setConsent(false); }}>
-            <option value={1000}>10%</option><option value={2500}>25%</option><option value={10000}>100%</option>
-            {![1000, 2500, 10000].includes(sample) ? <option value={sample}>{sample / 100}% (saved)</option> : null}
-          </select></label>
-          {policy.enabled ? <button type="button" className="matrix-ap-button" disabled={busy} onClick={() => void mutate("stop")}>Stop Chat usage</button> : null}
-          <button type="button" className="matrix-ap-button" disabled={busy} onClick={() => setConfirmDelete(true)}>Delete Chat usage data</button>
+          <div className="matrix-ap-field">Sampling<Select value={String(sample)} disabled={busy || policyLoading} onValueChange={value => { setSample(Number(value)); setConsent(false); }}>
+            <SelectTrigger aria-label="Sampling"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="1000">10%</SelectItem><SelectItem value="2500">25%</SelectItem><SelectItem value="10000">100%</SelectItem>
+              {![1000, 2500, 10000].includes(sample) ? <SelectItem value={String(sample)}>{sample / 100}% (saved)</SelectItem> : null}
+            </SelectContent>
+          </Select></div>
+          {policy.enabled ? <Button type="button" variant="secondary" disabled={busy} onClick={() => void mutate("stop")}>Stop Chat usage</Button> : null}
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => setConfirmDelete(true)}>Delete Chat usage data</Button>
         </div>
         <label htmlFor={consentId} style={{ display: "flex", alignItems: "start", gap: 8, marginBottom: 12 }}>
           <input id={consentId} type="checkbox" checked={consent} disabled={busy || policyLoading} onChange={event => setConsent(event.target.checked)} />
           <span>I agree to this processing of sampled ordinary Chat text for usage classification.</span>
         </label>
-        <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={!consent || busy || policyLoading} onClick={() => void mutate("enable")}>{policy.enabled ? "Update sampling" : "Enable Chat usage"}</button>
+        <Button type="button" variant="primary" disabled={!consent || busy || policyLoading} onClick={() => void mutate("enable")}>{policy.enabled ? "Update sampling" : "Enable Chat usage"}</Button>
         <p>Stopping cancels pending classification and keeps retained reports. Deleting erases Chat usage data and turns collection off.</p>
       </> : null}
       {confirmDelete ? <div role="alertdialog" aria-labelledby={deleteTitle} className="matrix-ap-notice" style={{ flexWrap: "wrap" }}>
         <div><strong id={deleteTitle}>Delete Chat usage data?</strong><span>This erases retained usage reports and turns collection off. Your conversations are kept.</span></div>
-        <button autoFocus type="button" className="matrix-ap-button" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancel</button>
-        <button type="button" className="matrix-ap-button matrix-ap-button-danger" disabled={busy} onClick={() => void mutate("delete")}>Confirm delete</button>
+        <Button autoFocus type="button" variant="secondary" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancel</Button>
+        <Button type="button" variant="destructive" disabled={busy} onClick={() => void mutate("delete")}>Confirm delete</Button>
       </div> : null}
       {deleted ? <p role="status">Chat usage data deleted. Collection is off.</p> : null}
-      <label className="matrix-ap-field" style={{ maxWidth: 240, marginTop: 16 }}>Group usage by<select aria-label="Group usage by" value={group} disabled={busy || reportLoading} onChange={event => { setGroup(event.target.value as ChatUsageGroup); setDeleted(false); }}>
-        {Object.entries(chatUsageGroups).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-      </select></label>
+      <div className="matrix-ap-field" style={{ maxWidth: 240, marginTop: 16 }}>Group usage by<Select value={group} disabled={busy || reportLoading} onValueChange={value => { setGroup(value as ChatUsageGroup); setDeleted(false); }}>
+        <SelectTrigger aria-label="Group usage by"><SelectValue /></SelectTrigger>
+        <SelectContent>{Object.entries(chatUsageGroups).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
+      </Select></div>
       {!reportLoading && summary ? <>
         <p>Last 7 days · Across shown groups: {number(totals!.classified)} classified · {number(totals!.sampled)} sampled · {number(totals!.generations)} recorded.</p>
         <p>Sampling rates can change over time. Unclassified generations have no estimated task tag. Known measurements exclude unknown values.</p>
