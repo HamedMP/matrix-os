@@ -226,11 +226,46 @@ service at a time:
 Never turn `split_portals` off once portals exist; mautrix documents it as
 irreversible.
 
-Rotating a secret: delete its file in `secrets/`, re-run `bootstrap.sh`, and
-update the platform with the new `platform.env`. For `gate-secret` or a
-provisioning secret, update the platform first to accept both, or accept a
-short link-flow outage. Rotating appservice tokens or database passwords
-needs only a re-run.
+Rotating a secret: bootstrap regenerates a deleted secret file and restarts
+every service whose rendered config changed (a change that a failed run did
+not apply is retried by the next run). Delete-and-re-run works only for
+secrets that bootstrap renders into configs:
+
+- Appservice tokens, database passwords, the gate secret and provisioning
+  secrets: delete the file in `secrets/`, re-run `bootstrap.sh`, and update
+  the platform with the new `platform.env`. For `gate-secret` or a
+  provisioning secret, update the platform first to accept both, or accept a
+  short link-flow outage.
+- Telegram API credentials: they are one pair from one Telegram application.
+  Delete both `secrets/telegram-api-id` and `secrets/telegram-api-hash`, then
+  re-run `bootstrap.sh` with both new `MBH_TELEGRAM_API_ID` and
+  `MBH_TELEGRAM_API_HASH` values; the Telegram bridge restarts with them.
+  Bootstrap refuses a value that differs from a saved one, so the pair never
+  mixes.
+- `admin-password` and `admin-access-token`: deleting `admin-password` alone
+  does not change the account's password, because the admin step is skipped
+  while `admin-access-token` exists. Reset the password through Synapse and
+  revoke every old token, then let bootstrap log in again:
+  ```sh
+  S=/var/lib/matrix-bridge-host/secrets
+  C="docker compose --env-file /var/lib/matrix-bridge-host/compose.env -f /opt/matrix-bridge-host/docker-compose.yml"
+  rm "$S/admin-password" && MBH_RENDER_ONLY=1 /opt/matrix-bridge-host/bootstrap.sh
+  # Token and new password travel on stdin, never in argv.
+  { cat "$S/admin-access-token"; cat "$S/admin-password"; } | $C exec -T synapse python -c '
+  import json, sys, urllib.request
+  token, password = sys.stdin.readline().strip(), sys.stdin.readline().strip()
+  req = urllib.request.Request(
+      "http://127.0.0.1:8008/_synapse/admin/v1/reset_password/%40mxadmin%3A<server name>",
+      data=json.dumps({"new_password": password, "logout_devices": True}).encode(),
+      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+      method="POST")
+  urllib.request.urlopen(req, timeout=30)'
+  rm "$S/admin-access-token" && /opt/matrix-bridge-host/bootstrap.sh
+  ```
+  `logout_devices` revokes every admin access token, including the saved
+  one. The final run logs in with the new password, saves a fresh token and
+  rewrites `platform.env`; copy it to the platform. Account linking fails
+  between the reset and the platform update.
 
 ## Restore
 

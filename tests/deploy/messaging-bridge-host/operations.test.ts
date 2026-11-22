@@ -138,7 +138,10 @@ describe("health.sh", () => {
         'if [ "$1" = compose ]; then',
         '  service="${*: -1}"',
         '  var="STUB_${service//-/_}"',
-        '  if [ -n "${!var:-}" ]; then printf "id-%s\\n" "$service"; fi',
+        '  state="${!var:-}"',
+        // Like docker, `ps` lists stopped containers only with -a.
+        '  case " $* " in *" -a "*) all=1 ;; *) all=0 ;; esac',
+        '  if [ -n "$state" ] && { [ "$all" = 1 ] || [ "${state%% *}" = running ]; }; then printf "id-%s\\n" "$service"; fi',
         "  exit 0",
         "fi",
         'if [ "$1" = inspect ]; then',

@@ -27,7 +27,7 @@ compose() {
 
 service_state() {
   local id raw status health
-  id="$(compose ps -q "$1" 2> /dev/null || true)"
+  id="$(compose ps -a -q "$1" 2> /dev/null || true)"
   if [ -z "$id" ]; then
     printf 'missing'
     return 0
