@@ -2,7 +2,7 @@
 
 **Feature Branch**: `hamed-eng-533-customizable-keyboard-shortcuts`
 **Created**: 2026-11-22
-**Status**: Draft, awaiting owner approval
+**Status**: Approved by owner 2026-11-22
 **Tracking**: [ENG-533](https://linear.app/matrix-os/issue/ENG-533/customizable-keyboard-shortcuts-in-electron-desktop)
 **Input**: "We have a custom Cmd+Q to close the app inside Matrix. Add shortcuts for switching apps and opening the App Launcher, add the bindings to Settings so people can customize them, find 5–10 more shortcuts (some bound by default, some unbound), and make the Settings UI as good as Granola's and Raycast's."
 
@@ -22,6 +22,9 @@ and none can be changed.
 4. **Bindings are editable in Settings**, with a UI modelled on Granola's
    shortcut settings: one row per action, key chips, remove, Reset, Add shortcut.
 5. **Add 5–10 more actions**, some with a default binding and some with none.
+6. **Cmd+1–9 switches apps.** The Task workspace panel toggles that use those
+   keys today move to other keys.
+7. **Verify the UI on the owner's Mac** (`/mac-verify`) once it exists.
 
 Everything below that is not in this list is the author's proposal.
 
@@ -56,7 +59,7 @@ Everything below that is not in this list is the author's proposal.
 | Apps | Close app | Cmd+Q | Ctrl+Q | exists |
 | Apps | Minimize app | Cmd+M | Ctrl+M | new |
 | Apps | Reopen closed app | Cmd+Shift+T | Ctrl+Shift+T | new |
-| Apps | Switch to app 1 … 9 | none (owner to confirm) | none (owner to confirm) | new |
+| Apps | Switch to app 1 … 9 | Cmd+1 … Cmd+9 | Ctrl+1 … Ctrl+9 | new |
 | Apps | Show desktop | none | none | new |
 | Apps | Toggle app full size | none | none | new |
 | Apps | Open Files | none | none | new |
@@ -84,9 +87,13 @@ Notes on behavior:
 - **Switch to app N** selects the Nth icon in the taskbar, counting the fixed
   Files slot and minimized apps, so the number matches what the user sees. A
   minimized app is restored. No Nth icon, no effect. These are nine separate
-  actions, shown as one collapsible group. Cmd+1–7 already toggles panels in
-  the Task workspace (`TaskWorkspace.tsx:145`), and a menu accelerator would
-  take those keys everywhere, so the proposed default is no binding.
+  actions, shown as one collapsible group.
+- **Task workspace panel toggles move.** Cmd+1–7 toggles panels in the Task
+  workspace today (`TaskWorkspace.tsx:145`). They move to Cmd+Option+1–7
+  (Ctrl+Alt+1–7 on Windows and Linux) so Cmd+1–9 is free for apps. They stay a
+  fixed in-view shortcut, not a Settings row. The handler must match on
+  `event.code`, because Option+digit produces a symbol on macOS. Update the
+  hint in `PanelStrip.tsx`, and reserve these combinations in the validator.
 - **Reopen closed app** reopens the most recently closed app in this session,
   from the tab description saved when it closed: the same file, folder, project
   or chat. A terminal reopens as a new session. Window position is not
