@@ -71,7 +71,9 @@ done
 
 # Empties the Matrix OS messaging tables before the data-only dump is loaded.
 # Tables this database does not have (an older or newer schema) are skipped,
-# so restore never fails on a table the gateway no longer creates.
+# so restore never fails on a table the gateway no longer creates. The retired
+# messaging_setup_sessions table is still listed: upgraded homes keep it, and
+# backups from before its removal still carry its rows.
 # BEGIN MATRIX_OS_TRUNCATE_SQL
 MATRIX_OS_TRUNCATE_SQL='
 DO $truncate$
@@ -81,6 +83,7 @@ BEGIN
   SELECT string_agg(format($fmt$%I$fmt$, name), $sep$, $sep$) INTO existing
   FROM unnest(ARRAY[
     $t$messaging_accounts$t$,
+    $t$messaging_setup_sessions$t$,
     $t$messaging_conversations$t$,
     $t$messaging_messages$t$,
     $t$messaging_bridge_sync_state$t$,

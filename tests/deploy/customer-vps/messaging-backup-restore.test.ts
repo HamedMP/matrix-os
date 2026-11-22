@@ -88,7 +88,6 @@ describe("customer VPS messaging backup and restore helpers", () => {
 
   it("restore empties every messaging table that exists and skips tables the schema lacks", async () => {
     const restore = await readFile("distro/customer-vps/host-bin/matrix-messaging-restore", "utf8");
-    expect(restore).not.toContain("messaging_setup_sessions");
     const block = /# BEGIN MATRIX_OS_TRUNCATE_SQL\nMATRIX_OS_TRUNCATE_SQL='([\s\S]*?)'\n# END MATRIX_OS_TRUNCATE_SQL/.exec(restore);
     expect(block).not.toBeNull();
     const truncateSql = block![1]!;
@@ -112,6 +111,27 @@ describe("customer VPS messaging backup and restore helpers", () => {
         expect((await db.query<{ count: number }>(`SELECT count(*)::int AS count FROM ${table}`)).rows[0]?.count, table).toBe(0);
       }
       expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM unrelated")).rows[0]?.count).toBe(1);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("restores a backup taken before setup sessions were removed into a database that still has them", async () => {
+    const restore = await readFile("distro/customer-vps/host-bin/matrix-messaging-restore", "utf8");
+    const truncateSql = /# BEGIN MATRIX_OS_TRUNCATE_SQL\nMATRIX_OS_TRUNCATE_SQL='([\s\S]*?)'\n# END MATRIX_OS_TRUNCATE_SQL/.exec(restore)![1]!;
+    const db = new PGlite();
+    try {
+      // An upgraded home keeps the old table and its rows; the old backup contains the same rows.
+      await db.exec(`
+        CREATE TABLE messaging_accounts (id TEXT PRIMARY KEY);
+        -- As the 077 schema created it: no foreign key, so truncating accounts does not cascade.
+        CREATE TABLE messaging_setup_sessions (id TEXT PRIMARY KEY, account_id TEXT);
+        INSERT INTO messaging_accounts VALUES ('a');
+        INSERT INTO messaging_setup_sessions VALUES ('setup_1', 'a');
+      `);
+      const oldBackup = "INSERT INTO messaging_accounts VALUES ('a'); INSERT INTO messaging_setup_sessions VALUES ('setup_1', 'a');";
+      await db.exec(`BEGIN; ${truncateSql} ${oldBackup} COMMIT;`);
+      expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM messaging_setup_sessions")).rows[0]?.count).toBe(1);
     } finally {
       await db.close();
     }
