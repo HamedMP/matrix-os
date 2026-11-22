@@ -66,7 +66,8 @@ export async function mintQualifiedToken(db: PlatformDB, input: { machine: Quali
   const credential = { token, tokenId, audience: FUNDED_AI_AUDIENCE, scope: FUNDED_AI_SCOPE, issuedAt: at.toISOString(), expiresAt: new Date(expiry).toISOString() };
   await db.executor.insertInto('ai_runtime_credentials').values({ token_id: tokenId, token_hash: qualifiedTokenHash(token, input.hashSecret),
     owner_id: machine.ownerId, machine_id: machine.machineId, runtime_slot: machine.runtimeSlot, audience: credential.audience, scope: credential.scope,
-    issued_at: credential.issuedAt, expires_at: credential.expiresAt, revoked_at: null, request_class: requestClass }).execute();
+    issued_at: credential.issuedAt, expires_at: credential.expiresAt, revoked_at: null, request_class: requestClass,
+    runtime_token_epoch: machine.epoch }).execute();
   const binding: GoogleQualifiedFundedBinding = { ...route, requestClass };
   await insertAiFundedRouteBinding(db.executor as Transaction<PlatformDatabase>, { identity: { ownerId: machine.ownerId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, tokenId, binding }, input.now);
   const lease: GoogleQualifiedFundedLease = { contractVersion: 1, credential, identity: { ownerId: machine.ownerId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, policy: input.policy.policy, requestClass };
