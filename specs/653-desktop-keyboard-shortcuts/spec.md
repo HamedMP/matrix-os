@@ -267,6 +267,15 @@ default changes reach users who never customized that action.
 - A menu item click sends one event, `shortcut:action { id }`, to the main
   window through the existing menu router, so Terminal-window routing keeps
   working.
+- `shortcuts:set-terminal-claims { bindings }` reports the keys a focused
+  Terminal handles itself: the effective bindings of its active keyboard
+  profile (defaults plus the user's overrides; none for Passthrough), in
+  registry form. The view that hosts the Terminal, in the main window or the
+  Terminal window, sends them when the Terminal gains focus or its profile
+  changes, and sends `[]` when it loses focus or unmounts. The main-process key
+  matcher does not run an Apps shortcut for a key the receiving web contents
+  claims, so the key reaches the Terminal and no menu routing (which would
+  focus the main window) happens.
 
 **Renderer.**
 
@@ -304,6 +313,18 @@ All checks run in the shared validator and again in the main process on
 
 Auth: these IPC channels are available to the app's own windows only, the same
 as `state:get` and `state:set`. Embedded apps have no access to them.
+
+Terminal claims: `shortcuts:set-terminal-claims` is open to the main window and
+the Terminal window, only from their own top-level frame (sender policy), and
+sets only the sender's claims. Embedded app views cannot call it. The request
+is a strict Zod object with at most 32 bindings of at most 40 characters, each
+in registry form; anything else is rejected. Main keeps claims in a map keyed
+by web contents, capped at 8 senders (oldest evicted), drops bindings that
+cannot be pressed on its platform, and clears a sender's claims when its window
+blurs or closes, its main frame navigates, or its web contents is destroyed;
+it never touches a closed window to do so. A lost or late report fails toward
+the old behavior: the Matrix shortcut runs. While a binding is being recorded
+the matcher stands down as before.
 
 ## Failure Modes
 
@@ -349,6 +370,11 @@ Tests first, per the constitution.
   show-desktop behavior on the stores.
 - Settings component: record, add, remove, reset, conflict replace, rejection
   message, search, save failure.
+- Terminal claims: terminal-to-registry binding conversion; the matcher skips a
+  claimed key only for the claiming web contents; claims end on blur,
+  navigation, close and destroy; IPC validation and sender policy; the
+  Terminal view claims on focus, releases on blur and unmount, and re-sends
+  when the profile changes.
 
 ## Surfaces and Evidence
 
@@ -411,6 +437,17 @@ Ctrl+Alt, because Ctrl+Shift+arrow selects text by word there.
   window's last floating bounds, which may be a half.
 - On the Canvas presentation these actions do nothing, because Canvas windows
   are not placed on the screen.
+- **A focused Terminal keeps the keys its profile binds.** While a Terminal
+  has keyboard focus, in the main window or the Terminal window, any key its
+  active keyboard profile (with the user's overrides) binds to a terminal
+  command goes to the Terminal instead of running a Matrix shortcut. The
+  Standard terminal profile binds Ctrl+Shift+arrows to pane focus and
+  Ctrl+Shift+Enter to pane maximize even on a Mac, so with that profile those
+  keys move between and maximize panes, and the Terminal window keeps focus.
+  With the default macOS profile they still arrange apps. Keys the profile does
+  not bind (Ctrl+Tab, Ctrl+Shift+Backspace under Standard) keep working, and
+  with focus anywhere else the keys arrange apps. The claim ends as soon as
+  the Terminal loses focus.
 - A tool that registers the same keys globally takes them before Matrix sees
   them. Some Linux desktops use Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
   Settings → Shortcuts.
