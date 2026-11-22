@@ -40,6 +40,16 @@ it('follows a rebinding and hides the hint when the action is unbound or binding
  expect(screen.getByRole('button', {name:'New chat'}).querySelector('kbd')).toBeNull();
  view.unmount();
 });
+it('labels Search chats with the palette binding and hides it when unbound', () => {
+ loadBindings('mac', { 'nav.palette': ['Cmd+Shift+F'] });
+ render(<WorkRailSearchControls onSearch={vi.fn()} />);
+ const search = () => screen.getByRole('button', { name: 'Search chats' });
+ expect(search().querySelector('kbd')?.textContent).toBe('⌘⇧F');
+ act(() => loadBindings('other'));
+ expect(search().querySelector('kbd')?.textContent).toBe('Ctrl+K');
+ act(() => loadBindings('mac', { 'nav.palette': [] }));
+ expect(search().querySelector('kbd')).toBeNull();
+});
 it('keeps New Chat clickable without advertising an unavailable shortcut', () => {
  const create=vi.fn();
  render(<WorkRailHeader shortcutAvailable={false} onNewChat={create} onCollapse={vi.fn()} showCollapseControl={false} />);

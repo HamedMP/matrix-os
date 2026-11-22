@@ -23,6 +23,7 @@ import {
   reopenClosedApp,
   switchToApp,
   toggleActiveAppFullSize,
+  toggleAppLauncher,
   toggleShowDesktop,
 } from "../desktop-shell/app-switching";
 
@@ -219,10 +220,7 @@ function switchTo(position: number): () => void {
 const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
   "app.next": () => cycleApp(1),
   "app.previous": () => cycleApp(-1),
-  "app.launcher": () => {
-    const ui = useUi.getState();
-    ui.setAppLauncherOpen(!ui.appLauncherOpen);
-  },
+  "app.launcher": toggleAppLauncher,
   "app.close": () => handleCloseSelectedAppShortcut(noEvent),
   "app.minimize": minimizeActiveApp,
   "app.reopen": reopenClosedApp,
@@ -263,16 +261,6 @@ export function runShortcutAction(id: ShortcutActionId): void {
 
 export function useGlobalShortcuts(): void {
   useEffect(() => {
-    const offShortcut = onEvent("shortcut:action", ({ id }) => runShortcutAction(id));
-    const offMenu = onEvent("menu:action", ({ action }) => {
-      if (action !== "refresh-home") return;
-      const tabs = useTabs.getState();
-      const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-      if (activeTab?.kind === "home") useUi.getState().requestHomeRefresh();
-    });
-    return () => {
-      offShortcut();
-      offMenu();
-    };
+    return onEvent("shortcut:action", ({ id }) => runShortcutAction(id));
   }, []);
 }

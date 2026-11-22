@@ -47,6 +47,7 @@ import {
   minimizeApp,
   openFilesApp,
   registerDesktopShellEffects,
+  toggleAppLauncher,
   toggleShowDesktop,
 } from "./app-switching";
 
@@ -221,14 +222,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }), [openRoot, scheduleDurablePersist]);
 
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
-  const toggleApps = useCallback(
-    () => {
-      const open = !useUi.getState().appLauncherOpen;
-      setLauncherOpen(open);
-      trackDesktopEvent({ name: "desktop_launcher_toggled", open });
-    },
-    [setLauncherOpen],
-  );
   const launchApp = useCallback((tabId: string) => {
     const tabbedWorkspaceOpen = desktopMode === "desktop"
       && workspaceView === "tabs"
@@ -428,7 +421,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           tabs={displayTabs}
           surfaces={surfaces}
           activeTabId={activeTabId}
-          onOpenApps={toggleApps}
+          onOpenApps={toggleAppLauncher}
           onOpenFiles={openFilesApp}
           launcherOpen={launcherOpen}
           onActivate={focusApp}

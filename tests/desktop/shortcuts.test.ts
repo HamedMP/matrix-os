@@ -690,11 +690,19 @@ describe("runShortcutAction", () => {
     expect(() => runShortcutAction(id)).not.toThrow();
   });
 
-  it("toggles the App Launcher", () => {
+  it("toggles the App Launcher like the taskbar button, analytics included", () => {
+    const tracked: Array<{ name: string; open?: boolean }> = [];
+    const onEvent = (event: Event) => tracked.push((event as CustomEvent<{ name: string; open?: boolean }>).detail);
+    window.addEventListener("matrix:desktop-analytics", onEvent);
+
     runShortcutAction("app.launcher");
     expect(useUi.getState().appLauncherOpen).toBe(true);
+    expect(tracked).toEqual([{ name: "desktop_launcher_toggled", open: true }]);
     runShortcutAction("app.launcher");
+    window.removeEventListener("matrix:desktop-analytics", onEvent);
+
     expect(useUi.getState().appLauncherOpen).toBe(false);
+    expect(tracked).toHaveLength(2);
   });
 
   it("opens the Terminal window through main", () => {
@@ -729,12 +737,9 @@ describe("runShortcutAction", () => {
     expect(useUi.getState().paletteOpen).toBe(false);
   });
 
-  it("still refreshes the Home app from menu:action", () => {
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+  it("listens only for shortcut:action", () => {
     renderHook(() => useGlobalShortcuts());
 
-    listeners.get("menu:action")?.({ action: "refresh-home" });
-
-    expect(useUi.getState().homeRefreshRequest).toBe(1);
+    expect([...listeners.keys()]).toEqual(["shortcut:action"]);
   });
 });

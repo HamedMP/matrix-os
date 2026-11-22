@@ -198,6 +198,13 @@ function openAndFocus(open: () => string): void {
   focusApp(open());
 }
 
+/** Taskbar Apps button and the App Launcher shortcut. */
+export function toggleAppLauncher(): void {
+  const open = !useUi.getState().appLauncherOpen;
+  useUi.getState().setAppLauncherOpen(open);
+  trackDesktopEvent({ name: "desktop_launcher_toggled", open });
+}
+
 export function openFilesApp(): void {
   const filesTab = currentTaskbarOrder().find((tab) => tab.kind === "files")
     ?? useTabs.getState().tabs.find((tab) => tab.kind === "files");

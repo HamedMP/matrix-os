@@ -8,6 +8,7 @@ import {
   switchToApp,
   taskbarOrder,
   toggleActiveAppFullSize,
+  toggleAppLauncher,
   toggleShowDesktop,
 } from "@desktop/renderer/src/features/desktop-shell/app-switching";
 import { handleCloseSelectedAppShortcut } from "@desktop/renderer/src/features/mission-control/shortcuts";
@@ -50,6 +51,15 @@ function threeApps() {
 const active = () => useTabs.getState().activeTabId;
 const mode = (id: string) => useDesktopSurfaces.getState().surfaces[id]?.mode;
 const visible = (id: string) => isDesktopSurfaceVisible(id, useDesktopSurfaces.getState());
+
+describe("toggleAppLauncher", () => {
+  it("opens and closes the App Launcher", () => {
+    toggleAppLauncher();
+    expect(useUi.getState().appLauncherOpen).toBe(true);
+    toggleAppLauncher();
+    expect(useUi.getState().appLauncherOpen).toBe(false);
+  });
+});
 
 describe("taskbarOrder", () => {
   it("puts the Files tab first and leaves out closed and unreconciled tabs", () => {
