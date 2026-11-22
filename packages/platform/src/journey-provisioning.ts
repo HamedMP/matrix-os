@@ -78,6 +78,12 @@ export function createJourneyProvisioner(
       case 'busy':
       case 'provisioning_unavailable':
         throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+      case 'throttled':
+        throw new CustomerVpsError(429, 'retry_throttled', 'Retry later');
+      case 'retry_exhausted':
+        throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
+      case 'support_required':
+        throw new CustomerVpsError(409, 'support_required', 'Contact support');
       case 'deletion_pending':
         throw new AccountDeletionAdmissionError();
       default:

@@ -37,7 +37,7 @@ describe('metal runtime shutdown wiring', () => {
     const stop = runtime.slice(runtime.indexOf('    stop() {'), runtime.indexOf('    shutdown() {'));
     expect(stop).toContain('sleeper?.stop();');
     const shutdown = runtime.slice(runtime.indexOf('    shutdown() {'));
-    const drain = shutdown.indexOf('await Promise.all([worker?.drain(), sleeper?.drain()]);');
+    const drain = shutdown.indexOf('await Promise.all([worker?.drain(), sleeper?.drain(), provisioner.drain()]);');
     expect(drain).toBeGreaterThan(shutdown.indexOf('sleeper?.stop();'));
     expect(drain).toBeLessThan(shutdown.indexOf('await dispatcher.close();'));
   });

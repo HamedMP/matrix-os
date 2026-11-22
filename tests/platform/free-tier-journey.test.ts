@@ -331,6 +331,20 @@ describe('onboarding journey on the free plan', () => {
     expect(createVm).toHaveBeenCalledTimes(3);
   });
 
+  it('an owner who bought a paid plan after three failed free builds can still build', async () => {
+    await upsertBillingEntitlement(db, paidEntitlement());
+    await insertUserMachine(db, {
+      machineId: 'metal-failed', clerkUserId: OWNER, handle: 'freeowner', status: 'failed', failureCode: 'registration_timeout',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 3, imageVersion: BUNDLE_VERSION,
+      provisionedAt: NOW.toISOString(),
+    });
+    const { app, provision } = journeyApp({ resolveEntitlement: async () => paidEntitlement() });
+
+    expect(await journey(app)).toMatchObject({ phase: 'provisioning_failed', nextAction: { kind: 'retry_provision' } });
+    expect((await retry(app)).status).toBe(200);
+    expect(provision).toHaveBeenCalledTimes(1);
+  });
+
   it('an uninvited owner still sees plan_required and cannot start provisioning', async () => {
     const { app, provision } = journeyApp();
 

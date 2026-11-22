@@ -508,6 +508,66 @@ describe('metal provisioner', () => {
     expect(host.createVm).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses to rebuild past the attempt ceiling without touching hostd', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null, attempt: 3,
+      imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ error: 'retry_exhausted' });
+    expect(host.capacity).not.toHaveBeenCalled();
+    expect(host.createVm).not.toHaveBeenCalled();
+  });
+
+  it('never retires a failed metal runtime that had registered', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await insertUserMachine(db, {
+      machineId: 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d', clerkUserId: 'user_metal', handle: 'alice', status: 'failed',
+      substrate: 'metal', metalHostId: 'host-a', hetznerServerId: null, publicIPv4: null,
+      lastSeenAt: '2026-11-20T00:00:00.000Z', imageVersion: GOLDEN, provisionedAt: NOW.toISOString(),
+    });
+
+    expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ error: 'support_required' });
+    expect(host.createVm).not.toHaveBeenCalled();
+    expect(await getUserMachine(db, 'b7a6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d')).toMatchObject({ status: 'failed', deletedAt: null });
+  });
+
+  it('throttles rebuild starts per owner', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    host.createVm.mockRejectedValue(new HostdError('internal'));
+    const shared = provisioner({ machineIds: [MACHINE_ID, '0f1e2d3c-4b5a-4968-8776-655443322110', '1f1e2d3c-4b5a-4968-8776-655443322110'] });
+
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'unavailable' });
+    // The first rebuild after the failure is admitted; a second inside the window is not.
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'unavailable' });
+    expect(await shared.provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'throttled' });
+    expect(host.createVm).toHaveBeenCalledTimes(2);
+  });
+
+  it('drain() waits for a read path\'s background teardown, so shutdown does not cut it off', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    let release!: () => void;
+    const later = createMetalProvisioner({
+      db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => host.client, goldenVersion: GOLDEN,
+      config: createTestConfig(), cloudInitTemplate: template, now: () => new Date('2026-11-21T14:00:00.000Z'),
+      drainMachineDeletions: () => new Promise<void>((resolve) => { release = resolve; }), log: () => undefined,
+    });
+
+    expect(await later.failExpiredProvisioning('user_metal', 'primary')).toBe('failed');
+    let drained = false;
+    const draining = later.drain().then(() => { drained = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(drained).toBe(false);
+    release();
+    await draining;
+    expect(drained).toBe(true);
+  });
+
   it('fails a metal row whose registration window expired and queues its destroy', async () => {
     await addHost('host-a', { memoryAvailableMiB: 60_000 });
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });

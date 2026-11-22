@@ -59,6 +59,9 @@ export type FreeProvisionOutcome =
   | { kind: 'plan_unavailable' }
   | { kind: 'deletion_pending' }
   | { kind: 'checkout_pending' }
+  | { kind: 'throttled' }
+  | { kind: 'retry_exhausted' }
+  | { kind: 'support_required' }
   | { kind: 'provisioning_unavailable' };
 
 export interface FreeRuntimeProvisionerDeps {
@@ -189,7 +192,17 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       const result = await deps.metal.provision({
         clerkUserId: input.clerkUserId, handle: input.handle, tier: 'free', runtimeSlot: FREE_RUNTIME_SLOT,
       });
-      if ('error' in result) return result.error === 'busy' ? { kind: 'busy' } : { kind: 'provisioning_unavailable' };
+      if ('error' in result) {
+        switch (result.error) {
+          case 'busy':
+          case 'throttled':
+          case 'retry_exhausted':
+          case 'support_required':
+            return { kind: result.error };
+          default:
+            return { kind: 'provisioning_unavailable' };
+        }
+      }
       const machine = await getActiveUserMachineByClerkId(db, input.clerkUserId, FREE_RUNTIME_SLOT);
       if (!machine || machine.machineId !== result.machineId) return { kind: 'provisioning_unavailable' };
       return { kind: 'created', runtime: toRecord(machine) };

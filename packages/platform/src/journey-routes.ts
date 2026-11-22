@@ -235,7 +235,8 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       if (existing?.status === 'failed') {
         // Retrying retires the failed row and its server: never for a computer that ran.
         if (!neverRegistered(existing)) return c.json({ error: 'support_required' }, 409);
-        if (existing.attempt >= options.maxProvisionAttempts) return c.json({ error: 'retry_exhausted' }, 409);
+        // The attempt ceiling is the provisioner's: a free metal row's count does
+        // not bind a paid build that replaces it.
       }
       const prebillingIntent = await getActivePrebillingIntent(options.db, clerkUserId, runtimeSlot);
       if (prebillingIntent) {
@@ -263,6 +264,8 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
       if (err instanceof CustomerVpsError) {
         if (err.code === 'billing_required') return c.json({ error: 'billing_required' }, 402);
         if (err.code === 'retry_exhausted') return c.json({ error: 'retry_exhausted' }, 409);
+        if (err.code === 'support_required') return c.json({ error: 'support_required' }, 409);
+        if (err.code === 'retry_throttled') return c.json({ error: 'retry_throttled' }, 429);
       }
       console.error('[journey] retry-provision failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'provisioning_unavailable' }, 503);

@@ -112,6 +112,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
   let template: string;
   let hostd: ReturnType<typeof fakeHostd>;
   let machineSeq: number;
+  let clock: Date;
 
   beforeEach(async () => {
     // Size-one pool semantics, so concurrent requests serialize on the owner lock as on real Postgres.
@@ -124,6 +125,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     template = await loadCustomerVpsCloudInitTemplate();
     hostd = fakeHostd();
     machineSeq = 0;
+    clock = NOW;
   });
 
   afterEach(async () => {
@@ -139,7 +141,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
       goldenVersion: BUNDLE_VERSION,
       config: createTestConfig(),
       cloudInitTemplate: template,
-      now: () => NOW,
+      now: () => clock,
       sleep: async () => undefined,
       machineIdFactory: () => `6a0c4f8e-3b1d-4f2a-9c7e-1d2b3c4d5e${String(++machineSeq).padStart(2, '0')}`,
       tokenFactory: () => ({ token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2026-11-21T13:00:00.000Z' }),
@@ -219,6 +221,29 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(ensureProvisionedPlatformUser).toHaveBeenCalledWith(db, expect.objectContaining({
       clerkUserId: OWNER, handle: 'freeowner', runtimeId: `metal:${String(body.machineId)}`,
     }));
+  });
+
+  it('a looping free provision request is throttled and stops at the attempt ceiling', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    hostd.createVm.mockRejectedValue(new HostdError('internal'));
+    const { routes } = routesFor();
+
+    // First build, then one rebuild, both failing at hostd create.
+    expect((await request(routes)).status).toBe(503);
+    expect((await request(routes)).status).toBe(503);
+    // A further rebuild inside the window is throttled before hostd.
+    const throttled = await request(routes);
+    expect(throttled.status).toBe(429);
+    expect(await throttled.json()).toMatchObject({ code: 'retry_throttled' });
+
+    clock = new Date(NOW.getTime() + 60_000);
+    expect((await request(routes)).status).toBe(503);
+    clock = new Date(NOW.getTime() + 2 * 60_000);
+    const exhausted = await request(routes);
+    expect(exhausted.status).toBe(409);
+    expect(await exhausted.json()).toMatchObject({ code: 'retry_exhausted' });
+    expect(hostd.createVm).toHaveBeenCalledTimes(3);
+    expect((await metalRows())[0]).toMatchObject({ attempt: 3, status: 'failed' });
   });
 
   it('an uninvited user gets 402 billing_required as today', async () => {
