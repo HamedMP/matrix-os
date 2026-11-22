@@ -14,6 +14,7 @@ import {
 } from "@matrix-os/contracts/keyboard-shortcuts";
 import type { LocalStore } from "../persistence/local-store";
 import type { ShortcutSnapshot } from "../../shared/shortcuts-ipc";
+import { createTerminalClaims } from "./terminal-claims";
 
 /** Menu shortcuts come back on by themselves if the recorder never says it stopped. */
 export const RECORDING_GUARD_MS = 30_000;
@@ -35,6 +36,10 @@ export interface ShortcutService {
   setRecording(target: RecordingTarget, recording: boolean): void;
   /** True from a recording start until its matching stop or the guard time. */
   isRecording(): boolean;
+  /** The keys the focused Terminal in `target` handles itself; [] ends the claim. */
+  setTerminalClaims(target: object, bindings: readonly string[]): void;
+  clearTerminalClaims(target: object): void;
+  isTerminalClaimed(target: object, binding: string): boolean;
   dispose(): void;
 }
 
@@ -81,6 +86,7 @@ export function createShortcutService(deps: {
   let setChain: Promise<unknown> = Promise.resolve();
   let recordingTarget: RecordingTarget | null = null;
   let recordingTimer: ReturnType<typeof setTimeout> | null = null;
+  const terminalClaims = createTerminalClaims(platform);
 
   function snapshot(): ShortcutSnapshot {
     return {
@@ -197,9 +203,14 @@ export function createShortcutService(deps: {
       return recordingTarget !== null;
     },
 
+    setTerminalClaims: terminalClaims.set,
+    clearTerminalClaims: terminalClaims.clear,
+    isTerminalClaimed: terminalClaims.has,
+
     dispose() {
       stopTimer();
       recordingTarget = null;
+      terminalClaims.clearAll();
     },
   };
 }

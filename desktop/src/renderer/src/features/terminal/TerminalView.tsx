@@ -40,6 +40,7 @@ import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
+import { useTerminalShortcutClaims } from "./use-terminal-shortcut-claims";
 import { NativeTerminalClipboardError, readNativeTerminalClipboardFiles } from "./terminal-native-clipboard";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
@@ -231,12 +232,16 @@ export default function TerminalView({
     setExitCode(null);
   }
 
+  const isMac = navigator.platform.startsWith("Mac");
   const controls = useDesktopTerminalControls({
     api, sessionName, chatId, active, socketState,
     writable: liveOwnership === "writer",
-    isMac: navigator.platform.startsWith("Mac"),
+    isMac,
     attachmentRef, termRef,
   });
+  // The main and Terminal windows both host this view; either way, a focused
+  // Terminal keeps the keys its profile binds.
+  useTerminalShortcutClaims(hostRef, { preferences: controls.preferences, isMac, enabled: controls.enabled });
   const controlsRef = useRef(controls);
   useLayoutEffect(() => {
     controlsRef.current = controls;

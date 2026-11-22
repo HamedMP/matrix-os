@@ -91,6 +91,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       snapshot: vi.fn(() => SHORTCUT_SNAPSHOT),
       set: vi.fn(async () => SHORTCUT_SNAPSHOT),
       setRecording: vi.fn(),
+      setTerminalClaims: vi.fn(),
     },
     ...overrides,
   } as unknown as HandlerContext;
@@ -1414,6 +1415,26 @@ describe("registerIpcHandlers sender authorization", () => {
     expect(harness.ctx.shortcuts.setRecording).toHaveBeenCalledWith(sender, true);
     await expect(harness.invoke("shortcuts:set-recording", { recording: true }, {})).rejects.toThrow(/^invalid request$/);
     expect(harness.ctx.shortcuts.setRecording).toHaveBeenCalledTimes(1);
+  });
+
+  it("sets Terminal key claims for the sender web contents only", async () => {
+    const harness = makeHarness();
+    const sender = { id: 1 };
+    await expect(harness.invoke("shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+Left"] }, { sender }))
+      .resolves.toEqual({ ok: true });
+    expect(harness.ctx.shortcuts.setTerminalClaims).toHaveBeenCalledWith(sender, ["Ctrl+Shift+Left"]);
+    await expect(harness.invoke("shortcuts:set-terminal-claims", { bindings: [] }, {})).rejects.toThrow(/^invalid request$/);
+    await expect(harness.invoke("shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+ArrowLeft"] }, { sender }))
+      .rejects.toThrow(/^invalid request$/);
+    expect(harness.ctx.shortcuts.setTerminalClaims).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses Terminal key claims from a sender the policy rejects", async () => {
+    const authorizeSender = vi.fn((_event: unknown, channel: string) => channel !== "shortcuts:set-terminal-claims");
+    const harness = makeHarness({ authorizeSender });
+    await expect(harness.invoke("shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+Left"] }, { sender: {} }))
+      .rejects.toThrow(/^invalid request$/);
+    expect(harness.ctx.shortcuts.setTerminalClaims).not.toHaveBeenCalled();
   });
 
   it("refuses to register without the shortcut service", () => {

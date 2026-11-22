@@ -5,6 +5,7 @@ import {
   type InvokeChannel,
 } from "@desktop/shared/ipc-contract";
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
+import { MAX_TERMINAL_CLAIMS } from "@desktop/shared/shortcuts-ipc";
 
 describe("IPC contract", () => {
   it("does not allow the renderer to write auth profile or choose a device-auth origin", () => {
@@ -1189,6 +1190,16 @@ describe("IPC contract", () => {
     expect(set.safeParse({ overrides: { version: 1, overrides: { "app.close": ["x".repeat(41)] } } }).success).toBe(false);
     expect(INVOKE_CHANNELS["shortcuts:get"].request.safeParse({ extra: true }).success).toBe(false);
     expect(INVOKE_CHANNELS["shortcuts:set-recording"].request.safeParse({ recording: "yes" }).success).toBe(false);
+    const claims = INVOKE_CHANNELS["shortcuts:set-terminal-claims"].request;
+    expect(claims.safeParse({ bindings: ["Ctrl+Shift+Left", "Cmd+Shift+Enter"] }).success).toBe(true);
+    expect(claims.safeParse({ bindings: [] }).success).toBe(true);
+    expect(claims.safeParse({ bindings: ["Ctrl+Shift+ArrowLeft"] }).success).toBe(false);
+    expect(claims.safeParse({ bindings: ["Shift+Ctrl+Left"] }).success).toBe(false);
+    expect(claims.safeParse({ bindings: ["x".repeat(41)] }).success).toBe(false);
+    expect(claims.safeParse({ bindings: Array.from({ length: MAX_TERMINAL_CLAIMS + 1 }, () => "Ctrl+Shift+Left") }).success)
+      .toBe(false);
+    expect(claims.safeParse({ bindings: ["Ctrl+Shift+Left"], extra: true }).success).toBe(false);
+    expect(claims.safeParse({}).success).toBe(false);
     expect(EVENT_CHANNELS["shortcut:action"].safeParse({ id: "app.next" }).success).toBe(true);
     expect(EVENT_CHANNELS["shortcut:action"].safeParse({ id: "app.unknown" }).success).toBe(false);
     expect(EVENT_CHANNELS["shortcuts:changed"].safeParse({

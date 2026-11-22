@@ -26,7 +26,7 @@ interface IpcMainLike {
 export interface HandlerContext {
   auth: AuthService;
   store: LocalStore;
-  shortcuts: Pick<ShortcutService, "snapshot" | "set" | "setRecording">;
+  shortcuts: Pick<ShortcutService, "snapshot" | "set" | "setRecording" | "setTerminalClaims">;
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
   setBadgeCount: (count: number) => void;
@@ -215,7 +215,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   }
   const { shortcuts } = ctx;
   if (!shortcuts || typeof shortcuts.snapshot !== "function" || typeof shortcuts.set !== "function"
-    || typeof shortcuts.setRecording !== "function") {
+    || typeof shortcuts.setRecording !== "function" || typeof shortcuts.setTerminalClaims !== "function") {
     throw new Error("shortcut service unavailable");
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
@@ -386,6 +386,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     const target = recordingTarget(event);
     if (!target) throw new Error("invalid request");
     shortcuts.setRecording(target, recording);
+    return { ok: true };
+  });
+  // authorizeSender admits only the main and Terminal windows' own top-level
+  // frames, so an embedded app view cannot claim keys; each sender sets its own.
+  handle("shortcuts:set-terminal-claims", ({ bindings }, event) => {
+    const sender = (event as { sender?: unknown } | null)?.sender;
+    if (typeof sender !== "object" || sender === null) throw new Error("invalid request");
+    shortcuts.setTerminalClaims(sender, bindings);
     return { ok: true };
   });
 

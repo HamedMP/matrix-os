@@ -1,7 +1,8 @@
 // Wires the shortcut service into the app (specs/653): loads the overrides,
 // tells the main and Terminal windows when they change, runs bound keys from
-// every web contents, and makes sure a recorder in the main window cannot
-// leave menu shortcuts paused.
+// every web contents, makes sure a recorder in the main window cannot leave
+// menu shortcuts paused, and ends a window's Terminal key claims when it blurs,
+// navigates or goes away.
 import type { ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
 import type { LocalStore } from "../persistence/local-store";
 import { SHORTCUT_EVENTS, type ShortcutSnapshot } from "../../shared/shortcuts-ipc";
@@ -98,24 +99,30 @@ export async function installShortcuts(deps: {
   // Only the main window may record (sender policy). It is checked when the
   // event fires because the window is created before it becomes the main one.
   const watchWindow: WindowCreatedListener = (_event, win) => {
-    const stopRecording = () => {
-      if (deps.mainWindow() === win) service.setRecording(win.webContents, false);
+    const contents = win.webContents;
+    // A Terminal's claim lasts only while its window has focus.
+    const onBlur = () => {
+      service.clearTerminalClaims(contents);
+      if (deps.mainWindow() === win) service.setRecording(contents, false);
     };
     // Subframe loads and in-page navigations leave the recorder on screen.
     const onNavigation: NavigationListener = (details) => {
-      if (details.isMainFrame && !details.isSameDocument) stopRecording();
+      if (details.isMainFrame && !details.isSameDocument) onBlur();
     };
     // Electron throws on any use of a window after "closed", and its listeners
-    // die with it, so a closed window is only forgotten, never detached.
-    const onClosed = () => { detachers.delete(win); };
-    const contents = win.webContents;
+    // die with it, so a closed window is only forgotten, never detached. The
+    // claims map uses `contents` only as a key, so clearing it is safe.
+    const onClosed = () => {
+      detachers.delete(win);
+      service.clearTerminalClaims(contents);
+    };
     const attached = watch(win, () => {
-      win.removeListener("blur", stopRecording);
+      win.removeListener("blur", onBlur);
       win.removeListener("closed", onClosed);
       contents.removeListener("did-start-navigation", onNavigation);
     });
     if (!attached) return;
-    win.on("blur", stopRecording);
+    win.on("blur", onBlur);
     win.on("closed", onClosed);
     contents.on("did-start-navigation", onNavigation);
   };
@@ -126,19 +133,24 @@ export async function installShortcuts(deps: {
     platform: toShortcutPlatform(deps.platform),
     isRecording: () => service.isRecording(),
     isAvailable: (id) => isShortcutActionAvailable(id, deps.platform),
+    isClaimed: (source, binding) => service.isTerminalClaimed(source, binding),
     run: deps.run,
   });
   const watchContents: ContentsCreatedListener = (_event, contents) => {
     // DevTools keeps its own keys.
     if (contents.getType() === "devtools") return;
+    const onInput: InputListener = (event, input) => matcher(event, input, contents);
     // Destroyed web contents are forgotten the same way as closed windows.
-    const onDestroyed = () => { detachers.delete(contents); };
+    const onDestroyed = () => {
+      detachers.delete(contents);
+      service.clearTerminalClaims(contents);
+    };
     const attached = watch(contents, () => {
-      contents.removeListener("before-input-event", matcher);
+      contents.removeListener("before-input-event", onInput);
       contents.removeListener("destroyed", onDestroyed);
     });
     if (!attached) return;
-    contents.on("before-input-event", matcher);
+    contents.on("before-input-event", onInput);
     contents.on("destroyed", onDestroyed);
   };
 

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { normalizeTerminalShortcut, terminalBindings, type TerminalKeyboardPreferences } from "#terminal-keyboard";
 
 // Pure registry shared by the Electron main process and the renderers.
 // No DOM, React or Node imports.
@@ -234,6 +235,50 @@ export function bindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform)
   const key = digit ?? keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
   if (key === null) return null;
   return [...heldModifiers(e, platform), key].join("+");
+}
+
+/** Whether `binding` is in the registry's form: known modifiers in order, then one known key. */
+export function isCanonicalBinding(binding: string, platform: ShortcutPlatform): boolean {
+  return parseBinding(binding, platform) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal claims: a focused Terminal keeps the keys its active profile binds,
+// so the main process does not run an Apps shortcut for them (specs/653).
+
+const TERMINAL_KEY_NAMES: Readonly<Record<string, string>> = {
+  ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down",
+};
+
+/**
+ * A terminal binding (`Ctrl+Shift+ArrowLeft`, `Shift+Meta+Enter`) in the
+ * registry's form (`Ctrl+Shift+Left`, `Cmd+Shift+Enter`), so it compares with
+ * bindingFromKeyEvent. Null when it cannot be one: off macOS the registry has
+ * no Cmd, so a Meta binding there stays with Matrix.
+ */
+export function bindingFromTerminalShortcut(value: string, platform: ShortcutPlatform): string | null {
+  const normalized = normalizeTerminalShortcut(value);
+  if (normalized === null) return null;
+  const parts = normalized.split("+");
+  const key = parts.pop()!;
+  if (parts.includes("Meta") && platform !== "mac") return null;
+  const modifiers = MODIFIERS.filter((modifier) => parts.includes(modifier === "Cmd" ? "Meta" : modifier));
+  const binding = [...modifiers, TERMINAL_KEY_NAMES[key] ?? key].join("+");
+  return isCanonicalBinding(binding, platform) ? binding : null;
+}
+
+/** The registry bindings a focused Terminal with these preferences handles itself. */
+export function terminalShortcutClaims(preferences: TerminalKeyboardPreferences, isMac: boolean): string[] {
+  // resolveTerminalShortcut ignores every binding, overrides included, here.
+  if (preferences.profile === "passthrough") return [];
+  const platform: ShortcutPlatform = isMac ? "mac" : "other";
+  const claims = new Set<string>();
+  for (const bound of Object.values(terminalBindings(preferences, isMac))) {
+    if (typeof bound !== "string") continue;
+    const binding = bindingFromTerminalShortcut(bound, platform);
+    if (binding !== null) claims.add(binding);
+  }
+  return [...claims].sort();
 }
 
 // ---------------------------------------------------------------------------

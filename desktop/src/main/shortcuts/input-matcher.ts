@@ -3,7 +3,8 @@
 // cannot block a shortcut, and preventDefault() also stops the matching menu
 // accelerator, so the action runs once. It carries only the Apps group, and
 // never terminal control chords; everything else is left to the page and the
-// menu, so apps inside Matrix can still claim keys such as Cmd+N.
+// menu, so apps inside Matrix can still claim keys such as Cmd+N. A focused
+// Terminal also keeps the keys its active profile binds (isClaimed).
 import {
   bindingFromKeyEvent,
   characterBindingFromKeyEvent,
@@ -65,8 +66,10 @@ export function createShortcutInputMatcher(deps: {
   isRecording(): boolean;
   /** False for actions that do not exist on this platform. */
   isAvailable(id: ShortcutActionId): boolean;
+  /** True when a Terminal focused in `source` handles this binding itself. */
+  isClaimed(source: object, binding: string): boolean;
   run(id: ShortcutActionId): void;
-}): (event: { preventDefault(): void }, input: ShortcutInput) => void {
+}): (event: { preventDefault(): void }, input: ShortcutInput, source: object) => void {
   // Rebuilt only when effective() returns a different object.
   let indexed: EffectiveShortcuts | null = null;
   let actionByBinding = new Map<string, ShortcutActionId>();
@@ -87,7 +90,7 @@ export function createShortcutInputMatcher(deps: {
     return actionByBinding.get(binding);
   }
 
-  return (event, input) => {
+  return (event, input, source) => {
     if (input.type !== "keyDown" || deps.isRecording()) return;
     // The same function the recorder uses, so a recorded key matches on any layout.
     const keyEvent = {
@@ -108,7 +111,7 @@ export function createShortcutInputMatcher(deps: {
       if (!check.ok && (check.reason === "reserved-menu" || check.reason === "reserved-system")) return;
     }
     const id = lookup(binding);
-    if (id === undefined) return;
+    if (id === undefined || deps.isClaimed(source, binding)) return;
     // A held key still must not reach the page as a stream of shortcut keys.
     event.preventDefault();
     if (input.isAutoRepeat && !REPEATABLE.has(id)) return;
