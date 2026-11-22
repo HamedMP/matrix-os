@@ -190,6 +190,21 @@ handles the key when no web contents has focus. Hidden menu items are not used.
 Still to confirm on macOS: that cancelling in `before-input-event` prevents the
 menu accelerator there too.
 
+**Terminal control keys are left to the page.** A binding that is Ctrl plus a
+single letter (or `[`, `\`, `]`) with no other modifier is a terminal control
+character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history. On Windows and
+Linux several defaults have that form (Ctrl+W, Ctrl+K, Ctrl+P, Ctrl+N, Ctrl+T,
+Ctrl+J, Ctrl+Q). The matcher does not handle these bindings; they run only
+through the menu accelerator, which a page can claim by cancelling the key. So
+in the terminal they go to the shell, as they do today, and everywhere else they
+run the Matrix action. A second or later binding of this form gets a hidden menu
+item, since the matcher will not carry it. Every other binding, including
+Ctrl+Tab and all Cmd bindings, works with focus anywhere.
+
+Other matcher rules: it skips DevTools web contents; it ignores auto-repeat for
+every action except Next app and Previous app; and it never matches an action
+that does not exist on the current platform (Terminal window on Windows).
+
 ## Architecture
 
 **Shared registry** — `packages/contracts/src/keyboard-shortcuts.ts` (pure
