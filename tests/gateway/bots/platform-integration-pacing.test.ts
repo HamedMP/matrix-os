@@ -150,7 +150,7 @@ describe('platform integration request pacing', () => {
     const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { releases.push(resolve); }));
     const transport = createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid/i', machineToken: TOKEN, fetchImpl });
     const abort = new AbortController();
-    const pending = Array.from({ length: 8 }, () => transport(OWNER, { ...request(), signal: abort.signal }).catch(() => null));
+    const pending = Array.from({ length: 8 }, () => expect(transport(OWNER, { ...request(), signal: abort.signal })).rejects.toBeInstanceOf(Error));
     await vi.advanceTimersByTimeAsync(3000);
     expect(fetchImpl).toHaveBeenCalledTimes(4);
     abort.abort();
@@ -173,7 +173,7 @@ describe('platform integration request pacing', () => {
     }) as typeof fetch);
     const transport = createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid/i', machineToken: TOKEN, fetchImpl });
     const abort = new AbortController();
-    const first = transport(OWNER, { ...request(), signal: abort.signal }).catch(() => null);
+    const first = expect(transport(OWNER, { ...request(), signal: abort.signal })).rejects.toBeInstanceOf(Error);
     await vi.advanceTimersByTimeAsync(0); abort.abort(); await first;
     const second = transport(OWNER, request());
     await vi.runAllTimersAsync(); expect((await second).status).toBe(200);
