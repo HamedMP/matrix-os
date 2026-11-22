@@ -150,6 +150,14 @@ describe('owned machine enrollment and machine routes', () => {
       method: 'DELETE', headers: { cookie: 'session=owner' },
     })).status).toBe(401);
     expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'PATCH', body: JSON.stringify({ name: 'Lab 3' }),
+      headers: { 'content-type': 'application/json', cookie: 'session=owner', origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' },
+    })).status).toBe(401);
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
+      method: 'PATCH', body: JSON.stringify({ name: 'Lab 3' }),
+      headers: { 'content-type': 'application/json', cookie: 'session=owner', origin: 'https://app.example.com', 'sec-fetch-site': 'same-origin' },
+    })).status).toBe(200);
+    expect((await app.request(`/api/auth/owned-computers/${machineId}`, {
       method: 'DELETE', headers: { authorization: 'Bearer owner-token' },
     })).status).toBe(204);
 

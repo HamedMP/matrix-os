@@ -78,6 +78,18 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
     return identity?.userId ?? null;
   }
 
+  /**
+   * Cookie sessions may mutate only from the app's own origin (the shell served
+   * through session routing, including on an owned computer). Cross-site forms
+   * carry a foreign Origin, or none, and fall back to bearer-only.
+   */
+  function sameAppOrigin(c: Context): boolean {
+    const origin = c.req.header('origin');
+    const site = c.req.header('sec-fetch-site');
+    return Boolean(deps.config && origin && origin === new URL(deps.config.publicUrl).origin
+      && (site === undefined || site === 'same-origin'));
+  }
+
   async function guard(c: Context, allowCookie: boolean): Promise<string | Response> {
     noStore(c);
     if (!deps.config) return c.json({ error: 'Owned computers unavailable' }, 503);
@@ -175,7 +187,7 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
   });
 
   routes.patch('/api/auth/owned-computers/:machineId', limit, async (c) => {
-    const userId = await guard(c, false);
+    const userId = await guard(c, sameAppOrigin(c));
     if (typeof userId !== 'string') return userId;
     const params = MachineIdParamSchema.safeParse(c.req.param());
     const body = OwnedComputerUpdateRequestSchema.safeParse(await readOwnedJson(c));
@@ -193,7 +205,7 @@ export function createOwnedOwnerRoutes(deps: OwnedOwnerRoutesDeps): Hono {
   });
 
   routes.delete('/api/auth/owned-computers/:machineId', limit, async (c) => {
-    const userId = await guard(c, false);
+    const userId = await guard(c, sameAppOrigin(c));
     if (typeof userId !== 'string') return userId;
     const params = MachineIdParamSchema.safeParse(c.req.param());
     if (!params.success) return c.json({ error: 'Invalid request' }, 400);
