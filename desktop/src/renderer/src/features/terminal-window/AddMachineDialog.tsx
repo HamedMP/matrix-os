@@ -97,7 +97,10 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onInstall, onClose }: Add
     return () => { alive.current = false; };
   }, [loadPeers]);
 
+  // One request at a time: while an add or an install runs, the form waits.
+  const busy = adding || installing;
   const attempt = async (address: string, label: string | undefined, ssh: SshOptions | undefined) => {
+    if (busy) return;
     setAdding(true);
     setFailure(null);
     setTried({ target: address, ...(label ? { name: label } : {}), ...(ssh ? { ssh } : {}) });
@@ -129,7 +132,7 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onInstall, onClose }: Add
   };
 
   const install = async () => {
-    if (!tried) return;
+    if (!tried || busy) return;
     setInstalling(true);
     setInstallFailed(false);
     const fallback = tried.target.replace(/^[^@]*@/, "").replace(/:\d+$/, "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 32);
@@ -157,23 +160,23 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onInstall, onClose }: Add
       </p>
       <section aria-label="Tailscale" className="flex flex-col gap-1.5">
         <h3 className="text-[12px] font-medium">On your tailnet</h3>
-        <TailscalePeers state={peers} busy={adding} onAdd={addPeer} />
+        <TailscalePeers state={peers} busy={busy} onAdd={addPeer} />
       </section>
-      <Input label="ssh address" aria-label="ssh address" disabled={adding} placeholder="user@host or a Host from ~/.ssh/config" value={target} maxLength={255}
+      <Input label="ssh address" aria-label="ssh address" disabled={busy} placeholder="user@host or a Host from ~/.ssh/config" value={target} maxLength={255}
         autoCapitalize="off" autoCorrect="off" spellCheck={false}
         onChange={(event) => { setTarget(event.target.value); setFailure(null); }} />
-      <Input label="Name (optional)" aria-label="Name" disabled={adding} placeholder="vps" value={name} maxLength={32}
+      <Input label="Name (optional)" aria-label="Name" disabled={busy} placeholder="vps" value={name} maxLength={32}
         autoCapitalize="off" autoCorrect="off" spellCheck={false}
         onChange={(event) => { setName(event.target.value); setFailure(null); }} />
       <details className="text-[12px]">
         <summary className="cursor-pointer" style={secondaryText}>Advanced: port, identity file, jump host</summary>
         <div className="mt-2 flex flex-col gap-2">
-          <Input label="Port" aria-label="Port" disabled={adding} inputMode="numeric" placeholder="22" value={port} maxLength={5}
+          <Input label="Port" aria-label="Port" disabled={busy} inputMode="numeric" placeholder="22" value={port} maxLength={5}
             onChange={(event) => { setPort(event.target.value); setFailure(null); }} />
-          <Input label="Identity file" aria-label="Identity file" disabled={adding} placeholder="~/.ssh/id_ed25519" value={identity} maxLength={1024}
+          <Input label="Identity file" aria-label="Identity file" disabled={busy} placeholder="~/.ssh/id_ed25519" value={identity} maxLength={1024}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
             onChange={(event) => { setIdentity(event.target.value); setFailure(null); }} />
-          <Input label="Jump host" aria-label="Jump host" disabled={adding} placeholder="user@bastion" value={jump} maxLength={255}
+          <Input label="Jump host" aria-label="Jump host" disabled={busy} placeholder="user@bastion" value={jump} maxLength={255}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
             onChange={(event) => { setJump(event.target.value); setFailure(null); }} />
         </div>
@@ -191,7 +194,7 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onInstall, onClose }: Add
           </Button>
         ) : null}
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-        <Button type="submit" size="sm" disabled={adding || !target.trim()}>{adding ? "Adding…" : "Add"}</Button>
+        <Button type="submit" size="sm" disabled={busy || !target.trim()}>{adding ? "Adding…" : "Add"}</Button>
       </div>
     </form>
   );

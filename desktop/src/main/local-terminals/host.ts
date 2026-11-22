@@ -360,9 +360,20 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     /** Adds a machine that has no core or an old one, installing the app's own core there. */
-    installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
+    async installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
       const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
-      return machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
+      const result = await machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
+      if (!result.ok) return result;
+      // Kept like an add, so Open in terminal reaches it the same way (port, identity, jump host, Tailscale SSH).
+      try {
+        const current = (await listMachines(await ensure())).find((machine) => machine.name === input.name);
+        await machineSsh.set(input.name, {
+          target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), ...(current ? { coreTarget: current.target } : {}),
+        });
+      } catch (error: unknown) {
+        console.warn("[local-terminals] installed machine's ssh settings not saved:", describeError(error));
+      }
+      return result;
     },
 
     /** Brings an added machine's core to the app's version; its terminals keep running. */

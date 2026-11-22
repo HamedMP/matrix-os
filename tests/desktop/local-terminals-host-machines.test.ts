@@ -12,7 +12,7 @@ import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 type Call = { id: number; method: string; params: Record<string, unknown> };
 const roots: string[] = [];
 
-function start(script: (core: ReturnType<typeof fakeCore>, call: Call) => void) {
+function start(script: (core: ReturnType<typeof fakeCore>, call: Call) => void, extra: Partial<LocalTerminalHostOptions> = {}) {
   const root = mkdtempSync(join(tmpdir(), "mx-machines-"));
   roots.push(root);
   const calls: Call[] = [];
@@ -25,6 +25,7 @@ function start(script: (core: ReturnType<typeof fakeCore>, call: Call) => void) 
       core.onCall((call: Call) => { calls.push(call); script(core, call); });
       return core.socket;
     },
+    ...extra,
   };
   mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
   return { host: createLocalTerminalHost(opts, { output: vi.fn(), closed: vi.fn() }), dataDir: opts.dataDir, calls };
@@ -56,6 +57,19 @@ describe("added machines over ssh", () => {
       version: 1, machines: { box: { target: "me@box", ssh: { port: 2222 }, coreTarget: "me@box" } },
     }));
     expect(await host.machines()).toEqual([{ name: "box", target: "me@box", state: "connected", temporary: false, ssh: { port: 2222 } }]);
+  });
+
+  // Fault detected (Greptile, #3579): a machine installed with a port or jump host lost that route for Open in terminal.
+  it("keeps the ssh settings of a machine whose core it installed", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    const { host, dataDir } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: [machine("box", "me@box")] } });
+    }, { runCoreCli });
+    expect(await host.installMachine({ target: "me@box", name: "box", ssh: { port: 2222, jump: "me@bastion" } })).toEqual({ ok: true });
+    expect(runCoreCli).toHaveBeenCalled();
+    expect(JSON.parse(await readFile(join(dataDir, "machine-ssh.json"), "utf8")).machines).toEqual({
+      box: { target: "me@box", ssh: { port: 2222, jump: "me@bastion" }, coreTarget: "me@box" },
+    });
   });
 
   // Fault detected (Greptile, #3570): a failed save left the machine added without its settings,

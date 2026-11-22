@@ -25,6 +25,7 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 function installOperator(options: {
   peers?: unknown;
   machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[];
+  holdInstall?: Promise<void>;
 } = {}) {
   let machines = options.machines ?? [];
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
@@ -45,6 +46,7 @@ function installOperator(options: {
       case "local-terminal:tailscale-peers": return options.peers ?? { status: "missing" };
       case "local-terminal:machine-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t8" };
       case "local-terminal:machine-install": {
+        await options.holdInstall;
         const { target, name } = payload as { target: string; name: string };
         machines = [...machines, { name, target, state: "connected", temporary: false }];
         return { ok: true };
@@ -265,12 +267,34 @@ describe("Terminal window ssh machines", () => {
     expect(await within(machinesList()).findByText(/me@fresh-box:2222 · Connected/)).toBeTruthy();
   });
 
+  // Fault detected (Greptile, #3579): the form took another Add while an install ran, and lost its result.
+  it("holds the form while the core installs", async () => {
+    let finish: () => void = () => undefined;
+    const invoke = installOperator({ add: () => ({ ok: false, reason: "hc_missing" }), holdInstall: new Promise<void>((resolve) => { finish = resolve; }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@fresh-box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Install core there" }));
+    expect(await within(dialog).findByRole("button", { name: "Installing…" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Add" }).hasAttribute("disabled")).toBe(true);
+    expect(within(dialog).getByRole("textbox", { name: "ssh address" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.submit(within(dialog).getByRole("button", { name: "Add" }).closest("form")!);
+    expect(invoke.mock.calls.filter(([channel]) => channel === "local-terminal:machine-add")).toHaveLength(1);
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull());
+  });
+
   it("shows a machine's core version and updates an older one", async () => {
     const invoke = installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
     render(<TerminalWindowApp />);
     const machines = await screen.findByRole("list", { name: "Machines" });
     expect(await within(machines).findByText("can@10.0.0.7 · Connected · core 0.1.14")).toBeTruthy();
-    fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
+    const update = within(machines).getByRole("button", { name: "Update core" });
+    // Fault detected (Greptile, #3579): a hand-styled native button; it is the shared Button now.
+    expect(update.classList.contains("matrix-btn")).toBe(true);
+    fireEvent.click(update);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps" }));
   });
 

@@ -3,6 +3,7 @@
 // terminal by status on the left, the terminal on screen on the right.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
+import { Button } from "@matrix-os/ui";
 import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
@@ -149,9 +150,9 @@ function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: Ter
       {busy ? <span>Updating its core…</span> : (
         <>
           <span>{failed ? "Couldn't update its core." : `Its core is ${machine.version}; this app has ${LOCAL_TERMINAL_VERSION}.`}</span>
-          <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.update(machine.name); }}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine.name); }}>
             {failed ? "Try again" : "Update core"}
-          </button>
+          </Button>
         </>
       )}
     </div>
