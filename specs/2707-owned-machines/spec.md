@@ -518,6 +518,12 @@ Where the build differs from the design above, or defers part of it:
 - **Routing state lives on `user_machines`.** The tunnel hostname is mirrored
   into `private_address` only while the tunnel is ready, and the heartbeat into
   `last_seen_at`, so the substrate's `resolveUpstream` stays synchronous.
+- **Origin hostnames are one label.** Universal SSL covers only
+  `*.<zone>`, so origins are `<prefix><16 hex>.<zone>` rather than a nested
+  `m.<zone>` subdomain. Tunnel names carry the same prefix per environment.
+- **Access is optional.** Zero Trust is not enabled on the account, so the
+  service-token header is sent only when configured. The machine's nginx and
+  gateway already require its epoch-bound bearer on every tunnel request.
 - **Owned rows are opt-in for clients.** `/api/auth/computers` returns them
   only with `?include=owned`, because released clients parse a strict list.
 - **Backups (D4).** The opt-in gate is enforced on the sync routes. The
