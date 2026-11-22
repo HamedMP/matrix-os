@@ -8,6 +8,8 @@ import nativeInput from "../fixtures/claude-native-authenticated-off.json";
 const state = vi.hoisted(() => ({
   gateway: "http://owner.local", runtime: "primary", getSnapshot: vi.fn(), mutate: vi.fn(),
 }));
+// Provider discovery is independent of the owner-only Chat Usage sign-in boundary.
+vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ isLoaded: true, userId: null, sessionId: null }) }));
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => state.gateway }));
 vi.mock("@/lib/ai-credit-checkout", () => ({
   currentAiCreditRuntimeSlot: () => state.runtime, openWebAiCreditCheckout: vi.fn(),
