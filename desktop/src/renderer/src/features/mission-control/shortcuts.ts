@@ -4,7 +4,6 @@ import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { invoke, onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
-import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -14,7 +13,6 @@ import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
-import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { isGetStartedBlocking } from "../get-started/get-started-blocking";
 import {
   closeApp,
@@ -45,29 +43,6 @@ type OpenTabSpec = Parameters<ReturnType<typeof useTabs.getState>["openTab"]>[0]
 /** Opens or reuses the app's tab and shows it, even if its window was closed or minimized. */
 function showApp(spec: OpenTabSpec): void {
   openAndFocusApp(() => useTabs.getState().openTab(spec));
-}
-
-export function handleMenuNavigate(kind: string): void {
-  if (kind === "settings") {
-    showApp({ kind: "settings", title: "Settings" });
-    return;
-  }
-  if (kind === "terminals") {
-    handleTerminalFocusShortcut({ preventDefault: () => undefined });
-    return;
-  }
-  if (kind === "board" || kind === "project") {
-    const { activeProjectSlug, projects } = useBoard.getState();
-    const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
-    showApp(project
-      ? { kind: "project", projectSlug: project.slug, title: project.name || project.slug }
-      : HOSTED_SHELL_TAB_SPEC);
-    return;
-  }
-  if (kind !== "home") {
-    console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
-  }
-  showApp(HOSTED_SHELL_TAB_SPEC);
 }
 
 export function handleCloseSelectedAppShortcut(
@@ -240,7 +215,7 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
     const ui = useUi.getState();
     ui.setQuickOpenOpen(!ui.quickOpenOpen);
   },
-  "nav.settings": () => handleMenuNavigate("settings"),
+  "nav.settings": () => showApp({ kind: "settings", title: "Settings" }),
   "tabs.new-context": () => handleNewContextShortcut(noEvent),
   "tabs.new": () => { handleNewTopLevelTabShortcut(noEvent); },
   "tabs.close": () => handleCloseTopLevelTabShortcut(noEvent),

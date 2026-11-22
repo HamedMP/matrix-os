@@ -6,7 +6,6 @@ import { SHORTCUT_ACTION_IDS } from "@matrix-os/contracts/keyboard-shortcuts";
 import {
   handleCloseSelectedAppShortcut,
   handleCloseTopLevelTabShortcut,
-  handleMenuNavigate,
   handleNewContextShortcut,
   handleNewAgentRunShortcut,
   handleNewTopLevelTabShortcut,
@@ -648,82 +647,6 @@ describe("handleNewAgentRunShortcut", () => {
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(useUi.getState().composerOpen).toBe(true);
     expect(useTabs.getState().tabs).toEqual([]);
-  });
-});
-
-describe("handleMenuNavigate", () => {
-  beforeEach(() => {
-    useBoard.setState({
-      projects: [],
-      activeProjectSlug: null,
-      cardsByProject: {},
-    });
-    useTabs.setState({ tabs: [], activeTabId: null });
-    vi.restoreAllMocks();
-  });
-
-  it("opens project tabs for active projects", () => {
-    useBoard.setState({
-      projects: [{ slug: "matrix", name: "Matrix OS" }],
-      activeProjectSlug: "matrix",
-    });
-
-    handleMenuNavigate("board");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "work",
-      workRoute: "project",
-      projectSlug: "matrix",
-      title: "Chat",
-    });
-  });
-
-  it("treats the retired agents kind as unsupported and falls back home", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    handleMenuNavigate("agents");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: agents");
-  });
-
-  it("focuses an existing terminal tab from menu navigation", () => {
-    const terminalId = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-main", title: "matrix-main" });
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-
-    handleMenuNavigate("terminals");
-
-    expect(useTabs.getState().activeTabId).toBe(terminalId);
-  });
-
-  it("falls back to home and logs unsupported menu kinds", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    handleMenuNavigate("apps");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: apps");
-  });
-
-  it("falls back to home without warning when board navigation has no project", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    handleMenuNavigate("board");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).not.toHaveBeenCalled();
   });
 });
 
