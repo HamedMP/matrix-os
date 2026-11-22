@@ -74,7 +74,7 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
     const model = c.req.query("model");
     const bedrockRoute = config.bedrockRoute;
     if (bedrockRoute && model === bedrockRoute.clientModelId) {
-      if (!bedrockUpstream || !isBedrockPricingCurrent(bedrockRoute, now())) {
+      if (config.reservationMode !== "usage" || !bedrockUpstream || !isBedrockPricingCurrent(bedrockRoute, now())) {
         return c.json({ ready: false }, 503);
       }
       const priceValidThrough = bedrockRoute.pricing.validThrough;

@@ -76,6 +76,7 @@ const IdentitySchema = z.object({
   runtimeSlot: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
 }).strict();
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const ManualJevReviewSchema = z.object({
   reservationId: ReferenceSchema,
   tokenId: ReferenceSchema,
   expectedRequestId: ReferenceSchema,

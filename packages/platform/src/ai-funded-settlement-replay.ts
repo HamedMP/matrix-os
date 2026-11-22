@@ -32,8 +32,6 @@ export function storedProvenanceMatches(
   const expected = provenanceColumns(provenance);
   return Object.entries(expected).every(([key, value]) => row[key as keyof typeof expected] === value);
 }
-const ManualJevReviewSchema = z.object({
-
 /** Replays only an already settled receipt; never derives new expense or writes. */
 export function replaySettledFundedUsage(row: Selectable<AiFundedUsageReservationsTable>, input: {
   actualCostMicrousd: number;

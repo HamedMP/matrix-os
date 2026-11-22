@@ -45,7 +45,7 @@ function platform() {
     check: vi.fn(async () => ({ identity: IDENTITY })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
-        modelId: input.modelId, reservedMicrousd: Math.min(1_000, input.maxCostMicrousd),
+        modelId: input.modelId, reservedMicrousd: 0, billingPolicy: "postpaid",
         maxCostMicrousd: input.maxCostMicrousd, billingMode: "usage" },
     })),
     start: vi.fn(async (input: { executionId?: string }) => ({
@@ -84,6 +84,21 @@ function request() {
 }
 
 describe("funded Bedrock relay", () => {
+  it("does not probe Bedrock when the relay cannot admit Bedrock requests", async () => {
+    const dispatch = vi.fn();
+    const service = createFundedRelayService({ ...config(), reservationMode: "cloudflare-count" }, {
+      now: () => NOW, bedrockUpstream: { dispatch, close: vi.fn() },
+    });
+    try {
+      const ready = await service.app.request(`/ready?model=${encodeURIComponent(MODEL)}`, {
+        headers: { authorization: `Bearer ${config().relayControlToken}` },
+      });
+      expect(ready.status).toBe(503);
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      await service.close();
+    }
+  });
   it("reports readiness only after a bounded route probe with current pricing", async () => {
     const bedrockUpstream: FundedGenerationUpstream = {
       dispatch: vi.fn(async () => ({ response: response(), provenance: {
@@ -111,7 +126,7 @@ describe("funded Bedrock relay", () => {
     control.check.mockImplementation(async () => { order.push("check"); return { identity: IDENTITY }; });
     control.authorize.mockImplementation(async (input) => { order.push("authorize"); return {
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
-        modelId: input.modelId, reservedMicrousd: 1_000, maxCostMicrousd: input.maxCostMicrousd,
+        modelId: input.modelId, reservedMicrousd: 0, billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd,
         billingMode: "usage" as const },
     }; });
     control.start.mockImplementation(async (input) => {
@@ -279,7 +294,7 @@ describe("funded Bedrock relay", () => {
     expect(await result.text()).not.toContain("Bedrock");
     await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith({
       reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
-      mode: "exact", actualCostMicrousd: 0,
+      mode: "exact", actualCostMicrousd: 0, customerCharge: "waived",
       upstreamProvenance: {
         upstream: "aws_bedrock", routeId: ROUTE.routeId, resolvedModel: ROUTE.resolvedModel,
         inferenceProfile: ROUTE.inferenceProfile, region: ROUTE.region,
