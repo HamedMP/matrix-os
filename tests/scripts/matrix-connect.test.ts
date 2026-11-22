@@ -139,7 +139,8 @@ describe("matrix-connect", () => {
         expect(JSON.parse(body)).toMatchObject({ arch: "x86_64", os: "Ubuntu 24.04 LTS", agentVersion: "2026.11.22" });
         return json(res, 200, {
           deviceCode: "a".repeat(43), userCode: "BCDF-GHJK", verificationUri: `${url}/connect`,
-          verificationUriComplete: `${url}/connect?code=BCDFGHJK`, expiresIn: 900, interval: 1,
+          // A different origin must never be printed: the link is built from --platform.
+          verificationUriComplete: "https://elsewhere.example/connect?code=BCDFGHJK", expiresIn: 900, interval: 1,
         });
       }
       polls += 1;
@@ -151,6 +152,8 @@ describe("matrix-connect", () => {
       const result = await run(["enroll", "--platform", url], env);
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("BCDF-GHJK");
+      expect(result.stdout).toContain(`Open ${url}/connect?code=BCDF-GHJK`);
+      expect(result.stdout).not.toContain("elsewhere.example");
       expect(result.stdout).toContain("Connected.");
       expect(`${result.stdout}${result.stderr}`).not.toContain(SECRET);
       expect(`${result.stdout}${result.stderr}`).not.toContain(TUNNEL);

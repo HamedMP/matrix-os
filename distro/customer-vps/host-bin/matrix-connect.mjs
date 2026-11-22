@@ -50,6 +50,7 @@ export function paths(env = process.env) {
     unitSrc: env.MATRIX_CONNECT_UNIT_SRC ?? '/opt/matrix/systemd',
     unitDst: env.MATRIX_CONNECT_UNIT_DST ?? '/etc/systemd/system',
     bundleVersion: env.MATRIX_CONNECT_BUNDLE_VERSION_FILE ?? '/opt/matrix/app/BUNDLE_VERSION',
+    releaseJson: env.MATRIX_CONNECT_RELEASE_FILE ?? '/opt/matrix/release.json',
     osRelease: env.MATRIX_CONNECT_OS_RELEASE ?? '/etc/os-release',
   };
 }
@@ -360,7 +361,16 @@ export function reportArch(value = osArch()) {
 
 async function agentVersion(p) {
   const raw = ((await readText(p.bundleVersion)) ?? '').trim();
-  return /^[0-9A-Za-z._+-]{1,64}$/.test(raw) ? raw : 'unknown';
+  if (/^[0-9A-Za-z._+-]{1,64}$/.test(raw)) return raw;
+  // Bundles record their version in release.json; BUNDLE_VERSION is optional.
+  let release;
+  try {
+    release = JSON.parse((await readText(p.releaseJson)) ?? 'null');
+  } catch (err) {
+    if (!(err instanceof SyntaxError)) throw err;
+  }
+  const version = typeof release?.version === 'string' ? release.version.trim() : '';
+  return /^[0-9A-Za-z._+-]{1,64}$/.test(version) ? version : 'unknown';
 }
 
 function machineHeaders(env) {
@@ -410,14 +420,16 @@ export async function enroll(argv, env = process.env) {
   }
   if (start.status === 429) { warn('too many connection attempts, try again in an hour'); return EXIT.unavailable; }
   const s = start.json;
-  if (start.status !== 200 || !s || !DEVICE_CODE.test(s.deviceCode ?? '') || !USER_CODE.test(s.userCode ?? '')
-    || typeof s.verificationUriComplete !== 'string' || !s.verificationUriComplete.startsWith(platform)) {
+  if (start.status !== 200 || !s || !DEVICE_CODE.test(s.deviceCode ?? '') || !USER_CODE.test(s.userCode ?? '')) {
     warn('platform unavailable');
     return EXIT.unavailable;
   }
-  log(`Open ${s.verificationUriComplete} and enter ${s.userCode}`);
+  // The approval link is built from the platform this machine chose, never
+  // taken from the response, so the printed URL always names that platform.
+  const approvalUrl = `${platform}/connect?code=${encodeURIComponent(s.userCode)}`;
+  log(`Open ${approvalUrl} and enter ${s.userCode}`);
   log('Waiting for approval...');
-  openBrowser(s.verificationUriComplete, env);
+  openBrowser(approvalUrl, env);
   let intervalMs = Math.max(1, Math.min(60, Number(s.interval) || 5)) * 1000;
   const deadline = Date.now() + Math.max(60, Math.min(3600, Number(s.expiresIn) || 900)) * 1000;
   const sleep = env.MATRIX_CONNECT_TEST_FAST === '1' ? () => delay(10) : (ms) => delay(ms);
