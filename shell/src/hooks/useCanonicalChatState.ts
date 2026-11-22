@@ -46,7 +46,7 @@ import {
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
-import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, withPendingCanonicalTurn, type PendingCanonicalTurn } from "@matrix-os/ui";
 import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
@@ -168,6 +168,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
+  // The message being sent, shown before admission confirms its turn.
+  const [pendingTurn, setPendingTurn] = useState<PendingCanonicalTurn | null>(null);
   const [gatewayUrl] = useState(getGatewayUrl);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
@@ -595,6 +597,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
+        setPendingTurn({ requestId: input.clientRequestId, chatId: record.chat.id, parts, createdAt: new Date().toISOString() });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
@@ -645,6 +648,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
     };
     return send().finally(() => {
+      setPendingTurn(null);
       if (!isCurrent()) return;
       submittingRef.current = false;
       setSubmitting(false);
@@ -957,7 +961,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [client, setRecords, isCurrent]);
 
   const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
-  const messages = selectedDetail ? projectCanonicalTranscript(selectedDetail) : [];
+  const messages = selectedDetail ? projectCanonicalTranscript(withPendingCanonicalTurn(selectedDetail, pendingTurn)) : [];
   const selectedDetailError = detailError?.scope === navigationIdentity && detailError.chatId === activeChatId
     ? "Chat could not be loaded. Try again." : null;
   const visibleError = (sameAuthority ? safeError : null) ?? selectedDetailError ?? unreadNavigation.error ?? navigation.error;

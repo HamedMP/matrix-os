@@ -24,7 +24,7 @@ import { createCanonicalChatRefresh, applyCanonicalChatContent, useCanonicalChat
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
-import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, type PendingCanonicalTurn } from "@matrix-os/ui";
 import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
@@ -84,6 +84,8 @@ export function useCanonicalChatRouteController({
   admissionIdentity?: unknown;
 }) {
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
+  // The message being sent, shown before admission confirms its turn.
+  const [pendingTurn, setPendingTurn] = useState<PendingCanonicalTurn | null>(null);
   const admissionSequence = useRef(0);
   const latestAdmissionId = useRef<string | undefined>(undefined);
   const selectionEpoch = useRef(0);
@@ -484,7 +486,10 @@ export function useCanonicalChatRouteController({
         canAcknowledge: () => admissionAuthority.current.mounted && admissionAuthority.current.client === client
           && admissionAuthority.current.identity === admissionIdentity,
         mayDispatch: isCurrentScope,
-        onPrepared: id => { latestAdmissionId.current = id; },
+        onPrepared: id => {
+          latestAdmissionId.current = id;
+          if (selectedChatId) setPendingTurn({ requestId: id, chatId: selectedChatId, parts: input.parts, createdAt: new Date().toISOString() });
+        },
         onAccepted: () => onAccepted?.(), onRejected,
         onConfirmed: id => {
           const current = admissionAuthority.current;
@@ -517,6 +522,9 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
+    } finally {
+      // Accepted turns now come from the detail; a rejected send keeps its draft.
+      if (admissionSequence.current === sequence) setPendingTurn(null);
     }
   }, [client, detail, projectId, admissions, admissionIdentity]);
 
@@ -954,6 +962,7 @@ export function useCanonicalChatRouteController({
     items,
     activeChatId,
     detail,
+    pendingTurn,
     streamedMessageIds: streamedMessagesRef.current.chatId === activeChatId
       ? streamedMessagesRef.current.ids
       : [],
