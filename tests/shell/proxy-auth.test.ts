@@ -526,6 +526,44 @@ describe("proxy auth: trusted platform native app sessions", () => {
     expect(headers?.get("x-matrix-native-app-session")).toBeNull();
   });
 
+  it.each([
+    ["owned", "native"],
+    ["", null],
+  ])("lets an owned computer (substrate %s) accept platform-verified native sessions in self-host mode", async (substrate, expected) => {
+    vi.resetModules();
+    vi.stubEnv("MATRIX_SELF_HOSTED", "1");
+    vi.stubEnv("MATRIX_SUBSTRATE", substrate);
+    vi.stubEnv("UPGRADE_TOKEN", "owned-machine-token");
+    vi.stubEnv("MATRIX_CLERK_USER_ID", "user_alice");
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => async (request: unknown, event: unknown) =>
+        handler(async () => ({ userId: null }), request, event)
+      ),
+    }));
+    const nextResponseNext = vi.fn((init?: { request?: { headers?: Headers } }) => ({ kind: "next", init }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+    const { proxy } = await import("../../shell/src/proxy");
+    const result = proxy({
+      headers: new Headers({
+        authorization: "Bearer owned-machine-token",
+        "x-platform-user-id": "user_alice",
+        "x-matrix-native-app-session": "1",
+      }),
+      nextUrl: { host: "app.matrix-os.com", pathname: "/", protocol: "https:", search: "" },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]) as unknown as { status?: number };
+    if (expected) {
+      expect(nextResponseNext.mock.calls[0]?.[0]?.request?.headers?.get("x-matrix-platform-session")).toBe(expected);
+    } else {
+      expect(nextResponseNext).not.toHaveBeenCalled();
+      expect(result.status).toBe(403);
+    }
+  });
+
   it("marks trusted platform page requests as server-verified sessions", async () => {
     vi.resetModules();
     vi.stubEnv("UPGRADE_TOKEN", "platform-upgrade-token");

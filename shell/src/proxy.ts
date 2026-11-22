@@ -175,6 +175,13 @@ export function proxy(
   // (nginx Basic Auth by default). The shell still injects the internal gateway
   // bearer for same-origin API/file/WebSocket requests.
   if (selfHostedMode) {
+    // An owned computer (spec 2707) is also reached through the platform, which
+    // presents this machine's own bearer and a signed user proof. Those
+    // requests, including native app sessions, take the platform-verified path.
+    if (process.env.MATRIX_SUBSTRATE === "owned") {
+      const ownedPlatformResponse = platformVerifiedResponse(request);
+      if (ownedPlatformResponse) return ownedPlatformResponse;
+    }
     if (
       request.headers.has(MATRIX_NATIVE_APP_SESSION_HEADER) ||
       request.headers.has(MATRIX_PLATFORM_SESSION_HEADER)
