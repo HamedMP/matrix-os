@@ -42,8 +42,13 @@ const spec: CreateVmSpec = {
 
 const GiB = 1024 ** 3;
 let goldenBytes: number;
+// lvs output for the thin pool's data and metadata percent, or a failing exit code.
+let thinPool: string | number;
 const exec: Exec = async (argv) => {
   execCalls.push([...argv]);
+  if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) {
+    return typeof thinPool === "number" ? { code: thinPool, stdout: "", stderr: "" } : { code: 0, stdout: thinPool, stderr: "" };
+  }
   if (argv[0] === "lvs" && argv.includes("lv_size")) {
     // NaN: lvs knows no such LV.
     return Number.isNaN(goldenBytes) ? { code: 5, stdout: "", stderr: "" } : { code: 0, stdout: `  ${goldenBytes}\n`, stderr: "" };
@@ -120,6 +125,7 @@ beforeEach(async () => {
   chOverrides = {};
   clockT = 1_000_000;
   goldenBytes = 20 * GiB;
+  thinPool = "  10.00   5.00\n";
 });
 
 afterEach(async () => {
@@ -502,5 +508,52 @@ describe("VM disk size against the golden image", () => {
     const [record] = await store.list();
     expect(record).toMatchObject({ state: "failed", failedDuring: "create" });
     expect(execCalls.some((c) => c[0] === "systemctl" && c[1] === "start")).toBe(false);
+  });
+});
+
+describe("thin pool admission", () => {
+  const poolQuery = ["lvs", "--noheadings", "--nosuffix", "-o", "data_percent,metadata_percent", "vmvg/pool"];
+  const created = () => execCalls.some((c) => c[0] === "lvcreate");
+
+  it("creates a VM while the pool is below both thresholds", async () => {
+    thinPool = "  84.99   79.99\n";
+    await expect(make().create(spec)).resolves.toMatchObject({ state: "running" });
+    expect(execCalls).toContainEqual(poolQuery);
+  });
+
+  it("refuses with capacity, before any record or LV, when data or metadata is past its threshold", async () => {
+    for (const output of ["  85.01   5.00\n", "  10.00   80.01\n"]) {
+      thinPool = output;
+      execCalls = [];
+      await expect(make().create(spec)).rejects.toMatchObject({ code: "capacity" });
+      expect(created()).toBe(false);
+      await expect(store.list()).resolves.toEqual([]);
+    }
+    expect(logs.filter((l) => l.event === "vm_thin_pool_full")).toHaveLength(2);
+  });
+
+  it("honours configured thresholds", async () => {
+    thinPool = "  60.00   5.00\n";
+    await expect(make({}, { poolMaxDataPercent: 50 }).create(spec)).rejects.toMatchObject({ code: "capacity" });
+    thinPool = "  10.00   45.00\n";
+    await expect(make({}, { poolMaxMetadataPercent: 40 }).create(spec)).rejects.toMatchObject({ code: "capacity" });
+  });
+
+  it("fails closed with capacity when the pool usage is unreadable", async () => {
+    for (const output of [5, "", "  abc  5.00\n", "  10.00\n", "  101.00   5.00\n"]) {
+      thinPool = output;
+      await expect(make().create(spec)).rejects.toMatchObject({ code: "capacity" });
+    }
+    expect(created()).toBe(false);
+    expect(logs.some((l) => l.event === "vm_thin_pool_unreadable")).toBe(true);
+  });
+
+  it("accepts a decimal comma and does not check the pool for an idempotent repeat", async () => {
+    thinPool = "  10,50   5,25\n";
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    await expect(lifecycle.thinPoolUsage()).resolves.toEqual({ dataPercent: 10.5, metadataPercent: 5.25 });
+    thinPool = "  99.00   99.00\n";
+    await expect(lifecycle.create(spec)).resolves.toMatchObject({ id: vm.id });
   });
 });

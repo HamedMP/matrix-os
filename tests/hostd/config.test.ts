@@ -23,7 +23,18 @@ describe("hostd config", () => {
       ingressPort: 443,
       stateDir: "/var/lib/matrix-hostd",
       runDir: "/run/matrix-vm",
+      poolMaxDataPercent: 85,
+      poolMaxMetadataPercent: 80,
     });
+  });
+
+  it("reads thin pool admission thresholds and refuses ones outside 1..100", () => {
+    expect(loadConfig({ ...base, HOSTD_POOL_MAX_DATA_PERCENT: "70", HOSTD_POOL_MAX_METADATA_PERCENT: "60.5" })).toMatchObject({
+      poolMaxDataPercent: 70,
+      poolMaxMetadataPercent: 60.5,
+    });
+    expect(() => loadConfig({ ...base, HOSTD_POOL_MAX_DATA_PERCENT: "101" })).toThrow(/HOSTD_POOL_MAX_DATA_PERCENT/);
+    expect(() => loadConfig({ ...base, HOSTD_POOL_MAX_METADATA_PERCENT: "0" })).toThrow(/HOSTD_POOL_MAX_METADATA_PERCENT/);
   });
 
   it("accepts overrides for ports, hosts and directories", () => {

@@ -147,6 +147,17 @@ describe("metal host scripts", () => {
     expect(smoke).toContain("hostd--snapshots");
   });
 
+  it("smoke proves the guest root filesystem grew into the 40 GiB disk", async () => {
+    const smoke = await readFile(`${DIR}/smoke-host.sh`, "utf8");
+    // Over the smoke's own support key, after the gateway is healthy, before suspend.
+    expect(smoke).toMatch(/ssh -i "\$work\/support"[\s\S]{0,200}?"matrix-support@\$vm_ip"/);
+    expect(smoke).toContain("df -B1 --output=size /");
+    expect(smoke).toContain("$((38 * 1024 * 1024 * 1024))");
+    const at = (needle: string) => smoke.indexOf(needle);
+    expect(at("df -B1 --output=size /")).toBeGreaterThan(at("gateway healthy"));
+    expect(at("df -B1 --output=size /")).toBeLessThan(at("# --- suspend / resume"));
+  });
+
   it("never flushes the ruleset and only defines its own tables", async () => {
     for (const file of await allFiles(DIR)) {
       expect(await readFile(file, "utf8"), file).not.toMatch(/flush\s+ruleset/);

@@ -19,6 +19,7 @@ let logs: Array<{ event: string; fields: Record<string, unknown> }>;
 
 const exec: Exec = async (argv) => {
   if (argv[0] === "lvcreate" && gate) await gate;
+  if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
 };
@@ -291,6 +292,7 @@ describe("hostd API", () => {
     const cases: Array<[LifecycleError["code"], number, string]> = [
       ["pool_full", 507, "pool_full"],
       ["no_capacity", 503, "busy"],
+      ["capacity", 503, "capacity"],
       ["busy", 503, "busy"],
       ["conflict", 409, "conflict"],
       ["not_found", 404, "not_found"],
@@ -433,9 +435,17 @@ describe("hostd API", () => {
     expect(await res.json()).toEqual({
       memoryAvailableMiB: 100_000,
       poolFreeBytes: 5 * 1024 ** 3,
+      thinPool: { dataPercent: 10, metadataPercent: 5 },
       runningVms: 1,
       suspendedVms: 1,
     });
+  });
+
+  it("GET /v1/capacity reports thinPool null when the pool usage is unreadable", async () => {
+    const app = api({ lifecycle: { ...lifecycle, thinPoolUsage: async () => Promise.reject(new LifecycleError("capacity", "x")) } });
+    const res = await send(app, "GET", "/v1/capacity", { headers: auth });
+    expect(res.status).toBe(200);
+    expect((await res.json()).thinPool).toBeNull();
   });
 
   it("an unknown route answers not_found", async () => {

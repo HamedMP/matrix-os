@@ -145,6 +145,20 @@ until [ "$(curl -ks --max-time 3 -o /dev/null -w '%{http_code}' "https://$vm_ip/
   sleep 3
 done
 pass "gateway healthy $((SECONDS - begin))s after create"
+# The LV is 40 GiB; prove the guest grew its root into it (cloud-init growpart
+# and resizefs). The customer cloud-init installs the smoke's support key.
+guest_ssh() {
+  ssh -i "$work/support" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "matrix-support@$vm_ip" "$@"
+}
+begin=$SECONDS
+root_bytes=""
+until root_bytes="$(guest_ssh df -B1 --output=size / 2>/dev/null | tail -n 1 | tr -d ' ')" && [[ "$root_bytes" =~ ^[0-9]+$ ]]; do
+  [ $((SECONDS - begin)) -lt 120 ] || die "no SSH to matrix-support@$vm_ip to read the guest root size"
+  sleep 3
+done
+[ "$root_bytes" -ge "$((38 * 1024 * 1024 * 1024))" ] || die "guest root is $root_bytes bytes; it did not grow into the 40 GiB disk"
+pass "guest root filesystem is $((root_bytes / 1048576)) MiB on the 40 GiB disk"
 vmm_pid="$(systemctl show -p MainPID --value "matrix-vm@$vm_id.service")"
 [ "$(ps -o user= -p "$vmm_pid" | tr -d ' ')" = matrix-vm ] || die "VMM does not run as matrix-vm"
 tap="$(sed -n 's/^TAP=//p' "$STATE_DIR/vms/$vm_id/unit.env")"

@@ -10,7 +10,15 @@ import { VM_ID_PATTERN, type VmRecord, type VmStore } from "./vm-store.js";
 // 64 KiB, and every input is validated with Zod. Clients only ever see the
 // typed error codes below: never messages, paths, provider names or IPs.
 
-export type ApiErrorCode = "unauthorized" | "bad_request" | "not_found" | "busy" | "pool_full" | "conflict" | "internal";
+export type ApiErrorCode =
+  | "unauthorized"
+  | "bad_request"
+  | "not_found"
+  | "busy"
+  | "capacity"
+  | "pool_full"
+  | "conflict"
+  | "internal";
 
 type ApiStatus = 400 | 401 | 404 | 409 | 413 | 500 | 503 | 507;
 
@@ -40,6 +48,8 @@ const STATUS: Record<ApiErrorCode, ApiStatus> = {
   not_found: 404,
   conflict: 409,
   busy: 503,
+  // The host's disk pool cannot take another VM: place it on another host.
+  capacity: 503,
   pool_full: 507,
   internal: 500,
 };
@@ -51,6 +61,7 @@ const LIFECYCLE_CODES: Record<LifecycleError["code"], ApiErrorCode> = {
   busy: "busy",
   pool_full: "pool_full",
   no_capacity: "busy",
+  capacity: "capacity",
   snapshot_failed: "internal",
   failed: "internal",
 };
@@ -230,14 +241,20 @@ export function createHostApi(deps: HostApiDeps): Hono {
   });
 
   app.get("/v1/capacity", async (c) => {
-    const [memoryAvailableMiB, poolFreeBytes, records] = await Promise.all([
+    const [memoryAvailableMiB, poolFreeBytes, records, thinPool] = await Promise.all([
       deps.hostAvailableMiB(AbortSignal.timeout(CAPACITY_TIMEOUT_MS)),
       deps.pool.freeBytes(),
       store.list(),
+      // Unknown pool use is reported as null (the lifecycle logs why); placement treats it as no room.
+      lifecycle.thinPoolUsage().catch((error: unknown) => {
+        if (!(error instanceof LifecycleError)) throw error;
+        return null;
+      }),
     ]);
     return c.json({
       memoryAvailableMiB,
       poolFreeBytes,
+      thinPool,
       runningVms: records.filter((r) => r.state === "running").length,
       suspendedVms: records.filter((r) => r.state === "suspended").length,
     });

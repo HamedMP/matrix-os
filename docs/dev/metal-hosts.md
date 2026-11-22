@@ -45,6 +45,13 @@ bun run --cwd packages/hostd build:guest-agent
 sudo distro/metal-host/provision-host.sh --host-name <fqdn> [--ingress-port 443] [--data-disks /dev/nvme0n1,/dev/nvme1n1]
 ```
 
+VM disks are thin clones that grow to the requested size, so the pool is
+overcommitted. hostd refuses a new VM with `503 {"error":"capacity"}` while
+the pool's Data% is above `HOSTD_POOL_MAX_DATA_PERCENT` (default 85) or its
+Metadata% is above `HOSTD_POOL_MAX_METADATA_PERCENT` (default 80), or when it
+cannot read them. `GET /v1/capacity` reports both as `thinPool` (`null` when
+unreadable) so placement can prefer hosts with room.
+
 The firewall (`nftables.conf`) owns the host: input default deny except
 established traffic, SSH on the public interface (key-only sshd, never
 removed), anything on `tailscale0`, Headscale (443/tcp, 3478/udp), Tailscale
