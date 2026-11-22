@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { DropdownMenu as Menu } from "radix-ui";
 import { z } from "zod/v4";
-import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, type MatrixComputerList } from "@matrix-os/contracts";
+import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, matrixComputerAvailabilityLabel, type MatrixComputerList } from "@matrix-os/contracts";
 import { DesktopActivityInbox, DesktopTopBarActions } from "@matrix-os/ui";
 import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -101,7 +101,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     {state.status === "error" ? <p role="alert" className="p-2 text-xs">Your computer list is unavailable. Try refreshing.</p> : null}
     {state.inventory?.items.map(computer => {
       const selected = computer.runtimeSlot === state.slot;
-      const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{selected ? "Current" : computer.availability === "available" ? "Available" : computer.availability === "starting" ? "Starting" : "Unavailable"} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
+      const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{selected ? "Current" : matrixComputerAvailabilityLabel(computer)} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
       return computer.availability === "available" && !selected
         ? /* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- Switching computers deliberately reloads the document to discard the previous owner/runtime connection, sockets and state. Next client navigation would retain that context. */
           <Menu.Item key={computer.runtimeSlot} asChild><a href={computer.gatewayPath} className={rowClass}>{contents}</a></Menu.Item>
