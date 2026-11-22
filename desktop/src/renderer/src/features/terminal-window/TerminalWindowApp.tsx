@@ -167,6 +167,23 @@ function ActivePane({ view }: { view: TerminalWindowView }) {
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 
+/** Herdr's status bar: the machine on screen, how many agents work or need you, and the command picker. */
+function StatusBar({ view }: { view: TerminalWindowView }) {
+  const row = view.selectedRow;
+  const working = view.status.rows.filter((entry) => entry.status === "working").length;
+  const waiting = view.status.rows.filter((entry) => entry.status === "blocked" || entry.status === "error").length;
+  return (
+    <footer className="flex h-6 shrink-0 items-center gap-3 border-t px-3 text-[11px]"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)", ...secondaryText }}>
+      <span className="truncate">{row ? row.machine.name : view.here.name}</span>
+      {row?.space ? <span className="truncate">{row.space}</span> : null}
+      {row?.detail ? <span className="min-w-0 truncate">{row.detail}</span> : null}
+      <span className="ml-auto tabular-nums">{view.status.rows.length} agents · {working} working{waiting ? ` · ${waiting} need you` : ""}</span>
+      <span aria-hidden="true">⌘⇧P commands</span>
+    </footer>
+  );
+}
+
 function windowTitle(view: TerminalWindowView): string {
   const row = view.selectedRow;
   if (row) return `${row.name} — ${row.machine.name}`;
@@ -201,6 +218,9 @@ export default function TerminalWindowApp() {
           machines={machines}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
           machineFolded={view.machineFolded}
+          filter={prefs.filter}
+          onFilter={view.sidebar.setFilter}
+          onSettings={focusMainWindow}
           onToggleMachine={(id) => view.sidebar.setMachineFolded(id, !view.machineFolded(id))}
           localCreating={view.local.creating}
           onCreateLocal={view.createLocal}
@@ -220,6 +240,7 @@ export default function TerminalWindowApp() {
         />
         <ActivePane view={view} />
       </div>
+      <StatusBar view={view} />
       <TerminalPicker open={view.picker.open} entries={view.order} onClose={view.picker.close}
         onPick={(key) => { view.picker.close(); view.select(key); }} />
       <RenameTerminalDialog target={view.renaming} onRename={view.rename} onClose={() => view.setRenaming(null)} />

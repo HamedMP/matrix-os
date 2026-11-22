@@ -115,6 +115,22 @@ describe("Terminal window computers", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // Hamed, 2026-11-22: a computer opened as its own tab, and its spaces, filter the agents list.
+  it("shows only one computer's agents, or one of its spaces, when it is opened as a tab", async () => {
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);
+    await stream("extra", [tabFacts(TAB_2, "deploy")]);
+    const machines = screen.getByRole("list", { name: "Machines" });
+    fireEvent.click(within(machines).getByRole("button", { name: /^neo-extra/ }));
+    await waitFor(() => expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull());
+    expect(within(sidebar()).getByRole("button", { name: /deploy/ })).toBeTruthy();
+    fireEvent.click(within(machines).getByRole("button", { name: /^neo-extra/ }));
+    fireEvent.click(within(machines).getByRole("button", { name: "Show neo spaces" }));
+    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getByRole("button", { name: /web/ }));
+    await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
+    expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
+  });
+
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
     render(<TerminalWindowApp />);
     await stream("primary", []);

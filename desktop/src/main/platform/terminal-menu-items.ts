@@ -15,7 +15,8 @@ export function terminalWindowMenuItems(
     label, accelerator: key(accelerator), click: () => command(sent),
   });
   return [
-    item("New Terminal", "Cmd+T", { command: "new-terminal" }),
+    item("New Terminal", "Cmd+N", { command: "new-terminal" }),
+    { ...item("New Terminal", "Cmd+T", { command: "new-terminal" }), visible: false, acceleratorWorksWhenHidden: true },
     item("Close Terminal", "Cmd+W", { command: "close-terminal" }),
     { label: "Close Window", accelerator: key("Cmd+Alt+W"), click: closeWindow },
     { type: "separator" },
@@ -23,6 +24,7 @@ export function terminalWindowMenuItems(
     item("Find…", "Cmd+F", { command: "find" }),
     { type: "separator" },
     item("Go to Terminal…", "Cmd+P", { command: "picker" }),
+    { ...item("Commands…", "Cmd+Shift+P", { command: "picker" }), visible: false, acceleratorWorksWhenHidden: true },
     item("Next Terminal", "Cmd+]", { command: "next" }),
     item("Previous Terminal", "Cmd+[", { command: "previous" }),
     // Ctrl+Tab cycles like Herdr's; it is hidden so the menu shows one entry per action.

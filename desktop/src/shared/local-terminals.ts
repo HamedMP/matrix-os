@@ -64,6 +64,9 @@ export const LocalTerminalFactSchema = z.strictObject({
   finishedSeen: z.boolean().optional(),
   parent: LocalTerminalAddressSchema.optional(),
   agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  /** What runs in it now and where (sanitized, short), for the row's second line. */
+  program: z.string().max(64).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
+  folder: z.string().max(96).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
 });
 export type LocalTerminalFact = z.infer<typeof LocalTerminalFactSchema>;
 const FactsSchema = z.array(LocalTerminalFactSchema).max(LOCAL_TERMINAL_FACTS_MAX);

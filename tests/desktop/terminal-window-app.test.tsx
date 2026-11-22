@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
@@ -94,7 +94,7 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
     expect(operator.invoke).toHaveBeenCalledWith("terminal-window:focus-main", {});
-    expect(screen.getByText("This Computer")).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "Machines" })).getByText("This Computer")).toBeTruthy();
     expect(operator.invoke).not.toHaveBeenCalledWith("runtime:list-computers", {});
   });
 

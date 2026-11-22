@@ -363,7 +363,8 @@ describe("Terminal window menu", () => {
     const { items, command, close } = build("darwin", true);
     const byKey = (accelerator: string) => items.filter((item) => item.accelerator === accelerator);
     const expected: Array<[string, unknown]> = [
-      ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }], ["F2", { command: "rename" }],
+      ["Cmd+N", { command: "new-terminal" }], ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }],
+      ["Cmd+Shift+P", { command: "picker" }], ["F2", { command: "rename" }],
       ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
       ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next" }], ["Ctrl+Shift+Tab", { command: "previous" }],
       ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
@@ -389,7 +390,7 @@ describe("Terminal window menu", () => {
 
   it("leaves Ctrl to the shell on Linux by using the Super key", () => {
     const { items } = build("linux", true);
-    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Super+T");
+    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Super+N");
     expect(items.some((item) => item.accelerator?.startsWith("Cmd+"))).toBe(false);
   });
 });

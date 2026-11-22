@@ -17,6 +17,7 @@ import { closeComputerTab, renameComputerTab } from "./computer-terminals";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
+import { filterRows } from "./TerminalWindowSidebar";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
   computerMachineId, localMachine, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
@@ -68,7 +69,8 @@ export function useTerminalWindow() {
 
   const selectedKey = localOpen ? `${here.id}|${localOpen.id}`
     : cloud.active ? `${computerMachineId(cloud.active.slot)}|${cloud.active.refKey}` : null;
-  const visibleRows = status.rows;
+  // Next, previous and numbers follow the agents list as shown, with a machine opened as its own tab.
+  const visibleRows = useMemo(() => filterRows(status.rows, sidebar.prefs.filter), [status.rows, sidebar.prefs.filter]);
   const order = useMemo(
     () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view })),
     [visibleRows, sidebar.prefs.view],

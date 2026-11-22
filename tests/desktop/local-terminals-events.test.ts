@@ -56,9 +56,9 @@ describe("local terminal events", () => {
     ]);
     await vi.advanceTimersByTimeAsync(100);
     expect(h.latest()).toEqual([
-      { id: "t1", title: "Review", status: "done", statusAt: 2_000, turn: 3, seenTurn: 3, finished: false, agent: "claude" },
-      { id: "t2", title: "helper", status: "working", statusAt: 3_000, turn: 0, seenTurn: null, finished: false, parent: "t1" },
-      { id: "t3", title: "zsh", status: null, statusAt: 4_000, turn: 0, seenTurn: null, finished: true, finishedSeen: false, agent: "codex" },
+      { id: "t1", title: "Review", status: "done", statusAt: 2_000, turn: 3, seenTurn: 3, finished: false, agent: "claude", folder: "/Users/me" },
+      { id: "t2", title: "helper", status: "working", statusAt: 3_000, turn: 0, seenTurn: null, finished: false, parent: "t1", folder: "/Users/me" },
+      { id: "t3", title: "zsh", status: null, statusAt: 4_000, turn: 0, seenTurn: null, finished: true, finishedSeen: false, agent: "codex", folder: "/Users/me" },
     ]);
   });
 
@@ -73,6 +73,16 @@ describe("local terminal events", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(h.latest()?.[0]?.agent).toBeUndefined();
     expect(h.latest()?.[0]?.status).toBe("working");
+  });
+
+  it("shows what runs in a terminal and where, from its foreground program", async () => {
+    const h = harness();
+    h.events.start();
+    h.cores[0]!.hello();
+    h.cores[0]!.snapshot([terminal("t1", { foreground: { name: "claude", cwd: "/Users/me/projects/app/web" } })]);
+    h.cores[0]!.event("foreground", "t1", { name: "node\u001b", cwd: "/Users/me/projects/app" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.latest()[0]).toMatchObject({ program: "node", folder: "…/projects/app" });
   });
 
   it("applies events in order: status, turn, labels, finished, removed, created", async () => {

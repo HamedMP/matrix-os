@@ -22,6 +22,10 @@ export interface TerminalSidebarRow {
   parentKey?: string;
   /** The agent's program, for its icon (claude, codex, opencode, pi). */
   agent?: string;
+  /** The space it belongs to on its machine (a project or workspace), as Herdr's agent rows show. */
+  space?: string;
+  /** What runs in it or where (the program, or a short folder), on the row's second line. */
+  detail?: string;
 }
 
 export type TerminalStatusSectionId = "needs-you" | "done" | "working" | "idle";

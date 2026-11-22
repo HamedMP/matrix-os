@@ -29,6 +29,10 @@ export interface LocalTerminalFact {
   parent?: string;
   /** The agent's program, for its icon. */
   agent?: string;
+  /** What runs in it now (the foreground program's name). */
+  program?: string;
+  /** Its folder, shortened for display. */
+  folder?: string;
 }
 
 /** Local terminals as sidebar rows: a finished one reads as done until opened. */
@@ -47,6 +51,7 @@ export function localSidebarRows(facts: readonly LocalTerminalFact[], machine: T
       ...(status === "done" ? { seen } : {}),
       ...(fact.parent ? { parentKey: terminalRowKey(machine.id, fact.parent) } : {}),
       ...(fact.agent ? { agent: fact.agent } : {}),
+      ...(fact.program || fact.folder ? { detail: [fact.program, fact.folder].filter(Boolean).join(" · ") } : {}),
     };
   });
 }
@@ -69,6 +74,8 @@ export function computerSidebarRows(state: TerminalEventsState, machine: Termina
       ...(status ? { status } : {}),
       ...(statusAt ? { statusAt } : {}),
       ...(status === "done" ? { seen: attention?.seen === true } : {}),
+      space: tab.projectId ?? "main",
+      ...(tab.cwd ? { detail: `~/${tab.cwd}` } : {}),
     };
   });
 }

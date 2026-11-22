@@ -60,7 +60,17 @@ const TerminalSchema = z.object({
   finished_ms: Count.nullable().optional().catch(null),
   turn: Count.optional().catch(0),
   labels: LabelsSchema,
+  cwd: z.string().max(4_096).optional().catch(undefined),
+  foreground: z.object({ name: z.string().max(256).optional().catch(undefined), cwd: z.string().max(4_096).optional().catch(undefined) })
+    .nullable().optional().catch(null),
 });
+/** The last two parts of a folder, for display. */
+function shortFolder(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const parts = path.replace(UNSAFE_CHARS, "").split("/").filter(Boolean);
+  const short = parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : `/${parts.join("/")}`;
+  return short.slice(0, 96) || undefined;
+}
 
 interface Tracked {
   title: string | null;
@@ -73,6 +83,8 @@ interface Tracked {
   turn: number;
   finished: boolean;
   parent: string | undefined;
+  program: string | undefined;
+  folder: string | undefined;
 }
 
 /** `vps/t4` with parent `t2` means `vps/t2`: a parent is always on its child's machine. */
@@ -99,6 +111,8 @@ function trackedFrom(raw: unknown): [string, Tracked] | null {
     turn: terminal.turn ?? 0,
     finished,
     parent: parent && LOCAL_TERMINAL_ADDRESS_PATTERN.test(parent) ? parent : undefined,
+    program: finished ? undefined : terminal.foreground?.name?.replace(UNSAFE_CHARS, "").slice(0, 64) || undefined,
+    folder: shortFolder(terminal.foreground?.cwd ?? terminal.cwd),
   }];
 }
 
@@ -118,6 +132,8 @@ function factFrom(id: string, tracked: Tracked): LocalTerminalFact {
     ...(tracked.finished ? { finishedSeen: tracked.labels[FINISHED_SEEN_LABEL] === "1" } : {}),
     ...(tracked.parent ? { parent: tracked.parent } : {}),
     ...(agent ? { agent } : {}),
+    ...(tracked.program ? { program: tracked.program } : {}),
+    ...(tracked.folder ? { folder: tracked.folder } : {}),
   };
 }
 
@@ -203,9 +219,18 @@ export function createLocalTerminalEvents(options: LocalTerminalEventsOptions) {
         terminals.set(id, { ...tracked, title });
         return;
       }
+      case "foreground": {
+        const foreground = z.object({ name: z.string().max(256).optional(), cwd: z.string().max(4_096).optional() }).catch({}).parse(data);
+        terminals.set(id, {
+          ...tracked,
+          program: foreground.name?.replace(UNSAFE_CHARS, "").slice(0, 64) || tracked.program,
+          folder: shortFolder(foreground.cwd) ?? tracked.folder,
+        });
+        return;
+      }
       case "finished": {
         const at = Count.nullable().catch(null).parse(data.finished_ms);
-        terminals.set(id, { ...tracked, finished: true, status: null, message: undefined, statusAt: at ?? now() });
+        terminals.set(id, { ...tracked, finished: true, status: null, message: undefined, program: undefined, statusAt: at ?? now() });
         return;
       }
       default:

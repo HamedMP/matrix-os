@@ -20,9 +20,11 @@ const PrefsSchema = z.object({
   view: z.enum(["priority", "machine"]).catch("priority"),
   width: z.number().min(SIDEBAR_MIN_WIDTH).max(SIDEBAR_MAX_WIDTH).catch(DEFAULT_WIDTH),
   rail: z.boolean().catch(false),
+  // A machine (or one of its spaces) opened as its own tab.
+  filter: z.object({ machineId: z.string().max(128), space: z.string().max(256).optional() }).nullable().catch(null),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false };
+const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null };
 
 function read(): SidebarPrefs {
   try {
@@ -75,5 +77,6 @@ export function useSidebarPrefs() {
       ? { ...current, rail: true }
       : { ...current, rail: false, width: Math.min(SIDEBAR_MAX_WIDTH, Math.round(width)) })), [update]),
     toggleRail: useCallback(() => update((current) => ({ ...current, rail: !current.rail })), [update]),
+    setFilter: useCallback((filter: SidebarPrefs["filter"]) => update((current) => ({ ...current, filter })), [update]),
   };
 }

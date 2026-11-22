@@ -52,6 +52,23 @@ function RowIcon({ entry }: { entry: TerminalSidebarEntry }) {
   return <SquareTerminal size={14} aria-hidden="true" className="shrink-0" style={{ color: SECONDARY }} />;
 }
 
+/** Herdr's second line: the space, the machine for remote rows, and what runs there. */
+function RowDetail({ entry }: { entry: TerminalSidebarEntry }) {
+  const parts = [entry.space, entry.machine.remote ? entry.machine.name : null, entry.detail].filter(Boolean);
+  if (parts.length === 0) return null;
+  return <span className="block truncate text-[11px]" style={{ color: SECONDARY }}>{parts.join(" · ")}</span>;
+}
+
+function SubAgentToggle({ entry, folded, onToggle }: { entry: TerminalSidebarEntry; folded: boolean; onToggle(): void }) {
+  if (entry.children.length === 0) return null;
+  return <button type="button" aria-expanded={!folded}
+    aria-label={`${folded ? "Show" : "Hide"} ${entry.children.length} sub-agents of ${entry.name}`}
+    onClick={onToggle} className="mr-1 flex shrink-0 items-center gap-0.5 rounded px-1 text-[11px]"
+    style={{ color: SECONDARY }}>
+    {folded ? entry.children.length : null}{folded ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
+  </button>;
+}
+
 function Row({ entry, depth, props }: { entry: TerminalSidebarEntry; depth: number; props: TerminalStatusSidebarProps }) {
   const selected = props.selectedKey === entry.key;
   const folded = props.folded.includes(entry.key);
@@ -60,20 +77,19 @@ function Row({ entry, depth, props }: { entry: TerminalSidebarEntry; depth: numb
     <div className="group flex items-center rounded-md" data-selected={selected || undefined}
       style={{ paddingLeft: 4 + depth * 14, background: selected ? "var(--terminal-drawer-card-selected-bg, var(--bg-hover, rgba(127,127,127,0.18)))" : undefined }}>
       <button type="button" aria-current={selected ? "true" : undefined} onClick={() => props.onSelect(entry.key)}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px]"
+        className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-1.5 py-1 text-left text-[13px]"
         style={{ color: "var(--text-primary, var(--foreground, #171717))" }}>
-        <RowIcon entry={entry} />
-        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.machine.remote ? <span className="max-w-[40%] shrink truncate text-[11px]" style={{ color: SECONDARY }}>{entry.machine.name}</span> : null}
-        {since ? <span className="shrink-0 text-[11px] tabular-nums" style={{ color: SECONDARY }}>{since}</span> : null}
-        <StatusMark status={entry.status} />
+        <span className="mt-0.5"><RowIcon entry={entry} /></span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+            {since ? <span className="shrink-0 text-[11px] tabular-nums" style={{ color: SECONDARY }}>{since}</span> : null}
+            <StatusMark status={entry.status} />
+          </span>
+          <RowDetail entry={entry} />
+        </span>
       </button>
-      {entry.children.length > 0 ? <button type="button" aria-expanded={!folded}
-        aria-label={`${folded ? "Show" : "Hide"} ${entry.children.length} sub-agents of ${entry.name}`}
-        onClick={() => props.onToggleFold(entry.key)} className="mr-1 flex shrink-0 items-center gap-0.5 rounded px-1 text-[11px]"
-        style={{ color: SECONDARY }}>
-        {folded ? entry.children.length : null}{folded ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
-      </button> : null}
+      <SubAgentToggle entry={entry} folded={folded} onToggle={() => props.onToggleFold(entry.key)} />
     </div>
     {entry.children.length > 0 && !folded
       ? <ul>{entry.children.map((child) => <Row key={child.key} entry={child} depth={depth + 1} props={props} />)}</ul>
@@ -89,7 +105,7 @@ function Section({ section, props }: { section: TerminalSidebarSection; props: T
       style={{ color: SECONDARY }}>
       {folded ? <ChevronRight size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
       <span className="min-w-0 flex-1 truncate">{section.label}</span>
-      {folded ? <span className="tabular-nums">{section.rows.length}</span> : null}
+      <span className="tabular-nums">{section.rows.length}</span>
       {folded && section.id.startsWith("machine:") ? <StatusMark status={section.status} /> : null}
     </button>
     {folded ? null : <ul className="px-1">{section.rows.map((entry) => <Row key={entry.key} entry={entry} depth={0} props={props} />)}</ul>}

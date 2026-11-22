@@ -148,7 +148,7 @@ describe("This Computer terminals", () => {
     expect(within(screen.getByRole("region", { name: "Done" })).getByRole("button", { name: /finished/ })).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Idle" })).getAllByRole("button").map((button) => button.textContent))
-      .toEqual(["Idle", expect.stringContaining("shell"), expect.stringContaining("plain")]);
+      .toEqual(["Idle2", expect.stringContaining("shell"), expect.stringContaining("plain")]);
     fireEvent.click(within(needsYou).getByRole("button", { name: /claude/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
   });
@@ -387,24 +387,16 @@ describe("Terminal window shortcuts", () => {
     expect(await screen.findByRole("button", { name: "Show sidebar" })).toBeTruthy();
   });
 
-  // Fault detected (Hamed, 2026-11-22): expanding a machine showed nothing under it.
-  it("lists exactly a machine's terminals under it, folds them, groups by machine, and turns into the rail below 160 px", async () => {
+  // Hamed, 2026-11-22 (Herdr layout): a machine opened as its own tab shows only its agents.
+  it("opens a machine as its own tab, groups by machine, and turns into the rail below 160 px", async () => {
     installOperator({ "local-terminal:watch": watching(three) });
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
     const machines = screen.getByRole("list", { name: "Machines" });
-    const own = within(machines).getByRole("list", { name: "This Computer terminals" });
-    expect(within(own).getAllByRole("button").map((button) => button.textContent?.match(/alpha|beta|gamma|remote one/)?.[0])).toEqual(["alpha", "beta", "gamma"]);
-    fireEvent.click(within(own).getByRole("button", { name: /gamma/ }));
-    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
-
-    const machine = within(machines).getByRole("button", { name: /This Computer/ });
-    fireEvent.click(machine);
-    expect(machine.getAttribute("aria-expanded")).toBe("false");
-    expect(within(machines).queryByRole("list", { name: "This Computer terminals" })).toBeNull();
-    // The status list still shows every terminal.
+    fireEvent.click(within(machines).getByRole("button", { name: /^This Computer/ }));
+    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer\)/ })).toBeTruthy();
     expect(within(sidebar()).getByRole("button", { name: /alpha/ })).toBeTruthy();
-    fireEvent.click(machine);
+    fireEvent.click(screen.getByRole("button", { name: /Show all machines/ }));
     fireEvent.click(screen.getByRole("button", { name: "Group by machine" }));
     expect(screen.getByRole("region", { name: "This Computer" })).toBeTruthy();
     const edge = screen.getByRole("separator", { name: "Resize sidebar" });
