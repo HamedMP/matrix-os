@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 
 import { canonicalSafeErrorText } from "#canonical-chat-primitives";
 import {
+  COLLABORATIVE_APP_ICON_MAX_BYTES,
   CollaborationActorIdSchema,
   CollaborationIdSchema,
   CollaborationOrganizationIdSchema,
@@ -109,8 +110,7 @@ export const CollaborativeAppShareSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
-/** Upper bound for one shared app icon; larger owner artwork keeps the launcher letter tile. */
-export const COLLABORATIVE_APP_ICON_MAX_BYTES = 256 * 1024;
+
 export const CollaborativeAppIconContentTypeSchema = z.enum(["image/png", "image/webp", "image/jpeg"]);
 export type CollaborativeAppIconContentType = z.infer<typeof CollaborativeAppIconContentTypeSchema>;
 

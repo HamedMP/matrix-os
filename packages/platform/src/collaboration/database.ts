@@ -1,4 +1,5 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { migrateLegacyAppIcons } from "./legacy-app-icon-migration.js";
 import { runPlatformMigration } from "../migration-runner.js";
 import type { CutoverCounts, CutoverPhase } from "./cutover.js";
 import type { CollaborativeAppLaunchIdentity } from "./app-launch-sessions.js";
@@ -28,8 +29,10 @@ export interface CollaborationDirectoryTable {
   app_state: "active" | "needs_recheck" | "stopped" | null;
   /** Owner manifest display name captured at share time (bounded, display only). */
   app_name: ColumnType<string | null, string | null | undefined, string | null>;
-  /** Content address of an icon this row's runtime uploaded to `collaboration_app_icons`. */
+  /** Bounded owner thumbnail stored atomically with this scope's routing metadata. */
   app_icon_sha256: ColumnType<string | null, string | null | undefined, string | null>;
+  app_icon_bytes: ColumnType<Uint8Array | null, Uint8Array | null | undefined, Uint8Array | null>;
+  app_icon_content_type: ColumnType<"image/png" | null, "image/png" | null | undefined, "image/png" | null>;
   /** A shared project's Chat: routed to the same home, admitted from the parent project's membership. */
   parent_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
@@ -109,18 +112,7 @@ export interface CollaborationCutoverDispositionTable {
   decided_at: Timestamp;
 }
 
-/** Raster icon bytes uploaded by an owner runtime, addressed by sha256 within that runtime. */
-export interface CollaborationAppIconsTable {
-  runtime_id: string;
-  sha256: string;
-  content_type: "image/png" | "image/webp" | "image/jpeg";
-  bytes: Uint8Array;
-  created_at: Timestamp;
-  last_uploaded_at: Timestamp;
-}
-
 export interface CollaborationPlatformDatabase {
-  collaboration_app_icons: CollaborationAppIconsTable;
   collaboration_app_launches: {
     launch_id: string; client_request_id: string; actor_id: string; scope_id: string;
     identity: CollaborativeAppLaunchIdentity; created_at: Timestamp; expires_at: Timestamp;
@@ -208,26 +200,16 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
     CHECK (app_share_revision IS NULL OR app_share_revision > 0)`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_state TEXT
     CHECK (app_state IS NULL OR app_state IN ('active', 'needs_recheck', 'stopped'))`.execute(trx);
-  // ENG-490: shared app presentation. Icon bytes are uploaded by the owner runtime (the platform
-  // never fetches owner URLs), raster-only, bounded, and addressed per runtime so one runtime can
-  // never reference another runtime's upload.
-  await sql`CREATE TABLE IF NOT EXISTS collaboration_app_icons (
-    runtime_id TEXT NOT NULL CHECK (char_length(runtime_id) BETWEEN 1 AND 128),
-    sha256 TEXT NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
-    content_type TEXT NOT NULL CHECK (content_type IN ('image/png', 'image/webp', 'image/jpeg')),
-    bytes BYTEA NOT NULL CHECK (octet_length(bytes) BETWEEN 12 AND 262144),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (runtime_id, sha256)
-  )`.execute(trx);
-  await sql`CREATE INDEX IF NOT EXISTS idx_collaboration_app_icons_uploaded
-    ON collaboration_app_icons (last_uploaded_at)`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_name TEXT
     CHECK (app_name IS NULL OR char_length(app_name) BETWEEN 1 AND 120)`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_sha256 TEXT
     CHECK (app_icon_sha256 IS NULL OR app_icon_sha256 ~ '^[a-f0-9]{64}$')`.execute(trx);
-  await sql`CREATE INDEX IF NOT EXISTS idx_collaboration_directory_app_icon
-    ON collaboration_directory (runtime_id, app_icon_sha256) WHERE app_icon_sha256 IS NOT NULL`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_bytes BYTEA
+    CHECK (app_icon_bytes IS NULL OR octet_length(app_icon_bytes) BETWEEN 12 AND 49152)`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_content_type TEXT
+    CHECK (app_icon_content_type IS NULL OR app_icon_content_type = 'image/png')`.execute(trx);
+  await migrateLegacyAppIcons(trx);
+  await sql`DROP INDEX IF EXISTS idx_collaboration_directory_app_icon`.execute(trx);
   // A project's Chats are routed beside their project and removed with it.
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS parent_scope_id UUID
     REFERENCES collaboration_directory(scope_id) ON DELETE CASCADE`.execute(trx);

@@ -1,4 +1,4 @@
-import { CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
+import { COLLABORATION_HTTP_BODY_LIMIT, COLLABORATIVE_APP_ICON_MAX_BYTES, CollaborativeAppThumbnailSchema, CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
 import type { Kysely, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
@@ -52,7 +52,6 @@ export class CollaborationDirectoryOutbox {
   private readonly now: () => Date;
   private readonly fetchImpl: typeof fetch;
   private readonly endpoint: string;
-  private readonly iconEndpoint: string;
   private timer?: ReturnType<typeof setInterval>;
   private active?: Promise<number>;
   private closing = false;
@@ -76,7 +75,6 @@ export class CollaborationDirectoryOutbox {
       throw new Error("Collaboration directory service token is unavailable");
     }
     this.endpoint = `${baseUrl.origin}/internal/collaboration/directory`;
-    this.iconEndpoint = `${baseUrl.origin}/internal/collaboration/app-icons`;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
     if (options.startTimer !== false) {
@@ -138,11 +136,9 @@ export class CollaborationDirectoryOutbox {
         const presented = payload.app && payload.app.state !== "stopped"
           ? await this.presentApp(payload.app.appId)
           : {};
-        if (presented === "retry") {
-          await this.settleFailedAttempt(event);
-          continue;
-        }
-        let response = await this.putDirectoryEvent(payload.app ? { ...payload, app: { ...payload.app, ...presented } } : payload);
+        const decorated = payload.app ? { ...payload, app: { ...payload.app, ...presented } } : payload;
+        // Budget the entire UTF-8 event, including recipients and base64 expansion.
+        let response = await this.putDirectoryEvent(Buffer.byteLength(JSON.stringify(decorated)) <= COLLABORATION_HTTP_BODY_LIMIT ? decorated : payload);
         // A platform that predates presentation fields rejects them as unknown; resend routing
         // metadata alone so a host bundle shipped ahead of the platform never stalls a share.
         if (response.status === 422 && Object.keys(presented).length > 0) {
@@ -186,43 +182,29 @@ export class CollaborationDirectoryOutbox {
     });
   }
 
-  /**
-   * Resolves the owner's presentation and uploads its icon bytes before the event names their
-   * address. A refused icon (4xx) is omitted so the launcher keeps its letter tile; an
-   * unavailable platform retries the whole event so the address never outruns the bytes.
-   */
-  private async presentApp(appId: string): Promise<{ name?: string; iconSha256?: string } | "retry"> {
+  /** Presentation is local and best-effort; no icon service can consume a share retry. */
+  private async presentApp(appId: string): Promise<{ name?: string; thumbnail?: ReturnType<typeof CollaborativeAppThumbnailSchema.parse> }> {
     if (!this.options.resolveAppPresentation) return {};
-    let presentation: CollaborativeAppPresentation | null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      presentation = await this.options.resolveAppPresentation(appId);
+      const presentation = await Promise.race([
+        this.options.resolveAppPresentation(appId),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 3_000); }),
+      ]);
+      if (!presentation) return {};
+      const name = CollaborationDirectoryEventSchema.shape.app.unwrap().shape.name.safeParse(presentation.name);
+      const thumbnail = CollaborativeAppThumbnailSchema.safeParse(presentation.icon ? {
+        sha256: presentation.icon.sha256,
+        contentType: presentation.icon.contentType,
+        base64: presentation.icon.bytes.byteLength <= COLLABORATIVE_APP_ICON_MAX_BYTES ? Buffer.from(presentation.icon.bytes).toString("base64") : "",
+      } : undefined);
+      return { ...(name.success && name.data ? { name: name.data } : {}), ...(thumbnail.success ? { thumbnail: thumbnail.data } : {}) };
     } catch (error: unknown) {
       console.warn("[collaboration-directory] app presentation unavailable", error instanceof Error ? error.name : "UnknownError");
       return {};
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    if (!presentation) return {};
-    const name = presentation.name ? { name: presentation.name } : {};
-    if (!presentation.icon) return name;
-    const response = await this.fetchImpl(`${this.iconEndpoint}/${presentation.icon.sha256}`, {
-      method: "PUT",
-      redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${this.options.serviceToken}`,
-        "content-type": presentation.icon.contentType,
-        "x-matrix-runtime-id": this.options.runtimeId,
-      },
-      body: new Uint8Array(presentation.icon.bytes),
-    });
-    await response.body?.cancel();
-    if (response.ok) return { ...name, iconSha256: presentation.icon.sha256 };
-    if (response.status >= 500 || response.status === 401 || response.status === 403 || response.status === 429) {
-      console.warn("[collaboration-directory] platform unavailable for app icon", response.status);
-      return "retry";
-    }
-    console.warn("[collaboration-directory] platform refused app icon", response.status);
-    return name;
   }
 
   /** A failed final attempt will never be retried: mark it so it stops holding back its scope. */

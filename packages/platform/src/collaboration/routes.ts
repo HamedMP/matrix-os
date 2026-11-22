@@ -19,7 +19,6 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
-import { CollaborativeAppIconRepository } from "./app-icon-repository.js";
 import { registerCollaborativeAppIconRoutes } from "./app-icon-routes.js";
 import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
 import {
@@ -85,8 +84,6 @@ export function createPlatformCollaborationRoutes(options: {
    * discovery fails closed even if saved membership rows still list an organization.
    */
   isCurrentOrganizationMember?(input: { organizationId: string; actorId: string }): Promise<boolean>;
-  /** ENG-490 shared app icon storage; defaults to the repository's database. */
-  appIcons?: CollaborativeAppIconRepository;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -151,8 +148,6 @@ export function createPlatformCollaborationRoutes(options: {
 
   registerCollaborativeAppIconRoutes(app, {
     repository: options.repository,
-    icons: options.appIcons ?? new CollaborativeAppIconRepository(options.repository.db, options.now ? { now: options.now } : {}),
-    authenticateRuntime: (c) => requireRuntime(c, options.authenticateRuntime),
     resolveActor: (c) => resolveValidatedActor(c, options.resolveActor),
     ...(options.isCurrentOrganizationMember ? { isCurrentOrganizationMember: options.isCurrentOrganizationMember } : {}),
     now: routeNow,

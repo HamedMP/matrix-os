@@ -227,15 +227,18 @@ Owner presentation (ENG-490): with `fields=display`, each item also carries opti
 - Authentication: platform Matrix session (Electron Desktop: bearer attached by the trusted core on the platform origin).
 - Authority: active current-membership app share + current organization membership; otherwise `404`.
 - Validation: Zod `uuid` scope; `v` optional 64-hex; any other or repeated query key is `422`.
-- Response: stored raster bytes (`image/png`, `image/webp`, `image/jpeg` only, re-sniffed before serving) with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`. A matching `v` is `private, max-age=31536000, immutable`; otherwise `private, no-cache`. `ETag` is the quoted address, so `If-None-Match` returns `304`.
+- Response: the requested scope's stored PNG thumbnail (at most 96×96 and 48 KiB), fully decoded and hash-checked, with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-cache`, and `CDN-Cache-Control: no-store`. `ETag` is the quoted hash. Conditional requests still check membership, active state, and stored bytes before `304`; membership revocation must not be hidden by immutable browser caching.
 - Rate limit: per-actor sliding window with a bounded LRU tracker.
 
-### `PUT /internal/collaboration/app-icons/:sha256`
+### Presentation in `PUT /internal/collaboration/directory`
 
-- Authentication: owner runtime service bearer + `x-matrix-runtime-id`, the same as the directory route.
-- Body: raw icon bytes, Hono `bodyLimit` at 256 KB (`COLLABORATIVE_APP_ICON_MAX_BYTES`). The platform recomputes sha256, rejects mismatches, and sniffs magic bytes (PNG/WebP/JPEG; SVG, HTML and anything else get `422`).
-- Storage: per-runtime content address, idempotent upsert that refreshes `last_uploaded_at`. A runtime keeps at most 64 icons; its oldest unreferenced icon is evicted first, and when every stored icon is referenced the upload gets `409`. Stale unreferenced icons (7 days) are swept in bounded batches after uploads.
-- The platform never fetches owner URLs (no SSRF surface). Directory events name an icon by `app.iconSha256`. The platform keeps it only when the same runtime uploaded that address and the share is not stopped; otherwise it drops the icon.
+- Authentication remains the owner runtime service bearer plus `x-matrix-runtime-id`; payload runtime/owner must match it.
+- Optional `app.name` is the owner's bounded manifest name. Optional `app.thumbnail` is `{ contentType: "image/png", sha256: <64-hex>, base64: <canonical base64> }`.
+- The gateway reads at most 8 MiB from a regular non-symlink artwork file, accepts PNG/WebP/JPEG only, limits decoding to 8192 pixels per axis / 16 megapixels, and resizes to a PNG within 96×96 pixels and 48 KiB. Processing is limited to two seconds, presentation resolution to three seconds. Invalid, corrupt, missing, SVG, HTML, symlink, or over-limit artwork uses the existing letter tile.
+- Base64 is at most 64 KiB. The complete UTF-8 event, including routing metadata and all recipients, must fit the unchanged 96 KiB `bodyLimit`; the outbox drops presentation if the complete event exceeds it.
+- Bad thumbnail schema, content type, size, dimensions, hash, or decoding omits only the thumbnail. Routing metadata is delivered without spending retries on presentation failure. There is no upload endpoint or pre-event upload.
+- Name, bytes, content type, and hash are written in the existing revision-fenced directory transaction. A new event replaces previous presentation; stopped/non-app events clear artwork. Older preview `app.iconSha256` is accepted but ignored. An older strict platform's `422` triggers a routing-only resend.
+- Listings contain versioned URLs only and require `fields=display`; no inline artwork reaches released strict clients.
 
 ### `POST /api/collaboration/shared-apps/:scopeId/launch`
 
@@ -335,7 +338,7 @@ Clients deduplicate by event/sequence and perform an authoritative read. Events 
 | Read/stop share | Owner Matrix session | Exact app owner + current revisions for stop | No |
 | Discover shared app | Platform Matrix session | Current membership in share organization | No |
 | Read shared app icon | Platform Matrix session | Active share + current membership | No |
-| Upload shared app icon | Owner runtime service bearer | Uploading runtime only; bytes scoped to that runtime | No |
+| Publish directory presentation | Owner runtime service bearer | Payload owner/runtime match authenticated authority | No |
 | Create/renew launch | Platform session + owner direct-session exchange | Active exact share + current membership + ready build | No |
 | Load bootstrap/assets | Platform session; owner relay signs upstream | Launch actor + active share + current membership + exact build | No |
 | Read app data | Signed owner-runtime direct session | Active share + current membership + declared table | No |

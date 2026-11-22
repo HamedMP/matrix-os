@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import sharp from "sharp";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +9,6 @@ import {
 } from "../../packages/platform/src/collaboration/app-launch-sessions.js";
 import { createCollaborativeAppLaunchUpstreamFactory } from "../../packages/platform/src/collaboration/app-launch-upstream.js";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
-import { CollaborativeAppIconRepository } from "../../packages/platform/src/collaboration/app-icon-repository.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
 import { proofKeyThumbprint } from "../../packages/platform/src/collaboration/ticket-crypto.js";
@@ -167,10 +167,8 @@ describe("collaborative app authenticated launch facade", () => {
   });
 
   it("names the shared target with the owner's manifest name and platform icon route", async () => {
-    const icon = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("launch-icon")]);
+    const icon = await sharp({ create: { width: 16, height: 16, channels: 4, background: "red" } }).png().toBuffer();
     const iconSha256 = createHash("sha256").update(icon).digest("hex");
-    await new CollaborativeAppIconRepository(fixture.collaborationDb, { now: () => nowDate })
-      .put({ runtimeId: "runtime_owner", sha256: iconSha256, contentType: "image/png", bytes: icon });
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000009",
       scopeId,
@@ -181,7 +179,7 @@ describe("collaborative app authenticated launch facade", () => {
       audience: "current_membership",
       authorityGeneration: 1,
       metadataRevision: 2,
-      app: { ...app, shareRevision: 2, name: "Team Tracker", iconSha256 },
+      app: { ...app, shareRevision: 2, name: "Team Tracker", thumbnail: { sha256: iconSha256, contentType: "image/png", base64: icon.toString("base64") } },
       recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
     });
     const response = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {

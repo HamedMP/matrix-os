@@ -9,6 +9,16 @@ import {
 } from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
 
+/** 48 KiB becomes 64 KiB of base64, leaving 32 KiB for the complete directory envelope. */
+export const COLLABORATIVE_APP_ICON_MAX_BYTES = 48 * 1024;
+export const COLLABORATIVE_APP_ICON_MAX_DIMENSION = 96;
+export const CollaborativeAppThumbnailSchema = z.object({
+  contentType: z.literal("image/png"),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  base64: z.string().min(16).max(4 * Math.ceil(COLLABORATIVE_APP_ICON_MAX_BYTES / 3))
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+}).strict();
+
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
 export const COLLABORATION_MESSAGE_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_PAGE_LIMIT = 100;
@@ -852,10 +862,9 @@ export const CollaborationDirectoryEventSchema = z.object({
     state: z.enum(["active", "needs_recheck", "stopped"]),
     /** Owner manifest display name, bounded; launchers fall back to the slug when absent. */
     name: boundedDisplayText(120, 512).optional(),
-    /**
-     * Content address of a raster icon the runtime already uploaded to the platform. The platform
-     * never fetches owner URLs; an unknown hash is dropped and the launcher keeps its letter tile.
-     */
+    /** Presentation failure never invalidates routing metadata. Bytes are verified server-side. */
+    thumbnail: CollaborativeAppThumbnailSchema.optional().catch(undefined),
+    /** Accepted for rolling compatibility with the original preview; never resolves external bytes. */
     iconSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict().optional(),
   authorityGeneration: z.number().int().positive(),

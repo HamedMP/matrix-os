@@ -387,46 +387,47 @@ describe("CollaborationDirectoryOutbox shared app presentation (ENG-490)", () =>
       .map(([, init]) => JSON.parse((init as RequestInit).body as string) as { app?: Record<string, unknown> });
   }
 
-  it("uploads the owner's raster icon before publishing its address and manifest name", async () => {
+  it("carries a bounded thumbnail and name in the single authenticated directory event", async () => {
     const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
     const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
     expect(await outbox.runOnce()).toBe(1);
-    const [iconUrl, iconInit] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(iconUrl).toBe(`https://platform.internal/internal/collaboration/app-icons/${appIconSha256}`);
-    expect(iconInit).toMatchObject({ method: "PUT", redirect: "error" });
-    expect(iconInit.signal).toBeInstanceOf(AbortSignal);
-    const headers = new Headers(iconInit.headers);
-    expect(headers.get("authorization")).toBe("Bearer runtime-service-secret-0123456789abcdef");
-    expect(headers.get("x-matrix-runtime-id")).toBe(collaborationIds.runtime);
-    expect(headers.get("content-type")).toBe("image/png");
-    expect(Buffer.from(iconInit.body as Uint8Array)).toEqual(appIcon);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://platform.internal/internal/collaboration/directory");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer runtime-service-secret-0123456789abcdef");
+    expect(Buffer.byteLength(init.body as string)).toBeLessThanOrEqual(96 * 1024);
     expect(directoryPayloads(fetchImpl)[0]?.app).toMatchObject({
-      appId: "team-tracker", state: "active", name: "Team Tracker", iconSha256: appIconSha256,
+      appId: "team-tracker", name: "Team Tracker",
+      thumbnail: { sha256: appIconSha256, contentType: "image/png", base64: appIcon.toString("base64") },
     });
     await outbox.shutdown();
   });
 
-  it("publishes the name without an icon address when the platform refuses the icon", async () => {
-    const fetchImpl = vi.fn(async (url: string) => new Response(null, {
-      status: url.includes("/app-icons/") ? 422 : 204,
-    }));
+  it("publishes the share on its last attempt even when the removed icon service is unavailable", async () => {
+    await fixture.db.updateTable("collaboration_directory_outbox").set({ attempts: 19 }).execute();
+    const fetchImpl = vi.fn(async (url: string) => new Response(null, { status: url.includes("/app-icons/") ? 503 : 204 }));
     const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
     expect(await outbox.runOnce()).toBe(1);
-    const app = directoryPayloads(fetchImpl)[0]?.app;
-    expect(app).toMatchObject({ name: "Team Tracker" });
-    expect(app).not.toHaveProperty("iconSha256");
+    expect(directoryPayloads(fetchImpl)).toHaveLength(1);
+    expect((await fixture.db.selectFrom("collaboration_directory_outbox").select("delivered_at").executeTakeFirstOrThrow()).delivered_at).not.toBeNull();
     await outbox.shutdown();
   });
 
-  it("retries the whole event when the platform is unavailable for the icon upload", async () => {
-    const fetchImpl = vi.fn(async (url: string) => new Response(null, {
-      status: url.includes("/app-icons/") ? 503 : 204,
-    }));
-    const outbox = worker(fetchImpl as unknown as typeof fetch, presentation);
-    expect(await outbox.runOnce()).toBe(0);
-    expect(directoryPayloads(fetchImpl)).toEqual([]);
-    expect((await fixture.db.selectFrom("collaboration_directory_outbox").select("delivered_at")
-      .executeTakeFirstOrThrow()).delivered_at).toBeNull();
+  it("omits invalid presentation rather than spending routing retries", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, async () => ({ name: "Team Tracker", icon: { bytes: new Uint8Array(100_000), contentType: "image/png", sha256: "bad" } }));
+    expect(await outbox.runOnce()).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(directoryPayloads(fetchImpl)[0]?.app).not.toHaveProperty("thumbnail");
+    await outbox.shutdown();
+  });
+
+  it("delivers routing metadata when presentation resolution exceeds its deadline", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const outbox = worker(fetchImpl as unknown as typeof fetch, () => new Promise(() => {}));
+    expect(await outbox.runOnce()).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(directoryPayloads(fetchImpl)[0]?.app).not.toHaveProperty("thumbnail");
     await outbox.shutdown();
   });
 

@@ -246,6 +246,16 @@ describe("collaborative app sharing contracts", () => {
     expect(CollaborationDirectoryEventSchema.parse(event)).toEqual(event);
     const presented = { ...event, app: { ...event.app, name: "Team Tracker", iconSha256: "f".repeat(64) } };
     expect(CollaborationDirectoryEventSchema.parse(presented)).toEqual(presented);
+    const thumbnail = { sha256: "f".repeat(64), contentType: "image/png", base64: Buffer.alloc(48 * 1024).toString("base64") };
+    const complete = { ...event, runtimeId: "r".repeat(128), ownerId: "o".repeat(128), organizationId: `org_${"g".repeat(124)}`,
+      recipients: Array.from({ length: 8 }, () => ({ actorId: "a".repeat(128), status: "accepted", invitationId: eventId, grantId: eventId })),
+      app: { ...event.app, appId: "a".repeat(256), name: "界".repeat(120), thumbnail },
+    };
+    expect(CollaborationDirectoryEventSchema.safeParse(complete).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(complete))).toBeLessThan(96 * 1024);
+    expect(CollaborationDirectoryEventSchema.parse({ ...event, app: { ...event.app, thumbnail: { ...thumbnail, base64: "!bad" } } }).app?.thumbnail)
+      .toBeUndefined();
+
     for (const app of [
       { ...event.app, iconSha256: "not-a-digest" },
       { ...event.app, name: "x".repeat(121) },

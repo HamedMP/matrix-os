@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
@@ -54,8 +55,12 @@ describe("PlatformCollaborationRepository", () => {
       authorityGeneration: 1,
       status: "invited",
     }]);
-    expect(JSON.stringify(await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute()))
-      .not.toMatch(/title|message|transcript|content/i);
+    const rows = await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute();
+    for (const { app_icon_bytes, app_icon_content_type, ...routing } of rows) {
+      expect(app_icon_bytes).toBeNull();
+      expect(app_icon_content_type).toBeNull();
+      expect(JSON.stringify(routing)).not.toMatch(/title|message|transcript|content/i);
+    }
   });
 
   it("projects standalone file, folder and app scopes for member discovery", async () => {
@@ -102,16 +107,12 @@ describe("PlatformCollaborationRepository", () => {
   it("adds shared app presentation columns to an existing directory and clears the icon when a share stops", async () => {
     await sql`ALTER TABLE collaboration_directory DROP COLUMN app_name`.execute(fixture.collaborationDb);
     await sql`ALTER TABLE collaboration_directory DROP COLUMN app_icon_sha256`.execute(fixture.collaborationDb);
-    await sql`DROP TABLE collaboration_app_icons`.execute(fixture.collaborationDb);
+
     await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
     await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
 
-    const icon = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("repository")]);
+    const icon = await sharp({ create: { width: 16, height: 16, channels: 4, background: "red" } }).png().toBuffer();
     const iconSha256 = createHash("sha256").update(icon).digest("hex");
-    await fixture.collaborationDb.insertInto("collaboration_app_icons").values({
-      runtime_id: "runtime_owner", sha256: iconSha256, content_type: "image/png", bytes: icon,
-      created_at: now.toISOString(), last_uploaded_at: now.toISOString(),
-    }).execute();
     const appScope = "10000000-0000-4000-8000-000000000105";
     const app = {
       appId: "team-tracker",
@@ -130,7 +131,7 @@ describe("PlatformCollaborationRepository", () => {
       ...(state === "active" ? { audience: "current_membership" as const } : {}),
       authorityGeneration: 1,
       metadataRevision: revision,
-      app: { ...app, shareRevision: revision, state, name: "Team Tracker", iconSha256 },
+      app: { ...app, shareRevision: revision, state, name: "Team Tracker", thumbnail: { sha256: iconSha256, contentType: "image/png", base64: icon.toString("base64") } },
       recipients: [],
     });
     await event(1, "active");

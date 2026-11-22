@@ -1,3 +1,4 @@
+import { readDirectoryThumbnail } from "./app-thumbnail.js";
 import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -41,6 +42,7 @@ export interface DirectoryEventInput {
     shareRevision: number;
     state: "active" | "needs_recheck" | "stopped";
     name?: string;
+    thumbnail?: { base64: string; contentType: "image/png"; sha256: string };
     iconSha256?: string;
   };
   /** A shared project's Chat route: same home, owner and organization as the project, no recipients of its own. */
@@ -131,6 +133,7 @@ export class PlatformCollaborationRepository {
 
   async applyDirectoryEvent(input: DirectoryEventInput): Promise<boolean> {
     const now = this.now().toISOString();
+    const thumbnail = input.app && input.app.state !== "stopped" ? await readDirectoryThumbnail(input.app.thumbnail) : null;
     return this.db.transaction().execute(async (trx) => {
       await this.admitRuntimeWrite?.(trx, input);
       // A person-to-person event is legacy ingestion: it must not commit inside
@@ -165,14 +168,7 @@ export class PlatformCollaborationRepository {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory parent changed without transition");
       }
       if (input.parentScopeId) await requireProjectChatParent(trx, input);
-      // ENG-490: only an icon this same runtime uploaded may be named; anything else is dropped and
-      // the launcher keeps its letter tile. Read in the write transaction beside the directory lock.
-      const appIconSha256 = input.app?.iconSha256 && input.app.state !== "stopped"
-        ? (await trx.selectFrom("collaboration_app_icons").select("sha256")
-          .where("runtime_id", "=", input.runtimeId)
-          .where("sha256", "=", input.app.iconSha256)
-          .executeTakeFirst())?.sha256 ?? null
-        : null;
+      const appIconSha256 = thumbnail?.sha256 ?? null;
       const appName = input.app?.name ?? null;
 
       // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
@@ -196,6 +192,8 @@ export class PlatformCollaborationRepository {
         app_state: input.app?.state ?? null,
         app_name: appName,
         app_icon_sha256: appIconSha256,
+        app_icon_bytes: thumbnail ? Buffer.from(thumbnail.bytes) : null,
+        app_icon_content_type: thumbnail?.contentType ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -215,6 +213,8 @@ export class PlatformCollaborationRepository {
         app_state: input.app?.state ?? null,
         app_name: appName,
         app_icon_sha256: appIconSha256,
+        app_icon_bytes: thumbnail ? Buffer.from(thumbnail.bytes) : null,
+        app_icon_content_type: thumbnail?.contentType ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -308,6 +308,18 @@ export class PlatformCollaborationRepository {
       parentScopeId: row.parent_scope_id ?? null,
       authorityGeneration: Number(row.authority_generation),
     } : null;
+  }
+
+  /** Scope + runtime + version confinement, with no thumbnail bytes in directory listings. */
+  async getAppThumbnail(scopeId: string, runtimeId: string, sha256: string) {
+    const row = await this.db.selectFrom("collaboration_directory")
+      .select(["app_icon_bytes", "app_icon_content_type", "app_icon_sha256"])
+      .where("scope_id", "=", scopeId).where("runtime_id", "=", runtimeId)
+      .where("app_icon_sha256", "=", sha256).where("app_state", "=", "active")
+      .where("audience", "=", "current_membership").executeTakeFirst();
+    if (!row?.app_icon_bytes) return null;
+    return readDirectoryThumbnail({ base64: Buffer.from(row.app_icon_bytes).toString("base64"),
+      contentType: row.app_icon_content_type, sha256: row.app_icon_sha256 });
   }
 
   async getInvitationRoute(actorId: string, invitationId: string): Promise<{

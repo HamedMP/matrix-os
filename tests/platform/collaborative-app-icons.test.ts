@@ -1,10 +1,12 @@
+import sharp from "sharp";
+import { sql } from "kysely";
+import { eraseOwnerPlatformData } from "../../packages/platform/src/account-deletion/cleanup-data.js";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { COLLABORATIVE_APP_ICON_MAX_BYTES } from "@matrix-os/contracts";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
-import { CollaborativeAppIconRepository } from "../../packages/platform/src/collaboration/app-icon-repository.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
 import {
@@ -16,7 +18,7 @@ import {
 
 /**
  * ENG-490: a shared app shows its owner's real raster icon and manifest name in every member
- * launcher. The owner runtime uploads content-addressed bytes; the platform serves them only to
+ * launcher. The directory event carries a bounded thumbnail; the platform serves it only to
  * current organization members, never fetches owner URLs, and never serves SVG or HTML.
  */
 const now = new Date("2026-11-05T10:00:00.000Z");
@@ -25,10 +27,7 @@ const runtimeId = "runtime_owner";
 const otherRuntimeId = "runtime_other";
 const token = "s".repeat(32);
 const member = platformCollaborationActors.recipientWithoutComputer;
-const png = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.from("IHDR-test-icon-bytes"),
-]);
+const png = await sharp({ create: { width: 32, height: 32, channels: 4, background: "#e02f70" } }).png().toBuffer();
 const pngSha = sha256(png);
 const app = {
   appId: "team-tracker",
@@ -77,19 +76,6 @@ describe("collaborative app icons", () => {
     await destroyPlatformCollaborationTestDatabase(fixture);
   });
 
-  function upload(body: Uint8Array, sha = sha256(body), runtime = runtimeId, headers: Record<string, string> = {}) {
-    return routes.request(`/internal/collaboration/app-icons/${sha}`, {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "x-matrix-runtime-id": runtime,
-        "content-type": "application/octet-stream",
-        ...headers,
-      },
-      body,
-    });
-  }
-
   async function share(input: { name?: string; iconSha256?: string; revision?: number; state?: "active" | "stopped"; runtime?: string } = {}) {
     const runtime = input.runtime ?? runtimeId;
     return repository.applyDirectoryEvent({
@@ -107,7 +93,7 @@ describe("collaborative app icons", () => {
         shareRevision: input.revision ?? 1,
         state: input.state ?? "active",
         ...(input.name ? { name: input.name } : {}),
-        ...(input.iconSha256 ? { iconSha256: input.iconSha256 } : {}),
+        ...(input.iconSha256 ? { thumbnail: { sha256: input.iconSha256, contentType: "image/png" as const, base64: png.toString("base64") } } : {}),
       },
       recipients: [{ actorId: runtime === runtimeId ? platformCollaborationActors.owner : "user_other", status: "accepted" }],
     });
@@ -119,8 +105,7 @@ describe("collaborative app icons", () => {
     });
   }
 
-  it("lists the owner manifest name and a versioned platform icon URL after the runtime uploads raster bytes", async () => {
-    expect((await upload(png)).status).toBe(204);
+  it("lists the owner manifest name and a versioned platform icon URL after the directory event stores a thumbnail", async () => {
     await share({ name: "Team Tracker", iconSha256: pngSha });
 
     const listing = await routes.request("/api/collaboration/shared-apps?fields=display", { headers: { "x-test-actor": member } });
@@ -142,7 +127,6 @@ describe("collaborative app icons", () => {
     // predates `name` and `iconUrl`; they never send `fields=display`.
     const legacyKeys = ["appId", "authorityGeneration", "buildId", "catalogId", "organizationId", "owner",
       "readinessId", "registrationIncarnation", "runtimeId", "scopeId", "shareRevision"];
-    await upload(png);
     await share({ name: "Team Tracker", iconSha256: pngSha });
     const listing = await routes.request("/api/collaboration/shared-apps?limit=10", { headers: { "x-test-actor": member } });
     const item = (await listing.json() as { items: Array<Record<string, unknown>> }).items[0]!;
@@ -156,7 +140,6 @@ describe("collaborative app icons", () => {
   });
 
   it("serves icon bytes to a current member with inert, versioned caching headers", async () => {
-    await upload(png);
     await share({ iconSha256: pngSha });
 
     const response = await iconRequest(member);
@@ -165,7 +148,7 @@ describe("collaborative app icons", () => {
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
-    expect(response.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(response.headers.get("cache-control")).toBe("private, no-cache");
 
     const stale = await iconRequest(member, `?v=${"0".repeat(64)}`);
     expect(stale.status).toBe(200);
@@ -176,21 +159,22 @@ describe("collaborative app icons", () => {
   });
 
   it("hides icons from outsiders, lapsed members, stopped shares, and unauthenticated requests", async () => {
-    await upload(png);
     await share({ iconSha256: pngSha });
 
     expect((await iconRequest(null)).status).toBe(401);
     expect((await iconRequest(platformCollaborationActors.outsider)).status).toBe(404);
     currentMemberships.delete(`${member}:org_matrix_team`);
+    expect((await iconRequest(member, `?v=${pngSha}`, { "if-none-match": `"${pngSha}"` })).status).toBe(404);
     expect((await iconRequest(member)).status).toBe(404);
     currentMemberships.add(`${member}:org_matrix_team`);
 
     await share({ iconSha256: pngSha, revision: 2, state: "stopped" });
     expect((await iconRequest(member)).status).toBe(404);
+    const stopped = await fixture.collaborationDb.selectFrom("collaboration_directory").select(["app_icon_bytes", "app_icon_content_type", "app_icon_sha256"]).executeTakeFirstOrThrow();
+    expect(stopped).toEqual({ app_icon_bytes: null, app_icon_content_type: null, app_icon_sha256: null });
   });
 
   it("validates icon route parameters at the boundary", async () => {
-    await upload(png);
     await share({ iconSha256: pngSha });
     const headers = { "x-test-actor": member };
     expect((await routes.request("/api/collaboration/shared-apps/not-a-uuid/icon", { headers })).status).toBe(422);
@@ -207,71 +191,71 @@ describe("collaborative app icons", () => {
     expect((await iconRequest(member, "")).status).toBe(404);
   });
 
-  it("rejects unauthenticated, oversized, non-raster, and mislabelled uploads", async () => {
-    expect((await routes.request(`/internal/collaboration/app-icons/${pngSha}`, { method: "PUT", body: png })).status).toBe(401);
-    expect((await upload(png, pngSha, runtimeId, { authorization: `Bearer ${"x".repeat(32)}` })).status).toBe(401);
-
-    const oversized = Buffer.alloc(COLLABORATIVE_APP_ICON_MAX_BYTES + 1);
-    png.copy(oversized);
-    expect((await upload(oversized)).status).toBe(413);
-
-    const svg = Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>");
-    expect((await upload(svg)).status).toBe(422);
-    const html = Buffer.from("<!doctype html><html><script>alert(1)</script></html>");
-    expect((await upload(html)).status).toBe(422);
-    expect((await upload(png, "f".repeat(64))).status).toBe(422);
-    expect((await upload(png, "NOT-A-HASH")).status).toBe(422);
-
-    expect(await fixture.collaborationDb.selectFrom("collaboration_app_icons").select("sha256").execute()).toEqual([]);
+  it("removes the obsolete upload endpoint", async () => {
+    expect((await routes.request(`/internal/collaboration/app-icons/${pngSha}`, { method: "PUT", body: png })).status).toBe(404);
   });
 
-  it("stores content-addressed icons idempotently", async () => {
-    expect((await upload(png)).status).toBe(204);
-    expect((await upload(png)).status).toBe(204);
-    expect(await fixture.collaborationDb.selectFrom("collaboration_app_icons")
-      .select(["runtime_id", "sha256", "content_type"]).execute())
-      .toEqual([{ runtime_id: runtimeId, sha256: pngSha, content_type: "image/png" }]);
-  });
-
-  it("never lets one runtime reference icon bytes another runtime uploaded", async () => {
-    expect((await upload(png, pngSha, otherRuntimeId)).status).toBe(204);
-    await share({ iconSha256: pngSha });
-    const route = await repository.getDirectoryRoute(scopeId);
-    expect(route?.app?.iconSha256).toBeUndefined();
+  it("fences stale and replayed presentation; replacement discards previous bytes", async () => {
+    await share({ name: "Newest", iconSha256: pngSha, revision: 3 });
+    expect(await share({ name: "Stale", revision: 2 })).toBe(false);
+    expect(await share({ name: "Replay", revision: 3 })).toBe(false);
+    expect((await repository.getDirectoryRoute(scopeId))?.app?.name).toBe("Newest");
+    expect((await iconRequest(member)).status).toBe(200);
+    await share({ name: "No artwork", revision: 4 });
     expect((await iconRequest(member)).status).toBe(404);
+    expect((await fixture.collaborationDb.selectFrom("collaboration_directory").select("app_icon_bytes").executeTakeFirstOrThrow()).app_icon_bytes).toBeNull();
   });
 
-  it("collects old unreferenced icons while keeping icons a directory row still names", async () => {
-    const stalePng = Buffer.concat([png, Buffer.from("stale")]);
-    await upload(png);
-    await upload(stalePng);
+  it("never resolves another scope's or runtime's thumbnail by its hash", async () => {
     await share({ iconSha256: pngSha });
-    await fixture.collaborationDb.updateTable("collaboration_app_icons")
-      .set({ last_uploaded_at: new Date(now.getTime() - 8 * 24 * 60 * 60_000).toISOString() })
-      .execute();
-
-    expect(await new CollaborativeAppIconRepository(fixture.collaborationDb, { now: () => now }).collectUnreferenced(10)).toBe(1);
-    expect((await fixture.collaborationDb.selectFrom("collaboration_app_icons").select("sha256").execute())
-      .map((row) => row.sha256)).toEqual([pngSha]);
+    const differentScope = "10000000-0000-4000-8000-000000000002";
+    expect((await routes.request(`/api/collaboration/shared-apps/${differentScope}/icon?v=${pngSha}`, { headers: { "x-test-actor": member } })).status).toBe(404);
+    await expect(share({ iconSha256: pngSha, revision: 2, runtime: otherRuntimeId })).rejects.toMatchObject({ code: "conflict" });
+    expect((await repository.getDirectoryRoute(scopeId))?.runtimeId).toBe(runtimeId);
   });
 
-  it("caps each runtime's stored icons by evicting its oldest unreferenced upload", async () => {
-    const icons = Array.from({ length: 3 }, (_, index) => Buffer.concat([png, Buffer.from(`variant-${index}`)]));
-    const iconRepository = new CollaborativeAppIconRepository(fixture.collaborationDb, { now: () => now, maxPerRuntime: 2 });
-    for (const [index, icon] of icons.entries()) {
-      await iconRepository.put({
-        runtimeId,
-        sha256: sha256(icon),
-        contentType: "image/png",
-        bytes: icon,
-        uploadedAt: new Date(now.getTime() + index * 1_000),
-      });
+  it("delivers routing metadata when optional thumbnail validation fails", async () => {
+    const event = {
+      eventId: "20000000-0000-4000-8000-000000000001", scopeId, runtimeId,
+      ownerId: platformCollaborationActors.owner, kind: "app", organizationId: "org_matrix_team",
+      audience: "current_membership", authorityGeneration: 1, metadataRevision: 1,
+      app: { ...app, name: "Team Tracker", thumbnail: { contentType: "image/png", sha256: pngSha, base64: "not-base64" } },
+      recipients: [],
+    };
+    const request = (payload: unknown, authorization = token) => routes.request("/internal/collaboration/directory", {
+      method: "PUT", headers: { authorization: `Bearer ${authorization}`, "x-matrix-runtime-id": runtimeId, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    expect((await request(event, "x".repeat(32))).status).toBe(401);
+    expect((await request({ ...event, ownerId: "user_other" })).status).toBe(403);
+    const wide = await sharp({ create: { width: 97, height: 1, channels: 4, background: "red" } }).png().toBuffer();
+    for (const [index, thumbnail] of [
+      { ...event.app.thumbnail },
+      { ...event.app.thumbnail, base64: wide.toString("base64"), sha256: sha256(wide) },
+      { ...event.app.thumbnail, base64: Buffer.alloc(48 * 1024 + 1).toString("base64") },
+      { ...event.app.thumbnail, base64: png.toString("base64"), sha256: "0".repeat(64) },
+      { ...event.app.thumbnail, base64: Buffer.from("<svg><script/></svg>").toString("base64") },
+      { ...event.app.thumbnail, base64: png.subarray(0, 40).toString("base64"), sha256: sha256(png.subarray(0, 40)) },
+    ].entries()) {
+      expect((await request({ ...event, metadataRevision: index + 1, app: { ...event.app, thumbnail } })).status).toBe(204);
+      expect((await iconRequest(member)).status).toBe(404);
+      expect((await repository.getDirectoryRoute(scopeId))?.app?.name).toBe("Team Tracker");
     }
-    await share({ iconSha256: sha256(icons[2]!) });
-    const fourth = Buffer.concat([png, Buffer.from("variant-3")]);
-    await iconRepository.put({ runtimeId, sha256: sha256(fourth), contentType: "image/png", bytes: fourth,
-      uploadedAt: new Date(now.getTime() + 10_000) });
-    const stored = await fixture.collaborationDb.selectFrom("collaboration_app_icons").select("sha256").execute();
-    expect(stored.map((row) => row.sha256).sort()).toEqual([sha256(icons[2]!), sha256(fourth)].sort());
+    expect((await request({ ...event, metadataRevision: 10, app: { ...event.app,
+      thumbnail: { contentType: "image/png", sha256: pngSha, base64: png.toString("base64") },
+    } })).status).toBe(204);
+    expect((await iconRequest(member)).status).toBe(200);
+    const listing = await routes.request("/api/collaboration/shared-apps?fields=display", { headers: { "x-test-actor": member } });
+    expect(JSON.stringify(await listing.json())).not.toContain(png.toString("base64"));
+    expect((await request({ ...event, padding: "x".repeat(96 * 1024) })).status).toBe(413);
+  });
+
+  it("erases thumbnail bytes through the existing owner directory cleanup", async () => {
+    await share({ iconSha256: pngSha });
+    // Erasure requires shared resources to be stopped/detached. Retain bytes to exercise cleanup.
+    await fixture.collaborationDb.updateTable("collaboration_directory").set({ organization_id: null, audience: null }).execute();
+    await eraseOwnerPlatformData(fixture.db, platformCollaborationActors.owner);
+    expect(await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute()).toEqual([]);
+    expect((await sql<{ present: boolean }>`SELECT to_regclass('collaboration_app_icons') IS NOT NULL AS present`.execute(fixture.collaborationDb)).rows[0]?.present).toBe(false);
   });
 });
