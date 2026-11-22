@@ -209,8 +209,8 @@ Ctrl+J, Ctrl+Q). The matcher does not handle these bindings; they run only
 through the menu accelerator, which a page can claim by cancelling the key. So
 in the terminal they go to the shell, as they do today, and everywhere else they
 run the Matrix action. A second or later binding of this form gets a hidden menu
-item, since the matcher will not carry it. Every other binding, including
-Ctrl+Tab and all Cmd bindings, works with focus anywhere.
+item, since the matcher will not carry it. Every other binding of an Apps-group action,
+including Ctrl+Tab and Cmd bindings, works with focus anywhere.
 
 Other matcher rules: it skips DevTools web contents; it ignores auto-repeat for
 every action except Next app and Previous app; and it never matches an action
