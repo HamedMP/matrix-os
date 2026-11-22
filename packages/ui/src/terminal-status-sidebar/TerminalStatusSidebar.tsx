@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, type CSSProperties } from "react";
-import { ChevronDown, ChevronRight, LoaderCircle, Pin, PinOff, SquareTerminal, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronRight, LoaderCircle, Pin, PinOff, SquareTerminal, X } from "lucide-react";
 import { AgentLogo } from "../agent-logo.js";
 import { isAgentLogoKind } from "../agent-logo-kind.js";
 import type { TerminalAgentWord } from "../terminal-agents/attention.js";
@@ -33,6 +33,8 @@ export interface TerminalStatusSidebarProps {
   onTogglePin?(key: string): void;
   /** Close a terminal (a hover action on its row); the host confirms while a program runs. */
   onClose?(key: string): void;
+  /** Open a terminal as a tab of its space (the row's ↗). */
+  onOpenInTab?(key: string): void;
   /** Every row is on one machine (a machine filter), so rows leave out the machine's name. */
   oneMachine?: boolean;
 }
@@ -102,11 +104,17 @@ function RowDetail({ entry, showMachine }: { entry: TerminalSidebarEntry; showMa
 
 /** Pin and close, shown over the time column while the row is hovered or has focus. */
 function RowActions({ entry, pinned, props }: { entry: TerminalSidebarEntry; pinned: boolean; props: TerminalStatusSidebarProps }) {
-  if (!props.onTogglePin && !props.onClose) return null;
+  if (!props.onTogglePin && !props.onClose && !props.onOpenInTab) return null;
   const button = "flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current";
   return (
     <span role="group" aria-label={`${entry.name} actions`}
       className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+      {props.onOpenInTab ? (
+        <button type="button" aria-label="Open in a tab" title="Open in a tab of its space"
+          onClick={() => props.onOpenInTab?.(entry.key)} className={button} style={{ color: SECONDARY }}>
+          <ArrowUpRight size={11} aria-hidden="true" />
+        </button>
+      ) : null}
       {props.onTogglePin ? (
         <button type="button" aria-label={pinned ? "Unpin terminal" : "Pin terminal"} title={pinned ? "Unpin" : "Pin"}
           onClick={() => props.onTogglePin?.(entry.key)} className={button} style={{ color: SECONDARY }}>
@@ -144,7 +152,7 @@ function Row({ entry, depth, inset, props }: {
   const pinned = props.pinned?.includes(entry.key) ?? false;
   const since = terminalSinceLabel(entry.statusAt, props.now);
   const indent = depth * INDENT_PX + (inset ? INDENT_PX : 0);
-  const actions = Boolean(props.onTogglePin || props.onClose);
+  const actions = Boolean(props.onTogglePin || props.onClose || props.onOpenInTab);
   const rowStyle = {
     paddingLeft: 2 + indent,
     background: selected ? SELECTED_BG : undefined,

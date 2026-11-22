@@ -34,6 +34,16 @@ export function terminalWindowMenuItems(
       label: "Select Terminal",
       submenu: Array.from({ length: 9 }, (_, offset) => item(`Terminal ${offset + 1}`, `Cmd+${offset + 1}`, { command: "select", index: offset + 1 })),
     },
+    {
+      // Ctrl, not Cmd, on every platform: Cmd+digits pick a terminal within the space.
+      label: "Switch Space",
+      submenu: [
+        { label: "All Spaces", accelerator: "Ctrl+0", click: () => command({ command: "space", index: 0 }) },
+        ...Array.from({ length: 9 }, (_, offset): MenuItemConstructorOptions => ({
+          label: `Space ${offset + 1}`, accelerator: `Ctrl+${offset + 1}`, click: () => command({ command: "space", index: offset + 1 }),
+        })),
+      ],
+    },
     { type: "separator" },
     item("Toggle Sidebar", "Cmd+B", { command: "toggle-sidebar" }),
   ];

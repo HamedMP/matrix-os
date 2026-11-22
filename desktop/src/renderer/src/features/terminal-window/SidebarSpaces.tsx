@@ -13,6 +13,10 @@ import { SPACE_COLORS, type SpaceStyle } from "./use-sidebar-prefs";
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const SELECTED_BG = "var(--terminal-drawer-card-selected-bg, rgba(127,127,127,0.18))";
 const smallButton = "no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
+const SPACE_COLOR_NAMES: Record<(typeof SPACE_COLORS)[number], string> = {
+  "#6366f1": "Indigo", "#0ea5e9": "Sky", "#10b981": "Green", "#f59e0b": "Amber",
+  "#ef4444": "Red", "#ec4899": "Pink", "#8b5cf6": "Violet", "#64748b": "Slate",
+};
 const menuItem = "flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-[12px] outline-none data-[highlighted]:bg-[var(--bg-hover)]";
 
 export interface SpaceItem {
@@ -52,33 +56,22 @@ function SpaceAvatar({ label, style }: { label: string; style?: SpaceStyle }) {
   );
 }
 
-/** One compact header per machine. */
-export function MachineHeader({ name, detail, kind, dotColor, folded, canFold, chosen, available, onToggle, onChoose, create }: {
-  name: string; detail?: string; kind: "local" | "computer" | "ssh"; dotColor?: string; folded: boolean; canFold: boolean;
-  chosen: boolean; available: boolean; onToggle(): void; onChoose(): void; create?: ReactNode;
+/**
+ * One small muted label per machine: icon, name, what it is and whether it can
+ * be used now, then its actions (`+` starts a terminal in its home space) and
+ * a status dot. It groups the machine's spaces; it neither folds nor filters.
+ */
+export function MachineHeader({ name, detail, kind, dotColor, actions }: {
+  name: string; detail?: string; kind: "local" | "computer" | "ssh"; dotColor?: string; actions?: ReactNode;
 }) {
   const icon = kind === "local" ? <Laptop size={12} /> : kind === "ssh" ? <Layers size={12} /> : <Cloud size={12} />;
   return (
-    <div className="group flex h-6 items-center gap-1 rounded-md pl-1.5 pr-0.5 hover:bg-black/5"
-      style={chosen ? { background: SELECTED_BG } : undefined}>
-      {/* The machine name shows only that machine's terminals. */}
-      <button type="button" aria-pressed={chosen} disabled={!available} onClick={onChoose}
-        className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-current disabled:opacity-60"
-        style={secondaryText}>
-        <span aria-hidden="true" className="shrink-0">{icon}</span>
-        <span className="shrink-0 truncate" style={{ maxWidth: "60%" }}>{name}</span>
-        {/* What it is and whether it can be used now (Main Computer · Connecting…). */}
-        {detail ? <span className="min-w-0 truncate text-[10px] font-normal opacity-80">{detail}</span> : null}
-      </button>
-      {create ?? null}
-      {dotColor ? <span aria-hidden="true" className="mx-0.5 size-1.5 shrink-0 rounded-full" style={{ background: dotColor }} /> : null}
-      {/* A machine with no spaces keeps the slot, so every header lines up. */}
-      {canFold ? (
-        <button type="button" aria-expanded={!folded} aria-label={`${folded ? "Show" : "Hide"} ${name} spaces`}
-          onClick={onToggle} className={smallButton} style={secondaryText}>
-          {folded ? <ChevronRight size={11} aria-hidden="true" /> : <ChevronDown size={11} aria-hidden="true" />}
-        </button>
-      ) : <span aria-hidden="true" className="size-5 shrink-0" />}
+    <div role="group" aria-label={name} className="group flex h-6 items-center gap-1 pl-1.5 pr-0.5 text-[11px] font-medium" style={secondaryText}>
+      <span aria-hidden="true" className="shrink-0">{icon}</span>
+      <span className="shrink-0 truncate" style={{ maxWidth: "60%" }}>{name}</span>
+      {detail ? <span className="min-w-0 flex-1 truncate text-[10px] font-normal opacity-80">{detail}</span> : <span className="flex-1" />}
+      {actions ?? null}
+      {dotColor ? <span aria-hidden="true" className="mx-1 size-1.5 shrink-0 rounded-full" style={{ background: dotColor }} /> : null}
     </div>
   );
 }
@@ -118,16 +111,16 @@ function SpaceMenu({ item, style, open, onOpenChange, onStyle, onMove, first, la
                 className="w-full rounded border bg-transparent px-1.5 py-0.5 text-[12px] outline-none" style={{ borderColor: "var(--border-default)" }} />
             </form>
           )}
-          <div role="group" aria-label="Color" className="flex flex-wrap gap-1 px-2.5 py-1.5">
+          <div role="group" aria-label="Space color" className="flex flex-wrap gap-1 px-2.5 py-1.5">
             {SPACE_COLORS.map((color) => (
-              <DropdownMenu.Item key={color} aria-label={`Color ${color}`} onSelect={() => onStyle({ ...style, color, icon: undefined })}
+              <DropdownMenu.Item key={color} aria-label={`${SPACE_COLOR_NAMES[color]} color`} onSelect={() => onStyle({ ...style, color, icon: undefined })}
                 className="size-4 cursor-default rounded-[4px] outline-none data-[highlighted]:ring-2 data-[highlighted]:ring-current"
                 style={{ background: color, boxShadow: (style?.color ?? defaultSpaceColor(item.space)) === color ? "0 0 0 2px var(--text-primary)" : undefined }} />
             ))}
           </div>
-          <div role="group" aria-label="Icon" className="flex flex-wrap gap-1 px-2.5 pb-1.5">
+          <div role="group" aria-label="Space icon" className="flex flex-wrap gap-1 px-2.5 pb-1.5">
             {["🚀", "🧪", "📦", "🛠️", "🌐", "📝", "🤖", "🔥"].map((icon) => (
-              <DropdownMenu.Item key={icon} aria-label={`Icon ${icon}`} onSelect={() => onStyle({ ...style, icon })}
+              <DropdownMenu.Item key={icon} aria-label={`${icon} icon`} onSelect={() => onStyle({ ...style, icon })}
                 className="flex size-5 cursor-default items-center justify-center rounded text-[13px] outline-none data-[highlighted]:bg-[var(--bg-hover)]">
                 {icon}
               </DropdownMenu.Item>
@@ -146,16 +139,22 @@ function SpaceMenu({ item, style, open, onOpenChange, onStyle, onMove, first, la
 }
 
 /** A machine's spaces: click to show only that space, the menu (or right-click) to dress it, drag to reorder. */
-export function SpaceRows({ machineName, items, styles, selected, onSelect, onStyle, onReorder }: {
+export function SpaceRows({ machineName, items, styles, selected, onSelect, onStyle, onReorder, expanded, onToggleExpanded, renderTerminals }: {
   machineName: string;
   items: readonly SpaceItem[];
   styles: Readonly<Record<string, SpaceStyle>>;
   selected: string | null;
-  onSelect(item: SpaceItem | null): void;
+  /** Makes the space active: the tab bar and agents list show only it. */
+  onSelect(item: SpaceItem): void;
+  /** Spaces whose terminals are listed inline under them (the chevron; never a filter). */
+  expanded: readonly string[];
+  onToggleExpanded(id: string): void;
+  renderTerminals(item: SpaceItem): ReactNode;
   onStyle(id: string, style: SpaceStyle | null): void;
   onReorder(spaces: string[]): void;
 }) {
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const open = new Set(expanded);
   const [dragging, setDragging] = useState<string | null>(null);
   const move = (from: number, to: number) => {
     if (to < 0 || to >= items.length || from === to) return;
@@ -170,9 +169,11 @@ export function SpaceRows({ machineName, items, styles, selected, onSelect, onSt
         const style = styles[item.id];
         const label = style?.name ?? item.space;
         const on = selected === item.id;
+        const shown = open.has(item.id);
         return (
-          <li key={item.id} draggable
-            onDragStart={(event: DragEvent<HTMLLIElement>) => { event.dataTransfer?.setData("text/plain", item.id); setDragging(item.id); }}
+          <li key={item.id} className="flex flex-col">
+          <div draggable
+            onDragStart={(event: DragEvent<HTMLDivElement>) => { event.dataTransfer?.setData("text/plain", item.id); setDragging(item.id); }}
             onDragEnd={() => setDragging(null)}
             onDragOver={(event) => { if (dragging && dragging !== item.id) event.preventDefault(); }}
             onDrop={(event) => {
@@ -182,10 +183,16 @@ export function SpaceRows({ machineName, items, styles, selected, onSelect, onSt
               setDragging(null);
             }}
             onContextMenu={(event) => { event.preventDefault(); setMenuFor(item.id); }}
-            className="group flex h-6 items-center gap-0.5 rounded-md pl-3 pr-0.5 hover:bg-black/5"
+            className="group flex h-6 items-center gap-0.5 rounded-md pl-0.5 pr-0.5 hover:bg-black/5"
             style={{ background: on ? SELECTED_BG : undefined, opacity: dragging === item.id ? 0.5 : undefined }}>
+            {/* Lists this space's terminals right here; choosing the space is the name's job. */}
+            <button type="button" aria-expanded={shown} aria-label={`${shown ? "Hide" : "Show"} ${label} terminals`}
+              title={shown ? "Hide its terminals" : "Show its terminals here"} disabled={item.count === 0}
+              onClick={() => onToggleExpanded(item.id)} className={`${smallButton} disabled:invisible`} style={secondaryText}>
+              {shown ? <ChevronDown size={11} aria-hidden="true" /> : <ChevronRight size={11} aria-hidden="true" />}
+            </button>
             <button type="button" aria-pressed={on} title={label === item.space ? item.space : `${label} (${item.space})`}
-              onClick={() => onSelect(on ? null : item)}
+              onClick={() => onSelect(item)}
               className="flex min-w-0 flex-1 items-center gap-2 text-left text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-current"
               style={{ color: "var(--text-primary)" }}>
               <SpaceAvatar label={label} style={style} />
@@ -195,6 +202,8 @@ export function SpaceRows({ machineName, items, styles, selected, onSelect, onSt
             <SpaceMenu item={item} style={style} open={menuFor === item.id} onOpenChange={(open) => setMenuFor(open ? item.id : null)}
               onStyle={(next) => onStyle(item.id, next)} onMove={(offset) => move(index, index + offset)}
               first={index === 0} last={index === items.length - 1} />
+          </div>
+          {shown ? <div className="pl-5">{renderTerminals(item)}</div> : null}
           </li>
         );
       })}

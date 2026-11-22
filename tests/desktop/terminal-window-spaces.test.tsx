@@ -16,12 +16,15 @@ function Host({ onFilter = vi.fn() }: { onFilter?: (item: SpaceItem | null) => v
   const [styles, setStyles] = useState<Record<string, SpaceStyle>>({});
   const [order, setOrder] = useState<string[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string[]>([]);
   const items = orderedSpaces([{ space: "matrix-os", count: 3 }, { space: "chat", count: 2 }, { space: "pipeline", count: 1 }], "vps", order);
   return (
     <>
       <AllSpacesRow chosen={selected === null} count={6} onChoose={() => { setSelected(null); onFilter(null); }} />
       <SpaceRows machineName="vps" items={items} styles={styles} selected={selected}
-        onSelect={(item) => { setSelected(item?.id ?? null); onFilter(item); }}
+        onSelect={(item) => { setSelected(item.id); onFilter(item); }}
+        expanded={expanded} onToggleExpanded={(id) => setExpanded((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id])}
+        renderTerminals={(item) => <ul aria-label={`${item.space} terminals`}><li>terminal in {item.space}</li></ul>}
         onStyle={(id, style) => setStyles((current) => { const next = { ...current }; if (style) next[id] = style; else delete next[id]; return next; })}
         onReorder={setOrder} />
     </>
@@ -30,6 +33,7 @@ function Host({ onFilter = vi.fn() }: { onFilter?: (item: SpaceItem | null) => v
 
 const spaceButtons = () => within(screen.getByRole("list", { name: "vps spaces" })).getAllByRole("button").filter((button) => button.hasAttribute("aria-pressed"));
 const names = () => spaceButtons().map((button) => button.textContent?.replace(/\d+$/, "").slice(1));
+const rowItems = () => within(screen.getByRole("list", { name: "vps spaces" })).getAllByRole("listitem").filter((item) => item.parentElement?.getAttribute("aria-label") === "vps spaces");
 const openMenu = (label: string) => fireEvent.pointerDown(screen.getByRole("button", { name: `${label} options` }), { button: 0, ctrlKey: false });
 
 describe("Terminal window Spaces", () => {
@@ -58,12 +62,12 @@ describe("Terminal window Spaces", () => {
     expect(names()).toEqual(["matrix-os", "Chat app", "pipeline"]);
 
     openMenu("Chat app");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Color #ef4444" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Red color" }));
     const avatar = spaceButtons()[1]!.querySelector("span[aria-hidden=true]") as HTMLElement;
     expect(avatar.style.background).toBe("rgb(239, 68, 68)");
 
     openMenu("Chat app");
-    fireEvent.click(screen.getByRole("menuitem", { name: "Icon 🚀" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "🚀 icon" }));
     expect(spaceButtons()[1]!.textContent).toContain("🚀");
 
     openMenu("Chat app");
@@ -73,7 +77,7 @@ describe("Terminal window Spaces", () => {
 
   it("opens the menu on a right-click and reorders by dragging", () => {
     render(<Host />);
-    const rows = within(screen.getByRole("list", { name: "vps spaces" })).getAllByRole("listitem");
+    const rows = rowItems().map((item) => item.firstElementChild as HTMLElement);
     fireEvent.contextMenu(rows[2]!);
     expect(screen.getByRole("menu", { name: "pipeline options" })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole("menu", { name: "pipeline options" }), { key: "Escape" });
@@ -81,6 +85,18 @@ describe("Terminal window Spaces", () => {
     fireEvent.dragOver(rows[0]!);
     fireEvent.drop(rows[0]!);
     expect(names()).toEqual(["pipeline", "matrix-os", "chat"]);
+  });
+
+  // Hamed, 2026-11-22: the chevron only lists a space's terminals inline; it never filters.
+  it("lists a space's terminals inline from its chevron without making it active", () => {
+    const onFilter = vi.fn();
+    render(<Host onFilter={onFilter} />);
+    fireEvent.click(screen.getByRole("button", { name: "Show chat terminals" }));
+    expect(screen.getByRole("list", { name: "chat terminals" }).textContent).toBe("terminal in chat");
+    expect(onFilter).not.toHaveBeenCalled();
+    expect(spaceButtons().every((button) => button.getAttribute("aria-pressed") === "false")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Hide chat terminals" }));
+    expect(screen.queryByRole("list", { name: "chat terminals" })).toBeNull();
   });
 
   it("keeps a space's default color steady for its name", () => {

@@ -137,13 +137,13 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     const name = computers.items[0]!.handle;
     await screen.findByText(name);
-    // While it starts there is nothing to open, and no events stream.
-    const machine = () => screen.getByRole("button", { name: new RegExp(`^${name}(?!-)`) }) as HTMLButtonElement;
-    expect(machine().disabled).toBe(true);
+    // While it starts there is nothing to open (no spaces, no +), and no events stream.
+    expect(screen.queryByRole("list", { name: `${name} spaces` })).toBeNull();
+    expect(screen.queryByRole("button", { name: `New terminal on ${name}` })).toBeNull();
     expect(FakeWebSocket.opened).toEqual([]);
     inventory = computers;
     act(() => operator.emit("window:focus-changed", { focused: true }));
-    await waitFor(() => expect(machine().disabled).toBe(false));
+    await waitFor(() => expect(screen.getByRole("list", { name: `${name} spaces` })).toBeTruthy());
     await waitFor(() => expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]));
     expect(screen.getByRole("button", { name: `New terminal on ${name}` })).toBeTruthy();
     // The refresh never flashed the loading state over the list.

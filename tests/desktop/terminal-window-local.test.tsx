@@ -143,14 +143,14 @@ describe("This Computer terminals", () => {
     ]) });
     render(<TerminalWindowApp />);
     const needsYou = await screen.findByRole("region", { name: "Needs you" });
-    expect(within(needsYou).getAllByRole("button").filter((button) => !/^(Pin|Unpin|Close) terminal$/.test(button.getAttribute("aria-label") ?? ""))
+    expect(within(needsYou).getAllByRole("button").filter((button) => !/^(Pin terminal|Unpin terminal|Close terminal|Open in a tab)$/.test(button.getAttribute("aria-label") ?? ""))
       .map((button) => button.textContent?.replace(/Needs you|Error|<1m|\d+[mhd]/g, "").trim()))
       .toEqual(expect.arrayContaining(["claude", "tests"]));
     expect(within(screen.getByRole("region", { name: "Done" })).getByRole("button", { name: /finished/ })).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
     // Each row's pin and close actions are left out: they are not rows.
     const rowButtons = (region: HTMLElement) => within(region).getAllByRole("button")
-      .filter((button) => !/^(Pin|Unpin|Close) terminal$/.test(button.getAttribute("aria-label") ?? ""));
+      .filter((button) => !/^(Pin terminal|Unpin terminal|Close terminal|Open in a tab)$/.test(button.getAttribute("aria-label") ?? ""));
     expect(rowButtons(screen.getByRole("region", { name: "Idle" })).map((button) => button.textContent))
       .toEqual(["Idle2", expect.stringContaining("shell"), expect.stringContaining("plain")]);
     fireEvent.click(within(needsYou).getByRole("button", { name: /claude/ }));
@@ -413,8 +413,10 @@ describe("Terminal window shortcuts", () => {
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
     const machines = screen.getByRole("list", { name: "Machines" });
-    fireEvent.click(within(machines).getByRole("button", { name: /^This Computer/ }));
-    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer\)/ })).toBeTruthy();
+    // This Computer's terminals live in its home space.
+    fireEvent.click(within(within(machines).getByRole("list", { name: "This Computer spaces" })).getAllByRole("button", { name: /home/ })
+      .find((button) => button.hasAttribute("aria-pressed"))!);
+    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer · home\)/ })).toBeTruthy();
     expect(within(sidebar()).getByRole("button", { name: /alpha/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Show all machines/ }));
     fireEvent.click(screen.getByRole("button", { name: "Group by machine" }));

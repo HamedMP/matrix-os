@@ -217,7 +217,9 @@ export default function TerminalWindowApp() {
         <TerminalWindowSidebar
           machines={machines}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
-          machineFolded={view.machineFolded}
+          expandedSpaces={prefs.expandedSpaces}
+          onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
+          onOpenInTab={view.openInTab}
           filter={prefs.filter}
           onFilter={view.sidebar.setFilter}
           onSettings={() => focusMainWindow("settings")}
@@ -228,7 +230,6 @@ export default function TerminalWindowApp() {
           pinned={prefs.pinned}
           onTogglePin={view.sidebar.togglePin}
           onCloseTerminal={view.requestClose}
-          onToggleMachine={(id) => view.sidebar.setMachineFolded(id, !view.machineFolded(id))}
           localCreating={view.local.creating}
           onCreateLocal={view.createLocal}
           rows={view.status.rows}

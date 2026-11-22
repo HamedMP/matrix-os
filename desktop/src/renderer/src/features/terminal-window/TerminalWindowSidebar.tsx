@@ -6,7 +6,7 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ListTree, PanelLeftOpen, Plus, Rows3, Settings, X } from "lucide-react";
 import {
-  TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
+  TerminalSidebarList, TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
 } from "@matrix-os/ui/terminal-status-sidebar";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
@@ -43,9 +43,11 @@ export interface TerminalWindowSidebarProps {
   machines: readonly SidebarMachine[];
   /** Shown below the machines: the Matrix computers' loading, sign-in or error state. */
   machinesStatus?: ReactNode;
-  /** Whether a machine's spaces are folded. */
-  machineFolded(id: string): boolean;
-  onToggleMachine(id: string): void;
+  /** Spaces whose terminals are listed inline under them. */
+  expandedSpaces: readonly string[];
+  onToggleSpaceExpanded(id: string): void;
+  /** A terminal row's ↗: opens it as a tab of its space and makes that space active. */
+  onOpenInTab(key: string): void;
   filter: SidebarFilter | null;
   onFilter(filter: SidebarFilter | null): void;
   localCreating: boolean;
@@ -77,27 +79,46 @@ export interface TerminalWindowSidebarProps {
   onCloseTerminal(key: string): void;
 }
 
-/** A machine's spaces (projects or workspaces) with how many terminals each has, most first. */
+/** Every machine has a home space: its terminals that belong to no project live there. */
+export const HOME_SPACE = "home";
+/** A Matrix computer's home is its `main` workspace. */
+export function homeSpaceFor(machineId: string): string {
+  return machineId.startsWith("computer:") ? "main" : HOME_SPACE;
+}
+/** The space a terminal belongs to: its project, or its machine's home. */
+export function spaceOfRow(row: TerminalSidebarRow): string {
+  return row.space ?? homeSpaceFor(row.machine.id);
+}
+
+/** A machine's spaces with how many terminals each has: home first, then the most used. */
 export function machineSpaces(rows: readonly TerminalSidebarRow[], machineId: string): Array<{ space: string; count: number }> {
-  const counts = new Map<string, number>();
-  for (const row of rows) if (row.machine.id === machineId && row.space) counts.set(row.space, (counts.get(row.space) ?? 0) + 1);
-  return [...counts].map(([space, count]) => ({ space, count })).sort((left, right) => right.count - left.count || left.space.localeCompare(right.space));
+  const home = homeSpaceFor(machineId);
+  const counts = new Map<string, number>([[home, 0]]);
+  for (const row of rows) if (row.machine.id === machineId) counts.set(spaceOfRow(row), (counts.get(spaceOfRow(row)) ?? 0) + 1);
+  return [...counts].map(([space, count]) => ({ space, count }))
+    .sort((left, right) => Number(right.space === home) - Number(left.space === home) || right.count - left.count || left.space.localeCompare(right.space));
+}
+
+/** Every space in the sidebar's order, for Ctrl+1…9. */
+export function spacesInOrder(machineIds: readonly string[], rows: readonly TerminalSidebarRow[], order: Readonly<Record<string, readonly string[]>>): SidebarFilter[] {
+  return machineIds.flatMap((machineId) => orderedSpaces(machineSpaces(rows, machineId), machineId, order[machineId])
+    .map((item) => ({ machineId, space: item.space })));
 }
 
 export function filterRows(rows: readonly TerminalSidebarRow[], filter: SidebarFilter | null): readonly TerminalSidebarRow[] {
   if (!filter) return rows;
-  return rows.filter((row) => row.machine.id === filter.machineId && (!filter.space || row.space === filter.space));
+  return rows.filter((row) => row.machine.id === filter.machineId && (!filter.space || spaceOfRow(row) === filter.space));
 }
 
-function MachineRow({ machine, folded, onToggle, local, spaces, props }: {
-  machine: SidebarMachine; folded: boolean; onToggle(): void; local?: ReactNode;
+function MachineRow({ machine, local, spaces, props }: {
+  machine: SidebarMachine; local?: ReactNode;
   spaces: Array<{ space: string; count: number }>;
   props: TerminalWindowSidebarProps;
 }) {
   const { filter, onFilter } = props;
-  const chosen = filter?.machineId === machine.id && !filter.space;
-  const items = orderedSpaces(spaces, machine.id, props.spaceOrder[machine.id]);
-  const create = local ?? (machine.onCreate && machine.available ? (
+  const items = machine.available ? orderedSpaces(spaces, machine.id, props.spaceOrder[machine.id]) : [];
+  // `+` starts a terminal in the machine's home space.
+  const add = local ?? (machine.onCreate && machine.available ? (
     <button type="button" aria-label={`New terminal on ${machine.name}`} title="New terminal" disabled={machine.creating}
       onClick={machine.onCreate} className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
       style={secondaryText}>
@@ -105,16 +126,21 @@ function MachineRow({ machine, folded, onToggle, local, spaces, props }: {
     </button>
   ) : null);
   return (
-    <li data-machine={machine.id} className="pt-1">
-      <MachineHeader name={machine.name} detail={machine.detail} kind={machine.kind} dotColor={machine.dotColor} folded={folded}
-        canFold={machine.available && items.length > 0} chosen={chosen} available={machine.available}
-        onToggle={onToggle} onChoose={() => onFilter(chosen ? null : { machineId: machine.id })} create={create} />
+    <li data-machine={machine.id} className="pt-1.5">
+      <MachineHeader name={machine.name} detail={machine.detail} kind={machine.kind} dotColor={machine.dotColor} actions={add} />
       {machine.status ?? null}
-      {folded || items.length === 0 ? null : (
+      {items.length === 0 ? null : (
         <SpaceRows machineName={machine.name} items={items} styles={props.spaceStyles}
           selected={filter?.machineId === machine.id && filter.space ? spaceId(machine.id, filter.space) : null}
-          onSelect={(item) => onFilter(item ? { machineId: machine.id, space: item.space } : null)}
-          onStyle={props.onSpaceStyle} onReorder={(order) => props.onSpaceOrder(machine.id, order)} />
+          onSelect={(item) => onFilter({ machineId: machine.id, space: item.space })}
+          onStyle={props.onSpaceStyle} onReorder={(order) => props.onSpaceOrder(machine.id, order)}
+          expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
+          renderTerminals={(item) => (
+            <TerminalSidebarList label={`${item.space} terminals`}
+              rows={filterRows(props.rows, { machineId: machine.id, space: item.space })}
+              selectedKey={props.selectedKey} onSelect={props.onSelect} folded={props.folded} onToggleFold={props.onToggleFold}
+              now={props.now} onOpenInTab={props.onOpenInTab} oneMachine />
+          )} />
       )}
     </li>
   );
@@ -169,8 +195,7 @@ function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[]
 
 function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
   const machineRow = (machine: SidebarMachine, local?: ReactNode) => (
-    <MachineRow key={machine.id} machine={machine} folded={props.machineFolded(machine.id)}
-      onToggle={() => props.onToggleMachine(machine.id)} local={local} spaces={machineSpaces(props.rows, machine.id)} props={props} />
+    <MachineRow key={machine.id} machine={machine} local={local} spaces={machineSpaces(props.rows, machine.id)} props={props} />
   );
   const [local, ...others] = props.machines;
   return (
@@ -236,7 +261,8 @@ export function TerminalWindowSidebar(props: TerminalWindowSidebarProps) {
           ? <p className="px-2 py-1 text-[12px]" style={secondaryText}>{props.filter ? "No terminals here yet." : "No terminals yet. Start one with + next to a machine."}</p>
           : <TerminalStatusSidebar rows={rows} view={props.view} selectedKey={props.selectedKey} onSelect={props.onSelect}
               folded={props.folded} onToggleFold={props.onToggleFold} now={props.now}
-              pinned={props.pinned} onTogglePin={props.onTogglePin} onClose={props.onCloseTerminal} oneMachine={props.filter !== null} />}
+              pinned={props.pinned} onTogglePin={props.onTogglePin} onClose={props.onCloseTerminal} onOpenInTab={props.onOpenInTab}
+              oneMachine={props.filter !== null} />}
         {props.notices ?? null}
       </div>
       <div className="flex shrink-0 items-center gap-1 border-t px-2 py-1.5" style={{ borderColor: "var(--border-subtle)" }}>

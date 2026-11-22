@@ -26,8 +26,6 @@ export type SpaceStyle = z.infer<typeof SpaceStyleSchema>;
 
 const PrefsSchema = z.object({
   folded: z.array(z.string().max(256)).max(MAX_FOLDS).catch([]),
-  // A machine's own terminal list, folded (true) or open (false) by the person; absent means the default.
-  machineFolds: z.record(z.string().max(128), z.boolean()).refine((folds) => Object.keys(folds).length <= MAX_FOLDS).catch({}),
   view: z.enum(["priority", "machine"]).catch("priority"),
   width: z.number().min(SIDEBAR_MIN_WIDTH).max(SIDEBAR_MAX_WIDTH).catch(DEFAULT_WIDTH),
   rail: z.boolean().catch(false),
@@ -39,9 +37,11 @@ const PrefsSchema = z.object({
   spaceStyles: z.record(z.string().max(512), SpaceStyleSchema).refine((styles) => Object.keys(styles).length <= MAX_SPACES).catch({}),
   // The order the person dragged each machine's spaces into.
   spaceOrder: z.record(z.string().max(128), z.array(z.string().max(256)).max(MAX_SPACES)).refine((order) => Object.keys(order).length <= MAX_FOLDS).catch({}),
+  // Spaces whose terminals the person listed inline under them.
+  expandedSpaces: z.array(z.string().max(512)).max(MAX_SPACES).catch([]),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], machineFolds: {}, view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {} };
+const DEFAULTS: SidebarPrefs = { folded: [], view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {}, expandedSpaces: [] };
 
 function read(): SidebarPrefs {
   try {
@@ -81,13 +81,6 @@ export function useSidebarPrefs() {
   return {
     prefs,
     toggleFold: useCallback((id: string) => update((current) => ({ ...current, folded: toggled(current.folded, id) })), [update]),
-    /** Folds or opens a machine's own list; `folded` is how it shows now (its default included). */
-    setMachineFolded: useCallback((id: string, folded: boolean) => update((current) => {
-      const machineFolds = { ...current.machineFolds, [id]: folded };
-      const keys = Object.keys(machineFolds);
-      for (const key of keys.slice(0, Math.max(0, keys.length - MAX_FOLDS))) delete machineFolds[key];
-      return { ...current, machineFolds };
-    }), [update]),
     setView: useCallback((view: TerminalSidebarView) => update((current) => ({ ...current, view })), [update]),
     /** Dragging the edge below the rail width turns the sidebar into the rail. */
     setWidth: useCallback((width: number) => update((current) => (width < SIDEBAR_RAIL_BELOW
@@ -106,6 +99,12 @@ export function useSidebarPrefs() {
     }), [update]),
     setSpaceOrder: useCallback((machineId: string, order: readonly string[]) => update((current) => ({
       ...current, spaceOrder: { ...current.spaceOrder, [machineId]: order.slice(0, MAX_SPACES) },
+    })), [update]),
+    toggleSpaceExpanded: useCallback((id: string) => update((current) => ({
+      ...current,
+      expandedSpaces: current.expandedSpaces.includes(id)
+        ? current.expandedSpaces.filter((entry) => entry !== id)
+        : [...current.expandedSpaces, id].slice(-MAX_SPACES),
     })), [update]),
     togglePin: useCallback((key: string) => update((current) => ({
       ...current,

@@ -17,7 +17,7 @@ import { closeComputerTab, renameComputerTab } from "./computer-terminals";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
-import { filterRows } from "./TerminalWindowSidebar";
+import { filterRows, spaceOfRow, spacesInOrder } from "./TerminalWindowSidebar";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
   computerMachineId, localMachine, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
@@ -164,6 +164,18 @@ export function useTerminalWindow() {
   }, [clearActive, cloud, local]);
 
   /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
+  // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
+  const spaceMachines = useMemo(() => [here.id, ...computers.filter((computer) => computer.availability === "available")
+    .map((computer) => computerMachineId(computer.runtimeSlot))], [computers, here.id]);
+  const spaces = useMemo(() => spacesInOrder(spaceMachines, status.rows, sidebar.prefs.spaceOrder), [sidebar.prefs.spaceOrder, spaceMachines, status.rows]);
+
+  /** A terminal's ↗: show it, as a tab of its own space, and make that space active. */
+  const openInTab = useCallback((key: string) => {
+    const row = status.rows.find((candidate) => candidate.key === key);
+    if (row) sidebar.setFilter({ machineId: row.machine.id, space: spaceOfRow(row) });
+    select(key);
+  }, [select, sidebar, status.rows]);
+
   const requestClose = useCallback((key: string) => {
     if (isFinished(key, local.state, status.states)) { close(key); return; }
     setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
@@ -187,6 +199,13 @@ export function useTerminalWindow() {
       case "close-terminal":
         if (selectedRow) requestClose(selectedRow.key);
         return;
+      case "space": {
+        // Ctrl+0 is All; Ctrl+1…9 the spaces in the sidebar's order.
+        if (command.index === 0) { sidebar.setFilter(null); return; }
+        const space = spaces[command.index - 1];
+        if (space) sidebar.setFilter(space);
+        return;
+      }
       case "select": {
         const entry = order[command.index - 1];
         if (entry) select(entry.key);
@@ -201,17 +220,15 @@ export function useTerminalWindow() {
       case "picker": setPickerOpen(true); return;
       case "find": setFindRequest((request) => request + 1); return;
     }
-  }, [createCloud, createLocal, order, requestClose, select, selectedKey, selectedRow, sidebar, step]);
+  }, [createCloud, createLocal, order, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
   useEffect(() => onEvent("terminal-window:command", run), [run]);
 
   return {
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice,
-    /** This Mac and the machine on screen start open; others start folded, unless the person chose. */
-    machineFolded: (id: string) => sidebar.prefs.machineFolds[id] ?? !(id === here.id || (selectedKey?.startsWith(`${id}|`) ?? false)),
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close, requestClose,
+    select, createLocal, createCloud, rename, close, requestClose, openInTab,
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
   };
 }

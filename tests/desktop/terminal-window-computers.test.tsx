@@ -121,16 +121,44 @@ describe("Terminal window computers", () => {
     await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);
     await stream("extra", [tabFacts(TAB_2, "deploy")]);
     const machines = screen.getByRole("list", { name: "Machines" });
-    fireEvent.click(within(machines).getByRole("button", { name: /^neo-extra/ }));
+    // The space itself (aria-pressed), not its chevron or options button.
+    const space = (list: string, name: string) => within(within(machines).getByRole("list", { name: list })).getAllByRole("button", { name: new RegExp(name) })
+      .find((button) => button.hasAttribute("aria-pressed"))!;
+    // Every machine has a home space: a computer's is its main workspace.
+    fireEvent.click(space("neo-extra spaces", "main"));
     await waitFor(() => expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull());
     expect(within(sidebar()).getByRole("button", { name: /deploy/ })).toBeTruthy();
-    fireEvent.click(within(machines).getByRole("button", { name: /^neo-extra/ }));
-    fireEvent.click(within(machines).getByRole("button", { name: "Show neo spaces" }));
-    // The space itself, not its options button.
-    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getAllByRole("button", { name: /web/ })
-      .find((button) => button.hasAttribute("aria-pressed"))!);
+    fireEvent.click(space("neo spaces", "web"));
     await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
+  });
+
+  // Hamed, 2026-11-22 (navigation model): Ctrl+1…9 switch space in the sidebar's order, Ctrl+0 is All.
+  it("switches the active space with Ctrl+digits and back to All with Ctrl+0", async () => {
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);
+    await stream("extra", [tabFacts(TAB_2, "deploy")]);
+    const chip = () => screen.queryByRole("button", { name: /Show all machines/ })?.getAttribute("aria-label");
+    // Order: This Computer's home, then neo's main and web, then neo-extra's main.
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    await waitFor(() => expect(chip()).toBe("Show all machines (now neo · web)"));
+    expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
+    act(() => emit("terminal-window:command", { command: "space", index: 4 }));
+    await waitFor(() => expect(chip()).toBe("Show all machines (now neo-extra · main)"));
+    act(() => emit("terminal-window:command", { command: "space", index: 9 }));
+    expect(chip()).toBe("Show all machines (now neo-extra · main)");
+    act(() => emit("terminal-window:command", { command: "space", index: 0 }));
+    await waitFor(() => expect(chip()).toBeUndefined());
+  });
+
+  // Hamed, 2026-11-22 (navigation model): a terminal's ↗ opens it as a tab of its own space.
+  it("opens a terminal into a tab of its space from its row", async () => {
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);
+    const actions = await screen.findByRole("group", { name: "site actions" });
+    fireEvent.click(within(actions).getByRole("button", { name: "Open in a tab" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Show all machines/ }).getAttribute("aria-label")).toBe("Show all machines (now neo · web)"));
+    expect(within(sidebar()).getByRole("button", { name: /site/ }).getAttribute("aria-current")).toBe("true");
   });
 
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
