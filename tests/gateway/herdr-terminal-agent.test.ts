@@ -53,6 +53,24 @@ describe("Herdr terminals in the terminal-agent pipeline", () => {
     expect(await services.verbs.get(ref("t1"))).toMatchObject({ state: "live", agentStatus: "blocked" });
   });
 
+  it("resolves a wait as exited when the Herdr terminal ends during it", async () => {
+    const { core, services } = await setup();
+    core.add("t1", { status: { state: "working" } });
+    const waiting = services.waiter.wait(ref("t1"), { timeoutMs: 10_000 });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    core.terminals.delete("t1");
+    await expect(waiting).resolves.toEqual({ reason: "exited", exitCode: null });
+  });
+
+  it("reports an ended Herdr terminal as finished", async () => {
+    const { core, services, adapter } = await setup();
+    core.add("t1");
+    expect(await services.verbs.get(ref("t1"))).toMatchObject({ state: "live" });
+    core.terminals.delete("t1");
+    expect(await services.verbs.get(ref("t1"))).toMatchObject({ state: "finished" });
+    expect((await adapter.list()).sessions).toEqual([]);
+  });
+
   it("reads a Herdr terminal's screen", async () => {
     const { core, services } = await setup();
     core.add("t1", { screen: "$ make\r\nok" });

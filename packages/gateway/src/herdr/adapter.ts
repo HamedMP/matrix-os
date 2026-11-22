@@ -14,7 +14,7 @@ import { ZodError } from "zod/v4";
 import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
 import { createHerdrSessionHost, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
-import { createHerdrRefMap } from "./refs.js";
+import { createHerdrRefMap, herdrTerminalRef } from "./refs.js";
 
 const { Terminal: HeadlessTerminal } = headless;
 
@@ -35,6 +35,10 @@ const CAPTURE_CACHE_MS = 400;
 const DEFAULT_INPUT_SIZE = { cols: 120, rows: 36 };
 const MAX_REMEMBERED_SIZES = 1_024;
 const MAX_EARLY_OUTPUT = 64;
+// Terminals that left a successful listing: shown as exited for a while, so a
+// wait or a status read sees the exit instead of a terminal that vanished.
+const ENDED_TTL_MS = 10 * 60_000;
+const MAX_ENDED = 256;
 const WORKSPACE_CREATED_AT = new Date(0).toISOString();
 
 /**
@@ -122,6 +126,11 @@ export function createHerdrAdapter(options: {
   // One entry per terminal: the deepest recent read, trimmed for shallower ones.
   const captures = new Map<string, { at: number; lines: number; screen: Promise<HerdrScreen> }>();
   let cache: { at: number; value: HerdrSessionList } | null = null;
+  // Live terminals as of the last successful listing (bounded by the listing cap),
+  // and terminals that have ended since (bounded by MAX_ENDED and ENDED_TTL_MS).
+  // A failed listing changes neither: an unreachable core is not an exit.
+  let lastLive = new Map<string, string>();
+  const ended = new Map<string, { tabId: string; title: string; at: number }>();
   // The last listing failure logged; logged again only when it changes or after a success.
   let loggedFailure: string | null = null;
   let listing: Promise<HerdrSessionList> | null = null;
@@ -207,6 +216,7 @@ export function createHerdrAdapter(options: {
         };
       });
       for (const id of [...reported.keys()]) if (!live.has(id)) reported.delete(id);
+      noteEnded(sessions);
       loggedFailure = null;
       return { available: true, status: "ready", sessions };
     } catch (error: unknown) {
@@ -218,6 +228,22 @@ export function createHerdrAdapter(options: {
       }
       return unavailable(coarse(host.status()));
     }
+  }
+
+  function noteEnded(sessions: HerdrSession[]): void {
+    const at = now();
+    const next = new Map(sessions.map((session) => [session.id, session.title]));
+    for (const [id, title] of lastLive) {
+      if (!next.has(id)) { ended.delete(id); ended.set(id, { tabId: herdrTerminalRef(id).tabId, title, at }); }
+    }
+    for (const id of next.keys()) ended.delete(id);
+    for (const [id, entry] of ended) if (at - entry.at >= ENDED_TTL_MS) ended.delete(id);
+    while (ended.size > MAX_ENDED) {
+      const oldest = ended.keys().next().value;
+      if (oldest === undefined) break;
+      ended.delete(oldest);
+    }
+    lastLive = next;
   }
 
   function list(): Promise<HerdrSessionList> {
@@ -358,7 +384,9 @@ export function createHerdrAdapter(options: {
     /** The Herdr terminals as one canonical workspace, or null when there are none to show. */
     async workspace(): Promise<TerminalWorkspace | null> {
       const listed = await list();
-      if (!listed.available || listed.sessions.length === 0) return null;
+      if (!listed.available) return null;
+      const finished = [...ended.values()].filter((entry) => now() - entry.at < ENDED_TTL_MS);
+      if (listed.sessions.length === 0 && finished.length === 0) return null;
       return {
         id: HERDR_TERMINAL_WORKSPACE_ID,
         scope: "main",
@@ -367,7 +395,7 @@ export function createHerdrAdapter(options: {
         revision: 0,
         createdAt: WORKSPACE_CREATED_AT,
         updatedAt: WORKSPACE_CREATED_AT,
-        tabs: listed.sessions.map((session, order) => ({
+        tabs: listed.sessions.map((session, order): TerminalWorkspace["tabs"][number] => ({
           id: session.tabId,
           workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
           name: displayName(session.title),
@@ -378,7 +406,20 @@ export function createHerdrAdapter(options: {
           accessScope: "owner",
           createdAt: WORKSPACE_CREATED_AT,
           updatedAt: WORKSPACE_CREATED_AT,
-        })),
+        })).concat(finished.map((entry, index): TerminalWorkspace["tabs"][number] => ({
+          id: entry.tabId,
+          workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
+          name: displayName(entry.title),
+          cwd: "",
+          // herdr-core's listing gives no exit code for a terminal that is gone.
+          status: "exited",
+          exitCode: null,
+          revision: 0,
+          order: listed.sessions.length + index,
+          accessScope: "owner",
+          createdAt: WORKSPACE_CREATED_AT,
+          updatedAt: WORKSPACE_CREATED_AT,
+        }))),
       };
     },
 
