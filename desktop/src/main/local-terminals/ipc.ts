@@ -69,6 +69,12 @@ export function registerLocalTerminalIpc(
       try { return await host.tailscalePeers(); }
       catch (error: unknown) { logFailure("local-terminal:tailscale-peers", error); return { status: "unavailable" }; }
     },
+    "local-terminal:machine-login": async ({ name, cols, rows }) => {
+      try {
+        const id = await host.machineLogin(name, { cols, rows });
+        return id && !id.includes("/") ? { status: "ready", id } : { status: "rate-limited" };
+      } catch (error: unknown) { logFailure("local-terminal:machine-login", error); return unavailable(); }
+    },
     "local-terminal:ssh-login": async ({ target, ssh, cols, rows }) => {
       try {
         const id = await host.sshLogin(target, { cols, rows }, ssh);

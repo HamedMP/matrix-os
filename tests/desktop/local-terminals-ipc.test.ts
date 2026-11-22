@@ -30,6 +30,7 @@ function setup(authorized = true) {
     connectMachine: vi.fn(async () => undefined),
     sshLogin: vi.fn(async (): Promise<string | null> => "t4"),
     tailscalePeers: vi.fn(async () => ({ status: "ready", peers: [] })),
+    machineLogin: vi.fn(async (): Promise<string | null> => "t6"),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -57,7 +58,7 @@ describe("local terminal IPC", () => {
       "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:remove": { id: "t1" },
       "local-terminal:machines": {}, "local-terminal:machine-add": { target: "vps" }, "local-terminal:machine-remove": { name: "vps" },
       "local-terminal:machine-connect": { name: "vps" }, "local-terminal:ssh-login": { target: "vps", cols: 80, rows: 24 },
-      "local-terminal:tailscale-peers": {},
+      "local-terminal:tailscale-peers": {}, "local-terminal:machine-login": { name: "vps", cols: 80, rows: 24 },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");

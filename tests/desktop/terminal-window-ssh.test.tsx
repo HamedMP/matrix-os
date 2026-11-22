@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import React from "react";
+import React, { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -43,6 +43,7 @@ function installOperator(options: {
         if (options.refuseRemove) return { ok: false };
         machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
       case "local-terminal:tailscale-peers": return options.peers ?? { status: "missing" };
+      case "local-terminal:machine-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t8" };
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -73,6 +74,31 @@ describe("Terminal window ssh machines", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-add", { target: "can@10.0.0.7:2222", name: "vps" }));
     expect(await within(machinesList()).findByText("can@10.0.0.7:2222 · Connected")).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull();
+  });
+
+  // Fault detected (Greptile, #3570): under StrictMode the dialog never closed after a finished add.
+  it("closes after a successful add under StrictMode", async () => {
+    installOperator({ add: ({ target }) => ({ ok: true, machine: { name: "box", target, state: "connected", temporary: false } }) });
+    render(<StrictMode><TerminalWindowApp /></StrictMode>);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull());
+  });
+
+  // Fault detected (Greptile, #3570): the address could change while an add ran, mixing up its error.
+  it("locks the fields while an add runs", async () => {
+    let finish!: (value: unknown) => void;
+    installOperator({ add: () => new Promise((resolve) => { finish = resolve; }) as never });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect((within(dialog).getByRole("textbox", { name: "ssh address" }) as HTMLInputElement).disabled).toBe(true));
+    await act(async () => { finish({ ok: false, reason: "unreachable" }); });
+    expect((within(dialog).getByRole("textbox", { name: "ssh address" }) as HTMLInputElement).disabled).toBe(false);
   });
 
   it("refuses an address that is not one before asking the core", async () => {
@@ -227,6 +253,7 @@ describe("Terminal window ssh machines", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-connect", { name: "lab" }));
     act(() => { fireEvent.click(screen.getByRole("button", { name: "Open in terminal" })); });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:ssh-login", { target: "me@lab", cols: 100, rows: 30 }));
+    // Fault detected (Greptile, #3570): a machine added with custom ssh got a plain ssh terminal; it now goes by name.
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-login", { name: "lab", cols: 100, rows: 30 }));
   });
 });

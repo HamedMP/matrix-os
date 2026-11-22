@@ -137,15 +137,32 @@ export function useTerminalWindow() {
     });
   }, [clearActive, cloud.active, local]);
   /** Opens the terminal running `ssh <target>`, for a host key or password only the person can answer. */
+  /** Shows a login terminal unless the person chose another terminal while it started. */
+  const showLogin = useCallback((id: string, title: string, chosen: number, cloudChosen: typeof cloud.active) => {
+    if (localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
+    localChoice.current += 1;
+    clearActive();
+    setLocalOpen({ id, title });
+  }, [clearActive]);
   const openSshLogin = useCallback(async (target: string, options?: SshOptions): Promise<boolean> => {
+    const chosen = localChoice.current;
+    const cloudChosen = cloudActive.current;
     const id = await ssh.sshLogin(target, options);
     setSshLoginFailed(id ? null : target);
     if (!id) return false;
-    localChoice.current += 1;
-    clearActive();
-    setLocalOpen({ id, title: `ssh ${target}` });
+    showLogin(id, `ssh ${target}`, chosen, cloudChosen);
     return true;
-  }, [clearActive, ssh]);
+  }, [showLogin, ssh]);
+  /** Open in terminal from a machine row: ssh there with the options it was added with. */
+  const openMachineLogin = useCallback(async (name: string): Promise<boolean> => {
+    const chosen = localChoice.current;
+    const cloudChosen = cloudActive.current;
+    const id = await ssh.machineLogin(name);
+    setSshLoginFailed(id ? null : name);
+    if (!id) return false;
+    showLogin(id, `ssh ${name}`, chosen, cloudChosen);
+    return true;
+  }, [showLogin, ssh]);
   const createCloud = useCallback((slot: string) => {
     localChoice.current += 1;
     setLocalOpen(null);
@@ -402,7 +419,7 @@ export function useTerminalWindow() {
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, sshLoginFailed,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),

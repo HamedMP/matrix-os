@@ -87,6 +87,8 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
   // A request still running when this form closes must not touch the next one.
   const alive = useRef(true);
   useEffect(() => {
+    // Set again on setup: StrictMode runs cleanup and setup once more on mount.
+    alive.current = true;
     void loadPeers().then((result) => { if (alive.current) setPeers(result); });
     return () => { alive.current = false; };
   }, [loadPeers]);
@@ -141,21 +143,21 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
         <h3 className="text-[12px] font-medium">On your tailnet</h3>
         <TailscalePeers state={peers} busy={adding} onAdd={addPeer} />
       </section>
-      <Input label="ssh address" aria-label="ssh address" placeholder="user@host or a Host from ~/.ssh/config" value={target} maxLength={255}
+      <Input label="ssh address" aria-label="ssh address" disabled={adding} placeholder="user@host or a Host from ~/.ssh/config" value={target} maxLength={255}
         autoCapitalize="off" autoCorrect="off" spellCheck={false}
         onChange={(event) => { setTarget(event.target.value); setFailure(null); }} />
-      <Input label="Name (optional)" aria-label="Name" placeholder="vps" value={name} maxLength={32}
+      <Input label="Name (optional)" aria-label="Name" disabled={adding} placeholder="vps" value={name} maxLength={32}
         autoCapitalize="off" autoCorrect="off" spellCheck={false}
         onChange={(event) => { setName(event.target.value); setFailure(null); }} />
       <details className="text-[12px]">
         <summary className="cursor-pointer" style={secondaryText}>Advanced: port, identity file, jump host</summary>
         <div className="mt-2 flex flex-col gap-2">
-          <Input label="Port" aria-label="Port" inputMode="numeric" placeholder="22" value={port} maxLength={5}
+          <Input label="Port" aria-label="Port" disabled={adding} inputMode="numeric" placeholder="22" value={port} maxLength={5}
             onChange={(event) => { setPort(event.target.value); setFailure(null); }} />
-          <Input label="Identity file" aria-label="Identity file" placeholder="~/.ssh/id_ed25519" value={identity} maxLength={1024}
+          <Input label="Identity file" aria-label="Identity file" disabled={adding} placeholder="~/.ssh/id_ed25519" value={identity} maxLength={1024}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
             onChange={(event) => { setIdentity(event.target.value); setFailure(null); }} />
-          <Input label="Jump host" aria-label="Jump host" placeholder="user@bastion" value={jump} maxLength={255}
+          <Input label="Jump host" aria-label="Jump host" disabled={adding} placeholder="user@bastion" value={jump} maxLength={255}
             autoCapitalize="off" autoCorrect="off" spellCheck={false}
             onChange={(event) => { setJump(event.target.value); setFailure(null); }} />
         </div>
@@ -188,7 +190,10 @@ function RemoveMachineBody({ name, onConfirm, onClose }: { name: string; onConfi
   const [removing, setRemoving] = useState(false);
   const [failed, setFailed] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   const remove = async () => {
     setRemoving(true);
     setFailed(false);

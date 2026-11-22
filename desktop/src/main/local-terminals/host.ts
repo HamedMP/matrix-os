@@ -4,8 +4,9 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import type { LocalMachine, LocalTerminalAgent, LocalTerminalFact, SshOptions } from "../../shared/local-terminals";
+import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
 import { sshLoginArgv, sshVia } from "./ssh-command";
+import { createMachineSshStore } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
@@ -184,6 +185,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   }
 
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  const machineSsh = createMachineSshStore(options.dataDir);
   // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
   let watchEpoch = 0;
   const events = (options.createEvents ?? createLocalTerminalEvents)({
@@ -289,14 +291,32 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       });
     },
 
-    /** Machines this core reaches over ssh, with their line state now. */
+    /** Machines this core reaches over ssh, with their line state now and how the app added them. */
     async machines(): Promise<LocalMachine[]> {
-      return listMachines(await ensure());
+      const [machines, saved] = await Promise.all([ensure().then(listMachines), machineSsh.all()]);
+      return machines.map((machine) => {
+        const entry = saved[machine.name];
+        return entry ? { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) } : machine;
+      });
+    },
+
+    /** Open in terminal for an added machine, the way it was added. Null when the core does not know it. */
+    async machineLogin(name: string, size: { cols: number; rows: number }): Promise<string | null> {
+      const entry = await machineSsh.get(name);
+      const target = entry?.target ?? (await listMachines(await ensure())).find((machine) => machine.name === name)?.target;
+      // A machine added with a command (via) elsewhere has no target to ssh to.
+      if (!target || !SshTargetSchema.safeParse(target).success) return null;
+      return this.sshLogin(target, size, entry?.ssh);
     },
 
     async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
       const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
-      return addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
+      const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
+      if (result.ok) {
+        await machineSsh.set(result.machine.name, { target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) });
+        return { ok: true, machine: { ...result.machine, target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) } };
+      }
+      return result;
     },
 
     /** This Mac's tailnet peers, for one-click Add machine. */
@@ -307,6 +327,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** Forgets a machine; its terminals keep running there. */
     async removeMachine(name: string): Promise<void> {
       await (await ensure()).call("machine.rm", { machine: name });
+      await machineSsh.remove(name);
     },
 
     /** Dials a machine now (after a login in a terminal) instead of at its next retry. */

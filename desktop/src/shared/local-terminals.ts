@@ -71,6 +71,8 @@ export const LocalMachineSchema = z.strictObject({
   target: z.string().max(255),
   state: LocalMachineStateSchema,
   temporary: z.boolean(),
+  /** How the app reaches it, when it was added here: shown, and reused by Open in terminal. */
+  ssh: z.lazy(() => SshOptionsSchema).optional(),
 });
 export type LocalMachine = z.infer<typeof LocalMachineSchema>;
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
@@ -222,6 +224,14 @@ export const LOCAL_TERMINAL_INVOKE = {
   },
   "local-terminal:machine-remove": { request: z.strictObject({ name: LocalMachineNameSchema }), response: Ok },
   "local-terminal:machine-connect": { request: z.strictObject({ name: LocalMachineNameSchema }), response: Ok },
+  // Open in terminal for an added machine: ssh there the way it was added (target and options kept in the main process).
+  "local-terminal:machine-login": {
+    request: z.strictObject({ name: LocalMachineNameSchema, ...Size }),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
+      z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
+    ]),
+  },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
     request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),

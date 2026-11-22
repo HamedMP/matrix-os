@@ -83,6 +83,17 @@ export function useSshMachines() {
     await refresh();
   }, [refresh]);
 
+  /** Open in terminal for an added machine, the way it was added; its id, or null. */
+  const machineLogin = useCallback(async (name: string): Promise<string | null> => {
+    try {
+      const result = await invoke("local-terminal:machine-login", { name, cols: 100, rows: 30 });
+      return result.status === "ready" ? result.id : null;
+    } catch (error: unknown) {
+      console.warn("[terminal-window] machine login terminal failed:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }, []);
+
   /** A terminal on this device running `ssh <target>`; its id, or null. */
   const sshLogin = useCallback(async (target: string, ssh?: SshOptions): Promise<string | null> => {
     try {
@@ -104,5 +115,5 @@ export function useSshMachines() {
     }
   }, []);
 
-  return { state, refresh, add, remove, connect, sshLogin, tailscalePeers };
+  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers };
 }
