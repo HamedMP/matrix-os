@@ -166,9 +166,17 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
     return deps.identities!.ensure(ownerId, deriveMatrixUserId(hostConfig.userIdKey, ownerId, hostConfig.serverName));
   }
 
-  async function record(processId: string, ownerId: string, network: MessagingBridgeNetwork, userId: string, result: NormalizedStep): Promise<MessagingBridgeLoginStep> {
+  /**
+   * Stores a pending step (`revision` absent: a new process from start) or ends the flow.
+   * A step that lost a race with a cancel, another step or expiry is refused, never recreated.
+   */
+  async function record(processId: string, ownerId: string, network: MessagingBridgeNetwork, userId: string, result: NormalizedStep, revision?: number): Promise<MessagingBridgeLoginStep> {
     if (result.kind === "pending") {
-      cancelAbandoned(await logins!.put(processId, { ownerId, network, userId, pending: result.pending }, now()));
+      const next = { ownerId, network, userId, pending: result.pending };
+      if (revision === undefined) cancelAbandoned(await logins!.create(processId, next, now()));
+      else if (!(await logins!.advance(processId, next, revision, now()))) {
+        throw new MessagingBridgeHttpError("conflict", { stage: "login_step", network, write: "stale" });
+      }
       return result.pending.step;
     }
     await logins!.delete(processId, ownerId, network);
@@ -238,10 +246,13 @@ export function createMessagingBridgeRoutes(deps: MessagingBridgeRouteDeps): { r
     checkFields(process.pending, body.fields);
     const outcome = await adapter!.submitStep(network, process.userId, body.loginProcessId, process.pending, body.fields, c.req.raw.signal);
     if (outcome.kind === "still_waiting") {
-      cancelAbandoned(await logins!.put(body.loginProcessId, process, now()));
+      // Refresh the expiry only if nothing changed the login while this request waited.
+      if (!(await logins!.advance(body.loginProcessId, process, process.revision, now()))) {
+        throw new MessagingBridgeHttpError("conflict", { stage: "login_step", network, write: "stale" });
+      }
       return c.json(ProgressInput(body.loginProcessId, process.pending.step));
     }
-    return c.json(ProgressInput(body.loginProcessId, await record(body.loginProcessId, ownerId, network, process.userId, outcome.result)));
+    return c.json(ProgressInput(body.loginProcessId, await record(body.loginProcessId, ownerId, network, process.userId, outcome.result, process.revision)));
   }));
 
   /**

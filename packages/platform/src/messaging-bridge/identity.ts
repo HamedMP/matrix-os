@@ -22,7 +22,7 @@ export interface MessagingBridgeDatabase extends MessagingBridgeLoginDatabase {
   messaging_bridge_identities: MessagingBridgeIdentitiesTable;
 }
 
-export const MESSAGING_BRIDGE_SCHEMA_REVISION = { generation: 2, fingerprint: "messaging-bridge-identities-logins-v2" } as const;
+export const MESSAGING_BRIDGE_SCHEMA_REVISION = { generation: 3, fingerprint: "messaging-bridge-identities-logins-revision-v3" } as const;
 
 const OWNER_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
 

@@ -30,6 +30,8 @@ export interface MessagingBridgeLoginsTable {
   matrix_user_id: string;
   pending_step: string;
   expires_at: ColumnType<Date, Date | string, Date | string>;
+  /** Bumped on every step write; updates and expiry deletes are conditional on the value read. */
+  revision: ColumnType<number, number | undefined, number>;
 }
 
 export interface MessagingBridgeLoginStartsTable {
@@ -52,9 +54,11 @@ export async function createMessagingBridgeLoginTables(db: Kysely<any>): Promise
       matrix_user_id TEXT NOT NULL CHECK (char_length(matrix_user_id) BETWEEN 3 AND 255),
       pending_step TEXT NOT NULL CHECK (char_length(pending_step) <= 131072),
       expires_at TIMESTAMPTZ NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
       PRIMARY KEY (network, process_id)
     )
   `.execute(db);
+  await sql`ALTER TABLE messaging_bridge_logins ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS messaging_bridge_logins_owner_idx ON messaging_bridge_logins (owner_id, expires_at)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS messaging_bridge_logins_expiry_idx ON messaging_bridge_logins (expires_at)`.execute(db);
   await sql`
@@ -161,13 +165,23 @@ async function lockOwner(db: Kysely<MessagingBridgeLoginDatabase>, ownerId: stri
   await sql`SELECT pg_advisory_xact_lock(hashtext(${`messaging-bridge-login:${ownerId}`}))`.execute(db);
 }
 
+export interface StoredLoginProcess extends LoginProcessRecord {
+  revision: number;
+}
+
 export interface MessagingBridgeLoginStore {
   /** Counts the attempt and returns false when the owner is over the start limit. */
   tryStart(ownerId: string, at: number): Promise<boolean>;
-  /** Record or refresh a pending process for its owner; returns processes evicted by the per-owner cap. */
-  put(processId: string, record: LoginProcessRecord, at: number): Promise<AbandonedLogin[]>;
+  /** Records a process the bridge just started; returns processes evicted by the per-owner cap. */
+  create(processId: string, record: LoginProcessRecord, at: number): Promise<AbandonedLogin[]>;
+  /**
+   * Stores the next step only if the row is still at `revision` (optimistic
+   * concurrency in the write itself). False when another request advanced,
+   * finished or cancelled the login meanwhile; a deleted row is never recreated.
+   */
+  advance(processId: string, record: LoginProcessRecord, revision: number, at: number): Promise<boolean>;
   /** The process only if it is live and was started by this owner on this network; an expired one is claimed. */
-  get(processId: string, ownerId: string, network: MessagingBridgeNetwork, at: number): Promise<{ record?: LoginProcessRecord; abandoned?: AbandonedLogin }>;
+  get(processId: string, ownerId: string, network: MessagingBridgeNetwork, at: number): Promise<{ record?: StoredLoginProcess; abandoned?: AbandonedLogin }>;
   /** Removes the owner's process; returns it when one existed. */
   delete(processId: string, ownerId: string, network: MessagingBridgeNetwork): Promise<AbandonedLogin | undefined>;
   /** Claims a bounded batch of expired processes and prunes old start records. */
@@ -196,7 +210,7 @@ export function createMessagingBridgeLoginStore(db: Kysely<MessagingBridgeLoginD
       });
     },
 
-    async put(processId, record, at) {
+    async create(processId, record, at) {
       const sealed = cipher.seal(record.pending, record.network, processId, record.ownerId);
       return db.transaction().execute(async (trx) => {
         await lockOwner(trx, record.ownerId);
@@ -210,10 +224,13 @@ export function createMessagingBridgeLoginStore(db: Kysely<MessagingBridgeLoginD
             pending_step: sealed,
             expires_at: new Date(at + LOGIN_PROCESS_TTL_MS),
           })
+          // A start is authoritative for its new process id; a retried start for the same id
+          // replaces the step and bumps the revision so older in-flight writes lose.
           .onConflict(conflict => conflict.columns(["network", "process_id"]).doUpdateSet(eb => ({
             matrix_user_id: eb.ref("excluded.matrix_user_id"),
             pending_step: eb.ref("excluded.pending_step"),
             expires_at: eb.ref("excluded.expires_at"),
+            revision: sql<number>`messaging_bridge_logins.revision + 1`,
           })).where("messaging_bridge_logins.owner_id", "=", record.ownerId))
           .execute();
         const evicted = await trx.deleteFrom("messaging_bridge_logins")
@@ -233,9 +250,26 @@ export function createMessagingBridgeLoginStore(db: Kysely<MessagingBridgeLoginD
       });
     },
 
+    async advance(processId, record, revision, at) {
+      const sealed = cipher.seal(record.pending, record.network, processId, record.ownerId);
+      const row = await db.updateTable("messaging_bridge_logins")
+        .set({
+          pending_step: sealed,
+          expires_at: new Date(at + LOGIN_PROCESS_TTL_MS),
+          revision: sql<number>`revision + 1`,
+        })
+        .where("network", "=", record.network)
+        .where("process_id", "=", processId)
+        .where("owner_id", "=", record.ownerId)
+        .where("revision", "=", revision)
+        .returning("revision")
+        .executeTakeFirst();
+      return row !== undefined;
+    },
+
     async get(processId, ownerId, network, at) {
       const row = await db.selectFrom("messaging_bridge_logins")
-        .select(["matrix_user_id", "pending_step", "expires_at"])
+        .select(["matrix_user_id", "pending_step", "expires_at", "revision"])
         .where("network", "=", network)
         .where("process_id", "=", processId)
         .where("owner_id", "=", ownerId)
@@ -243,12 +277,14 @@ export function createMessagingBridgeLoginStore(db: Kysely<MessagingBridgeLoginD
       if (!row) return {};
       const expired = new Date(row.expires_at).getTime() <= at;
       const pending = expired ? null : cipher.open(row.pending_step, network, processId, ownerId);
-      if (pending) return { record: { ownerId, network, userId: row.matrix_user_id, pending } };
-      // Expired or unreadable: claim it so exactly one instance cancels it at the bridge.
+      if (pending) return { record: { ownerId, network, userId: row.matrix_user_id, pending, revision: Number(row.revision) } };
+      // Expired or unreadable: claim it so exactly one instance cancels it at the bridge. The
+      // delete only applies to the version read, so a row another request refreshed meanwhile stays.
       const claimed = await db.deleteFrom("messaging_bridge_logins")
         .where("network", "=", network)
         .where("process_id", "=", processId)
         .where("owner_id", "=", ownerId)
+        .where("revision", "=", Number(row.revision))
         .returning(["network", "process_id", "matrix_user_id"])
         .execute();
       const [gone] = abandoned(claimed);
@@ -267,7 +303,10 @@ export function createMessagingBridgeLoginStore(db: Kysely<MessagingBridgeLoginD
 
     async sweep(at) {
       const now = new Date(at);
+      // The expiry check is repeated on the deleted row itself, so a row a step refreshed
+      // after the subquery read it is rechecked under its row lock and kept.
       const claimed = await db.deleteFrom("messaging_bridge_logins")
+        .where("expires_at", "<=", now)
         .where(eb => eb(eb.refTuple("network", "process_id"), "in",
           eb.selectFrom("messaging_bridge_logins")
             .select(["network", "process_id"])
