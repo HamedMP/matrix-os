@@ -213,6 +213,16 @@ export function createOwnedMachineRoutes(deps: OwnedMachineRoutesDeps): Hono {
       const parsed = OwnedMachineHeartbeatRequestSchema.safeParse(await readOwnedJson(c));
       if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
       const at = now();
+      // A machine whose gateway is down is reachable but not usable: answer the
+      // heartbeat without refreshing liveness, so it turns offline, not online.
+      if (!parsed.data.gatewayHealthy) {
+        return c.json({
+          status: 'ok',
+          tunnel: link.tunnelState === 'ready' ? 'ok' : 'reissue',
+          autoSecurityUpdates: link.autoSecurityUpdates,
+          backupsEnabled: link.backupsEnabled,
+        } satisfies OwnedMachineHeartbeatResponse);
+      }
       const updated = await recordOwnedHeartbeat(deps.db, {
         machineId: link.machine.machineId,
         epoch: link.machine.runtimeTokenEpoch,

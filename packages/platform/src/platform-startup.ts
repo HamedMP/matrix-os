@@ -1321,6 +1321,8 @@ async function startPlatformServerWithCleanup(
     accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
+    // Stop and drain owned-machine tunnel work before the database closes.
+    const ownedMachinesDrained = ownedMachines?.shutdown();
     managedFeatureReconciliationWorker?.stop();
     activateResumedRuntime?.stop();
     metalRuntime?.stop();
@@ -1352,6 +1354,7 @@ async function startPlatformServerWithCleanup(
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
         await activateResumedRuntime?.drain();
+        await ownedMachinesDrained;
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         // Drain the metal maintenance pass (DB writes, hostd deletes) and sleeper tick before the pool closes.
         await metalShutdown;

@@ -127,6 +127,8 @@ describe('owned machine enrollment and machine routes', () => {
     const beat = await app.request('/api/machines/heartbeat',
       json({ agentVersion: '2026.11.1', uptimeSec: 10, diskFreeBytes: 1_000_000, gatewayHealthy: true }, machineHeaders));
     expect(await beat.json()).toMatchObject({ status: 'ok', tunnel: 'ok', autoSecurityUpdates: true, backupsEnabled: false });
+    const unhealthyMachine = await getOwnedMachineLink(db, machineId);
+    expect(unhealthyMachine?.machine.status).toBe('running');
     const forged = await app.request('/api/machines/heartbeat',
       json({ agentVersion: '1', uptimeSec: 1, diskFreeBytes: 1, gatewayHealthy: true },
         { authorization: `Bearer ${buildPlatformVerificationToken('alice', SECRET)}`, 'x-matrix-machine-id': machineId }));
@@ -279,5 +281,21 @@ describe('owned machine enrollment and machine routes', () => {
     expect(next).toBe(21);
     expect(await runOwnedTunnelReconcilePass(deps, next)).toBe(41);
     expect(pages[20]).toBe(21);
+  });
+
+  it('keeps a machine whose gateway is down from turning online', async () => {
+    const cf = fakeCloudflare();
+    const app = buildApp(db, cf.client);
+    const { deviceCode, machineId } = await enrollAndApprove(app);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    tick();
+    const ready = await (await app.request('/api/machines/enroll/poll', json({ deviceCode }))).json() as { env: Record<string, string> };
+    const headers = { authorization: `Bearer ${ready.env.UPGRADE_TOKEN}`, 'x-matrix-machine-id': machineId };
+    const beat = await app.request('/api/machines/heartbeat',
+      json({ agentVersion: '1', uptimeSec: 1, diskFreeBytes: 1, gatewayHealthy: false }, headers));
+    expect(beat.status).toBe(200);
+    const link = await getOwnedMachineLink(db, machineId);
+    expect(link?.machine.status).toBe('enrolling');
+    expect(link?.lastHeartbeatAt).toBeNull();
   });
 });
