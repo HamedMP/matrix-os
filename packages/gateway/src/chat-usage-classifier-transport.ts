@@ -65,7 +65,8 @@ export function createFundedChatUsageTransport(options: {
       const content = (value as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
       if (typeof content !== "string" || Buffer.byteLength(content) > 2048) throw unavailable();
       return ChatAnalyticsTagsSchema.parse(JSON.parse(content));
-    } catch (_error: unknown) {
+    } catch (error: unknown) {
+      console.warn("[chat-usage] Classification unavailable", error instanceof Error ? "Error" : "UnknownError");
       // Neither model output nor upstream error bodies enter the logging path.
       throw unavailable();
     }
