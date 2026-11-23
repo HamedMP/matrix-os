@@ -295,3 +295,55 @@ it("does not let an API-key clean failure release a native subscription session"
   const release = await admission.prepareRevocation(); await release();
   expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_subscription_proof");
 });
+
+describe("one full native admission per send", () => {
+  it("confirms a same-send receipt without re-projecting the Settings snapshot", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { binding, receipt } = await admission.startWithReceipt("owner", "sess_receipt");
+    expect(binding).toEqual(expect.any(String));
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    await expect(admission.confirm("owner", receipt, "sess_receipt")).resolves.toBeUndefined();
+    const followUp = await admission.validateWithReceipt("owner", binding, "sess_receipt");
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    await expect(admission.confirm("owner", followUp, "sess_receipt")).resolves.toBeUndefined();
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+  });
+  it.each(["disabled", "revoked", "principal", "key", "owner", "revocation"])("still fails closed on confirm after %s", async kind => {
+    const f = await fixture();
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_receipt");
+    let user = "owner";
+    if (kind === "disabled") { f.change({ enabled: false }); await f.save(); }
+    else if (kind === "revoked") f.change({ available: false });
+    else if (kind === "principal") f.change({ principal: "private_owner_profile_B" });
+    else if (kind === "key") f.change({ method: "api_key" });
+    else if (kind === "owner") user = "collaborator";
+    else {
+      // Draining (cleanup of the registered child may still be unconfirmed): new authority must be refused.
+      try { await admission.prepareRevocation(); } catch (error: unknown) { expect(error).toBeInstanceOf(Error); }
+    }
+    await expect(admission.confirm(user, receipt, "sess_receipt")).rejects.toThrow("unavailable");
+  });
+  it("falls back to the full check for a foreign, expired, or other-admission receipt", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const other = createCodexExecutionAdmission(f.options);
+    const { receipt } = await other.startWithReceipt("owner", "sess_receipt");
+    getSnapshot.mockClear();
+    await expect(admission.confirm("owner", receipt, "sess_receipt")).resolves.toBeUndefined();
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    await expect(admission.confirm("owner", { forged: true } as never, "sess_receipt")).rejects.toThrow("unavailable");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const fresh = (await admission.startWithReceipt("owner", "sess_receipt")).receipt;
+      getSnapshot.mockClear();
+      vi.setSystemTime(Date.now() + 31_000);
+      await expect(admission.confirm("owner", fresh, "sess_receipt")).resolves.toBeUndefined();
+      expect(getSnapshot).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+

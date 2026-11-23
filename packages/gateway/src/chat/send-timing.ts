@@ -16,7 +16,7 @@ const activeSend = new AsyncLocalStorage<ActiveTiming>();
 export type ChatSendSubStage =
   | "catalog_coding_inventory" | "catalog_settings_snapshot"
   | "codex_identity_observe" | "codex_identity_verify" | "claude_identity"
-  | "codex_execution_admission"
+  | "codex_execution_admission" | "codex_execution_confirm"
   | "codex_admission_start" | "codex_events_watch" | "codex_admission_validate"
   | "session_start" | "browser_prepare" | "turn_submit" | "thread_store_queue_wait"
   | "native_launch_admission" | "background_lock_wait" | "launch_build" | "launch_request"
