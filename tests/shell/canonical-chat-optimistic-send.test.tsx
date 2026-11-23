@@ -134,7 +134,7 @@ it("shows a follow-up while its attachment is still uploading", async () => {
 it.each([
   { streamOpen: true, draft: false }, { streamOpen: true, draft: true },
   { streamOpen: false, draft: false },
-])("re-reads the list and detail after a send only without a live event stream (open: $streamOpen, new Chat: $draft)", async ({ streamOpen, draft }) => {
+])("re-reads after a send only without a live event stream, except one detail read for a new Chat (open: $streamOpen, new Chat: $draft)", async ({ streamOpen, draft }) => {
   vi.stubGlobal("crypto", webcrypto);
   const { chat, reads } = fixtureServer({ streamOpen });
   const { result } = renderHook(() => useCanonicalChatState(draft ? { initialDraft: "Hello" } : {}));
@@ -151,8 +151,9 @@ it.each([
   expect(result.current.sessionId).toBe(chat.id);
   expect(shownCount(result.current.messages, "Hello")).toBe(1);
   if (streamOpen) {
+    // A new Chat reads its detail once: its events may have passed while unselected.
     expect(reads.list).toBe(before.list);
-    expect(reads.detail).toBe(before.detail);
+    expect(reads.detail).toBe(before.detail + (draft ? 1 : 0));
   } else {
     expect(reads.list).toBeGreaterThan(before.list);
     expect(reads.detail).toBeGreaterThan(before.detail);
@@ -203,6 +204,58 @@ it("keeps a fast reply when an event-driven read confirms a new Chat's send befo
   await waitFor(() => expect(result.current.sessionId).toBe(chat.id));
   response.release();
   await act(async () => { expect(await sending).toBe(true); });
+  await waitFor(() => expect(result.current.messages.some((message) => message.role === "assistant" && String(message.content).includes("Fast reply"))).toBe(true));
+  expect(shownCount(result.current.messages, "Hello")).toBe(1);
+});
+
+it("shows a fast first reply when the send response beats the event-driven read on a new Chat", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { snapshot } = createCanonicalChatFixture("completed");
+  const { activeRun: _activeRun, providerBinding: _binding, project: _project, ...chat } = snapshot.chat;
+  const encoder = new TextEncoder();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  let full: unknown = null;
+  const eventRead = gate();
+  const eventReadStarted = gate();
+  let gatedRead = false;
+  stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/events?")) {
+      return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        stream = controller;
+        controller.enqueue(encoder.encode([{ type: "chat.stream.attached" }, { type: "chat.replay.end" }]
+          .map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("")));
+      } }), { headers: { "content-type": "text/event-stream" } });
+    }
+    if (url.includes("/api/chats?") && init?.method === "POST") return Response.json({ chat: { ...chat, revision: 0, messageCount: 0 } });
+    if (url.includes("/turns?") && init?.method === "POST") {
+      const body = JSON.parse(init.body as string);
+      const message = { ...snapshot.messages[0]!, id: "msg_sent", seq: 1, role: "user" as const, state: "committed" as const, turnId: "cturn_sent", runId: undefined, parts: body.parts };
+      const reply = { ...snapshot.messages[0]!, id: "msg_reply", seq: 2, role: "assistant" as const, state: "committed" as const, turnId: "cturn_sent", runId: "run_sent",
+        parts: [{ type: "text" as const, text: "Fast reply" }] };
+      const turn = { ...snapshot.turns[0]!, id: "cturn_sent", clientRequestId: body.clientRequestId, inputMessageId: "msg_sent", baseMessageSeq: 0 };
+      const run = { ...snapshot.runs[0]!, id: "run_sent", turnId: "cturn_sent" };
+      // The run completes and its events pass while the new Chat is not yet selected.
+      full = { record: { chat: { ...chat, revision: 3, messageCount: 2 } }, messages: [message, reply], turns: [turn], runs: [run], activities: [] };
+      stream.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "chat.event", event: {
+        cursor: 1, chatId: chat.id, revision: 3, eventType: "turn.accepted", createdAt: chat.createdAt } })}\n\n`));
+      // The send response arrives while the event-triggered detail read is still in flight.
+      await eventReadStarted.opened;
+      return Response.json({ record: { chat: { ...chat, revision: 1, messageCount: 1 } }, message, turn, run, admission: "accepted" });
+    }
+    if (url.includes("/api/chats?")) return Response.json({ items: [{ chat }] });
+    if (full && !gatedRead) {
+      gatedRead = true;
+      eventReadStarted.release();
+      await eventRead.opened;
+    }
+    return Response.json(full ?? { record: { chat }, messages: [], turns: [], runs: [], activities: [] });
+  }));
+  const { result } = renderHook(() => useCanonicalChatState({ initialDraft: "Hello" }));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+
+  await act(async () => { expect(await result.current.submitMessage("Hello", undefined, options)).toBe(true); });
+  expect(result.current.sessionId).toBe(chat.id);
+  eventRead.release();
   await waitFor(() => expect(result.current.messages.some((message) => message.role === "assistant" && String(message.content).includes("Fast reply"))).toBe(true));
   expect(shownCount(result.current.messages, "Hello")).toBe(1);
 });
