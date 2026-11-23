@@ -8,12 +8,14 @@ import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notice
  * The message being sent, shown from the moment it is sent: before a new Chat
  * is created, before attachments upload, and before admission confirms its
  * turn. Scoped to the authority and the Chat it was sent from (undefined: the
- * new-Chat draft); the token lets a send replace or clear only its own message.
+ * new-Chat draft, further keyed by the draft session so New Chat starts empty);
+ * the token lets a send replace or clear only its own message.
  */
 export type PendingCanonicalSend = {
   token: object;
   identity: string;
   sourceChatId: string | undefined;
+  draftSession: number;
   turn: PendingCanonicalTurn;
 };
 
@@ -44,11 +46,13 @@ export function canonicalTranscriptWithPendingSend(input: {
   detail: CanonicalChatDetailResponse | null;
   pending: PendingCanonicalSend | null;
   activeChatId: string | undefined;
+  draftSession: number;
   collaborationViewOpen: boolean;
 }): ChatMessage[] {
   const { detail, pending, activeChatId } = input;
   if (detail) return projectCanonicalTranscript(withPendingCanonicalTurn(detail, pending?.turn));
   if (input.collaborationViewOpen || !pending || pending.sourceChatId !== undefined) return [];
+  if (pending.draftSession !== input.draftSession) return [];
   if (activeChatId !== undefined && pending.turn.chatId !== activeChatId) return [];
   return projectCanonicalMessages([pendingCanonicalTurnMessage(pending.turn)]);
 }
