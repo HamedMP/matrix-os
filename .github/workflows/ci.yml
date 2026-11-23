@@ -764,7 +764,7 @@ jobs:
 
       - name: Run docs contract tests
         if: needs.changes.outputs.docs_contract_tests == 'true'
-        run: pnpm exec vitest run tests/repository/site-extraction.test.ts
+        run: pnpm exec vitest run tests/repository/site-extraction.test.ts tests/platform/matrix-dev-plugin.test.ts
 
   os-view-parity:
     name: OS View Parity

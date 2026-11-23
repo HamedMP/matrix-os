@@ -19,6 +19,14 @@ describe("matrix-dev plugin", () => {
     expect(await findDrift()).toEqual([]);
   });
 
+  it("runs in the docs-only CI lane, because a skill edit changes only Markdown", async () => {
+    const ci = await read(".github/workflows/ci.yml");
+    const docsContractCommand = ci
+      .split("\n")
+      .find((line) => line.includes("pnpm exec vitest run tests/repository/site-extraction.test.ts"));
+    expect(docsContractCommand).toContain("tests/platform/matrix-dev-plugin.test.ts");
+  });
+
   it.each(MATRIX_DEV_SKILLS)("%s is one skill for Codex, Claude Code, and the plugin", async (name) => {
     const skill = await read(`.agents/skills/${name}/SKILL.md`);
     expect(skill).toMatch(new RegExp(`^---\\nname: ${name}\\ndescription: .+\\n---\\n`));
