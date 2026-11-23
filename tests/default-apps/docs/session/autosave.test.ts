@@ -7,11 +7,16 @@ const options = { autosave: true, autosaveDelayMs: DELAY };
 
 const realSetTimeout = globalThis.setTimeout;
 
-/** Advances the fake clock, then lets real asynchronous work (compression) finish. */
-async function settle(ms: number, session?: { whenIdle(): Promise<void> }): Promise<void> {
+/** Advances the fake clock, then waits for every save it started (serialising is real asynchronous work). */
+async function settle(ms: number, session: { whenIdle(): Promise<void> }): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
-  if (session !== undefined) await session.whenIdle();
-  else await new Promise<void>((resolve) => realSetTimeout(resolve, 30));
+  await session.whenIdle();
+}
+
+/** Waits in real time for work the fake clock does not drive (serialising the document). */
+async function until(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 400 && !condition(); attempt++) await new Promise<void>((resolve) => realSetTimeout(resolve, 5));
+  expect(condition()).toBe(true);
 }
 
 describe("document session: autosave", () => {
@@ -83,10 +88,10 @@ describe("document session: autosave", () => {
     await session.open("a.docx");
     session.apply([{ type: "insertText", at: { blockId: firstId(session), offset: 0 }, text: "1" }]);
     const release = files.holdWrites();
-    await settle(DELAY + 10);
-    expect(files.writes).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(DELAY + 10);
+    await until(() => files.writes.length === 1);
     const opened = session.open("b.docx", { discardChanges: true });
-    await settle(0);
+    await until(() => files.reads.filter((path) => path === "b.docx").length === 1);
     release();
     expect(await opened).toEqual({ status: "opened", path: "b.docx" });
     await settle(DELAY * 2, session);
