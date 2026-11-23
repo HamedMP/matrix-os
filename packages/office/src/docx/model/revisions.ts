@@ -5,8 +5,12 @@
  * Grouping: revision elements of the same kind, author and date that touch
  * (nothing unrevised lies between them, a paragraph mark counts as one
  * position) are one revision. A tracked table row takes the content changes
- * inside it that share its kind, author and date. Property changes of one
- * table (`w:tblPrChange`, `w:tcPrChange`, …) by one author are one revision.
+ * inside it that share its kind, author and date. The inserted cells of one
+ * table with one author and date are one revision and its deleted cells
+ * another (`w:cellIns`, `w:cellDel`: a tracked column); they take the content
+ * changes inside them the same way. Property changes of one table
+ * (`w:tblPrChange`, `w:tcPrChange`, `w:cellMerge`, …) by one author are one
+ * revision.
  */
 
 import type { Revision, RevisionId, RevisionMark } from "../../api/docx-model.js";
@@ -18,7 +22,7 @@ import { type Draft, type RevisionMember, StoryPass } from "./revision-pass.js";
 import type { Structure } from "./structure.js";
 
 export type { RevisionMember, RevisionMemberRole } from "./revision-pass.js";
-export { rowRevisionElement, rowRevisionElements } from "./revision-pass.js";
+export { cellGoneInView, cellRevisionElements, rowGoneInView, rowRevisionElement, rowRevisionElements, tableGoneInView } from "./table-revisions.js";
 
 export interface RevisionGroup {
   readonly revision: Revision;

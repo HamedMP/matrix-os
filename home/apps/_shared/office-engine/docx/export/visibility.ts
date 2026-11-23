@@ -5,7 +5,8 @@
  * `original` view too, because the insertion around it is. The paragraph
  * scan knows both (`context.inserted`, `context.deleted`), so runs are split
  * at the atoms that the view leaves out. The same holds for a paragraph mark
- * and a table row that carry an insertion and a deletion.
+ * and a table row that carry an insertion and a deletion, and for the cells
+ * of a tracked column, which the view model does not mark.
  */
 
 import type { DocxDocument } from "../../api/docx.js";
@@ -15,8 +16,8 @@ import { isOfficeError } from "../../errors.js";
 import { getDocxIndex } from "../model/document.js";
 import type { DocxIndex } from "../model/doc-index.js";
 import { type InlineAtom, atomInView, atomIndexAt, revisionsGoneInView } from "../model/inline.js";
-import { rowRevisionElements } from "../model/revisions.js";
-import { tableRows } from "../model/structure.js";
+import { rowCells, tableRows } from "../model/structure.js";
+import { cellGoneInView, rowGoneInView } from "../model/table-revisions.js";
 import { type RunFilter, goneInView, markRunFilter } from "./flatten.js";
 
 function filterWithIndex(index: DocxIndex): RunFilter {
@@ -71,7 +72,17 @@ function filterWithIndex(index: DocxIndex): RunFilter {
   filter.rowGone = (table, rowIndex, view) => {
     const row = rowsOf(table)[rowIndex];
     if (row === undefined) return goneInView(table.rows[rowIndex]?.revision?.kind, view);
-    return revisionsGoneInView(rowRevisionElements(row), view);
+    return rowGoneInView(row, view);
+  };
+  // A tracked cell has no mark in the view model at all: only the document says which cells a view keeps.
+  filter.cellsGone = (table, rowIndex, view) => {
+    const row = rowsOf(table)[rowIndex];
+    if (row === undefined || view === "markup") return null;
+    let gone: boolean[] | null = null;
+    rowCells(row).forEach((cell, cellIndex) => {
+      if (cellGoneInView(cell, view)) (gone ??= [])[cellIndex] = true;
+    });
+    return gone;
   };
   return filter;
 }

@@ -15,7 +15,7 @@ import { setContentDeleted } from "../edit/text.js";
 import { fieldNodesToKeep, hoistAnchorsBefore, rescueAnchors } from "../edit/anchors.js";
 import { elementParent, hasElementChildren, isAttached, removeEmptyWrappers } from "../edit/xml-util.js";
 import type { DocxIndex, RevisionGroup } from "../internal.js";
-import { REVISION_CONTAINERS, attr, closest, tableRows } from "../internal.js";
+import { REVISION_CONTAINERS, attr, closest, rowCells, tableRows } from "../internal.js";
 import { isCellMark, isPropertyChange, resolveCellMark, resolvePropertyChange } from "./properties.js";
 
 const MOVE_MARKERS: ReadonlySet<string> = new Set([
@@ -122,13 +122,18 @@ export class Resolver {
     const properties = elementParent(mark);
     const row = properties === null ? null : elementParent(properties);
     if (properties === null || row === null) return;
-    const table = closest(row, "w:tbl");
     if (this.keeps(mark)) {
       remove(mark);
       if (!hasElementChildren(properties)) remove(properties);
       this.dirty(row);
       return;
     }
+    this.removeRow(row);
+  }
+
+  /** Takes a row out of its table, and the table with it when it was the last row. */
+  private removeRow(row: XmlElement): void {
+    const table = closest(row, "w:tbl");
     if (table === null || tableRows(table).length > 1) {
       const parent = elementParent(row);
       this.dirty(rescueAnchors(row));
@@ -153,6 +158,20 @@ export class Resolver {
       this.index.markDirty(placeholder);
     }
     removeBlock(this.index, this.index.blockOf(table) ?? record);
+  }
+
+  /** Resolves `w:cellIns`, `w:cellDel` or `w:cellMerge`. A row that loses its last cell goes with it. */
+  private resolveCell(mark: XmlElement): void {
+    const properties = elementParent(mark);
+    const cell = properties === null ? null : elementParent(properties);
+    const table = closest(mark, "w:tbl");
+    const goes = cell !== null && mark.name !== "w:cellMerge" && (mark.name === "w:cellIns") !== this.accept;
+    // Bookmarks, comment anchors and open fields in a cell that goes move to the nearest paragraph that stays.
+    if (goes) this.dirty(rescueAnchors(cell));
+    const changed = resolveCellMark(mark, this.accept);
+    if (goes && changed !== null && changed.name === "w:tr" && rowCells(changed).length === 0) this.removeRow(changed);
+    else this.dirty(changed);
+    if (table !== null && isAttached(this.index, table)) this.touched.add(table);
   }
 
   private resolveMark(mark: XmlElement): void {
@@ -204,12 +223,7 @@ export class Resolver {
       remove(element);
       this.dirty(parent);
     }
-    for (const element of this.cells) {
-      if (!isAttached(index, element)) continue;
-      const table = closest(element, "w:tbl");
-      this.dirty(resolveCellMark(element, this.accept));
-      if (table !== null && isAttached(index, table)) this.touched.add(table);
-    }
+    for (const element of this.cells) if (isAttached(index, element)) this.resolveCell(element);
     for (const element of this.rows) if (isAttached(index, element)) this.resolveRow(element);
     for (const { mark } of marks) if (isAttached(index, mark)) this.resolveMark(mark);
     if (this.moveNames.size > 0) this.removeMoveMarkers(this.moveNames);

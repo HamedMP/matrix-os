@@ -3,7 +3,8 @@
  * the comparison treats revisions pending in its inputs as accepted.
  *
  * Insertions and move destinations are unwrapped, deletions and move sources
- * are removed, deleted rows are removed, property change records and move
+ * are removed, deleted rows and deleted cells are removed (a row with no
+ * cell left goes with its last cell), property change records and move
  * range markers are dropped. A paragraph whose mark is deleted joins the
  * paragraph that follows it.
  */
@@ -15,7 +16,8 @@ import { firstChild } from "../internal.js";
 
 const REMOVED_CONTENT: ReadonlySet<string> = new Set(["w:del", "w:moveFrom"]);
 const KEPT_CONTENT: ReadonlySet<string> = new Set(["w:ins", "w:moveTo"]);
-const CELL_MARKS: ReadonlySet<string> = new Set(["w:cellIns", "w:cellDel", "w:cellMerge"]);
+/** Cell marks that leave the cell where it is once accepted; `w:cellDel` takes the cell away. */
+const CELL_MARKS: ReadonlySet<string> = new Set(["w:cellIns", "w:cellMerge"]);
 const RANGE_MARKER = /^w:(?:moveFrom|moveTo|customXmlIns|customXmlDel|customXmlMoveFrom|customXmlMoveTo)Range(?:Start|End)$/;
 const PROPERTY_CHANGE = /^w:[A-Za-z]+Change$/;
 const BLOCKS: ReadonlySet<string> = new Set(["w:p", "w:tbl", "w:sdt", "w:customXml"]);
@@ -24,6 +26,8 @@ interface Pending {
   /** Paragraphs whose mark was deleted, in document order. */
   readonly joins: XmlElement[];
   readonly rows: XmlElement[];
+  /** Cells that were deleted. */
+  readonly cells: XmlElement[];
   changed: boolean;
 }
 
@@ -50,6 +54,14 @@ function rowOwner(element: XmlElement): XmlElement | null {
   return row !== null && row.name === "w:tr" ? row : null;
 }
 
+/** The `w:tc` whose `w:tcPr` holds `element`, or null. */
+function cellOwner(element: XmlElement): XmlElement | null {
+  const tcPr = elementParent(element);
+  if (tcPr === null || tcPr.name !== "w:tcPr") return null;
+  const cell = elementParent(tcPr);
+  return cell !== null && cell.name === "w:tc" ? cell : null;
+}
+
 function resolve(parent: XmlElement, pending: Pending): void {
   for (const node of [...parent.children]) {
     if (node.kind !== "element") continue;
@@ -66,6 +78,11 @@ function resolve(parent: XmlElement, pending: Pending): void {
         resolve(node, pending);
         for (const inner of [...node.children]) insertBefore(node, inner);
       }
+      remove(node);
+      pending.changed = true;
+    } else if (name === "w:cellDel") {
+      const cell = cellOwner(node);
+      if (cell !== null) pending.cells.push(cell);
       remove(node);
       pending.changed = true;
     } else if (PROPERTY_CHANGE.test(name) || RANGE_MARKER.test(name) || CELL_MARKS.has(name)) {
@@ -117,8 +134,14 @@ export function acceptAllInPlace(index: DocxIndex): boolean {
     if (slot.kind !== "document" && slot.kind !== "header" && slot.kind !== "footer" && slot.kind !== "footnotes" && slot.kind !== "endnotes") {
       continue;
     }
-    const pending: Pending = { joins: [], rows: [], changed: false };
+    const pending: Pending = { joins: [], rows: [], cells: [], changed: false };
     resolve(slot.doc.root, pending);
+    for (const cell of pending.cells) {
+      const row = elementParent(cell);
+      remove(cell);
+      // A row cannot be left without a cell.
+      if (row !== null && row.name === "w:tr" && firstChild(row, "w:tc") === null && !pending.rows.includes(row)) pending.rows.push(row);
+    }
     for (const row of pending.rows) {
       const table = elementParent(row);
       remove(row);

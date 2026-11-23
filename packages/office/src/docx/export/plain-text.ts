@@ -42,9 +42,8 @@ function blocksText(blocks: readonly FlatBlock[], labels: boolean): string {
     } else if (block.type === "table") {
       for (const row of block.rows) {
         // Cells hidden by a vertical merge still take their place in the row, as in `getPlainText`.
-        const cells = row.row.cells.map((cell) => {
-          const flat = row.cells.find((entry) => entry.cell === cell);
-          if (flat === undefined) return "";
+        const cells = row.slots.map(({ flat }) => {
+          if (flat === null) return "";
           const inner = blocksText(flat.blocks, labels);
           return inner.endsWith("\n") ? inner.slice(0, -1) : inner;
         });

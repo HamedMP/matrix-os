@@ -141,9 +141,9 @@ function codeBlock(paragraph: FlatParagraph): string {
 
 function tableMarkdown(table: FlatTable, context: MarkdownContext): string {
   const rows = table.rows.map((row) =>
-    row.row.cells.flatMap((cell) => {
+    row.slots.flatMap(({ cell, flat }) => {
       // A cell hidden by a vertical merge keeps its column, empty.
-      const blocks = row.cells.find((entry) => entry.cell === cell)?.blocks ?? [];
+      const blocks = flat?.blocks ?? [];
       const text = blocks
         .map((block) => (block.type === "paragraph" ? inlineMarkdown(block.runs, context) : ""))
         .filter((part) => part !== "")

@@ -6,10 +6,11 @@
 import type { BlockId, Revision, RevisionId, RevisionKind, RevisionScope, TextPosition } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import type { Flow } from "./flow.js";
-import { type ParagraphScan, shownRevision } from "./inline.js";
+import type { ParagraphScan } from "./inline.js";
 import { attr, firstChild } from "./names.js";
 import { type FormatResolver, tableStyleIdOf } from "./resolve.js";
 import { type BlockRecord, type StoryRecord, type Structure, rowCells, tableRows } from "./structure.js";
+import { cellRevisionElements, rowRevisionElements } from "./table-revisions.js";
 
 export type RevisionMemberRole =
   /** A `w:ins`, `w:del`, `w:moveFrom` or `w:moveTo` around runs. */
@@ -18,20 +19,22 @@ export type RevisionMemberRole =
   | "paragraphMark"
   /** A `w:ins` or `w:del` inside `w:trPr`: the whole row. */
   | "tableRow"
+  /** A `w:cellIns` or `w:cellDel` inside `w:tcPr`: the whole cell. */
+  | "tableCell"
   /** A `w:rPrChange` (of a run, or of a paragraph mark). */
   | "runFormat"
   /** A `w:pPrChange`. */
   | "paragraphFormat"
-  /** Any other property change: table, row, cell and section properties, cell insertion, deletion and merge. */
+  /** Any other property change: table, row, cell and section properties, and cell merges. */
   | "otherFormat";
 
 /** One XML revision element of a logical revision. */
 export interface RevisionMember {
   readonly element: XmlElement;
   readonly role: RevisionMemberRole;
-  /** What the element changes: the paragraph (content, marks, paragraph format), the `w:r`, the `w:tr`, or the element whose properties changed. */
+  /** What the element changes: the paragraph (content, marks, paragraph format), the `w:r`, the `w:tr`, the `w:tc`, or the element whose properties changed. */
   readonly owner: XmlElement;
-  /** The paragraph that holds the element, or the table for row and table property changes. */
+  /** The paragraph that holds the element, or the table for row, cell and table property changes. */
   readonly blockId: BlockId;
 }
 
@@ -63,13 +66,16 @@ export interface Draft {
 }
 
 const ROW_PROPERTY_CHANGES: ReadonlySet<string> = new Set(["w:trPrChange"]);
-const CELL_PROPERTY_CHANGES: ReadonlySet<string> = new Set(["w:tcPrChange", "w:cellIns", "w:cellDel", "w:cellMerge"]);
+/** Cell insertions and deletions are not here: they change content and are revisions of their own (see `table`). */
+const CELL_PROPERTY_CHANGES: ReadonlySet<string> = new Set(["w:tcPrChange", "w:cellMerge"]);
 
 function kindOf(name: string): RevisionKind {
   switch (name) {
     case "w:ins":
+    case "w:cellIns":
       return "insert";
     case "w:del":
+    case "w:cellDel":
       return "delete";
     case "w:moveFrom":
       return "moveFrom";
@@ -85,22 +91,6 @@ function infoOf(element: XmlElement): RevisionInfo {
   const author = attr(element, "w:author") ?? "";
   const date = attr(element, "w:date");
   return { kind, author, date, key: `${kind}\u0000${author}\u0000${date ?? ""}` };
-}
-
-/** Every `w:ins` and `w:del` in the `w:trPr` of a row, in file order: a row one author inserted and another deleted has both. */
-export function rowRevisionElements(row: XmlElement): XmlElement[] {
-  const trPr = firstChild(row, "w:trPr");
-  const found: XmlElement[] = [];
-  if (trPr === null) return found;
-  for (const node of trPr.children) {
-    if (node.kind === "element" && (node.name === "w:ins" || node.name === "w:del")) found.push(node);
-  }
-  return found;
-}
-
-/** The revision of a row a reader is shown: its `w:del`, else its `w:ins`, or null. */
-export function rowRevisionElement(row: XmlElement): XmlElement | null {
-  return shownRevision(rowRevisionElements(row));
 }
 
 function childrenNamed(parent: XmlElement | null, names: ReadonlySet<string>): XmlElement[] {
@@ -355,16 +345,18 @@ export class StoryPass {
     this.ordinal += 1;
   }
 
-  private rowText(row: XmlElement): string {
-    const cells: string[] = [];
-    for (const cell of rowCells(row)) {
-      const texts: string[] = [];
-      for (const record of this.structure.blocksByContainer.get(cell) ?? []) {
-        if (record.type === "paragraph") texts.push(this.flow.scans.get(record.element)?.text ?? "");
-      }
-      cells.push(texts.join("\n"));
+  private cellText(cell: XmlElement): string {
+    const texts: string[] = [];
+    for (const record of this.structure.blocksByContainer.get(cell) ?? []) {
+      if (record.type === "paragraph") texts.push(this.flow.scans.get(record.element)?.text ?? "");
     }
-    return cells.join("\t");
+    return texts.join("\n");
+  }
+
+  private rowText(row: XmlElement): string {
+    return rowCells(row)
+      .map((cell) => this.cellText(cell))
+      .join("\t");
   }
 
   private otherFormat(changes: XmlElement[], blockId: BlockId, sort: number): void {
@@ -397,6 +389,13 @@ export class StoryPass {
     if (tblGrid !== null) changes.push(...childrenNamed(tblGrid, new Set(["w:tblGridChange"])));
     /** The row revisions of the row before, which the same revisions on this row extend. */
     let previous: Draft[] = [];
+    /**
+     * The cell insertions and deletions of this table by kind, author and
+     * date, each with the row of the last cell it took: a tracked column is
+     * one revision, whose text has the cells of a row apart by a tab and
+     * the rows by a line break.
+     */
+    const cellDrafts = new Map<string, { draft: Draft; row: XmlElement | null }>();
     for (const row of tableRows(table)) {
       changes.push(...childrenNamed(firstChild(row, "w:trPr"), ROW_PROPERTY_CHANGES));
       changes.push(...childrenNamed(firstChild(row, "w:tblPrEx"), new Set(["w:tblPrExChange"])));
@@ -411,7 +410,34 @@ export class StoryPass {
       if (drafts.length > 0) this.rowStack.push(drafts);
       for (const cell of rowCells(row)) {
         changes.push(...childrenNamed(firstChild(cell, "w:tcPr"), CELL_PROPERTY_CHANGES));
+        const own: Array<{ draft: Draft; row: XmlElement | null }> = [];
+        for (const mark of cellRevisionElements(cell)) {
+          const info = infoOf(mark);
+          const member: RevisionMember = { element: mark, role: "tableCell", owner: cell, blockId: record.id };
+          // A cell of a row that is tracked the same way is part of the change of the row.
+          const ofRow = drafts.find((entry) => entry.info.key === info.key);
+          if (ofRow !== undefined) {
+            this.addMember(ofRow, member);
+            continue;
+          }
+          let entry = cellDrafts.get(info.key);
+          if (entry === undefined) {
+            entry = { draft: this.draft(info, "tableRow", this.base), row: null };
+            cellDrafts.set(info.key, entry);
+          }
+          this.addMember(entry.draft, member);
+          if (!own.includes(entry)) own.push(entry);
+        }
+        // Content of the cell that is tracked the same way belongs to the change of the cell, else to that of the row.
+        if (own.length > 0) this.rowStack.push([...own.map((entry) => entry.draft), ...(this.rowStack[this.rowStack.length - 1] ?? [])]);
         this.blocks(this.structure.blocksByContainer.get(cell) ?? []);
+        if (own.length === 0) continue;
+        this.rowStack.pop();
+        const text = this.cellText(cell);
+        for (const entry of own) {
+          entry.draft.text += (entry.row === null ? "" : entry.row === row ? "\t" : "\n") + text;
+          entry.row = row;
+        }
       }
       if (drafts.length > 0) this.rowStack.pop();
       for (const draft of drafts) draft.text += (draft.text === "" ? "" : "\n") + this.rowText(row);

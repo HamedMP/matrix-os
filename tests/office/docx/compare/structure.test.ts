@@ -56,6 +56,35 @@ describe("identical documents", () => {
   });
 });
 
+describe("tracked cells pending in the inputs", () => {
+  const who = 'w:author="Alex Morgan" w:date="2026-01-05T09:30:00Z"';
+  const tc = (text: string, mark = ""): string => `<w:tc><w:tcPr><w:tcW w:w="2400" w:type="dxa"/>${mark}</w:tcPr>${p(r(text))}</w:tc>`;
+  const pending = (): Promise<Uint8Array> =>
+    buildDocx({
+      body:
+        `<w:tbl><w:tblPr/><w:tblGrid/>` +
+        `<w:tr>${tc("Item")}${tc("Price", `<w:cellDel w:id="1" ${who}/>`)}${tc("Qty", `<w:cellIns w:id="2" ${who}/>`)}</w:tr>` +
+        `<w:tr>${tc("Widget")}${tc("9.99", `<w:cellDel w:id="3" ${who}/>`)}${tc("4", `<w:cellIns w:id="4" ${who}/>`)}</w:tr>` +
+        `<w:tr>${tc("gone", `<w:cellDel w:id="5" ${who}/>`)}${tc("gone too", `<w:cellDel w:id="6" ${who}/>`)}</w:tr>` +
+        `</w:tbl>${p(r("end"))}`,
+    });
+
+  it("compares a deleted column, an inserted column and an emptied row by what accepting them leaves", async () => {
+    const tracked = await pending();
+    const accepted = "Item\tQty\nWidget\t4\nend\n";
+    expect((await openDocx(tracked)).getPlainText({ view: "final" })).toBe(accepted);
+    const same = await compareDocxDetailed(tracked, tracked, OPTIONS);
+    expect(same.summary.identical).toBe(true);
+    expect(views(same.document)).toEqual({ final: accepted, original: accepted, markup: accepted });
+
+    const clean = await buildDocx({ body: textTable(["Item", "Qty"], ["Widget", "4"]) + p(r("end")) });
+    expect((await compareDocxDetailed(clean, tracked, OPTIONS)).document.listRevisions()).toEqual([]);
+    const changed = await buildDocx({ body: textTable(["Item", "Qty"], ["Widget", "5"]) + p(r("end")) });
+    const document = await compareDocx(tracked, changed, OPTIONS);
+    expect(views(document)).toMatchObject({ original: accepted, final: "Item\tQty\nWidget\t5\nend\n" });
+  });
+});
+
 describe("paragraphs", () => {
   it("inserts a paragraph in the middle, at the start and at the end", async () => {
     const original = await bodyOf("Alpha one two three.", "Beta four five six.", "Gamma seven eight nine.");

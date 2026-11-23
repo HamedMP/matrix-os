@@ -74,6 +74,10 @@
  *   inserted and another deleted has two) and `scan.mark` the one a reader
  *   is shown, a deletion before an insertion; `revisionsGoneInView` says
  *   whether such a mark, or a row (`rowRevisionElements`), is in a view.
+ *   A cell carries `w:cellIns` and `w:cellDel` (`cellRevisionElements`);
+ *   `cellGoneInView`, `rowGoneInView` and `tableGoneInView` say what a view
+ *   keeps of a table, a row with no cell left and a table with no row left
+ *   being gone too.
  *   `scan.propertiesChange` is
  *   the `w:pPrChange`, `scan.markFormatChange` the `w:pPr/w:rPr/w:rPrChange`,
  *   and `scan.contentSpans` and `scan.formatSpans` give the extent of every
@@ -227,8 +231,12 @@ export {
   type RevisionIndex,
   type RevisionMember,
   type RevisionMemberRole,
+  cellGoneInView,
+  cellRevisionElements,
+  rowGoneInView,
   rowRevisionElement,
   rowRevisionElements,
+  tableGoneInView,
 } from "./model/revisions.js";
 export { FormatResolver, type ResolvedParagraph, tableStyleIdOf } from "./model/resolve.js";
 export {
