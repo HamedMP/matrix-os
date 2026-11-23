@@ -6,16 +6,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 // Records each mount of a terminal view, for tests that care about remounting.
 let mountLog: string[] | null = null;
-let finishAttachment: (() => void) | null = null;
+let reportSocketState: ((state: "attached" | "ended" | "connection-lost") => void) | null = null;
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: function TerminalViewStub({ sessionName, findRequest, onAttached }: {
-    sessionName: string; findRequest?: number; onAttached?: () => void;
+  default: function TerminalViewStub({ sessionName, findRequest, onSocketState }: {
+    sessionName: string; findRequest?: number;
+    onSocketState?: (state: "attached" | "ended" | "connection-lost") => void;
   }) {
     React.useEffect(() => { mountLog?.push(sessionName); }, [sessionName]);
     React.useEffect(() => {
-      finishAttachment = onAttached ?? null;
-      return () => { if (finishAttachment === onAttached) finishAttachment = null; };
-    }, [onAttached]);
+      reportSocketState = onSocketState ?? null;
+      return () => { if (reportSocketState === onSocketState) reportSocketState = null; };
+    }, [onSocketState]);
     return <div data-testid="terminal-view" data-find={findRequest ?? 0}>{sessionName}</div>;
   },
 }));
@@ -229,12 +230,15 @@ describe("This Computer terminals", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await findRow(/build/));
     const live = await screen.findByTestId("terminal-view");
-    act(() => finishAttachment?.());
+    act(() => reportSocketState?.("attached"));
     operator.invoke.mockClear();
     operator.push([fact("t1", "build", { finished: true })]);
     expect(await screen.findByText("build ended")).toBeTruthy();
     expect(screen.getByTestId("terminal-view")).toBe(live);
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:history", { id: "t1" });
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:seen", { id: "t1" });
+    act(() => reportSocketState?.("ended"));
+    expect(screen.getByTestId("terminal-view")).toBe(live);
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "t1" });
     fireEvent.click(screen.getByRole("button", { name: "Close build" }));
     expect(screen.queryByTestId("terminal-view")).toBeNull();
@@ -254,6 +258,32 @@ describe("This Computer terminals", () => {
     operator.push([fact("t1", "fast build", { finished: true })]);
     expect(await screen.findByText("finished before attaching")).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
+  });
+
+  it.each([true, false])("loads saved output after a dropped SSH attachment (finished fact first: %s)", async (factFirst) => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    let finish!: (result: unknown) => void;
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("box/t1", "remote build")]),
+      "local-terminal:history": () => new Promise((resolve) => { finish = resolve; }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/remote build/));
+    const live = await screen.findByTestId("terminal-view");
+    act(() => reportSocketState?.("attached"));
+    operator.invoke.mockClear();
+    const finished = [fact("box/t1", "remote build", { finished: true })];
+    if (factFirst) operator.push(finished);
+    else act(() => reportSocketState?.("connection-lost"));
+    expect(screen.getByTestId("terminal-view")).toBe(live);
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:seen", { id: "box/t1" });
+    if (factFirst) act(() => reportSocketState?.("connection-lost"));
+    else operator.push(finished);
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:history", { id: "box/t1" }));
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:seen", { id: "box/t1" });
+    await act(async () => finish({ ok: true, text: "output after the dropped connection" }));
+    expect(await screen.findByText("output after the dropped connection")).toBeTruthy();
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "box/t1" });
   });
 
   // Fault detected (Greptile, #3567): a running terminal on an added machine read as ended.
@@ -592,12 +622,12 @@ describe("local terminal socket", () => {
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input")).toHaveLength(2);
   });
 
-  it("reports ended when the terminal closes or cannot be attached, and releases its listeners", async () => {
+  it("reports a confirmed exit and distinguishes a refused attach", async () => {
     const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 2 }), "local-terminal:detach": () => ({ ok: true }) });
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
-    operator.emit("local-terminal:closed", { attachId: 2 });
+    operator.emit("local-terminal:closed", { attachId: 2, finished: true });
     expect(handlers.onState).toHaveBeenLastCalledWith("ended");
     expect(operator.listening("local-terminal:closed")).toBe(0);
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:detach", expect.anything());
@@ -605,7 +635,7 @@ describe("local terminal socket", () => {
     const refused = installOperator({ "local-terminal:attach": () => ({ ok: false }) });
     const refusedHandlers = events();
     createLocalTerminalSocket("local:t1", refusedHandlers).connect();
-    await waitFor(() => expect(refusedHandlers.onState).toHaveBeenLastCalledWith("ended"));
+    await waitFor(() => expect(refusedHandlers.onState).toHaveBeenLastCalledWith("connection-lost"));
     expect(refused.listening("local-terminal:output")).toBe(0);
   });
 
@@ -707,7 +737,7 @@ describe("local terminal socket", () => {
     socket.connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
     socket.sendInput("ls\r");
-    await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
+    await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("connection-lost"));
     socket.sendInput("more");
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:input")).toHaveLength(1);
   });
@@ -719,8 +749,8 @@ describe("local terminal socket", () => {
     const handlers = events();
     createLocalTerminalSocket("local:t1", handlers).connect();
     operator.emit("local-terminal:output", { attachId: 6, data: "exit\r\n" });
-    operator.emit("local-terminal:closed", { attachId: 6 });
-    operator.emit("local-terminal:closed", { attachId: 9 });
+    operator.emit("local-terminal:closed", { attachId: 6, finished: true });
+    operator.emit("local-terminal:closed", { attachId: 9, finished: false });
     resolveAttach({ ok: true, attachId: 6 });
     await waitFor(() => expect(handlers.onState).toHaveBeenLastCalledWith("ended"));
     expect(handlers.onOutput.mock.calls.map(([data]) => data)).toEqual(["exit\r\n"]);

@@ -10,6 +10,7 @@ import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
 import { FinishedTerminalOutput } from "./FinishedTerminalOutput";
 import { createPaneAttachManager } from "../terminal/terminal-runtime";
+import type { ShellSocketState } from "../../lib/shell-socket";
 import type { AttachManager } from "../terminal/attach-manager";
 import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
 import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "../terminal/terminal-agent-options";
@@ -196,9 +197,9 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-function LivePaneTerminal({ sessionName, focused, findRequest, onPaneAction, onAttached }: {
+function LivePaneTerminal({ sessionName, focused, findRequest, onPaneAction, onSocketState }: {
   sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
-  onAttached(): void;
+  onSocketState(state: ShellSocketState): void;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
   useEffect(() => {
@@ -209,7 +210,7 @@ function LivePaneTerminal({ sessionName, focused, findRequest, onPaneAction, onA
   }, []);
   if (!manager) return null;
   return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} onAttached={onAttached} reservedKeys={isTerminalWindowShortcut}
+    onPaneAction={onPaneAction} onSocketState={onSocketState} reservedKeys={isTerminalWindowShortcut}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
 }
@@ -221,21 +222,21 @@ const PaneTerminal = memo(function PaneTerminal({
   onPaneAction(action: TerminalPaneAction): void;
   onFinishedOutput(key: string): () => void;
 }) {
-  const [wasAttached, setWasAttached] = useState(false);
-  const onAttached = useCallback(() => setWasAttached(true), []);
+  const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
 
   useEffect(() => {
-    if (finishedId && wasAttached && focused) return onFinishedOutput(terminalKey);
+    if (finishedId && socketState === "ended" && focused) return onFinishedOutput(terminalKey);
     return undefined;
-  }, [finishedId, focused, onFinishedOutput, terminalKey, wasAttached]);
+  }, [finishedId, focused, onFinishedOutput, socketState, terminalKey]);
 
-  // Keep the mounted xterm and everything it has already rendered after exit.
-  if (finishedId && !wasAttached) {
+  // Hold the live view while the stream drains. Keep it after a confirmed
+  // exit, or read saved output if this pane never received the final screen.
+  if (finishedId && socketState !== "attached" && socketState !== "ended") {
     return <FinishedTerminalOutput terminalKey={terminalKey} terminalId={finishedId} focused={focused}
       findRequest={findRequest} onDisplayed={onFinishedOutput} />;
   }
   return <LivePaneTerminal sessionName={sessionName} focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} onAttached={onAttached} />;
+    onPaneAction={onPaneAction} onSocketState={setSocketState} />;
 });
 
 function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {

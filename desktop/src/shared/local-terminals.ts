@@ -265,7 +265,7 @@ export const LOCAL_TERMINAL_INVOKE = {
 
 export const LOCAL_TERMINAL_EVENTS = {
   "local-terminal:output": z.strictObject({ attachId: AttachIdSchema, data: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS) }),
-  "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema }),
+  "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema, finished: z.boolean() }),
   "local-terminal:facts": z.strictObject({ terminals: FactsSchema }),
 } as const;
 

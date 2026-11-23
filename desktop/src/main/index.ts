@@ -716,7 +716,7 @@ if (!gotLock) {
         openSocket: (path) => connectSocket(path),
       }, {
         output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
-        closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
+        closed: (attachId, finished) => sendTerminalWindowEvent("local-terminal:closed", { attachId, finished }),
         facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;

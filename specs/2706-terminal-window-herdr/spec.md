@@ -139,11 +139,11 @@ bottom status bar.
   inset and do not repeat the machine's name. Agents is the full list of
   terminals; in Spaces, terminals appear only when a project's chevron lists
   that project's terminals inline under it (same rows, never a filter).
-- Done means finished since the person last looked. A pane with a successful live
-  attachment keeps its xterm buffer when a local or SSH terminal exits. A pane
-  opening a finished terminal reads retained text from herdr-core. After the
-  selected pane displays the output, the app marks it seen. A failed history
-  read leaves it unread and offers a retry.
+- Done means finished since the person last looked. A pane that receives a
+  confirmed exit after its final output keeps the xterm buffer. A pane that
+  opens a finished terminal or loses its attachment reads retained text from
+  herdr-core. After the selected pane displays the output, the app marks it
+  seen. A failed history read leaves it unread and offers a retry.
 - A row shows the agent icon, the project in bold then " · title" muted, the
   time since the last change right-aligned in a fixed column, and a status mark
   (spinner, amber dot for needs you, filled dot, ring) in a fixed last column,

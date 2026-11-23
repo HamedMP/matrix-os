@@ -77,7 +77,7 @@ export function createAttachmentSlots(max = DEFAULT_MAX_ATTACHMENTS): Attachment
 
 export interface HcSessionSink {
   output(attachId: number, data: string): void;
-  closed(attachId: number): void;
+  closed(attachId: number, finished: boolean): void;
 }
 
 interface Attachment {
@@ -211,7 +211,7 @@ export function createHcSessions(options: {
               sink.output(attachId, text.slice(offset, offset + LOCAL_TERMINAL_MAX_OUTPUT_CHARS));
             }
           },
-          onClose: () => { if (forget(attachId)) sink.closed(attachId); },
+          onClose: (finished) => { if (forget(attachId)) sink.closed(attachId, finished); },
         });
       } catch (error: unknown) {
         if (attachments.get(attachId) === attachment) forget(attachId);
@@ -262,7 +262,7 @@ export function createHcSessions(options: {
     /** The connection is gone: every attachment has ended, and the window is told. */
     connectionLost(): void {
       for (const attachId of [...attachments.keys()]) {
-        if (forget(attachId)) sink.closed(attachId);
+        if (forget(attachId)) sink.closed(attachId, false);
       }
     },
 

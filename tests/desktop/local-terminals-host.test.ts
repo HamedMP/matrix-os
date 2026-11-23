@@ -519,10 +519,10 @@ describe("local terminal host against a scripted core", () => {
     const { host, sink, cores, lastChannel } = attaching();
     const ended = await host.attach("t1", { cols: 80, rows: 24 });
     const kept = await host.attach("t2", { cols: 80, rows: 24 });
-    cores[0]!.stream(lastChannel() - 1, HC_FRAME.CLOSE, Buffer.alloc(0));
-    expect(sink.closed.mock.calls).toEqual([[ended]]);
+    cores[0]!.stream(lastChannel() - 1, HC_FRAME.CLOSE, Buffer.from(JSON.stringify({ finished_ms: 1000 })));
+    expect(sink.closed.mock.calls).toEqual([[ended, true]]);
     cores[0]!.socket.emit("close");
-    expect(sink.closed.mock.calls).toEqual([[ended], [kept]]);
+    expect(sink.closed.mock.calls).toEqual([[ended, true], [kept, false]]);
   });
 
   it("fails an attach whose terminal ended while the core was still answering", async () => {
@@ -562,13 +562,13 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
   const coreEnv = { HOME: root, PATH: "/usr/bin:/bin", HC_SESSION: "mx", XDG_STATE_HOME: join(root, "d/state"),
     XDG_CONFIG_HOME: join(root, "d/config"), XDG_RUNTIME_DIR: join(root, "r") };
   const outputs = new Map<number, string>();
-  const closed: number[] = [];
+  const closed = new Map<number, boolean>();
   const facts = vi.fn();
   const sink = {
     facts,
     // Acknowledge as a window would, so the core keeps sending.
     output: (id: number, data: string) => { outputs.set(id, (outputs.get(id) ?? "") + data); host.acknowledge(id, 1); },
-    closed: (id: number) => { closed.push(id); },
+    closed: (id: number, finished: boolean) => { closed.set(id, finished); },
   };
   const until = (read: () => boolean) => vi.waitFor(() => { if (!read()) throw new Error("waiting"); }, { timeout: 10_000, interval: 50 });
   let host = createLocalTerminalHost(base, sink);
@@ -637,8 +637,19 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
   it("ends a terminal on request and reports its stream closed", async () => {
     const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
     await host.kill(terminalId);
-    await until(() => closed.includes(attachId));
+    await until(() => closed.has(attachId));
     expect(await host.list()).toEqual([]);
+  }, 30_000);
+
+  it("receives the pinned core's exit confirmation after the final output", async () => {
+    const size = { cols: 100, rows: 30 };
+    const id = await host.create(size);
+    if (!id) throw new Error("test shell did not start");
+    const attachId = await host.attach(id, size);
+    host.input(attachId, "printf 'FINAL_%s\\n' output; exit\r", false);
+    await until(() => closed.has(attachId));
+    expect(closed.get(attachId)).toBe(true);
+    expect(outputs.get(attachId)).toContain("FINAL_output");
   }, 30_000);
 
   it("loads rendered text from the pinned core after a colored program finishes without an attached pane", async () => {

@@ -119,7 +119,7 @@ describe("herdr-core client", () => {
     const onClose = vi.fn();
     await connection.attach({ terminal: "t1", cols: 80, rows: 24 }, { onData, onClose });
     expect(onData).toHaveBeenCalledWith(Buffer.from("history"), expect.any(Function));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.calls).toEqual([[false]]);
   });
 
   it("drops the connection when the core reuses an open channel or names one outside the protocol", async () => {
@@ -165,7 +165,7 @@ describe("herdr-core client", () => {
     const pending = connection.call("terminal.list", {});
     core.socket.emit("close");
     await expect(pending).rejects.toThrow("disconnected");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose.mock.calls).toEqual([[false]]);
     expect(disconnected).toHaveBeenCalledTimes(1);
     await expect(connection.call("terminal.list", {})).rejects.toThrow("disconnected");
     expect(vi.getTimerCount()).toBe(0);

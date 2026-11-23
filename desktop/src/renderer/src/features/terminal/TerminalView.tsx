@@ -18,7 +18,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
-import { LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
+import { LOCAL_TERMINAL_PUT_MAX_BYTES, LOCAL_TERMINAL_SESSION_PREFIX } from "../../../../shared/local-terminals";
 import { putTerminalPasteFile } from "./terminal-paste-transport";
 import { getAttachManager } from "./terminal-runtime";
 import type { AttachManager } from "./attach-manager";
@@ -126,8 +126,8 @@ interface TerminalViewProps {
    * keeps one live terminal at a time.
    */
   attachManager?: AttachManager;
-  /** Reports a successful live attachment to the pane that owns this view. */
-  onAttached?: () => void;
+  /** Reports the stream state to the pane that owns this view. */
+  onSocketState?: (state: ShellSocketState) => void;
   /** Takes keyboard focus when it attaches or becomes focused. Defaults to `active`. */
   focused?: boolean;
   /**
@@ -180,7 +180,7 @@ export default function TerminalView({
   findRequest = 0,
   onPaneAction,
   attachManager: attachManagerProp,
-  onAttached,
+  onSocketState,
   focused,
   reservedKeys,
 }: TerminalViewProps) {
@@ -615,8 +615,8 @@ export default function TerminalView({
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
-        if (state === "attached") onAttached?.();
-        else nativeHistoryRef.current?.attach(false);
+        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+        onSocketState?.(state);
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
@@ -663,7 +663,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, onAttached, sendSize]);
+  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, onSocketState, sendSize]);
 
   // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
   const takesFocusRef = useRef(takesFocus);
@@ -877,7 +877,10 @@ export default function TerminalView({
     if (socketState === "ended") {
       return { text: exitCode !== null ? `Session exited (code ${exitCode}).` : "Session ended.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
-    if (socketState === "connection-lost") return { text: "Connection lost. Reconnecting…", action: null };
+    if (socketState === "connection-lost") return {
+      text: sessionName.startsWith(LOCAL_TERMINAL_SESSION_PREFIX) ? "Terminal connection lost." : "Connection lost. Reconnecting…",
+      action: null,
+    };
     return null;
   })();
   const clipboardError = clipboardFeedback?.message ?? null;

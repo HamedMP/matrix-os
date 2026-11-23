@@ -136,7 +136,7 @@ describe("herdr session host against a scripted core", () => {
     expect(core.sent.frames.some((frame) => frame.channel === 5 && frame.kind === HC_FRAME.DATA && frame.payload.toString() === "ls\r")).toBe(true);
 
     core.socket.emit("close");
-    expect(sink.closed).toHaveBeenCalledWith(attachId);
+    expect(sink.closed).toHaveBeenCalledWith(attachId, false);
     expect(host.input(attachId, "x", false)).toBe(false);
     // A dropped line is a failure like any other: reported, and not redialed on the next poll.
     expect(host.status()).toBe("unavailable");

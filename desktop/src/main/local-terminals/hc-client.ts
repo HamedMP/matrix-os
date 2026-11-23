@@ -9,6 +9,7 @@ const CALL_TIMEOUT_MS = 5_000;
 const MAX_PENDING_CALLS = 64;
 const MAX_STREAMS = 32;
 const MAX_HELLO_BYTES = 64 * 1024;
+const MAX_CLOSE_BYTES = 1024;
 
 const HelloSchema = z.object({
   version: z.string().max(32),
@@ -39,6 +40,7 @@ export class HcProtocolError extends Error {
   constructor() { super("local terminal runtime protocol error"); this.name = "HcProtocolError"; }
 }
 const AttachedSchema = z.object({ channel: z.number().int().min(1).max(0xffff_ffff) });
+const FinishedCloseSchema = z.object({ finished_ms: z.number().int().positive() });
 export class HcCallError extends Error {
   constructor(readonly kind: string) { super("local terminal call failed"); this.name = "HcCallError"; }
 }
@@ -64,7 +66,7 @@ export interface HcStreamHandlers {
    * slows the program down instead of piling output up in memory.
    */
   onData(chunk: Buffer, consumed: () => void): void;
-  onClose(): void;
+  onClose(finished: boolean): void;
 }
 
 interface PendingCall {
@@ -89,6 +91,18 @@ function parseJson(bytes: Buffer): unknown {
   catch (error: unknown) {
     if (error instanceof SyntaxError) throw new HcProtocolError();
     throw error;
+  }
+}
+
+function isFinishedClose(payload: Buffer): boolean {
+  // Herdr's final close frame follows the output and carries the finish time.
+  // Relay failures can send an empty close instead.
+  if (!payload.length || payload.length > MAX_CLOSE_BYTES) return false;
+  try {
+    return FinishedCloseSchema.safeParse(parseJson(payload)).success;
+  } catch (error: unknown) {
+    if (!(error instanceof HcProtocolError)) throw error;
+    return false;
   }
 }
 
@@ -121,7 +135,7 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
       abandonedAttaches.clear();
       const open = [...streams.values()];
       streams.clear();
-      for (const stream of open) stream.onClose();
+      for (const stream of open) stream.onClose(false);
       if (!settled) { settled = true; reject(error); return; }
       for (const listener of disconnectListeners) listener();
     };
@@ -215,7 +229,7 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
         });
       } else if (kind === HC_FRAME.CLOSE) {
         streams.delete(channel);
-        stream.onClose();
+        stream.onClose(isFinishedClose(payload));
       }
     };
 
