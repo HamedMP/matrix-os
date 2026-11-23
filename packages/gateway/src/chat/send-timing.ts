@@ -18,7 +18,7 @@ export type ChatSendSubStage =
   | "codex_identity_observe" | "codex_identity_verify" | "claude_identity"
   | "codex_execution_admission" | "codex_execution_confirm"
   | "codex_admission_start" | "codex_events_watch" | "codex_admission_validate"
-  | "session_start" | "browser_prepare" | "turn_submit" | "thread_store_queue_wait"
+  | "session_start" | "browser_prepare" | "browser_bind" | "browser_release" | "turn_submit" | "thread_store_queue_wait"
   | "native_launch_admission" | "background_lock_wait" | "launch_build" | "launch_request"
   | "background_queue_wait" | "background_flock" | "background_inventory"
   | "systemd_run_spawned" | "unit_active" | "provider_event_file_first_line";
