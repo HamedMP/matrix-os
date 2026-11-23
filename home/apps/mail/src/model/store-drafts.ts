@@ -18,7 +18,9 @@ import {
   partiallySavedDraft,
   type Draft,
 } from "../../../_shared/office-accounts/types/mail";
+import { copyAttachments, listedAttachments } from "./draft-attachments";
 import { composeDraft, buildDraftFromThread } from "./drafts";
+import { draftFromProviderMessage } from "./provider-draft";
 import { asMailError, localMailError, toMailError } from "./errors";
 import { localId, type ThreadKey } from "./ids";
 import type { ListActions } from "./store-lists";
@@ -37,6 +39,12 @@ export interface DraftActions {
   compose(accountId?: string): string | null;
   /** Starts a reply, reply-all or forward of a thread (default: the open, else focused thread). */
   respond(kind: Exclude<DraftKind, "new">, options?: { key?: ThreadKey; messageId?: string }): Promise<string | null>;
+  /**
+   * Opens a draft the provider stores (a message with `draftId` in the thread
+   * `key`) for editing; reuses the local draft when one already holds it.
+   * `bodyHtml` is editor-safe HTML the UI made from the provider's body.
+   */
+  editProviderDraft(key: ThreadKey, messageId: string, options?: { bodyHtml?: string }): Promise<string | null>;
   editDraft(localId: string, edit: DraftEdit): void;
   /** Saves now instead of waiting for the debounce. */
   saveDraft(localId: string): Promise<void>;
@@ -238,9 +246,51 @@ export function createDraftActions(ctx: StoreContext, lists: ListActions): Draft
       try {
         const thread = await lists.fullThread(key);
         const built = buildDraftFromThread(kind, thread, { owner: entry.account, timeZone: ctx.timeZone, messageId: options.messageId });
-        return add(entry.account.id, kind, built.draft, built.quote, key);
+        // A forward carries the original's files; it is refused rather than sent without them.
+        const attachments = kind === "forward" ? await copyAttachments(entry.provider, built.source, composeDraft(built)) : [];
+        return add(entry.account.id, kind, { ...built.draft, attachments }, built.quote, key);
       } catch (error: unknown) {
         ctx.log("draft.respond.failed", error);
+        ctx.fail(error instanceof RangeError ? localMailError("thread_unavailable") : asMailError(error));
+        return null;
+      }
+    },
+
+    async editProviderDraft(key, messageId, options = {}) {
+      const summary = ctx.get().threads[key];
+      const entry = summary ? ctx.entry(summary.accountId) : undefined;
+      if (!summary || !entry) {
+        ctx.fail(localMailError("thread_unavailable"));
+        return null;
+      }
+      try {
+        const thread = await lists.fullThread(key);
+        const message = thread.messages.find((m) => m.id === messageId);
+        if (!message?.draftId) {
+          ctx.fail(localMailError("not_a_draft"));
+          return null;
+        }
+        const local = Object.values(ctx.get().drafts).find((d) => d.accountId === entry.account.id && d.draft.id === message.draftId);
+        if (local) {
+          if (!local.open && openCount() >= MAX_OPEN_DRAFTS) {
+            ctx.fail(localMailError("too_many_drafts"));
+            return null;
+          }
+          ctx.set((s) => patchDraft({ ...s, activeDraftId: local.localId }, local.localId, { open: true }));
+          return local.localId;
+        }
+        if (openCount() >= MAX_OPEN_DRAFTS) {
+          ctx.fail(localMailError("too_many_drafts"));
+          return null;
+        }
+        // Outlook keeps stored files on the draft by id; Gmail replaces the whole draft on save, so it needs their content.
+        const attachments = entry.account.provider === "outlook"
+          ? listedAttachments(message).map(({ id, name, mimeType, size }) => ({ id, name, mimeType, size }))
+          : await copyAttachments(entry.provider, message, draftFromProviderMessage(thread, message, { ...options, attachments: [] }).draft, { keepIds: true });
+        const built = draftFromProviderMessage(thread, message, { bodyHtml: options.bodyHtml, attachments });
+        return add(entry.account.id, built.kind, built.draft, null, key);
+      } catch (error: unknown) {
+        ctx.log("draft.reopen.failed", error);
         ctx.fail(error instanceof RangeError ? localMailError("thread_unavailable") : asMailError(error));
         return null;
       }

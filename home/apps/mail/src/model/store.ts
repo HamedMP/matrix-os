@@ -82,6 +82,8 @@ export interface MailStore {
 
   compose(accountId?: string): string | null;
   respond(kind: Exclude<DraftKind, "new">, options?: { key?: ThreadKey; messageId?: string }): Promise<string | null>;
+  /** Opens a draft the provider stores for editing; see `DraftActions.editProviderDraft`. */
+  editProviderDraft(key: ThreadKey, messageId: string, options?: { bodyHtml?: string }): Promise<string | null>;
   editDraft(localId: string, edit: DraftEdit): void;
   saveDraft(localId: string): Promise<void>;
   closeDraft(localId: string): void;
@@ -193,6 +195,7 @@ export function createMailStore(options: MailStoreOptions): MailStore {
 
     compose: drafts.compose,
     respond: drafts.respond,
+    editProviderDraft: drafts.editProviderDraft,
     editDraft: drafts.editDraft,
     saveDraft: drafts.saveDraft,
     closeDraft: drafts.closeDraft,

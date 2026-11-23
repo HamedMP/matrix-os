@@ -112,6 +112,8 @@ export interface MailMessage {
   id: string;
   threadId: string;
   from: MailAddress;
+  /** The `Reply-To` addresses; replies go here instead of `from`. Absent or empty when the sender set none. */
+  replyTo?: MailAddress[];
   to: MailAddress[];
   cc: MailAddress[];
   bcc: MailAddress[];

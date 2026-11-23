@@ -208,6 +208,8 @@ export function normalizeGmailMessage(raw: unknown): MailMessage {
     references: parseMessageIds(headers.get("references")),
     unread: labelIds.includes("UNREAD"),
   };
+  const replyTo = parseAddressList(headers.get("reply-to"));
+  if (replyTo.length) result.replyTo = replyTo;
   return result;
 }
 

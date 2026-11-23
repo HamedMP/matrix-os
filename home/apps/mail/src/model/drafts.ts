@@ -91,11 +91,23 @@ function withoutOwner(addresses: readonly MailAddress[], owner: MailAccount, exc
   return result;
 }
 
-/** The message to answer: the given one, else the last message that is not an unsent draft. */
-function targetMessage(thread: MailThread, messageId: string | undefined): MailMessage | undefined {
-  if (messageId) return thread.messages.find((message) => message.id === messageId);
+/**
+ * The message to answer: the given one, else the last message that is not an
+ * unsent draft. An unsent draft is never answered: the owner's own unsent text
+ * must not be quoted or addressed as if someone had sent it.
+ */
+export function targetMessage(thread: MailThread, messageId: string | undefined): MailMessage | undefined {
+  if (messageId) {
+    const named = thread.messages.find((message) => message.id === messageId);
+    return named && !named.draftId ? named : undefined;
+  }
   for (let i = thread.messages.length - 1; i >= 0; i -= 1) if (!thread.messages[i].draftId) return thread.messages[i];
   return undefined;
+}
+
+/** Where replies to `message` go: its Reply-To addresses when it has any, else its sender. */
+function replyAddresses(message: MailMessage): MailAddress[] {
+  return message.replyTo?.length ? message.replyTo : [message.from];
 }
 
 export interface BuildDraftOptions {
@@ -110,6 +122,8 @@ export interface BuildDraftOptions {
 export interface BuiltDraft {
   draft: Draft;
   quote: DraftQuote | null;
+  /** The message answered or forwarded. */
+  source: MailMessage;
 }
 
 /** A new reply, reply-all or forward draft. Throws `RangeError` when the thread has no message to answer. */
@@ -118,15 +132,15 @@ export function buildDraftFromThread(kind: Exclude<DraftKind, "new">, thread: Ma
   if (!message) throw new RangeError("No message to answer");
   const draft = emptyDraft();
   if (kind === "forward") {
-    return { draft: { ...draft, subject: forwardSubject(message.subject || thread.subject) }, quote: quoteForward(message, options.timeZone) };
+    return { draft: { ...draft, subject: forwardSubject(message.subject || thread.subject) }, quote: quoteForward(message, options.timeZone), source: message };
   }
   const fromOwner = sameMailAddress(message.from.address, options.owner.address);
   let to: MailAddress[];
   let cc: MailAddress[] = [];
   if (kind === "reply") {
-    to = fromOwner ? withoutOwner(message.to, options.owner) : withoutOwner([message.from], options.owner);
+    to = fromOwner ? withoutOwner(message.to, options.owner) : withoutOwner(replyAddresses(message), options.owner);
   } else {
-    to = withoutOwner(fromOwner ? message.to : [message.from, ...message.to], options.owner);
+    to = withoutOwner(fromOwner ? message.to : [...replyAddresses(message), ...message.to], options.owner);
     cc = withoutOwner(message.cc, options.owner, new Set(to.map((entry) => entry.address)));
   }
   return {
@@ -139,6 +153,7 @@ export function buildDraftFromThread(kind: Exclude<DraftKind, "new">, thread: Ma
       inReplyToMessageId: message.id,
     },
     quote: quoteReply(message, options.timeZone),
+    source: message,
   };
 }
 

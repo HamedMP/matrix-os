@@ -140,6 +140,8 @@ export function normalizeGraphMessage(raw: unknown, attachments: MailAttachment[
     references: [],
     unread: message.isRead === false,
   };
+  const replyTo = graphAddresses(message.replyTo);
+  if (replyTo.length) result.replyTo = replyTo;
   if (message.isDraft === true && result.id) result.draftId = result.id;
   return result;
 }

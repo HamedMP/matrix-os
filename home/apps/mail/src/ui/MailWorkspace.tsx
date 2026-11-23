@@ -18,6 +18,7 @@ import {
 } from "../model";
 import { BulkBar } from "./BulkBar";
 import { hostBridge, MailUiContext, type MailBridge, type MailUi } from "./context";
+import { DraftChips } from "./DraftChips";
 import { FolderRail } from "./FolderRail";
 import { createLayoutStore, DEFAULT_LAYOUT, LAYOUT_LIMITS, type MailLayout } from "./layout-prefs";
 import { ReadingPane } from "./ReadingPane";
@@ -214,6 +215,7 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
             />
           </div>
         )}
+        <DraftChips state={state} />
         <UndoBar undo={state.undo} />
         <ShortcutHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
       </AppFrame>

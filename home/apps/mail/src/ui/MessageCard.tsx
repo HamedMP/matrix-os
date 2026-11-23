@@ -4,7 +4,7 @@
  * attachments.
  */
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, PenLine } from "lucide-react";
 import { Avatar } from "../../../_shared/office-ui";
 import { formatMailAddress, type MailAddress, type MailMessage, type MailProvider } from "../../../_shared/office-accounts/types/mail";
 import { attachmentToDataUrl, inlineImageRefs, MessageBody, type InlineImageSource } from "../html";
@@ -76,9 +76,11 @@ export interface MessageCardProps {
   provider: MailProvider | undefined;
   expanded: boolean;
   onToggle: () => void;
+  /** Set for a stored draft: opens it in the composer. */
+  onEditDraft?: () => void;
 }
 
-export function MessageCard({ message, provider, expanded, onToggle }: MessageCardProps) {
+export function MessageCard({ message, provider, expanded, onToggle, onEditDraft }: MessageCardProps) {
   const { timeZone, now, ownAddresses } = useMailUi();
   const [showRecipients, setShowRecipients] = useState(false);
   const inlineImages = useInlineImages(provider, message, expanded);
@@ -109,6 +111,11 @@ export function MessageCard({ message, provider, expanded, onToggle }: MessageCa
             </button>
             {message.from.name && <span className="mail-message__address">{message.from.address}</span>}
             <time className="mail-message__time" dateTime={message.sentAt}>{formatFullTime(message.sentAt, timeZone)}</time>
+            {onEditDraft && (
+              <button type="button" className="oui-button oui-button--ghost mail-message__edit" onClick={onEditDraft}>
+                <PenLine size={13} aria-hidden="true" /> Edit draft
+              </button>
+            )}
           </div>
           <button
             type="button"

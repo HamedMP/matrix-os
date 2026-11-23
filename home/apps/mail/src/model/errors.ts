@@ -22,6 +22,8 @@ export const MAIL_LOCAL_ERROR_MESSAGES = Object.freeze({
   thread_unavailable: "That conversation is not available.",
   no_account: "Connect a mail account first.",
   cache_unavailable: "Saved mail could not be loaded.",
+  attachments_too_large: "The attachments are too large to include in a draft here. Download them and send them another way.",
+  not_a_draft: "That message is not a draft.",
 } as const);
 
 export type MailLocalErrorCode = keyof typeof MAIL_LOCAL_ERROR_MESSAGES;

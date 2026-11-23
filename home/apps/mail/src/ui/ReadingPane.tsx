@@ -1,23 +1,40 @@
 /**
  * The reading pane: the open conversation with its actions. Earlier messages
  * start collapsed and the latest is expanded. Replying opens a draft in the
- * composer; nothing here sends mail.
+ * composer; nothing here sends mail. Replies answer the last sent message,
+ * never the owner's own unsent draft; a stored draft has an Edit action that
+ * opens it in the composer.
  */
 import { useState } from "react";
 import { AlertCircle, Archive, Flag, FlagOff, Forward, Mail, MailOpen, Reply, ReplyAll, Trash2, X } from "lucide-react";
 import { EmptyState, Skeleton, Toolbar, ToolbarButton, ToolbarGroup, ToolbarSeparator } from "../../../_shared/office-ui";
-import type { MailThread } from "../../../_shared/office-accounts/types/mail";
+import type { MailMessage, MailThread } from "../../../_shared/office-accounts/types/mail";
+import { sanitizeForQuote } from "../html";
 import type { DraftKind, MailState, ThreadKey } from "../model";
 import { useMailUi } from "./context";
 import { MessageCard } from "./MessageCard";
+
+/** The newest message that is not an unsent draft: the one Reply, Reply all and Forward answer. */
+function lastSentMessage(thread: MailThread): MailMessage | undefined {
+  for (let i = thread.messages.length - 1; i >= 0; i -= 1) if (!thread.messages[i].draftId) return thread.messages[i];
+  return undefined;
+}
 
 function Conversation({ thread, threadKey, flagged }: { thread: MailThread; threadKey: ThreadKey; flagged: boolean }) {
   const { store, entries } = useMailUi();
   const provider = entries.find((entry) => entry.account.id === thread.accountId)?.provider;
   const latest = thread.messages[thread.messages.length - 1];
+  const lastSent = lastSentMessage(thread);
   const [expanded, setExpanded] = useState<readonly string[]>(() => (latest ? [latest.id] : []));
   const keys = [threadKey];
-  const respond = (kind: Exclude<DraftKind, "new">) => void store.respond(kind, { key: threadKey, messageId: latest?.id });
+  const canRespond = lastSent !== undefined;
+  const respond = (kind: Exclude<DraftKind, "new">) => {
+    if (lastSent) void store.respond(kind, { key: threadKey, messageId: lastSent.id });
+  };
+  // Provider HTML goes through the quote sanitiser before it reaches the composer.
+  const editDraft = (message: MailMessage) => void store.editProviderDraft(threadKey, message.id, {
+    bodyHtml: message.bodyHtml ? sanitizeForQuote(message.bodyHtml) : undefined,
+  });
   const toggle = (id: string) => setExpanded((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
   const subject = thread.subject.trim() || "(no subject)";
   const expandedSet = new Set(expanded);
@@ -26,9 +43,9 @@ function Conversation({ thread, threadKey, flagged }: { thread: MailThread; thre
     <div className="mail-reading">
       <Toolbar label="Conversation actions" className="mail-reading__toolbar">
         <ToolbarGroup label="Respond">
-          <ToolbarButton label="Reply" icon={<Reply size={15} />} shortcut="R" onClick={() => respond("reply")} />
-          <ToolbarButton label="Reply all" icon={<ReplyAll size={15} />} shortcut="A" onClick={() => respond("replyAll")} />
-          <ToolbarButton label="Forward" icon={<Forward size={15} />} shortcut="F" onClick={() => respond("forward")} />
+          <ToolbarButton label="Reply" icon={<Reply size={15} />} shortcut="R" disabled={!canRespond} onClick={() => respond("reply")} />
+          <ToolbarButton label="Reply all" icon={<ReplyAll size={15} />} shortcut="A" disabled={!canRespond} onClick={() => respond("replyAll")} />
+          <ToolbarButton label="Forward" icon={<Forward size={15} />} shortcut="F" disabled={!canRespond} onClick={() => respond("forward")} />
         </ToolbarGroup>
         <ToolbarSeparator />
         <ToolbarGroup label="Triage">
@@ -56,14 +73,17 @@ function Conversation({ thread, threadKey, flagged }: { thread: MailThread; thre
               provider={provider}
               expanded={expandedSet.has(message.id)}
               onToggle={() => toggle(message.id)}
+              onEditDraft={message.draftId ? () => editDraft(message) : undefined}
             />
           ))}
         </div>
-        <div className="mail-reading__respond">
-          <button type="button" className="oui-button" onClick={() => respond("reply")}><Reply size={14} aria-hidden="true" /> Reply</button>
-          <button type="button" className="oui-button" onClick={() => respond("replyAll")}><ReplyAll size={14} aria-hidden="true" /> Reply all</button>
-          <button type="button" className="oui-button" onClick={() => respond("forward")}><Forward size={14} aria-hidden="true" /> Forward</button>
-        </div>
+        {canRespond && (
+          <div className="mail-reading__respond">
+            <button type="button" className="oui-button" onClick={() => respond("reply")}><Reply size={14} aria-hidden="true" /> Reply</button>
+            <button type="button" className="oui-button" onClick={() => respond("replyAll")}><ReplyAll size={14} aria-hidden="true" /> Reply all</button>
+            <button type="button" className="oui-button" onClick={() => respond("forward")}><Forward size={14} aria-hidden="true" /> Forward</button>
+          </div>
+        )}
       </div>
     </div>
   );
