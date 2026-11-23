@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -33,6 +33,55 @@ describe("CanonicalChatWorkspace send failures", () => {
   });
 
   afterEach(cleanup);
+
+  it("opens a first submitted message with sending feedback before admission returns", async () => {
+    const idle = createCanonicalChatFixture("idle").snapshot;
+    const { project, ...chat } = idle.chat;
+    const record = { chat, projectId: project.projectId };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+    vi.mocked(routeClient.create).mockResolvedValue(record);
+    vi.mocked(routeClient.getDetail).mockResolvedValue({ record, messages: [], turns: [], runs: [], activities: [] });
+    let rejectAdmission!: (error: Error) => void;
+    vi.mocked(routeClient.admitTurn).mockImplementation(() => new Promise((_resolve, reject) => { rejectAdmission = reject; }));
+    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialView="draft"
+      projectLabel="Matrix OS" active catalog={providerCatalog} />);
+    await setSharedComposerText(await screen.findByRole("textbox", { name: "Start a chat" }), "First message waiting for confirmation");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledTimes(1));
+    try {
+      expect(screen.queryByRole("textbox", { name: "Reply to chat" })).not.toBeNull();
+      expect(screen.queryByText("What should we build today?")).toBeNull();
+      expect(screen.getByRole("status", { name: "Sending message" }).textContent).toContain("Sending");
+      expect(screen.getAllByText("First message waiting for confirmation").some(element => element.getAttribute("role") !== "textbox")).toBe(true);
+    } finally {
+      await act(async () => { rejectAdmission(new AppError("server", { httpStatus: 400 })); });
+    }
+  });
+
+  it("keeps a newer draft selected when the previous first send is rejected", async () => {
+    const idle = createCanonicalChatFixture("idle").snapshot;
+    const { project, ...chat } = idle.chat;
+    const record = { chat, projectId: project.projectId };
+    const routeClient = client();
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [] });
+    vi.mocked(routeClient.create).mockResolvedValue(record);
+    vi.mocked(routeClient.getDetail).mockResolvedValue({ record, messages: [], turns: [], runs: [], activities: [] });
+    let rejectAdmission!: (error: Error) => void;
+    vi.mocked(routeClient.admitTurn).mockImplementation(() => new Promise((_resolve, reject) => { rejectAdmission = reject; }));
+    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialView="draft"
+      projectLabel="Matrix OS" active catalog={providerCatalog} />);
+    await setSharedComposerText(await screen.findByRole("textbox", { name: "Start a chat" }), "Earlier submitted prompt");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    const newerEditor = screen.getByRole("textbox", { name: "Start a chat" });
+    await setSharedComposerText(newerEditor, "Keep this new unsent draft");
+    await act(async () => { rejectAdmission(new AppError("server", { httpStatus: 400 })); });
+    expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe("Keep this new unsent draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(routeClient.admitTurn).toHaveBeenCalledTimes(1);
+  });
 
   it("shows the safe attachment upload reason", async () => {
     const api = {
