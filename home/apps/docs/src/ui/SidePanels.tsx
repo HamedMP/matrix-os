@@ -10,7 +10,7 @@ import { GitCompareArrows, ListChecks, Sparkles, X } from "lucide-react";
 import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
 import { EmptyState, Spinner, Tabs } from "../../../_shared/office-ui";
 import type { ReviewController } from "../review/index";
-import type { DocsPanelId, DocsPanelProps } from "./panel-types";
+import type { AssistantRequest, DocsPanelId, DocsPanelProps } from "./panel-types";
 import { ReviewTab } from "./ReviewIntegration";
 
 /** Extra props every panel receives besides `DocsPanelProps`. */
@@ -19,6 +19,12 @@ export interface ShellPanelProps extends DocsPanelProps {
   review: ReviewController | null;
   /** True in the read-only (original) view. */
   readOnly: boolean;
+  /** A ribbon request for the Assistant panel; it reports it handled once it ran (or cannot run). */
+  assistantRequest?: AssistantRequest | null;
+  onAssistantRequestHandled?: () => void;
+  /** The ribbon asked for a new comment: the Review tab focuses its comment box. */
+  composeComment?: boolean;
+  onComposeHandled?: () => void;
 }
 
 const PANELS: ReadonlyArray<{ id: DocsPanelId; label: string; icon: ReactNode }> = [

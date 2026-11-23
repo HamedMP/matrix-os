@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { docxFromMarkdown, docxFromParagraphs, findSurface, installBridge, renderApp, typeInto } from "./harness";
 
 afterEach(cleanup);
+
+function ribbonTab(name: string): void {
+  fireEvent.click(within(screen.getByRole("tablist", { name: "Document ribbon" })).getByRole("tab", { name }));
+}
 
 const CONTRACT = [
   "# Definitions",
@@ -101,10 +105,10 @@ describe("Docs defined terms and cross-references", () => {
     expect(await screen.findByRole("dialog", { name: /Agreement/ })).toBeTruthy();
 
     fireEvent.click(use);
-    const back = await screen.findByRole("button", { name: /Back/ });
+    const back = await screen.findByRole("button", { name: /^Back$/ });
     await waitFor(() => expect(screen.getByRole("navigation", { name: "Outline" }).querySelector("[aria-current='location']")?.textContent).toBe("Definitions"));
     fireEvent.click(back);
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Back/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Back$/ })).toBeNull());
   });
 
   it("previews the referenced clause and reports a broken reference", async () => {
@@ -121,16 +125,17 @@ describe("Docs defined terms and cross-references", () => {
 
     fireEvent.click(good!);
     await waitFor(() => expect(screen.getByRole("navigation", { name: "Outline" }).querySelector("[aria-current='location']")?.textContent).toBe("1.Scope of work"));
-    expect(screen.getByRole("button", { name: /Back/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Back$/ })).toBeTruthy();
   });
 });
 
-describe("Docs toolbar and status bar", () => {
-  it("counts words, toggles tracking and switches the view", async () => {
+describe("Docs ribbon and status bar", () => {
+  it("counts words, toggles tracking and switches the view from the Review tab", async () => {
     const { surface } = await openContract();
     const status = screen.getByRole("contentinfo");
     await waitFor(() => expect(status.textContent).toMatch(/\d+ words/));
     expect(status.textContent).toMatch(/0 revisions/);
+    ribbonTab("Review");
     const track = screen.getByRole("button", { name: "Track changes" });
     expect(track.getAttribute("aria-pressed")).toBe("false");
     fireEvent.click(track);
@@ -138,24 +143,69 @@ describe("Docs toolbar and status bar", () => {
     act(() => typeInto(surface, "Z"));
     await waitFor(() => expect(status.textContent).toMatch(/1 revision(?!s)/));
 
-    fireEvent.click(screen.getByRole("button", { name: /^View: All markup/ }));
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Final" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Markup view" }), { target: { value: "final" } });
     await waitFor(() => expect(document.querySelector(".doc-page")?.getAttribute("data-view-mode")).toBe("final"));
-    expect(screen.getByRole("button", { name: /^View: Final/ })).toBeTruthy();
+    expect((screen.getByRole("combobox", { name: "Markup view" }) as HTMLSelectElement).value).toBe("final");
+  });
+
+  it("shows keyboard shortcuts in the command tooltips", async () => {
+    await openContract();
+    expect(screen.getByRole("button", { name: "Bold" }).getAttribute("aria-keyshortcuts")).toBe("Ctrl+B");
+    expect(screen.getByRole("button", { name: "Undo" }).getAttribute("aria-keyshortcuts")).toBe("Ctrl+Z");
+    expect(screen.getByRole("button", { name: "Bold" }).getAttribute("title")).toMatch(/Ctrl\+B/);
+  });
+
+  it("formats the selection with the font colour, size and alignment controls", async () => {
+    const { bridge, surface } = await openContract();
+    act(() => typeInto(surface, "Hello"));
+    const doc = () => document.querySelector(".doc-page");
+    expect(doc()).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Center" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Center" }).getAttribute("aria-pressed")).toBe("true"));
+    const before = surface.querySelectorAll("[data-block-type='paragraph']").length;
+    ribbonTab("Insert");
+    const button = screen.getByRole("button", { name: "Paragraph break" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(surface.querySelectorAll("[data-block-type='paragraph']").length).toBe(before + 1));
+    expect(bridge.files.writes).toEqual([]);
   });
 
   it("opens the side panel with the review module's revisions and comments", async () => {
     await openContract();
+    ribbonTab("View");
     const toggle = screen.getByRole("button", { name: "Side panel" });
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("tab", { name: /Review/ }).getAttribute("aria-selected")).toBe("true");
-    const panel = screen.getByRole("tabpanel");
+    expect(screen.getByRole("tab", { name: /^Review/, selected: true })).toBeTruthy();
+    const side = screen.getByRole("complementary", { name: "Review, assistant and compare" });
+    const panel = within(side).getByRole("tabpanel");
     expect(await within(panel).findByText("No tracked changes", {}, { timeout: 3000 })).toBeTruthy();
     expect(within(panel).getByText("No comments yet")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: /Assistant/ }));
-    expect(screen.getByRole("tab", { name: /Assistant/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(side).getByRole("tab", { name: /Assistant/ }));
+    expect(within(side).getByRole("tab", { name: /Assistant/ }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Close side panel" }));
-    await waitFor(() => expect(screen.queryByRole("tabpanel")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Review, assistant and compare" })).toBeNull());
+  });
+
+  it("opens the comment box from New comment and the assistant from its tab", async () => {
+    await openContract();
+    ribbonTab("Review");
+    fireEvent.click(screen.getByRole("button", { name: "New comment" }));
+    const box = await screen.findByRole("textbox", { name: /comment/i }, { timeout: 3000 });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    ribbonTab("Assistant");
+    fireEvent.click(screen.getByRole("button", { name: "Assistant", pressed: false }));
+    expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it("runs an assistant quick action from the Assistant tab", async () => {
+    await openContract();
+    const generate = vi.fn(async () => ({ text: "A short contract." }));
+    (window as unknown as { MatrixOS: { ai: { generate: unknown } } }).MatrixOS.ai.generate = generate;
+    ribbonTab("Assistant");
+    fireEvent.click(screen.getByRole("button", { name: "Summarise" }));
+    expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
+    await waitFor(() => expect(generate).toHaveBeenCalled(), { timeout: 5000 });
   });
 });

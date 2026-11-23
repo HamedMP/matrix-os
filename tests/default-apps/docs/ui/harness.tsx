@@ -4,7 +4,7 @@
  * requests and the recent-documents table.
  */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React, { StrictMode } from "react";
 import type { BridgeFileEntry, BridgeFileListing, OpenRequest } from "../../../../home/apps/_shared/matrix-os";
 import { createDocx, createDocxFromMarkdown } from "../../../../home/apps/_shared/office-engine/index";
@@ -118,9 +118,16 @@ export async function findSurface(): Promise<HTMLElement> {
   return screen.findByRole("textbox", { name: "Document" });
 }
 
-/** The document name in the title bar. */
+/** The document name in the title bar (the open document's, else the app's). */
 export function titleText(): string {
-  return document.querySelector(".oui-frame__title")?.textContent ?? "";
+  const name = document.querySelector(".oui-doc-title__heading")?.getAttribute("aria-label");
+  return name ?? document.querySelector(".oui-frame__title")?.textContent ?? "";
+}
+
+/** Opens a File (backstage) entry of the ribbon. */
+export function fileMenu(item: string | RegExp): void {
+  fireEvent.click(screen.getByRole("tab", { name: "File" }));
+  fireEvent.click(screen.getByRole("button", { name: item }));
 }
 
 /** Puts the DOM caret at the end of the document when it is not already inside it, as a click would. */

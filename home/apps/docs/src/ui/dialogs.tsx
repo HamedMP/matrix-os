@@ -1,10 +1,10 @@
-/** Small dialogs of the Docs shell: new from Markdown, save as, and unsaved changes. */
+/** Small dialogs of the Docs shell: new from Markdown, save to the home, and unsaved changes. */
 
 import { useState } from "react";
 import { Dialog, TextField } from "../../../_shared/office-ui";
 import { type DocumentSession, directoryOf, fileName } from "../session/index";
 import { savePath } from "./file-picker-model";
-import type { BlockedReason } from "./use-docs-session";
+import type { BlockedReason, PendingLeave } from "./use-docs-session";
 import { MAX_MARKDOWN_LENGTH } from "./use-docs-session";
 
 export function MarkdownDialog({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (markdown: string) => void }) {
@@ -38,11 +38,21 @@ export function MarkdownDialog({ open, onClose, onCreate }: { open: boolean; onC
   );
 }
 
-export function SaveAsDialog({ open, session, onClose, onSaved }: { open: boolean; session: DocumentSession; onClose: () => void; onSaved: (path: string) => void }) {
-  return open ? <SaveAsBody session={session} onClose={onClose} onSaved={onSaved} /> : null;
+export interface SaveAsDialogProps {
+  open: boolean;
+  session: DocumentSession;
+  /** Default "Save document". */
+  title?: string;
+  description?: string;
+  onClose: () => void;
+  onSaved: (path: string) => void;
 }
 
-function SaveAsBody({ session, onClose, onSaved }: { session: DocumentSession; onClose: () => void; onSaved: (path: string) => void }) {
+export function SaveAsDialog({ open, ...props }: SaveAsDialogProps) {
+  return open ? <SaveAsBody {...props} /> : null;
+}
+
+function SaveAsBody({ session, title = "Save document", description = "Choose where in your home to keep this document.", onClose, onSaved }: Omit<SaveAsDialogProps, "open">) {
   const state = session.getState();
   const [folder, setFolder] = useState(state.path === null ? "Documents" : directoryOf(state.path));
   const [name, setName] = useState(state.path === null ? state.name : fileName(state.path));
@@ -76,8 +86,8 @@ function SaveAsBody({ session, onClose, onSaved }: { session: DocumentSession; o
     <Dialog
       open
       onClose={onClose}
-      title="Save document"
-      description="Choose where in your home to keep this document."
+      title={title}
+      description={description}
       size="sm"
       footer={
         <>
@@ -114,25 +124,46 @@ const REASONS: Record<BlockedReason, string> = {
   save_failed: "Your changes could not be saved.",
 };
 
-export function UnsavedDialog({ reason, onCancel, onDiscard }: { reason: BlockedReason | null; onCancel: () => void; onDiscard: () => void }) {
+export interface UnsavedDialogProps {
+  pending: PendingLeave | null;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}
+
+/** Save, Discard or Cancel before leaving a document with unsaved changes. */
+export function UnsavedDialog({ pending, onSave, onDiscard, onCancel }: UnsavedDialogProps) {
+  const busy = pending?.busy === true;
+  const where = pending?.local ? " Save downloads it to this computer." : "";
   return (
     <Dialog
-      open={reason !== null}
-      onClose={onCancel}
+      open={pending !== null}
+      onClose={busy ? () => undefined : onCancel}
       role="alertdialog"
-      title="Discard unsaved changes?"
-      description={reason === null ? undefined : `${REASONS[reason]} Continuing drops them. Use Save or Save a copy first to keep them.`}
+      title={pending === null ? "Unsaved changes" : `Save changes to “${pending.name}”?`}
+      description={pending === null ? undefined : `${REASONS[pending.reason]} Save them before leaving, or discard them.${where}`}
       size="sm"
       footer={
         <>
-          <button type="button" className="oui-button" onClick={onCancel}>
-            Keep editing
+          <button type="button" className="oui-button" onClick={onCancel} disabled={busy}>
+            Cancel
           </button>
-          <button type="button" className="oui-button oui-button--danger" onClick={onDiscard}>
-            Discard and continue
+          <button type="button" className="oui-button oui-button--danger" onClick={onDiscard} disabled={busy}>
+            Discard
+          </button>
+          <button type="button" className="oui-button oui-button--primary" onClick={onSave} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
           </button>
         </>
       }
-    />
+    >
+      {pending?.error != null && (
+        <p role="alert" className="docs-inline-alert">
+          <span>
+            <strong>Not saved.</strong> {pending.error}
+          </span>
+        </p>
+      )}
+    </Dialog>
   );
 }

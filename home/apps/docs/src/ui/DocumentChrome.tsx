@@ -1,8 +1,8 @@
 /** Title-bar actions, the save-state indicator, banners and the status bar of an open document. */
 
-import { FilePlus2, FolderOpen, PanelLeft, PanelRight, Save, X } from "lucide-react";
+import { HardDrive, Save } from "lucide-react";
 import { useMemo } from "react";
-import { Dropdown } from "../../../_shared/office-ui";
+import { Badge } from "../../../_shared/office-ui";
 import type { DocumentSession, SessionState } from "../session/index";
 import { countWords, describeSaveState, plural } from "./status-model";
 
@@ -15,53 +15,32 @@ export function SaveIndicator({ state }: { state: SessionState }) {
   );
 }
 
-export interface TitleActionsProps {
+export interface TitleBarActionsProps {
   state: SessionState;
-  outlineOpen: boolean;
-  panelOpen: boolean;
   onSave: () => void;
-  onSaveCopy: () => void;
-  onOpen: () => void;
-  onNew: (kind: "blank" | "markdown") => void;
-  onClose: () => void;
-  onToggleOutline: () => void;
-  onTogglePanel: () => void;
 }
 
-export function TitleActions(props: TitleActionsProps) {
-  const { state, outlineOpen, panelOpen, onSave, onSaveCopy, onOpen, onNew, onClose, onToggleOutline, onTogglePanel } = props;
-  const saving = state.saveStatus === "saving";
+/** The right side of the title bar: where the document is from, its save state and Save. */
+export function TitleBarActions({ state, onSave }: TitleBarActionsProps) {
+  const local = state.source === "local";
   return (
     <div className="docs-title-actions">
+      {local && (
+        <Badge tone="accent" className="docs-source-badge">
+          <HardDrive size={12} aria-hidden="true" /> From this computer
+        </Badge>
+      )}
       <SaveIndicator state={state} />
-      <button type="button" className="oui-button oui-button--primary" onClick={onSave} disabled={saving} title="Save (Ctrl+S)">
+      <button
+        type="button"
+        className="oui-button oui-button--primary"
+        onClick={onSave}
+        disabled={state.saveStatus === "saving"}
+        title={local ? "Save: downloads the file to this computer (Ctrl+S)" : "Save (Ctrl+S)"}
+        aria-keyshortcuts="Control+S"
+      >
         <Save size={14} aria-hidden="true" />
         Save
-      </button>
-      <button type="button" className="oui-button" onClick={onSaveCopy} disabled={saving}>
-        Save a copy
-      </button>
-      <button type="button" className="oui-icon-button" aria-label="Open a document" title="Open a document" onClick={onOpen}>
-        <FolderOpen size={16} aria-hidden="true" />
-      </button>
-      <Dropdown
-        label={<FilePlus2 size={16} aria-hidden="true" />}
-        ariaLabel="New document"
-        align="end"
-        items={[
-          { id: "blank", label: "Blank document" },
-          { id: "markdown", label: "From Markdown…" },
-        ]}
-        onSelect={(id) => onNew(id === "markdown" ? "markdown" : "blank")}
-      />
-      <button type="button" className="oui-icon-button" aria-label="Outline" aria-pressed={outlineOpen} title="Show or hide the outline" onClick={onToggleOutline}>
-        <PanelLeft size={16} aria-hidden="true" />
-      </button>
-      <button type="button" className="oui-icon-button" aria-label="Side panel" aria-pressed={panelOpen} title="Show or hide review, assistant and compare" onClick={onTogglePanel}>
-        <PanelRight size={16} aria-hidden="true" />
-      </button>
-      <button type="button" className="oui-icon-button" aria-label="Close document" title="Close document" onClick={onClose}>
-        <X size={16} aria-hidden="true" />
       </button>
     </div>
   );

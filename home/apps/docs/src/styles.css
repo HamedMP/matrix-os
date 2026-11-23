@@ -133,7 +133,12 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 .docs-save--unsaved, .docs-save--draft { color: var(--app-warning); }
 .docs-save--saving { color: var(--app-muted-fg); }
 .docs-save--conflict, .docs-save--error { color: var(--app-danger); font-weight: 650; }
-.docs-ribbon .oui-dropdown > button svg { vertical-align: -3px; }
+.docs-source-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+/* File backstage panes */
+.docs-backstage { display: grid; gap: 12px; max-width: 720px; }
+.docs-backstage__heading { margin: 0; font-size: 20px; font-weight: 600; }
+.docs-backstage__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 
 .docs-banner {
   display: flex;
@@ -190,7 +195,11 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 /* ---------------------------------------------------------------- document pane, references */
 
 .docs-pane { position: relative; height: 100%; min-height: 0; }
-.docs-pane .doc-page { zoom: var(--docs-zoom, 1); }
+/* The page keeps a readable width: when the side panel or a small window
+   leaves less room, the document scrolls sideways instead of wrapping its
+   text into a narrow column. */
+.docs-pane { --docs-min-page: 480px; }
+.docs-pane .doc-page { zoom: var(--docs-zoom, 1); min-width: var(--docs-min-page); }
 
 .doc-hl-terms { text-decoration: underline dotted color-mix(in srgb, var(--identity-accent, var(--app-primary)) 70%, transparent); text-underline-offset: 3px; cursor: pointer; }
 .doc-hl-xrefs { text-decoration: underline dashed var(--identity-accent, var(--app-primary)); text-underline-offset: 3px; cursor: pointer; }
@@ -242,6 +251,6 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
   .docs-start { padding: 20px 16px 32px; }
   .docs-start__recent { grid-template-columns: 16px minmax(0, 1fr) auto; }
   .docs-start__recent-time { display: none; }
-  .docs-title-actions .oui-button:not(.oui-button--primary) { display: none; }
   .docs-save { display: none; }
+  .docs-pane { --docs-min-page: 320px; }
 }

@@ -1,15 +1,17 @@
 /**
  * The app's one `DocumentSession`, its recent-documents store, and the
- * actions that replace the active document (open, new, close) with the
- * "unsaved changes" question when the session refuses to leave the current one.
+ * actions that replace the active document (open, open from the computer,
+ * new, close) with the "unsaved changes" question (Save, Discard, Cancel)
+ * when the session refuses to leave the current one, or before closing.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import type { MatrixOSBridge } from "../../../_shared/matrix-os";
 import { createDocxFromMarkdown } from "../../../_shared/office-engine/docx/index";
 import { useToast, watchLeave } from "../../../_shared/office-ui";
-import { DocumentSession, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
+import { DocumentSession, type LocalFileInput, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
 import { isDocxPath } from "./file-picker-model";
+import { saveForLeave } from "./leave-flow";
 
 /** Longest Markdown accepted for a new document. */
 export const MAX_MARKDOWN_LENGTH = 1_000_000;
@@ -67,19 +69,39 @@ export function useRecentDocuments(recents: RecentFilesStore | null, documentKey
 
 export type BlockedReason = "unsaved_changes" | "conflict" | "save_failed";
 
-export interface PendingReplace {
+/** The question asked before the current document is left with unsaved changes. */
+export interface PendingLeave {
   reason: BlockedReason;
-  /** Runs the action again, dropping the current document's unsaved changes. */
-  proceed: () => void;
+  /** Name of the document being left. */
+  name: string;
+  /** True for a document from the computer: Save downloads it. */
+  local: boolean;
+  /** A save is running. */
+  busy: boolean;
+  /** Why the last Save failed, safe to show. */
+  error: string | null;
 }
 
 export interface DocumentActions {
   openPath(path: string): Promise<void>;
+  /** Opens a file from the computer as a local document. */
+  openLocalFile(file: LocalFileInput): Promise<void>;
   newBlank(): Promise<void>;
   newFromMarkdown(markdown: string): Promise<void>;
+  /** Back to the start screen (the home button, File > Close). Asks first when there are unsaved changes. */
   closeDocument(): Promise<void>;
-  pending: PendingReplace | null;
+  pending: PendingLeave | null;
+  /** Saves the document, then continues: back home, or to the document that was asked for. */
+  savePending(): Promise<void>;
+  /** Drops the unsaved changes and continues. */
+  discardPending(): void;
+  /** Keeps the document open. */
   cancelPending(): void;
+}
+
+export interface DocumentActionOptions {
+  /** Asks where in the home to save a new document; `onSaved` runs after it was written. */
+  requestSaveAs: (onSaved: () => void) => void;
 }
 
 type Attempt = (discardChanges: boolean) => Promise<OpenResult>;
@@ -90,34 +112,35 @@ function titleFromMarkdown(markdown: string): string {
   return safe === "" ? "Untitled" : safe;
 }
 
-export function useDocumentActions(handles: SessionHandles | null, author: string): DocumentActions {
+export function useDocumentActions(handles: SessionHandles | null, author: string, options: DocumentActionOptions): DocumentActions {
   const toast = useToast();
-  const [pending, setPending] = useState<PendingReplace | null>(null);
+  const [pending, setPending] = useState<(PendingLeave & { attempt: Attempt; path: string | null }) | null>(null);
   const session = handles?.session ?? null;
   const recents = handles?.recents ?? null;
+  const { requestSaveAs } = options;
+
+  const settle = useCallback(
+    (attempt: Attempt, path: string | null, result: OpenResult): void => {
+      if (session === null) return;
+      if (result.status === "blocked") {
+        const state = session.getState();
+        setPending({ reason: result.reason, name: state.name, local: state.source === "local", busy: false, error: null, attempt, path });
+        return;
+      }
+      if (result.status !== "error") return;
+      if (result.error.code === "not_found" && path !== null) void recents?.remove(path);
+      // Without a document the start screen shows the session's error; with one, the document stays open.
+      if (session.document !== null) toast.show({ title: "The document could not be opened", description: result.error.message, tone: "danger" });
+    },
+    [session, recents, toast],
+  );
 
   const run = useCallback(
     async (attempt: Attempt, path: string | null): Promise<void> => {
       if (session === null) return;
-      const settle = (result: OpenResult): void => {
-        if (result.status === "blocked") {
-          setPending({
-            reason: result.reason,
-            proceed: () => {
-              setPending(null);
-              void attempt(true).then(settle);
-            },
-          });
-          return;
-        }
-        if (result.status !== "error") return;
-        if (result.error.code === "not_found" && path !== null) void recents?.remove(path);
-        // Without a document the start screen shows the session's error; with one, the document stays open.
-        if (session.document !== null) toast.show({ title: "The document could not be opened", description: result.error.message, tone: "danger" });
-      };
-      settle(await attempt(false));
+      settle(attempt, path, await attempt(false));
     },
-    [session, recents, toast],
+    [session, settle],
   );
 
   const openPath = useCallback(
@@ -131,6 +154,8 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     [run, session, toast],
   );
 
+  const openLocalFile = useCallback((file: LocalFileInput) => run((discardChanges) => session!.openLocal(file, { discardChanges }), null), [run, session]);
+
   const newBlank = useCallback(() => run((discardChanges) => session!.createNew({ discardChanges }), null), [run, session]);
 
   const newFromMarkdown = useCallback(
@@ -142,8 +167,41 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     [run, session, author],
   );
 
-  const closeDocument = useCallback(() => run((discardChanges) => session!.close({ discardChanges }), null), [run, session]);
+  const closeDocument = useCallback(async () => {
+    if (session === null) return;
+    const attempt: Attempt = (discardChanges) => session.close({ discardChanges });
+    const state = session.getState();
+    // Closing never saves on its own: the owner chooses Save, Discard or Cancel.
+    if (state.dirty) {
+      setPending({ reason: state.conflict !== null ? "conflict" : "unsaved_changes", name: state.name, local: state.source === "local", busy: false, error: null, attempt, path: null });
+      return;
+    }
+    await run(attempt, null);
+  }, [session, run]);
+
+  const savePending = useCallback(async () => {
+    if (session === null || pending === null || pending.busy) return;
+    const current = pending;
+    setPending({ ...current, busy: true, error: null });
+    const outcome = await saveForLeave(session);
+    if (outcome.status === "failed") {
+      setPending({ ...current, busy: false, error: outcome.message });
+      return;
+    }
+    setPending(null);
+    if (outcome.status === "needs-path") requestSaveAs(() => void run(current.attempt, current.path));
+    else await run(current.attempt, current.path);
+  }, [session, pending, requestSaveAs, run]);
+
+  const discardPending = useCallback(() => {
+    if (pending === null || pending.busy) return;
+    const current = pending;
+    setPending(null);
+    void current.attempt(true).then((result) => settle(current.attempt, current.path, result));
+  }, [pending, settle]);
+
   const cancelPending = useCallback(() => setPending(null), []);
 
-  return { openPath, newBlank, newFromMarkdown, closeDocument, pending, cancelPending };
+  const publicPending: PendingLeave | null = pending === null ? null : { reason: pending.reason, name: pending.name, local: pending.local, busy: pending.busy, error: pending.error };
+  return { openPath, openLocalFile, newBlank, newFromMarkdown, closeDocument, pending: publicPending, savePending, discardPending, cancelPending };
 }

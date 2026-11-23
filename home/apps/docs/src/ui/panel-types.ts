@@ -6,6 +6,7 @@
  * lazily and shows a fallback when one fails to load or render.
  */
 
+import type { QuickActionId } from "../agent/quick-actions";
 import type { DocumentEditorController } from "../editor/index";
 import type { DocumentSession } from "../session/index";
 
@@ -21,3 +22,11 @@ export interface DocsPanelProps {
 }
 
 export type DocsPanelId = "review" | "assistant" | "compare";
+
+/** What the ribbon asks the Assistant panel to run: a quick action, Explain selection or Fix numbering. */
+export type AssistantRequestId = QuickActionId | "explain" | "fix-numbering";
+
+/** One request; a new object is a new request. The panel reports it handled so it runs once. */
+export interface AssistantRequest {
+  id: AssistantRequestId;
+}

@@ -180,6 +180,7 @@ describe("file picker model", () => {
 describe("status model", () => {
   const base: SessionState = {
     status: "ready",
+    source: "matrix",
     path: "plan.docx",
     name: "plan.docx",
     version: "v1",
@@ -205,6 +206,14 @@ describe("status model", () => {
     expect(describeSaveState({ ...base, dirty: true, saveStatus: "error" })).toEqual({ tone: "error", label: "Not saved" });
     expect(describeSaveState({ ...base, conflict: { path: "plan.docx", detectedAt: DATE } }).tone).toBe("conflict");
     expect(describeSaveState({ ...base, path: null })).toEqual({ tone: "draft", label: "Not saved yet" });
+  });
+
+  it("describes a document from the computer by its downloads", () => {
+    const local = { ...base, source: "local" as const, path: null };
+    expect(describeSaveState(local)).toEqual({ tone: "saved", label: "Not changed" });
+    expect(describeSaveState({ ...local, dirty: true })).toEqual({ tone: "unsaved", label: "Unsaved changes" });
+    expect(describeSaveState({ ...local, saveStatus: "saved" })).toEqual({ tone: "saved", label: "Downloaded" });
+    expect(describeSaveState({ ...local, dirty: true, saveStatus: "error" })).toEqual({ tone: "error", label: "Not saved" });
   });
 
   it("counts words", () => {

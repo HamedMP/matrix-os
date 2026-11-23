@@ -9,13 +9,14 @@
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { AgentPanel, ReviewBar, aiAccessMessage, useAiAccess } from "../../../../_shared/office-ui";
-import type { AiAccessBridge } from "../../../../_shared/office-ui";
+import type { AiAccess, AiAccessBridge } from "../../../../_shared/office-ui";
 import type { AgentResult } from "../../../../_shared/office-ui";
 import { MAX_INSTRUCTION_CHARS, QUICK_ACTIONS } from "../../agent/index";
 import type { AgentGenerate } from "../../agent/index";
 import type { TextRange } from "../../../../_shared/office-engine/index";
 import type { DocumentEditorController } from "../../editor/index";
 import type { DocumentSession } from "../../session/index";
+import type { AssistantRequest, AssistantRequestId } from "../panel-types";
 import { AnswerBody, EditCardBody } from "./AgentCards";
 import type { JumpTarget } from "./AgentCards";
 import { AssistantStore } from "./assistant-store";
@@ -34,6 +35,9 @@ export interface DocsAgentPanelProps {
   /** Accepted for the side panel contract; not used here. */
   pickDocument?: unknown;
   review?: unknown;
+  /** A request from the ribbon: runs once AI access is known, then `onAssistantRequestHandled` is called. */
+  assistantRequest?: AssistantRequest | null;
+  onAssistantRequestHandled?: () => void;
 }
 
 const MODES: ReadonlyArray<{ id: AssistantMode; label: string; placeholder: string }> = [
@@ -56,13 +60,24 @@ function bridgeGenerate(): AgentGenerate | null {
   return (input) => ai.generate(input);
 }
 
-/** The model the panel uses, and why the assistant is off when it is. */
-function useAssistantModel(generate: AgentGenerate | undefined): { model: AgentGenerate | null; hint: string | null } {
+/** The model the panel uses, its access, and why the assistant is off when it is. */
+function useAssistantModel(generate: AgentGenerate | undefined): { model: AgentGenerate | null; access: AiAccess; hint: string | null } {
   const model = useMemo(() => generate ?? bridgeGenerate(), [generate]);
   // The host answers only apps the owner allowed: ask before offering the assistant.
   const access = useAiAccess(bridge(), generate !== undefined ? "available" : undefined, logCheck);
-  if (model === null) return { model, hint: aiAccessMessage("unavailable", "Docs", "docs") };
-  return { model, hint: access === "available" ? null : aiAccessMessage(access, "Docs", "docs") };
+  if (model === null) return { model, access: "unavailable", hint: aiAccessMessage("unavailable", "Docs", "docs") };
+  return { model, access, hint: access === "available" ? null : aiAccessMessage(access, "Docs", "docs") };
+}
+
+/** Runs a ribbon request on the store. Requests that need the model wait for access and are dropped without it (the panel says why). */
+function runRequest(store: AssistantStore, id: AssistantRequestId, access: AiAccess, readOnly: boolean): void {
+  if (id === "fix-numbering") {
+    if (!readOnly) store.fixStructure();
+    return;
+  }
+  if (access !== "available") return;
+  if (id === "explain") void store.explain();
+  else if (id === "summarise" || !readOnly) void store.runQuickAction(id);
 }
 
 function selectionOf(editor: DocumentEditorController | null): TextRange | null {
@@ -74,8 +89,8 @@ function selectionOf(editor: DocumentEditorController | null): TextRange | null 
 const noSubscription = () => () => undefined;
 const noSelection = () => null;
 
-export function DocsAgentPanel({ session, editor, readOnly = false, generate }: DocsAgentPanelProps) {
-  const { model, hint } = useAssistantModel(generate);
+export function DocsAgentPanel({ session, editor, readOnly = false, generate, assistantRequest = null, onAssistantRequestHandled }: DocsAgentPanelProps) {
+  const { model, access, hint } = useAssistantModel(generate);
   const editorRef = useRef(editor);
   const modelRef = useRef(model);
   useEffect(() => {
@@ -97,6 +112,15 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate }: 
   useSyncExternalStore(session.subscribe, session.getState);
   const hasSelection = useSyncExternalStore(editor?.subscribe ?? noSubscription, editor ? () => editor.getSnapshot().selection?.collapsed === false : noSelection) === true;
   useEffect(() => () => store.cancel(), [store]);
+  // Each request object runs once, also when effects run twice in development.
+  const handledRequest = useRef<AssistantRequest | null>(null);
+  useEffect(() => {
+    if (assistantRequest === null || handledRequest.current === assistantRequest) return;
+    if (access === "checking" && assistantRequest.id !== "fix-numbering") return;
+    handledRequest.current = assistantRequest;
+    onAssistantRequestHandled?.();
+    runRequest(store, assistantRequest.id, access, readOnly);
+  }, [assistantRequest, access, store, readOnly, onAssistantRequestHandled]);
 
   const jump = (target: JumpTarget) => {
     if (editor === null) return;

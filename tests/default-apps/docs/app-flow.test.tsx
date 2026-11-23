@@ -12,7 +12,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-libra
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDocx, opc } from "../../../home/apps/_shared/office-engine/index";
 import { envelope, fixture } from "./agent/helpers";
-import { type FakeBridge, findSurface, installBridge, renderApp, titleText } from "./ui/harness";
+import { type FakeBridge, fileMenu, findSurface, installBridge, renderApp, titleText } from "./ui/harness";
 
 afterEach(() => {
   cleanup();
@@ -72,6 +72,10 @@ async function pickFromDialog(dialogName: string, folder: string, file: string):
   await waitFor(() => expect(screen.queryByRole("dialog", { name: dialogName })).toBeNull());
 }
 
+function sidePanel(): HTMLElement {
+  return screen.getByRole("complementary", { name: "Review, assistant and compare" });
+}
+
 function statusBar(): string {
   return document.querySelector(".docs-status")?.textContent ?? "";
 }
@@ -89,7 +93,7 @@ describe("Docs app journey", () => {
     expect(screen.getByRole("button", { name: "Browse files…" })).toBeTruthy();
 
     // Open the contract from the Open dialog.
-    fireEvent.click(screen.getByRole("button", { name: /Open…/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Open from Matrix…/ }));
     await pickFromDialog("Open a document", "Documents", "contract.docx");
     const surface = await findSurface();
     await waitFor(() => expect(titleText()).toBe("contract.docx"));
@@ -98,7 +102,7 @@ describe("Docs app journey", () => {
     await waitFor(() => expect(bridge.db.rows("recent_documents").map((row) => row.path)).toEqual([CONTRACT]));
 
     // Acceptance 1: saving without edits keeps every part byte-identical.
-    fireEvent.click(screen.getByRole("button", { name: "Save a copy" }));
+    fileMenu("Save a copy");
     await screen.findByText("Saved a copy");
     const copy = bridge.files.bytes("Documents/contract (copy).docx");
     expect(copy).not.toBeNull();
@@ -111,8 +115,9 @@ describe("Docs app journey", () => {
     expect(bridge.files.bytes(CONTRACT)).toEqual(fixture("contract.docx"));
 
     // Acceptance 2: the assistant's edits arrive as tracked revisions.
+    fireEvent.click(within(screen.getByRole("tablist", { name: "Document ribbon" })).getByRole("tab", { name: "View" }));
     fireEvent.click(screen.getByRole("button", { name: "Side panel" }));
-    fireEvent.click(await screen.findByRole("tab", { name: /Assistant/ }));
+    fireEvent.click(await within(sidePanel()).findByRole("tab", { name: /Assistant/ }));
     const ask = await screen.findByLabelText("Ask the agent", {}, { timeout: 5000 });
     fireEvent.change(ask, { target: { value: "Make the term 36 months and the notice 60 days" } });
     fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
@@ -129,7 +134,7 @@ describe("Docs app journey", () => {
     expect(screen.getByTestId("save-state").textContent).not.toMatch(/^Saved$/);
 
     // Review them one by one: accept the term change, reject the notice change.
-    fireEvent.click(screen.getByRole("tab", { name: /Review/ }));
+    fireEvent.click(within(sidePanel()).getByRole("tab", { name: /Review/ }));
     const panel = await screen.findByRole("region", { name: "Tracked changes" });
     fireEvent.click(within(panel).getByRole("button", { name: "Next revision" }));
     // Each edit is a deletion plus an insertion; the current one is accepted or rejected by what it changes.
@@ -171,7 +176,7 @@ describe("Docs app journey", () => {
     expect(parsed.getElementsByTagName("parsererror")).toHaveLength(0);
 
     // Acceptance 3: comparing with the second version opens a document of tracked revisions.
-    fireEvent.click(screen.getByRole("tab", { name: /Compare/ }));
+    fireEvent.click(within(sidePanel()).getByRole("tab", { name: /Compare/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Choose from Files…" }, { timeout: 5000 }));
     await pickFromDialog("Compare with another version", "Documents", "contract-v2.docx");
     const answer = await screen.findByRole("article", { name: "Did anything substantive change?" }, { timeout: 5000 });
@@ -183,10 +188,10 @@ describe("Docs app journey", () => {
     // The comparison is a new, unsaved document; neither version was written.
     expect(bridge.files.bytes(CONTRACT_V2)).toEqual(fixture("contract-v2.docx"));
 
-    // Closing an unsaved comparison asks first, then returns to the start screen with recents.
-    fireEvent.click(screen.getByRole("button", { name: "Close document" }));
-    const confirm = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
-    fireEvent.click(within(confirm).getByRole("button", { name: "Discard and continue" }));
+    // Closing an unsaved comparison asks first (Save, Discard, Cancel), then returns to the start screen with recents.
+    fileMenu("Close");
+    const confirm = await screen.findByRole("alertdialog", { name: /^Save changes to/ });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Discard" }));
     const recent = await screen.findByRole("heading", { name: "Recent documents" });
     const list = recent.parentElement!;
     await waitFor(() => expect(within(list).getByText("contract (copy).docx")).toBeTruthy());

@@ -45,7 +45,7 @@ describe("Docs open dialog", () => {
       { extraPaths: ["system/config.json", "notes.md", "Documents/budget.xlsx", ".hidden/x.docx"] },
     );
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /^Open/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Open from Matrix/ }));
     const dialog = await screen.findByRole("dialog", { name: "Open a document" });
     await within(dialog).findByRole("button", { name: /top\.docx/ });
     const names = within(dialog)
@@ -69,7 +69,7 @@ describe("Docs open dialog", () => {
   it("returns home through the breadcrumb and shows listing failures", async () => {
     const bridge = installBridge({ "Documents/a.docx": await docxFromParagraphs(["A"]) });
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /^Open/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Open from Matrix/ }));
     const dialog = await screen.findByRole("dialog", { name: "Open a document" });
     fireEvent.click(await within(dialog).findByRole("button", { name: /Folder Documents/ }));
     await within(dialog).findByRole("button", { name: /a\.docx/ });

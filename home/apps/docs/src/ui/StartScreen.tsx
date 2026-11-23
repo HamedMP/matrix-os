@@ -1,6 +1,6 @@
-/** The start screen: new blank, open, new from Markdown, and recent documents. */
+/** The start screen: new blank, open from Matrix or from this computer, new from Markdown, and recent documents. */
 
-import { FilePlus2, FileText, FileType2, FolderOpen } from "lucide-react";
+import { FilePlus2, FileText, FileType2, FolderOpen, HardDrive } from "lucide-react";
 import { AppFrame, EmptyState, Spinner } from "../../../_shared/office-ui";
 import { type RecentFile, type SessionError, directoryOf } from "../session/index";
 
@@ -10,6 +10,8 @@ export interface StartScreenProps {
   error: SessionError | null;
   onNewBlank: () => void;
   onOpen: () => void;
+  /** Opens a .docx from the owner's computer. */
+  onOpenLocal: () => void;
   onNewFromMarkdown: () => void;
   onOpenRecent: (path: string) => void;
 }
@@ -21,7 +23,7 @@ function when(iso: string): string {
   return Number.isNaN(time) ? "" : DATE_FORMAT.format(time);
 }
 
-export function StartScreen({ recents, loading, error, onNewBlank, onOpen, onNewFromMarkdown, onOpenRecent }: StartScreenProps) {
+export function StartScreen({ recents, loading, error, onNewBlank, onOpen, onOpenLocal, onNewFromMarkdown, onOpenRecent }: StartScreenProps) {
   return (
     <AppFrame title="Docs" titleIcon={<FileText size={18} />}>
       <div className="docs-start">
@@ -45,8 +47,13 @@ export function StartScreen({ recents, loading, error, onNewBlank, onOpen, onNew
             </button>
             <button type="button" className="docs-start__card" onClick={onOpen} disabled={loading}>
               <FolderOpen size={22} aria-hidden="true" />
-              <span className="docs-start__card-title">Open…</span>
+              <span className="docs-start__card-title">Open from Matrix…</span>
               <span className="docs-muted">A .docx file from your home.</span>
+            </button>
+            <button type="button" className="docs-start__card" onClick={onOpenLocal} disabled={loading}>
+              <HardDrive size={22} aria-hidden="true" />
+              <span className="docs-start__card-title">Open from this computer…</span>
+              <span className="docs-muted">A .docx file on this device, or drop one on the window.</span>
             </button>
             <button type="button" className="docs-start__card" onClick={onNewFromMarkdown} disabled={loading}>
               <FileType2 size={22} aria-hidden="true" />
