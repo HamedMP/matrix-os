@@ -663,6 +663,11 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 
 - To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
 
+### Wrap up
+
+- To close out a chat whose work has shipped, use `.claude/commands/wrap-up.md` in Claude Code (`/wrap-up [pr-numbers | ticket-ids] [--keep-open]`) or the `wrap-up` skill in `.agents/skills/wrap-up/` in Codex. Keep the two files in step.
+- It checks that the chat's PRs are merged and their post-merge runs passed, removes its worktrees and branches, marks its Linear tickets Done, reports, and closes the chat's terminal. It never merges or deploys, and it leaves unmerged, uncommitted, or unpushed work untouched.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.

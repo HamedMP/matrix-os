@@ -133,6 +133,8 @@ skills-lock.json
 !.agents/skills/daily-update/**
 !.agents/skills/release-notes/
 !.agents/skills/release-notes/**
+!.agents/skills/wrap-up/
+!.agents/skills/wrap-up/**
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
