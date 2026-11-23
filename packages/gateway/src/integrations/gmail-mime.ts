@@ -48,12 +48,12 @@ const PARAMETER_CHUNK = 60;
 
 // Dot-atom local part and a hostname: no whitespace, brackets, commas,
 // semicolons, quotes or control characters can survive into a header.
-const SAFE_ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
+export const SAFE_ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 // Printable ASCII between angle brackets, excluding the brackets themselves.
-const SAFE_MESSAGE_ID = /^<[\x21-\x3b\x3d\x3f-\x7e]{1,995}>$/;
-const SAFE_FILENAME = /^[^/\\"\x00-\x1f\x7f-\x9f\u2028\u2029]{1,255}$/;
-const SAFE_MIME_TYPE = /^[\w.+-]{1,63}\/[\w.+-]{1,63}$/;
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+export const SAFE_MESSAGE_ID = /^<[\x21-\x3b\x3d\x3f-\x7e]{1,995}>$/;
+export const SAFE_FILENAME = /^[^/\\"\x00-\x1f\x7f-\x9f\u2028\u2029]{1,255}$/;
+export const SAFE_MIME_TYPE = /^[\w.+-]{1,63}\/[\w.+-]{1,63}$/;
+export const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 // Line breaks of every kind plus C0/C1 controls.
 const HEADER_UNSAFE = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 const PLAIN_PHRASE = /^[\x20-\x7e]*$/;
