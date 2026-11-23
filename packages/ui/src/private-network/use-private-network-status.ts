@@ -3,6 +3,7 @@ import type { PrivateNetworkClient, PrivateNetworkStatus } from "./client.js";
 import {
   LOGIN_POLL_LIMIT_MS,
   PRIVATE_NETWORK_ERRORS,
+  STATUS_IDLE_POLL_MS,
   STATUS_POLL_MS,
   logRequestFailure,
   requestErrorStatus,
@@ -62,14 +63,16 @@ export function usePrivateNetworkStatus(client: PrivateNetworkClient): PrivateNe
 
   const state = status?.state;
   useEffect(() => {
-    if (state !== "needs-login") {
-      loginDeadline.current = null;
-      return;
-    }
-    loginDeadline.current ??= Date.now() + LOGIN_POLL_LIMIT_MS;
-    if (Date.now() >= loginDeadline.current) {
-      setLoginTimedOut(true);
-      return;
+    // Polls while the panel is shown: fast during a login, slowly once settled,
+    // so a change made in another tab or on the server shows here too.
+    if (phase !== "ready" || !state || state === "unsupported") return;
+    if (state !== "needs-login") loginDeadline.current = null;
+    else {
+      loginDeadline.current ??= Date.now() + LOGIN_POLL_LIMIT_MS;
+      if (Date.now() >= loginDeadline.current) {
+        setLoginTimedOut(true);
+        return;
+      }
     }
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -85,12 +88,12 @@ export function usePrivateNetworkStatus(client: PrivateNetworkClient): PrivateNe
           logRequestFailure("status poll", failure);
           setPollTick((tick) => tick + 1);
         });
-    }, STATUS_POLL_MS);
+    }, state === "needs-login" ? STATUS_POLL_MS : STATUS_IDLE_POLL_MS);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [client, state, pollTick]);
+  }, [client, phase, state, pollTick]);
 
   const retry = useCallback(() => {
     setPhase((current) => (current === "failed" ? "loading" : current));

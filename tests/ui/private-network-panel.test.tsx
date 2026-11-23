@@ -3,7 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrivateNetworkPanel } from "../../packages/ui/src/private-network/PrivateNetworkPanel";
-import { MACHINES_IDLE_POLL_MS } from "../../packages/ui/src/private-network/presentation";
+import { MACHINES_IDLE_POLL_MS, STATUS_IDLE_POLL_MS } from "../../packages/ui/src/private-network/presentation";
 import type {
   PairedMachinesResponse,
   PrivateNetworkClient,
@@ -182,6 +182,19 @@ describe("PrivateNetworkPanel", () => {
     expect(await screen.findByText("Could not disconnect. Try again.")).toBeTruthy();
     expect(screen.getByText("alice@example.com")).toBeTruthy();
     expect(document.body.textContent).not.toContain("secret-path");
+  });
+
+  it("keeps this computer's connection status current after it connects", async () => {
+    // Found in review: polling stopped once connected, so a disconnect elsewhere
+    // (another tab, or tailscale down on the server) kept showing Connected.
+    vi.useFakeTimers();
+    const statusFn = vi.fn<PrivateNetworkClient["status"]>().mockResolvedValueOnce(connected).mockResolvedValue(status({ state: "stopped" }));
+    render(<PrivateNetworkPanel client={fakeClient({ status: statusFn })} />);
+    await flush();
+    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);
+    await flush(STATUS_IDLE_POLL_MS);
+    expect(statusFn).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText("Disconnected").length).toBeGreaterThan(0);
   });
 
   it("keeps paired machines' online state current without a join code", async () => {

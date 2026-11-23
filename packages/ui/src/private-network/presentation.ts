@@ -6,6 +6,8 @@ export const mutedText: CSSProperties = { color: "var(--matrix-muted-fg)", fontS
 export const linkStyle: CSSProperties = { color: "var(--matrix-primary)", textDecoration: "underline", wordBreak: "break-all" };
 
 export const STATUS_POLL_MS = 3_000;
+/** Once settled (connected, stopped, ...): slow, but a change made elsewhere still shows. */
+export const STATUS_IDLE_POLL_MS = 30_000;
 export const LOGIN_POLL_LIMIT_MS = 10 * 60_000;
 export const MACHINES_POLL_MS = 5_000;
 /** While Machines is open without a join code: slow, but a machine going offline still shows. */
