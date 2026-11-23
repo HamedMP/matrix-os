@@ -24,3 +24,26 @@ Bound external observations and process stops. Keep the old binding when proof o
 Regression tests cover idle account switch, same-account consent refresh, active or uncertain old execution, stale/cross-owner references, repeat retry, and settings changes during startup. Run the affected gateway suites and typecheck. Capture the changed Chat journey on each affected Matrix surface from a reviewed preview or staging build before PR review readiness. Recommend product and security review of the account-switch behavior.
 
 Public documentation update: prepare a separate matrix-os-site PR describing Codex account switching and Chat continuity.
+
+## Recovery after temporary identity observation failures
+
+Execution admission must request identity without optional usage. The Settings
+usage reader has a five-second cooldown and may retain a failed observation;
+that cache must never substitute for a fresh account proof at launch or resume.
+Keep the private principal verification, owner checks, current consent, profile
+guard, and session registration unchanged.
+
+When a Settings snapshot privately classifies its identity observation as
+`checking`, reobserve at most once. Check the revocation fence, profile, and
+saved consent revision before the retry, then apply all ordinary admission
+checks to the new snapshot. Confirmed sign-out or account change must not retry.
+This retries observation only; it never replays a provider prompt.
+
+Regression qualification keeps the production metadata reader, private proof,
+admission, durable session registration, and workspace recovery together, with
+only the Codex RPC transport simulated. Cover a timed-out optional observation
+followed immediately by healthy identity, cold recovery of the same native
+conversation, changed principal rejection, bounded observation retries, and
+consent changes during retry. Record red/green evidence. Live qualification
+still requires the existing surface evidence above; simulated RPCs do not
+qualify a running provider or client. Product/security review is recommended.

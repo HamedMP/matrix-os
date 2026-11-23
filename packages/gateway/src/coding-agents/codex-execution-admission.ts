@@ -6,6 +6,7 @@ import { boundedOperation } from "../bounded-operation.js";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
+import { codexCatalogObservation } from "../ai-providers/codex-native-observation.js";
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata } from "../ai-providers/native-account-metadata-binding.js";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { CodexNativeAccountMetadata } from "../ai-providers/codex-native-account-metadata.js";
@@ -74,7 +75,18 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     if (rows.length !== 1 || !rows[0]!.enabled) reject();
     const row = rows[0]!;
     if (row.route.kind !== "fixed" || row.route.providerId !== "openai") reject();
-    const snapshot = await options.getSnapshot();
+    let snapshot = await options.getSnapshot();
+    if (snapshot.access.mode !== "writable" || snapshot.revision !== config!.revision) reject();
+    // An unavailable private observation is not a confirmed logout. Reobserve
+    // once under the same consent; never replay a provider turn or retry an
+    // observed sign-out/account change. Every original proof below still runs.
+    if (codexCatalogObservation(snapshot) === "checking") {
+      await sessions.assertOpen();
+      await options.assertProfileAvailable?.();
+      const saved = await readSavedProviderSettingsConfiguration(path);
+      if (!saved || saved.revision !== config!.revision) reject();
+      snapshot = await options.getSnapshot();
+    }
     if (snapshot.access.mode !== "writable" || snapshot.revision !== config!.revision) reject();
     const source = snapshot.accessSources.find(source => source.id === row.accessSourceId);
     const account = snapshot.accounts.find(account => account.id === row.selectedAccountId);
