@@ -7,13 +7,14 @@ import { describe, expect, it } from 'vitest';
 const helper = resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-support-access');
 const isolatedInstallFixture = resolve(import.meta.dirname, '../fixtures/support-access-install-isolated.sh');
 // Ubuntu 24.04 hosts with kernel.apparmor_restrict_unprivileged_userns=1 refuse
-// `unshare -Ur`, but its bwrap profile still grants user namespaces.
+// `unshare -Ur`, but its bwrap profile still grants user namespaces. Probe the
+// mount the fixture needs: some runners start the namespace and then deny it.
 const namespaceRunner = ((): string[] | null => {
   const candidates = [
     ['unshare', '-Ur', '-m'],
     ['bwrap', '--unshare-user', '--uid', '0', '--gid', '0', '--cap-add', 'ALL', '--dev-bind', '/', '/'],
   ];
-  return candidates.find(([command, ...args]) => spawnSync(command!, [...args, 'true']).status === 0) ?? null;
+  return candidates.find(([command, ...args]) => spawnSync(command!, [...args, 'mount', '-t', 'tmpfs', 'tmpfs', '/etc']).status === 0) ?? null;
 })();
 const supportsUserMountNamespace = namespaceRunner !== null;
 
