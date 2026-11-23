@@ -211,9 +211,10 @@ function align(
       const attempt = match.slice();
       const budget: WorkBudget = { left: ALIGN_BUDGET };
       alignRange(aTok, range.a0, range.a1, bTok, range.b0, range.b1, attempt, budget);
-      if (budget.left > 0) {
+      // Without texts there is no line fallback: a partial alignment is still the best there is.
+      if (budget.left > 0 || !texts) {
         match.set(attempt);
-        fine = true;
+        fine = budget.left > 0;
       }
     }
     if (!fine) complete = texts ? alignByLines(texts, it, range, match, maxTokens) : false;

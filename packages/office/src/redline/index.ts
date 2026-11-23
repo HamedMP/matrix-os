@@ -7,3 +7,5 @@ export type * from "../api/redline.js";
 export { MAX_SEQUENCE_LENGTH, MAX_TEXT_LENGTH, diffSequences, diffWords } from "./diff.js";
 export { tokenize } from "./tokenize.js";
 export type { TokenizeOptions } from "./tokenize.js";
+export { diffParagraphs } from "./paragraphs.js";
+export type { ParagraphDiffOp, ParagraphDiffOptions, ParagraphOpType } from "./paragraphs.js";
