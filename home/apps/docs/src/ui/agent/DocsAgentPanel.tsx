@@ -24,6 +24,7 @@ import "./docs-agent.css";
 export interface DocsAgentPanelProps {
   session: DocumentSession;
   editor: DocumentEditorController | null;
+  /** Accepted for the side panel contract; the side panel shows the one close button. */
   onClose?: () => void;
   /** True in the read-only (original) view: nothing is changed from the panel. */
   readOnly?: boolean;
@@ -55,7 +56,7 @@ function selectionOf(editor: DocumentEditorController | null): TextRange | null 
 const noSubscription = () => () => undefined;
 const noSelection = () => null;
 
-export function DocsAgentPanel({ session, editor, onClose, readOnly = false, generate }: DocsAgentPanelProps) {
+export function DocsAgentPanel({ session, editor, readOnly = false, generate }: DocsAgentPanelProps) {
   const model = useMemo(() => generate ?? bridgeGenerate(), [generate]);
   const editorRef = useRef(editor);
   const modelRef = useRef(model);
@@ -138,7 +139,6 @@ export function DocsAgentPanel({ session, editor, onClose, readOnly = false, gen
         results={results}
         busy={state.busy}
         onCancel={() => store.cancel()}
-        onClose={onClose}
         suggestions={QUICK_ACTIONS.map((action) => action.label)}
         placeholder={mode.placeholder}
         disabled={unavailable || session.document === null || (readOnly && state.mode !== "ask")}

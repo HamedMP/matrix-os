@@ -50,6 +50,11 @@
   caret-color: var(--doc-ink);
 }
 
+/* The sheet and the caret show where the owner types; the app-wide focus ring would frame the text column. */
+:root .doc-content[contenteditable]:focus-visible {
+  outline: none;
+}
+
 .doc-header,
 .doc-footer {
   color: var(--app-muted-fg);

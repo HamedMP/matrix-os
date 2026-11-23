@@ -31,6 +31,8 @@ describe("side panel wiring", () => {
     expect(screen.getByText("Loading review")).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: /Assistant/ }));
     expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
+    // The side panel's own close button is the only one; the assistant adds no second close.
+    expect(screen.queryByRole("button", { name: "Close Assistant" })).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /Compare/ }));
     expect(await screen.findByRole("button", { name: "Choose from Files…" }, { timeout: 5000 })).toBeTruthy();
     expect(screen.queryByText("Not available")).toBeNull();
