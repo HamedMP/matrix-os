@@ -975,14 +975,23 @@ MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale restore_previous_listener`;
     // Found live: Tailscale Serve kept port 80 on the tailnet address, so public nginx could not bind.
     it("turns off Matrix's Tailscale Serve handlers before public nginx binds port 80", () => {
       const calls = join(dir, "serve-calls");
-      const serve = (status: string) => run(`tailscale() { [ "$*" = "serve status" ] && { printf '%s\\n' "${status}"; return 0; }; echo "tailscale $*" >>"${calls}"; }
+      const status = join(dir, "serve.json");
+      const serve = (web: Record<string, string>) => {
+        writeFileSync(status, JSON.stringify({ Web: Object.fromEntries(Object.entries(web).map(([host, proxy]) => [host, { Handlers: { "/": { Proxy: proxy } } }])) }));
+        rmSync(calls, { force: true });
+        return run(`tailscale() { [ "$*" = "serve status --json" ] && { cat "${status}"; return 0; }; echo "tailscale $*" >>"${calls}"; }
 timeout() { shift; "$@"; }
 MATRIX_INSTALL_LOG=/dev/null stop_matrix_tailscale_serve`);
-      expect(serve("|-- / proxy http://127.0.0.1:9000").status).toBe(0);
+      };
+      const matrix = "unix:/run/matrix-nginx/tailnet.sock";
+      expect(serve({ "box.ts.net:443": "http://127.0.0.1:9000" }).status).toBe(0);
       expect(existsSync(calls)).toBe(false);
-      const result = serve("|-- / proxy unix:/run/matrix-nginx/tailnet.sock");
+      // Review P1: another app's HTTPS site on 443 stays when Matrix used HTTP on 80.
+      const result = serve({ "box.ts.net:80": matrix, "box.ts.net:443": "http://127.0.0.1:9000" });
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --http=80 off\ntailscale serve --https=443 off\n");
+      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --http=80 off\n");
+      serve({ "box.ts.net:443": matrix });
+      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --https=443 off\n");
       const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
       expect(main).toContain('[ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve');
       expect(main.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(main.indexOf("configure_nginx"));

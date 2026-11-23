@@ -1094,12 +1094,32 @@ configure_tailscale_serve() {
 
 # stop_matrix_tailscale_serve: after a private install, Tailscale Serve holds port 80
 # (and 443) on the tailnet address, so public nginx cannot bind 0.0.0.0:80. Only
-# a Serve config that points at Matrix's socket is turned off.
+# a port whose handler points at Matrix's socket is turned off; other apps' ports stay.
 stop_matrix_tailscale_serve() {
+  local port
   command -v tailscale >/dev/null 2>&1 || return 0
-  timeout 30 tailscale serve status 2>>"$MATRIX_INSTALL_LOG" | grep -qF "$TAILNET_SOCKET" || return 0
-  timeout 30 tailscale serve --http=80 off >>"$MATRIX_INSTALL_LOG" 2>&1 || log "no Tailscale Serve handler on port 80"
-  timeout 30 tailscale serve --https=443 off >>"$MATRIX_INSTALL_LOG" 2>&1 || log "no Tailscale Serve handler on port 443"
+  for port in $(timeout 30 tailscale serve status --json 2>>"$MATRIX_INSTALL_LOG" | matrix_serve_ports); do
+    case "$port" in
+      80) timeout 30 tailscale serve --http=80 off >>"$MATRIX_INSTALL_LOG" 2>&1 || warn "could not turn off Tailscale Serve on port 80" ;;
+      443) timeout 30 tailscale serve --https=443 off >>"$MATRIX_INSTALL_LOG" 2>&1 || warn "could not turn off Tailscale Serve on port 443" ;;
+    esac
+  done
+}
+
+# matrix_serve_ports: reads `tailscale serve status --json`; prints each port
+# whose handlers proxy to Matrix's tailnet socket.
+matrix_serve_ports() {
+  SOCKET="unix:${TAILNET_SOCKET}" python3 -I -c '
+import json, os, sys
+try:
+    web = json.load(sys.stdin).get("Web") or {}
+except ValueError:
+    sys.exit(0)
+for host, conf in web.items():
+    handlers = (conf or {}).get("Handlers") or {}
+    if any((h or {}).get("Proxy") == os.environ["SOCKET"] for h in handlers.values()):
+        print(host.rsplit(":", 1)[-1])
+'
 }
 
 configure_private_network() {
