@@ -115,17 +115,32 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
   }
   // Receipt facts stay private to this instance; the WeakMap is bounded by live receipts.
   const receipts = new WeakMap<object, { userId: string; binding: string; principal: string; revision: number;
-    configurationFingerprint: string; issuedAt: number }>();
-  function mint(userId: string, value: Awaited<ReturnType<typeof current>>, binding: string | undefined): CodexAdmissionReceipt {
+    configurationFingerprint: string; consentRevision: number; harnessInstanceId: string; accountId: string; issuedAt: number }>();
+  // Latest receipt per session so launch admission in the same send can confirm
+  // instead of re-projecting. Bounded: oldest evicted past 64; facts expire in 30 s.
+  const sessionReceipts = new Map<string, CodexAdmissionReceipt>();
+  function mint(userId: string, value: Awaited<ReturnType<typeof current>>, binding: string | undefined, sessionId?: string): CodexAdmissionReceipt {
     const receipt = Object.freeze({ binding });
-    if (value) receipts.set(receipt, { userId, binding: value.binding, principal: value.principal, revision: value.revision,
-      configurationFingerprint: value.configurationFingerprint, issuedAt: Date.now() });
+    if (value) {
+      receipts.set(receipt, { userId, binding: value.binding, principal: value.principal, revision: value.revision,
+        configurationFingerprint: value.configurationFingerprint, consentRevision: value.consentRevision,
+        harnessInstanceId: value.harnessInstanceId, accountId: value.accountId, issuedAt: Date.now() });
+      if (sessionId) {
+        sessionReceipts.delete(sessionId);
+        sessionReceipts.set(sessionId, receipt);
+        if (sessionReceipts.size > 64) sessionReceipts.delete(sessionReceipts.keys().next().value!);
+      }
+    }
     return receipt;
   }
-  async function confirm(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
+  function freshFacts(userId: string, receipt: CodexAdmissionReceipt | undefined) {
     const facts = receipt && typeof receipt === "object" ? receipts.get(receipt) : undefined;
     const age = facts ? Date.now() - facts.issuedAt : Infinity;
-    if (!facts || facts.userId !== userId || age < 0 || age >= RECEIPT_TTL_MS) {
+    return facts && facts.userId === userId && age >= 0 && age < RECEIPT_TTL_MS ? facts : undefined;
+  }
+  async function confirm(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
+    const facts = freshFacts(userId, receipt);
+    if (!facts) {
       await validate(userId, receipt?.binding, sessionId);
       return;
     }
@@ -155,11 +170,11 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     async startWithReceipt(userId, sessionId) {
       const value = await current(userId);
       await sessions.register(userId, sessionId, value?.binding ?? null);
-      return { binding: value?.binding, receipt: mint(userId, value, value?.binding) };
+      return { binding: value?.binding, receipt: mint(userId, value, value?.binding, sessionId) };
     },
     async validateWithReceipt(userId, binding, sessionId) {
       const value = await validate(userId, binding, sessionId);
-      return mint(userId, value, binding);
+      return mint(userId, value, binding, sessionId);
     },
     prepareRevocation: sessions.prepareRevocation,
     async renewStoppedSession(userId, previousBinding, sessionId, proveStopped) {
@@ -201,6 +216,14 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     async validateLaunch(userId, sessionId) {
       const prior = await sessions.get(sessionId);
       if (prior && prior.userId !== userId) reject();
+      const receipt = sessionReceipts.get(sessionId);
+      const facts = freshFacts(userId, receipt);
+      if (receipt && facts && prior?.binding === facts.binding) {
+        await confirm(userId, receipt, sessionId);
+        return { expectedPrincipalFingerprint: facts.principal, expectedConsentRevision: facts.consentRevision,
+          expectedHarnessInstanceId: facts.harnessInstanceId, expectedAccountId: facts.accountId,
+          expectedConfigurationFingerprint: facts.configurationFingerprint };
+      }
       const value = await validate(userId, prior?.binding ?? undefined, sessionId);
       return value ? { expectedPrincipalFingerprint: value.principal, expectedConsentRevision: value.consentRevision,
         expectedHarnessInstanceId: value.harnessInstanceId, expectedAccountId: value.accountId, expectedConfigurationFingerprint: value.configurationFingerprint } : undefined;

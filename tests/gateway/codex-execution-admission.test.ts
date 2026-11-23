@@ -347,3 +347,27 @@ describe("one full native admission per send", () => {
   });
 });
 
+describe("launch admission reuses the same send's receipt", () => {
+  it("confirms the session's fresh receipt at launch without another snapshot projection", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_launch");
+    await admission.confirm("owner", receipt, "sess_launch");
+    const intent = await admission.validateLaunch("owner", "sess_launch");
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    expect(intent).toMatchObject({ expectedPrincipalFingerprint: createHash("sha256").update("private_owner_profile_A").digest("hex"),
+      expectedConsentRevision: 1, expectedHarnessInstanceId: "codex", expectedAccountId: "native_account" });
+    // A different session never borrows it.
+    await expect(admission.validateLaunch("owner", "sess_other")).rejects.toThrow("unavailable");
+  });
+  it.each(["principal", "disabled"])("still refuses launch after %s", async kind => {
+    const f = await fixture();
+    const admission = createCodexExecutionAdmission(f.options);
+    await admission.startWithReceipt("owner", "sess_launch");
+    if (kind === "principal") f.change({ principal: "private_owner_profile_B" });
+    else { f.change({ enabled: false }); await f.save(); }
+    await expect(admission.validateLaunch("owner", "sess_launch")).rejects.toThrow("unavailable");
+  });
+});
+
