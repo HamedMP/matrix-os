@@ -3,7 +3,7 @@ import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "../c
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
 import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import type { SessionStartScope } from "../session-start-guard.js";
-import type { CodexExecutionAdmission } from "./codex-execution-admission.js";
+import type { CodexAdmissionReceipt, CodexExecutionAdmission } from "./codex-execution-admission.js";
 import { join } from "node:path";
 import { boundedOperation } from "../bounded-operation.js";
 import {
@@ -273,7 +273,11 @@ export function createWorkspaceCodingAgentProvider(
         const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
         if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
         if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");
-        const nativeAccountBinding = agent === "codex" ? await timeChatSendStage("codex_admission_start", async () => options.codexAdmission?.start(principal.userId, sessionId)) : undefined;
+        // One full native check per send; the post-watch recheck confirms its receipt.
+        const admitted = agent === "codex" ? await timeChatSendStage("codex_admission_start", async () => options.codexAdmission?.startWithReceipt
+          ? options.codexAdmission.startWithReceipt(principal.userId, sessionId)
+          : { binding: await options.codexAdmission?.start(principal.userId, sessionId), receipt: undefined }) : undefined;
+        const nativeAccountBinding = admitted?.binding;
         let result;
         let runtimeInvoked = false;
         let startup: ReturnType<typeof beginNativeBrowserBootstrap>;
@@ -287,7 +291,9 @@ export function createWorkspaceCodingAgentProvider(
               ...(options.codexControl ? { checkpoint: true } : {}),
             }));
           }
-          if (agent === "codex") await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId));
+          if (agent === "codex") await timeChatSendStage("codex_admission_validate", async () => admitted?.receipt && options.codexAdmission?.confirm
+            ? options.codexAdmission.confirm(principal.userId, admitted.receipt, sessionId)
+            : options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId));
           // Keep physical startup and MCP binding tracked without marking
           // manager-proved predispatch failures as uncertain processes.
           startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
@@ -373,9 +379,13 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider conversation mismatch");
       }
       signal.throwIfAborted();
+      let receipt: CodexAdmissionReceipt | undefined;
       if (agent === "codex") {
         try {
-          await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
+          await timeChatSendStage("codex_admission_validate", async () => {
+            if (options.codexAdmission?.validateWithReceipt) receipt = await options.codexAdmission.validateWithReceipt(principal.userId, resumeState.nativeAccountBinding, sessionId);
+            else await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
+          });
         } catch (error: unknown) {
           const recovered = await recoverStoppedCodexContinuation(options, context, sessionId, workspaceTurnPrompt(turn.message, turn.attachments));
           if (recovered) return recovered;
@@ -403,7 +413,9 @@ export function createWorkspaceCodingAgentProvider(
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         const browser = nativeBrowserExecution(principal.userId);
         try {
-          await timeChatSendStage("codex_admission_validate", async () => options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
+          await timeChatSendStage("codex_admission_validate", async () => receipt && options.codexAdmission?.confirm
+            ? options.codexAdmission.confirm(principal.userId, receipt, sessionId)
+            : options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
           const submitStartedAt = startChatSendStage();
           const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}) }, `req_${turn.turnId.slice("turn_".length)}`);

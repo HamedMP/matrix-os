@@ -21,7 +21,20 @@ export interface CodexExecutionAdmission {
   prepareRevocation(): Promise<() => Promise<void>>;
   releaseStoppedSession(userId: string, sessionId: string, proof: unknown): Promise<void>;
   releaseFailedStart(userId: string, sessionId: string, binding: string | undefined, result: unknown): Promise<void>;
+  /** Full check that also mints a short-lived same-send receipt. */
+  startWithReceipt?(userId: string, sessionId?: string): Promise<{ binding: string | undefined; receipt: CodexAdmissionReceipt }>;
+  validateWithReceipt?(userId: string, binding: string | undefined, sessionId?: string): Promise<CodexAdmissionReceipt>;
+  /**
+   * Re-check within the same send after an async step (watch): owner, open
+   * revocation gate, unchanged saved consent row and revision, and a fresh
+   * verified native principal equal to the receipt's. Skips only re-projecting
+   * the Settings snapshot. Unknown, foreign, or expired receipts run the full check.
+   */
+  confirm?(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string): Promise<void>;
 }
+/** Opaque; only receipts minted by the same admission instance are honored. */
+export type CodexAdmissionReceipt = { readonly binding: string | undefined };
+const RECEIPT_TTL_MS = 30_000;
 export interface CodexExecutionAdmissionOptions {
   homePath: string;
   stopSession?(sessionId: string): Promise<void>;
@@ -90,7 +103,7 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     const binding = createHash("sha256").update(JSON.stringify({
       owner: userId, computer: resolve(options.homePath), configurationFingerprint, principal,
     })).digest("hex");
-    return { binding, principal: principal!, consentRevision: row.nativeAccountConsentRevision!, configurationFingerprint, harnessInstanceId: row.id, accountId: row.selectedAccountId! };
+    return { revision: config!.revision, binding, principal: principal!, consentRevision: row.nativeAccountConsentRevision!, configurationFingerprint, harnessInstanceId: row.id, accountId: row.selectedAccountId! };
   }
   async function validate(userId: string, binding?: string, sessionId?: string) {
     const value = await current(userId);
@@ -100,8 +113,82 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     await sessions.register(userId, sessionId, value?.binding ?? null);
     return value;
   }
+  // Receipt facts stay private to this instance; the WeakMap is bounded by live receipts.
+  const receipts = new WeakMap<object, { userId: string; sessionId: string | undefined; binding: string; principal: string; revision: number;
+    configurationFingerprint: string; consentRevision: number; harnessInstanceId: string; accountId: string; issuedAt: number }>();
+  // Latest receipt per session so launch admission in the same send can confirm
+  // instead of re-projecting. Bounded: oldest evicted past 64; facts expire in 30 s.
+  const sessionReceipts = new Map<string, CodexAdmissionReceipt>();
+  function mint(userId: string, value: Awaited<ReturnType<typeof current>>, binding: string | undefined, sessionId?: string): CodexAdmissionReceipt {
+    const receipt = Object.freeze({ binding });
+    if (value) {
+      receipts.set(receipt, { userId, sessionId, binding: value.binding, principal: value.principal, revision: value.revision,
+        configurationFingerprint: value.configurationFingerprint, consentRevision: value.consentRevision,
+        harnessInstanceId: value.harnessInstanceId, accountId: value.accountId, issuedAt: Date.now() });
+      if (sessionId) {
+        sessionReceipts.delete(sessionId);
+        sessionReceipts.set(sessionId, receipt);
+        if (sessionReceipts.size > 64) sessionReceipts.delete(sessionReceipts.keys().next().value!);
+      }
+    }
+    return receipt;
+  }
+  function freshFacts(userId: string, receipt: CodexAdmissionReceipt | undefined) {
+    const facts = receipt && typeof receipt === "object" ? receipts.get(receipt) : undefined;
+    const age = facts ? Date.now() - facts.issuedAt : Infinity;
+    return facts && facts.userId === userId && age >= 0 && age < RECEIPT_TTL_MS ? facts : undefined;
+  }
+  /**
+   * Returns undefined when the receipt was confirmed, or the full check's value
+   * when it had to run (unknown, foreign, other-session, or expired receipt, or
+   * any Settings write since). Only the full check's binding comparison decides
+   * those; owner, revocation gate, and principal mismatches reject outright.
+   */
+  async function confirmOrValidate(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
+    const facts = freshFacts(userId, receipt);
+    if (!facts || facts.sessionId !== sessionId) return { full: await validate(userId, receipt?.binding, sessionId) };
+    return timeChatSendStage("codex_execution_confirm", async () => {
+      if (!await options.isOwner(userId)) reject();
+      await sessions.assertOpen();
+      const config = await readSavedProviderSettingsConfiguration(path);
+      const rows = config?.harnesses.filter(row => row.harness === "codex") ?? [];
+      const row = rows[0];
+      // Any Settings write (even an unrelated harness edit) bumps the revision:
+      // re-derive everything with the full check rather than failing the send.
+      if (!config || config.revision !== facts.revision || rows.length !== 1 || !row!.enabled
+        || nativeCodexConfigurationFingerprint(row!) !== facts.configurationFingerprint
+        || row!.nativeAccountGeneration !== facts.principal) return { full: await validate(userId, facts.binding, sessionId) };
+      await options.assertProfileAvailable?.();
+      const metadata = await verifyNativeAccountMetadata(await options.readNativeAccount());
+      if (!metadata || metadata.authMethod !== "terminal"
+        || !(Date.parse(metadata.checkedAt) <= Date.now() && Date.parse(metadata.staleAfter) > Date.now())
+        || nativeAccountPrincipalFingerprint(metadata) !== facts.principal) reject();
+      await options.assertProfileAvailable?.();
+      await sessions.assertOpen();
+      const latest = await readSavedProviderSettingsConfiguration(path);
+      if (!latest || latest.revision !== facts.revision) return { full: await validate(userId, facts.binding, sessionId) };
+      await sessions.register(userId, sessionId, facts.binding);
+      return { full: undefined, confirmed: facts };
+    });
+  }
+  async function confirm(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
+    await confirmOrValidate(userId, receipt, sessionId);
+  }
   return {
-    prepareRevocation: sessions.prepareRevocation,
+    confirm,
+    async startWithReceipt(userId, sessionId) {
+      const value = await current(userId);
+      await sessions.register(userId, sessionId, value?.binding ?? null);
+      return { binding: value?.binding, receipt: mint(userId, value, value?.binding, sessionId) };
+    },
+    async validateWithReceipt(userId, binding, sessionId) {
+      const value = await validate(userId, binding, sessionId);
+      return mint(userId, value, binding, sessionId);
+    },
+    async prepareRevocation() {
+      sessionReceipts.clear();
+      return sessions.prepareRevocation();
+    },
     async renewStoppedSession(userId, previousBinding, sessionId, proveStopped) {
       if (!/^[a-f0-9]{64}$/.test(previousBinding)) reject();
       const candidate = await current(userId);
@@ -126,10 +213,12 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     },
     async releaseStoppedSession(userId, sessionId, proof) {
       if (!isSessionStopConfirmed(proof, userId, sessionId)) return;
+      sessionReceipts.delete(sessionId);
       await sessions.releaseCleanFailure(userId, sessionId);
     },
     async releaseFailedStart(userId, sessionId, binding, result) {
       if (!isSessionStartClean(result, userId, sessionId)) return;
+      sessionReceipts.delete(sessionId);
       await sessions.releaseCleanFailure(userId, sessionId, binding ?? null);
     },
     async start(userId, sessionId) {
@@ -141,6 +230,18 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     async validateLaunch(userId, sessionId) {
       const prior = await sessions.get(sessionId);
       if (prior && prior.userId !== userId) reject();
+      const receipt = sessionReceipts.get(sessionId);
+      const facts = freshFacts(userId, receipt);
+      if (receipt && facts && prior?.binding === facts.binding) {
+        const outcome = await confirmOrValidate(userId, receipt, sessionId);
+        // Intent comes from the confirmed facts, or from the full check when it ran.
+        const value = outcome.full ?? (outcome.confirmed ? { principal: outcome.confirmed.principal, consentRevision: outcome.confirmed.consentRevision,
+          harnessInstanceId: outcome.confirmed.harnessInstanceId, accountId: outcome.confirmed.accountId,
+          configurationFingerprint: outcome.confirmed.configurationFingerprint } : undefined);
+        return value ? { expectedPrincipalFingerprint: value.principal, expectedConsentRevision: value.consentRevision,
+          expectedHarnessInstanceId: value.harnessInstanceId, expectedAccountId: value.accountId,
+          expectedConfigurationFingerprint: value.configurationFingerprint } : undefined;
+      }
       const value = await validate(userId, prior?.binding ?? undefined, sessionId);
       return value ? { expectedPrincipalFingerprint: value.principal, expectedConsentRevision: value.consentRevision,
         expectedHarnessInstanceId: value.harnessInstanceId, expectedAccountId: value.accountId, expectedConfigurationFingerprint: value.configurationFingerprint } : undefined;

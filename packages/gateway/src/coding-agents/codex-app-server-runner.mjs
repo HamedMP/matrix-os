@@ -108,11 +108,13 @@ try {
   fail("Codex app-server runner configuration is invalid.");
 }
 
-try {
-  await assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() });
-} catch (_error) {
-  fail("Codex provider version is not verified.");
-}
+// Overlap `codex --version` with the rest of startup (the private launch
+// handshake, proof setup, Browser lease wait). startNativeSession awaits it,
+// so no app-server is ever spawned before the version is verified.
+const providerVersionVerified = assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() }).then(() => true, (error) => {
+  console.warn("[coding-agents] Codex provider version check failed:", error instanceof Error ? error.name : "UnknownError");
+  return false;
+});
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
 const browserBootstrap = createCodexBrowserBootstrap(config.browserAttemptId);
@@ -1258,6 +1260,10 @@ process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
 async function startNativeSession(lease) {
+  if (!await providerVersionVerified) {
+    process.stderr.write("Codex provider version is not verified.\n");
+    throw new Error("provider_version_unverified");
+  }
   const resumeId = nativeThreadId ?? config.providerThreadId;
   const turnIndex = terminalEventCount + 1;
   const processStartedAt = sendTiming.now();
