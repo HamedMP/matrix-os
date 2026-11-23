@@ -148,6 +148,16 @@ describe("Docs ribbon and status bar", () => {
     expect((screen.getByRole("combobox", { name: "Markup view" }) as HTMLSelectElement).value).toBe("final");
   });
 
+  it("shows the ribbon tabs in menu-bar order with Home selected, and File opens the backstage", async () => {
+    await openContract();
+    const tablist = screen.getByRole("tablist", { name: "Document ribbon" });
+    expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["File", "Home", "Insert", "Review", "View", "Assistant"]);
+    expect(within(tablist).getByRole("tab", { name: "Home" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(tablist).getByRole("tab", { name: "File" }));
+    const entries = [...document.querySelectorAll(".oui-backstage__item")].map((item) => item.textContent);
+    expect(entries).toEqual(["New", "Open from Matrix…", "Open from this computer…", "Save", "Save a copy", "Download a copy", "Export", "Close"]);
+  });
+
   it("shows keyboard shortcuts in the command tooltips", async () => {
     await openContract();
     expect(screen.getByRole("button", { name: "Bold" }).getAttribute("aria-keyshortcuts")).toBe("Ctrl+B");
