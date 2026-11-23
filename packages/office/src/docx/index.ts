@@ -67,3 +67,22 @@ export type {
   CompareResult,
   CompareSummary,
 } from "./compare/index.js";
+
+// New documents (blank, plain paragraphs, Markdown) and HTML, Markdown and plain-text export.
+import { createDocxFactory, createDocxFromMarkdownWith } from "./create/index.js";
+
+FACTORIES.createDocx = createDocxFactory;
+
+/**
+ * Creates a document from Markdown: headings, paragraphs, bold, italic,
+ * strikethrough, inline code, links, nested lists, block quotes, fenced code
+ * and pipe tables. Raw HTML stays literal text.
+ */
+export const createDocxFromMarkdown = (
+  markdown: string,
+  options?: Omit<import("../api/docx.js").CreateDocxOptions, "paragraphs">,
+): import("../api/docx.js").DocxDocument =>
+  createDocxFromMarkdownWith(markdown, options, (pkg, texts) => documentFromPackage(pkg, texts, ENGINES));
+
+export { toHtml, toMarkdown, toPlainText } from "./export/index.js";
+export type { HtmlExportMode, HtmlExportOptions, MarkdownExportOptions, PlainTextExportOptions } from "./export/index.js";
