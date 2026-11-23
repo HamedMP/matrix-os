@@ -58,10 +58,15 @@ export function useTerminalPreviews(options: {
   // When each computer terminal was last read, the status it had then, and whether the read worked.
   // Kept while the overview stays open, across changes to the list; bounded by the list.
   const lastReadRef = useRef(new Map<string, { at: number; statusAt: string | undefined; ok: boolean }>());
+  // The newest read started for each listed terminal, across rounds and reopenings: an older read
+  // that finishes later never replaces a newer screen. Bounded by the list.
+  const newestReadRef = useRef(new Map<string, number>());
+  const readCountRef = useRef(0);
 
   // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/no-set-state-after-await-in-effect -- the round's timer is cleared and the loop cancelled in the returned cleanup (nothing starts while disabled); a late read still lands for terminals listed now, so an idle one is not left blank
   useEffect(() => {
     const lastRead = lastReadRef.current;
+    const newestRead = newestReadRef.current;
     if (!enabled) { lastRead.clear(); return undefined; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -83,9 +88,13 @@ export function useTerminalPreviews(options: {
       const shown = listed.map((row) => row.key);
       const listedKeys = new Set(shown);
       for (const key of [...lastRead.keys()]) if (!listedKeys.has(key)) lastRead.delete(key);
+      for (const key of [...newestRead.keys()]) if (!listedKeys.has(key)) newestRead.delete(key);
       const reading = listed.filter((row) => due(row, now));
       for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, statusAt: row.statusAt, ok: true });
       const read = await Promise.all(reading.map(async ({ key }) => {
+        readCountRef.current += 1;
+        const order = readCountRef.current;
+        newestRead.set(key, order);
         let lines: string[] | null = null;
         try {
           const text = await readScreen(key, apiRef.current);
@@ -95,7 +104,7 @@ export function useTerminalPreviews(options: {
         }
         const last = lastRead.get(key);
         if (lines === null && last?.at === now) lastRead.set(key, { ...last, ok: false });
-        return [key, lines] as const;
+        return [key, lines, order] as const;
       }));
       // A read that finished after the list changed still counts for terminals listed now: its
       // terminal is not read again until its status changes, so its result must not be dropped.
@@ -104,10 +113,9 @@ export function useTerminalPreviews(options: {
         // Only terminals still listed are kept, so the map stays as small as the list.
         const next: Record<string, string[]> = {};
         for (const key of stillListed) if (current[key]) next[key] = current[key]!;
-        for (const [key, lines] of read) if (lines && stillListed.has(key)) next[key] = lines;
+        for (const [key, lines, order] of read) if (lines && stillListed.has(key) && newestRead.get(key) === order) next[key] = lines;
         return next;
       });
-      if (cancelled) return;
       if (!cancelled) timer = setTimeout(() => { void round(); }, PREVIEW_INTERVAL_MS);
     };
     void round();

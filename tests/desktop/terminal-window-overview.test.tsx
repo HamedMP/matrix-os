@@ -187,7 +187,7 @@ describe("Terminal window overview previews", () => {
     if (failFirst) get.mockRejectedValueOnce(new Error("timed out"));
     const client = { get } as unknown as ApiClient;
     const hook = renderHook(
-      ({ rows }: { rows: TerminalSidebarRow[] }) => useTerminalPreviews({ rows, enabled: true, api: () => client }),
+      ({ rows, enabled = true }: { rows: TerminalSidebarRow[]; enabled?: boolean }) => useTerminalPreviews({ rows, enabled, api: () => client }),
       { initialProps: { rows: [row("local|t1", "1"), row(computerKey, "1")] } },
     );
     const localReads = () => window.operator!.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:read").length;
@@ -252,6 +252,23 @@ describe("Terminal window overview previews", () => {
     await tick(3_000);
     expect(hook.result.current[computerKey]).toEqual(["late screen"]);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  // Fault detected (Greptile, #3586): closing and reopening the overview quickly let an older read
+  // that finished last replace the newer screen, which then stayed while the terminal was idle.
+  it("never lets an older computer read replace a newer screen", async () => {
+    const pending: Array<(value: { screen: string }) => void> = [];
+    const { hook } = setup(false, () => new Promise((resolve) => { pending.push(resolve); }));
+    const rows = [row(computerKey, "1")];
+    hook.rerender({ rows });
+    await tick(0);
+    hook.rerender({ rows, enabled: false });
+    hook.rerender({ rows, enabled: true });
+    await tick(0);
+    expect(pending.length).toBeGreaterThanOrEqual(2);
+    await act(async () => { pending.at(-1)!({ screen: "new screen" }); await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { pending[0]!({ screen: "old screen" }); await vi.advanceTimersByTimeAsync(0); });
+    expect(hook.result.current[computerKey]).toEqual(["new screen"]);
   });
 
   it("reads nothing while the window is hidden", async () => {
