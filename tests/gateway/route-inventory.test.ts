@@ -26,6 +26,7 @@ describe("gateway route inventory", () => {
     expect(gatewayRouteGroupForPath("/ws/terminal/tab")?.id).toBe("shell-terminal");
     expect(gatewayRouteGroupForPath("/api/bridge/data")?.id).toBe("bridge");
     expect(gatewayRouteGroupForPath("/api/canvases/abc")?.id).toBe("data-features");
+    expect(gatewayRouteGroupForPath("/api/board")?.id).toBe("data-features");
     expect(gatewayRouteGroupForPath("/files/system/icons/app.png")?.id).toBe("files-workspace");
   });
 });
