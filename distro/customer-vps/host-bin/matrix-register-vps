@@ -32,28 +32,9 @@ mark_registration_complete() {
   mv -f "$incoming" "$REGISTER_FLAG"
 }
 
-selected_developer_tools_settled() {
-  local installed_file="/var/lib/matrix-developer-tools/installed-tools"
-  local failed_file="/var/lib/matrix-developer-tools/failed-tools"
-  local tool bin_name
-  for tool in ${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}; do
-    case "$tool" in
-      claude-code) bin_name="claude" ;;
-      codex|opencode|pi) bin_name="$tool" ;;
-      *) return 1 ;;
-    esac
-    if [ -r "$installed_file" ] && grep -qxF "$tool" "$installed_file" && \
-      [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
-      continue
-    fi
-    [ -r "$failed_file" ] && grep -qxF "$tool" "$failed_file" && continue
-    return 1
-  done
-}
-
 runtime_ready() {
   [ -n "${MATRIX_AUTH_TOKEN:-}" ] || return 1
-  selected_developer_tools_settled || return 1
+  # Optional developer-tool installers run independently of core readiness.
   curl --fail --silent --show-error --max-time 2 \
     -H "authorization: Bearer ${MATRIX_AUTH_TOKEN}" \
     "$TERMINAL_HEALTH_URL" >/dev/null

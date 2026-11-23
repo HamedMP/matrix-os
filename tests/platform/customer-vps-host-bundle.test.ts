@@ -1825,11 +1825,11 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(registrationClient).toContain('curl --fail --silent --show-error --max-time 10');
     expect(registrationClient).toContain('MATRIX_REGISTRATION_TOKEN');
     expect(registrationClient).toContain('runtime_ready()');
-    expect(registrationClient).toContain('selected_developer_tools_settled()');
+    expect(registrationClient).not.toContain('MATRIX_DEVELOPER_TOOLS');
     expect(registrationClient).toContain('/api/terminal/health');
-    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/installed-tools');
-    expect(registrationClient).toContain('/var/lib/matrix-developer-tools/failed-tools');
-    expect(registrationClient).toContain('grep -qxF "$tool" "$failed_file" && continue');
+    expect(registrationClient).not.toContain('/var/lib/matrix-developer-tools');
+    expect(registrationClient).toContain('if [ "$gateway_healthy" != true ]; then');
+    expect(registrationClient).toContain('if registration_expired; then');
     expect(registrationClient).toContain('authorization: Bearer ${MATRIX_AUTH_TOKEN}');
     expect(registrationClient).toContain('if ! runtime_ready; then');
     expect(registrationClient).not.toContain('MATRIX_OPTIONAL_TOOLS_START_DELAY_SECONDS');
