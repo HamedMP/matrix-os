@@ -24,5 +24,5 @@ export async function openSheetSession(deps: SessionDeps, path: string): Promise
 /** A new, empty workbook that has no file yet. `saveAs` gives it one. */
 export function createSheetSession(deps: SessionDeps, options: { name?: string } = {}): SheetSession {
   const loaded: LoadedWorkbook = { workbook: createXlsx(), csv: null };
-  return new SheetSession(deps, loaded, { path: null, format: "xlsx", version: null }, options.name);
+  return new SheetSession(deps, loaded, { path: null, format: "xlsx", version: null }, { name: options.name });
 }

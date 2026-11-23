@@ -5,6 +5,14 @@ import type { CellRange, ChangedCell, SheetId, SheetRangeRef } from "./engine";
 /** What a file is saved as. Decided by the extension of its path. */
 export type SheetFileFormat = "xlsx" | "csv" | "tsv";
 
+/**
+ * Where the open document lives: `matrix` for a file in the owner's home (or
+ * a new workbook that will be saved there), `local` for a file opened from
+ * this computer, which is saved by downloading it again until a copy is
+ * saved to Matrix.
+ */
+export type DocumentSource = "matrix" | "local";
+
 /** The part of `window.MatrixOS.files` the session uses. */
 export interface SessionFiles {
   read(path: string): Promise<{ path: string; bytes: Uint8Array; size: number; version: string; mimeType: string }>;
@@ -103,6 +111,7 @@ export interface SessionState {
   path: string | null;
   /** File name without directories. */
   name: string;
+  source: DocumentSource;
   format: SheetFileFormat;
   /** True when edits are not on disk yet. */
   dirty: boolean;

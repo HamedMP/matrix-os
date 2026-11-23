@@ -325,6 +325,17 @@ export class SaveController {
     this.saveError = null;
   }
 
+  /** The edits so far were saved somewhere else (a download of a local file): the document counts as saved. */
+  markSaved(): void {
+    if (this.disposed) return;
+    this.cancelTimer();
+    this.savedSeq = this.host.editSeq();
+    this.lastSavedAt = this.options.now();
+    this.saveState = "saved";
+    this.saveError = null;
+    this.host.changed();
+  }
+
   /** Saves pending edits now, if any and if nothing blocks it. */
   flush(): Promise<SaveOutcome> {
     if (this.path === null || !this.dirty) return Promise.resolve({ status: "unchanged" });

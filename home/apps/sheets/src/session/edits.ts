@@ -112,6 +112,12 @@ export function applyInputs(workbook: Workbook, sheet: SheetId, start: CellAddre
   }
 }
 
+/** The first free "SheetN" name, counting on from the number of sheets. */
+export function nextSheetName(workbook: Pick<Workbook, "listSheets">): string {
+  const taken = new Set(workbook.listSheets().map((sheet) => sheet.name.toLowerCase()));
+  for (let n = taken.size + 1; ; n++) if (!taken.has(`sheet${n}`)) return `Sheet${n}`;
+}
+
 /** A complete style as a patch, to copy the look of one cell to another. */
 export function styleAsPatch(style: CellStyle): CellStylePatch {
   return {

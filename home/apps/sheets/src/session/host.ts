@@ -11,6 +11,7 @@
  */
 
 import { toSessionError } from "./file-io";
+import { openLocalSheetSession } from "./local";
 import { createSheetSession, openSheetSession } from "./open";
 import type { SheetSession } from "./session";
 import type { SessionDeps, SessionErrorCode } from "./types";
@@ -128,6 +129,36 @@ export class SessionHost {
     if (!(await this.release(options.discardUnsaved === true))) return { status: "unsaved" };
     if (ticket !== this.ticket) return { status: "superseded" };
     const session = createSheetSession(this.deps, { name: options.name });
+    this.replace(session);
+    return { status: "opened", session };
+  }
+
+  /**
+   * Opens a file chosen on this computer as a local document. A file that
+   * does not open is reported to the caller only: the current document
+   * stays, and no error page replaces it.
+   */
+  async openLocal(name: string, bytes: Uint8Array, options: { discardUnsaved?: boolean } = {}): Promise<HostOpenResult> {
+    const ticket = ++this.ticket;
+    let session: SheetSession;
+    try {
+      session = await openLocalSheetSession(this.deps, name, bytes);
+    } catch (error: unknown) {
+      const mapped = toSessionError(error);
+      return ticket === this.ticket ? { status: "error", code: mapped.code, message: mapped.message } : { status: "superseded" };
+    }
+    if (ticket !== this.ticket) {
+      session.dispose();
+      return { status: "superseded" };
+    }
+    if (!(await this.release(options.discardUnsaved === true))) {
+      session.dispose();
+      return { status: "unsaved" };
+    }
+    if (ticket !== this.ticket) {
+      session.dispose();
+      return { status: "superseded" };
+    }
     this.replace(session);
     return { status: "opened", session };
   }

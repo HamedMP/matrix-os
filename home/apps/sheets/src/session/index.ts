@@ -46,12 +46,22 @@
  *   everything.
  * - `session.recents.list()` gives the recently opened files.
  *
+ * Local documents
+ * - `host.openLocal(name, bytes)` opens a file chosen on this computer:
+ *   `state.source` is `"local"`, the path is null and autosave is off. Save
+ *   it with `exportSessionFile(session)` (bytes, name, MIME type) followed by
+ *   `session.markDownloaded()`; `session.saveAs(path)` makes it a Matrix
+ *   document with autosave. `exportSessionFile(session, "xlsx")` downloads a
+ *   copy of any document.
+ *
  * Undo of an edit that removed an array formula restores its values and the
  * formula of its first cell as an ordinary formula.
  */
 
 export { SheetSession } from "./session";
 export { createSheetSession, openSheetSession } from "./open";
+export { exportSessionFile, openLocalSheetSession } from "./local";
+export type { ExportedFile } from "./local";
 export { SessionHost } from "./host";
 export type { HostOpenResult, HostState } from "./host";
 export { SheetSessionError, copyPath, fileName, formatOfPath, isValidFilePath, sessionMessage } from "./file-io";
@@ -61,6 +71,7 @@ export { LARGE_RANGE_CELLS, clampRange, rangeArea, styleAsPatch } from "./edits"
 export type { SessionCellEdit, Transaction } from "./edits";
 export { DEFAULT_AUTOSAVE_DELAY_MS } from "./save";
 export type {
+  DocumentSource,
   EditResult,
   SaveOutcome,
   SaveState,

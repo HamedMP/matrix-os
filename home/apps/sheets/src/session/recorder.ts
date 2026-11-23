@@ -21,6 +21,7 @@ import {
   type WorkbookInternals,
   getWorkbookInternals,
 } from "./engine";
+import type { Transaction } from "./edits";
 import {
   type BandCell,
   type CellDelta,
@@ -290,4 +291,21 @@ export class Recorder {
     this.history.settleRedo();
     return entry;
   }
+}
+
+/** The edits a session transaction offers, recorded for undo. */
+export function transactionFor(recorder: Recorder, workbook: Workbook): Transaction {
+  return {
+    workbook,
+    insertRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, true),
+    deleteRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, false),
+    insertColumns: (sheet, index, count) => recorder.axis(sheet, "col", index, count, true),
+    deleteColumns: (sheet, index, count) => recorder.axis(sheet, "col", index, count, false),
+    setColumnWidths: (sheet, cols, width) => recorder.sizes(sheet, "col", cols, width),
+    setRowHeights: (sheet, rows, heightPt) => recorder.sizes(sheet, "row", rows, heightPt),
+    mergeCells: (sheet, range) => recorder.merges(sheet, () => workbook.mergeCells(sheet, range)),
+    unmergeCells: (sheet, range) => recorder.merges(sheet, () => workbook.unmergeCells(sheet, range)),
+    setFrozenPanes: (sheet, frozen) => recorder.frozen(sheet, frozen),
+    renameSheet: (sheet, name) => recorder.rename(sheet, name),
+  };
 }
