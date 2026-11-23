@@ -1929,7 +1929,8 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
-      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close()), officeDocuments.close()]);
+      const [nativeClose, officeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close()), officeDocuments.close()]);
+      if (officeClose.status === "rejected") logBestEffortFailure("Office documents shutdown failed", officeClose.reason);
       nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();
