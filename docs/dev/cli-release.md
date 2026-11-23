@@ -83,6 +83,22 @@ but a downstream release job failed, select the existing `cli-v<version>` tag
 as the workflow ref and rerun with `allow_existing_npm=true`; this preserves the
 published source revision while completing the GitHub release and Homebrew work.
 
+## Installer Host
+
+`https://get.matrix-os.com` is served by the `matrix-get-worker` Cloudflare
+Worker in `packages/get-worker`. It returns `scripts/install.sh` at `/` and
+`/install.sh`, and 404 for every other path. The script is bundled into the
+Worker at deploy time, so the `Installer Worker` workflow redeploys it on every
+push to `main` that changes `scripts/install.sh` or the Worker, then checks that
+the live response is byte-identical to the committed script. To redeploy by
+hand, dispatch that workflow from `main` with `deploy=true`.
+
+Verify the host at any time:
+
+```bash
+curl -fsSL https://get.matrix-os.com | cmp - scripts/install.sh
+```
+
 ## Post-Release Verification
 
 ```bash

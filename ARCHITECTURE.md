@@ -37,6 +37,7 @@ Production customer runtime is VPS-native. Do not model new user-facing runtime 
 | `packages/observability/` | Shared telemetry, PostHog wiring, and error tracking helpers | Product-domain behavior or user-owned data |
 | `packages/edge-router/` | Edge routing helpers and Cloudflare-facing routing code | Owner runtime state or shell UI policy |
 | `packages/neo-worker/` | Cloudflare Worker surface for PostHog/edge support paths | Owner runtime APIs or platform database ownership |
+| `packages/get-worker/` | Cloudflare Worker that serves `scripts/install.sh` at `get.matrix-os.com` | CLI release artifacts (GitHub releases) or any other route |
 | `packages/mcp-browser/` | Browser automation MCP helpers and browser security utilities | Shell renderer state or app data persistence |
 | `packages/clerk-sync/` | Clerk user/profile synchronization helpers | General platform provisioning or owner app data |
 | `packages/ui/` | Shared UI primitives used by shells/apps | Domain business rules |
