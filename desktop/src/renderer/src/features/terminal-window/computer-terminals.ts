@@ -35,6 +35,36 @@ export interface ComputerTerminalTab {
 
 export type ComputerTerminalsFailure = "reconnect" | "unavailable";
 
+/**
+ * Why starting a terminal on a computer failed, bounded and safe to show: the
+ * kind of failure and, for an HTTP answer, only its status number. Nothing the
+ * computer said is passed on.
+ */
+export type ComputerCreateFailure =
+  | { kind: "timeout" | "offline" | "unexpected" | "unknown" }
+  | { kind: "refused" | "server"; status: number };
+
+export function createFailure(error: unknown): ComputerCreateFailure {
+  if (error instanceof z.ZodError) return { kind: "unexpected" };
+  if (!(error instanceof AppError)) return { kind: "unknown" };
+  if (error.category === "timeout" || error.category === "offline") return { kind: error.category };
+  const status = error.httpStatus;
+  if (status === undefined || !Number.isInteger(status) || status < 400 || status > 599) return { kind: "unknown" };
+  return { kind: status < 500 ? "refused" : "server", status };
+}
+
+/** The row's line for a failed start: what happened, never the computer's own words. */
+export function createFailureText(failure: ComputerCreateFailure): string {
+  switch (failure.kind) {
+    case "timeout": return "Couldn't start a terminal: the computer did not answer in time. Try again.";
+    case "offline": return "Couldn't start a terminal: the computer can't be reached. Try again.";
+    case "unexpected": return "Couldn't start a terminal: the computer's answer wasn't understood. It may need an update.";
+    case "refused": return `Couldn't start a terminal: the computer refused it (${failure.status}). Try again.`;
+    case "server": return `Couldn't start a terminal: the computer had an error (${failure.status}). Try again.`;
+    default: return "Couldn't start a terminal. Try again.";
+  }
+}
+
 export function terminalsFailure(error: unknown): ComputerTerminalsFailure {
   return error instanceof AppError && (error.category === "unauthorized" || error.category === "fatalSession")
     ? "reconnect"

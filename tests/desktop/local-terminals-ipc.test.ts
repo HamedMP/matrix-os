@@ -156,11 +156,17 @@ describe("local terminal IPC", () => {
     for (const status of ["not-installed", "unavailable", "version-mismatch"] as const) {
       setStatus(status);
       await expect(invoke("local-terminal:list", {})).resolves.toEqual({ status });
-      await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status });
+      await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual(status === "unavailable" ? { status, reason: "unknown" } : { status });
     }
     // A call that fails while the core is otherwise healthy is still a failure.
     setStatus("ready");
     await expect(invoke("local-terminal:list", {})).resolves.toEqual({ status: "unavailable" });
+    // A failed start says why, as a bounded kind; the error's own text never reaches the window.
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "unknown" });
+    host.create.mockRejectedValueOnce(new Error("local terminal call timed out"));
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "timeout" });
+    host.create.mockRejectedValueOnce(new HcCallError("invalid_params"));
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "refused" });
   });
 
   // Fault detected (Mac, 2026-11-22): every pane of a finished terminal logged a failure with no reason.
