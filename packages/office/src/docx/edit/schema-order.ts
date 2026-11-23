@@ -97,12 +97,3 @@ export const PPR_ORDER: readonly string[] = [
 
 /** `w:trPr`: the row properties in any order, then the tracked-change marks. */
 export const TRPR_ORDER: readonly string[] = ["*", "w:ins", "w:del", "w:trPrChange"];
-
-/** Children of `w:tr` that come before the cells. */
-export const ROW_ORDER: readonly string[] = ["w:tblPrEx", "w:trPr", "*"];
-
-/** Children of `w:p`: the properties first. */
-export const PARAGRAPH_ORDER: readonly string[] = ["w:pPr", "*"];
-
-/** Children of `w:r`: the properties first. */
-export const RUN_ORDER: readonly string[] = ["w:rPr", "*"];

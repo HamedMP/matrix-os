@@ -2,7 +2,7 @@
 
 import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
-import { appendChild, cloneNode, createElement, remove, setAttr, setTextContent } from "../../xml/index.js";
+import { appendChild, cloneNode, createElement, remove } from "../../xml/index.js";
 import type { DocxIndex } from "../internal.js";
 import { closest, firstChild } from "../internal.js";
 import { renameElement } from "./xml-util.js";
@@ -27,12 +27,6 @@ export function requireInsertableText(value: unknown, what = "text"): asserts va
 
 function needsPreserve(text: string): boolean {
   return /^\s|\s$|\s\s/.test(text);
-}
-
-/** Sets the text of a `w:t` or `w:delText`, keeping `xml:space="preserve"` true to it. */
-export function setTextNode(node: XmlElement, text: string): void {
-  setTextContent(node, text);
-  if (needsPreserve(text)) setAttr(node, "xml:space", "preserve");
 }
 
 /** The children of a run that show `text`: `w:t` stretches, `w:tab` for a tab, `w:br` for a line feed. */

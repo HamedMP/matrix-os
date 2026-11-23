@@ -1,7 +1,6 @@
 /** Small tree helpers shared by the editing and revision engines. */
 
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
-import { OfficeError } from "../../errors.js";
 import { appendChild, createElement, insertBefore, prependChild, remove, replaceNode, setAttr } from "../../xml/index.js";
 import type { DocxIndex, InsertionPoint } from "../internal.js";
 import { REVISION_CONTAINERS, attr, firstChild } from "../internal.js";
@@ -9,12 +8,6 @@ import { REVISION_CONTAINERS, attr, firstChild } from "../internal.js";
 export function elementParent(node: XmlChildNode): XmlElement | null {
   const parent = node.parent;
   return parent !== null && parent.kind === "element" ? parent : null;
-}
-
-export function requireParent(node: XmlChildNode): XmlElement {
-  const parent = elementParent(node);
-  if (parent === null) throw new OfficeError("invalid_operation", "the node is not attached to an element");
-  return parent;
 }
 
 /** The sibling element before `node`, looking past whitespace and comments. */
