@@ -150,14 +150,9 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
     expect(cloudInit).toContain('/usr/local/libexec/matrix-postgres-start');
     expect(cloudInit).toContain('systemctl start matrix-postgres.service');
     expect(cloudInit).not.toMatch(/for required_bin in [^;]*matrix-postgres-start/);
-    // The inline restore unit applies only to bundles without shipped units,
-    // which also predate the root service; shipped units replace it otherwise.
-    const inlineRestoreUnit = cloudInit.slice(
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-restore.service'),
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-gateway.service'),
-    );
-    expect(inlineRestoreUnit).toContain('Requires=docker.service');
-    expect(inlineRestoreUnit).not.toContain('matrix-postgres.service');
+    // The shipped restore unit (Requires=matrix-postgres.service) is the only
+    // copy; a stale inline one in user data must not reappear.
+    expect(cloudInit).not.toContain('path: /etc/systemd/system/matrix-restore.service');
     const golden = read('distro/customer-vps/host-bin/matrix-golden-snapshot-activate');
     expect(golden).toContain('/usr/local/libexec/matrix-postgres-start');
     expect(golden).toContain('matrix-postgres.service.d/golden.conf');
