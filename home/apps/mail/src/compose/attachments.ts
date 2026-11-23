@@ -147,7 +147,9 @@ export async function readAttachment(files: PickerFiles, path: string, draft: Dr
     console.warn(`[mail] attach.read.failed (${error instanceof Error ? error.name : typeof error})`);
     throw new ComposeAttachError(bridgeCode(error));
   }
-  const bytes = content.bytes instanceof Uint8Array ? content.bytes : new Uint8Array(0);
+  // Checked by shape: the bridge may hand over a typed array from another realm.
+  const raw: unknown = content?.bytes;
+  const bytes = ArrayBuffer.isView(raw) ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : new Uint8Array(0);
   const after = checkAttachment(draft, name, bytes.length);
   if (!after.ok) throw new ComposeAttachError(after.code);
   return { name, mimeType: mimeTypeFor(name, content.mimeType), size: bytes.length, contentBase64: bytesToBase64(bytes) };

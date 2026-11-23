@@ -29,3 +29,26 @@ export function pastedTextToHtml(text: string): string {
   if (typeof text !== "string") return "";
   return textToHtml(capped(text).replace(/\r\n?/g, "\n")).replace(/&#39;/g, "'");
 }
+
+/**
+ * A link target typed by the owner, or null when it is not allowed. Only
+ * http, https and mailto; a bare domain becomes https and a bare address
+ * becomes mailto.
+ */
+export function linkTarget(input: string): string | null {
+  const text = input.trim();
+  if (!text || text.length > 2_048 || /[\s<>"]/.test(text)) return null;
+  let candidate = text;
+  if (/^[^@/:]+@[^@/:]+\.[^@/:]+$/.test(text)) candidate = `mailto:${text}`;
+  else if (!/^[a-z][a-z0-9+.-]*:/i.test(text)) candidate = `https://${text}`;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return null;
+    throw error;
+  }
+  if (url.protocol === "mailto:") return url.href;
+  if ((url.protocol === "http:" || url.protocol === "https:") && url.hostname.includes(".")) return url.href;
+  return null;
+}
