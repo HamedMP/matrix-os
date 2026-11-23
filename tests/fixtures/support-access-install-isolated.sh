@@ -5,12 +5,16 @@ set -euo pipefail
 helper="$1"
 active_key="$2"
 candidate_key="$3"
+scenario="${4:-full}"
 fixture_dir="$(mktemp -d /tmp/matrix-support-fixture.XXXXXX)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 
 mount -t tmpfs tmpfs /etc
 mount -t tmpfs tmpfs /var
-chmod 0755 /etc /var
+# A fresh /run models first boot: socket-activated sshd has not accepted a
+# connection yet, so its privilege separation directory does not exist.
+mount -t tmpfs tmpfs /run
+chmod 0755 /etc /var /run
 mkdir -p /etc/matrix/support /etc/sudoers.d /var/lib "$fixture_dir/bin"
 chmod 0755 /etc/matrix /etc/sudoers.d /var/lib
 chmod 0700 /etc/matrix/support
@@ -31,9 +35,40 @@ printf 'matrix-support:!:20000:0:99999:7:::\n' >>/etc/shadow
 printf 'matrix-support:*::\n' >>/etc/gshadow
 EOF
 printf '#!/bin/sh\nprintf "locked\\n" >"%s/locked"\n' "$fixture_dir" >"$fixture_dir/bin/usermod"
-printf '#!/bin/sh\nexit 0\n' >"$fixture_dir/bin/sshd"
+# Like OpenSSH, the config test refuses to run without /run/sshd.
+cat >"$fixture_dir/bin/sshd" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = -t ] && [ ! -d /run/sshd ]; then
+  echo 'Missing privilege separation directory: /run/sshd' >&2
+  exit 255
+fi
+exit 0
+EOF
 chmod 0755 "$fixture_dir/bin/useradd" "$fixture_dir/bin/usermod" "$fixture_dir/bin/sshd"
 export PATH="$fixture_dir/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+case "$scenario" in
+  fresh-boot)
+    bash "$helper" install >/dev/null
+    [ -d /run/sshd ] && [ ! -L /run/sshd ]
+    [ "$(stat -c '%u:%g:%a' /run/sshd)" = 0:0:755 ]
+    cmp -s "$active_key" /var/lib/matrix-support/.ssh/authorized_keys
+    exit 0
+    ;;
+  privsep-symlink)
+    install -d -m 0700 /run/elsewhere
+    ln -s /run/elsewhere /run/sshd
+    if bash "$helper" install >/dev/null 2>&1; then
+      echo 'install followed a symlinked privilege separation directory' >&2
+      exit 1
+    fi
+    [ "$(stat -c '%a' /run/elsewhere)" = 700 ]
+    [ ! -e /var/lib/matrix-support/.ssh/authorized_keys ]
+    exit 0
+    ;;
+  full) ;;
+  *) echo "unknown scenario: $scenario" >&2; exit 2 ;;
+esac
 
 bash "$helper" install >/dev/null
 bash "$helper" install >/dev/null

@@ -1,9 +1,11 @@
+import { join } from "node:path";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { TerminalAgentKernelTools } from "@matrix-os/kernel";
 import type { TerminalWorkspaceProjectAdmission } from "../shell/workspace-routes.js";
 import { TerminalAgentVerbError } from "./verbs.js";
 import { createTerminalAgents, type TerminalAgents } from "./agents.js";
 import { createTerminalEventHub, type TerminalEventHub } from "./events.js";
+import { createTerminalSeenStore } from "./seen-store.js";
 import { createTerminalInputActivity, type TerminalInputActivity } from "./input-activity.js";
 import { createTerminalAgentRegistry } from "./registry.js";
 import { createTerminalAgentStatusSource, type TerminalAgentStatusSource } from "./status-source.js";
@@ -53,7 +55,12 @@ export function createTerminalAgentServices(options: {
     onSent: (ref) => status.noteSent?.(ref),
   });
   const waiter = createTerminalWaiter({ runtime, status });
-  const events = createTerminalEventHub({ runtime, status });
+  // When each tab was last opened, shared by every window and device (spec 2706).
+  const seen = createTerminalSeenStore({ path: join(homePath, "system", "terminal-seen.json") });
+  const seenLoaded = seen.load().catch((error: unknown) => {
+    console.warn("[gateway] terminal seen load failed", error instanceof Error ? error.name : "unknown_error");
+  });
+  const events = createTerminalEventHub({ runtime, status, seen });
   const templates = createTerminalTemplates({ homePath });
   const agents = createTerminalAgents({
     runtime,
@@ -98,6 +105,8 @@ export function createTerminalAgentServices(options: {
       // Ends child waits and cancels pending notes, so the supervisor's pass ends quickly.
       await agents.close();
       await supervisor.close();
+      await seenLoaded;
+      await seen.close();
     },
   };
 }

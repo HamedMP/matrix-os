@@ -309,7 +309,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 
   const openSharedApp = useCallback((target: CollaborativeAppDirectoryItem) => {
     const path = sharedAppWindowPath(target);
-    openApp({ id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps" }, {
+    openApp({
+      id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps",
+      ...(target.iconUrl ? { iconUrl: target.iconUrl } : {}),
+    }, {
       sharedAppTarget: target,
     });
   }, [openApp]);
@@ -795,7 +798,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} fallbackName={o.sharedAppTarget ? o.app.name : undefined} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"

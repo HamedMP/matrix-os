@@ -41,8 +41,10 @@ describe("IPC sender policy", () => {
       "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers",
       "shortcuts:set-terminal-claims", "terminal:read-clipboard-files", "terminal-window:focus-main",
       "local-terminal:ack", "local-terminal:attach", "local-terminal:create", "local-terminal:detach",
-      "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:put",
-      "local-terminal:rename", "local-terminal:resize",
+      "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:put", "local-terminal:remove",
+      "local-terminal:machines", "local-terminal:machine-add", "local-terminal:machine-remove", "local-terminal:machine-connect",
+      "local-terminal:ssh-login", "local-terminal:tailscale-peers", "local-terminal:machine-login",
+      "local-terminal:rename", "local-terminal:resize", "local-terminal:seen", "local-terminal:watch",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
@@ -67,7 +69,7 @@ describe("IPC sender policy", () => {
 
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
-      ["auth:changed", "local-terminal:closed", "local-terminal:output", "shortcuts:changed", "window:focus-changed"],
+      ["auth:changed", "local-terminal:closed", "local-terminal:facts", "local-terminal:output", "shortcuts:changed", "terminal-window:command", "window:focus-changed"],
     );
     for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });
