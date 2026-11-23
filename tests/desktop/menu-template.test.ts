@@ -424,6 +424,20 @@ describe("Terminal window menu", () => {
 
   // ENG-521: the Terminal window's commands are registry actions, so a key set in Shortcuts settings
   // is the key its menu uses, and only while that window has focus.
+  // Fault detected (Greptile, #3586): Cmd+, set on New Terminal also stayed on Settings in the Terminal
+  // window's menu, so one key held two commands.
+  it("leaves a key moved onto a Terminal window command off the main window's items there", () => {
+    const shortcuts = { ...resolveShortcuts(null, "mac"), "terminal-window.new": ["Cmd+,"] };
+    const command = vi.fn();
+    const items = flat(createAppMenuTemplate({
+      appName: "Matrix OS", isPackaged: true, platform: "darwin", openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(), shortcuts, runShortcut: vi.fn(), terminalWindow: { command, close: vi.fn() },
+    }) as Item[]);
+    const holders = items.filter((item) => item.accelerator === "Cmd+,");
+    expect(holders.map((item) => item.label)).toEqual(["New Terminal"]);
+    expect(items.find((item) => item.label === "Settings…")?.accelerator).toBeUndefined();
+  });
+
   it("takes each command's keys from the Shortcuts settings", () => {
     const command = vi.fn();
     const shortcuts = { ...resolveShortcuts(null, "mac"), "terminal-window.split-right": ["Cmd+Alt+D", "F7"], "terminal-window.overview": [] };

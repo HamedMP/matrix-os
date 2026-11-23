@@ -3,7 +3,7 @@ import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/
 import { isCarriedByMatcher } from "../shortcuts/input-matcher";
 import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ZoomAction } from "./zoom";
-import type { TerminalWindowCommand } from "../../shared/terminal-window";
+import { terminalWindowKeys, type TerminalWindowCommand } from "../../shared/terminal-window";
 import { terminalWindowMenuItems } from "./terminal-menu-items";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
@@ -100,7 +100,15 @@ export function createAppMenuTemplate({
   terminalWindow,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
-  const item: ShortcutItemFactory = (id, label) => createShortcutItems(shortcuts, () => runShortcut(id), id, label);
+  // While the Terminal window has focus its own commands own their keys: a main-window item that
+  // shares one (Settings on a key moved onto New Terminal) keeps its place without the key.
+  const terminalKeys = terminalWindow ? terminalWindowKeys(shortcuts, isMac) : null;
+  const menuShortcuts: EffectiveShortcuts = terminalKeys
+    ? Object.fromEntries(Object.entries(shortcuts).map(([id, bindings]) => [
+      id, id.startsWith("terminal-window.") ? bindings : bindings.filter((binding) => !terminalKeys.has(binding)),
+    ])) as EffectiveShortcuts
+    : shortcuts;
+  const item: ShortcutItemFactory = (id, label) => createShortcutItems(menuShortcuts, () => runShortcut(id), id, label);
   const mainOnly = (items: MenuItemConstructorOptions[]) => (terminalWindow ? [] : items);
   const viewSubmenu: MenuItemConstructorOptions[] = [
     ...mainOnly([
