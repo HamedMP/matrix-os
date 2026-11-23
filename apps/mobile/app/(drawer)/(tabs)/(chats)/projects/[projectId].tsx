@@ -25,6 +25,7 @@ import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-m
 import type { ProjectSummary } from "@/lib/requests/projects";
 import { composerChoiceScope, useRememberedComposerChoice } from "@/lib/remembered-composer-choice";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
+import { useMinuteClock } from "@/lib/use-minute-clock";
 import { showToast } from "@/lib/toast";
 
 export default function ProjectRoute() {
@@ -54,8 +55,10 @@ export default function ProjectRoute() {
 
   const project = list.projects.find((candidate) => candidate.id === projectId) ?? leaving;
   const chats = useProjectChats(project?.id ?? null);
-  const shown = useMemo(() => (project ? projectRow(project) : null), [project]);
-  const chatRows = useMemo(() => projectChatRows(chats.chats), [chats.chats]);
+  const nowMs = useMinuteClock();
+  const now = useMemo(() => new Date(nowMs), [nowMs]);
+  const shown = useMemo(() => (project ? projectRow(project, now) : null), [project, now]);
+  const chatRows = useMemo(() => projectChatRows(chats.chats, now), [chats.chats, now]);
 
   // A chat opens above the project, so back returns to its chats.
   const showChat = (chatId: string) => {
