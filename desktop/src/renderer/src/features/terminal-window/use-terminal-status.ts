@@ -27,6 +27,15 @@ export function localMachine(isMac = typeof navigator !== "undefined" && navigat
 const COMPUTER_PREFIX = "computer:";
 
 export const computerMachineId = (slot: string) => `${COMPUTER_PREFIX}${slot}`;
+const SSH_PREFIX = "ssh:";
+/** A machine this device's core reaches over ssh (spec 2706 layer 7). */
+export const sshMachineId = (name: string) => `${SSH_PREFIX}${name}`;
+
+/** The row key of a terminal this device's core reports: here (`t7`) or on an added machine (`vps/t7`). */
+export function localRowKey(id: string): string {
+  const slash = id.indexOf("/");
+  return slash < 0 ? `${LOCAL_MACHINE_ID}|${id}` : `${sshMachineId(id.slice(0, slash))}|${id}`;
+}
 
 /** A computer by its own name (its handle), so rows can tell computers apart. */
 export function computerMachine(computer: Pick<MatrixComputer, "runtimeSlot" | "handle">): TerminalSidebarMachine {
@@ -132,14 +141,28 @@ export function useComputerTerminalEvents(options: {
   return { states, markSeen };
 }
 
-/** Every terminal the sidebar shows: this Mac first, then each computer in inventory order. */
+/** Every terminal the sidebar shows: this Mac, its ssh machines, then each computer in inventory order. */
 export function terminalStatusRows(
   local: LocalTerminalFactsState,
   computers: ReadonlyArray<Pick<MatrixComputer, "runtimeSlot" | "handle">>,
   states: Readonly<Record<string, TerminalEventsState>>,
   here: TerminalSidebarMachine = localMachine(),
 ): TerminalSidebarRow[] {
-  const rows = local.status === "ready" ? localSidebarRows(local.terminals, here) : [];
+  const rows: TerminalSidebarRow[] = [];
+  if (local.status === "ready") {
+    // A terminal on an added machine is `vps/t7`: its row belongs to that machine.
+    const byMachine = new Map<string, LocalTerminalFact[]>();
+    for (const fact of local.terminals) {
+      const slash = fact.id.indexOf("/");
+      const machine = slash < 0 ? "" : fact.id.slice(0, slash);
+      byMachine.set(machine, [...(byMachine.get(machine) ?? []), fact]);
+    }
+    for (const [name, facts] of byMachine) {
+      const machine = name ? { id: sshMachineId(name), name, remote: true } : here;
+      rows.push(...localSidebarRows(facts, machine).map((row) => ({ ...row, key: localRowKey(row.key.slice(row.key.indexOf("|") + 1)),
+        ...(row.parentKey ? { parentKey: localRowKey(row.parentKey.slice(row.parentKey.indexOf("|") + 1)) } : {}) })));
+    }
+  }
   for (const computer of computers) {
     rows.push(...computerSidebarRows(states[computer.runtimeSlot] ?? EMPTY_TERMINAL_EVENTS_STATE, computerMachine(computer)));
   }
@@ -159,6 +182,8 @@ export function terminalRowTarget(key: string): TerminalRowTarget | null {
   const machine = key.slice(0, bar);
   const terminal = key.slice(bar + 1);
   if (machine === LOCAL_MACHINE_ID) return { kind: "local", id: terminal };
+  // Reached through this device's core, under the machine's address.
+  if (machine.startsWith(SSH_PREFIX) && terminal.startsWith(`${machine.slice(SSH_PREFIX.length)}/`)) return { kind: "local", id: terminal };
   if (!machine.startsWith(COMPUTER_PREFIX)) return null;
   const ref = REF_KEY.exec(terminal);
   if (!ref) return null;

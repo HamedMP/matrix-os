@@ -20,7 +20,9 @@ import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSide
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
 import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
-import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
+import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
+import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
+import type { LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
@@ -110,7 +112,32 @@ function ComputerFailure({ reason, onRetry }: { reason: "reconnect" | "unavailab
   );
 }
 
-function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
+const SSH_STATE_LABEL: Record<LocalMachine["state"], string> = {
+  connecting: "Connecting…",
+  connected: "Connected",
+  needs_login: "Needs login",
+  unreachable: "Unreachable",
+};
+const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
+  connecting: "var(--color-warning)",
+  connected: "var(--color-success)",
+  needs_login: "var(--color-warning)",
+  unreachable: "var(--text-tertiary, var(--color-muted-foreground))",
+};
+
+/** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
+function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
+  if (machine.state === "connected" || machine.state === "connecting") return null;
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9">
+      <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.openMachineLogin(machine.name); }}>Open in terminal</button>
+      {view.sshLoginFailed === machine.name ? <span role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</span> : null}
+      <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.connect(machine.name); }}>Retry</button>
+    </div>
+  );
+}
+
+function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => void): SidebarMachine[] {
   const local: SidebarMachine = {
     id: view.here.id, name: view.here.name, kind: "local", detail: "Terminals on this device",
     available: view.local.state.status === "ready" || view.local.state.status === "loading",
@@ -136,7 +163,18 @@ function sidebarMachines(view: TerminalWindowView): SidebarMachine[] {
       : view.cloud.createFailed === computer.runtimeSlot
         ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">Couldn't start a terminal. Try again.</p> } : {}),
   }));
-  return [local, ...computers];
+  const ssh = (view.ssh.state.status === "ready" ? view.ssh.state.machines : []).map((machine): SidebarMachine => ({
+    id: sshMachineId(machine.name),
+    name: machine.name,
+    kind: "ssh",
+    detail: `${machine.target} · ${SSH_STATE_LABEL[machine.state]}`,
+    dotColor: SSH_STATE_COLOR[machine.state],
+    available: true,
+    onCreate: () => view.createLocal({ machine: machine.name }),
+    onRemove: () => onRemove(machine.name),
+    status: <SshMachineStatus machine={machine} view={view} />,
+  }));
+  return [local, ...ssh, ...computers];
 }
 
 function EmptyPane({ signedIn }: { signedIn: boolean }) {
@@ -270,7 +308,9 @@ function windowTitle(view: TerminalWindowView): string {
 export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const view = useTerminalWindow();
-  const machines = useMemo(() => sidebarMachines(view), [view]);
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
   const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
@@ -296,7 +336,7 @@ export default function TerminalWindowApp() {
   const notice = noticeText ? <p role="alert" className="px-2 py-1 text-[12px]">{noticeText}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
-      <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(`${view.here.id}|${id}`)} />
+      <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(localRowKey(id))} />
       {/* This window's one toast host, configured like the main window's. */}
       <Toaster position="bottom-right" toastOptions={{ style: {
         background: "var(--bg-overlay)", color: "var(--text-primary)", border: "1px solid var(--border-default)",
@@ -339,6 +379,7 @@ export default function TerminalWindowApp() {
           width={prefs.width}
           onResize={view.sidebar.setWidth}
           notices={notice}
+          onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
@@ -351,6 +392,8 @@ export default function TerminalWindowApp() {
         onPick={(key) => { view.picker.close(); view.select(key); }} />
       <RenameTerminalDialog target={view.renaming} onRename={view.rename} onClose={() => view.setRenaming(null)} />
       <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
+      <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers} onClose={() => setAdding(false)} />
+      <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
     </div>
   );
 }

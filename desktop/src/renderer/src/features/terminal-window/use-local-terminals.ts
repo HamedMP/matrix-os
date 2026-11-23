@@ -46,12 +46,14 @@ export function useLocalTerminals() {
   }, []);
 
   /** Starts a login shell, or a known agent in one, and returns its id, or null when it could not start. */
-  const create = useCallback(async (launch: { agent?: LocalTerminalAgent } = {}): Promise<string | null> => {
+  const create = useCallback(async (launch: { agent?: LocalTerminalAgent; machine?: string } = {}): Promise<string | null> => {
     if (starting.current) return null;
     starting.current = true;
     setCreating(true);
     try {
-      const result = await invoke("local-terminal:create", { cols: 100, rows: 30, ...(launch.agent ? { agent: launch.agent } : {}) });
+      const result = await invoke("local-terminal:create", {
+        cols: 100, rows: 30, ...(launch.agent ? { agent: launch.agent } : {}), ...(launch.machine ? { machine: launch.machine } : {}),
+      });
       if (result.status === "ready") {
         setNotice(null);
         return result.id;

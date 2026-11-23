@@ -11,13 +11,14 @@ import {
 import type { TerminalEventsState } from "@matrix-os/ui/terminal-agents";
 import { onEvent } from "../../lib/operator";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
-import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
+import type { LocalTerminalAgent, SshOptions } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
 import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
 import { useTerminalPanes } from "./use-terminal-panes";
 import { useOpenTabs } from "./use-open-tabs";
 import { leaves } from "@matrix-os/ui/terminal-pane-tree";
 import type { PaneButton } from "./TerminalPaneTree";
+import { useSshMachines } from "./use-ssh-machines";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
@@ -25,7 +26,7 @@ import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowS
 import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
-  computerMachineId, localMachine, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
+  computerMachineId, localMachine, localRowKey, sshMachineId, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
 } from "./use-terminal-status";
 
 const CLOCK_MS = 30_000;
@@ -35,6 +36,9 @@ export function useTerminalWindow() {
   const ready = machines.state.status === "ready" ? machines.state : null;
   const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
   const local = useLocalTerminals();
+  const ssh = useSshMachines();
+  // The ssh target whose login terminal did not start, shown on its machine row.
+  const [sshLoginFailed, setSshLoginFailed] = useState<string | null>(null);
   const sidebar = useSidebarPrefs();
   const here = useMemo(() => localMachine(), []);
   const localFacts = useMemo<LocalTerminalFactsState>(
@@ -73,7 +77,7 @@ export function useTerminalWindow() {
   const cloudActive = useRef(cloud.active);
   useEffect(() => { cloudActive.current = cloud.active; }, [cloud.active]);
 
-  const selectedKey = localOpen ? `${here.id}|${localOpen.id}`
+  const selectedKey = localOpen ? localRowKey(localOpen.id)
     : cloud.active ? `${computerMachineId(cloud.active.slot)}|${cloud.active.refKey}` : null;
   // Next, previous and numbers follow the agents list as shown, with a machine opened as its own tab.
   const visibleRows = useMemo(() => filterRows(status.rows, sidebar.prefs.filter), [status.rows, sidebar.prefs.filter]);
@@ -121,7 +125,7 @@ export function useTerminalWindow() {
     markSeen(key);
   }, [markSeen, openCloud, openLocal, status.rows]);
 
-  const createLocal = useCallback((launch: { agent?: LocalTerminalAgent } = {}) => {
+  const createLocal = useCallback((launch: { agent?: LocalTerminalAgent; machine?: string } = {}) => {
     const chosen = localChoice.current;
     const cloudChosen = cloud.active;
     void local.create(launch).then((id) => {
@@ -132,6 +136,33 @@ export function useTerminalWindow() {
       setLocalOpen({ id, title: "Terminal" });
     });
   }, [clearActive, cloud.active, local]);
+  /** Opens the terminal running `ssh <target>`, for a host key or password only the person can answer. */
+  /** Shows a login terminal unless the person chose another terminal while it started. */
+  const showLogin = useCallback((id: string, title: string, chosen: number, cloudChosen: typeof cloud.active) => {
+    if (localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
+    localChoice.current += 1;
+    clearActive();
+    setLocalOpen({ id, title });
+  }, [clearActive]);
+  const openSshLogin = useCallback(async (target: string, options?: SshOptions): Promise<boolean> => {
+    const chosen = localChoice.current;
+    const cloudChosen = cloudActive.current;
+    const id = await ssh.sshLogin(target, options);
+    setSshLoginFailed(id ? null : target);
+    if (!id) return false;
+    showLogin(id, `ssh ${target}`, chosen, cloudChosen);
+    return true;
+  }, [showLogin, ssh]);
+  /** Open in terminal from a machine row: ssh there with the options it was added with. */
+  const openMachineLogin = useCallback(async (name: string): Promise<boolean> => {
+    const chosen = localChoice.current;
+    const cloudChosen = cloudActive.current;
+    const id = await ssh.machineLogin(name);
+    setSshLoginFailed(id ? null : name);
+    if (!id) return false;
+    showLogin(id, `ssh ${name}`, chosen, cloudChosen);
+    return true;
+  }, [showLogin, ssh]);
   const createCloud = useCallback((slot: string) => {
     localChoice.current += 1;
     setLocalOpen(null);
@@ -155,9 +186,13 @@ export function useTerminalWindow() {
     });
   }, [cloud, local]);
 
-  // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
-  const spaceMachines = useMemo(() => inOrder([here.id, ...computers.filter((computer) => computer.availability === "available")
-    .map((computer) => computerMachineId(computer.runtimeSlot))], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder]);
+  // The machines whose spaces the sidebar lists, in the person's order: this device, its ssh machines, then every usable computer.
+  const sshMachines = ssh.state.status === "ready" ? ssh.state.machines : null;
+  const spaceMachines = useMemo(() => inOrder([
+    here.id,
+    ...(sshMachines ?? []).map((machine) => sshMachineId(machine.name)),
+    ...computers.filter((computer) => computer.availability === "available").map((computer) => computerMachineId(computer.runtimeSlot)),
+  ], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder, sshMachines]);
   const spaces = useMemo(() => spacesInOrder(spaceMachines, status.rows, sidebar.prefs.spaceOrder), [sidebar.prefs.spaceOrder, spaceMachines, status.rows]);
 
   /** A terminal's ↗: show it, as a tab of its own space (its project, or its machine), and make that space active. */
@@ -176,9 +211,10 @@ export function useTerminalWindow() {
 
   const createBeside = useCallback(async (key: string): Promise<string | null> => {
     const machineId = key.slice(0, Math.max(0, key.indexOf("|")));
-    if (machineId === here.id) {
-      const id = await local.create({});
-      return id ? `${here.id}|${id}` : null;
+    if (machineId === here.id || machineId.startsWith("ssh:")) {
+      const machine = machineId.startsWith("ssh:") ? machineId.slice("ssh:".length) : undefined;
+      const id = await local.create(machine ? { machine } : {});
+      return id ? localRowKey(id) : null;
     }
     const target = terminalRowTarget(key);
     if (target?.kind !== "computer") return null;
@@ -193,9 +229,15 @@ export function useTerminalWindow() {
       return null;
     }
   }, [cloud, here.id, local, status.states]);
-  const listed = useCallback((machineId: string) => (machineId === here.id
-    ? local.state.status === "ready"
-    : status.states[machineId.slice("computer:".length)]?.connected === true), [here.id, local.state.status, status.states]);
+  const listed = useCallback((machineId: string) => {
+    if (machineId === here.id) return local.state.status === "ready";
+    // An ssh machine's terminals are listed only while the core is connected to it.
+    if (machineId.startsWith("ssh:")) {
+      return local.state.status === "ready" && ssh.state.status === "ready"
+        && ssh.state.machines.some((machine) => sshMachineId(machine.name) === machineId && machine.state === "connected");
+    }
+    return status.states[machineId.slice("computer:".length)]?.connected === true;
+  }, [here.id, local.state.status, ssh.state, status.states]);
   const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createBeside, listed });
   const { dropTerminal } = panes;
 
@@ -332,11 +374,14 @@ export function useTerminalWindow() {
           const neighbour = space.space ? visibleRows[0] : undefined;
           if (neighbour) { createInSpace(neighbour.key); return; }
           if (space.machineId.startsWith("computer:")) { createCloud(space.machineId.slice("computer:".length)); return; }
+          // An ssh machine's home space starts the terminal on that machine.
+          if (space.machineId.startsWith("ssh:")) { createLocal({ machine: space.machineId.slice("ssh:".length) }); return; }
           createLocal({});
           return;
         }
         const target = selectedKey ? terminalRowTarget(selectedKey) : null;
         if (target?.kind === "computer") createCloud(target.slot);
+        else if (target?.id.includes("/")) createLocal({ machine: target.id.slice(0, target.id.indexOf("/")) });
         else createLocal({});
         return;
       }
@@ -376,7 +421,7 @@ export function useTerminalWindow() {
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
