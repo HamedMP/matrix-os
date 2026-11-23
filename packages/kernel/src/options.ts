@@ -13,6 +13,7 @@ import { createIpcServer } from "./ipc-server.js";
 import type { OsViewAgentTools } from "./ipc-server.js";
 import { TERMINAL_AGENT_IPC_TOOL_NAMES, type TerminalAgentKernelTools } from "./tools/terminal-agents.js";
 import type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
+import { DOCUMENT_APPROVAL_IPC_TOOL_NAMES, DOCUMENT_IPC_TOOL_NAMES, type DocumentKernelTools } from "./tools/documents.js";
 import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
@@ -26,6 +27,7 @@ import {
   notifyShellHook,
   preCompactHook,
   createIntegrationApprovalHook,
+  createDocumentApprovalHook,
   type RequestApprovalFn,
 } from "./hooks.js";
 import { createProtectedFilesHook } from "./evolution.js";
@@ -245,6 +247,8 @@ export interface KernelConfig {
   ownerAudioTranscriber?: OwnerAudioTranscriber;
   /** Persistent terminal and coding-agent tools, provided by the gateway. */
   terminalTools?: TerminalAgentKernelTools;
+  /** Document and sheet tools over the gateway document service, provided by the gateway. */
+  documentTools?: DocumentKernelTools;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -267,6 +271,7 @@ export async function kernelOptions(config: KernelConfig) {
     config.osViewTools,
     config.ownerAudioTranscriber,
     config.terminalTools,
+    config.documentTools,
   );
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
@@ -315,6 +320,7 @@ export async function kernelOptions(config: KernelConfig) {
       ...IPC_TOOL_NAMES,
       ...(config.osViewTools ? OS_VIEW_IPC_TOOL_NAMES : []),
       ...(config.terminalTools ? TERMINAL_AGENT_IPC_TOOL_NAMES : []),
+      ...(config.documentTools ? DOCUMENT_IPC_TOOL_NAMES : []),
       ...browserToolNames,
     ],
     skills: "all" as const,
@@ -329,6 +335,12 @@ export async function kernelOptions(config: KernelConfig) {
             customAgentMcpAllowlists,
           ) as (...args: unknown[]) => Promise<unknown>],
         },
+        ...(config.documentTools ? [{
+          matcher: DOCUMENT_APPROVAL_IPC_TOOL_NAMES.join("|"),
+          hooks: [createDocumentApprovalHook(
+            config.requestApproval ?? (async () => false),
+          ) as (...args: unknown[]) => Promise<unknown>],
+        }] : []),
         {
           matcher: "Bash|Write|Edit",
           hooks: [safetyGuardHook as (...args: unknown[]) => Promise<unknown>],

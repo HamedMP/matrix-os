@@ -283,6 +283,7 @@ import {
 } from "./shell/index.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
+import { createOfficeDocumentRoutes } from "./office/routes.js";
 
 export {
   buildAllowedOrigins,
@@ -936,6 +937,7 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
     terminalTools: terminalAgents.kernelTools,
+    documentTools: createOfficeDocumentRoutes({ homePath }),
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
