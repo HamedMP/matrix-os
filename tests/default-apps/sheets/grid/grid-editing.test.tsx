@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cellElement, cellText, click, drag, editor, formulaBar, liveText, press, renderGrid, type } from "./harness";
+import { at, cellElement, cellText, click, drag, editor, formulaBar, liveText, press, renderGrid, type } from "./harness";
 
 afterEach(cleanup);
 
@@ -40,6 +40,22 @@ describe("SheetGrid editing", () => {
     press(grid, "F2");
     press(editor(container)!, "Enter");
     expect(session.getState().dirty).toBe(false);
+  });
+
+  it("opens the editor on a double click and breaks the line with Alt+Enter", async () => {
+    const { session, sheet, grid, container } = await renderGrid();
+    click(grid, 0, 2);
+    fireEvent.doubleClick(grid, at(0, 2));
+    const input = editor(container)!;
+    expect(input.value).toBe("note");
+    // Arrows belong to the caret now; they do not leave the cell.
+    press(input, "ArrowLeft");
+    expect(editor(container)).not.toBeNull();
+    press(input, "Enter", { altKey: true });
+    expect(editor(container)!.value).toBe("note\n");
+    type(editor(container)!, "note\ntwo");
+    press(editor(container)!, "Enter");
+    expect(session.cell(sheet, 0, 2).value).toBe("note\ntwo");
   });
 
   it("commits with Tab to the right and with the arrows after typing", async () => {
