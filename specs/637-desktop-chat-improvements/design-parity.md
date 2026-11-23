@@ -98,3 +98,7 @@ The real local pass reproduced Web unmounting the inspector on Hide and dropping
 An expanded preview hides the file tree only while a file remains selected. Clearing that file during Hide/Show restores the tree, so Files remains usable without reopening a message link. The real inspector regression expands a preview, clears its file selection, then opens a file from the restored tree.
 
 Web Archives now hides the retained conversation/inspector subtree, with inactive inspector shortcuts, instead of unmounting it. The saved Side question survives returning to the same chat. Maximized Web Chat forwards the existing TrafficLights controls into its current header and archive surface, retaining pointer close/minimize/restore without a duplicate outer title row. Host action wiring and the real ChatApp archive journey have separate production regressions.
+
+### Current-main self-hosted reconciliation
+
+Organization Drive navigation keeps its empty-organization boundary and adopts main's Clerk-safe identity helper. Project and bot navigation retain the caller's verified owner/session/runtime/authority scope, which already supports self-hosted mode without a Clerk provider. Main's shortcut registry and other independent fixes are preserved. The unchanged main self-hosted tests and the affected archive, project, window-control and inspector suites pass together (238 tests across 12 files).
