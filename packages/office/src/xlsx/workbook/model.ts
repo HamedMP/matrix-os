@@ -1,11 +1,12 @@
 /**
  * The in-memory workbook: what the handle reads and edits.
  *
- * Cell content lives in {@link CellRec} records, each still attached to the
- * `<c>` element it was read from. An edit changes the record and marks it;
- * the XML is brought up to date by `sheet-write.ts` when the part is needed
- * (on save, or when the change journal asks for it). A sheet nobody edits is
- * never written, so its part stays byte for byte as it was.
+ * Cell content lives in {@link CellRec} records, each tied to the `<c>`
+ * element it was read from. An edit changes the record and marks it; the XML
+ * is brought up to date by `sheet-write.ts` when the part is needed (on
+ * save, or when the change journal asks for it), and only for the rows that
+ * changed. A sheet nobody edits is never written, so its part stays byte for
+ * byte as it was, and its XML tree is not even kept in memory.
  */
 
 import type { FormulaAst, FunctionRegistry } from "../../api/formula.js";
@@ -36,8 +37,13 @@ export interface CellRec {
   /** Formula text without the leading `=`, or null. */
   formula: string | null;
   styleId: StyleId;
-  /** The element this cell was read from or last written to; null for a cell not yet in the XML. */
-  el: XmlElement | null;
+  /**
+   * The element this cell was read from or last written to; null for a cell
+   * not yet in the XML. While the sheet XML is not held in memory (see
+   * {@link SheetModel.sourceText}) it is the position of the cell among the
+   * `<c>` elements of its source row.
+   */
+  el: XmlElement | number | null;
   /** {@link CLEAN}, or a combination of {@link DIRTY_CONTENT} and {@link DIRTY_STYLE}. */
   dirty: number;
   /** Shared formula group of the cell in the XML, or -1. */
@@ -78,8 +84,18 @@ export interface SheetModel {
   relId: string;
   /** The `<sheet>` element in the workbook part. */
   entry: XmlElement;
-  doc: XmlDocument;
-  sheetData: XmlElement;
+  /**
+   * The parsed part, or null while only its text is held. A sheet is read
+   * into cell records and its tree is then let go: a tree costs several
+   * times the memory of the records, and a sheet that is never edited never
+   * needs it. `attachSheet` parses the text again before the first write.
+   */
+  doc: XmlDocument | null;
+  sheetData: XmlElement | null;
+  /** Text of the part as opened, while {@link doc} is null. */
+  sourceText: string | null;
+  /** The rows of the part in document order, while {@link doc} is null, so each finds its element again. */
+  sourceRows: RowRec[] | null;
   /** Rows by index. Iteration order is ascending unless {@link rowsUnordered} is set. */
   rows: Map<number, RowRec>;
   rowsUnordered: boolean;
@@ -119,6 +135,12 @@ export interface FormulaDeps {
   evaluate: import("../../api/formula.js").Evaluate;
   collectReferences: import("../../api/formula.js").CollectReferences;
   createFunctionRegistry: import("../../api/formula.js").CreateFunctionRegistry;
+}
+
+/** A sheet whose XML tree is in memory. */
+export interface AttachedSheet extends SheetModel {
+  doc: XmlDocument;
+  sheetData: XmlElement;
 }
 
 /** A part the workbook holds as parsed XML. */

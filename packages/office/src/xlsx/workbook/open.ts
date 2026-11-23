@@ -93,8 +93,9 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
       throw new OfficeError("corrupt_package", "a sheet entry of the workbook is incomplete");
     }
     const partName = pkg.resolveTarget(source, relationship.target);
-    const doc = parsePart(sources, partName);
-    if (doc === null) throw new OfficeError("corrupt_package", "a sheet part is missing");
+    const text = sources.texts.get(partNameKey(partName));
+    if (text === undefined) throw new OfficeError("corrupt_package", "a sheet part is missing");
+    const doc = parseXml(text);
     if (sheetsById.has(id) || sheetsByKey.has(name.toLowerCase())) {
       throw new OfficeError("corrupt_package", "two sheets share an id or a name");
     }
@@ -103,7 +104,10 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
       { id, name, state: visibility === "hidden" || visibility === "veryHidden" ? visibility : "visible", partName, relId, entry },
       doc,
       context,
+      text,
     );
+    // The model has what it needs; the texts of other parts are not kept either.
+    sources.texts.delete(partNameKey(partName));
     sheets.push(sheet);
     sheetsById.set(id, sheet);
     sheetsByKey.set(name.toLowerCase(), sheet);

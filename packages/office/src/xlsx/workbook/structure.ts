@@ -11,6 +11,7 @@ import { MAX_COLS, MAX_ROWS, formatA1Range, tryParseA1Range } from "./a1.js";
 import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState } from "./model.js";
 import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./refs-rewrite.js";
 import { rewriteAllFormulas } from "./sheets.js";
+import { attachSheet } from "./sheet-read.js";
 import { sheetDimensions } from "./sheet-write.js";
 import { dropCalcChain, invalidateGraph } from "./state.js";
 import { isNamed, kid, kids } from "./xml-util.js";
@@ -133,7 +134,7 @@ function rewriteFormulaChildren(element: XmlElement, key: string, op: Structural
 
 /** Updates the ranges of conditional formats, data validations, hyperlinks and the auto filter. */
 function moveSheetFeatures(sheet: SheetModel, op: StructuralOp): void {
-  const root = sheet.doc.root;
+  const root = attachSheet(sheet).doc.root;
   const key = sheet.name.toLowerCase();
   const adjust = (element: XmlElement, attr: string): boolean => {
     const value = getAttr(element, attr);

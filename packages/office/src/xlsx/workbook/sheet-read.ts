@@ -4,10 +4,18 @@ import type { FormulaErrorCode } from "../../api/formula.js";
 import type { CellRange, CellValue, FrozenPanes } from "../../api/xlsx.js";
 import type { XmlChildNode, XmlDocument, XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
-import { getAttr, textContent } from "../../xml/index.js";
+import { getAttr, parseXml, textContent } from "../../xml/index.js";
 import { isoToSerial } from "../format/serial.js";
 import { MAX_COLS, MAX_ROWS, tryParseA1Range } from "./a1.js";
-import { CLEAN, type CellRec, type ColumnRun, type FormulaExtra, type RowRec, type SheetModel } from "./model.js";
+import {
+  type AttachedSheet,
+  CLEAN,
+  type CellRec,
+  type ColumnRun,
+  type FormulaExtra,
+  type RowRec,
+  type SheetModel,
+} from "./model.js";
 import { shiftRelativeRefs } from "./refs-rewrite.js";
 import { type SharedStrings, stringItemText } from "./shared-strings.js";
 import { boolAttr, decodeCellText, isNamed, kid, kids } from "./xml-util.js";
@@ -154,11 +162,17 @@ function readCell(
   return cell;
 }
 
-function readRows(sheetData: XmlElement, context: ReadContext): Pick<SheetModel, "rows" | "rowsUnordered" | "hasShared"> {
+interface ReadRows extends Pick<SheetModel, "rows" | "rowsUnordered" | "hasShared"> {
+  /** Rows in document order. */
+  ordered: RowRec[];
+}
+
+function readRows(sheetData: XmlElement, context: ReadContext): ReadRows {
   const rows = new Map<number, RowRec>();
   // Shared formula masters by group. One entry per group of this sheet.
   const masters = new Map<number, SharedMaster>();
   const flags = { hasShared: false };
+  const ordered: RowRec[] = [];
   let rowsUnordered = false;
   let nextRow = 0;
   let lastRow = -1;
@@ -196,8 +210,9 @@ function readRows(sheetData: XmlElement, context: ReadContext): Pick<SheetModel,
       row.cells.set(col, readCell(cellElement, index, col, context, masters, flags));
     }
     rows.set(index, row);
+    ordered.push(row);
   }
-  return { rows, rowsUnordered, hasShared: flags.hasShared };
+  return { rows, rowsUnordered, hasShared: flags.hasShared, ordered };
 }
 
 const COLUMN_OWN_ATTRS: ReadonlySet<string> = new Set(["min", "max", "width", "customWidth", "hidden"]);
@@ -255,8 +270,14 @@ function readFrozen(root: XmlElement): FrozenPanes {
 
 export type SheetIdentity = Pick<SheetModel, "id" | "name" | "state" | "partName" | "relId" | "entry">;
 
-/** Builds the model of one worksheet from its parsed part. */
-export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: ReadContext): SheetModel {
+/**
+ * Builds the model of one worksheet from its parsed part.
+ *
+ * With `sourceText` (the text `doc` was parsed from) the tree is not kept:
+ * rows and cells remember where they were in the document and
+ * `attachSheet` parses the text again when the sheet is first written.
+ */
+export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: ReadContext, sourceText?: string): SheetModel {
   const root = doc.root;
   if (!isNamed(root.name, "worksheet")) {
     throw new OfficeError("unsupported_format", "the sheet is not a worksheet (chart and macro sheets are not supported)");
@@ -268,11 +289,24 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     const value = format === null ? Number.NaN : Number(getAttr(format, name) ?? "NaN");
     return Number.isFinite(value) && value > 0 ? value : fallback;
   };
+  const { rows, rowsUnordered, hasShared, ordered } = readRows(sheetData, context);
+  const detached = sourceText !== undefined;
+  if (detached) {
+    for (const row of ordered) {
+      row.el = null;
+      let position = 0;
+      for (const cell of row.cells.values()) cell.el = position++;
+    }
+  }
   return {
     ...identity,
-    doc,
-    sheetData,
-    ...readRows(sheetData, context),
+    doc: detached ? null : doc,
+    sheetData: detached ? null : sheetData,
+    sourceText: detached ? sourceText : null,
+    sourceRows: detached ? ordered : null,
+    rows,
+    rowsUnordered,
+    hasShared,
     rowSetDirty: false,
     merges: readMerges(root),
     mergesDirty: false,
@@ -287,4 +321,35 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     unshare: false,
     dimensions: undefined,
   };
+}
+
+/**
+ * Parses the sheet XML again and gives every row and cell its element back.
+ * Rows and cells are matched by their position in the document, which does
+ * not change while the tree is away, whatever was edited in between.
+ */
+export function attachSheet(sheet: SheetModel): AttachedSheet {
+  if (sheet.doc !== null && sheet.sheetData !== null) return sheet as AttachedSheet;
+  const doc = parseXml(sheet.sourceText ?? "");
+  const sheetData = kid(doc.root, "sheetData");
+  if (sheetData === null) throw corrupt("a worksheet has no sheetData");
+  const sourceRows = sheet.sourceRows ?? [];
+  let rowPosition = 0;
+  for (const node of sheetData.children) {
+    if (node.kind !== "element" || !isNamed(node.name, "row")) continue;
+    const row = sourceRows[rowPosition++];
+    if (row === undefined) break;
+    row.el = node;
+    let cells: XmlElement[] | null = null;
+    for (const cell of row.cells.values()) {
+      if (typeof cell.el !== "number") continue;
+      if (cells === null) cells = kids(node, "c");
+      cell.el = cells[cell.el] ?? null;
+    }
+  }
+  sheet.doc = doc;
+  sheet.sheetData = sheetData;
+  sheet.sourceText = null;
+  sheet.sourceRows = null;
+  return sheet as AttachedSheet;
 }

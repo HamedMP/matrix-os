@@ -45,6 +45,7 @@ import { type CellMutationListener, type RawCell, type WorkbookInternals, type W
 import { setColumnWidth, setMerge, unmerge } from "./layout.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { flushNames, listNames, removeName, setName } from "./names.js";
+import { attachSheet } from "./sheet-read.js";
 import { flushSheet } from "./sheet-write.js";
 import { addSheet, removeSheet, renameSheet, sheetInfo } from "./sheets.js";
 import { CONTENT_TYPE_STYLES, REL_STYLES, addSharedString, sheetOf } from "./state.js";
@@ -66,7 +67,7 @@ export function syncParts(state: WorkbookState): void {
   for (const sheet of state.sheets) {
     flushSheet(sheet, strings);
     if (!sheet.partDirty) continue;
-    pkg.setPart(sheet.partName, serializeXml(sheet.doc));
+    pkg.setPart(sheet.partName, serializeXml(attachSheet(sheet).doc));
     sheet.partDirty = false;
   }
   flushNames(state);
@@ -405,7 +406,7 @@ function makeInternals(workbook: Workbook, state: WorkbookState): WorkbookIntern
       const sheet = sheetByPart(name);
       if (sheet !== undefined) {
         flushSheet(sheet, (text) => addSharedString(state, text));
-        return sheet.doc;
+        return attachSheet(sheet).doc;
       }
       if (state.stringsPartName !== null && partNamesEqual(name, state.stringsPartName)) return state.strings.doc;
       if (partNamesEqual(name, state.stylesPart.name)) return state.stylesPart.doc;

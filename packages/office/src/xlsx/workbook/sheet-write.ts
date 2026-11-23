@@ -10,8 +10,8 @@ import type { CellRange } from "../../api/xlsx.js";
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { createElement, getAttr, prependChild, remove, removeAttr, setAttr } from "../../xml/index.js";
 import { columnLabel, formatA1, formatA1Range } from "./a1.js";
-import { CLEAN, type CellRec, DIRTY_CONTENT, DIRTY_STYLE, type RowRec, type SheetModel } from "./model.js";
-import { firstSheetView } from "./sheet-read.js";
+import { type AttachedSheet, CLEAN, type CellRec, DIRTY_CONTENT, DIRTY_STYLE, type RowRec, type SheetModel } from "./model.js";
+import { attachSheet, firstSheetView } from "./sheet-read.js";
 import { encodeCellText, insertInOrder, isNamed, kid, kids, needsSpacePreserve, qualify, setChildren } from "./xml-util.js";
 
 export const WORKSHEET_ORDER = [
@@ -138,7 +138,7 @@ function isBareRow(element: XmlElement): boolean {
 }
 
 /** Writes one row. Returns false when the row is empty and should leave the sheet. */
-function flushRow(sheet: SheetModel, row: RowRec, strings: StringSink): boolean {
+function flushRow(sheet: AttachedSheet, row: RowRec, strings: StringSink): boolean {
   if (row.cells.size === 0 && row.height === null && !row.hidden && (row.el === null || isBareRow(row.el))) return false;
   const data = sheet.sheetData;
   let element = row.el;
@@ -161,14 +161,16 @@ function flushRow(sheet: SheetModel, row: RowRec, strings: StringSink): boolean 
   const children: XmlChildNode[] = [];
   for (const col of cols) {
     const cell = row.cells.get(col) as CellRec;
-    if (cell.el === null || (cell.dirty & DIRTY_CONTENT) !== 0) {
-      cell.el = buildCell(data, cell, row.index, col, strings);
+    let cellElement = cell.el;
+    if (cellElement === null || typeof cellElement === "number" || (cell.dirty & DIRTY_CONTENT) !== 0) {
+      cellElement = buildCell(data, cell, row.index, col, strings);
+      cell.el = cellElement;
     } else {
-      if ((cell.dirty & DIRTY_STYLE) !== 0) syncAttr(cell.el, "s", cell.styleId === 0 ? null : String(cell.styleId));
-      syncAttr(cell.el, "r", columnLabel(col) + String(row.index + 1));
+      if ((cell.dirty & DIRTY_STYLE) !== 0) syncAttr(cellElement, "s", cell.styleId === 0 ? null : String(cell.styleId));
+      syncAttr(cellElement, "r", columnLabel(col) + String(row.index + 1));
     }
     cell.dirty = CLEAN;
-    children.push(cell.el);
+    children.push(cellElement);
   }
   for (const node of element.children) {
     if (node.kind === "element" && !isNamed(node.name, "c")) children.push(node);
@@ -178,7 +180,7 @@ function flushRow(sheet: SheetModel, row: RowRec, strings: StringSink): boolean 
   return true;
 }
 
-function flushMerges(sheet: SheetModel): void {
+function flushMerges(sheet: AttachedSheet): void {
   const root = sheet.doc.root;
   const existing = kid(root, "mergeCells");
   if (existing !== null) remove(existing);
@@ -189,7 +191,7 @@ function flushMerges(sheet: SheetModel): void {
   sheet.mergesDirty = false;
 }
 
-function flushColumns(sheet: SheetModel): void {
+function flushColumns(sheet: AttachedSheet): void {
   const root = sheet.doc.root;
   const existing = kid(root, "cols");
   if (existing !== null) remove(existing);
@@ -208,7 +210,7 @@ function flushColumns(sheet: SheetModel): void {
   sheet.columnsDirty = false;
 }
 
-function flushFrozen(sheet: SheetModel): void {
+function flushFrozen(sheet: AttachedSheet): void {
   const root = sheet.doc.root;
   const { rows, cols } = sheet.frozen;
   let view = firstSheetView(root);
@@ -242,8 +244,9 @@ function flushFrozen(sheet: SheetModel): void {
 }
 
 /** Writes every pending change of the sheet model into its XML. */
-export function flushSheet(sheet: SheetModel, strings: StringSink): void {
-  if (!sheet.dirty) return;
+export function flushSheet(model: SheetModel, strings: StringSink): void {
+  if (!model.dirty) return;
+  const sheet = attachSheet(model);
   if (sheet.hasShared && !sheet.unshare) {
     // A member of a shared formula whose content changed (an edit, or a new result) is written
     // on its own; its group then has to be written out too, or the others lose their master.
