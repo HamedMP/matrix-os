@@ -30,6 +30,7 @@ import { type GridCommand, gridKeyCommand, keyInputOf } from "./keymap";
 import { cellElementId, describeActiveCell, paneSpecs } from "./render-model";
 import { mergeAt } from "./selection";
 import "./sheet-grid.css";
+import "./sheet-grid-chrome.css";
 import { useGridMouse } from "./use-grid-mouse";
 import { createScrollScale, maxScroll, rangeOnScreen } from "./viewport";
 

@@ -10,7 +10,8 @@
  */
 
 import { toSessionError } from "./file-io";
-import { type SheetSession, createSheetSession, openSheetSession } from "./session";
+import { createSheetSession, openSheetSession } from "./open";
+import type { SheetSession } from "./session";
 import type { SessionDeps, SessionErrorCode } from "./types";
 
 export type HostOpenResult =

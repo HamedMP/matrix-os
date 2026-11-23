@@ -50,7 +50,8 @@
  * formula of its first cell as an ordinary formula.
  */
 
-export { SheetSession, createSheetSession, openSheetSession } from "./session";
+export { SheetSession } from "./session";
+export { createSheetSession, openSheetSession } from "./open";
 export { SessionHost } from "./host";
 export type { HostOpenResult, HostState } from "./host";
 export { SheetSessionError, copyPath, fileName, formatOfPath, isValidFilePath, sessionMessage } from "./file-io";

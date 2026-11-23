@@ -15,11 +15,10 @@ import {
   type SheetInfo,
   type SheetRangeRef,
   type Workbook,
-  createXlsx,
   isOfficeError,
 } from "./engine";
 import { type SessionCellEdit, type Transaction, applyCellEdit, applyInputs, clampRange } from "./edits";
-import { type LoadedWorkbook, SheetSessionError, fileName, formatOfPath, loadWorkbook, serializeWorkbook, toSessionError } from "./file-io";
+import { type LoadedWorkbook, SheetSessionError, fileName, loadWorkbook, serializeWorkbook, toSessionError } from "./file-io";
 import { affectedRange } from "./history";
 import { type RecentFiles, createRecentFiles } from "./recents";
 import { Recorder } from "./recorder";
@@ -480,26 +479,4 @@ export class SheetSession {
   get isDisposed(): boolean {
     return this.disposed;
   }
-}
-
-/** Opens a file from the owner's home. Throws {@link SheetSessionError}; the file is never written when opening fails. */
-export async function openSheetSession(deps: SessionDeps, path: string): Promise<SheetSession> {
-  const format = formatOfPath(path);
-  if (format === null) throw new SheetSessionError("unsupported");
-  let content;
-  try {
-    content = await deps.files.read(path);
-  } catch (error: unknown) {
-    throw toSessionError(error);
-  }
-  const loaded = await loadWorkbook(content.bytes, format);
-  const session = new SheetSession(deps, loaded, { path: content.path, format, version: content.version });
-  void session.recents.touch(content.path);
-  return session;
-}
-
-/** A new, empty workbook that has no file yet. `saveAs` gives it one. */
-export function createSheetSession(deps: SessionDeps, options: { name?: string } = {}): SheetSession {
-  const loaded: LoadedWorkbook = { workbook: createXlsx(), csv: null };
-  return new SheetSession(deps, loaded, { path: null, format: "xlsx", version: null }, options.name);
 }
