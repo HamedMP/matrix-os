@@ -160,6 +160,21 @@ describe("added machines over ssh", () => {
     expect(runCoreCli).toHaveBeenCalledTimes(1);
   });
 
+  // Fault detected (Greptile, #3579): an install whose ssh settings could not be saved still reported
+  // success, so Open in terminal later lacked the port, identity or jump host.
+  it("reports an install whose ssh settings could not be saved and takes the machine back out", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    const { host, dataDir, calls } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: [machine("box", "me@box")] } });
+      if (call.method === "machine.rm") core.reply(call.id, { result: {} });
+    }, { runCoreCli });
+    mkdirSync(join(dataDir, "machine-ssh.json"));
+    expect(await host.installMachine({ target: "me@box", name: "box", ssh: { port: 2222 } })).toEqual({ ok: false, reason: "failed" });
+    expect(calls.filter((call) => call.method === "machine.rm").map((call) => call.params)).toEqual([{ machine: "box" }]);
+    // A plain target needs no saved settings: its install stands.
+    expect(await host.installMachine({ target: "me@plain", name: "plain" })).toEqual({ ok: true });
+  });
+
   // Fault detected (Nima, #3579): "Install core there" on user@host:2222 handed the raw address to
   // herdr-core's installer, which took host:2222 as the host name.
   it("installs the core over ssh with the port split out, typed inline or in the advanced field", async () => {

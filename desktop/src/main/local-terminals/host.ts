@@ -278,6 +278,13 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       });
     } catch (error: unknown) {
       console.warn("[local-terminals] installed machine's ssh settings not saved:", describeError(error));
+      // A machine reached through ssh options cannot be reached the same way later without them:
+      // take it back out, as Add does, so a retry starts clean (the core already there is reused).
+      if (via) {
+        await (await ensure()).call("machine.rm", { machine: input.name })
+          .catch((rollback: unknown) => console.warn("[local-terminals] install rollback failed:", describeError(rollback)));
+        return { ok: false, reason: "failed" };
+      }
     }
     return result;
   }
