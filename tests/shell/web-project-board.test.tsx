@@ -100,3 +100,18 @@ it("shows no ticket for a chat outside a project", () => {
   const { container } = render(<ChatTicketBar gatewayUrl="https://example.test/vm/ana" chatId="chat_loose" project={undefined} onOpenDetails={vi.fn()} />);
   expect(container.innerHTML).toBe("");
 });
+
+// Fault detected: one Board open fetched the active and archived lists, then again on the
+// change feed's first resync, so every open cost several round trips for the same data.
+it("opens the board with one request per resource", async () => {
+  const { fetch } = renderBoard();
+  expect(await screen.findByRole("button", { name: /FR-1: Fix login/ })).toBeTruthy();
+  const paths = () => fetch.mock.calls.map(([input]) => new URL(input as string).pathname.replace(/^\/vm\/ana/, ""));
+  await waitFor(() => expect(paths()).toContain("/api/workspace/events"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const count = (path: string) => paths().filter((candidate) => candidate === path).length;
+  expect(count("/api/projects/france/tasks")).toBe(1);
+  expect(count("/api/projects/france/board/members")).toBe(1);
+  expect(count("/api/projects/france/board/settings")).toBe(1);
+  expect(fetch.mock.calls.some(([input]) => new URL(input as string).searchParams.get("includeArchived") === "true")).toBe(false);
+});
