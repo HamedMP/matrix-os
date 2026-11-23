@@ -73,6 +73,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
+  if (input.botCreation) throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "Send a new message with the current Bot draft after this run finishes."), 400);
   if (input.routineCreation && (options.owner.type !== "personal" || options.principal.userId !== options.owner.ownerId)) {
     throw new CanonicalQueueAdmissionError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
   }

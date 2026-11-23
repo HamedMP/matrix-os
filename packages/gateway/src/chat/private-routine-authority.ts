@@ -58,8 +58,10 @@ export async function assertPrivateRoutineTurn(executor: Executor, owner: ChatOw
 
 /** Use the persisted turn, including retries whose run request ID changes. */
 export async function assertPrivateRoutineRun(executor: Executor, owner: ChatOwner, chatId: string, runId: string): Promise<void> {
-  const run = await executor.selectFrom("chat_runs").select("turn_id")
+  const run = await executor.selectFrom("chat_runs")
+    .select(["turn_id", sql<boolean>`context_snapshot->'botCreation' IS NOT NULL`.as("drafting")])
     .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
+  if (run?.drafting && await hasNonPrivateChatScope(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
   if (run) await assertPrivateRoutineTurn(executor, owner, chatId, run.turn_id);
 }
 
