@@ -2,7 +2,7 @@
 import React, { StrictMode, startTransition, Suspense, useState } from 'react';
 import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { clearChatNavigationScopes, useChatNavigation } from '../../packages/ui/src/chat-navigation/use-chat-navigation.js';
+import { CHAT_NAVIGATION_EVENT_COALESCE_MS, clearChatNavigationScopes, useChatNavigation } from '../../packages/ui/src/chat-navigation/use-chat-navigation.js';
 import { clearMatrixAppSession } from '../../shell/src/lib/sign-out.js';
 afterEach(() => { cleanup(); clearChatNavigationScopes(); vi.unstubAllGlobals(); });
 const empty = { version: 1 as const, items: [], truncated: false };
@@ -145,15 +145,47 @@ it('revalidates equal/lower reconnect cursors and lower committed live events wi
   const events = { subscribe: (listener: typeof emit) => { emit = listener; return { dispose() {} }; } };
   const hook = renderHook(() => useChatNavigation({ scope: 'unordered-commits', load, eventSource: events }));
   await waitFor(() => expect(hook.result.current.fresh).toBe(true));
+  vi.useFakeTimers();
   for (const [index, event] of [
     { type: 'chat.changed', chatId: 'chat_high', cursor: 10, eventType: 'chat.updated' },
     { type: 'chat.full_refresh', cursor: 10 },
     { type: 'chat.full_refresh', cursor: 8 },
     { type: 'chat.changed', chatId: 'chat_late', cursor: 9, eventType: 'chat.updated' },
   ].entries()) {
-    await act(async () => emit(event));
+    await act(async () => { emit(event); await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS); });
     expect(load).toHaveBeenCalledTimes(index + 2);
   }
-  await act(async () => emit({ type: 'chat.changed', chatId: 'chat_high', cursor: 11, eventType: 'run.message' }));
+  await act(async () => { emit({ type: 'chat.changed', chatId: 'chat_high', cursor: 11, eventType: 'run.message' }); await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS); });
   expect(load).toHaveBeenCalledTimes(5);
+  vi.useRealTimers();
+});
+
+// ENG-540: one send produced a burst of Chat events and three navigation
+// reads within ~700 ms. A burst now costs one trailing read.
+it('coalesces a burst of Chat events into one trailing navigation read', async () => {
+  const load = vi.fn(async () => empty);
+  let emit!: (event: unknown) => void;
+  const dispose = vi.fn();
+  const events = { subscribe: (listener: typeof emit) => { emit = listener; return { dispose }; } };
+  const hook = renderHook(() => useChatNavigation({ scope: 'burst', load, eventSource: events }));
+  await waitFor(() => expect(hook.result.current.fresh).toBe(true));
+  vi.useFakeTimers();
+  try {
+    await act(async () => {
+      emit({ type: 'chat.changed', chatId: 'chat_one', cursor: 1, eventType: 'turn.accepted' });
+      emit({ type: 'chat.changed', chatId: 'chat_one', cursor: 2, eventType: 'chat.updated' });
+      emit({ type: 'chat.changed', chatId: 'chat_one', cursor: 3, eventType: 'run.completed' });
+    });
+    expect(load).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS); });
+    expect(load).toHaveBeenCalledTimes(2);
+    // A pending trailing read is cancelled with the subscription.
+    await act(async () => { emit({ type: 'chat.changed', chatId: 'chat_one', cursor: 4, eventType: 'chat.updated' }); });
+    hook.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS); });
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
