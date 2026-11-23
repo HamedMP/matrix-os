@@ -948,11 +948,11 @@ MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MA
       const env = join(dir, "host.env");
       writeFileSync(env, "MATRIX_ACCESS_MODE=public\nSHELL_ORIGIN=http://matrix.example.com\n");
       const calls = join(dir, "rollback-calls");
-      const body = (code: string) => `read_env_value() { sed -n "s/^$2=//p" "$1" | grep . ; }
+      const body = (code: string) => `read_env_value() { sed -n "s/^$2=//p" "${env}" | grep . ; }
 parse_args
 MATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode >/dev/null
 printf 'MATRIX_ACCESS_MODE=tailscale\\nSHELL_ORIGIN=https://box.ts.net\\n' >"${env}"
-write_env() { printf 'write_env %s origin=%s\\n' "$OPT_ACCESS" "$(MATRIX_TAILNET_URL=https://box.ts.net self_host_shell_origin "$OPT_ACCESS" https://box.ts.net "$([ "$PREVIOUS_ACCESS_MODE" = public ] && echo "$PREVIOUS_SHELL_ORIGIN")" http://203.0.113.7)" >>"${calls}"; }
+write_env() { o="$(self_host_shell_origin "$OPT_ACCESS" https://box.ts.net "$([ "$PREVIOUS_ACCESS_MODE" = public ] && echo "$PREVIOUS_SHELL_ORIGIN")" http://203.0.113.7)"; printf 'write_env %s origin=%s\\n' "$OPT_ACCESS" "$o" >>"${calls}"; printf 'SHELL_ORIGIN=%s\\n' "$o" >"${env}"; }
 systemctl() { echo "systemctl $*" >>"${calls}"; }
 nginx() { :; }
 cat() { echo secret; }
@@ -966,6 +966,8 @@ MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale restore_previous_listener`;
       expect(log).toContain("systemctl restart matrix-gateway.service matrix-shell.service");
       expect(log.indexOf("systemctl restart")).toBeLessThan(log.indexOf("curl"));
       expect(log).toMatch(/curl .*Upgrade: websocket.*http:\/\/127\.0\.0\.1\/ws/);
+      // Review P2: public nginx requires the Origin host to be the Host, or a working recovery reads as failed.
+      expect(log).toContain("Origin: http://matrix.example.com -H Host: matrix.example.com");
       const refused = run(body("403"));
       expect(refused.status).not.toBe(0);
     });

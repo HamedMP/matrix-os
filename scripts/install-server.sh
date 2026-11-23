@@ -1895,13 +1895,16 @@ restore_previous_listener() {
 # password and the recorded browser origin, returns HTTP 101.
 verify_public_websocket() {
   local password origin code attempt
+  local -a page=()
   password="$(cat /opt/matrix/env/initial-ui-password 2>/dev/null || true)"
   origin="$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)"
   [ -n "$password" ] || { warn "cannot check public WebSockets: no saved UI password"; return 1; }
+  # Public nginx accepts a page's socket only when the Origin host[:port] is the Host.
+  [ -z "$origin" ] || page=(-H "Origin: ${origin}" -H "Host: ${origin#*://}")
   for attempt in $(seq 1 30); do
     code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 --http1.1 --user "matrix:${password}" \
       -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
-      -H "Sec-WebSocket-Key: bWF0cml4LW9zLWNoZWNrIQ==" -H "Origin: ${origin}" \
+      -H "Sec-WebSocket-Key: bWF0cml4LW9zLWNoZWNrIQ==" "${page[@]}" \
       "http://127.0.0.1/ws" 2>>"$MATRIX_INSTALL_LOG" || true)"
     if [ "$code" = "101" ]; then
       ok "public access works: a WebSocket through nginx upgraded"
