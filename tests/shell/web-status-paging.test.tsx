@@ -5,9 +5,7 @@ import { usePagedStatusGroup } from "../../shell/src/components/chat/usePagedPro
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { WebChatLifecycleGroups } from "../../shell/src/components/chat/WebChatLifecycleGroups";
-
 afterEach(cleanup);
-
 it("retains expanded status rows across a navigation refresh", async () => {
   const item = (index: number) => ({ chat: { id: `chat_${index}`, title: `Chat ${index}`, messageCount: 0,
     updatedAt: "2026-11-12T00:00:00.000Z" } });
@@ -22,7 +20,6 @@ it("retains expanded status rows across a navigation refresh", async () => {
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   expect(hook.result.current.rows).toHaveLength(30);
 });
-
 it("applies the selected source to server-paged status rows", async () => {
   const loadPage = vi.fn(async () => ({ items: [
     { chat: { id: "chat_claude", title: "Claude chat", messageCount: 0, updatedAt: "2026-11-12T00:00:00.000Z" }, importSource: { harness: "claude" } },
@@ -32,7 +29,6 @@ it("applies the selected source to server-paged status rows", async () => {
   expect((await screen.findAllByText("Claude chat")).length).toBeGreaterThan(0);
   expect(screen.queryByText("Codex chat")).toBeNull();
 });
-
 it("keeps read chats out of mobile Unread after status pages load", async () => {
   const loadPage = vi.fn(async () => ({ items: [
     { chat: { id: "chat_read", title: "Read chat", messageCount: 4, updatedAt: "2026-11-12T00:00:00.000Z" }, readState: { unread: false } },
@@ -42,7 +38,6 @@ it("keeps read chats out of mobile Unread after status pages load", async () => 
   expect((await screen.findAllByText("Unread chat")).length).toBeGreaterThan(0);
   expect(screen.queryByText("Read chat")).toBeNull();
 });
-
 it("keeps Pinned and Show more available when unread pinned chats are on a later page", async () => {
   const loadPage = vi.fn(async (input: { group: string; cursor?: string }) => input.group !== "pinned"
     ? { items: [], totalCount: 0 }
@@ -58,8 +53,6 @@ it("keeps Pinned and Show more available when unread pinned chats are on a later
   fireEvent.click(more);
   expect(await screen.findByText("Later unread pinned chat")).toBeTruthy();
 });
-
-
 it.each(["pinned", "needsYou", "working", "done"])("retries a failed first %s page independently", async group => {
   const loadPage = vi.fn(async (input: { group: string }) => {
     if (input.group !== group) return { items: [], totalCount: 0 };

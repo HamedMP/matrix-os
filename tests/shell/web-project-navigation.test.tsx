@@ -36,14 +36,12 @@ vi.mock("@matrix-os/ui", async original => ({ ...await original<typeof import("@
 }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.userId = "user_owner"; auth.sessionId = "session_owner"; delete document.documentElement.dataset.matrixSelfHosted; window.history.replaceState(null, "", "/"); });
-
 it("loads project navigation in self-hosted Chat without a ClerkProvider", async () => {
   document.documentElement.dataset.matrixSelfHosted = "1";
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
   render(<Nav gatewayUrl="https://example.test" scopeKey="self-hosted-owner/runtime/main" />);
   expect(await screen.findByRole("button", { name: "Expand Local project chats" })).toBeTruthy();
 });
-
 it("archives both the project ID and legacy slug chats", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
   const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
@@ -58,7 +56,6 @@ it("archives both the project ID and legacy slug chats", async () => {
   await waitFor(() => expect(archive).toHaveBeenCalledTimes(2));
   expect(archive.mock.calls.map(([reference]) => reference).sort()).toEqual(["local", "proj_local"]);
 });
-
 it("reports running chats skipped when a project archive changes no chats", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp
@@ -73,7 +70,6 @@ it("reports running chats skipped when a project archive changes no chats", asyn
   expect(await screen.findByText("Archived 0 chats in Local project; 3 running skipped")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 });
-
 it("restores an older archived chat into an expanded project without reopening it", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
   let active = true;
@@ -105,7 +101,6 @@ it("restores an older archived chat into an expanded project without reopening i
   expect(await within(nav).findByRole("button", { name: "Older project chat" })).toBeTruthy();
   expect(within(nav).getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
 });
-
 it("keeps only failed project chats in bulk Undo after a partial restore", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "local", name: "Local project" }] })));
   const archive = vi.fn(async (reference: string) => ({ archived: [{ chatId: `chat_${reference}`, revision: 2 }], archivedCount: 1, skippedCount: 0 }));
@@ -131,7 +126,6 @@ it("keeps only failed project chats in bulk Undo after a partial restore", async
   expect(restore).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
 });
-
 it("updates a visible paged project title after rename without collapsing its project", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
   const loadNavigationPage = vi.fn(async () => ({ items: [{ chat: {
@@ -146,7 +140,6 @@ it("updates a visible paged project title after rename without collapsing its pr
   expect(screen.getByRole("button", { name: "New title" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
 });
-
 it("renders self-hosted Chat after a conversation exists without a ClerkProvider", async () => {
   document.documentElement.dataset.matrixSelfHosted = "1";
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
@@ -208,7 +201,6 @@ it("pages a project's canonical navigation independently and retains full row ac
   await waitFor(() => expect(result.current.fetched).toHaveLength(6));
   expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_next", limit: 20 }));
 });
-
 it("uses the projected unread flag for paged project chats", async () => {
   const item = (id: string, unread: boolean) => ({
     chat: { id, title: id, messageCount: 9, updatedAt: "2026-11-12T00:00:00Z" },
@@ -219,7 +211,6 @@ it("uses the projected unread flag for paged project chats", async () => {
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.fetched.map(chat => chat.id)).toEqual(["unread"]);
 });
-
 it("refreshes expanded project rows after a bulk archive even beyond the exclusion window", async () => {
   let archived = false;
   const load = vi.fn(async () => ({ items: archived ? [] : [{ chat: { id: "chat_old", title: "Old chat" } }], totalCount: archived ? 0 : 1 }));
@@ -231,7 +222,6 @@ it("refreshes expanded project rows after a bulk archive even beyond the exclusi
   await waitFor(() => expect(hook.result.current.fetched).toHaveLength(0));
   expect(load).toHaveBeenCalledTimes(2);
 });
-
 it("searches committed history beyond loaded Web Desktop rail rows", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], nextCursor: null })));
   const row = (id: string,title: string) => ({chat:{id,title,messageCount:1,activityAt:"2026-11-12T00:00:00Z",updatedAt:"2026-11-12T00:00:00Z"}});
@@ -251,7 +241,6 @@ it("searches committed history beyond loaded Web Desktop rail rows", async () =>
   expect(searchConversations).toHaveBeenCalledWith("planning",{lifecycle:"active",limit:50,cursor:"chatcur_more"});
   expect(open).toHaveBeenCalledWith("chat_oldest");
 });
-
 it("opens archive management from Chat and searches the full archived history", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [] })));
   const search = vi.fn(async () => ({ items: [{ chat: { id: "chat_archived", title: "Older planning", revision: 2, archivedAt: "2026-11-12T00:00:00Z" } }] }));
@@ -266,7 +255,6 @@ it("opens archive management from Chat and searches the full archived history", 
   expect(await screen.findByRole("checkbox", { name: "Select Older planning" })).toBeTruthy();
   expect(search).toHaveBeenCalledWith("planning", { lifecycle: "archived", limit: 50 });
 });
-
 it("keeps the owner's projects visible when the account is also an organization member", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_personal", slug: "personal", name: "Personal plan" }] })));
   render(<OrganizationStateProvider value={{ status: "member", organizationId: "org_team" }}><ChatApp
@@ -738,7 +726,6 @@ it("continues paging older project chats beyond 1,000 rows with a bounded window
   expect(result.current.hasMore).toBe(true);
   expect(request).toHaveBeenCalledTimes(22);
 });
-
 it("refreshes an expanded server-paged project when a new live chat joins it", async()=>{
  vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[{id:"proj_new",slug:"proj_new",name:"New project"}]})));
  const row=(id:string,title:string)=>({chat:{id,title,revision:1,titleVersion:1,lifecycle:"active",attention:"none",messageCount:1,createdAt:"2026-11-17T00:00:00Z",updatedAt:"2026-11-17T00:00:00Z"},projectId:"proj_new",classification:"done",persistence:"durable"});
@@ -751,7 +738,6 @@ it("refreshes an expanded server-paged project when a new live chat joins it", a
  expect(await screen.findByRole("button",{name:"New live chat"})).toBeTruthy();
  expect(load.mock.calls.length).toBeGreaterThan(1);
 });
-
 it("leaves the archive when a project is selected from Search", async()=>{
  vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[{id:"proj_local",slug:"local",name:"Local project"}]})));
  const api={list:vi.fn(async()=>({items:[]})),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
@@ -766,7 +752,6 @@ it("leaves the archive when a project is selected from Search", async()=>{
  fireEvent.click(screen.getByRole("option",{name:/Local project/}));
  expect(screen.queryByRole("region",{name:"Archived chats"})).toBeNull();
 });
-
 it("updates read marks on retained project pages without refetching or losing the next cursor", async () => {
   const item = (id: string, version = 1, unread = false) => ({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
     createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
@@ -786,8 +771,6 @@ it("updates read marks on retained project pages without refetching or losing th
   act(()=>result.current.loadMore());
   await waitFor(()=>expect(load).toHaveBeenCalledWith(expect.objectContaining({cursor:"navcur_third"})));
 });
-
-
 it("reorders adjacent older project chats across lifecycle states without moving listed chats", async () => {
   const older = [10, 11, 12].map(index => {
     const row = projectConversation(index).canonicalRecord!;
@@ -808,7 +791,6 @@ it("reorders adjacent older project chats across lifecycle states without moving
   expect(listedTitles()).toEqual(listedBefore);
   expect(region.querySelectorAll("[data-rail-order-id]")).toHaveLength(3);
 });
-
 it.each([{ insert: false, total: 25, pages: 1 }, { insert: true, total: 25, pages: 1 }, { insert: true, total: 600, pages: 27 }])("refreshes loaded project run states across shifted pages (%o)", async ({ insert, total, pages }) => {
   let completed = false;
   const order = Array.from({ length: total }, (_, index) => `chat_${index + 1}`);
@@ -845,7 +827,37 @@ it.each([{ insert: false, total: 25, pages: 1 }, { insert: true, total: 25, page
   await waitFor(() => expect(hook.result.current.fetched.map(row => row.id)).toEqual([...expected, ...following].slice(-500)));
   expect(hook.result.current.hasMore).toBe(pages > 25);
 });
-
+it.each([605, 625])("refreshes the combined project window across both references (%i chats each)", async total => {
+  let refreshed = false;
+  const load = vi.fn(async ({ projectId, cursor, limit }: { projectId: string; cursor?: string; limit: number }) => {
+    const start = cursor ? Number(cursor.slice("navcur_".length)) : 0, end = Math.min(total, start + limit);
+    return { items: Array.from({ length: end - start }, (_, offset) => ({ chat: { id: `${projectId}_${start + offset}`, title: refreshed ? "Updated" : "Original", titleVersion: 0 } })),
+      totalCount: total, nextCursor: end < total ? `navcur_${end}` : undefined };
+  });
+  const project = { id: "proj_one", slug: "one", name: "One" };
+  const hook = renderHook(({ version }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, version), { initialProps: { version: 0 } });
+  await waitFor(() => expect(hook.result.current.loading).toBe(false));
+  for (let page = 0; page < 30; page++) {
+    act(() => hook.result.current.loadMore());
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+  }
+  const before = hook.result.current.fetched.map(row => row.id);
+  expect(before).toHaveLength(500);
+  expect(before.some(id => id.startsWith("proj_one_"))).toBe(true);
+  expect(before.some(id => id.startsWith("one_"))).toBe(true);
+  refreshed = true;
+  hook.rerender({ version: 1 });
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(before);
+  await waitFor(() => expect(hook.result.current.loading).toBe(false));
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(before);
+  expect(hook.result.current.fetched.every(row => row.title === "Updated")).toBe(true);
+  expect(hook.result.current.hasMore).toBe(total > 605);
+  if (hook.result.current.hasMore) {
+    act(() => hook.result.current.loadMore());
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    expect(hook.result.current.fetched.at(-1)?.id).toBe("one_624");
+  }
+});
 it.each(["navigation", "run", "selection"])("unblocks an older project chat after %s refresh", async trigger => {
   vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })));

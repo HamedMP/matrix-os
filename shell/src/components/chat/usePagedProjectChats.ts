@@ -98,6 +98,13 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
         // Keep a bounded window while the cursor continues through full history.
         if (reload || sources.some(source => source.cursor === null)) {
           const uniqueRows = rows.filter((row, index) => rows.findIndex(item => item.id === row.id) === index);
+          if (reload && uniqueRows.length > MAX_RETAINED_PROJECT_ROWS) {
+            // Refresh the combined retained window, rather than favoring the last source.
+            return previous.flatMap(prior => {
+              const refreshed = uniqueRows.find(row => row.id === prior.id);
+              return refreshed ? [refreshed] : [];
+            });
+          }
           return reload ? uniqueRows.slice(-MAX_RETAINED_PROJECT_ROWS)
             : [...uniqueRows, ...previous.filter(row => !uniqueRows.some(item => item.id === row.id))].slice(0, MAX_RETAINED_PROJECT_ROWS);
         }
@@ -143,12 +150,10 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   return { expanded, toggleExpanded, fetched: visible, loading, error, retry, loadMore, capped: false,
     hasMore: Boolean(nextCursors.id || nextCursors.slug) };
 }
-
 import type { RenameableConversation } from "./ChatTitleRename";
 type Group = "pinned" | "needsYou" | "working" | "done";
 type PageState = { key: string; rows: RenameableConversation[]; count: number; cursor?: string; loading: boolean; error: boolean };
 const MAX_RETAINED_STATUS_ROWS = 500;
-
 function conversation(item: CanonicalChatNavigationPageResponse["items"][number]): RenameableConversation {
   return {
     id: item.chat.id,
@@ -160,7 +165,6 @@ function conversation(item: CanonicalChatNavigationPageResponse["items"][number]
     readState: item.readState,
   };
 }
-
 /** Each status group owns its cursor and retains visible rows while a page is in flight. */
 export function usePagedStatusGroup(group: Group, loadPage?: LoadNavigationPage, scopeKey?: string, version?: number) {
   const key = `${scopeKey ?? ""}\0${group}`;
