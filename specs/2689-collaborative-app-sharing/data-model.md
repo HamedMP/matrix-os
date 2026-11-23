@@ -106,6 +106,14 @@ Constraints:
 - Rebind CASes binding/scope and bumps auth epoch atomically.
 - Stop changes scope/binding atomically and never deletes app rows.
 
+### Shared app presentation (platform, ENG-490)
+
+- Existing `collaboration_directory` row: `app_name` (at most 120 characters), `app_icon_bytes` (nullable BYTEA, 12–49152 bytes), `app_icon_content_type` (nullable `image/png`), and `app_icon_sha256` (nullable 64-hex).
+- Presentation is applied atomically with routing metadata under the existing authority, generation, and metadata-revision checks. Replayed/stale events cannot replace newer name/artwork. The upsert predicates owner/runtime as well as revision, so a competing runtime cannot overwrite presentation after racing the first insert. New events replace all presentation; stopped or removed app shares clear thumbnail bytes/type/hash.
+- Directory deletion and successful owner account erasure remove the bytes in the same existing cleanup transaction; no orphan artwork store exists.
+- Preview upgrade: under the existing platform migration lock, detect the old upload table, lock it, scan referenced artwork in batches of 25, resize valid source images into bounded thumbnails on the corresponding runtime/scope directory rows, clear dangling or stopped references, then drop the old table and reference index. Names and routing revisions remain unchanged. A SQL failure rolls back the entire conversion; invalid artwork safely becomes the letter tile. Re-running the migration is idempotent.
+- No separate upload repository/table, quota, eviction, upload-specific retry/rate limiter, reference checks, or orphan collector remains.
+
 ### Shared app launch session
 
 Ephemeral bounded state:

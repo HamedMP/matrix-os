@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
+import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
 
 const { terminals, attach, write } = vi.hoisted(() => ({
   terminals: [] as Array<{ key?: (event: KeyboardEvent) => boolean; selection: string; selectAll: ReturnType<typeof vi.fn>; paste: ReturnType<typeof vi.fn> }>,
@@ -112,6 +113,41 @@ describe("TerminalView keyboard control wiring", () => {
     expect(event.defaultPrevented).toBe(false);
     expect(readText).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  // Fault detected (Hamed, 2026-11-22): with a terminal focused, the Terminal window's
+  // Cmd+Alt+Shift+Arrow swap was taken by the terminal's own resize binding and the menu never saw it.
+  it.each([
+    { key: "ArrowLeft", metaKey: true, altKey: true, shiftKey: true },
+    { key: "ArrowRight", metaKey: true, altKey: true },
+    { key: "d", metaKey: true },
+    { key: "D", metaKey: true, shiftKey: true },
+    { key: "Enter", metaKey: true, shiftKey: true },
+    { key: "w", metaKey: true },
+    { key: "n", metaKey: true },
+    { key: "3", metaKey: true },
+    { key: "F2" },
+    { key: "Tab", ctrlKey: true },
+    { key: "Tab", ctrlKey: true, shiftKey: true },
+    { key: "1", ctrlKey: true },
+    { key: "0", ctrlKey: true },
+  ])("leaves the Terminal window's shortcut %j to its menu", (options) => {
+    render(<TerminalView sessionName="session-one" reservedKeys={isTerminalWindowShortcut} />);
+    act(() => events.onState("attached"));
+    const event = new KeyboardEvent("keydown", { cancelable: true, ...options });
+    act(() => expect(terminals[0].key!(event)).toBe(false));
+    // Not cancelled, so Chromium hands it on to the menu accelerator.
+    expect(event.defaultPrevented).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps the clipboard and shell keys with the terminal in the Terminal window", () => {
+    expect([
+      { key: "c", metaKey: true }, { key: "v", metaKey: true }, { key: "a", metaKey: true },
+      { key: "d", ctrlKey: true }, { key: "w", ctrlKey: true }, { key: "ArrowLeft", metaKey: true }, { key: "Tab" },
+    ].map((options) => isTerminalWindowShortcut({ metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...options })))
+      .toEqual([false, false, false, false, false, false, false]);
   });
 
   it("preserves AltGraph input without a separate altKey flag", () => {

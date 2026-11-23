@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import sharp from "sharp";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -164,6 +166,34 @@ describe("collaborative app authenticated launch facade", () => {
     } finally { await second.close(); }
   });
 
+  it("names the shared target with the owner's manifest name and platform icon route", async () => {
+    const icon = await sharp({ create: { width: 16, height: 16, channels: 4, background: "red" } }).png().toBuffer();
+    const iconSha256 = createHash("sha256").update(icon).digest("hex");
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000009",
+      scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "app",
+      organizationId,
+      audience: "current_membership",
+      authorityGeneration: 1,
+      metadataRevision: 2,
+      app: { ...app, shareRevision: 2, name: "Team Tracker", thumbnail: { sha256: iconSha256, contentType: "image/png", base64: icon.toString("base64") } },
+      recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+    });
+    const response = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-actor": actorId },
+      body: JSON.stringify({ clientRequestId: requestId, expectedShareRevision: "2", expectedBuildId: app.buildId }),
+    });
+    expect(response.status).toBe(201);
+    expect((await response.json() as { target: unknown }).target).toMatchObject({
+      name: "Team Tracker",
+      iconUrl: `/api/collaboration/shared-apps/${scopeId}/icon?v=${iconSha256}`,
+    });
+  });
+
   it("creates an idempotent path-bound launch and serves safe immutable bytes without a browser credential", async () => {
     const create = () => routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
       method: "POST",
@@ -176,8 +206,10 @@ describe("collaborative app authenticated launch facade", () => {
     expect(launch).toMatchObject({
       launchId,
       entryUrl: `/api/collaboration/shared-apps/${scopeId}/runtime/${launchId}/index.html`,
-      target: { kind: "shared", scopeId, appId: app.appId, buildId: app.buildId },
+      target: { kind: "shared", scopeId, appId: app.appId, buildId: app.buildId, name: app.appId },
     });
+    // No owner icon was captured: the target carries no icon URL and never a member `/icons/<slug>` fallback.
+    expect(launch.target).not.toHaveProperty("iconUrl");
     expect(JSON.stringify(launch)).not.toMatch(/credential|session|proof|token/i);
     expect((await create()).status).toBe(201);
     expect(sessions.size).toBe(1);

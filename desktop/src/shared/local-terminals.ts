@@ -16,6 +16,68 @@ export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
 
 export const LOCAL_TERMINAL_ID_PATTERN = /^t[0-9]{1,6}[a-z]{0,2}$/;
 export const LocalTerminalIdSchema = z.string().regex(LOCAL_TERMINAL_ID_PATTERN);
+/**
+ * A terminal this core reports, here (`t7`) or on a machine it added
+ * (`vps/t7`); machine names follow herdr-core's terminal-name rules.
+ */
+export const LOCAL_TERMINAL_ADDRESS_PATTERN = /^(?:[a-z0-9][a-z0-9._-]{0,31}\/)?t[0-9]{1,6}[a-z]{0,2}$/;
+export const LocalTerminalAddressSchema = z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN);
+/** Live and finished terminals one facts update may carry. */
+export const LOCAL_TERMINAL_FACTS_MAX = 2_000;
+
+/**
+ * Machines this core reaches over ssh (spec 2706 layer 7), with herdr-core's
+ * own machine model. A name follows herdr-core's terminal-name rules; a
+ * target is how ssh reaches it: `host`, `user@host`, `user@host:port`, or a
+ * `Host` from `~/.ssh/config`. It never starts with `-`, so it can never be
+ * read as an ssh option, and it carries no spaces or shell signs.
+ */
+export const LOCAL_MACHINE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+export const LocalMachineNameSchema = z.string().regex(LOCAL_MACHINE_NAME_PATTERN);
+export const SSH_TARGET_PATTERN = /^(?:[A-Za-z0-9_][A-Za-z0-9._-]{0,63}@)?(?:[A-Za-z0-9][A-Za-z0-9._-]{0,252}|\[[0-9A-Fa-f:.]{2,45}\])(?::[0-9]{1,5})?$/;
+export const SshTargetSchema = z.string().min(1).max(255).regex(SSH_TARGET_PATTERN)
+  .refine((target) => {
+    const port = /:([0-9]{1,5})$/.exec(target.replace(/^.*\]/, ""))?.[1];
+    return port === undefined || (Number(port) >= 1 && Number(port) <= 65_535);
+  });
+export const LOCAL_MACHINES_MAX = 64;
+/**
+ * How to reach a machine beyond its target (spec 2706 layer 7): a port, an
+ * identity file on this Mac (a path, never its contents), a jump host, or
+ * Tailscale SSH. The main process builds the ssh command from these; the
+ * renderer never sends a command.
+ */
+export const SshIdentityPathSchema = z.string().min(3).max(1024).regex(/^(?:~\/|\/)[A-Za-z0-9._/-]+$/)
+  .refine((path) => !path.split("/").includes(".."));
+export const SshOptionsSchema = z.strictObject({
+  port: z.number().int().min(1).max(65_535).optional(),
+  identity: SshIdentityPathSchema.optional(),
+  jump: SshTargetSchema.optional(),
+  tailscaleSsh: z.boolean().optional(),
+}).refine((options) => !options.tailscaleSsh || (!options.port && !options.identity && !options.jump));
+export type SshOptions = z.infer<typeof SshOptionsSchema>;
+/** A tailnet peer from `tailscale status`: names and state only. */
+export const TailscalePeerSchema = z.strictObject({
+  name: z.string().max(64),
+  dnsName: z.string().max(253).regex(/^[A-Za-z0-9][A-Za-z0-9.-]*$/),
+  os: z.string().max(32),
+  online: z.boolean(),
+  tailscaleSsh: z.boolean(),
+});
+export type TailscalePeer = z.infer<typeof TailscalePeerSchema>;
+export const LocalMachineStateSchema = z.enum(["connecting", "connected", "needs_login", "unreachable"]);
+export const LocalMachineSchema = z.strictObject({
+  name: LocalMachineNameSchema,
+  target: z.string().max(255),
+  state: LocalMachineStateSchema,
+  temporary: z.boolean(),
+  /** How the app reaches it, when it was added here: shown, and reused by Open in terminal. */
+  ssh: z.lazy(() => SshOptionsSchema).optional(),
+});
+export type LocalMachine = z.infer<typeof LocalMachineSchema>;
+/** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
+export const LocalMachineAddFailureSchema = z.enum(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added", "invalid", "unavailable"]);
+export type LocalMachineAddFailure = z.infer<typeof LocalMachineAddFailureSchema>;
 const AttachIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const Size = { cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) };
 const Ok = z.strictObject({ ok: z.boolean() });
@@ -38,6 +100,30 @@ export const LocalTerminalSchema = z.strictObject({
   statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
 });
 export type LocalTerminal = z.infer<typeof LocalTerminalSchema>;
+
+/**
+ * One terminal's status facts from herdr-core's `events.subscribe` (spec 2706
+ * layer 4): what the sidebar needs, nothing the program could use to reach
+ * the window beyond a bounded, sanitized title.
+ */
+export const LocalTerminalFactSchema = z.strictObject({
+  id: LocalTerminalAddressSchema,
+  title: z.string().max(256),
+  status: LocalTerminalStatusSchema.nullable(),
+  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
+  statusAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+  turn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  seenTurn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+  finished: z.boolean(),
+  finishedSeen: z.boolean().optional(),
+  parent: LocalTerminalAddressSchema.optional(),
+  agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  /** What runs in it now and where (sanitized, short), for the row's second line. */
+  program: z.string().max(64).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
+  folder: z.string().max(96).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
+});
+export type LocalTerminalFact = z.infer<typeof LocalTerminalFactSchema>;
+const FactsSchema = z.array(LocalTerminalFactSchema).max(LOCAL_TERMINAL_FACTS_MAX);
 
 /** Coding agents the Terminal window can start; the command line for each is fixed in the main process. */
 export const LocalTerminalAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
@@ -65,20 +151,25 @@ export const LOCAL_TERMINAL_INVOKE = {
       ...Size,
       agent: LocalTerminalAgentSchema.optional(),
       folder: LocalTerminalFolderSchema.optional(),
-    }),
+      // A shell on a machine this core added, instead of this device.
+      machine: LocalMachineNameSchema.optional(),
+    }).refine((request) => !request.machine || (!request.agent && !request.folder)),
     response: z.discriminatedUnion("status", [
-      z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
+      z.strictObject({ status: z.literal("ready"), id: LocalTerminalAddressSchema }),
       // "rate-limited": too many terminals were started in a short time.
       z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
     ]),
   },
-  "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalIdSchema }), response: Ok },
-  "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalIdSchema, name: LocalTerminalNameSchema }), response: Ok },
+  // Terminals here (`t7`) and on machines this core added (`vps/t7`) take the same actions.
+  "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
+  // Removes a finished terminal (herdr-core `terminal.rm`); a live one is refused by the core.
+  "local-terminal:remove": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
+  "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalAddressSchema, name: LocalTerminalNameSchema }), response: Ok },
   // Writes a pasted file beside the terminal (herdr-core `terminal.put`) and
   // returns where it landed, for the window to paste that path.
   "local-terminal:put": {
     request: z.strictObject({
-      id: LocalTerminalIdSchema,
+      id: LocalTerminalAddressSchema,
       name: PutFileNameSchema,
       dataBase64: z.string().max(PUT_BASE64_MAX).regex(/^(?:[A-Za-z0-9+/]+={0,2})?$/), // "" is a zero-byte file
     }),
@@ -88,7 +179,7 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:attach": {
-    request: z.strictObject({ id: LocalTerminalIdSchema, ...Size }),
+    request: z.strictObject({ id: LocalTerminalAddressSchema, ...Size }),
     response: z.union([
       z.strictObject({ ok: z.literal(true), attachId: AttachIdSchema }),
       z.strictObject({ ok: z.literal(false) }),
@@ -108,11 +199,63 @@ export const LOCAL_TERMINAL_INVOKE = {
     response: Ok,
   },
   "local-terminal:detach": { request: z.strictObject({ attachId: AttachIdSchema }), response: Ok },
+  // Starts following status (herdr-core `events.subscribe`) and returns what is known now;
+  // later changes arrive as `local-terminal:facts`.
+  "local-terminal:watch": {
+    request: z.strictObject({}),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), terminals: FactsSchema }),
+      z.strictObject({ status: Unavailable }),
+    ]),
+  },
+  "local-terminal:machines": {
+    request: z.strictObject({}),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), machines: z.array(LocalMachineSchema).max(LOCAL_MACHINES_MAX) }),
+      z.strictObject({ status: Unavailable }),
+    ]),
+  },
+  "local-terminal:machine-add": {
+    request: z.strictObject({ target: SshTargetSchema, name: LocalMachineNameSchema.optional(), ssh: SshOptionsSchema.optional() }),
+    response: z.union([
+      z.strictObject({ ok: z.literal(true), machine: LocalMachineSchema }),
+      z.strictObject({ ok: z.literal(false), reason: LocalMachineAddFailureSchema }),
+    ]),
+  },
+  "local-terminal:machine-remove": { request: z.strictObject({ name: LocalMachineNameSchema }), response: Ok },
+  "local-terminal:machine-connect": { request: z.strictObject({ name: LocalMachineNameSchema }), response: Ok },
+  // Open in terminal for an added machine: ssh there the way it was added (target and options kept in the main process).
+  "local-terminal:machine-login": {
+    request: z.strictObject({ name: LocalMachineNameSchema, ...Size }),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
+      z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
+    ]),
+  },
+  // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
+  "local-terminal:ssh-login": {
+    request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
+      z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
+    ]),
+  },
+  // This Mac's tailnet peers, for one-click Add machine; Tailscale missing, stopped or logged out says so.
+  "local-terminal:tailscale-peers": {
+    request: z.strictObject({}),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), peers: z.array(TailscalePeerSchema).max(256) }),
+      z.strictObject({ status: z.enum(["missing", "stopped", "logged-out", "unavailable"]) }),
+    ]),
+  },
+  // The person opened this terminal: herdr-core's `herdr.seen` label, shared with every client of the core.
+  "local-terminal:seen": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
 } as const;
 
 export const LOCAL_TERMINAL_EVENTS = {
   "local-terminal:output": z.strictObject({ attachId: AttachIdSchema, data: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS) }),
   "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema }),
+  "local-terminal:facts": z.strictObject({ terminals: FactsSchema }),
 } as const;
 
 export const LOCAL_TERMINAL_INVOKE_CHANNELS = Object.keys(LOCAL_TERMINAL_INVOKE) as Array<keyof typeof LOCAL_TERMINAL_INVOKE>;

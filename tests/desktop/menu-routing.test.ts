@@ -196,6 +196,7 @@ function installMenu(overrides: { terminalFocused?: boolean } = {}) {
     openTerminalWindow,
     thirdPartyNoticesPath: null,
     shortcuts: shortcuts as never,
+    sendTerminalCommand: vi.fn(),
   });
   return { main, terminal, shortcuts, openTerminalWindow };
 }
