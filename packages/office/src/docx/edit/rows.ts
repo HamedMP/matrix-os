@@ -7,6 +7,7 @@ import type { BlockRecord, DocxIndex } from "../internal.js";
 import { attr, firstChild, rowCells, rowRevisionElement, tableRows } from "../internal.js";
 import { type EditContext, isOwn, noteRevision, revisionAttrs, touch } from "./context.js";
 import { deleteInParagraph } from "./delete.js";
+import { rescueAnchors } from "./anchors.js";
 import { addMarkRevision, fallbackPosition, firstPositionIn, lastPositionIn, markRevisions, removeBlock } from "./marks.js";
 import { PPR_ORDER, TRPR_ORDER } from "./schema-order.js";
 import { copyRunProps, makeRun, paragraphAttrs, runPropsOf } from "./text.js";
@@ -53,6 +54,8 @@ export function removeRow(context: EditContext, table: BlockRecord, row: XmlElem
     edgePosition(index, rows[at + 1], true) ?? edgePosition(index, rows[at - 1], false) ?? fallbackPosition(index, table);
   const ids = blockIdsIn(index, row);
   const parent = elementParent(row);
+  const rescued = rescueAnchors(row);
+  if (rescued !== null) index.markDirty(rescued);
   remove(row);
   for (const id of ids) context.tracker.blockRemoved(id, fallback);
   context.touched.add(table.element);

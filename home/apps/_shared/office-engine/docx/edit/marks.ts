@@ -10,6 +10,7 @@ import { appendChild, insertBefore, remove } from "../../xml/index.js";
 import type { BlockRecord, DocxIndex } from "../internal.js";
 import { REVISION_CONTAINERS, firstChild, rowCells, tableRows } from "../internal.js";
 import { PPR_ORDER, RPR_ORDER } from "./schema-order.js";
+import { rescueAnchors } from "./anchors.js";
 import type { PositionTracker } from "./tracker.js";
 import { elementParent, ensureChild, ensureFirst, hasElementChildren, insertOrdered } from "./xml-util.js";
 
@@ -198,6 +199,9 @@ export function removeBlock(index: DocxIndex, record: BlockRecord, tracker?: Pos
   };
   collect(record);
   const parent = elementParent(record.element);
+  // Bookmarks, comment anchors and open fields in the block move to the nearest paragraph that stays.
+  const rescued = rescueAnchors(record.element);
+  if (rescued !== null) index.markDirty(rescued);
   remove(record.element);
   if (tracker !== undefined) for (const id of ids) tracker.blockRemoved(id, fallback);
   if (parent !== null) index.markDirty(parent);

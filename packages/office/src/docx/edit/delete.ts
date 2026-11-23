@@ -5,6 +5,7 @@ import { appendChild, createElement, insertBefore, prependChild, remove } from "
 import type { BlockRecord, InlineAtom } from "../internal.js";
 import { splitRunAt } from "../internal.js";
 import { type EditContext, type ResolvedRange, blockIdOf, isOwn, noteRevision, revisionAttrs, touch } from "./context.js";
+import { hoistAnchorsBefore } from "./anchors.js";
 import { codeRunsOfDeletedFields, runsInOrder } from "./fields.js";
 import {
   addMarkRevision,
@@ -56,6 +57,8 @@ function wrapDeleted(context: EditContext, node: XmlElement): void {
 
 function removeNode(node: XmlElement): void {
   const parent = elementParent(node);
+  // A comment reference or a range marker inside what goes stays; field characters go on purpose.
+  hoistAnchorsBefore(node, node, { fields: false });
   remove(node);
   removeEmptyWrappers(parent);
 }

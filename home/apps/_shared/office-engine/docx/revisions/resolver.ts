@@ -12,7 +12,8 @@ import {
   sectionBreakOf,
 } from "../edit/marks.js";
 import { setContentDeleted } from "../edit/text.js";
-import { elementParent, hasElementChildren, isAttached, isRangeMarker, removeEmptyWrappers } from "../edit/xml-util.js";
+import { fieldNodesToKeep, hoistAnchorsBefore, rescueAnchors } from "../edit/anchors.js";
+import { elementParent, hasElementChildren, isAttached, removeEmptyWrappers } from "../edit/xml-util.js";
 import type { DocxIndex, RevisionGroup } from "../internal.js";
 import { REVISION_CONTAINERS, attr, closest, tableRows } from "../internal.js";
 import { isCellMark, isPropertyChange, resolveCellMark, resolvePropertyChange } from "./properties.js";
@@ -48,6 +49,8 @@ export class Resolver {
   private readonly cells: XmlElement[] = [];
   private readonly records: XmlElement[] = [];
   private readonly moveNames = new Set<string>();
+  /** Field characters that stay when the dropped content goes; see `fieldNodesToKeep`. */
+  private fieldKeep: ReadonlySet<XmlElement> = new Set();
 
   constructor(
     private readonly index: DocxIndex,
@@ -107,18 +110,8 @@ export class Resolver {
       }
       remove(element);
     } else {
-      // Bookmarks and comment ranges that end or start inside the removed text keep both ends.
-      const stack: XmlElement[] = [element];
-      const markers: XmlElement[] = [];
-      for (let guard = 0; stack.length > 0 && guard < 1_000_000; guard++) {
-        const current = stack.pop() as XmlElement;
-        for (const node of current.children) {
-          if (node.kind !== "element") continue;
-          if (isRangeMarker(node.name)) markers.push(node);
-          else if (node.name !== "w:r") stack.push(node);
-        }
-      }
-      for (const marker of markers) insertBefore(element, marker);
+      // Bookmarks, comment anchors and the characters of fields that reach outside the removed text stay.
+      hoistAnchorsBefore(element, element, { fields: this.fieldKeep });
       remove(element);
       removeEmptyWrappers(parent);
     }
@@ -138,6 +131,7 @@ export class Resolver {
     }
     if (table === null || tableRows(table).length > 1) {
       const parent = elementParent(row);
+      this.dirty(rescueAnchors(row));
       remove(row);
       this.dirty(parent);
       if (table !== null) this.touched.add(table);
@@ -199,6 +193,7 @@ export class Resolver {
     };
     const marks = this.marks.map((mark) => ({ mark, at: position(mark) })).sort((a, b) => b.at - a.at);
 
+    this.fieldKeep = fieldNodesToKeep(this.content.filter((element) => !this.keeps(element) && isAttached(index, element)));
     for (const element of this.content) if (isAttached(index, element)) this.resolveContent(element);
     for (const element of this.properties) {
       if (isAttached(index, element)) this.dirty(resolvePropertyChange(element, this.accept));

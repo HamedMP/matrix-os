@@ -143,6 +143,22 @@ def _run_text(paragraph) -> str:
     return "".join(out)
 
 
+def _cell_paragraphs(cell) -> list[str]:
+    """Paragraph texts of a table cell; a paragraph whose mark was removed joins the next one."""
+    texts: list[str] = []
+    pending = ""
+    for paragraph in cell.findall(_w("p")):
+        text = pending + _run_text(paragraph)
+        if paragraph.get("mergeWithNext"):
+            pending = text
+            continue
+        pending = ""
+        texts.append(text)
+    if pending or not texts:
+        texts.append(pending)
+    return texts
+
+
 def body_text(body) -> str:
     lines: list[str] = []
     pending = ""  # text of paragraphs whose mark was removed, waiting to join the next one
@@ -162,7 +178,7 @@ def body_text(body) -> str:
             for row in block.iter(_w("tr")):
                 cells = []
                 for cell in row.findall(_w("tc")):
-                    cells.append("\n".join(_run_text(p) for p in cell.findall(_w("p"))))
+                    cells.append("\n".join(_cell_paragraphs(cell)))
                 lines.append("\t".join(cells))
         elif block.tag == _w("sdt"):
             content = block.find(_w("sdtContent"))
