@@ -20,7 +20,7 @@ const input = { clientRequestId: "req_fixture_running", baseRevision: 0,
   interactionMode: "default", permissionMode: "supervised" };
 
 describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface) => {
-  function setup(readResult: unknown = detail, status?: number, readFails = false, detailFails = false, transcriptResult: unknown = readResult, readTranscript?: () => Promise<unknown>) {
+  function setup(readResult: unknown = detail, status?: number, readFails = false, readTranscript?: () => Promise<unknown>) {
     const post = vi.fn(async () => {
       if (surface === "Electron") throw new AppError(status ? "server" : "timeout", { httpStatus: status });
       if (status) return new Response("{}", { status });
@@ -37,9 +37,8 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
         const saved = readResult as typeof detail;
         return { record: saved.record, message: saved.messages[0], turn: saved.turns[0], run: saved.runs[0], admission: "already_accepted" };
       }
-      if (detailFails) throw new TypeError("Detail offline");
       if (readTranscript) return readTranscript();
-      return transcriptResult;
+      return readResult;
     });
     const client = surface === "Electron" ? createCanonicalChatClient({
       get, post, patch: vi.fn(), delete: vi.fn(),
@@ -56,9 +55,9 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
     expect(accepted.admission).toBe("already_accepted");
     expect(accepted.turn.id).toBe("cturn_fixture_running");
     expect(accepted.run.id).toBe("run_fixture_running");
-    expect(accepted).toHaveProperty("recoveredDetail.messages", detail.messages);
+    expect(accepted).not.toHaveProperty("recoveredDetail");
     expect(post).toHaveBeenCalledOnce();
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledOnce();
   });
 
   it.each(["Agent context", "Bot permissions"])("recovers original request authority after legitimate %s overrides", async (override) => {
@@ -94,20 +93,12 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
     },
   );
 
-  it("preserves confirmed acceptance when the optional transcript read is unavailable", async () => {
-    const { client, post } = setup(detail, undefined, false, true);
-    const accepted = await client.admitTurn(chatId, input);
-    expect(accepted.admission).toBe("already_accepted");
-    expect(accepted).not.toHaveProperty("recoveredDetail");
-    expect(post).toHaveBeenCalledOnce();
-  });
-
   it("acknowledges a proven admission while optional transcript hydration remains pending", async () => {
     vi.useFakeTimers();
     let finishTranscript!: (value: unknown) => void;
     const transcript = new Promise<unknown>(resolve => { finishTranscript = resolve; });
     const readTranscript = vi.fn(() => transcript);
-    const { client, post, get } = setup(detail, undefined, false, false, detail, readTranscript);
+    const { client, post, get } = setup(detail, undefined, false, readTranscript);
     let acknowledged: Awaited<ReturnType<typeof client.admitTurn>> | undefined;
     const sending = client.admitTurn(chatId, input).then(result => { acknowledged = result; });
     try {
@@ -126,14 +117,6 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
       vi.useRealTimers();
     }
     expect(post).toHaveBeenCalledOnce();
-  });
-
-  it("does not replace a confirmed admission with a stale transcript snapshot", async () => {
-    const stale = { ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision: 0 } }, messages: [], turns: [], runs: [] };
-    const { client } = setup(detail, undefined, false, false, stale);
-    const accepted = await client.admitTurn(chatId, input);
-    expect(accepted.admission).toBe("already_accepted");
-    expect(accepted).not.toHaveProperty("recoveredDetail");
   });
 
   it("keeps an old host's missing lookup uncertain without retrying admission", async () => {

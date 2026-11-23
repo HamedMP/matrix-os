@@ -428,8 +428,7 @@ export function createCanonicalChatClient(
               || (error.category === "server" && error.httpStatus !== undefined && error.httpStatus >= 500));
             if (ambiguous) {
               const recovered = await recoverCanonicalChatAdmission(parsedChatId, request,
-                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`, true)),
-                () => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`, true)));
+                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`, true)));
               if (recovered) return recovered;
             }
             throw error;
