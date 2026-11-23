@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useDesktopSurfaces,
+  type DesktopSurfaceBounds,
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
@@ -50,6 +51,7 @@ import {
   toggleAppLauncher,
   toggleShowDesktop,
 } from "./app-switching";
+import { moveAppWindow } from "./window-tiling";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -216,10 +218,20 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     open();
     reconcileAndActivateCurrent();
   }, [reconcileAndActivateCurrent]);
+  // The end of a drag and a keyboard tile both save window bounds through here.
+  const applyWindowBounds = useCallback((tabId: string, bounds: DesktopSurfaceBounds) => {
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    recordCanonicalBounds(tab, desktopMode, bounds);
+    setSurfaceBounds(tabId, bounds, viewport, desktopMode !== "canvas");
+    scheduleDurablePersist();
+  }, [desktopMode, recordCanonicalBounds, scheduleDurablePersist, setSurfaceBounds, viewport]);
   useEffect(() => registerDesktopShellEffects({
     schedulePersist: () => scheduleDurablePersist(),
     openRoot,
-  }), [openRoot, scheduleDurablePersist]);
+    viewport: () => viewport,
+    applyWindowBounds,
+  }), [applyWindowBounds, openRoot, scheduleDurablePersist, viewport]);
 
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
   const launchApp = useCallback((tabId: string) => {
@@ -394,11 +406,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
               onClose={() => closeApp(tab)}
               onMinimize={() => minimizeApp(tab.id)}
               onMaximize={() => maximizeApp(tab.id)}
-              onBoundsChange={(bounds) => {
-                recordCanonicalBounds(tab, desktopMode, bounds);
-                setSurfaceBounds(tab.id, bounds, viewport, desktopMode !== "canvas");
-                scheduleDurablePersist();
-              }}
+              onBoundsChange={(bounds) => moveAppWindow(tab.id, bounds)}
             />
           );
           })}

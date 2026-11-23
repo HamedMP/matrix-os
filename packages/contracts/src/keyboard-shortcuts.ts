@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { normalizeTerminalShortcut, terminalBindings, type TerminalKeyboardPreferences } from "#terminal-keyboard";
 
 // Pure registry shared by the Electron main process and the renderers.
 // No DOM, React or Node imports.
@@ -11,6 +12,7 @@ export const SHORTCUT_ACTION_IDS = [
   "app.switch-1", "app.switch-2", "app.switch-3", "app.switch-4", "app.switch-5",
   "app.switch-6", "app.switch-7", "app.switch-8", "app.switch-9",
   "app.show-desktop", "app.toggle-full-size", "app.open-files",
+  "app.tile-left", "app.tile-right", "app.tile-top", "app.tile-bottom", "app.restore-size",
   "nav.palette", "nav.quick-open", "nav.settings",
   "tabs.new-context", "tabs.new", "tabs.close",
   "chat.new-thread", "chat.open",
@@ -41,6 +43,14 @@ function action(
   return { id, group, label, description, defaults: { mac, other } };
 }
 
+// Same keys on every platform, as in Rectangle.
+// Window arrangement: Ctrl+Shift on macOS, because Rectangle and Magnet take
+// Ctrl+Option there. Elsewhere Ctrl+Shift+arrow selects text by word, so the
+// keys stay on Ctrl+Alt.
+function arrange(key: string): [readonly string[], readonly string[]] {
+  return [[`Ctrl+Shift+${key}`], [`Ctrl+Alt+${key}`]];
+}
+
 // "Mod" binding: Cmd on mac, Ctrl elsewhere.
 function mod(rest: string): [readonly string[], readonly string[]] {
   return [[`Cmd+${rest}`], [`Ctrl+${rest}`]];
@@ -59,8 +69,13 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   action("app.reopen", "apps", "Reopen closed app", "Reopen the app you closed most recently.", ...mod("Shift+T")),
   ...SWITCH_ACTIONS,
   action("app.show-desktop", "apps", "Show desktop", "Minimize every open app.", [], []),
-  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", [], []),
+  action("app.toggle-full-size", "apps", "Toggle app full size", "Make the selected app fill the screen, or restore it.", ...arrange("Enter")),
   action("app.open-files", "apps", "Open Files", "Open the Files app.", [], []),
+  action("app.tile-left", "apps", "Move app to left half", "Place the selected app on the left half of the desktop.", ...arrange("Left")),
+  action("app.tile-right", "apps", "Move app to right half", "Place the selected app on the right half of the desktop.", ...arrange("Right")),
+  action("app.tile-top", "apps", "Move app to top half", "Place the selected app on the top half of the desktop.", ...arrange("Up")),
+  action("app.tile-bottom", "apps", "Move app to bottom half", "Place the selected app on the bottom half of the desktop.", ...arrange("Down")),
+  action("app.restore-size", "apps", "Restore app size", "Return the selected app to its size before it was moved to a half or made full size.", ...arrange("Backspace")),
   action("nav.palette", "navigation", "Command palette", "Search commands and apps.", ...mod("K")),
   action("nav.quick-open", "navigation", "Go to file", "Find and open a file by name.", ...mod("P")),
   action("nav.settings", "navigation", "Settings", "Open Settings.", ...mod(",")),
@@ -220,6 +235,50 @@ export function bindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform)
   const key = digit ?? keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
   if (key === null) return null;
   return [...heldModifiers(e, platform), key].join("+");
+}
+
+/** Whether `binding` is in the registry's form: known modifiers in order, then one known key. */
+export function isCanonicalBinding(binding: string, platform: ShortcutPlatform): boolean {
+  return parseBinding(binding, platform) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal claims: a focused Terminal keeps the keys its active profile binds,
+// so the main process does not run an Apps shortcut for them (specs/653).
+
+const TERMINAL_KEY_NAMES: Readonly<Record<string, string>> = {
+  ArrowLeft: "Left", ArrowRight: "Right", ArrowUp: "Up", ArrowDown: "Down",
+};
+
+/**
+ * A terminal binding (`Ctrl+Shift+ArrowLeft`, `Shift+Meta+Enter`) in the
+ * registry's form (`Ctrl+Shift+Left`, `Cmd+Shift+Enter`), so it compares with
+ * bindingFromKeyEvent. Null when it cannot be one: off macOS the registry has
+ * no Cmd, so a Meta binding there stays with Matrix.
+ */
+export function bindingFromTerminalShortcut(value: string, platform: ShortcutPlatform): string | null {
+  const normalized = normalizeTerminalShortcut(value);
+  if (normalized === null) return null;
+  const parts = normalized.split("+");
+  const key = parts.pop()!;
+  if (parts.includes("Meta") && platform !== "mac") return null;
+  const modifiers = MODIFIERS.filter((modifier) => parts.includes(modifier === "Cmd" ? "Meta" : modifier));
+  const binding = [...modifiers, TERMINAL_KEY_NAMES[key] ?? key].join("+");
+  return isCanonicalBinding(binding, platform) ? binding : null;
+}
+
+/** The registry bindings a focused Terminal with these preferences handles itself. */
+export function terminalShortcutClaims(preferences: TerminalKeyboardPreferences, isMac: boolean): string[] {
+  // resolveTerminalShortcut ignores every binding, overrides included, here.
+  if (preferences.profile === "passthrough") return [];
+  const platform: ShortcutPlatform = isMac ? "mac" : "other";
+  const claims = new Set<string>();
+  for (const bound of Object.values(terminalBindings(preferences, isMac))) {
+    if (typeof bound !== "string") continue;
+    const binding = bindingFromTerminalShortcut(bound, platform);
+    if (binding !== null) claims.add(binding);
+  }
+  return [...claims].sort();
 }
 
 // ---------------------------------------------------------------------------

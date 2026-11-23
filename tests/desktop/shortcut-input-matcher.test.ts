@@ -23,6 +23,7 @@ function setup(options: {
   recording?: boolean;
   platform?: ShortcutPlatform;
   isAvailable?: (id: ShortcutActionId) => boolean;
+  isClaimed?: (source: object, binding: string) => boolean;
 } = {}) {
   const run = vi.fn();
   const platform = options.platform ?? "mac";
@@ -31,17 +32,19 @@ function setup(options: {
     platform,
     isRecording: () => options.recording ?? false,
     isAvailable: options.isAvailable ?? (() => true),
+    isClaimed: options.isClaimed ?? (() => false),
     run,
   });
-  const press = (value: Partial<ShortcutInput>) => {
+  const press = (value: Partial<ShortcutInput>, source: object = DEFAULT_SOURCE) => {
     const event = { preventDefault: vi.fn() };
-    matcher(event, input(value));
+    matcher(event, input(value), source);
     return event.preventDefault;
   };
   return { run, press };
 }
 
 const CTRL_TAB = { key: "Tab", code: "Tab", control: true };
+const DEFAULT_SOURCE = {};
 
 describe("shortcut input matcher", () => {
   it("runs a bound action once and stops the page and menu from seeing the key", () => {
@@ -111,11 +114,12 @@ describe("shortcut input matcher", () => {
     let effective: EffectiveShortcuts = MAC_DEFAULTS;
     const run = vi.fn();
     const matcher = createShortcutInputMatcher({
-      effective: () => effective, platform: "mac", isRecording: () => false, isAvailable: () => true, run,
+      effective: () => effective, platform: "mac", isRecording: () => false, isAvailable: () => true,
+      isClaimed: () => false, run,
     });
     effective = { ...MAC_DEFAULTS, "app.next": ["F8"] };
-    matcher({ preventDefault: vi.fn() }, input({ key: "F8", code: "F8" }));
-    matcher({ preventDefault: vi.fn() }, input(CTRL_TAB));
+    matcher({ preventDefault: vi.fn() }, input({ key: "F8", code: "F8" }), DEFAULT_SOURCE);
+    matcher({ preventDefault: vi.fn() }, input(CTRL_TAB), DEFAULT_SOURCE);
     expect(run.mock.calls).toEqual([["app.next"]]);
   });
 
@@ -185,9 +189,66 @@ describe("isMainProcessShortcut", () => {
     expect(isMainProcessShortcut("app.next")).toBe(true);
     expect(isMainProcessShortcut("app.switch-9")).toBe(true);
     expect(isMainProcessShortcut("app.open-files")).toBe(true);
+    expect(isMainProcessShortcut("app.tile-left")).toBe(true);
+    expect(isMainProcessShortcut("app.restore-size")).toBe(true);
     for (const id of ["nav.palette", "tabs.new-context", "chat.new-thread", "terminal.focus", "terminal.window"] as const) {
       expect(isMainProcessShortcut(id), id).toBe(false);
     }
+  });
+});
+
+describe("window arrangement keys", () => {
+  it.each(["mac", "other"] as const)("arranges the selected app from any focus on %s", (platform) => {
+    const { run, press } = setup({ platform });
+    const keys: Array<[Partial<ShortcutInput>, ShortcutActionId]> = [
+      [{ key: "ArrowLeft", code: "ArrowLeft" }, "app.tile-left"],
+      [{ key: "ArrowRight", code: "ArrowRight" }, "app.tile-right"],
+      [{ key: "ArrowUp", code: "ArrowUp" }, "app.tile-top"],
+      [{ key: "ArrowDown", code: "ArrowDown" }, "app.tile-bottom"],
+      [{ key: "Enter", code: "Enter" }, "app.toggle-full-size"],
+      [{ key: "Backspace", code: "Backspace" }, "app.restore-size"],
+    ];
+    const modifiers = platform === "mac" ? { control: true, shift: true } : { control: true, alt: true };
+    for (const [key, id] of keys) {
+      expect(press({ ...key, ...modifiers }), id).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenLastCalledWith(id);
+    }
+    expect(run).toHaveBeenCalledTimes(keys.length);
+  });
+
+  it("does not repeat a tile while the key is held", () => {
+    const { run, press } = setup();
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, shift: true });
+    press({ key: "ArrowLeft", code: "ArrowLeft", control: true, shift: true, isAutoRepeat: true });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("keys a focused Terminal claims", () => {
+  const TILE_LEFT = { key: "ArrowLeft", code: "ArrowLeft", control: true, shift: true };
+
+  it("leaves a claimed key to the page that claimed it, without running the action", () => {
+    const terminal = {};
+    const isClaimed = vi.fn((source: object, binding: string) => source === terminal && binding === "Ctrl+Shift+Left");
+    const { run, press } = setup({ isClaimed });
+    expect(press(TILE_LEFT, terminal)).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(isClaimed).toHaveBeenCalledWith(terminal, "Ctrl+Shift+Left");
+  });
+
+  it("still arranges apps from web contents that did not claim the key", () => {
+    const terminal = {};
+    const { run, press } = setup({ isClaimed: (source) => source === terminal });
+    expect(press(TILE_LEFT, {})).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.tile-left");
+  });
+
+  it("still runs keys the Terminal did not claim with the Terminal focused", () => {
+    const terminal = {};
+    const { run, press } = setup({ isClaimed: (source, binding) => source === terminal && binding === "Ctrl+Shift+Left" });
+    expect(press(CTRL_TAB, terminal)).toHaveBeenCalledTimes(1);
+    expect(press({ ...TILE_LEFT, key: "ArrowRight", code: "ArrowRight" }, terminal)).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls).toEqual([["app.next"], ["app.tile-right"]]);
   });
 });
 

@@ -252,6 +252,81 @@ describe("installShortcuts", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  describe("keys a focused Terminal claims", () => {
+    const TILE_LEFT = { ...CTRL_TAB, key: "ArrowLeft", code: "ArrowLeft", shift: true };
+
+    async function claimed(window: "main" | "terminal") {
+      const harness = await setup();
+      const win = harness[window]!;
+      harness.app.create(win);
+      harness.app.createContents(win.webContents);
+      harness.installed.service.setTerminalClaims(win.webContents, ["Ctrl+Shift+Left"]);
+      return { ...harness, win };
+    }
+
+    it.each(["main", "terminal"] as const)("leaves a claimed key to the %s window's Terminal and runs nothing", async (window) => {
+      const { win, run } = await claimed(window);
+      expect(press(win.webContents, TILE_LEFT)).not.toHaveBeenCalled();
+      // No action runs, so the Terminal window keeps focus: menu routing never sees the key.
+      expect(run).not.toHaveBeenCalled();
+      expect(press(win.webContents, CTRL_TAB)).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith("app.next");
+    });
+
+    it("still arranges apps from other web contents while a Terminal claims the key", async () => {
+      const { app, run } = await claimed("main");
+      const view = fakeContents();
+      app.createContents(view);
+      expect(press(view, TILE_LEFT)).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith("app.tile-left");
+    });
+
+    it.each([
+      ["the window blurs", (win: FakeWindow) => win.emit("blur")],
+      ["the page navigates", (win: FakeWindow) => win.emitContents("did-start-navigation", MAIN_FRAME_NAVIGATION)],
+      ["the window closes", (win: FakeWindow) => win.emit("closed")],
+      ["the web contents is destroyed", (win: FakeWindow) => win.emitContents("destroyed")],
+    ])("ends the claim when %s", async (_case, end) => {
+      const { win, run, installed } = await claimed("terminal");
+      end(win);
+      expect(installed.service.isTerminalClaimed(win.webContents, "Ctrl+Shift+Left")).toBe(false);
+      expect(press(win.webContents, TILE_LEFT)).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith("app.tile-left");
+    });
+
+    it("keeps the claim through subframe and same-document navigations", async () => {
+      const { win, installed } = await claimed("main");
+      win.emitContents("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+      win.emitContents("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+      expect(installed.service.isTerminalClaimed(win.webContents, "Ctrl+Shift+Left")).toBe(true);
+    });
+
+    it("clears claims on a closed window without touching it", async () => {
+      const { terminal, installed } = await claimed("terminal");
+      const contents = terminal!.webContents;
+      terminal!.isDestroyed.mockReturnValue(true);
+      Object.defineProperty(terminal!, "webContents", {
+        get() { throw new TypeError("Object has been destroyed"); },
+      });
+      expect(() => terminal!.emit("closed")).not.toThrow();
+      expect(installed.service.isTerminalClaimed(contents, "Ctrl+Shift+Left")).toBe(false);
+    });
+
+    it("still stands down while a shortcut is being recorded", async () => {
+      const { win, main, run, installed } = await claimed("main");
+      installed.service.setTerminalClaims(win.webContents, []);
+      installed.service.setRecording(main!.webContents, true);
+      expect(press(win.webContents, TILE_LEFT)).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    it("drops every claim on dispose", async () => {
+      const { win, installed } = await claimed("main");
+      installed.dispose();
+      expect(installed.service.isTerminalClaimed(win.webContents, "Ctrl+Shift+Left")).toBe(false);
+    });
+  });
+
   it("detaches the key matcher on dispose and forgets destroyed web contents", async () => {
     const { app, run, installed } = await setup();
     const live = fakeContents();

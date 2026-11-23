@@ -10,6 +10,7 @@ import {
   toggleActiveAppFullSize,
   toggleAppLauncher,
   toggleShowDesktop,
+  type DesktopShellEffects,
 } from "@desktop/renderer/src/features/desktop-shell/app-switching";
 import { handleCloseSelectedAppShortcut } from "@desktop/renderer/src/features/mission-control/shortcuts";
 import { useClosedApps } from "@desktop/renderer/src/stores/closed-apps";
@@ -21,6 +22,16 @@ import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "@desktop/renderer/s
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
 const VIEWPORT = { width: 1280, height: 800 };
+
+function shellEffects(overrides: Partial<DesktopShellEffects>): DesktopShellEffects {
+  return {
+    schedulePersist: vi.fn(),
+    openRoot: (open) => open(),
+    viewport: () => VIEWPORT,
+    applyWindowBounds: vi.fn(),
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
@@ -366,7 +377,7 @@ describe("desktop shell side effects", () => {
 
   it("schedules a durable save for every shortcut action that changes app state", () => {
     const schedulePersist = vi.fn();
-    unregister = registerDesktopShellEffects({ schedulePersist, openRoot: (open) => open() });
+    unregister = registerDesktopShellEffects(shellEffects({ schedulePersist }));
     const { notes } = threeApps();
 
     const actions: Array<[string, () => void]> = [
@@ -386,7 +397,7 @@ describe("desktop shell side effects", () => {
 
   it("opens reopened apps through the shell so their window is placed", () => {
     const openRoot = vi.fn((open: () => void) => open());
-    unregister = registerDesktopShellEffects({ schedulePersist: vi.fn(), openRoot });
+    unregister = registerDesktopShellEffects(shellEffects({ openRoot }));
     useClosedApps.getState().push({ id: "gone", kind: "notes", title: "Notes", closable: true });
 
     reopenClosedApp();
@@ -410,7 +421,7 @@ describe("desktop shell side effects", () => {
 
   it("stops calling the shell after it unregisters", () => {
     const schedulePersist = vi.fn();
-    registerDesktopShellEffects({ schedulePersist, openRoot: (open) => open() })();
+    registerDesktopShellEffects(shellEffects({ schedulePersist }))();
     threeApps();
 
     cycleApp(1);

@@ -61,8 +61,10 @@ Everything below that is not in this list is the author's proposal.
 | Apps | Reopen closed app | Cmd+Shift+T | Ctrl+Shift+T | new |
 | Apps | Switch to app 1 … 9 | Cmd+1 … Cmd+9 | Ctrl+1 … Ctrl+9 | new |
 | Apps | Show desktop | none | none | new |
-| Apps | Toggle app full size | none | none | new |
+| Apps | Toggle app full size | Ctrl+Shift+Enter | Ctrl+Alt+Enter | new |
 | Apps | Open Files | none | none | new |
+| Apps | Move app to left / right / top / bottom half | Ctrl+Shift+arrow | Ctrl+Alt+arrow | new, see Window arrangement |
+| Apps | Restore app size | Ctrl+Shift+Backspace | Ctrl+Alt+Backspace | new, see Window arrangement |
 | Navigation | Command palette | Cmd+K | Ctrl+K | exists |
 | Navigation | Go to file | Cmd+P | Ctrl+P | exists |
 | Navigation | Settings | Cmd+, | Ctrl+, | exists |
@@ -265,6 +267,15 @@ default changes reach users who never customized that action.
 - A menu item click sends one event, `shortcut:action { id }`, to the main
   window through the existing menu router, so Terminal-window routing keeps
   working.
+- `shortcuts:set-terminal-claims { bindings }` reports the keys a focused
+  Terminal handles itself: the effective bindings of its active keyboard
+  profile (defaults plus the user's overrides; none for Passthrough), in
+  registry form. The view that hosts the Terminal, in the main window or the
+  Terminal window, sends them when the Terminal gains focus or its profile
+  changes, and sends `[]` when it loses focus or unmounts. The main-process key
+  matcher does not run an Apps shortcut for a key the receiving web contents
+  claims, so the key reaches the Terminal and no menu routing (which would
+  focus the main window) happens.
 
 **Renderer.**
 
@@ -302,6 +313,18 @@ All checks run in the shared validator and again in the main process on
 
 Auth: these IPC channels are available to the app's own windows only, the same
 as `state:get` and `state:set`. Embedded apps have no access to them.
+
+Terminal claims: `shortcuts:set-terminal-claims` is open to the main window and
+the Terminal window, only from their own top-level frame (sender policy), and
+sets only the sender's claims. Embedded app views cannot call it. The request
+is a strict Zod object with at most 32 bindings of at most 40 characters, each
+in registry form; anything else is rejected. Main keeps claims in a map keyed
+by web contents, capped at 8 senders (oldest evicted), drops bindings that
+cannot be pressed on its platform, and clears a sender's claims when its window
+blurs or closes, its main frame navigates, or its web contents is destroyed;
+it never touches a closed window to do so. A lost or late report fails toward
+the old behavior: the Matrix shortcut runs. While a binding is being recorded
+the matcher stands down as before.
 
 ## Failure Modes
 
@@ -347,6 +370,11 @@ Tests first, per the constitution.
   show-desktop behavior on the stores.
 - Settings component: record, add, remove, reset, conflict replace, rejection
   message, search, save failure.
+- Terminal claims: terminal-to-registry binding conversion; the matcher skips a
+  claimed key only for the claiming web contents; claims end on blur,
+  navigation, close and destroy; IPC validation and sender policy; the
+  Terminal view claims on focus, releases on blur and unmount, and re-sends
+  when the profile changes.
 
 ## Surfaces and Evidence
 
@@ -366,6 +394,63 @@ Tests first, per the constitution.
   or change a default that would take a key from them.
 - **Stakeholder review**: suggest design review of the Settings section before
   it is marked ready.
+
+## Window arrangement
+
+Owner request (2026-11-22): keys like Rectangle and Magnet on macOS that move
+app windows inside the Matrix desktop. They arrange Matrix app windows, not the
+native Electron window. All are Apps-group actions, so they work with focus
+anywhere. On macOS they use Ctrl+Shift, because Rectangle and Magnet take
+Ctrl+Option (owner decision, 2026-11-22). On Windows and Linux they use
+Ctrl+Alt, because Ctrl+Shift+arrow selects text by word there.
+
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Move app to left half | Ctrl+Shift+Left | Ctrl+Alt+Left |
+| Move app to right half | Ctrl+Shift+Right | Ctrl+Alt+Right |
+| Move app to top half | Ctrl+Shift+Up | Ctrl+Alt+Up |
+| Move app to bottom half | Ctrl+Shift+Down | Ctrl+Alt+Down |
+| Toggle app full size (existing, now bound) | Ctrl+Shift+Enter | Ctrl+Alt+Enter |
+| Restore app size | Ctrl+Shift+Backspace | Ctrl+Alt+Backspace |
+
+- They act on the selected app. A selected app that is full size or minimized
+  becomes a floating window first. With no selected app, or an app hidden by
+  Show desktop, nothing happens.
+- A half is half of the area the shell already uses to keep windows in bounds:
+  below the header, above the taskbar. Halves have no gap. Windows keep their
+  minimum size (440 × 300), so on a small screen two halves can overlap.
+- Tiled bounds are saved through the same path as the end of a drag, so the
+  placement is kept the same way a dragged window's is.
+- **Restore rule.** The first tile remembers the window's floating bounds.
+  Later tiles keep that first value, so left, then right, then Restore returns
+  to the original size. Restore puts the window back and forgets the value.
+  Full size does not change the floating bounds, so Restore on a full-size app
+  returns it to its window; if it was tiled before, to its size before the tile.
+  With nothing remembered, Restore on a floating window does nothing.
+- **Manual move wins.** Any drag or resize by the user forgets the remembered
+  bounds. The window stays where the user put it, and Restore does nothing
+  until the next tile.
+- The remembered bounds are session state in the desktop surfaces store. They
+  are never persisted, are dropped when the app closes or its tab goes away,
+  and are cleared on a computer switch.
+- Toggle app full size keeps its behavior: from full size it returns to the
+  window's last floating bounds, which may be a half.
+- On the Canvas presentation these actions do nothing, because Canvas windows
+  are not placed on the screen.
+- **A focused Terminal keeps the keys its profile binds.** While a Terminal
+  has keyboard focus, in the main window or the Terminal window, any key its
+  active keyboard profile (with the user's overrides) binds to a terminal
+  command goes to the Terminal instead of running a Matrix shortcut. The
+  Standard terminal profile binds Ctrl+Shift+arrows to pane focus and
+  Ctrl+Shift+Enter to pane maximize even on a Mac, so with that profile those
+  keys move between and maximize panes, and the Terminal window keeps focus.
+  With the default macOS profile they still arrange apps. Keys the profile does
+  not bind (Ctrl+Tab, Ctrl+Shift+Backspace under Standard) keep working, and
+  with focus anywhere else the keys arrange apps. The claim ends as soon as
+  the Terminal loses focus.
+- A tool that registers the same keys globally takes them before Matrix sees
+  them. Some Linux desktops use Ctrl+Alt+arrows to switch workspaces. The user can rebind each action in
+  Settings → Shortcuts.
 
 ## Left to the Builder
 

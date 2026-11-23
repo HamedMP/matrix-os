@@ -41,6 +41,8 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   // Only for the keys in TERMINAL_WINDOW_STATE_KEYS; see windowMayInvoke.
   "state:get",
   "terminal:read-clipboard-files",
+  // So its Terminal keeps the keys its profile binds (specs/653).
+  "shortcuts:set-terminal-claims",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 
