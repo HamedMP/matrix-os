@@ -1,5 +1,7 @@
 import { canonicalProviderModelCanBeSelected, canonicalProviderAvailabilityReasonLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, sameChatgptPlanSelectionBinding } from "@matrix-os/contracts";
+import { chatHarnessLabel } from "./chat/project-conversations.js";
 import type {
+  CanonicalChatRun,
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
   CanonicalProviderInstanceDescriptor,
@@ -127,6 +129,23 @@ export function codexLocalObservationLabel(observation?: AiProviderLocalObservat
   return "Access not verified";
 }
 
+/** The harness name the model picker shows for a provider instance. */
+export function canonicalProviderInstanceHarnessLabel(instance: Pick<CanonicalProviderInstanceDescriptor, "id" | "driverKind" | "displayName">): string {
+  const route = { instanceId: instance.id, driverKind: instance.driverKind };
+  const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
+  if (managedExecution || isChatgptPlanChatRoute(route) || isMatrixAnthropicChatRoute(route) || isMatrixAnthropicBotRoute(route)) return "Matrix AI";
+  return isChatgptPlanBotRoute(route) ? "ChatGPT subscription" : instance.displayName;
+}
+
+/** Names the harness that ran a Chat Run: the picker's name, else the bound harness name. */
+export function canonicalChatRunHarnessLabel(
+  run: Pick<CanonicalChatRun, "instanceId" | "driverKind">,
+  catalog: CanonicalProviderCatalog | null | undefined,
+): string | undefined {
+  const instance = catalog?.instances.find((candidate) => candidate.id === run.instanceId);
+  return instance ? canonicalProviderInstanceHarnessLabel(instance) : chatHarnessLabel(run.driverKind);
+}
+
 /** Bot configuration stays runnable-only; Chat may opt into managed model intent. */
 export function deriveCanonicalProviderChoices(
   catalog: CanonicalProviderCatalog,
@@ -137,10 +156,8 @@ export function deriveCanonicalProviderChoices(
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
     if (!interactionMode || !permissionMode) return [];
-    const managedExecution = instance.driverKind === "matrix_pi" && instance.id === "matrix_pi_default";
     const personalChat = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
-    const apiPaid = isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind });
-    const harnessLabel = managedExecution || personalChat || apiPaid ? "Matrix AI" : isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) ? "ChatGPT subscription" : instance.displayName;
+    const harnessLabel = canonicalProviderInstanceHarnessLabel(instance);
     return instance.models.flatMap((model) => (allowUnavailableManagedModels
       ? canonicalProviderModelCanBeSelected(instance, model.id)
       : instance.availability === "available" && model.availability === "available") && canonicalChatSubscriptionSelectionMatches(instance, selectedOptionsFor(instance, model.id)) ? [{

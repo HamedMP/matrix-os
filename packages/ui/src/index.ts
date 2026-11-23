@@ -81,6 +81,7 @@ export {
 
 export {
   canonicalChatSubscriptionSelectionMatches,
+  canonicalChatRunHarnessLabel,
   canonicalProviderChoiceCanBeDefault,
   canonicalProviderAvailabilityLabel,
   canonicalProviderUnavailableSelectionLabel,
@@ -282,7 +283,7 @@ export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
 export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, MAX_TERMINAL_DROP_FILE_BYTES } from "./terminal/terminal-file-drag.js";
-export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
+export { canonicalChatSafeFailureReason, canonicalChatFailurePresentation, type CanonicalChatFailureAction, type CanonicalChatFailureActionKind, type CanonicalChatFailurePresentation } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
 export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";

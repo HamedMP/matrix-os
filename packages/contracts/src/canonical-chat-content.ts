@@ -177,6 +177,46 @@ export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: u
     : undefined;
 }
 
+type CanonicalChatRecoveryAction = NonNullable<CanonicalChatSafeError["recoveryActions"]>[number];
+export type CanonicalChatFailureActionKind = "retry" | "open_setup_terminal" | "select_provider" | "start_new_chat";
+export type CanonicalChatFailureAction = { kind: CanonicalChatFailureActionKind; label: string };
+export type CanonicalChatFailurePresentation = { title: string; message: string; actions: CanonicalChatFailureAction[] };
+
+// Fixed order and client-owned labels; server text never becomes a button.
+const FAILURE_ACTIONS: ReadonlyArray<CanonicalChatFailureAction & { from: readonly CanonicalChatRecoveryAction[] }> = [
+  { kind: "retry", label: "Retry", from: ["retry"] },
+  { kind: "open_setup_terminal", label: "Open Agents & providers", from: ["open_setup_terminal"] },
+  { kind: "select_provider", label: "Choose model", from: ["select_provider"] },
+  { kind: "start_new_chat", label: "New chat", from: ["start_new_chat", "fork_chat"] },
+];
+const MAX_FAILURE_ACTIONS = 3;
+
+/**
+ * One failure notice for every renderer: reviewed copy, the harness that failed,
+ * and the recovery actions from the wire error plus the reviewed catalog.
+ * Retry keeps the existing gate: wire-retryable, offered by the server, not
+ * contradicted by a reviewed cause, and allowed by the renderer for that turn.
+ */
+export function canonicalChatFailurePresentation(
+  error: Partial<Pick<CanonicalChatSafeError, "code" | "safeMessage" | "retryable" | "recoveryActions">> | undefined,
+  { harnessLabel, allowRetry = true }: { harnessLabel?: string; allowRetry?: boolean } = {},
+): CanonicalChatFailurePresentation {
+  const reviewed = canonicalReviewedAgentFailure(error?.code, error?.safeMessage);
+  const wire = error?.recoveryActions ?? [];
+  const offered = new Set<CanonicalChatRecoveryAction>([...wire, ...(reviewed?.recoveryActions ?? [])]);
+  const retry = allowRetry && error?.retryable === true && (reviewed?.retryable ?? true) && wire.includes("retry");
+  const actions = FAILURE_ACTIONS
+    .filter((action) => action.kind === "retry" ? retry : action.from.some((source) => offered.has(source)))
+    .slice(0, MAX_FAILURE_ACTIONS)
+    .map(({ kind, label }) => ({ kind, label }));
+  const harness = harnessLabel?.trim();
+  return {
+    title: harness ? `${harness} could not finish` : "Agent work failed",
+    message: canonicalChatSafeFailureReason(error?.code, error?.safeMessage) ?? canonicalChatSafeFailureReason("run_failed")!,
+    actions,
+  };
+}
+
 /** Shared terminal outcome derivation; renderers only adapt placement and styling. */
 export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalChatDetailResponseSchema>) {
   const inputs = detail.turns.map((turn) => ({ turn,
