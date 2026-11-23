@@ -65,8 +65,8 @@ body { background: var(--app-bg); color: var(--app-fg); }
 
 /* ---------------------------------------------------------------- tabs */
 
-.sheets-tabs { display: flex; align-items: stretch; gap: 4px; min-height: 32px; padding: 0 6px; border-top: 1px solid var(--app-border); background: var(--app-card); overflow-x: auto; }
-.sheets-tabs__list { display: flex; align-items: stretch; gap: 2px; }
+.sheets-tabs { display: flex; align-items: stretch; gap: 4px; min-height: 32px; padding: 0 6px; border-top: 1px solid var(--app-border); background: var(--app-card); }
+.sheets-tabs__list { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .sheets-tabs__tab { position: relative; display: flex; align-items: center; border-bottom: 3px solid transparent; }
 .sheets-tabs__tab.is-selected { background: var(--app-bg); border-bottom-color: var(--identity-accent, var(--app-primary)); }
 .sheets-tabs__tab::before { content: ""; position: absolute; left: 4px; right: 4px; top: 0; height: 3px; border-radius: 0 0 2px 2px; background: var(--sheets-tab-color, transparent); }
@@ -77,7 +77,9 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .sheets-tabs__tab:not(.is-selected) .sheets-tabs__button { color: var(--app-muted-fg); }
 .sheets-tabs__button:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
 .sheets-tabs__pending { width: 6px; height: 6px; border-radius: 50%; background: var(--app-warning); }
-.sheets-tabs__menu .oui-dropdown__trigger, .sheets-tabs__menu > button { padding: 0 4px; min-height: 22px; }
+.sheets-tabs__menu { align-self: center; }
+/* The tabs sit at the bottom of the window, so their menu opens upwards. */
+.sheets-tabs__menu .oui-menu { top: auto; bottom: calc(100% + 4px); max-height: 60vh; overflow: auto; }
 .sheets-tabs__rename { width: 14ch; margin: 3px 0; padding: 0 6px; border: 1px solid var(--identity-accent, var(--app-primary)); border-radius: 4px; background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; }
 .sheets-tabs__add { align-self: center; }
 
@@ -103,7 +105,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .sheets-start__actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 32px; }
 .sheets-start__card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px;
-  border: 1px solid var(--app-border); border-radius: calc(var(--app-radius, 6px) * 2);
+  border: 1px solid var(--app-border); border-radius: var(--app-radius, 8px);
   background: var(--app-card); color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
 }
 .sheets-start__card > svg { color: var(--identity-accent, var(--app-primary)); }
@@ -112,7 +114,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .sheets-start__card-title { font-weight: 600; font-size: 14px; }
 .sheets-start__card-hint { font-size: 12px; color: var(--app-muted-fg); }
 .sheets-start__recent h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--app-muted-fg); }
-.sheets-start__list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--app-border); border-radius: calc(var(--app-radius, 6px) * 2); overflow: hidden; }
+.sheets-start__list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--app-border); border-radius: var(--app-radius, 8px); overflow: hidden; }
 .sheets-start__list li + li { border-top: 1px solid var(--app-border); }
 .sheets-start__file {
   display: grid; grid-template-columns: auto minmax(0, 2fr) minmax(0, 2fr) auto; align-items: center; gap: 12px;

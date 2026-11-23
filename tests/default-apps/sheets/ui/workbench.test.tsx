@@ -198,9 +198,11 @@ describe("Sheets right panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     await flush();
     expect(screen.getByRole("complementary", { name: "Review changes" })).toBeTruthy();
+    expect(screen.queryByText("Change review is not available")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
     await flush();
     expect(screen.getByRole("complementary", { name: "Assistant" })).toBeTruthy();
+    expect(screen.queryByText("The assistant is not available")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
     expect(screen.queryByRole("complementary")).toBeNull();
 

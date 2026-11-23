@@ -59,6 +59,8 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
   const controller = useMemo(() => createSheetGridController(session), [session]);
   useEffect(() => {
     controller.attach();
+    // A newly opened workbook takes the keyboard straight away.
+    controller.focus();
     return () => controller.dispose();
   }, [controller]);
   const reported = useGridSelection(controller);
@@ -72,6 +74,7 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
   const [look, setLook] = useTabLook(tabLooks, state.path);
   const [find, setFind] = useState<{ replace: boolean } | null>(null);
   const [panel, setPanel] = useState<PanelId | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<string | null>(null);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const pendingChanges = useMemo(() => (revision >= 0 ? session.sheets().reduce((sum, sheet) => sum + sheet.pendingChangeCount, 0) : 0), [session, revision]);
 
@@ -130,6 +133,10 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
 
   const togglePanel = (id: PanelId): void => setPanel((current) => (current === id ? null : id));
   const closePanel = useCallback(() => setPanel(null), []);
+  const openReview = useCallback((changeId: string | null) => {
+    setReviewFocus(changeId);
+    setPanel("review");
+  }, []);
   const panelProps = { session, controller, onClose: closePanel };
 
   return (
@@ -140,7 +147,7 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
       titleActions={<TitleActions state={state} pendingChanges={pendingChanges} panel={panel} onSave={save} onFileMenu={onFileMenu} onPanel={togglePanel} />}
       toolbar={<Ribbon controller={controller} state={state} style={style} onFailure={(message) => notify(message, "warning")} onFind={() => setFind({ replace: false })} />}
       banner={<SaveBanner session={session} state={state} controller={controller} notify={notify} />}
-      rightPanel={panel === null ? undefined : panel === "review" ? <ReviewPanelSlot {...panelProps} /> : <AgentPanelSlot {...panelProps} />}
+      rightPanel={panel === null ? undefined : panel === "review" ? <ReviewPanelSlot {...panelProps} focusChangeId={reviewFocus} /> : <AgentPanelSlot {...panelProps} onOpenReview={openReview} />}
       rightPanelLabel={panel === "review" ? "Review changes" : "Assistant"}
       statusBar={<StatusBar session={session} state={state} selection={selection} filtered={controller.isFiltered} />}
     >

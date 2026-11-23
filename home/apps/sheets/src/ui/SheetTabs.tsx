@@ -39,6 +39,8 @@ export function SheetTabs({ session, activeSheetId, revision, look, onLookChange
   // Read every render: `revision` changes with each edit, renames and added sheets included.
   const sheets = revision >= 0 ? session.sheets() : [];
   const tabs = orderedSheets(sheets, look);
+  const activeIndex = tabs.findIndex((sheet) => sheet.id === activeSheetId);
+  const activeTab = tabs[activeIndex];
 
   const commitRename = (): void => {
     if (renaming === null) return;
@@ -158,19 +160,19 @@ export function SheetTabs({ session, activeSheetId, revision, look, onLookChange
                 {sheet.name}
                 {sheet.pendingChangeCount > 0 && <span className="sheets-tabs__pending" aria-label={`${sheet.pendingChangeCount} proposed changes`} />}
               </button>
-              {selected && !readOnly && (
-                <Dropdown
-                  className="sheets-tabs__menu"
-                  label={<MoreHorizontal size={14} aria-hidden="true" />}
-                  ariaLabel={`Options for ${sheet.name}`}
-                  items={menuItems(index, tabs.length, look, sheet.id)}
-                  onSelect={(action) => onMenu(sheet, index, action)}
-                />
-              )}
             </div>
           );
         })}
       </div>
+      {activeTab !== undefined && !readOnly && (
+        <Dropdown
+          className="sheets-tabs__menu"
+          label={<MoreHorizontal size={14} aria-hidden="true" />}
+          ariaLabel={`Options for ${activeTab.name}`}
+          items={menuItems(activeIndex, tabs.length, look, activeTab.id)}
+          onSelect={(action) => onMenu(activeTab, activeIndex, action)}
+        />
+      )}
       {!readOnly && (
         <button type="button" className="sheets-icon-btn sheets-tabs__add" aria-label="Add sheet" onClick={add}>
           <Plus size={16} />
