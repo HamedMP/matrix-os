@@ -94,3 +94,11 @@ export const xlsxModule: XlsxModule = Object.freeze({
   MAX_ROWS,
   MAX_COLS,
 });
+export {
+  JOURNAL_CONTENT_TYPE,
+  JOURNAL_PART_NAME,
+  JOURNAL_RELATIONSHIP_TYPE,
+  getJournalWarnings,
+  listJournalChanges,
+} from "./journal/index.js";
+export type { JournalChange, JournalChangeKind, JournalResolveResult, JournalWarning, JournalWarningCode } from "./journal/index.js";
