@@ -38,6 +38,8 @@ export interface DocsRibbonState {
   /** The document has a path in the home. */
   hasPath: boolean;
   saving: boolean;
+  /** The colour each colour button applies with its face: the one chosen last (null removes the colour). */
+  colors: { font: string | null; highlight: string | null };
 }
 
 export type ToggleableFormat = "bold" | "italic" | "underline" | "strike";
@@ -62,6 +64,10 @@ export interface DocsRibbonActions {
   paste(): void;
   toggleFormat(format: ToggleableFormat): void;
   setRunFormat(patch: Partial<RunFormat>): void;
+  /** Colours the selection and makes the colour the one its button applies next; null is automatic. */
+  setFontColor(color: string | null): void;
+  /** Highlights the selection; null removes the highlight. */
+  setHighlight(color: string | null): void;
   setParagraphStyle(patch: Partial<ParagraphStylePatch>): void;
   applyStyle(id: string): void;
   openFind(): void;

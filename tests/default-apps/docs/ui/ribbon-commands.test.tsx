@@ -62,6 +62,7 @@ function fullState(patch: Partial<DocsRibbonState> = {}): DocsRibbonState {
     source: "matrix",
     hasPath: true,
     saving: false,
+    colors: { font: "#dc2626", highlight: "#ffff00" },
     ...patch,
   };
 }
@@ -162,6 +163,24 @@ describe("Docs ribbon commands", () => {
       ["insertTableRow", ["below"]],
       ["setRunFormat", [{ verticalAlign: "superscript" }]],
       ["assistant", ["explain"]],
+    ]);
+  });
+
+  it("puts the last chosen colour on the face of each colour button, so the face applies it", () => {
+    const actions = spyActions();
+    const tabs = buildDocsRibbon({ state: fullState({ colors: { font: "#2563eb", highlight: "#00ff00" } }), actions });
+    const items = tabs.flatMap((tab) => (tab.mode === "backstage" ? [] : tab.groups.flatMap((group) => group.items))).flatMap((item) => (item.kind === "stack" ? item.rows.flat() : [item]));
+    const font = items.find((item) => item.id === "font-color");
+    const highlight = items.find((item) => item.id === "highlight");
+    if (font?.kind !== "color" || highlight?.kind !== "color") throw new Error("the colour buttons are missing");
+    expect([font.value, highlight.value]).toEqual(["#2563eb", "#00ff00"]);
+    font.onChange(font.value);
+    highlight.onChange(null);
+    font.onChange("#16A34A");
+    expect(actions.calls()).toEqual([
+      ["setFontColor", ["#2563eb"]],
+      ["setHighlight", [null]],
+      ["setFontColor", ["#16a34a"]],
     ]);
   });
 

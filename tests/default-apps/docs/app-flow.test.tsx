@@ -142,7 +142,8 @@ describe("Docs app journey", () => {
     for (let step = 0; step < 10; step++) {
       const current = within(panel).queryByRole("button", { current: true });
       if (current === null) break;
-      const label = current.textContent ?? "";
+      // The revised text only: the row also shows the date and time, whose digits must not decide.
+      const label = current.querySelector(".docs-review__item-text")?.textContent ?? "";
       if (/36|24/.test(label)) {
         fireEvent.click(within(panel).getByRole("button", { name: "Accept revision" }));
         decisions.accepted++;

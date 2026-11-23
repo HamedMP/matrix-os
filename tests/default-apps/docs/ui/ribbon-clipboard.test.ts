@@ -1,13 +1,14 @@
 /**
  * Ribbon Cut, Copy and Paste: the browser's own copy command first (so the
  * editor's copy and cut handlers run), the async clipboard as the fallback,
- * and "blocked" when the frame may use neither, so the ribbon can point to
- * the keyboard shortcut.
+ * and, when the frame may use neither, the text kept for pasting in the same
+ * document ("own"). "blocked" is left for a Paste with nothing copied here,
+ * so the ribbon can point to the keyboard shortcut.
  */
 
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentEditorController } from "../../../../home/apps/docs/src/editor/index";
-import { copySelection, pasteText } from "../../../../home/apps/docs/src/ui/ribbon/clipboard";
+import { copySelection, noteCopied, pasteText } from "../../../../home/apps/docs/src/ui/ribbon/clipboard";
 
 const at = (offset: number) => ({ blockId: "b1", offset });
 
@@ -52,12 +53,31 @@ describe("ribbon clipboard", () => {
     expect(writeText).toHaveBeenCalledWith("Hello");
     expect(raw.deleteSelection).toHaveBeenCalledTimes(1);
 
-    const refused = fakeEditor();
+  });
+
+  it("keeps a copy or a cut for pasting in this document when the frame may not use the clipboard", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const outcome = await copySelection(refused.editor, true, { execCommand: () => false, clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))), readText: vi.fn() } });
-    expect(outcome).toBe("blocked");
-    expect(refused.raw.deleteSelection).not.toHaveBeenCalled();
+    const refusing = { execCommand: () => false, clipboard: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))), readText: vi.fn(async () => Promise.reject(new Error("denied"))) } };
+    const cut = fakeEditor();
+    expect(await copySelection(cut.editor, true, refusing)).toBe("own");
+    // The text is kept, so the cut may delete it.
+    expect(cut.raw.deleteSelection).toHaveBeenCalledTimes(1);
+    expect(await pasteText(cut.editor, refusing)).toBe("own");
+    expect(cut.inserted).toEqual(["Hello"]);
+
+    const copied = fakeEditor();
+    expect(await copySelection(copied.editor, false, { execCommand: () => false, clipboard: null })).toBe("own");
+    expect(copied.raw.deleteSelection).not.toHaveBeenCalled();
+    expect(await pasteText(copied.editor, { clipboard: null })).toBe("own");
+    expect(copied.inserted).toEqual(["Hello"]);
     warn.mockRestore();
+  });
+
+  it("remembers what the keyboard copied, for a later Paste from the ribbon", async () => {
+    const { editor, inserted } = fakeEditor();
+    noteCopied(editor);
+    expect(await pasteText(editor, { clipboard: null })).toBe("own");
+    expect(inserted).toEqual(["Hello"]);
   });
 
   it("does nothing without a selection", async () => {
@@ -70,6 +90,7 @@ describe("ribbon clipboard", () => {
     expect(await pasteText(editor, { clipboard: { readText: async () => "One\r\nTwo\n\nThree", writeText: vi.fn() } })).toBe("done");
     expect(inserted).toEqual(["One", "¶", "Two", "¶", "¶", "Three"]);
 
+    // Nothing was copied in this document: the ribbon can only point to the keyboard.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(await pasteText(editor, { clipboard: { readText: async () => Promise.reject(new Error("denied")), writeText: vi.fn() } })).toBe("blocked");
     expect(await pasteText(editor, { clipboard: null })).toBe("blocked");

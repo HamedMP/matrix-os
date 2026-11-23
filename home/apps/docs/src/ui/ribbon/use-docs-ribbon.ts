@@ -4,7 +4,7 @@
  * and the workspace for panels, find, zoom and the File commands.
  */
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { RibbonTab } from "../../../../_shared/office-ui";
 import { useToast } from "../../../../_shared/office-ui";
 import { EDITOR_ORIGIN, type DocumentEditorController, type EditorSnapshot, type ViewMode } from "../../editor/index";
@@ -12,7 +12,7 @@ import type { ResolveOutcome, ReviewController, ReviewSnapshot } from "../../rev
 import type { DocumentSession, SessionState } from "../../session/index";
 import type { AssistantRequestId, DocsPanelId } from "../panel-types";
 import { caretFormat, documentStyles } from "./caret-format";
-import { type ClipboardOutcome, copySelection, pasteText } from "./clipboard";
+import { type ClipboardOutcome, copySelection, noteCopied, pasteText } from "./clipboard";
 import { buildDocsRibbon } from "./index";
 import { styleChoices } from "./styles-model";
 import type { DocsRibbonActions, DocsRibbonState } from "./types";
@@ -54,12 +54,16 @@ export interface UseDocsRibbonInput {
   file: FileControls;
 }
 
+/** What the colour buttons apply before the owner has chosen a colour: red text, yellow highlight. */
+const FIRST_COLORS = { font: "#dc2626" as string | null, highlight: "#ffff00" as string | null };
+
 const noSubscription = () => () => undefined;
 const noReview = (): ReviewSnapshot | null => null;
 
 export function useDocsRibbon(input: UseDocsRibbonInput): RibbonTab[] {
   const { session, state, editor, snapshot, review, contentVersion, derivedVersion, controls, file } = input;
   const toast = useToast();
+  const [colors, setColors] = useState(FIRST_COLORS);
   const reviewState = useSyncExternalStore(review?.subscribe ?? noSubscription, review ? review.getSnapshot : noReview);
   const focusBlock = snapshot.selection?.focus.blockId ?? null;
   const focusOffset = snapshot.selection?.focus.offset ?? 0;
@@ -70,6 +74,20 @@ export function useDocsRibbon(input: UseDocsRibbonInput): RibbonTab[] {
     [session, focusBlock, focusOffset, inTable, contentVersion],
   );
   const styles = useMemo(() => styleChoices(documentStyles(session.document)), [session, derivedVersion]);
+
+  // Ctrl+C and Ctrl+X in the document count as copied here too, for a later Paste from the ribbon.
+  useEffect(() => {
+    if (editor === null) return undefined;
+    const remember = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".docs-pane") !== null) noteCopied(editor);
+    };
+    document.addEventListener("copy", remember, true);
+    document.addEventListener("cut", remember, true);
+    return () => {
+      document.removeEventListener("copy", remember, true);
+      document.removeEventListener("cut", remember, true);
+    };
+  }, [editor]);
 
   const ribbonState: DocsRibbonState = {
     hasEditor: editor !== null,
@@ -90,10 +108,13 @@ export function useDocsRibbon(input: UseDocsRibbonInput): RibbonTab[] {
     source: state.source,
     hasPath: state.path !== null,
     saving: state.saveStatus === "saving",
+    colors,
   };
 
   const clipboardResult = (outcome: ClipboardOutcome, key: string, verb: string) => {
     if (outcome === "blocked") toast.show({ title: `${verb} with ${key}`, description: `This window cannot use the clipboard directly. Press ${key} in the document.`, tone: "info" });
+    else if (outcome === "own" && verb === "Paste") toast.show({ title: "Pasted the text last copied in this document", description: `For text copied in another app, press ${key}.`, tone: "info" });
+    else if (outcome === "own") toast.show({ title: `${verb === "Cut" ? "Cut" : "Copied"} for pasting in this document`, description: `To paste in another app, press ${key} instead.`, tone: "info" });
   };
   const reportResolve = (outcome: ResolveOutcome) => {
     if (!outcome.ok && outcome.reason === "failed") toast.show({ title: "That change could not be applied", description: "The document is unchanged.", tone: "danger" });
@@ -136,6 +157,14 @@ export function useDocsRibbon(input: UseDocsRibbonInput): RibbonTab[] {
     paste: () => editor && void pasteText(editor).then((outcome) => clipboardResult(outcome, "Ctrl+V", "Paste")),
     toggleFormat: (format) => edit((target) => target.format(format)),
     setRunFormat: (patch) => edit((target) => target.format(patch)),
+    setFontColor: (color) => {
+      setColors((current) => ({ ...current, font: color }));
+      edit((target) => target.format({ color }));
+    },
+    setHighlight: (color) => {
+      setColors((current) => ({ ...current, highlight: color }));
+      edit((target) => target.format({ highlight: color }));
+    },
     setParagraphStyle: (patch) =>
       edit((target) => {
         if (!target.setParagraphStyle(patch)) toast.show({ title: "Could not change the paragraph", description: "Place the cursor in the document first.", tone: "warning" });

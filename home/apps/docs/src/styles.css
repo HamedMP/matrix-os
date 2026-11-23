@@ -247,7 +247,23 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 .docs-side > .oui-tabs { height: 100%; }
 .docs-review-tab { display: grid; gap: 12px; }
 
+/* Narrow windows (see ui/pane-layout.ts). Up to 1080px the side panel has the
+   outline's room, so the page keeps its width. Up to 840px even that is too
+   little: the panel lies over the page instead of squeezing it. */
+@media (max-width: 840px) {
+  .docs-workspace .oui-frame__body { position: relative; }
+  .docs-workspace .oui-frame.has-right .oui-frame__body { grid-template-columns: minmax(0, 1fr); }
+  .docs-workspace .oui-frame__panel {
+    display: block; position: absolute; top: 0; right: 0; bottom: 0; z-index: 5;
+    width: min(360px, 100%); box-shadow: -8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
+}
 @media (max-width: 720px) {
+  /* The outline lies over the page too; it is closed until the owner asks for it. */
+  .docs-workspace .oui-frame__rail {
+    display: block; position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
+    width: min(280px, 85%); box-shadow: 8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
   .docs-start { padding: 20px 16px 32px; }
   .docs-start__recent { grid-template-columns: 16px minmax(0, 1fr) auto; }
   .docs-start__recent-time { display: none; }

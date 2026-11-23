@@ -14,6 +14,7 @@ import { type ExportFormat, buildExport, downloadFile } from "./exports";
 import { FindReplaceBar } from "./FindReplaceBar";
 import { useDocVersion } from "./hooks";
 import { OutlinePane } from "./OutlinePane";
+import { COMPACT_QUERY, NARROW_QUERY, mediaMatches, outlineVisible, useMediaQuery } from "./pane-layout";
 import type { AssistantRequest, AssistantRequestId, DocsPanelId } from "./panel-types";
 import { ReferenceLayer } from "./ReferenceLayer";
 import { useReviewController } from "./review/index";
@@ -52,7 +53,7 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
   const [zoom, setZoom] = useState(100);
   const [findOpen, setFindOpen] = useState(false);
   const [findFocus, setFindFocus] = useState(0);
-  const [outlineOpen, setOutlineOpen] = useState(true);
+  const [outlineOpen, setOutlineOpen] = useState(() => !mediaMatches(COMPACT_QUERY));
   const [panel, setPanel] = useState<DocsPanelId | null>(null);
   const [assistantRequest, setAssistantRequest] = useState<AssistantRequest | null>(null);
   const [composeComment, setComposeComment] = useState(false);
@@ -119,6 +120,14 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
     setPanel(null);
   };
   const togglePanel = () => (panel === null ? setPanel(lastPanel.current) : closePanel());
+  // A narrow window shows the outline or the side panel, not both.
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const outlineShown = outlineVisible(outlineOpen, panel !== null, narrow);
+  const toggleOutline = () => {
+    if (outlineShown) return setOutlineOpen(false);
+    setOutlineOpen(true);
+    if (narrow) closePanel();
+  };
 
   const controls: WorkspaceControls = {
     viewMode,
@@ -128,8 +137,8 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
     findOpen,
     openFind,
     toggleFind: () => (findOpen ? setFindOpen(false) : openFind()),
-    outlineOpen,
-    toggleOutline: () => setOutlineOpen((open) => !open),
+    outlineOpen: outlineShown,
+    toggleOutline,
     panel,
     openPanel: setPanel,
     togglePanel,
@@ -210,7 +219,7 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
           />
         }
         banner={showBanner ? banner : undefined}
-        leftRail={outlineOpen ? <OutlinePane session={session} editor={editor} docVersion={derivedVersion} caretBlockId={caretBlockId} /> : undefined}
+        leftRail={outlineShown ? <OutlinePane session={session} editor={editor} docVersion={derivedVersion} caretBlockId={caretBlockId} /> : undefined}
         leftRailLabel="Outline"
         rightPanel={
           panel === null ? undefined : (

@@ -171,6 +171,33 @@ describe("Docs ribbon and status bar", () => {
     expect(bridge.files.writes).toEqual([]);
   });
 
+  it("colours the selection with the face of the font colour button, then with the colour chosen last", async () => {
+    installBridge({ "plan.docx": await docxFromParagraphs(["Plain words here"]) }, { pending: "plan.docx" });
+    renderApp();
+    const surface = await findSurface();
+    const selectWords = () => {
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      const text = walker.nextNode()!;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 5);
+      const selection = document.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    };
+    const colours = () => [...surface.querySelectorAll<HTMLElement>("[style*='color']")].map((node) => node.style.color).filter((value) => value !== "");
+    act(selectWords);
+    fireEvent.click(screen.getByRole("button", { name: "Font colour" }));
+    await waitFor(() => expect(colours()).toEqual(["rgb(220, 38, 38)"]));
+
+    act(selectWords);
+    fireEvent.click(screen.getByRole("button", { name: "Font colour options" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Blue" }));
+    await waitFor(() => expect(colours()).toEqual(["rgb(37, 99, 235)"]));
+    expect(screen.getByRole("button", { name: "Font colour" }).getAttribute("title")).toMatch(/Blue/);
+  });
+
   it("opens the side panel with the review module's revisions and comments", async () => {
     await openContract();
     ribbonTab("View");
