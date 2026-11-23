@@ -278,7 +278,7 @@ export default function TerminalView({
 
   const isMac = navigator.platform.startsWith("Mac");
   const controls = useDesktopTerminalControls({
-    api, sessionName, chatId, active, socketState,
+    api, sessionName, chatId, active, focused: takesFocus, socketState,
     writable: liveOwnership === "writer",
     isMac,
     attachmentRef, termRef, onPaneAction,

@@ -105,6 +105,24 @@ describe("Electron Desktop shared terminal controls", () => {
     expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/terminal/sessions/session-one/pane-actions", { type: "scroll", edge: "top" });
   });
 
+  // Fault detected (Greptile, #3569): History top in pane A, then a click on pane B before it settled,
+  // gave the keyboard back to A.
+  it("does not take the keyboard back after the person moved to another pane", async () => {
+    const { api, focus, initialProps } = setup();
+    let settle: (value: unknown) => void = () => undefined;
+    api.post.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    const { result, rerender } = renderHook((props: typeof initialProps & { focused: boolean }) => useDesktopTerminalControls({ ...props, onPaneAction: vi.fn() }),
+      { initialProps: { ...initialProps, focused: true } });
+    let running: Promise<void> = Promise.resolve();
+    act(() => { running = result.current.runAction({ type: "scroll", edge: "top" }); });
+    rerender({ ...initialProps, focused: false });
+    await act(async () => { settle({ ok: true }); await running; });
+    expect(focus).not.toHaveBeenCalled();
+    rerender({ ...initialProps, focused: true });
+    await act(async () => { await result.current.runAction({ type: "split", direction: "right" }); });
+    expect(focus).toHaveBeenCalled();
+  });
+
   it("enables the host's pane actions for a terminal on this device, which has no computer API", async () => {
     const { initialProps } = setup();
     const onPaneAction = vi.fn();

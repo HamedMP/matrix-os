@@ -15,6 +15,8 @@ interface DesktopTerminalControlsOptions {
   sessionName: string;
   chatId?: string;
   active: boolean;
+  /** Whether this terminal holds the keyboard; defaults to `active`. Panes stay active while another is focused. */
+  focused?: boolean;
   socketState: ShellSocketState;
   writable: boolean;
   isMac: boolean;
@@ -34,6 +36,7 @@ export function useDesktopTerminalControls({
   sessionName,
   chatId,
   active,
+  focused,
   socketState,
   writable,
   isMac,
@@ -98,8 +101,11 @@ export function useDesktopTerminalControls({
     },
     [attachmentRef, enabled, sessionName],
   );
+  // Read when an action settles: a pane the person left meanwhile must not take the keyboard back.
+  const holdsKeyboardRef = useRef(focused ?? active);
+  useEffect(() => { holdsKeyboardRef.current = focused ?? active; }, [active, focused]);
   const focus = useCallback(() => {
-    if (active) termRef.current?.focus();
+    if (active && holdsKeyboardRef.current) termRef.current?.focus();
   }, [active, termRef]);
   return useTerminalControls({
     sessionName,
