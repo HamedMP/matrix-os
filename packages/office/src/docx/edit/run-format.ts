@@ -116,6 +116,7 @@ function toggle(
   wanted: boolean,
   read: () => boolean,
 ): void {
+  if (read() === wanted) return;
   drop(properties, names[0]);
   if (names[1] !== null) drop(properties, names[1]);
   if (read() === wanted) return;
@@ -132,20 +133,20 @@ export function applyRunFormat(properties: XmlElement, patch: Partial<RunFormat>
   const seen = (): RunFormat => resolve(properties);
   if (patch.bold !== undefined) toggle(properties, ["w:b", "w:bCs"], patch.bold, () => seen().bold);
   if (patch.italic !== undefined) toggle(properties, ["w:i", "w:iCs"], patch.italic, () => seen().italic);
-  if (patch.strike !== undefined) {
+  if (patch.strike !== undefined && seen().strike !== patch.strike) {
     drop(properties, "w:dstrike");
     toggle(properties, ["w:strike", null], patch.strike, () => seen().strike);
   }
-  if (patch.underline !== undefined) {
+  if (patch.underline !== undefined && seen().underline !== patch.underline) {
     drop(properties, "w:u");
     if (seen().underline !== patch.underline) put(properties, "w:u", [["w:val", patch.underline ? "single" : "none"]]);
   }
-  if (patch.color !== undefined) {
+  if (patch.color !== undefined && seen().color !== (patch.color?.toLowerCase() ?? null)) {
     drop(properties, "w:color");
     if (patch.color !== null) put(properties, "w:color", [["w:val", patch.color.slice(1).toUpperCase()]]);
     else if (seen().color !== null) put(properties, "w:color", [["w:val", "auto"]]);
   }
-  if (patch.highlight !== undefined) {
+  if (patch.highlight !== undefined && seen().highlight !== (patch.highlight?.toLowerCase() ?? null)) {
     drop(properties, "w:highlight", "w:shd");
     if (patch.highlight !== null) {
       const name = HIGHLIGHT_NAMES[patch.highlight.toLowerCase()];
@@ -161,7 +162,7 @@ export function applyRunFormat(properties: XmlElement, patch: Partial<RunFormat>
       put(properties, "w:highlight", [["w:val", "none"]]);
     }
   }
-  if (patch.fontSizePt !== undefined) {
+  if (patch.fontSizePt !== undefined && seen().fontSizePt !== patch.fontSizePt) {
     drop(properties, "w:sz", "w:szCs");
     if (patch.fontSizePt !== null) {
       const halfPoints = String(Math.max(1, Math.round(patch.fontSizePt * 2)));
@@ -169,7 +170,7 @@ export function applyRunFormat(properties: XmlElement, patch: Partial<RunFormat>
       put(properties, "w:szCs", [["w:val", halfPoints]]);
     }
   }
-  if (patch.fontFamily !== undefined) {
+  if (patch.fontFamily !== undefined && seen().fontFamily !== patch.fontFamily) {
     if (patch.fontFamily === null) drop(properties, "w:rFonts");
     else {
       const fonts = ensureChild(properties, "w:rFonts", RPR_ORDER);
@@ -177,7 +178,7 @@ export function applyRunFormat(properties: XmlElement, patch: Partial<RunFormat>
       for (const name of ["w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"]) setAttr(fonts, name, patch.fontFamily);
     }
   }
-  if (patch.verticalAlign !== undefined) {
+  if (patch.verticalAlign !== undefined && seen().verticalAlign !== patch.verticalAlign) {
     drop(properties, "w:vertAlign");
     if (seen().verticalAlign !== patch.verticalAlign) put(properties, "w:vertAlign", [["w:val", patch.verticalAlign]]);
   }
