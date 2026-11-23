@@ -28,6 +28,7 @@ import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mc
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
 import { createCodexSendTiming } from "./codex-send-timing.mjs";
+import { discardUnrecordedNativeThread } from "./codex-unrecorded-thread.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -1314,7 +1315,15 @@ async function startNativeSession(lease) {
   // after the proof already failed) is never an unhandled rejection.
   const threadOutcome = request(resumeId ? "thread/resume" : "thread/start", threadParams)
     .then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
-  await proof;
+  try {
+    await proof;
+  } catch (proofError) {
+    // A new thread opened alongside a failed proof was never recorded; delete
+    // it (best effort, bounded) so no orphan Codex conversation remains. A
+    // resumed thread belongs to the chat and is left untouched.
+    if (!resumeId) await discardUnrecordedNativeThread(threadOutcome, request);
+    throw proofError;
+  }
   sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
   const threadResult = await threadOutcome;
   if (!threadResult.ok) throw threadResult.error;
