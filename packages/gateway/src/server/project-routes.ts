@@ -11,6 +11,7 @@ import { registerProjectAgentContextRoute } from "../project-agent-context-route
 import type { createProjectManager } from "../project-manager.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { registerFileRoutes } from "./file-routes.js";
+import { registerOfficeDocumentRoutes } from "../office/routes.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 
@@ -67,6 +68,7 @@ export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFile
     } : {}),
   });
   registerProjectAgentContextRoute(app, { executionRoots });
+  registerOfficeDocumentRoutes(app, { homePath });
 }
 
 export async function registerGatewayProjectDriveRoutes(
