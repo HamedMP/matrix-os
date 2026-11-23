@@ -231,6 +231,8 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                windowControls={isFullscreen && desktopParity ? <TrafficLights onClose={() => onCloseWindow(win.id)}
+                  onMinimize={() => onAnimateMinimize(win.id)} onFullscreen={() => onToggleFullscreen(win.id)} /> : undefined}
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
                 onOpenSharedProject={chat.openSharedProject}

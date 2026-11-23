@@ -22,7 +22,7 @@ import { ChatComposerColumn, ChatNewChatContent, useChatReadState, CanonicalChat
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from "react";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
@@ -145,6 +145,7 @@ function writeHermesSetup(channels: string[]) {
 }
 
 interface ChatAppProps {
+  windowControls?: ReactNode;
   collaborationView?: ChatCollaborationView;
   onOpenSharedChat?: (scopeId: string) => void;
   onOpenSharedProject?: (scopeId: string) => void;
@@ -236,7 +237,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
-  collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome, onOpenSharedApp,
+  windowControls, collaborationView, onOpenSharedChat, onOpenSharedProject, onOpenSharedHome, onOpenSharedApp,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, visible = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -754,15 +755,15 @@ function ChatAppContent({
         recent={conversations.flatMap(item => item.canonicalRecord ? [item.canonicalRecord] : [])} projects={webProjects.projects} centerX={searchCenter} bounds={searchBounds}
         onClose={() => setSearchOpen(false)} onSelect={onSwitchConversation} onProject={openProjectHome} onShared={onOpenSharedHome ? () => { if (isCurrentAuthority && !isCurrentAuthority()) return; setArchivesOpen(false); onOpenSharedHome(); } : undefined}
         onOpenArchived={() => setArchivesOpen(true)} onRestored={onRestored}/> : null}
-      {!mobile && archivesOpen && archiveClient ? <div className="relative flex min-w-0 flex-1">{!sidebarOpen ? <div className="absolute left-2 top-2 z-10">{sidebarToggle}</div> : null}<ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
+      {!mobile && archivesOpen && archiveClient ? <div className="relative flex min-w-0 flex-1">{windowControls || !sidebarOpen ? <div className="absolute left-3 top-2 z-10 flex items-center">{windowControls}{!sidebarOpen ? sidebarToggle : null}</div> : null}<ArchivedChatsPage key={JSON.stringify([authorityKey, projectGatewayUrl])}
         client={pageClient!} projects={webProjects.projects} onChanged={historyChanged}/></div> : null}
       {/* Main content */}
-      {!archivesOpen || mobile ? <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
-        providerCatalog={agentProviderCatalog} headerLeading={sidebarToggle}>
+      <div hidden={archivesOpen && !mobile} className={archivesOpen && !mobile ? "hidden" : "contents"}><BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
+        providerCatalog={agentProviderCatalog} headerLeading={<>{windowControls}{sidebarToggle}</>}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0" style={{ display: archivesOpen && !mobile ? "none" : undefined }}>
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-12"}`}>
-          {sidebarToggle}
+          {windowControls}{sidebarToggle}
           {!sidebarOpen && (
             <>
               <Button
@@ -835,7 +836,7 @@ function ChatAppContent({
         ) : <>
         <BotChatPanel key={JSON.stringify([authorityKey, sessionId])} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
           headerLeading={<>
-            {sidebarToggle}
+            {windowControls}{sidebarToggle}
             {!sidebarOpen ? <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button> : null}
           </>}
           headerActions={<>
@@ -1002,8 +1003,8 @@ function ChatAppContent({
         </BotChatPanel>
         </>}
       </main>
-      {sessionId && sideChatClient && inspectorOpened && !archivesOpen && !collaborationView && !mobile ? <div hidden={!inspectorOpen} className={inspectorOpen ? "contents" : "hidden"}><WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
-        active={active && visible && inspectorOpen} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} worktreeId={activeFileWorktreeId}
+      {sessionId && sideChatClient && inspectorOpened && !collaborationView && !mobile ? <div hidden={!inspectorOpen} className={inspectorOpen ? "contents" : "hidden"}><WebChatInspector key={JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}
+        active={active && visible && inspectorOpen && !archivesOpen} chatId={sessionId} chatTitle={activeConversationTitle} project={activeFileProject} worktreeId={activeFileWorktreeId}
         projectLoading={Boolean(activeFileProjectId && webProjects.loading)} projectError={fileScopeUnavailable || Boolean(activeFileProjectId && !webProjects.loading && (webProjects.error || !activeFileProject))} onRetryProject={webProjects.retry} gatewayUrl={projectGatewayUrl} layoutKey={authorityKey ? `matrix-chat-inspector:${JSON.stringify([authorityKey, projectGatewayUrl, sessionId])}` : null}
         rootWidth={rootWidth} railWidth={sidebarOpen ? 240 : 0} fileOpenRequest={previewFile ?? undefined} filePath={previewFile?.chatId === sessionId ? previewFile.path : null}
         fileResource={previewFile?.chatId === sessionId ? previewResource : undefined}
@@ -1012,7 +1013,7 @@ function ChatAppContent({
         onClose={() => { setInspectorOpen(false); setPreviewFile(null); }} /></div> : null}
       {previewFile && previewFile.chatId === sessionId && (mobile || !sideChatClient || collaborationView)
         ? <ChatFilePanel path={previewFile.path} resource={previewResource} gatewayUrl={projectGatewayUrl} onClose={() => setPreviewFile(null)} /> : null}
-      </ChatAgentsContent></BotModelRecoveryProvider> : null}
+      </ChatAgentsContent></BotModelRecoveryProvider></div>
     </div>
   );
 }

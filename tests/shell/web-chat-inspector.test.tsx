@@ -458,3 +458,28 @@ it("restores the file tree when an expanded preview closes", async () => {
   fireEvent.click(await screen.findByRole("treeitem", {name:"note.txt"}));
   expect(props.onFilePathChange).toHaveBeenCalledWith("note.txt");
 });
+
+it("retains the real Side question and window controls through Web Archives", async () => {
+  vi.stubGlobal("ResizeObserver",class{observe(){}unobserve(){}disconnect(){}});
+  vi.stubGlobal("fetch",vi.fn(async()=>Response.json({projects:[],entries:[]})));
+  const client=inspectorProps().sideChatClient;
+  const archiveClient={list:vi.fn(async()=>({items:[]})),search:vi.fn(async()=>({items:[]})),updateLifecycle:vi.fn(),delete:vi.fn()};
+  const close=vi.fn();
+  render(<ChatApp messages={[]} sessionId="chat_archive_question" activeConversationTitle="Archive question" busy={false} connected
+    conversations={[{id:"chat_archive_question",title:"Archive question",preview:"",messageCount:1,updatedAt:1}]}
+    onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={client} archiveClient={archiveClient}
+    windowControls={<button onClick={close}>Host close control</button>}/>);
+  fireEvent.click(screen.getByRole("button",{name:"Toggle chat inspector"}));
+  fireEvent.click(screen.getByRole("button",{name:"Add inspector tab"}));fireEvent.click(screen.getByRole("button",{name:/Side chat/}));
+  const input=await screen.findByRole("textbox",{name:"Ask side chat"});fireEvent.change(input,{target:{value:"Keep this question through Archives"}});
+  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"Open archived list",exact:true}));
+  await screen.findByRole("heading",{name:"Archived chats"});
+  expect(screen.queryByRole("textbox",{name:"Ask side chat"})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Archive question",exact:true}));
+  expect(screen.getByRole("textbox",{name:"Ask side chat"})).toBe(input);
+  expect(input).toHaveProperty("value","Keep this question through Archives");expect(client.askSideChat).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"Open archived list",exact:true}));
+  fireEvent.click(screen.getByRole("button",{name:"Host close control"}));expect(close).toHaveBeenCalledOnce();
+});
