@@ -25,5 +25,32 @@
       "vite.config.ts"
     ]
   },
-  "listingTrust": "first_party"
+  "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "calendar_preferences": {
+        "columns": {
+          "name": "text",
+          "value": "jsonb"
+        },
+        "indexes": [
+          "name"
+        ]
+      },
+      "calendar_proposals": {
+        "columns": {
+          "start_at": "text",
+          "end_at": "text",
+          "title": "text",
+          "attendees": "jsonb",
+          "note": "text",
+          "calendar_id": "text",
+          "time_zone": "text"
+        },
+        "indexes": [
+          "start_at"
+        ]
+      }
+    }
+  }
 }
