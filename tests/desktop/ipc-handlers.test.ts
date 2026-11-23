@@ -1379,6 +1379,9 @@ describe("registerIpcHandlers sender authorization", () => {
     expect(harness.ctx.openTerminalWindow).toHaveBeenCalledTimes(1);
     await expect(harness.invoke("terminal-window:focus-main")).resolves.toEqual({ ok: true });
     expect(harness.ctx.focusMainWindow).toHaveBeenCalledTimes(1);
+    await expect(harness.invoke("terminal-window:focus-main", { to: "settings" })).resolves.toEqual({ ok: true });
+    expect(harness.ctx.focusMainWindow).toHaveBeenLastCalledWith("settings");
+    await expect(harness.invoke("terminal-window:focus-main", { to: "files" })).rejects.toThrow("invalid request");
   });
 
   it("refuses to register without window services", () => {
