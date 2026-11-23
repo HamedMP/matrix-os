@@ -60,6 +60,8 @@ export * from "#canonical-chat-execution-controls";
 export * from "#chat-agents";
 export * from "#chat-agent-context";
 export * from "#chat-agent-recipe";
+export * from "#bot-creation-draft";
+export * from "#bot-creation-wire";
 export * from "#canonical-chat-api";
 export * from "#canonical-chat-content";
 export {
@@ -1519,6 +1521,3 @@ export * from "#routine-full-access-view";
 
 export * from "#routine-chat-origin";
 export * from "#routine-origin-proof";
-
-export * from "#bot-creation-draft";
-export * from "#bot-creation-wire";
