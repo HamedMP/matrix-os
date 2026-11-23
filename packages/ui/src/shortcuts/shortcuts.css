@@ -141,6 +141,14 @@
   padding: 0;
 }
 .mxs-chip-remove-space { display: inline-block; flex: none; width: 24px; }
+.mxs-chip.mxs-chip-compact {
+  border-radius: 5px;
+  font-size: 10px;
+  gap: 2px;
+  min-height: 18px;
+  min-width: 0;
+  padding: 0 5px;
+}
 
 .mxs-chip-recording {
   border-color: var(--mxs-accent);
