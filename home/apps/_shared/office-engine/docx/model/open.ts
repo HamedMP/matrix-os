@@ -1,10 +1,11 @@
 /** Opening a `.docx`: package, part texts, index, handle. */
 
 import type { DocxDocument } from "../../api/docx.js";
-import type { OpcPackage, ZipLimits } from "../../api/opc.js";
+import type { OpcPackage } from "../../api/opc.js";
 import { openPackage, partNameKey } from "../../opc/index.js";
 import { DocxIndex } from "./doc-index.js";
 import { type DocxEngines, createDocumentHandle } from "./document.js";
+import { type DocxLimits, type DocxOpenLimits, resolveDocxLimits, zipLimitsOf } from "./limits.js";
 import { discoverParts } from "./parts.js";
 
 /** Reads the text of every part the model parses. */
@@ -25,18 +26,25 @@ export function documentFromPackage(
   pkg: OpcPackage,
   texts: ReadonlyMap<string, string>,
   engines: DocxEngines = {},
+  limits?: Partial<DocxLimits>,
 ): DocxDocument {
   const keyed = new Map<string, string>();
   for (const [name, text] of texts) keyed.set(partNameKey(name), text);
-  return createDocumentHandle(new DocxIndex(pkg, keyed), engines);
+  return createDocumentHandle(new DocxIndex(pkg, keyed, resolveDocxLimits(limits)), engines);
 }
 
-/** Opens a document with the given engines behind its editing methods. */
+/**
+ * Opens a document with the given engines behind its editing methods.
+ * `limits` holds the ZIP limits and the document limits; a missing key takes
+ * its default (`DEFAULT_ZIP_LIMITS`, `DEFAULT_DOCX_LIMITS`). A server that
+ * opens files it did not write should pass the limits it means to enforce.
+ */
 export async function openDocxWith(
   engines: DocxEngines,
   bytes: Uint8Array,
-  limits?: Partial<ZipLimits>,
+  limits?: DocxOpenLimits,
 ): Promise<DocxDocument> {
-  const pkg = await openPackage(bytes, limits);
-  return createDocumentHandle(new DocxIndex(pkg, await readPartTexts(pkg)), engines);
+  const documentLimits = resolveDocxLimits(limits);
+  const pkg = await openPackage(bytes, zipLimitsOf(limits));
+  return createDocumentHandle(new DocxIndex(pkg, await readPartTexts(pkg), documentLimits), engines);
 }

@@ -9,7 +9,8 @@
  */
 
 import type { DocxDocument } from "../../api/docx.js";
-import type { InlineRun } from "../../api/docx-model.js";
+import type { InlineRun, TableBlock } from "../../api/docx-model.js";
+import type { XmlElement } from "../../api/xml.js";
 import { isOfficeError } from "../../errors.js";
 import { getDocxIndex } from "../model/document.js";
 import type { DocxIndex } from "../model/doc-index.js";
@@ -58,9 +59,17 @@ function filterWithIndex(index: DocxIndex): RunFilter {
     if (record === null || record.type !== "paragraph") return goneInView(block.markRevision?.kind, view);
     return revisionsGoneInView(index.scan(record.element).marks, view);
   };
+  // The rows of the table being written, listed once: a table is asked about each of its rows in turn.
+  let listed: { id: string; rows: readonly XmlElement[] } | null = null;
+  const rowsOf = (table: TableBlock): readonly XmlElement[] => {
+    if (listed === null || listed.id !== table.id) {
+      const record = index.block(table.id);
+      listed = { id: table.id, rows: record === null || record.type !== "table" ? [] : tableRows(record.element) };
+    }
+    return listed.rows;
+  };
   filter.rowGone = (table, rowIndex, view) => {
-    const record = index.block(table.id);
-    const row = record === null || record.type !== "table" ? undefined : tableRows(record.element)[rowIndex];
+    const row = rowsOf(table)[rowIndex];
     if (row === undefined) return goneInView(table.rows[rowIndex]?.revision?.kind, view);
     return revisionsGoneInView(rowRevisionElements(row), view);
   };

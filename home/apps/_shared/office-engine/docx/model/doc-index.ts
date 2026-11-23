@@ -15,6 +15,7 @@ import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { type Flow, type FlowState, buildFlow } from "./flow.js";
 import { type ParagraphScan, scanParagraph } from "./inline.js";
+import { DEFAULT_DOCX_LIMITS, type DocxLimits } from "./limits.js";
 import { type DocxPartKind, WORD_NAMESPACES, attr } from "./names.js";
 import { type NumberedParagraph, NumberingDefinitions, computeNumberingLabels } from "./numbering.js";
 import { type PartSlot, PartStore, type PartTexts } from "./parts.js";
@@ -76,8 +77,16 @@ export class DocxIndex {
   private labelCache: Map<XmlElement, NumberingLabel> | null = null;
   private revisionCache: RevisionIndex | null = null;
 
-  constructor(pkg: OpcPackage, texts: PartTexts) {
-    this.store = new PartStore(pkg, texts);
+  /**
+   * `limits` bound the size of the document for as long as the handle lives:
+   * the parts as they are parsed, and the structure every time it is built.
+   */
+  constructor(
+    pkg: OpcPackage,
+    texts: PartTexts,
+    readonly limits: DocxLimits = DEFAULT_DOCX_LIMITS,
+  ) {
+    this.store = new PartStore(pkg, texts, limits);
     this.package = pkg;
     this.snapshots = new SnapshotManager(this.store);
     this.store.onChange((slot) => this.invalidate(slot));
@@ -95,7 +104,7 @@ export class DocxIndex {
 
   /** Stories and blocks. Rebuilt after any change; ids are kept. */
   get structure(): Structure {
-    this.structureCache ??= buildStructure(this.store, this.blockIds);
+    this.structureCache ??= buildStructure(this.store, this.blockIds, this.limits);
     return this.structureCache;
   }
 

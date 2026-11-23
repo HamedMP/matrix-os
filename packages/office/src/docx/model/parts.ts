@@ -18,6 +18,7 @@ import type { XmlChildNode, XmlDocument, XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { findPartByRelationshipType, partNameKey, relativeTargetFor } from "../../opc/index.js";
 import { parseXml, serializeXml } from "../../xml/index.js";
+import { DEFAULT_DOCX_LIMITS, type DocxLimits, countNodes, documentTooLarge } from "./limits.js";
 import { type DocxPartKind, type DocxSlotKind, PART_KINDS, firstChild, isWordMainContentType } from "./names.js";
 
 /** Identity the index attaches to XML elements. Copied with the element into snapshots. */
@@ -157,12 +158,15 @@ export class PartStore {
   /**
    * Parses the parts named by `discoverParts`. `texts` must hold the text of
    * each of them. Throws `corrupt_package` when the main part is not a
-   * document with a body and `malformed_xml` when a part is not well formed.
+   * document with a body, `malformed_xml` when a part is not well formed and
+   * `limit_exceeded` when the parts together hold more XML than `limits` allows.
    */
-  constructor(pkg: OpcPackage, texts: PartTexts) {
+  constructor(pkg: OpcPackage, texts: PartTexts, limits: DocxLimits = DEFAULT_DOCX_LIMITS) {
     this.package = pkg;
     const parts = discoverParts(pkg);
     this.mainPartName = (parts[0] as { name: PartName }).name;
+    let chars = 0;
+    let nodes = 0;
     for (const part of parts) {
       const text = texts.get(partNameKey(part.name));
       if (text === undefined) {
@@ -170,14 +174,23 @@ export class PartStore {
           details: { part: part.name },
         });
       }
+      chars += text.length;
+      if (chars > limits.maxXmlChars) throw documentTooLarge("maxXmlChars", limits.maxXmlChars);
+      // Each part is parsed with what the parts before it left of the node budget.
+      const budget = limits.maxNodes - nodes;
+      if (budget < 1) throw documentTooLarge("maxNodes", limits.maxNodes);
       let doc: XmlDocument;
       try {
-        doc = parseXml(text);
+        doc = parseXml(text, { maxNodes: budget });
       } catch (error) {
         // The theme only supplies font names; a broken one must not make the document unreadable.
         if (part.kind === "theme" && error instanceof OfficeError && error.code === "malformed_xml") continue;
+        if (error instanceof OfficeError && error.code === "limit_exceeded" && error.details.limit === "maxNodes") {
+          throw documentTooLarge("maxNodes", limits.maxNodes);
+        }
         throw error;
       }
+      nodes += countNodes(doc);
       this.addSlot({
         name: part.name,
         kind: part.kind,

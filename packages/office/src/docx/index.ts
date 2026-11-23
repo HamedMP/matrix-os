@@ -24,6 +24,7 @@ import type { CompareDetailedOptions, CompareResult } from "./compare/index.js";
 import { createDocxFactory, createDocxFromMarkdownWith } from "./create/index.js";
 import { applyOps } from "./edit/index.js";
 import type { DocxEngines } from "./model/document.js";
+import type { DocxOpenLimits } from "./model/limits.js";
 import { documentFromPackage, openDocxWith } from "./model/open.js";
 import { acceptRevisions, rejectRevisions } from "./revisions/index.js";
 
@@ -36,6 +37,8 @@ export type {
   CompareResult,
   CompareSummary,
 } from "./compare/index.js";
+export { DEFAULT_DOCX_LIMITS } from "./model/limits.js";
+export type { DocxLimits, DocxOpenLimits } from "./model/limits.js";
 export { toHtml, toMarkdown, toPlainText } from "./export/index.js";
 export type { HtmlExportMode, HtmlExportOptions, MarkdownExportOptions, PlainTextExportOptions } from "./export/index.js";
 
@@ -45,7 +48,12 @@ const ENGINES: DocxEngines = Object.freeze({ applyOps, acceptRevisions, rejectRe
 /** Makes the handle of a package assembled in memory; `texts` holds the XML text of the model parts by part name. */
 const finish = (pkg: OpcPackage, texts: ReadonlyMap<string, string>): DocxDocument => documentFromPackage(pkg, texts, ENGINES);
 
-export const openDocx: DocxModule["openDocx"] = (bytes, limits) => openDocxWith(ENGINES, bytes, limits);
+/**
+ * Opens a document. `limits` takes the ZIP limits and the document limits
+ * (`DEFAULT_DOCX_LIMITS`) in one object; a file that passes one is refused
+ * with `zip_limit_exceeded` or `limit_exceeded`.
+ */
+export const openDocx = (bytes: Uint8Array, limits?: DocxOpenLimits): Promise<DocxDocument> => openDocxWith(ENGINES, bytes, limits);
 
 export const createDocx: DocxModule["createDocx"] = (options) => createDocxFactory(options, finish);
 

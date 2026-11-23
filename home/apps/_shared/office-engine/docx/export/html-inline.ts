@@ -15,8 +15,6 @@ export interface InlineContext {
   refCounter: number;
 }
 
-const OBJECT_CHAR = "￼";
-
 /** The data attributes of a revision mark, with the given attribute prefix. */
 export function revisionAttrs(mark: RevisionMark, prefix = "data-revision"): string {
   let attrs = ` ${prefix}-id="${escapeHtml(mark.revisionId)}" ${prefix}-kind="${escapeHtml(mark.kind)}"`;
@@ -25,26 +23,21 @@ export function revisionAttrs(mark: RevisionMark, prefix = "data-revision"): str
   return attrs;
 }
 
+/** Line breaks, tabs and the placeholder of an inline object: the characters of run text that are not written as text. */
+const TEXT_SPECIAL = /[\n\t\uFFFC]/g;
+
 function textHtml(text: string): string {
+  // The stretches between special characters are escaped whole; a run can be megabytes long.
   let html = "";
-  let plain = "";
-  const flush = (): void => {
-    html += escapeHtml(plain);
-    plain = "";
-  };
-  for (const char of text) {
-    if (char === "\n") {
-      flush();
-      html += "<br>";
-    } else if (char === "\t") {
-      flush();
-      html += '<span class="tab">\t</span>';
-    } else if (char !== OBJECT_CHAR) {
-      plain += char;
-    }
+  let from = 0;
+  TEXT_SPECIAL.lastIndex = 0;
+  for (let match = TEXT_SPECIAL.exec(text); match !== null; match = TEXT_SPECIAL.exec(text)) {
+    if (match.index > from) html += escapeHtml(text.slice(from, match.index));
+    if (match[0] === "\n") html += "<br>";
+    else if (match[0] === "\t") html += '<span class="tab">\t</span>';
+    from = match.index + 1;
   }
-  flush();
-  return html;
+  return from === 0 ? escapeHtml(text) : html + escapeHtml(text.slice(from));
 }
 
 function objectHtml(run: InlineRun, context: InlineContext): string {

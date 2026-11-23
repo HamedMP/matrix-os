@@ -27,8 +27,8 @@ function limitFailure(action: () => unknown): { code: string; limit: unknown } {
 }
 
 describe("ZIP limits", () => {
-  it("has the documented defaults and they cannot be changed", () => {
-    expect(DEFAULT_ZIP_LIMITS).toEqual({ maxEntries: 5000, maxEntryBytes: 64 * MIB, maxTotalBytes: 256 * MIB });
+  it("has defaults that fit a 10 MiB file and cannot be changed", () => {
+    expect(DEFAULT_ZIP_LIMITS).toEqual({ maxEntries: 5000, maxEntryBytes: 32 * MIB, maxTotalBytes: 96 * MIB });
     expect(Object.isFrozen(DEFAULT_ZIP_LIMITS)).toBe(true);
   });
 
@@ -40,24 +40,28 @@ describe("ZIP limits", () => {
     const zip = handmadeZip([bombEntry("word/document.xml", ZEROS.length)]);
     expect(zip.length).toBeLessThan(MIB);
     expect(limitFailure(() => parseZip(zip))).toEqual({ code: "zip_limit_exceeded", limit: "maxEntryBytes" });
+    // One byte over the limit is refused; the limit itself is not.
+    const over = { name: "word/document.xml", data: "", method: 8, rawPayload: ZEROS_DEFLATED, crc: ZEROS_CRC };
+    expect(limitFailure(() => parseZip(handmadeZip([{ ...over, uncompressedSize: 32 * MIB + 1 }])))).toEqual({ code: "zip_limit_exceeded", limit: "maxEntryBytes" });
+    expect(parseZip(handmadeZip([{ ...over, uncompressedSize: 32 * MIB }])).records).toHaveLength(1);
   });
 
   it("refuses an archive whose entries together pass the default total limit", () => {
-    // Five entries of 60 MiB each: every one is under the per-entry limit, the sum is 300 MiB.
-    const sixty = rawDeflate(ZEROS.subarray(0, 60 * MIB), 9);
-    const crc = checksum(ZEROS.subarray(0, 60 * MIB));
-    const entries = Array.from({ length: 5 }, (_unused, index) => ({
+    // Four entries of 30 MiB each: every one is under the per-entry limit, the sum is 120 MiB.
+    const thirty = rawDeflate(ZEROS.subarray(0, 30 * MIB), 9);
+    const crc = checksum(ZEROS.subarray(0, 30 * MIB));
+    const entries = Array.from({ length: 4 }, (_unused, index) => ({
       name: `xl/worksheets/sheet${index + 1}.xml`,
       data: "",
       method: 8,
-      rawPayload: sixty,
-      uncompressedSize: 60 * MIB,
+      rawPayload: thirty,
+      uncompressedSize: 30 * MIB,
       crc,
     }));
     const zip = handmadeZip(entries);
     expect(limitFailure(() => parseZip(zip))).toEqual({ code: "zip_limit_exceeded", limit: "maxTotalBytes" });
-    // Four of them fit.
-    expect(parseZip(handmadeZip(entries.slice(0, 4))).records).toHaveLength(4);
+    // Three of them fit.
+    expect(parseZip(handmadeZip(entries.slice(0, 3))).records).toHaveLength(3);
   });
 
   it("refuses more entries than the default entry limit", () => {

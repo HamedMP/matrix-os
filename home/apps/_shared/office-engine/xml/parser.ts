@@ -15,7 +15,12 @@ import { invalidArgument, limitExceeded, malformed, quoteName } from "./errors.j
 import type { WritableDocument, WritableElement } from "./nodes.js";
 import { decodeReferences } from "./references.js";
 
-export const DEFAULT_XML_LIMITS: Readonly<XmlParseLimits> = Object.freeze({ maxDepth: 512, maxNodes: 5_000_000 });
+/**
+ * A node of the tree costs about 200 bytes of heap, so the default node
+ * count keeps one parsed document under half a gigabyte. A reader that knows
+ * its documents are smaller should pass a smaller budget.
+ */
+export const DEFAULT_XML_LIMITS: Readonly<XmlParseLimits> = Object.freeze({ maxDepth: 512, maxNodes: 2_000_000 });
 
 /** Attribute count from which duplicate detection switches from a scan to a set. */
 const DUPLICATE_SCAN_LIMIT = 8;

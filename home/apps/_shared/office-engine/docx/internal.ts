@@ -179,6 +179,7 @@
 export { DocxIndex, type CreatablePartKind } from "./model/doc-index.js";
 export { type DocxEngines, type DocxFactories, createDocumentHandle, getDocxIndex } from "./model/document.js";
 export { documentFromPackage, openDocxWith, readPartTexts } from "./model/open.js";
+export { DEFAULT_DOCX_LIMITS, type DocxLimits, type DocxOpenLimits, documentTooLarge, resolveDocxLimits } from "./model/limits.js";
 export { type ElementTags, type PartSlot, PartStore, containerOf, discoverParts } from "./model/parts.js";
 export {
   type BlockRecord,

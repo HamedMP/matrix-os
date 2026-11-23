@@ -114,7 +114,7 @@ describe("depth guard", () => {
   const nested = (depth: number): string => "<a>".repeat(depth) + "</a>".repeat(depth);
 
   it("publishes frozen defaults", () => {
-    expect(DEFAULT_XML_LIMITS).toEqual({ maxDepth: 512, maxNodes: 5_000_000 });
+    expect(DEFAULT_XML_LIMITS).toEqual({ maxDepth: 512, maxNodes: 2_000_000 });
     expect(Object.isFrozen(DEFAULT_XML_LIMITS)).toBe(true);
   });
 

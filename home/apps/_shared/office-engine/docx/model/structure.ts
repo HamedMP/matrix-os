@@ -12,6 +12,7 @@ import type { PartName } from "../../api/opc.js";
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { partNameKey } from "../../opc/index.js";
 import { findAll } from "../../xml/index.js";
+import { DEFAULT_DOCX_LIMITS, type DocxLimits, documentTooLarge } from "./limits.js";
 import { TRANSPARENT_BLOCK, attr, firstChild } from "./names.js";
 import { toRoman } from "./number-format.js";
 import { type PartSlot, type PartStore, containerOf } from "./parts.js";
@@ -137,9 +138,14 @@ class Builder {
     blockLevelBookmarks: new Map(),
   };
 
+  private blockCount = 0;
+  private rowCount = 0;
+  private cellCount = 0;
+
   constructor(
     private readonly store: PartStore,
     private readonly ids: IdState,
+    private readonly limits: DocxLimits,
   ) {}
 
   private idFor(element: XmlElement): BlockId {
@@ -168,6 +174,8 @@ class Builder {
   ): BlockRecord[] {
     const records: BlockRecord[] = [];
     const add = (type: BlockRecord["type"], element: XmlElement): BlockRecord => {
+      this.blockCount += 1;
+      if (this.blockCount > this.limits.maxBlocks) throw documentTooLarge("maxBlocks", this.limits.maxBlocks);
       const id = this.idFor(element);
       const record: BlockRecord = {
         id,
@@ -198,10 +206,14 @@ class Builder {
         if (sectPr !== null) add("sectionBreak", sectPr);
       } else {
         const table = add("table", element);
-        for (const row of tableRows(element)) {
-          for (const cell of rowCells(row)) {
-            this.walk(cell, story, table.id, table.topLevelId, pendingBookmarks);
-          }
+        const rows = tableRows(element);
+        this.rowCount += rows.length;
+        if (this.rowCount > this.limits.maxTableRows) throw documentTooLarge("maxTableRows", this.limits.maxTableRows);
+        for (const row of rows) {
+          const cells = rowCells(row);
+          this.cellCount += cells.length;
+          if (this.cellCount > this.limits.maxTableCells) throw documentTooLarge("maxTableCells", this.limits.maxTableCells);
+          for (const cell of cells) this.walk(cell, story, table.id, table.topLevelId, pendingBookmarks);
         }
       }
     }
@@ -263,8 +275,12 @@ function noteElements(slot: PartSlot | null, name: string): XmlElement[] {
   return notes;
 }
 
-export function buildStructure(store: PartStore, ids: IdState): Structure {
-  const builder = new Builder(store, ids);
+/**
+ * Builds the structure. Throws `limit_exceeded` when the stories together
+ * hold more blocks, table rows or table cells than `limits` allows.
+ */
+export function buildStructure(store: PartStore, ids: IdState, limits: DocxLimits = DEFAULT_DOCX_LIMITS): Structure {
+  const builder = new Builder(store, ids, limits);
   const pkg = store.package;
   const main = store.main();
   const body = containerOf(main.doc);
