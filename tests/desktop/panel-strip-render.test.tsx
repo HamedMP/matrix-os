@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PanelStrip from "../../desktop/src/renderer/src/features/workspace/PanelStrip";
 import { defaultLayout, useWorkspace, type PanelLayout } from "../../desktop/src/renderer/src/stores/workspace";
@@ -56,5 +56,20 @@ describe("PanelStrip layout persistence", () => {
       terminal: 64,
       editor: 36,
     });
+  });
+
+  it.each([
+    ["MacIntel", "⌘⌥1–⌘⌥7"],
+    ["Win32", "Ctrl+Alt+1–Ctrl+Alt+7"],
+  ])("hints the Cmd+Alt panel chords when every panel is hidden on %s", (platform, range) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    const layout = defaultLayout(1);
+    const hidden = Object.fromEntries(Object.keys(layout.visible).map((panel) => [panel, false]));
+    useWorkspace.setState({ layouts: { "task-1": { ...layout, visible: hidden as PanelLayout["visible"] } } });
+
+    render(<PanelStrip taskId="task-1" renderPanel={(panel) => <div>{panel}</div>} />);
+
+    expect(screen.getByText(`All panels hidden. Toggle one from the toolbar (${range}).`)).toBeTruthy();
+    vi.restoreAllMocks();
   });
 });

@@ -234,4 +234,13 @@ describe("local store", () => {
     expect(layouts).not.toBeNull();
     expect(Object.keys(layouts!)).toEqual(["proj/task-fresh"]);
   });
+  it("persists keyboard shortcut overrides in the stored shape and rejects other shapes", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const overrides = { version: 1 as const, overrides: { "app.close": ["Cmd+Shift+W"] } };
+    await store.set("keyboardShortcuts", overrides);
+    expect(await store.get("keyboardShortcuts")).toEqual(overrides);
+    await expect(store.setUnknown("keyboardShortcuts", { version: 2, overrides: {} })).rejects.toThrow();
+    await expect(store.setUnknown("keyboardShortcuts", { version: 1, overrides: {}, extra: true })).rejects.toThrow();
+    await expect(store.setUnknown("keyboardShortcuts", { version: 1, overrides: { "app.close": ["x".repeat(41)] } })).rejects.toThrow();
+  });
 });
