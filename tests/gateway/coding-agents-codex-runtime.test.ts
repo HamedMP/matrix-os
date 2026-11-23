@@ -87,6 +87,7 @@ describe("Codex structured event runtime", () => {
       prompt: "Fix the failing route.",
       model: "openai/gpt-5.6-sol",
       approvalPolicy: "never",
+      approvalsReviewer: "user",
       sandbox: "workspace-write",
       writableRoots: ["/home/matrix/home/projects/repo"],
     });
