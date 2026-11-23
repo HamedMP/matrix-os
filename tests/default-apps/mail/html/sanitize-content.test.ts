@@ -71,8 +71,11 @@ describe("sanitizeEmailHtml on a legitimate newsletter", () => {
 
   it("carries the body's own attributes on a wrapper", () => {
     const wrapper = body.querySelector(".mx-body");
-    expect(wrapper?.getAttribute("bgcolor")).toBe("#f4f4f7");
-    expect(wrapper?.getAttribute("style")).toContain("margin:0");
+    expect(wrapper?.hasAttribute("bgcolor")).toBe(false);
+    expect(wrapper?.getAttribute("style")).toBe("background-color:#f4f4f7;margin:0;padding:0");
+    const legacy = expectInert(sanitizeEmailHtml('<body bgcolor="FFFFCC" text="navy" link="red" background="https://cdn.example/bg.png">x</body>').html);
+    expect(legacy.querySelector(".mx-body")?.getAttribute("style")).toBe("background-color:#FFFFCC;color:navy");
+    expect(expectInert(sanitizeEmailHtml('<body bgcolor="url(x)" text="expression(1)">x</body>').html).querySelector(".mx-body")?.hasAttribute("style")).toBe(false);
     expect(wrapper?.getAttribute("lang")).toBeNull();
     expect(result.hasOwnColors).toBe(true);
   });

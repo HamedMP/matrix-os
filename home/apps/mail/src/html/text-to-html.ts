@@ -77,6 +77,8 @@ function appendLines(lines: readonly string[], target: Element, doc: Document, d
         if (position > 0) target.appendChild(doc.createElement("br"));
         if (line) appendLinkified(target, line, doc);
       });
+      // An empty last line needs a break of its own to show as a blank line above the quote that follows.
+      if (group[group.length - 1] === "" && end < lines.length) target.appendChild(doc.createElement("br"));
     }
     index = end;
   }

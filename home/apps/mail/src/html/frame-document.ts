@@ -25,9 +25,11 @@ export interface FrameTheme {
   border: string;
   link: string;
   fontFamily: string;
+  /** Space around the mail inside the frame, in pixels (0 to 48). */
+  padding: number;
 }
 
-/** Readable light colours. Also the "paper" a mail with its own colours is shown on in a dark theme. */
+/** Readable light colours. */
 export const DEFAULT_FRAME_THEME: FrameTheme = Object.freeze({
   scheme: "light",
   foreground: "#1f2328",
@@ -36,7 +38,11 @@ export const DEFAULT_FRAME_THEME: FrameTheme = Object.freeze({
   border: "#d0d7de",
   link: "#1a5fd0",
   fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  padding: 0,
 });
+
+/** The light page a mail with its own colours is shown on when the app theme is dark. */
+export const PAPER_FRAME_THEME: FrameTheme = Object.freeze({ ...DEFAULT_FRAME_THEME, padding: 12 });
 
 export interface FrameDocumentInput {
   /** Markup from `sanitizeEmailHtml`, `textToHtml` or `renderMailBody`. It is checked again here. */
@@ -66,6 +72,7 @@ export function safeFrameTheme(theme: FrameTheme): FrameTheme {
     border: safeColor(theme.border, base.border),
     link: safeColor(theme.link, base.link),
     fontFamily: typeof theme.fontFamily === "string" && FONT_VALUE.test(theme.fontFamily.trim()) ? theme.fontFamily.trim() : base.fontFamily,
+    padding: Number.isFinite(theme.padding) ? Math.min(48, Math.max(0, Math.round(theme.padding))) : 0,
   };
 }
 
@@ -96,7 +103,7 @@ export function contentCss(input: FrameTheme): string {
   const root = `.${ROOT_CLASS}`;
   const base = `:where(${root})`;
   return [
-    `${root}{display:flow-root;margin:0;padding:0;color:${theme.foreground};background:${theme.background};font-family:${theme.fontFamily};font-size:14px;line-height:1.5;overflow-wrap:anywhere;overflow-x:auto;color-scheme:${theme.scheme}}`,
+    `${root}{display:flow-root;box-sizing:border-box;margin:0;padding:${theme.padding}px;color:${theme.foreground};background:${theme.background};font-family:${theme.fontFamily};font-size:14px;line-height:1.5;overflow-wrap:anywhere;overflow-x:auto;color-scheme:${theme.scheme}}`,
     `${base} a{color:${theme.link}}`,
     `${base} img{max-width:100%}`,
     `${base} blockquote{margin:0 0 0 .8em;padding:0 0 0 .8em;border-left:2px solid ${theme.border}}`,

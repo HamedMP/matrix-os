@@ -127,6 +127,11 @@ describe("quoted replies in plain-text mail", () => {
     expect(body.textContent).toContain("Ada <ada@example.com> wrote:");
   });
 
+  it("keeps the blank lines around a quote that is shown", () => {
+    const body = expectInert(textToHtml("Above\n\n> quoted\n\nBelow", { quotes: "show" }).html);
+    expect(body.querySelector(".mx-plain")?.innerHTML).toBe("Above<br><br><blockquote>quoted</blockquote><br>Below");
+  });
+
   it("collapses an original-message block", () => {
     const result = textToHtml("Approved.\n\n-----Original Message-----\nFrom: Ada\nSent: Monday\nSubject: Budget\n\nPlease approve.");
     expect(result.quoteCollapsed).toBe(true);

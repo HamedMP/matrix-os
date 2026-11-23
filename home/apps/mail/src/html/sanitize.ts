@@ -296,13 +296,28 @@ function collectStylesheets(source: Document, result: SanitizedEmail): void {
   }
 }
 
-/** Builds the element that stands in for the mail's `<body>` and carries its colours and direction. */
+/** A legacy colour attribute value (`bgcolor`, `text`) as a CSS colour, or null. */
+function legacyColor(value: string | null): string | null {
+  const text = (value ?? "").trim();
+  if (/^[0-9a-fA-F]{6}$/.test(text)) return `#${text}`;
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(text) || /^[A-Za-z]{3,20}$/.test(text) ? text : null;
+}
+
+/**
+ * Builds the element that stands in for the mail's `<body>`. A `div` ignores
+ * `bgcolor` and `text`, so the body's colours are carried over as styles.
+ */
 function bodyWrapper(body: Element, context: Context): HTMLElement {
   const wrapper = context.out.createElement("div");
   copyAttributes(body, wrapper, "div", context);
-  const text = /^#?[A-Za-z0-9]{1,24}$/.exec((body.getAttribute("text") ?? "").trim());
-  if (text) {
-    const declared = filterDeclarations(`color:${text[0]}${wrapper.hasAttribute("style") ? `;${wrapper.getAttribute("style")}` : ""}`, { strict: context.strict });
+  wrapper.removeAttribute("bgcolor");
+  const background = legacyColor(body.getAttribute("bgcolor"));
+  const color = legacyColor(body.getAttribute("text"));
+  if (background || color) {
+    const declared = filterDeclarations(
+      [background ? `background-color:${background}` : "", color ? `color:${color}` : "", wrapper.getAttribute("style") ?? ""].filter(Boolean).join(";"),
+      { strict: context.strict },
+    );
     if (declared.css) wrapper.setAttribute("style", declared.css);
     context.result.hasOwnColors ||= declared.hasColor;
   }

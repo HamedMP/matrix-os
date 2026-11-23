@@ -40,12 +40,13 @@ export function readFrameTheme(probe: Element): FrameTheme {
     border: style.borderTopColor ?? "",
     link: style.outlineColor ?? "",
     fontFamily: style.fontFamily ?? "",
+    padding: 0,
   });
 }
 
 function sameTheme(a: FrameTheme, b: FrameTheme): boolean {
   return a.scheme === b.scheme && a.foreground === b.foreground && a.background === b.background && a.muted === b.muted
-    && a.border === b.border && a.link === b.link && a.fontFamily === b.fontFamily;
+    && a.border === b.border && a.link === b.link && a.fontFamily === b.fontFamily && a.padding === b.padding;
 }
 
 /**

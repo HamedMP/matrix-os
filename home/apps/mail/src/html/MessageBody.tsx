@@ -5,9 +5,10 @@
  * the app's document as a link, a control or a script.
  */
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { buildFrameDocument, contentCss, DEFAULT_FRAME_THEME, FRAME_SANDBOX, type FrameTheme } from "./frame-document";
+import { buildFrameDocument, contentCss, FRAME_SANDBOX, PAPER_FRAME_THEME, type FrameTheme } from "./frame-document";
 import { createCidResolver, type InlineImageSource } from "./inline-images";
 import { buildLayoutProjection } from "./layout-projection";
+import { resolveMediaQueries } from "./media-queries";
 import "./message-body.css";
 import { isEmptyBody, renderMailBody } from "./render";
 import type { SanitizedEmail } from "./sanitize";
@@ -52,10 +53,16 @@ function useMeasuredHeight(hostRef: RefObject<HTMLDivElement | null>, html: stri
     const doc = host.ownerDocument;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     const style = doc.createElement("style");
-    style.textContent = contentCss(theme) + (css.includes("<") ? "" : css);
+    const base = contentCss(theme);
+    const sheet = css.includes("<") ? "" : css;
     const copy = buildLayoutProjection(html, doc);
     shadow.replaceChildren(style, copy);
     const measure = () => {
+      // Media queries in the frame answer to the frame's width, so the copy resolves them for that width.
+      const width = copy.clientWidth;
+      const deviceWidth = doc.defaultView?.screen?.width ?? width;
+      const resolved = base + resolveMediaQueries(sheet, { width, deviceWidth, scheme: theme.scheme });
+      if (style.textContent !== resolved) style.textContent = resolved;
       const measured = Math.max(copy.scrollHeight, copy.offsetHeight);
       setHeight(measured > 0 ? Math.ceil(measured) + 1 : null);
     };
@@ -135,7 +142,7 @@ function MessageBodyView({
 
   // A mail that sets its own colours assumes a light page; give it one when the app is dark.
   const paper = appTheme.scheme === "dark" && body.hasOwnColors;
-  const theme = paper ? DEFAULT_FRAME_THEME : appTheme;
+  const theme = paper ? PAPER_FRAME_THEME : appTheme;
   const srcDoc = useMemo(
     () => buildFrameDocument({ html: body.html, css: body.css, theme, allowRemoteImages: loadImages }),
     [body, theme, loadImages],
@@ -158,7 +165,7 @@ function MessageBodyView({
           sandbox={FRAME_SANDBOX}
           srcDoc={srcDoc}
           referrerPolicy="no-referrer"
-          style={{ height: measured ?? minHeight }}
+          style={{ height: measured ?? minHeight, colorScheme: theme.scheme }}
         />
       )}
       {body.hasQuote && (
