@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalAssistantContinuationId, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 import { projectSetupDetailPresentation } from "../../packages/ui/src/chat/project-setup-presentation.js";
 import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-terminal-notices.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
@@ -16,6 +17,57 @@ function generationDetail(): CanonicalChatDetailResponse {
 }
 
 describe("durable setup generation presentation", () => {
+  it("hides the exact synthetic input while keeping both preceding setup answers and later user turns", () => {
+    const detail = generationDetail();
+    const [userInput, result] = detail.messages;
+    const ordinaryParts = [{ type: "text" as const, text: 'Draft the project setup described below. {"note":"Typed by the user"}' }];
+    const ownerAnswer = { ...userInput!, id: "msg_setup_answer", seq: 1, turnId: undefined, parts: ordinaryParts };
+    const laterTurn = { ...detail.turns[0]!, id: "cturn_ordinary", inputMessageId: "msg_later_turn" };
+    const laterInput = { ...ownerAnswer, id: laterTurn.inputMessageId, turnId: laterTurn.id, seq: 4 };
+    const generationInput = {
+      ...userInput!,
+      purpose: "ai_request" as const,
+      seq: 2,
+      parts: [{ type: "text" as const, text: 'Draft the project setup described below. {"guidance":"Private provider input"}' }],
+    };
+    detail.messages = [ownerAnswer, generationInput, { ...result!, seq: 3 }, laterInput];
+    detail.turns.push(laterTurn);
+
+    const desktop = projectSetupDetailPresentation(detail, null);
+    expect(desktop.messages.map(message => message.id)).toEqual([ownerAnswer.id, result!.id, laterInput.id]);
+    expect(desktop.messages.filter(message => message.role === "user").map(message => message.parts)).toEqual([ordinaryParts, ordinaryParts]);
+    expect(projectCanonicalTranscript(detail).map(message => message.id)).toEqual([ownerAnswer.id, result!.id, laterInput.id]);
+    expect(detail.messages[1]).toBe(generationInput);
+  });
+
+  it("keeps the input hidden while the setup run is active and has yet to write a result", () => {
+    const detail = generationDetail();
+    detail.runs[0]!.status = "running";
+    detail.messages = detail.messages.slice(0, 1);
+    expect(projectSetupDetailPresentation(detail, null).messages).toEqual([]);
+  });
+
+  it("does not stream incomplete setup JSON into the Electron transcript", () => {
+    const detail = generationDetail();
+    const [run] = detail.runs;
+    const [input, result] = detail.messages;
+    const delta = '{"guidance":"# Incomplete draft"';
+    run!.status = "running";
+    delete run!.outcome;
+    detail.messages = [input!];
+    detail.activities = [{
+      id: "activity_setup_delta", chatId: run!.chatId, turnId: run!.turnId, runId: run!.id,
+      occurredAt: run!.createdAt, type: "assistant.delta", messageId: result!.id, delta,
+    }];
+
+    const present = (candidate: CanonicalChatDetailResponse) =>
+      canonicalChatPresentation(projectSetupDetailPresentation(candidate, null))[0]?.work;
+    expect(present(detail)).not.toContainEqual(expect.objectContaining({ markdown: delta }));
+
+    delete run!.context;
+    expect(present(detail)).toContainEqual(expect.objectContaining({ markdown: delta }));
+  });
+
   it("keeps internal JSON out of the transcript after an answer or Markdown revision invalidates the current generation", () => {
     const projected = projectSetupDetailPresentation(generationDetail(), null);
     expect(projected.messages.at(-1)?.parts).toEqual([{ type: "text", text: "I drafted your project files for review." }]);

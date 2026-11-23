@@ -52,6 +52,8 @@ it("allows skipping the setup offer without starting Chat", () => {
 it("keeps an edited Markdown draft and blocks Save until its update is accepted", async () => {
   const dispatch = vi.fn(async () => false);
   render(<ProjectSetupControls setup={controller(dispatch)} transport={null} onOpenMcpSettings={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: "Portfolio" })).toBeTruthy();
+  expect(screen.getByText("Run the tests.")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Edit Markdown" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Markdown for AGENTS.md" }), {
     target: { value: "# Portfolio\n\nAsk before publishing." },
@@ -69,6 +71,9 @@ it("keeps an edited Markdown draft and blocks Save until its update is accepted"
     "value",
     "# Portfolio\n\nAsk before publishing.",
   );
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+  expect(screen.getByText("Ask before publishing.")).toBeTruthy();
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
 });
 

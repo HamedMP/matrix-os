@@ -50,13 +50,13 @@ export function ProjectSetupMarkdown({
     }
   };
   return (
-    <section className="overflow-hidden rounded-lg border" style={borderStyle} aria-label={`Review ${path}`}>
+    <section className="min-w-0" aria-label={`Review ${path}`}>
       <div
-        className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2"
+        className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2"
         style={borderStyle}
       >
-        <span className="break-all font-mono text-xs">{path}</span>
-        <div className="flex gap-2">
+        <span className="min-w-0 font-mono text-xs font-medium [overflow-wrap:anywhere]">{path}</span>
+        <div className="flex flex-wrap gap-2">
           {editable ? (
             <Action onClick={() => {
               const nextMode = mode === "edit" ? "preview" : "edit";
@@ -80,7 +80,7 @@ export function ProjectSetupMarkdown({
       {mode === "edit" ? (
         <textarea
           aria-label={`Markdown for ${path}`}
-          className="min-h-56 w-full rounded-none border-0 bg-transparent p-3 font-mono text-xs"
+          className="block min-h-56 w-full rounded-none border-0 bg-transparent p-4 font-mono text-sm leading-relaxed"
           value={value}
           onChange={(event) => {
             setValue(event.target.value);
@@ -90,17 +90,17 @@ export function ProjectSetupMarkdown({
           maxLength={65536}
         />
       ) : (
-        <div className="max-h-80 overflow-y-auto p-3 text-sm leading-relaxed [&_h1]:mb-3 [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:font-medium [&_li]:ml-4 [&_ul]:list-disc [&_p]:my-2">
+        <div className="max-h-80 space-y-3 overflow-auto px-4 py-3 text-sm leading-relaxed [overflow-wrap:anywhere] [&_h1]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_ol]:list-decimal [&_ul]:list-disc [&_ol]:pl-5 [&_ul]:pl-5 [&_pre]:overflow-x-auto">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
         </div>
       )}
       {tooLong ? (
-        <p role="alert" className="px-3 pb-3 text-xs" style={mutedStyle}>
+        <p role="alert" className="px-4 pb-3 text-xs" style={mutedStyle}>
           {value.length} / {maximumCharacters} characters. Shorten this draft before saving.
         </p>
       ) : null}
       {dirty ? (
-        <p className="px-3 pb-3 text-xs" style={mutedStyle}>
+        <p className="px-4 pb-3 text-xs" style={mutedStyle}>
           Apply these draft changes before saving project setup.
         </p>
       ) : null}

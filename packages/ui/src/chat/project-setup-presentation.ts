@@ -30,11 +30,20 @@ export function projectSetupDetailPresentation(
   detail: CanonicalChatDetailResponse,
   draft: ProjectSetupDraft | null,
 ): CanonicalChatDetailResponse {
-  const runs = detail.runs.filter(run => run.context?.projectSetupDraft);
-  const current = draft?.chatId === detail.record?.chat.id ? draft : null;
+  const chatId = detail.record.chat.id;
+  const runs = detail.runs.filter(run => run.chatId === chatId && run.context?.projectSetupDraft);
+  const current = draft?.chatId === chatId ? draft : null;
   const runIds = [...runs.map(run => run.id), ...(current?.generation?.runId ? [current.generation.runId] : [])];
   if (runIds.length === 0) return detail;
-  const combined = canonicalAssistantOutputMessages(detail.messages);
+  // The provider input has a turn ID but no run ID. Only suppress the canonical input
+  // attached to an admitted setup run, so normal answers can contain any text.
+  const setupTurnIds = new Set(runs.map(run => run.turnId));
+  const setupInputIds = new Set(detail.turns
+    .filter(turn => turn.chatId === chatId && setupTurnIds.has(turn.id))
+    .map(turn => turn.inputMessageId));
+  const combined = canonicalAssistantOutputMessages(detail.messages.filter(message =>
+    message.chatId !== chatId || message.role !== "user" || !setupInputIds.has(message.id),
+  ));
   const resultIds = runIds.flatMap(runId => {
     const result = [...combined].reverse().find(message => message.role === "assistant" && message.runId === runId);
     return result ? [result.id] : [];
@@ -48,5 +57,10 @@ export function projectSetupDetailPresentation(
           : "I’m drafting your project files for review.");
     return { ...message, parts: [{ type: "text" as const, text }] };
   });
-  return { ...detail, messages };
+  // Electron can render a delta before its corresponding message arrives.
+  // For setup, only project the accepted Markdown and the fixed generation status.
+  const activities = detail.activities.filter(activity =>
+    activity.type !== "assistant.delta" || activity.chatId !== chatId || !runIds.includes(activity.runId),
+  );
+  return { ...detail, messages, activities };
 }

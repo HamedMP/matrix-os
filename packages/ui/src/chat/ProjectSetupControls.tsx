@@ -9,7 +9,7 @@ import {
 import { copyProjectSkill, importProjectSkill } from "./project-skill-file.js";
 import type { ProjectSetupController, ProjectSetupTransport } from "./use-project-setup.js";
 
-import { ProjectSetupActionButton as Action, mutedStyle } from "./ProjectSetupAction.js";
+import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
 import { ProjectSetupMarkdown, type ProjectSetupMarkdownState } from "./ProjectSetupMarkdown.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction } from "./ProjectSetupEntry.js";
 
@@ -328,9 +328,6 @@ function ProjectSetupControlsScoped({
       ) : null}
       {draft.step === "review" ? (
         <>
-          <p className="text-xs" style={mutedStyle}>
-            Review the Markdown before saving. MCP connections are managed separately in Settings.
-          </p>
           {draft.generation?.status === "running" ? (
             <p role="status">Drafting your project files…</p>
           ) : (
@@ -354,39 +351,48 @@ function ProjectSetupControlsScoped({
               ) : null}
             </div>
           ) : null}
-          {draft.proposals.map((file) => (
-            <ProjectSetupMarkdown
-              key={`${draft.chatId}:${file.path}`}
-              path={file.path}
-              content={file.content}
-              maximumCharacters={guidanceLimit(file)}
-              initialState={markdownEdits?.files[file.path]}
-              onStateChange={markdownEdits ? (state) => markdownEdits.onChange(file.path, state) : undefined}
-              editable={file.path !== "CLAUDE.md" && !file.expectedHash}
-              busy={busy}
-              onDirtyChange={(dirty) =>
-                setDirtyFiles((current) =>
-                  dirty
-                    ? current.includes(file.path)
-                      ? current
-                      : [...current, file.path]
-                    : current.filter((path) => path !== file.path),
-                )
-              }
-              onApply={(content) => setup.dispatch({ type: "review_file", path: file.path, content })}
-            />
-          ))}
           {draft.proposals.length ? (
-            <Action
-              disabled={
-                busy || needsSkillDraft
-                || draft.proposals.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
-                || draft.generation?.status === "running"
-              }
-              onClick={() => dispatch({ type: "save" })}
-            >
-              Save project setup
-            </Action>
+            <>
+              <div
+                className="divide-y divide-[var(--border-subtle,var(--border))] overflow-hidden rounded-lg border"
+                style={borderStyle}
+              >
+                {draft.proposals.map((file) => (
+                  <ProjectSetupMarkdown
+                    key={`${draft.chatId}:${file.path}`}
+                    path={file.path}
+                    content={file.content}
+                    maximumCharacters={guidanceLimit(file)}
+                    initialState={markdownEdits?.files[file.path]}
+                    onStateChange={markdownEdits ? (state) => markdownEdits.onChange(file.path, state) : undefined}
+                    editable={file.path !== "CLAUDE.md" && !file.expectedHash}
+                    busy={busy}
+                    onDirtyChange={(dirty) =>
+                      setDirtyFiles((current) =>
+                        dirty
+                          ? current.includes(file.path)
+                            ? current
+                            : [...current, file.path]
+                          : current.filter((path) => path !== file.path),
+                      )
+                    }
+                    onApply={(content) => setup.dispatch({ type: "review_file", path: file.path, content })}
+                  />
+                ))}
+              </div>
+              <Button
+                size="sm"
+                className="min-h-8 max-w-full"
+                disabled={
+                  busy || needsSkillDraft
+                  || draft.proposals.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
+                  || draft.generation?.status === "running"
+                }
+                onClick={() => dispatch({ type: "save" })}
+              >
+                Save project setup
+              </Button>
+            </>
           ) : null}
           {needsSkillDraft ? (
             <p role="status" className="text-xs" style={mutedStyle}>
