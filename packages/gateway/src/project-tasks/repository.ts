@@ -150,6 +150,24 @@ function clip(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
+export interface BackfillChat {
+  id: string;
+  title: string;
+  lifecycle: "active" | "archived";
+  runStatus: string | null;
+}
+
+/** Chat runs still in flight: their backfilled task is work in progress. */
+const LIVE_RUN_STATUSES = new Set(["accepted", "running", "waiting_for_approval", "waiting_for_input"]);
+
+/**
+ * Status for a chat that predates the board. Refines the user's "existing chats
+ * go to Done" choice: a chat whose agent is running or waiting is In progress.
+ */
+export function backfillStatus(runStatus: string | null): TaskStatus {
+  return runStatus !== null && LIVE_RUN_STATUSES.has(runStatus) ? "in_progress" : "done";
+}
+
 export class ProjectTaskRepository {
   constructor(readonly db: ProjectTaskDb, private readonly now: () => Date = () => new Date()) {}
 
@@ -312,10 +330,12 @@ export class ProjectTaskRepository {
       .returningAll().executeTakeFirst();
   }
 
-  /** Project chats of this owner with no task yet, oldest first. */
-  async unlinkedChats(scope: TaskScope, limit: number): Promise<Array<{ id: string; title: string; lifecycle: "active" | "archived" }>> {
-    const result = await sql<{ id: string; title: string; lifecycle: "active" | "archived" }>`
-      SELECT chats.id, chats.title, chats.lifecycle FROM chats
+  /** Project chats of this owner with no task yet, oldest first, with their latest run status (null before the first run). */
+  async unlinkedChats(scope: TaskScope, limit: number): Promise<BackfillChat[]> {
+    const result = await sql<BackfillChat>`
+      SELECT chats.id, chats.title, chats.lifecycle,
+        (SELECT run.status FROM chat_runs AS run WHERE run.chat_id = chats.id ORDER BY run.created_at DESC, run.id DESC LIMIT 1) AS "runStatus"
+      FROM chats
       WHERE chats.owner_type = 'personal' AND chats.owner_id = ${scope.ownerId} AND chats.project_id = ${scope.projectId}
         AND NOT EXISTS (
           SELECT 1 FROM project_tasks AS task
@@ -339,13 +359,13 @@ export class ProjectTaskRepository {
       .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).execute();
   }
 
-  /** Backfilled chat: a task in Done (the chat predates the board), title and archived state copied. */
-  async insertBackfilledInside(trx: ProjectTaskTrx, scope: TaskScope, chat: { id: string; title: string; lifecycle: "active" | "archived" }): Promise<TaskRow | undefined> {
+  /** Backfilled chat: Done, or In progress while its agent runs or waits (see `backfillStatus`); title and archived state copied. */
+  async insertBackfilledInside(trx: ProjectTaskTrx, scope: TaskScope, chat: BackfillChat): Promise<TaskRow | undefined> {
     const existing = await this.findByChat(trx, scope.ownerId, chat.id, true);
     if (existing) return undefined;
     return this.insertTaskInside(trx, scope, {
       id: `task_${randomUUID()}`, chatId: chat.id, title: clip(chat.title.trim() || "Untitled chat", TASK_LIMITS.title),
-      status: "done", archived: chat.lifecycle === "archived",
+      status: backfillStatus(chat.runStatus), archived: chat.lifecycle === "archived",
     }, "system:backfill");
   }
 

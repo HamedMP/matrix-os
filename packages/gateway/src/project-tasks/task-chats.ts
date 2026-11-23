@@ -37,8 +37,13 @@ export const TicketSeedSchema = z.object({
 }).strict();
 export type TicketSeed = z.output<typeof TicketSeedSchema>;
 
-/** A chat started directly (Chat app, CLI, agent tool) is work in progress. */
-export const DIRECT_CHAT_STATUS = "in_progress" as const;
+/**
+ * A chat started directly (Chat app, CLI, agent tool) lands in To do while it
+ * has no turns; its first accepted turn moves it to In progress (see
+ * `ProjectTaskService.chatChanged`). Refines the user's "new chats are In
+ * progress" choice; set this to "in_progress" to revert.
+ */
+export const DIRECT_CHAT_STATUS = "todo" as const;
 const CHAT_ACTOR: ActorRef = "system:chat";
 
 export interface ProjectChatHookOptions {

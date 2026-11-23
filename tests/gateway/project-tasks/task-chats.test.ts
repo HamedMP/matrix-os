@@ -68,14 +68,25 @@ describe("task chats over the owner chat store", () => {
   const taskFor = (chatId: string) => tasks.findByChatAny(OWNER.id, chatId);
   const chatRow = (chatId: string) => chatRepository.kysely.selectFrom("chats").selectAll().where("id", "=", chatId).executeTakeFirst();
 
-  it("gives a chat started in a project a task in In progress, and none to chats outside a project", async () => {
+  async function addRun(chatId: string, id: string, status: string, at: string) {
+      await sql`INSERT INTO chat_messages (id, chat_id, seq, role, state, parts, byte_count, created_at)
+        VALUES (${`msg_${id}`}, ${chatId}, ${Number(at.slice(-6, -4))}, 'user', 'committed', '[]'::jsonb, 0, ${at})`.execute(chatRepository.kysely);
+      await sql`INSERT INTO chat_turns (id, chat_id, client_request_id, base_message_seq, input_message_id, status, created_at, updated_at)
+        VALUES (${`turn_${id}`}, ${chatId}, ${`req_${id}`}, 0, ${`msg_${id}`}, 'accepted', ${at}, ${at})`.execute(chatRepository.kysely);
+      await sql`INSERT INTO chat_runs (id, chat_id, turn_id, client_request_id, attempt, driver_kind, instance_id, selection, interaction_mode,
+        permission_mode, status, history_boundary_seq, capability_snapshot, created_at, updated_at)
+        VALUES (${`run_${id}`}, ${chatId}, ${`turn_${id}`}, ${`req_${id}`}, 1, 'kernel', 'inst', '{}'::jsonb, 'default', 'default',
+        ${status}, 0, '{}'::jsonb, ${at}, ${at})`.execute(chatRepository.kysely);
+  }
+
+  it("gives a chat started in a project a task in To do, and none to chats outside a project", async () => {
     install();
     const project = await createChat("req_plain_project", "proj_demo");
     const loose = await createChat("req_plain_loose");
     const unknown = await createChat("req_plain_unknown", "proj_gone");
 
     expect(await taskFor(project.chat.id)).toMatchObject({
-      project_id: "proj_demo", status: "in_progress", title: "Fix the login page", number: 1, created_by: "system:chat",
+      project_id: "proj_demo", status: "todo", title: "Fix the login page", number: 1, created_by: "system:chat",
     });
     expect(await taskFor(loose.chat.id)).toBeUndefined();
     expect(await taskFor(unknown.chat.id)).toBeUndefined();
@@ -160,8 +171,11 @@ describe("task chats over the owner chat store", () => {
     expect(row).toBeUndefined();
   });
 
-  it("backfills earlier project chats into Done and gives chatless tasks a chat, once", async () => {
+  it("backfills earlier project chats into Done, or In progress while their agent runs, and gives chatless tasks a chat, once", async () => {
     const old = await createChat("req_old_chat", "proj_demo", "An old conversation");
+    const waiting = await createChat("req_old_waiting", "proj_demo", "Waiting on me");
+    await addRun(old.chat.id, "o1", "completed", "2026-11-01T00:00:01.000Z");
+    await addRun(waiting.chat.id, "w1", "waiting_for_input", "2026-11-01T00:00:02.000Z");
     const archived = await createChat("req_old_archived", "proj_demo", "Archived conversation");
     await chatRepository.update(CHAT_OWNER, archived.chat.id, { baseRevision: archived.chat.revision, lifecycle: "archived" });
     await tasks.ensureBoard({ ownerId: OWNER.id, projectId: "proj_demo" }, "BD");
@@ -172,6 +186,8 @@ describe("task chats over the owner chat store", () => {
 
     const { tasks: listed } = await service.listTasks(CALLER, "board-demo", { limit: 50, includeArchived: true });
     expect(listed.find((task) => task.chatId === old.chat.id)).toMatchObject({ status: "done", title: "An old conversation", archivedAt: null });
+    expect(listed.find((task) => task.chatId === waiting.chat.id)?.status).toBe("in_progress");
+    expect(listed.find((task) => task.chatId === archived.chat.id)).toMatchObject({ status: "done" });
     expect(listed.find((task) => task.chatId === archived.chat.id)?.archivedAt).not.toBeNull();
     const linked = listed.find((task) => task.id === legacy.row.id)!;
     expect(linked.chatId).toMatch(/^chat_/);
@@ -179,7 +195,7 @@ describe("task chats over the owner chat store", () => {
     expect((await tasks.getBoard({ ownerId: OWNER.id, projectId: "proj_demo" }))?.chats_linked_at).not.toBeNull();
 
     const again = await service.listTasks(CALLER, "board-demo", { limit: 50, includeArchived: true });
-    expect(again.tasks).toHaveLength(3);
+    expect(again.tasks).toHaveLength(4);
   });
 
   it("moves a Backlog task to In progress when its chat's first turn is accepted, and only then", async () => {
@@ -197,18 +213,8 @@ describe("task chats over the owner chat store", () => {
   it("reads the latest run status of each task's chat", async () => {
     install();
     const first = await createChat("req_status_a", "proj_demo");
-    const add = async (id: string, status: string, at: string) => {
-      await sql`INSERT INTO chat_messages (id, chat_id, seq, role, state, parts, byte_count, created_at)
-        VALUES (${`msg_${id}`}, ${first.chat.id}, ${Number(at.slice(-6, -4))}, 'user', 'committed', '[]'::jsonb, 0, ${at})`.execute(chatRepository.kysely);
-      await sql`INSERT INTO chat_turns (id, chat_id, client_request_id, base_message_seq, input_message_id, status, created_at, updated_at)
-        VALUES (${`turn_${id}`}, ${first.chat.id}, ${`req_${id}`}, 0, ${`msg_${id}`}, 'accepted', ${at}, ${at})`.execute(chatRepository.kysely);
-      await sql`INSERT INTO chat_runs (id, chat_id, turn_id, client_request_id, attempt, driver_kind, instance_id, selection, interaction_mode,
-        permission_mode, status, history_boundary_seq, capability_snapshot, created_at, updated_at)
-        VALUES (${`run_${id}`}, ${first.chat.id}, ${`turn_${id}`}, ${`req_${id}`}, 1, 'kernel', 'inst', '{}'::jsonb, 'default', 'default',
-        ${status}, 0, '{}'::jsonb, ${at}, ${at})`.execute(chatRepository.kysely);
-    };
-    await add("a1", "completed", "2026-11-01T00:00:01.000Z");
-    await add("a2", "waiting_for_input", "2026-11-01T00:00:02.000Z");
+    await addRun(first.chat.id, "a1", "completed", "2026-11-01T00:00:01.000Z");
+    await addRun(first.chat.id, "a2", "waiting_for_input", "2026-11-01T00:00:02.000Z");
     const task = await taskFor(first.chat.id);
     expect((await service.getTask(CALLER, "board-demo", task!.id)).chatStatus).toBe("blocked");
     expect(await chats.statuses({ type: "user", id: "someone_else" }, [first.chat.id])).toEqual({});
