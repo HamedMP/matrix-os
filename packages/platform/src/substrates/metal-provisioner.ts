@@ -136,8 +136,8 @@ function errorCode(error: unknown): string {
 }
 
 /**
- * Adds `MATRIX_SERVER_PROVIDER=metal` and `MATRIX_SERVER_REF=<machineId>` to
- * host.env, right after its `MATRIX_MACHINE_ID` line and at the same indent.
+ * Adds `MATRIX_SERVER_PROVIDER=metal`, `MATRIX_SERVER_REF=<machineId>` and
+ * `MATRIX_UPDATE_EXPANSION_FACTOR=5` to host.env, right after its `MATRIX_MACHINE_ID` line and at the same indent.
  * hostd assigns the VM id on create, after this renders, so the guest names
  * its platform machine instead. The lines are added here rather than through
  * template placeholders so Hetzner user data, which runs within bytes of its
@@ -151,7 +151,11 @@ export function withMetalServerEnv(userData: string, machineId: string): string 
   if (matches.length !== 1) return null;
   const [line, indent] = matches[0]!;
   const at = matches[0]!.index + line.length;
-  const added = `\n${indent}MATRIX_SERVER_PROVIDER=metal\n${indent}MATRIX_SERVER_REF=${machineId}`;
+  // A metal disk holds the app plus its rollback copy (~4.2 GiB each), so the
+  // shared update check's default 8x-download headroom refuses the second
+  // update on a 40 GiB disk. An update needs ~4.3x (download + unpacked app).
+  const added = `\n${indent}MATRIX_SERVER_PROVIDER=metal\n${indent}MATRIX_SERVER_REF=${machineId}`
+    + `\n${indent}MATRIX_UPDATE_EXPANSION_FACTOR=5`;
   return userData.slice(0, at) + added + userData.slice(at);
 }
 

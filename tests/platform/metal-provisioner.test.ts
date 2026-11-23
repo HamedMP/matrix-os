@@ -249,6 +249,9 @@ describe('metal provisioner', () => {
     expect(spec.userData).toContain(`MATRIX_MACHINE_ID=${MACHINE_ID}`);
     expect(spec.userData).toMatch(/^\s*MATRIX_SERVER_PROVIDER=metal$/m);
     expect(spec.userData).toMatch(new RegExp(`^\\s*MATRIX_SERVER_REF=${MACHINE_ID}$`, 'm'));
+    // The 40 GiB disk keeps the app and its rollback copy (~4.2 GiB each); the
+    // shared 8x-download update check would refuse every update after the first.
+    expect(spec.userData).toMatch(/^\s*MATRIX_UPDATE_EXPANSION_FACTOR=5$/m);
     expect(spec.userData).toContain('MATRIX_REGISTRATION_TOKEN=registration-token');
     expect(spec.userData).not.toMatch(/\{\{[A-Za-z0-9_]+\}\}/);
     expect(new TextEncoder().encode(spec.userData).byteLength).toBeLessThanOrEqual(64 * 1024);
