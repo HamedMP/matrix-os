@@ -483,3 +483,35 @@ it("retains the real Side question and window controls through Web Archives", as
   fireEvent.click(screen.getByRole("button",{name:"Open archived list",exact:true}));
   fireEvent.click(screen.getByRole("button",{name:"Host close control"}));expect(close).toHaveBeenCalledOnce();
 });
+
+
+it.each(["picker", "file", "terminal"] as const)("keeps an unsent Side question when %s opens at tab capacity", async action => {
+  const api = terminalApi();
+  const refs = Array.from({ length: 11 }, (_, index) => {
+    const id = `tt_${(index + 50).toString(16).padStart(32, "0")}`;
+    api.tabs.push({ id, name: `Terminal ${index}`, cwd: "~/project", status: "running" });
+    return `${api.workspaceId}:${id}`;
+  });
+  vi.stubGlobal("fetch", api.request);
+  const layoutKey = "side-question-capacity";
+  localStorage.setItem(layoutKey, JSON.stringify({ width: 400, treeHeight: 300, selected: "side-chat", tabs: [
+    { id: "side-chat", kind: "side-chat", label: "Side chat" },
+    ...refs.map(ref => ({ id: `terminal:${ref}`, kind: "terminal", label: "Terminal" })),
+  ] }));
+  const props = inspectorProps({ layoutKey, terminalSessionIds: refs });
+  const view = render(<WebChatInspector {...props}/>);
+  const question = await screen.findByRole("textbox", { name: "Ask side chat" });
+  fireEvent.change(question, { target: { value: "Preserve my unsent capacity question" } });
+  if (action === "file") view.rerender(<WebChatInspector {...props} filePath="README.md"/>);
+  if (action === "terminal") {
+    fireEvent.keyDown(window, { key: "`", ctrlKey: true });
+    await waitFor(() => expect(api.tabs).toHaveLength(12));
+  }
+  fireEvent.keyDown(screen.getByRole("button", { name: "Add inspector tab" }), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "New tab" }));
+  fireEvent.click(screen.getByRole("button", { name: /Side chat.*⌥/ }));
+  expect(await screen.findByRole("textbox", { name: "Ask side chat" })).toBe(question);
+  expect(question).toHaveProperty("value", "Preserve my unsent capacity question");
+  expect(screen.getAllByRole("tab").length).toBeLessThanOrEqual(12);
+  expect(api.request.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});

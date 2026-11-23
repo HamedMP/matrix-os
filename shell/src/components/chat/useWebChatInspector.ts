@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import type { InspectorTool, SideChatClient } from "@matrix-os/ui";
 import {
   readLayout,
+  addInspectorTab,
   createChatTerminal,
   deleteChatTerminal,
   FILES,
@@ -191,18 +192,14 @@ export function useWebChatInspector({
     setLayout((current) => ({
       ...current,
       selected: tab.id,
-      tabs: current.tabs.some((item) => item.id === tab.id)
-        ? current.tabs.filter((item) => item.kind !== "new")
-        : [...current.tabs.filter((item) => item.kind !== "new").slice(-(MAX_TABS - 1)), tab],
+      tabs: addInspectorTab(current.tabs, tab),
     }));
   useEffect(() => {
     if (filePath) {
       setLayout((current) => ({
         ...current,
         selected: "files",
-        tabs: current.tabs.some((tab) => tab.kind === "files")
-          ? current.tabs.filter((tab) => tab.kind !== "new")
-          : [...current.tabs.filter((tab) => tab.kind !== "new"), FILES].slice(-MAX_TABS),
+        tabs: addInspectorTab(current.tabs, FILES),
       }));
     }
   }, [filePath, fileOpenRequest]);
@@ -355,7 +352,7 @@ export function useWebChatInspector({
     setLayout((current) => ({
       ...current,
       selected: NEW.id,
-      tabs: current.tabs.some((tab) => tab.kind === "new") ? current.tabs : [...current.tabs, NEW].slice(-MAX_TABS),
+      tabs: addInspectorTab(current.tabs, NEW),
     }));
   };
   return {

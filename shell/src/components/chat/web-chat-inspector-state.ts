@@ -15,6 +15,17 @@ export const FILES: Tab = { id: "files", kind: "files", label: "Files" };
 export const NEW: Tab = { id: "new-tab", kind: "new", label: "New tab" };
 export const SIDE: Tab = { id: "side-chat", kind: "side-chat", label: "Side chat" };
 export const MAX_TABS = 12;
+/** Keep stateful Files/Side panels mounted; only terminal views make room. */
+export function addInspectorTab(current: readonly Tab[], tab: Tab): Tab[] {
+  const tabs = current.filter(item => item.kind !== "new");
+  if (tabs.some(item => item.id === tab.id)) return tabs;
+  if (tabs.length >= MAX_TABS) {
+    const terminal = tabs.findIndex(item => item.kind === "terminal");
+    if (terminal < 0) return tabs;
+    tabs.splice(terminal, 1);
+  }
+  return [...tabs, tab];
+}
 export function readLayout(key: string | null, refs: readonly string[]): SavedLayout {
   const initial = {
     width: 400,
