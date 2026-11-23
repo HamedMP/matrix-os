@@ -3,7 +3,8 @@ import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolL
 import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
 import { createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
 import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
-import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
+import { codexTurnStartParams } from "./codex-turn-parameters.mjs";
+import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema } from "./codex-runner-config.mjs";
 import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
@@ -1100,23 +1101,6 @@ function nextTurn() {
   });
 }
 
-function turnOption(turn, id) {
-  const value = turn.modelOptions.find((option) => option.id === id)?.value;
-  return typeof value === "string" ? value : undefined;
-}
-
-function turnStartParams(threadId, turn) {
-  const effort = EffortSchema.parse(turnOption(turn, "effort"));
-  const serviceTier = ServiceTierSchema.parse(turnOption(turn, "service_tier"));
-  return {
-    threadId,
-    input: [{ type: "text", text: turn.prompt, text_elements: [] }],
-    model: turn.model,
-    effort,
-    serviceTier,
-  };
-}
-
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on("line", enqueueTurn);
 input.on("close", () => {
@@ -1205,7 +1189,7 @@ async function runTurn(threadId, turn) {
     await verifyNativeSubscription?.(request);
     sendTiming.mark("turn_account_proof", proofStartedAt);
     const turnStartAt = sendTiming.now();
-    const started = await request("turn/start", turnStartParams(threadId, turn));
+    const started = await request("turn/start", codexTurnStartParams(threadId, turn, config));
     sendTiming.mark("turn_start", turnStartAt);
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
@@ -1287,7 +1271,7 @@ async function startNativeSession(lease) {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
-    serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
+    serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy, approvalsReviewer: config.approvalsReviewer,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
     config: codexBrowserThreadConfig(lease),
   });

@@ -27,78 +27,12 @@ import {
   canonicalProviderChoiceCanBeDefault,
   canonicalComposerSelectionIsAvailable,
 } from "@matrix-os/ui";
+import { choiceKey, readSavedChoice, applySavedSelection, readSavedProviderPreferences, rememberProviderPreference, saveLastProviderSelection, type SavedProviderSelection } from "./chat-provider-preferences";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 
 // Stable markup identity preserves a pressed SVG across catalog refreshes.
 const MATRIX_RABBIT_HTML = { __html: rabbitMarkSvg("matrix-chat-rabbit-mark") };
-
-const PROVIDER_SELECTION_STORAGE_KEY = "matrix:canonical-chat-provider-selection";
-function choiceKey(choice: Pick<CanonicalProviderChoice, "instanceId" | "modelId">): string {
-  return `${choice.instanceId}:${choice.modelId}`;
-}
-
-interface SavedProviderSelection {
-  key: string;
-  interactionMode?: string;
-  permissionMode?: string;
-  options?: Array<{ id: string; value: string | boolean }>;
-}
-
-function readSavedChoice(): SavedProviderSelection {
-  if (typeof window === "undefined") return { key: "" };
-  const value = window.localStorage.getItem(PROVIDER_SELECTION_STORAGE_KEY);
-  if (typeof value !== "string" || value.length > 4_096) return { key: "" };
-  // Keep accepting the old instance:model value while migrating saved choices.
-  if (!value.startsWith("{")) return { key: value.slice(0, 320) };
-  try {
-    const parsed = JSON.parse(value) as Partial<SavedProviderSelection>;
-    if (typeof parsed.key !== "string" || parsed.key.length > 320) return { key: "" };
-    return {
-      key: parsed.key,
-      ...(typeof parsed.interactionMode === "string" && parsed.interactionMode.length <= 80
-        ? { interactionMode: parsed.interactionMode }
-        : {}),
-      ...(typeof parsed.permissionMode === "string" && parsed.permissionMode.length <= 80
-        ? { permissionMode: parsed.permissionMode }
-        : {}),
-      ...(Array.isArray(parsed.options) ? {
-        options: parsed.options.slice(0, 32).flatMap((option) => (
-          option && typeof option.id === "string" && option.id.length <= 80
-          && (typeof option.value === "boolean" || (typeof option.value === "string" && option.value.length <= 160))
-            ? [{ id: option.id, value: option.value }]
-            : []
-        )),
-      } : {}),
-    };
-  } catch (error: unknown) {
-    console.warn("[chat] Ignoring invalid saved Provider selection:", error instanceof Error ? error.name : "UnknownError");
-    return { key: "" };
-  }
-}
-
-function applySavedSelection(
-  choice: CanonicalProviderChoice,
-  saved: SavedProviderSelection,
-): CanonicalProviderChoice {
-  const interactionMode = saved.interactionMode && choice.interactionModes.includes(saved.interactionMode)
-    ? saved.interactionMode
-    : choice.interactionMode;
-  const permissionMode = saved.permissionMode && choice.permissionModes.includes(saved.permissionMode)
-    ? saved.permissionMode
-    : choice.permissionMode;
-  const requestedOptions = saved.options ?? [];
-  const selectedOptions = choice.options.flatMap((descriptor) => {
-    const requested = requestedOptions.find((option) => option.id === descriptor.id)?.value;
-    const valid = descriptor.kind === "boolean"
-      ? typeof requested === "boolean"
-      : typeof requested === "string" && descriptor.values?.some((value) => value.value === requested);
-    const fallback = choice.selectedOptions.find((option) => option.id === descriptor.id)?.value;
-    const value = valid ? requested : fallback;
-    return value === undefined ? [] : [{ id: descriptor.id, value }];
-  });
-  return { ...choice, interactionMode, permissionMode, selectedOptions };
-}
 
 export function useChatProviderState(
   currentSelection?: CanonicalChatModelSelection,
@@ -107,6 +41,7 @@ export function useChatProviderState(
 ) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
+  const [providerPreferences, setProviderPreferences] = useState(readSavedProviderPreferences);
   const [boundDraft, setBoundDraft] = useState<{
     bindingKey: string;
     selection: SavedProviderSelection;
@@ -239,7 +174,8 @@ export function useChatProviderState(
     ? boundDraft?.bindingKey === bindingKey
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [], ...restoredModes }
-    : savedChoice;
+    : providerPreferences[Object.keys(providerPreferences).sort((a, b) => b.length - a.length)
+      .find(id => savedChoice.instanceId ? id === savedChoice.instanceId : savedChoice.key.startsWith(`${id}:`)) ?? ""] ?? savedChoice;
   const retainedInstanceId = ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
     .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));
   const checkingInstance = catalog?.instances.find(instance => instance.observationState === "checking" && effectiveSaved.key.startsWith(`${instance.id}:`));
@@ -271,17 +207,22 @@ export function useChatProviderState(
     ? applySavedSelection(selectedBase, effectiveSaved)
     : null;
 
-  const save = (next: SavedProviderSelection) => {
+  const save = (value: SavedProviderSelection, requestedInstanceId?: string) => {
+    const instanceId = requestedInstanceId ?? selected?.instanceId;
+    if (!instanceId) return;
+    const next = { ...value, instanceId };
+    // Preserve the source too, including an untouched legacy single preference.
+    const preferences = selected ? { ...providerPreferences, [selected.instanceId]: {
+      key: choiceKey(selected), instanceId: selected.instanceId,
+      interactionMode: selected.interactionMode, permissionMode: selected.permissionMode, options: selected.selectedOptions,
+    } } : providerPreferences;
+    setProviderPreferences(rememberProviderPreference(preferences, instanceId, next));
     if (currentSelection) {
       setBoundDraft({ bindingKey, selection: next });
       return;
     }
     setSavedChoice(next);
-    try {
-      window.localStorage.setItem(PROVIDER_SELECTION_STORAGE_KEY, JSON.stringify(next));
-    } catch (error: unknown) {
-      console.warn("[chat] Failed to save Provider selection:", error instanceof Error ? error.name : "UnknownError");
-    }
+    saveLastProviderSelection(next);
   };
 
   const select = (choice: CanonicalProviderChoice) => {
@@ -290,12 +231,15 @@ export function useChatProviderState(
       && current.modelId === choice.modelId
       && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
+    const preference = preserveControls ? {
+      key: choiceKey(choice), interactionMode: selected.interactionMode,
+      permissionMode: selected.permissionMode, options: selected.selectedOptions,
+    } : providerPreferences[choice.instanceId];
+    const restored = preference ? applySavedSelection(choice, preference) : choice;
     save({
-      key: choiceKey(choice),
-      interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
-      permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls && !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? selected.selectedOptions : choice.selectedOptions,
-    });
+      key: choiceKey(choice), interactionMode: restored.interactionMode, permissionMode: restored.permissionMode,
+      options: isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice) ? choice.selectedOptions : restored.selectedOptions,
+    }, choice.instanceId);
   };
 
   const updateSelected = (patch: Partial<Omit<SavedProviderSelection, "key">>) => {

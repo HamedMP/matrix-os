@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 import { createCanonicalCodingChatProviderAdapter } from "../../../packages/gateway/src/chat/coding-provider-adapter.js";
 import * as codexRoutineSource from "../../../packages/gateway/src/chat/codex-routine-source.js";
 import { createChatRoutineSourceProducer } from "../../../packages/gateway/src/chat/routine-chat-source.js";
+import { routineActionPolicy } from "../../../packages/gateway/src/bots/routine-action-source-registry.js";
 import type { CanonicalProviderRunEvent, CanonicalProviderRunInput } from "../../../packages/gateway/src/chat/provider-adapter.js";
 
 const input: CanonicalProviderRunInput = {
@@ -71,6 +72,13 @@ it("keeps an explicitly selected Codex provider distinct from Claude without inc
   expect(actual.producer.readPolicy()).toMatchObject({ interactionMode: "plan", originCeiling: "read" });
   actual.narrowNativeMode("default");
   expect(actual.producer.readPolicy()).toMatchObject({ interactionMode: "plan", originCeiling: "read" });
+});
+it("keeps Codex auto review eligible for owner-reviewed routine proposals", () => {
+  const autoInput = { ...input, permissionMode: "auto_review" };
+  const actual = createChatRoutineSourceProducer({ input: autoInput, provider: "codex", computerId: "computer_one", signal: input.signal, current: () => true, publish: () => {} });
+  const policy = actual.producer.readPolicy();
+  expect(policy.permissionMode).toBe("auto_review");
+  expect(routineActionPolicy(actual.producer.source, policy, "propose")).toBe("ask");
 });
 it("retains the existing Claude default and synchronous source lifetime fence", () => {
   let live = true;

@@ -36,7 +36,7 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
       id: "permission-mode",
       label: "Permission mode",
       value: selected.permissionMode,
-      options: selected.permissionModes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
+      options: selected.permissionModes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode, selected.driverKind) })),
       openRequest: permissionModeRequest,
       onChange: providerState.selectPermissionMode,
     },

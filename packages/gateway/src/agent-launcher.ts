@@ -61,7 +61,7 @@ export interface AgentLaunchInput {
   modelOptions?: AgentModelOption[];
   mode?: "default" | "plan" | "review" | "full_access";
   sandbox?: AgentLaunchSandbox;
-  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
+  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "auto-review" | "never";
   runtimeHome?: string;
   providerEventPath?: string;
   providerThreadId?: string;
@@ -122,6 +122,7 @@ const CodexAppServerConfigSchema = z.object({
   providerThreadId: z.string().trim().min(1).max(512).optional(),
   browserAttemptId: z.uuid().optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
+  approvalsReviewer: z.enum(["user", "auto_review"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
   model: ProviderModelReferenceSchema.optional(),
@@ -273,7 +274,7 @@ function claudeEditPermissionRule(root: string): string {
 function claudePermissionMode(input: AgentLaunchInput): z.infer<typeof ClaudePermissionModeSchema> {
   if (input.claudePermissionMode) return ClaudePermissionModeSchema.parse(input.claudePermissionMode);
   if (input.mode === "plan" || input.mode === "review") return "plan";
-  if (input.approvalPolicy === "on-failure") {
+  if (input.approvalPolicy === "on-failure" || input.approvalPolicy === "auto-review") {
     throw new Error("Claude approval policy is unavailable");
   }
   if (
@@ -464,9 +465,10 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     prompt: codexPrompt(input.prompt, input.mode),
     ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
     ...(input.codexBrowserAttemptId ? { browserAttemptId: input.codexBrowserAttemptId } : {}),
-    approvalPolicy: input.approvalPolicy === "on-failure"
+    approvalPolicy: input.approvalPolicy === "on-failure" || input.approvalPolicy === "auto-review"
       ? "on-request"
       : input.approvalPolicy ?? "never",
+    approvalsReviewer: input.approvalPolicy === "auto-review" ? "auto_review" : "user",
     sandbox: mode,
     writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
     ...(input.model ? { model: input.model } : {}),
@@ -505,7 +507,8 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         const args = [
           ...coreArgs,
           "--ask-for-approval",
-          input.approvalPolicy ?? "never",
+          input.approvalPolicy === "auto-review" ? "on-request" : input.approvalPolicy ?? "never",
+          ...(input.approvalPolicy === "auto-review" ? ["-c", 'approvals_reviewer="auto_review"'] : []),
           ...codexSandboxArgs(input.sandbox),
           "exec",
           "--skip-git-repo-check",

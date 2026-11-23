@@ -1751,6 +1751,7 @@ describe("canonical Chat Provider catalog", () => {
         { value: "low" },
         { value: "medium" },
         { value: "high" },
+        { value: "xhigh" },
         { value: "max" },
       ],
     }]);
@@ -1758,6 +1759,7 @@ describe("canonical Chat Provider catalog", () => {
       "supervised",
       "auto_accept_edits",
       "auto",
+      "dont_ask",
       "full_access",
     ]);
   });

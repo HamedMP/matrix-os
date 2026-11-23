@@ -100,9 +100,11 @@ export function changeCanonicalComposerInstance(
   catalog: CanonicalProviderCatalog,
   current: CanonicalComposerSelection,
   instanceId: string,
+  preference?: CanonicalComposerPreference,
 ): CanonicalComposerSelection {
   const instance = catalog.instances.find((candidate) => candidate.id === instanceId);
-  return (instance ? selectionForInstance(instance, true) : null) ?? current;
+  const next = instance ? selectionForInstance(instance, true) : null;
+  return next ? applyCanonicalComposerPreference(catalog, next, preference) : current;
 }
 
 export function updateCanonicalComposerOption(

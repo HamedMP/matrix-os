@@ -507,7 +507,7 @@ export const ProviderAvailabilitySchema = z.enum([
 export const ProviderInstallStatusSchema = z.enum(["installed", "missing", "installing", "failed", "unknown"]);
 export const ProviderAuthStatusSchema = z.enum(["authenticated", "missing", "expired", "unknown"]);
 export const AgentModeSchema = z.enum(["default", "plan", "review", "full_access"]);
-export const ApprovalPolicySchema = z.enum(["untrusted", "on_request", "on_failure", "never"]);
+export const ApprovalPolicySchema = z.enum(["untrusted", "on_request", "on_failure", "auto_review", "never"]);
 export const SandboxModeSchema = z.enum(["read_only", "workspace_write", "full_access"]);
 
 export const SafeSetupActionSchema = z.discriminatedUnion("kind", [

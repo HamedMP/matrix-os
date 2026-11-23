@@ -5,6 +5,7 @@ import { canonicalProviderModelRouteLabel, isManagedPiBotRoute, isChatgptPlanCha
 import { Cpu } from "@renderer/lib/hugeicons";
 import { ChatModelPicker, deriveCanonicalProviderChoices, canonicalProviderUnavailableSelectionLabel } from "@matrix-os/ui";
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, canonicalComposerSelectionIsAvailable, type CanonicalComposerSelection } from "./canonical-composer-state";
+import { useProviderPreferences } from "../settings/provider-preferences";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -42,7 +43,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
     onSelect={(choice) => {
       if (instanceLocked && choice.instanceId !== selection?.instanceId) return;
       const base = selection ? choice.instanceId === selection.instanceId ? selection
-        : changeCanonicalComposerInstance(catalog, selection, choice.instanceId)
+        : changeCanonicalComposerInstance(catalog, selection, choice.instanceId, useProviderPreferences.getState().composerSelections[choice.instanceId])
         : createCanonicalComposerSelection(catalog, choice.instanceId);
       if (!base) return;
       onChange({ ...base, model: choice.modelId,

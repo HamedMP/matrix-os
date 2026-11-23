@@ -370,7 +370,7 @@ export function SharedChatComposer({
       id: "permission-mode",
       label: "Permission mode",
       value: selection.permissionMode,
-      options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode) })),
+      options: (instance?.supports.permissionModes ?? []).map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode, instance?.driverKind) })),
       openRequest: permissionModeRequest,
       onChange: (permissionMode: string) => onSelectionChange({ ...selection, permissionMode }),
     },

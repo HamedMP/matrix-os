@@ -61,7 +61,7 @@ export interface StartWorkspaceSessionRequest {
   model?: string;
   modelOptions?: AgentModelOption[];
   mode?: "default" | "plan" | "review" | "full_access";
-  approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "never";
+  approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "auto_review" | "never";
   sandboxMode?: "read_only" | "workspace_write" | "full_access";
   runtimePreference?: "zellij" | "background";
   adminSandboxOverride?: boolean;
@@ -124,9 +124,10 @@ async function resolveAgentWorkspaceRoot(
 
 function toLaunchApprovalPolicy(
   policy?: StartWorkspaceSessionRequest["approvalPolicy"],
-): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+): "untrusted" | "on-request" | "on-failure" | "auto-review" | "never" | undefined {
   if (policy === "on_request") return "on-request";
   if (policy === "on_failure") return "on-failure";
+  if (policy === "auto_review") return "auto-review";
   return policy;
 }
 

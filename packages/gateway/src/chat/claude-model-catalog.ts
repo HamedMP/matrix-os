@@ -19,8 +19,8 @@ export function claudeFallbackCatalog(): CodingModelCatalogProjection {
     defaultModel: "default",
     options: [{
       id: "effort", label: "Reasoning", kind: "enum",
-      values: ["low", "medium", "high", "max"].map((value) => ({
-        value, label: value.charAt(0).toUpperCase() + value.slice(1),
+      values: ["low", "medium", "high", "xhigh", "max"].map((value) => ({
+        value, label: value === "xhigh" ? "Extra high" : value.charAt(0).toUpperCase() + value.slice(1),
       })),
       defaultValue: "low", placement: "composer",
     }],

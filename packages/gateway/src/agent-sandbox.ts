@@ -34,7 +34,7 @@ const PreflightSchema = z.object({
   worktreePath: z.string().trim().min(1).max(4096),
   adminOverride: z.boolean().optional(),
   mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
-  approvalPolicy: z.enum(["untrusted", "on-request", "on-failure", "never"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on-request", "on-failure", "auto-review", "never"]).optional(),
   sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
 });
 
@@ -43,7 +43,7 @@ type ClaudeSandboxVerifier = (input: {
   runtimeHome: string;
   mode?: "default" | "plan" | "review" | "full_access";
   sandbox: AgentLaunchSandbox;
-  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
+  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "auto-review" | "never";
 }) => Promise<void>;
 // Resolves the Git common dir for a workspace, or null when the workspace is
 // not inside a Git repository (no Git metadata exists to protect).

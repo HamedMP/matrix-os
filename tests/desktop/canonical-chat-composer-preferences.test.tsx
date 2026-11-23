@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useProviderPreferences } from "@desktop/renderer/src/features/settings/provider-preferences";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -94,6 +94,48 @@ describe("Canonical Chat composer preferences", () => {
     await screen.findByRole("textbox", { name: "Start a chat" });
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
     expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+  });
+
+  it("restores separate provider defaults through the model picker and a preference reload", async () => {
+    const base = providerCatalog.instances[0]!;
+    const options = [{ id: "effort", label: "Reasoning", kind: "enum" as const, placement: "composer" as const,
+      values: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], defaultValue: "low" }];
+    const catalog = { ...providerCatalog, drivers: [...providerCatalog.drivers, {
+      ...providerCatalog.drivers[0]!, kind: "claude_code" as const, displayName: "Claude Code",
+    }], instances: [
+      { ...base, options, supports: { ...base.supports, permissionModes: ["supervised", "auto_review", "full_access"] } },
+      { ...base, id: "claude_fixture", driverKind: "claude_code" as const, displayName: "Claude fixture", options,
+        models: [{ ...base.models[0]!, id: "opus", displayName: "Claude Opus" }],
+        defaultSelection: { instanceId: "claude_fixture", model: "opus" } },
+    ] };
+    useProviderPreferences.getState().setComposerSelection({ instanceId: base.id, model: base.models[0]!.id,
+      options: [{ id: "effort", value: "high" }], interactionMode: "default", permissionMode: "auto_review" });
+    useProviderPreferences.getState().setComposerSelection({ instanceId: "claude_fixture", model: "opus",
+      options: [{ id: "effort", value: "low" }], interactionMode: "default", permissionMode: "full_access" });
+    const workspace = () => <CanonicalChatWorkspace client={client()} projectId="matrix-os" projectLabel="Matrix OS"
+      initialView="draft" active catalog={catalog} />;
+    const view = render(workspace());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("claude_fixture"));
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: /Codex fixture agent,/ }));
+    fireEvent.click(screen.getByRole("option", { name: "GPT-5.6-Sol via Codex fixture" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Approve for me");
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude fixture agent, Available" }));
+    fireEvent.click(screen.getByRole("option", { name: "Claude Opus via Claude fixture" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("Low");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+    const saved = { defaultProviderId: null, lastComposerInstanceId: "claude_fixture",
+      composerSelections: useProviderPreferences.getState().composerSelections };
+    view.unmount();
+    resetProviderPreferences();
+    window.operator.invoke = vi.fn(async () => ({ value: saved }));
+    render(workspace());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-provider-instance")).toBe("claude_fixture"));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("Low");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+    expect(useProviderPreferences.getState().composerSelections[base.id]?.permissionMode).toBe("auto_review");
   });
 
   it("uses the last provider and model choice as the default for a new Chat", async () => {

@@ -44,7 +44,7 @@ import { createCoreMcpSessionGrants, CORE_MCP_RENEW_INTERVAL_MS } from "./coding
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
-type SessionApprovalPolicy = "untrusted" | "on_request" | "on_failure" | "never";
+type SessionApprovalPolicy = "untrusted" | "on_request" | "on_failure" | "auto_review" | "never";
 
 export interface WorkspaceSession {
   id: string;
@@ -131,7 +131,7 @@ const StartSessionSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
   mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
-  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "auto_review", "never"]).optional(),
   sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   runtimePreference: z.enum(["zellij", "background"]).optional(),
   sandbox: AgentSandboxSchema.optional(),
@@ -154,9 +154,10 @@ function failure(status: number, code: string, message: string, holderId?: strin
   return { ok: false, status, error: { code, message }, holderId };
 }
 
-function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "on-request" | "on-failure" | "auto-review" | "never" | undefined {
   if (policy === "on_request") return "on-request";
   if (policy === "on_failure") return "on-failure";
+  if (policy === "auto_review") return "auto-review";
   return policy;
 }
 
