@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocxDocument, InlineRun, ParagraphBlock } from "../../../../packages/office/src/api/docx.js";
 import { compareDocx, compareDocxDetailed, openDocx } from "../../../../packages/office/src/docx/index.js";
-import { OPTIONS, buildDocx, describeRevisions, loadFixture, p, r, reopen, resolvedText, views } from "./helpers.js";
+import { OPTIONS, buildDocx, describeRevisions, expectResolves, loadFixture, p, r, reopen, views } from "./helpers.js";
 
 /*
  * Content that only the revised document has refers to things of the revised
@@ -32,12 +32,6 @@ const picture = (relationshipId: string): string =>
 const link = (relationshipId: string, text: string): string => `<w:hyperlink r:id="${relationshipId}">${r(text)}</w:hyperlink>`;
 
 const runsOf = (document: DocxDocument, block: number): InlineRun[] => (document.getView().body.blocks[block] as ParagraphBlock).runs;
-
-async function expectResolves(document: DocxDocument, original: Uint8Array, revised: Uint8Array): Promise<void> {
-  const written = await document.save();
-  expect(await resolvedText(written, "accept")).toBe(await resolvedText(revised, "accept"));
-  expect(await resolvedText(written, "reject")).toBe(await resolvedText(original, "accept"));
-}
 
 describe("content carried over from the revised document", () => {
   it("brings the target of a hyperlink in an inserted paragraph", async () => {

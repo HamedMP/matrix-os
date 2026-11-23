@@ -90,6 +90,29 @@ describe("footnotes", () => {
   });
 });
 
+describe("endnotes", () => {
+  it("compares an endnote both versions refer to and brings a new one over", async () => {
+    const reference = (id: string): string => `<w:r><w:endnoteReference w:id="${id}"/></w:r>`;
+    const note = (text: string): string => p(`<w:r><w:endnoteRef/></w:r>${r(` ${text}`)}`);
+    const original = await buildDocx({
+      body: p(r("Sources are listed") + reference("1") + r(" at the end.")) + p(r("A closing remark.")),
+      endnotes: { "1": note("Annual report of 2026.") },
+    });
+    const revised = await buildDocx({
+      body: p(r("Sources are listed") + reference("1") + r(" at the end.")) + p(r("A closing remark") + reference("2") + r(".")),
+      endnotes: { "1": note("Annual report of 2027."), "2": note("Private correspondence.") },
+    });
+    const document = await reopen(await compareDocx(original, revised, OPTIONS));
+    const texts = (view: "final" | "original"): string[] =>
+      document.getView().endnotes.map((story) => document.getPlainText({ storyId: story.id, view }));
+    expect(texts("final")).toEqual([" Annual report of 2027.\n", " Private correspondence.\n"]);
+    expect(texts("original")[0]).toBe(" Annual report of 2026.\n");
+    expect(describeRevisions(document)).toContainEqual(["delete", "text", "2026"]);
+    expect(describeRevisions(document)).toContainEqual(["insert", "text", "2027"]);
+    expect(views(document).final).toBe("Sources are listed at the end.\nA closing remark.\n");
+  });
+});
+
 describe("headers", () => {
   it("compares the header of the same section and type", async () => {
     const original = await buildDocx({ body: p(r("Body text.")), header: p(r("Draft of 1 March")) });

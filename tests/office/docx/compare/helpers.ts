@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { expect } from "vitest";
+
 import type { DocxDocument, Revision } from "../../../../packages/office/src/api/docx.js";
-import { openDocx } from "../../../../packages/office/src/docx/index.js";
+import { compareDocx, openDocx } from "../../../../packages/office/src/docx/index.js";
 import { createPackage, openPackage } from "../../../../packages/office/src/opc/index.js";
 import { getAttr, insertBefore, parseXml, remove, textContent } from "../../../../packages/office/src/xml/index.js";
 
@@ -31,6 +33,8 @@ export interface Parts {
   styles?: string;
   /** Normal footnotes: `w:id` to the content of the `w:footnote`. */
   footnotes?: Record<string, string>;
+  /** Normal endnotes: `w:id` to the content of the `w:endnote`. */
+  endnotes?: Record<string, string>;
   /** Content of the default header. */
   header?: string;
   /** Relationship id to external hyperlink target. */
@@ -63,6 +67,16 @@ export async function buildDocx(parts: Parts): Promise<Uint8Array> {
       .join("");
     pkg.setPart("/word/footnotes.xml", part("w:footnotes", separators + notes), `${TYPE}.footnotes+xml`);
     pkg.addRelationship(main, { type: `${R}/footnotes`, target: "footnotes.xml" });
+  }
+  if (parts.endnotes !== undefined) {
+    const separators =
+      `<w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>` +
+      `<w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>`;
+    const notes = Object.entries(parts.endnotes)
+      .map(([id, content]) => `<w:endnote w:id="${id}">${content}</w:endnote>`)
+      .join("");
+    pkg.setPart("/word/endnotes.xml", part("w:endnotes", separators + notes), `${TYPE}.endnotes+xml`);
+    pkg.addRelationship(main, { type: `${R}/endnotes`, target: "endnotes.xml" });
   }
   if (parts.header !== undefined) {
     pkg.setPart("/word/header1.xml", part("w:hdr", parts.header), `${TYPE}.header+xml`);
@@ -205,10 +219,17 @@ function runText(paragraph: Node, deletedTextVisible: boolean): string {
   return text;
 }
 
+/** Child blocks of a container, looking through block-level content controls. */
+function blocksOf(container: Node): Node[] {
+  return elements(container).flatMap((node) =>
+    node.name === "w:sdt" || node.name === "w:sdtContent" || node.name === "w:customXml" ? blocksOf(node) : [node],
+  );
+}
+
 function blockLines(container: Node, joining: ReadonlySet<Node>, reject: boolean): string[] {
   const lines: string[] = [];
   let pending = "";
-  for (const block of elements(container)) {
+  for (const block of blocksOf(container)) {
     if (block.name === "w:p") {
       const text = pending + runText(block, reject);
       if (joining.has(block)) {
@@ -238,4 +259,28 @@ export async function resolvedText(bytes: Uint8Array, mode: "accept" | "reject")
   if (body === undefined) throw new Error("no body");
   const joining = resolveBody(body, mode === "accept");
   return blockLines(body, joining, mode === "reject").join("\n");
+}
+
+/**
+ * Accepting everything in the written file gives the revised body and
+ * rejecting everything the original, by the independent reading above.
+ */
+export async function expectResolves(document: DocxDocument, original: Uint8Array, revised: Uint8Array): Promise<void> {
+  const written = await document.save();
+  expect(await resolvedText(written, "accept")).toBe(await resolvedText(revised, "accept"));
+  expect(await resolvedText(written, "reject")).toBe(await resolvedText(original, "accept"));
+}
+
+/** Compares, checks both views against the inputs (in memory, after a save, and independently), and returns the result. */
+export async function compared(original: Uint8Array, revised: Uint8Array): Promise<DocxDocument> {
+  const document = await compareDocx(original, revised, OPTIONS);
+  const expected = { final: await textOf(revised), original: await textOf(original) };
+  expect({ final: views(document).final, original: views(document).original }).toEqual(expected);
+  const saved = await reopen(document);
+  expect({ final: views(saved).final, original: views(saved).original }).toEqual(expected);
+  for (const revision of saved.listRevisions()) {
+    expect([revision.author, revision.date]).toEqual([AUTHOR, DATE]);
+  }
+  await expectResolves(document, original, revised);
+  return document;
 }

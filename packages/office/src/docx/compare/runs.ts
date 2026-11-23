@@ -146,11 +146,27 @@ function atStart(parent: XmlElement, before: XmlChildNode | null): boolean {
   return before === null;
 }
 
+/** Wrappers new text must not silently become part of: a point at their edge moves outside. */
+const LEAVE_AT_EDGE: ReadonlySet<string> = new Set(["w:hyperlink", "w:fldSimple", "w:ins", "w:del", "w:moveFrom", "w:moveTo"]);
+
+function endsField(node: XmlChildNode): boolean {
+  if (node.kind !== "element" || node.name !== "w:r") return false;
+  return node.children.some(
+    (child) => child.kind === "element" && child.name === "w:fldChar" && child.attrs.some((entry) => entry.name === "w:fldCharType" && entry.value === "end"),
+  );
+}
+
+function holdsText(node: XmlChildNode): boolean {
+  if (node.kind !== "element") return false;
+  if (node.name !== "w:r") return !node.name.endsWith("Start") && !node.name.endsWith("End") && node.name !== "w:proofErr";
+  return node.children.some((child) => child.kind === "element" && child.name !== "w:rPr" && child.name !== "w:fldChar");
+}
+
 /**
  * The place to insert at `offset`: behind the node that ends there, or in
  * front of the node that starts there at the start of the paragraph. At the
- * edge of an inline wrapper (a hyperlink, a field, a revision) the point is
- * outside the wrapper.
+ * edge of a hyperlink, a field or a revision the point is outside it, so new
+ * text does not become part of the link or of the field result.
  */
 export function pointAt(para: Para, offset: number, stamp: Stamp): Point {
   splitAt(para, offset, stamp);
@@ -162,7 +178,15 @@ export function pointAt(para: Para, offset: number, stamp: Stamp): Point {
   if (before !== undefined) {
     const top = topOf(before);
     let point: Point = { parent: parentOf(top), before: nextSibling(top) };
-    for (let depth = 0; depth < 64 && point.parent !== paragraph && point.before === null; depth++) {
+    // Fields whose result ends here: step over the runs that close them.
+    const open = new Set(after === undefined ? [] : after.context.fields.map((frame) => frame.key));
+    let closing = before.context.fields.filter((frame) => !open.has(frame.key)).length;
+    for (let node = point.before; closing > 0 && node !== null && !holdsText(node); node = nextSibling(node)) {
+      if (!endsField(node)) continue;
+      closing -= 1;
+      point = { parent: point.parent, before: nextSibling(node) };
+    }
+    for (let depth = 0; depth < 64 && point.parent !== paragraph && point.before === null && LEAVE_AT_EDGE.has(point.parent.name); depth++) {
       point = { parent: parentOf(point.parent), before: nextSibling(point.parent) };
     }
     return point;
@@ -170,7 +194,11 @@ export function pointAt(para: Para, offset: number, stamp: Stamp): Point {
   if (after !== undefined) {
     const top = topOf(after);
     let point: Point = { parent: parentOf(top), before: top };
-    for (let depth = 0; depth < 64 && point.parent !== paragraph && atStart(point.parent, point.before); depth++) {
+    for (
+      let depth = 0;
+      depth < 64 && point.parent !== paragraph && LEAVE_AT_EDGE.has(point.parent.name) && atStart(point.parent, point.before);
+      depth++
+    ) {
       point = { parent: parentOf(point.parent), before: point.parent };
     }
     return point;

@@ -1,44 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import type { DocxDocument, TableBlock } from "../../../../packages/office/src/api/docx.js";
+import type { TableBlock } from "../../../../packages/office/src/api/docx.js";
 import { compareDocx, compareDocxDetailed, openDocx } from "../../../../packages/office/src/docx/index.js";
 import {
   AUTHOR,
-  DATE,
   OPTIONS,
   bodyOf,
   buildDocx,
+  compared,
   describeRevisions,
+  expectResolves,
   loadFixture,
   p,
   r,
   reopen,
-  resolvedText,
   textOf,
   textTable,
   views,
 } from "./helpers.js";
-
-/** Accepting everything in the written file gives the revised body and rejecting everything the original, by an independent reading of the XML. */
-async function expectResolves(document: DocxDocument, original: Uint8Array, revised: Uint8Array): Promise<void> {
-  const written = await document.save();
-  expect(await resolvedText(written, "accept")).toBe(await resolvedText(revised, "accept"));
-  expect(await resolvedText(written, "reject")).toBe(await resolvedText(original, "accept"));
-}
-
-/** Compares, checks both views against the inputs (also after a save), and returns the result. */
-async function compared(original: Uint8Array, revised: Uint8Array): Promise<DocxDocument> {
-  const document = await compareDocx(original, revised, OPTIONS);
-  const expected = { final: await textOf(revised), original: await textOf(original) };
-  expect({ final: views(document).final, original: views(document).original }).toEqual(expected);
-  const saved = await reopen(document);
-  expect({ final: views(saved).final, original: views(saved).original }).toEqual(expected);
-  for (const revision of saved.listRevisions()) {
-    expect([revision.author, revision.date]).toEqual([AUTHOR, DATE]);
-  }
-  await expectResolves(document, original, revised);
-  return document;
-}
 
 describe("identical documents", () => {
   const fixtures = ["basic.docx", "contract.docx", "table.docx", "footnotes-headers.docx", "numbering.docx", "links-fields.docx", "unicode.docx", "comments.docx"];
