@@ -657,10 +657,8 @@ map "$http_upgrade|$http_origin|$http_host" $matrix_ws_origin_ok {
 EOF
 }
 
-# Private modes: Tailscale Serve reaches nginx over a unix socket in a root-only
-# directory (tailscaled runs as root), so only it can present a tailnet identity.
-# Any other local process can still reach the loopback listener, so a request
-# there that carries Tailscale-User-Login is forged and refused before auth.
+# Private modes: only Tailscale Serve (root) reaches nginx's root-only unix socket, so
+# only it presents a tailnet identity; the loopback listener refuses one before auth.
 TAILNET_SOCKET=/run/matrix-nginx/tailnet.sock
 nginx_private_identity_map() {
   cat <<'EOF'
@@ -1103,12 +1101,9 @@ stop_browser_use() {
 # the docker group (root), so a compromised browser reaches no owner secret. It
 # gets its own lingering user manager (the desktop's Files/Terminal buttons need
 # its user bus) and a private home; it never gains access to the owner's home.
-# migrate_browser_profile <account> <home>: an install whose browser ran as matrix
-# keeps its saved logins and tabs. The profile moves (never copies) once. Root
-# never writes inside the account's home, whose directories the account could
-# swap for links: root moves the profile into a root-owned staging directory and
-# gives it to the account there (never following links); the account itself then
-# moves it into place, so any link it planted reaches only what it already can.
+# migrate_browser_profile <account> <home>: keep saved logins from a matrix-run browser.
+# Root never writes in the account's (link-swappable) home: it stages and chowns the
+# profile in a root-owned directory; the account itself moves it into place.
 migrate_browser_profile() {
   local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}"
   local stage="${MATRIX_BROWSER_PROFILE_STAGE:-/var/lib/matrix-browser-profile-move}" old new group
