@@ -7,6 +7,7 @@ import { relativeTargetFor } from "../../opc/index.js";
 import { appendChild, createElement, getAttr, insertBefore, lookupPrefix, parseXml, remove, setAttr } from "../../xml/index.js";
 import { MAX_COLS } from "./a1.js";
 import { writeCell } from "./cells.js";
+import { rewriteFeatureFormulas } from "./feature-formulas.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { rewriteForRemoval, rewriteForRename } from "./refs-rewrite.js";
 import { readSheet } from "./sheet-read.js";
@@ -65,7 +66,11 @@ export function checkSheetName(state: WorkbookState, name: string, except: Sheet
   }
 }
 
-/** Rewrites every formula and defined name of the workbook with `rewrite`, telling listeners about changed cells. */
+/**
+ * Rewrites every formula of the workbook with `rewrite`: cells (telling
+ * listeners about the changed ones), defined names, and the formulas of
+ * conditional formats, data validations and in-workbook links.
+ */
 export function rewriteAllFormulas(state: WorkbookState, rewrite: (text: string, sheet: SheetModel | null) => string, skip: SheetModel | null): void {
   for (const sheet of state.sheets) {
     if (sheet === skip) continue;
@@ -78,6 +83,7 @@ export function rewriteAllFormulas(state: WorkbookState, rewrite: (text: string,
       }
     }
   }
+  for (const sheet of state.sheets) if (sheet !== skip) rewriteFeatureFormulas(sheet, (text) => rewrite(text, sheet));
   for (const name of state.names) {
     const text = rewrite(name.refersTo, null);
     if (text === name.refersTo) continue;

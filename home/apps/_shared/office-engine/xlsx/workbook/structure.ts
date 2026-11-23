@@ -15,9 +15,10 @@ import { rewriteAllFormulas } from "./sheets.js";
 import { attachSheet } from "./sheet-read.js";
 import { sheetDimensions } from "./sheet-write.js";
 import { invalidateArrayRanges } from "./arrays.js";
+import { forEachExtensionElement } from "./feature-formulas.js";
 import { dropCalcChain, invalidateGraph } from "./state.js";
 import { checkTablesForStructure, moveTables } from "./tables.js";
-import { isNamed, kid, kids } from "./xml-util.js";
+import { kid, kids } from "./xml-util.js";
 
 function checkOp(op: StructuralOp): void {
   const limit = op.axis === "row" ? MAX_ROWS : MAX_COLS;
@@ -122,23 +123,14 @@ function moveRangeList(text: string, op: StructuralOp): string | null {
   return kept.length === 0 ? null : kept.join(" ");
 }
 
-function rewriteFormulaChildren(element: XmlElement, key: string, op: StructuralOp): void {
-  for (const node of element.children) {
-    if (node.kind !== "element") continue;
-    if (isNamed(node.name, "formula") || isNamed(node.name, "formula1") || isNamed(node.name, "formula2")) {
-      const text = textContent(node);
-      const next = rewriteForStructure(text, true, key, op);
-      if (next !== text) setTextContent(node, next);
-    } else {
-      rewriteFormulaChildren(node, key, op);
-    }
-  }
-}
-
-/** Updates the ranges of conditional formats, data validations, hyperlinks and the auto filter. */
+/**
+ * Updates the ranges of conditional formats, data validations, hyperlinks
+ * and the auto filter, also the validations and formats kept in the
+ * extension list. A feature whose range is gone goes with it. The formulas
+ * of the features are rewritten with every other formula of the workbook.
+ */
 function moveSheetFeatures(sheet: SheetModel, op: StructuralOp): void {
   const root = attachSheet(sheet).doc.root;
-  const key = sheet.name.toLowerCase();
   const adjust = (element: XmlElement, attr: string): boolean => {
     const value = getAttr(element, attr);
     if (value === null) return true;
@@ -147,26 +139,39 @@ function moveSheetFeatures(sheet: SheetModel, op: StructuralOp): void {
     if (moved !== value) setAttr(element, attr, moved);
     return true;
   };
-  for (const format of kids(root, "conditionalFormatting")) {
-    if (!adjust(format, "sqref")) remove(format);
-    else rewriteFormulaChildren(format, key, op);
-  }
+  for (const format of kids(root, "conditionalFormatting")) if (!adjust(format, "sqref")) remove(format);
   for (const [container, item, attr] of [
     ["dataValidations", "dataValidation", "sqref"],
     ["hyperlinks", "hyperlink", "ref"],
   ] as const) {
     const list = kid(root, container);
     if (list === null) continue;
-    for (const entry of kids(list, item)) {
-      if (!adjust(entry, attr)) remove(entry);
-      else rewriteFormulaChildren(entry, key, op);
-    }
+    for (const entry of kids(list, item)) if (!adjust(entry, attr)) remove(entry);
     const left = kids(list, item).length;
     if (left === 0) remove(list);
     else if (getAttr(list, "count") !== null) setAttr(list, "count", String(left));
   }
   const filter = kid(root, "autoFilter");
   if (filter !== null && !adjust(filter, "ref")) remove(filter);
+  const extensions = kid(root, "extLst");
+  if (extensions === null) return;
+  forEachExtensionElement(extensions, "sqref", (ranges) => {
+    const text = textContent(ranges);
+    const moved = moveRangeList(text, op);
+    if (moved === null) {
+      // The validation or format that owns the ranges has no cell left.
+      const owner = ranges.parent;
+      if (owner !== null && owner.kind === "element") {
+        const list = owner.parent;
+        remove(owner);
+        if (list !== null && list.kind === "element" && getAttr(list, "count") !== null) {
+          setAttr(list, "count", String(list.children.filter((node) => node.kind === "element").length));
+        }
+      }
+    } else if (moved !== text) {
+      setTextContent(ranges, moved);
+    }
+  });
 }
 
 /** Inserts or deletes rows or columns of a sheet. */
