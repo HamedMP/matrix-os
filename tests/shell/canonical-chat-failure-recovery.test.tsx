@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse, CanonicalChatSafeError } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp";
@@ -79,6 +79,42 @@ describe("Web Chat failure recovery", () => {
     renderFailure({ code: "service_unavailable", safeMessage: "Service is busy. Try again shortly.", retryable: true, recoveryActions: ["retry"] });
     expect(screen.getByRole("status", { name: "Codex could not finish" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Retry / })).toBeNull();
+  });
+
+  it.each(["admitted", "rejected"] as const)("keeps the newly opened Chat when a %s retry settles after switching away", async (outcome) => {
+    const failed = failedDetail({ code: "service_unavailable", safeMessage: "Service is busy. Try again shortly.", retryable: true, recoveryActions: ["retry"] });
+    const other = createCanonicalChatFixture("completed").snapshot;
+    const { project, activeRun, providerBinding, ...otherChat } = other.chat;
+    const otherDetail: CanonicalChatDetailResponse = { record: { chat: otherChat, projectId: project?.projectId, activeRun, providerBinding },
+      messages: other.messages, turns: other.turns, runs: other.runs, activities: other.activities };
+    let settleRetry: (response: Response) => void = () => undefined;
+    let settleOther: () => void = () => undefined;
+    stubLegacyChatFetch(vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Promise<Response>((resolve) => { settleRetry = resolve; });
+      if (url.includes("/api/chats?")) return Promise.resolve(Response.json({ items: [failed.record, otherDetail.record] }));
+      if (url.includes(otherChat.id)) return new Promise<Response>((resolve) => { settleOther = () => resolve(Response.json(otherDetail)); });
+      return Promise.resolve(Response.json(failed));
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.messages.some((message) => message.role === "system")).toBe(true));
+    let retried!: Promise<boolean>;
+    act(() => { retried = result.current.retryTurn!(failed.turns[0]!.id); });
+    act(() => result.current.switchConversation(otherChat.id));
+    const { completedAt: _completedAt, outcome: _outcome, ...failedRun } = failed.runs[0]!;
+    await act(async () => {
+      settleRetry(outcome === "admitted"
+        ? Response.json({ record: failed.record, turn: { ...failed.turns[0]!, status: "accepted" },
+          run: { ...failedRun, id: "run_retry", attempt: 2, status: "accepted" }, admission: "accepted" })
+        : Response.json({ error: { code: "chat_conflict" } }, { status: 409 }));
+      await retried;
+    });
+    // The newly opened Chat's own load answers after the retry settled.
+    await act(async () => { settleOther(); });
+    await waitFor(() => expect(result.current.messages.map((message) => message.id)).toContain(other.messages[0]!.id));
+    expect(result.current.sessionId).toBe(otherChat.id);
+    expect(result.current.busy).toBe(false);
+    expect(result.current.messages.map((message) => message.id)).toContain(other.messages[0]!.id);
+    expect(JSON.stringify(result.current)).not.toContain("could not be retried");
   });
 
   it("posts the retry for the failed turn against the current Chat revision", async () => {
