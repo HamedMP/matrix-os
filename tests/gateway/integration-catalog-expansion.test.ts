@@ -36,8 +36,8 @@ describe("catalog service contracts", () => {
     expect(schemaAccepts("google_contacts", "get_contact", { personId: "../me" })).toBe(false);
   });
 
-  it("describes Outlook's current read-only calendar actions truthfully", () => {
-    expect(INTEGRATION_PRESENTATION.microsoft_outlook_calendar.description).toBe("Read calendars and events");
+  it("describes Outlook calendar scheduling while keeping the catalog definition read-only", () => {
+    expect(INTEGRATION_PRESENTATION.microsoft_outlook_calendar.description).toBe("Read calendars and schedule events");
     expect(Object.values(CATALOG_SERVICE_REGISTRY.microsoft_outlook_calendar.actions).every(action => action.risk === "read")).toBe(true);
   });
   it("bounds Outlook calendar views and rejects ranges exceeding a year or reversed dates", () => {

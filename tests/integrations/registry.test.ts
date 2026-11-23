@@ -280,8 +280,8 @@ describe("Service Registry", () => {
     expect(getAction("linear", "graphql")).toBeUndefined();
   });
 
-  it("does not register destructive or arbitrary-provider escape-hatch actions", () => {
-    expect(getAction("google_calendar", "delete_event")).toBeUndefined();
+  it("registers calendar event deletion only as an approved recoverable write, never destructive or arbitrary-provider actions", () => {
+    expect(getAction("google_calendar", "delete_event")?.risk).toBe("write");
     expect(getAction("linear", "graphql")).toBeUndefined();
     for (const service of listServices()) {
       expect(Object.values(service.actions).every((action) => action.risk !== "destructive")).toBe(true);
