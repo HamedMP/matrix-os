@@ -10,7 +10,7 @@
  */
 
 import type { XmlElement } from "../../../packages/office/src/index.js";
-import { attr, elementsOf, hasAncestor, orderProblems, parentElement, text, walk, where } from "./package.js";
+import { attr, elementsOf, hasAncestor, orderProblems, parentElement, sourceText, text, walk, where } from "./package.js";
 
 const names = (list: string): string[] => list.split(/\s+/).filter((name) => name !== "").map((name) => `w:${name}`);
 
@@ -208,7 +208,7 @@ function textProblems(element: XmlElement): string[] {
   if (value !== value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "") && attr(element, "xml:space") !== "preserve") {
     problems.push(`<${element.name}> text ${shown} has leading or trailing white space without xml:space="preserve"`);
   }
-  if ((element.name === "w:t" || element.name === "w:delText") && /[\t\r\n]/.test(value)) {
+  if ((element.name === "w:t" || element.name === "w:delText") && /[\t\r\n]/.test(sourceText(element))) {
     problems.push(`<${element.name}> holds a raw tab or line break ${shown}`);
   }
   const deleted = hasAncestor(element, new Set(["w:del"]));

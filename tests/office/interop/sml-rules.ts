@@ -11,7 +11,7 @@
  */
 
 import type { XmlElement } from "../../../packages/office/src/index.js";
-import { type SavedPackage, attr, elementsOf, orderProblems, readPackage, related, text, walk } from "./package.js";
+import { type SavedPackage, attr, elementsOf, orderProblems, readPackage, related, sourceText, text, walk } from "./package.js";
 
 const list = (names: string): string[] => names.split(/\s+/).filter((name) => name !== "");
 
@@ -147,7 +147,7 @@ function sharedStringProblems(root: XmlElement): { problems: string[]; count: nu
       if (element.name !== "t") continue;
       const value = text(element);
       if (value !== value.trim() && attr(element, "xml:space") !== "preserve") problems.push(`string ${index} ${JSON.stringify(value.slice(0, 24))} has outer white space without xml:space="preserve"`);
-      if (value.includes("\r")) problems.push(`string ${index} holds a raw carriage return, which an XML reader turns into a line feed`);
+      if (sourceText(element).includes("\r")) problems.push(`string ${index} holds a literal carriage return, which an XML reader turns into a line feed`);
     }
   });
   return { problems, count: items.length };
@@ -184,7 +184,7 @@ function cellProblems(cell: XmlElement, row: number, cellFormats: number, string
   else if (type === "inlineStr" && (child(cell, "is") === null || valueElement !== null)) problems.push(`cell ${ref} is inlineStr without <is> or with <v>`);
   else if (type === "str" && valueElement !== null && value !== null) {
     if (value !== value.trim() && attr(valueElement, "xml:space") !== "preserve") problems.push(`cell ${ref} string result has outer white space without xml:space="preserve"`);
-    if (value.includes("\r")) problems.push(`cell ${ref} holds a raw carriage return`);
+    if (sourceText(valueElement).includes("\r")) problems.push(`cell ${ref} holds a literal carriage return`);
   }
   const formula = child(cell, "f");
   if (formula !== null) {

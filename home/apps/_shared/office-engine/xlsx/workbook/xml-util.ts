@@ -84,16 +84,17 @@ export function decodeCellText(text: string): string {
 }
 
 /**
- * Escapes characters XML 1.0 cannot carry, text that would read as an
- * escape, and the carriage return: an XML reader turns a literal one into
- * a line feed, so spreadsheets write it as `_x000D_`.
+ * Escapes characters XML 1.0 cannot carry, and text that would read as an
+ * escape. A carriage return is left to the XML writer, which writes it as
+ * the character reference `&#13;`: every reader gets it back, also those
+ * that do not decode `_x000D_`.
  */
 export function encodeCellText(text: string): string {
   let out = "";
   let from = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    const control = code < 32 && code !== 9 && code !== 10;
+    const control = code < 32 && code !== 9 && code !== 10 && code !== 13;
     const looksEscaped =
       code === 95 && text.charCodeAt(i + 1) === 120 && /^_x[0-9A-Fa-f]{4}_/.test(text.slice(i, i + 7));
     const invalid = code === 0xfffe || code === 0xffff;

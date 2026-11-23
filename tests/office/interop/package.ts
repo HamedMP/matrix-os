@@ -100,6 +100,13 @@ export function text(element: XmlElement): string {
   return xml.textContent(element);
 }
 
+/** The text of an element as it is spelled in the file, character references not decoded. */
+export function sourceText(element: XmlElement): string {
+  let out = "";
+  for (const node of element.children) if (node.kind === "text") out += node.raw ?? node.value;
+  return out;
+}
+
 /** A short path for messages: the names of the last few ancestors. */
 export function where(element: XmlElement): string {
   const names: string[] = [];

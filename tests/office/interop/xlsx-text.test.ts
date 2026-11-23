@@ -2,7 +2,8 @@
  * Cell text other software reads back as written.
  *
  * - A carriage return written literally in XML reaches every other reader
- *   as a line feed; spreadsheets store it as `_x000D_`.
+ *   as a line feed. As the character reference `&#13;` it reaches all of
+ *   them, also the readers that do not decode the `_x000D_` form.
  * - The shared string table states how many cells use it. The engine used
  *   to add one for every write and never take one away.
  */
@@ -34,7 +35,7 @@ async function stringCounts(bytes: Uint8Array): Promise<{ stated: string | null;
 describe("carriage returns in cell text", () => {
   const TEXT = "first line\r\nsecond line\rthird";
 
-  it("are written as _x000D_ and read back", async () => {
+  it("are written as a character reference and read back", async () => {
     const workbook = createXlsx();
     const sheet = firstSheet(workbook).id;
     workbook.setCell(sheet, parseA1("A1"), TEXT);
@@ -43,11 +44,11 @@ describe("carriage returns in cell text", () => {
     const bytes = await workbook.save();
     const strings = await partText(bytes, "/xl/sharedStrings.xml");
     expect(strings).not.toContain("\r");
-    expect(strings).toContain("first line_x000D_\nsecond line_x000D_third");
+    expect(strings).toContain("first line&#13;\nsecond line&#13;third");
     expect(strings).toContain("literal _x005F_x000D_ stays text");
     const sheetXml = await partText(bytes, "/xl/worksheets/sheet1.xml");
     expect(sheetXml).not.toContain("\r");
-    expect(sheetXml).toContain("first line_x000D_\nsecond line_x000D_third!");
+    expect(sheetXml).toContain("first line&#13;\nsecond line&#13;third!");
 
     const reopened = await openXlsx(bytes);
     const id = firstSheet(reopened).id;
@@ -55,6 +56,15 @@ describe("carriage returns in cell text", () => {
     expect(reopened.getCell(id, parseA1("A2")).value).toBe("literal _x000D_ stays text");
     expect(reopened.getCell(id, parseA1("A3")).value).toBe(`${TEXT}!`);
     expect(await sheetProblems(bytes)).toEqual([]);
+  });
+
+  it("are read from the _x000D_ form other spreadsheets write", async () => {
+    const workbook = createXlsx();
+    workbook.setCell(firstSheet(workbook).id, parseA1("A1"), "placeholder");
+    const pkg = await opc.openPackage(await workbook.save());
+    pkg.setPart("/xl/sharedStrings.xml", (await pkg.getPartText("/xl/sharedStrings.xml")).replace("placeholder", "one_x000D_\ntwo"));
+    const reopened = await openXlsx(await pkg.save());
+    expect(reopened.getCell(firstSheet(reopened).id, parseA1("A1")).value).toBe("one\r\ntwo");
   });
 });
 
