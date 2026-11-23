@@ -10,7 +10,6 @@ import {
   askDocument,
   explainSelection,
   fixNumberingAndReferences,
-  pendingRevisionIds,
   runAssistantEdit,
   summariseDocument,
 } from "../../agent/index";
@@ -25,7 +24,8 @@ import type {
   EditRunResult,
   QuickActionId,
 } from "../../agent/index";
-import type { TextRange } from "../../../../_shared/office-engine/index";
+import type { Revision, TextRange } from "../../../../_shared/office-engine/index";
+import { type CardLineage, cardRevisions, changeRevisions, lineageOf } from "./card-revisions";
 import type { DocumentSession } from "../../session/index";
 
 export const MAX_MESSAGES = 40;
@@ -62,6 +62,8 @@ export type AssistantCard =
       status: CardStatus;
       /** Revisions of this card the owner accepted or rejected here. */
       outcomes: { accepted: number; rejected: number };
+      /** Finds the pieces the document split off this card's revisions; set when the card is added. */
+      lineage?: CardLineage;
     }
   | { id: string; type: "answer"; title: string; documentKey: number; segments: AnswerSegment[] };
 
@@ -201,12 +203,9 @@ export class AssistantStore {
     this.controller?.abort();
   }
 
-  /** Revision ids of a card still pending in the document (empty for a card of another document). */
+  /** Revision ids of a card still pending in the document, split pieces included (empty for a card of another document). */
   pending(cardId: string): string[] {
-    const card = this.card(cardId);
-    const doc = this.options.session.document;
-    if (card?.type !== "edit" || doc === null || card.documentKey !== this.options.session.getState().documentKey) return [];
-    return pendingRevisionIds(doc, card.revisionIds);
+    return this.pendingRevisions(cardId).map((revision) => revision.id);
   }
 
   acceptAll(cardId: string): void {
@@ -221,8 +220,9 @@ export class AssistantStore {
   pendingChanges(cardId: string): ChangeSummaryItem[] {
     const card = this.card(cardId);
     if (card?.type !== "edit") return [];
-    const pending = new Set(this.pending(cardId));
-    return card.changes.filter((change) => change.revisionIds.some((id) => pending.has(id)));
+    const pending = this.pendingRevisions(cardId);
+    const listed = new Set(card.changes.flatMap((change) => change.revisionIds));
+    return card.changes.filter((change) => changeRevisions(pending, change.revisionIds, change.blockId, listed).length > 0);
   }
 
   startReview(cardId: string): ChangeSummaryItem | null {
@@ -254,8 +254,9 @@ export class AssistantStore {
     const changes = this.pendingChanges(review.cardId);
     const current = changes[Math.min(review.index, changes.length - 1)];
     if (current === undefined) return this.endReview();
-    const pending = new Set(this.pending(review.cardId));
-    this.resolve(review.cardId, current.revisionIds.filter((id) => pending.has(id)), action, 1);
+    const card = this.card(review.cardId);
+    const listed = new Set(card?.type === "edit" ? card.changes.flatMap((change) => change.revisionIds) : []);
+    this.resolve(review.cardId, changeRevisions(this.pendingRevisions(review.cardId), current.revisionIds, current.blockId, listed), action, 1);
     const left = this.pendingChanges(review.cardId);
     if (left.length === 0) return this.endReview();
     const index = Math.min(review.index, left.length - 1);
@@ -272,6 +273,19 @@ export class AssistantStore {
 
   private deps() {
     return { session: this.options.session, generate: this.options.generate, log: this.options.log };
+  }
+
+  private pendingRevisions(cardId: string): Revision[] {
+    const card = this.card(cardId);
+    const doc = this.options.session.document;
+    const documentKey = this.options.session.getState().documentKey;
+    if (card?.type !== "edit" || doc === null || card.documentKey !== documentKey) return [];
+    // Revisions another card names by id stay with that card.
+    const claimed = new Set<string>();
+    for (const other of this.state.cards) {
+      if (other.type === "edit" && other.id !== cardId && other.documentKey === documentKey) for (const id of other.revisionIds) claimed.add(id);
+    }
+    return cardRevisions(doc.listRevisions(), card.revisionIds, card.lineage, claimed);
   }
 
   private card(cardId: string): AssistantCard | undefined {
@@ -366,7 +380,10 @@ export class AssistantStore {
   }
 
   private addCard(card: AssistantCard): void {
-    this.patch({ cards: [...this.state.cards, card].slice(-MAX_CARDS) });
+    let added = card;
+    const doc = this.options.session.document;
+    if (card.type === "edit" && doc !== null) added = { ...card, lineage: lineageOf(doc.listRevisions(), card.revisionIds) };
+    this.patch({ cards: [...this.state.cards, added].slice(-MAX_CARDS) });
   }
 
   private replaceCard(card: AssistantCard): void {
