@@ -131,6 +131,20 @@ describe("added machines over ssh", () => {
     expect(runCoreCli).toHaveBeenCalledTimes(1);
   });
 
+  // Fault detected (Nima, #3579): "Install core there" on user@host:2222 handed the raw address to
+  // herdr-core's installer, which took host:2222 as the host name.
+  it("installs the core over ssh with the port split out, typed inline or in the advanced field", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: [machine("box", "me@box")] } });
+    }, { runCoreCli });
+    await host.installMachine({ target: "me@box:2222", name: "box" });
+    await host.installMachine({ target: "me@box", name: "box2", ssh: { port: 2200 } });
+    const argv = runCoreCli.mock.calls.map((call) => (call as unknown as [string, string[]])[1]);
+    expect(argv[0]).toEqual(["machine", "add", "--install", "--name", "box", "--via", "ssh -o BatchMode=yes -p 2222 -- 'me@box'"]);
+    expect(argv[1]).toEqual(["machine", "add", "--install", "--name", "box2", "--via", "ssh -o BatchMode=yes -p 2200 -- 'me@box'"]);
+  });
+
   // Fault detected (Greptile, #3570): a failed save left the machine added without its settings,
   // and an unreadable settings file was replaced, erasing every machine's settings.
   it("takes the machine back out when its settings cannot be saved, and never overwrites an unreadable file", async () => {

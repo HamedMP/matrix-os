@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sshLoginArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
+import { installVia, sshLoginArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
 import { findTailscale, parseTailscaleStatus } from "@desktop/main/local-terminals/tailscale";
 import { SshOptionsSchema } from "@desktop/shared/local-terminals";
 
@@ -23,6 +23,17 @@ describe("custom ssh fields", () => {
     expect(sshVia("can@10.0.0.7:2200", { port: 2222, identity: "~/.ssh/id_ed25519", jump: "me@bastion" }, null))
       .toBe("ssh -o BatchMode=yes -p 2222 -i '~/.ssh/id_ed25519' -J 'me@bastion' -- 'can@10.0.0.7'");
     expect(sshVia("can@10.0.0.7:2200", { identity: "/Users/me/.ssh/k" }, null)).toBe("ssh -o BatchMode=yes -p 2200 -i '/Users/me/.ssh/k' -- 'can@10.0.0.7'");
+  });
+
+  // Fault detected (Nima, #3579): installing the core on user@host:2222 passed the raw address,
+  // which herdr-core's installer took as the host name.
+  it("passes a port to ssh when installing the core, from the target or the advanced field", () => {
+    expect(installVia("me@box:2222", undefined, null)).toBe("ssh -o BatchMode=yes -p 2222 -- 'me@box'");
+    expect(installVia("[::1]:2222", undefined, null)).toBe("ssh -o BatchMode=yes -p 2222 -- '::1'");
+    expect(installVia("me@[fe80::1]:2200", undefined, null)).toBe("ssh -o BatchMode=yes -p 2200 -- 'me@fe80::1'");
+    expect(installVia("me@box", { port: 2222 }, null)).toBe("ssh -o BatchMode=yes -p 2222 -- 'me@box'");
+    expect(installVia("me@box", undefined, null)).toBeNull();
+    expect(installVia("box", undefined, null)).toBeNull();
   });
 
   it("reaches a Tailscale SSH peer with tailscale ssh, and refuses when tailscale is missing", () => {

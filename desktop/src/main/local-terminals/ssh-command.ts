@@ -27,6 +27,18 @@ export function sshVia(target: string, options: SshOptions | undefined, tailscal
   ].join(" ");
 }
 
+/**
+ * The `via` line for installing the core there. herdr-core's installer takes a
+ * plain target's `host:2222` as the host name (Nima, #3579, pinned 0.1.19), so a
+ * port in the target, as well as the advanced port field, goes to ssh as `-p`.
+ */
+export function installVia(target: string, options: SshOptions | undefined, tailscaleBinary: string | null): string | null {
+  const via = sshVia(target, options, tailscaleBinary);
+  if (via) return via;
+  const { destination, port } = sshDestination(target);
+  return port ? ["ssh", "-o", "BatchMode=yes", "-p", port, "--", quote(destination)].join(" ") : null;
+}
+
 /** The argv of a terminal running ssh there, where the person answers a host key or password themselves. */
 export function sshLoginArgv(target: string, options: SshOptions | undefined, tailscaleBinary: string | null): string[] {
   const { destination, port } = sshDestination(target);

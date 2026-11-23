@@ -5,7 +5,7 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
-import { sshLoginArgv, sshVia } from "./ssh-command";
+import { installVia, sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
 import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
@@ -252,7 +252,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   }
 
   async function installMachineNow(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
-    const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+    const via = installVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
     const result = await machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
     if (!result.ok) return result;
     // Kept like an add, so Open in terminal reaches it the same way (port, identity, jump host, Tailscale SSH).
