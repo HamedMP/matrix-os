@@ -38,6 +38,26 @@ export async function saveCopyNow(session: SheetSession, controller: SheetGridCo
   if (text !== null) notify(outcome.status === "saved" ? `${text.message} You are now editing the copy.` : text.message, text.tone);
 }
 
+/** The path of a .csv or .tsv file with the .xlsx extension, numbered when that name is taken. */
+export function workbookPathFor(path: string, attempt = 1): string {
+  const stem = path.replace(/\.(csv|tsv)$/i, "");
+  return attempt <= 1 ? `${stem}.xlsx` : `${stem} (${attempt}).xlsx`;
+}
+
+/** Saves a CSV or TSV file as a workbook beside it, which keeps pending changes for review, and continues there. */
+export async function saveAsWorkbookNow(session: SheetSession, controller: SheetGridController, notify: Notify): Promise<void> {
+  controller.commitEdit();
+  const path = session.getState().path;
+  if (path === null) return;
+  let outcome: SaveOutcome = { status: "unchanged" };
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    outcome = await session.saveAs(workbookPathFor(path, attempt));
+    if (outcome.status !== "error" || outcome.code !== "exists") break;
+  }
+  const text = describeSave(outcome);
+  if (text !== null) notify(outcome.status === "saved" ? `${text.message} Suggested changes are kept for review.` : text.message, text.tone);
+}
+
 /** Checks a folder and a file name typed in the save dialog; returns the path or a message. */
 export function buildSavePath(folder: string, name: string): { ok: true; path: string } | { ok: false; message: string } {
   const dir = folder.trim().replace(/^\/+|\/+$/g, "");

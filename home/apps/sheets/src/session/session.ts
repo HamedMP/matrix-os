@@ -78,6 +78,7 @@ export class SheetSession {
         serialize: (format, csv) => serializeWorkbook(this.wb, format, csv),
         editSeq: () => this.editSeq,
         changed: () => this.refresh(true),
+        reviewPending: () => this.wb.listChanges().length > 0,
         log: this.log,
       },
       { files: deps.files, timers: deps.timers ?? DEFAULT_TIMERS, now: this.now, delayMs: deps.autosaveDelayMs ?? DEFAULT_AUTOSAVE_DELAY_MS },

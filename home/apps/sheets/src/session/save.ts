@@ -38,6 +38,8 @@ export interface SaveHost {
   editSeq(): number;
   /** The controller's state changed; tell the listeners. */
   changed(): void;
+  /** True while proposed changes wait for review: a values-only format cannot store them. */
+  reviewPending(): boolean;
   log(message: string, error: unknown): void;
 }
 
@@ -163,11 +165,30 @@ export class SaveController {
     return { status: "error", code: mapped.code, message: mapped.message };
   }
 
+  /**
+   * A CSV or TSV file has no place for the change journal: written now, a
+   * proposal would land in the file as an ordinary value before the owner
+   * reviewed it. The save waits until the review is done or the owner saves
+   * as .xlsx.
+   */
+  private blockedByReview(format: SheetFileFormat): boolean {
+    return format !== "xlsx" && this.host.reviewPending();
+  }
+
+  private refuseForReview(): SaveOutcome {
+    this.cancelTimer();
+    this.saveState = "error";
+    this.saveError = { code: "review_pending", message: sessionMessage("review_pending") };
+    this.host.changed();
+    return { status: "error", code: "review_pending", message: sessionMessage("review_pending") };
+  }
+
   private async write(epoch: number, automatic: boolean): Promise<SaveOutcome> {
     if (this.stale(epoch)) return { status: "superseded" };
     if (this.saveState === "conflict") return { status: "conflict" };
     const path = this.path;
     if (path === null) return { status: "error", code: "invalid_path", message: sessionMessage("invalid_path") };
+    if (this.dirty && this.blockedByReview(this.format)) return this.refuseForReview();
     if (!this.dirty) {
       if (this.saveState === "pending") {
         this.saveState = "idle";
@@ -230,6 +251,7 @@ export class SaveController {
     if (format === null || !isValidFilePath(path)) {
       return { status: "error", code: "invalid_path", message: sessionMessage("invalid_path") };
     }
+    if (this.blockedByReview(format)) return { status: "error", code: "review_pending", message: sessionMessage("review_pending") };
     const csv = format === "xlsx" ? null : this.format === format && this.csv !== null ? this.csv : defaultCsvShape(format);
     const seq = this.host.editSeq();
     const previous = this.saveState;

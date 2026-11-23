@@ -22,6 +22,7 @@ const MESSAGES: Record<SessionErrorCode, string> = {
   formula: "This formula could not be read. Check brackets, quotes and separators.",
   not_allowed: "This change is not possible here.",
   too_many_cells: "This change touches too many cells for one step.",
+  review_pending: "A CSV or TSV file cannot keep the assistant's suggested changes. Accept or reject them to save, or save as .xlsx to keep reviewing later.",
   failed: "Something went wrong. Your edits are still here.",
 };
 

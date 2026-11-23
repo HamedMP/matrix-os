@@ -69,6 +69,8 @@ export type SessionErrorCode =
   | "not_allowed"
   /** The edit touches more cells than one step may. */
   | "too_many_cells"
+  /** A CSV or TSV file cannot hold assistant changes that wait for review. */
+  | "review_pending"
   /** Anything else. */
   | "failed";
 

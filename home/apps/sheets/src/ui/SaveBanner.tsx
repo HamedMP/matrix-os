@@ -8,7 +8,7 @@ import { Dialog } from "../../../_shared/office-ui";
 import type { SheetGridController } from "../grid";
 import type { SheetSession } from "../session/session";
 import type { SessionState } from "../session/types";
-import { type Notify, saveCopyNow, saveNow } from "./file-actions";
+import { type Notify, saveAsWorkbookNow, saveCopyNow, saveNow } from "./file-actions";
 
 export interface SaveBannerProps {
   session: SheetSession;
@@ -39,6 +39,7 @@ export function SaveBanner({ session, state, controller, notify }: SaveBannerPro
 
   if (state.saveState !== "conflict" && state.saveState !== "error") return null;
   const conflict = state.saveState === "conflict";
+  const review = state.saveError?.code === "review_pending";
 
   return (
     <div className="sheets-banner" role="alert">
@@ -46,7 +47,9 @@ export function SaveBanner({ session, state, controller, notify }: SaveBannerPro
       <span className="sheets-banner__text">
         {conflict
           ? "This file changed on disk since you opened it. Your edits are kept here and were not written over it."
-          : `Your latest edits are not saved. ${state.saveError?.message ?? ""}`}
+          : review
+            ? "Your latest edits are not saved yet: this CSV file cannot keep the assistant's suggested changes. Accept or reject them to save, or save as .xlsx to keep reviewing later."
+            : `Your latest edits are not saved. ${state.saveError?.message ?? ""}`}
       </span>
       {conflict ? (
         <>
@@ -57,6 +60,10 @@ export function SaveBanner({ session, state, controller, notify }: SaveBannerPro
             Reload from disk
           </button>
         </>
+      ) : review ? (
+        <button type="button" className="oui-button oui-button--primary" disabled={busy} onClick={() => void act(() => saveAsWorkbookNow(session, controller, notify))}>
+          Save as .xlsx
+        </button>
       ) : (
         <button type="button" className="oui-button oui-button--primary" disabled={busy} onClick={() => void act(() => saveNow(session, controller, notify))}>
           Try again
