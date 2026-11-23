@@ -86,7 +86,7 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       fixture.client.get.mockResolvedValue(siteRecord({ status: "published", forms: [] }) as never);
       render(<ContainedTrigger Component={Component} />);
       fireEvent.click(screen.getByRole("button", { name: "Share" }));
-      await within(await screen.findByRole("dialog", { name: "Share app" })).findByText("Live");
+      await within(await screen.findByRole("dialog", { name: "Share app" })).findByText(/^Live\b/);
       await waitFor(() => expect(fixture.client.submissions).toHaveBeenCalled());
       expect(screen.queryByRole("button", { name: "Visitor submissions" })).toBeNull();
     });
