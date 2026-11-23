@@ -46,6 +46,15 @@ function address<T>(parse: () => T): T {
   }
 }
 
+/**
+ * A proposal cannot change a cell that an array formula fills: the journal
+ * could not take the change back. The edit is rejected here, so that it does
+ * not fail the whole proposal later.
+ */
+function requireOutsideArray(workbook: Workbook, sheet: SheetInfo, at: CellAddress): void {
+  if (workbook.getCell(sheet.id, at).arrayRange !== null) reject("invalid_operation", "the cell is part of an array formula");
+}
+
 /** A literal or a formula from what the agent wrote. A string that starts with `=` is a formula. */
 function content(input: AgentCellInput): Pick<ResolvedSheetEdit, "value" | "formula"> {
   if (typeof input !== "string" || !input.startsWith("=")) return { value: input, formula: null };
@@ -70,6 +79,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
         const current = cell.formula === null ? singleLine(cell.display) : `=${singleLine(cell.formula)}`;
         if (singleLine(edit.expect).trim() !== current.trim()) reject("stale_reference", "the cell does not hold what was expected");
       }
+      requireOutsideArray(workbook, sheet, at);
       return [{ editIndex, sheet: sheet.id, row: at.row, col: at.col, ...content(edit.value) }];
     }
     case "setRange": {
@@ -79,6 +89,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
         row.forEach((input, c) => {
           const cell: CellAddress = { row: start.row + r, col: start.col + c };
           if (cell.row >= MAX_ROWS || cell.col >= MAX_COLS) reject("invalid_operation", "the values do not fit on the sheet");
+          requireOutsideArray(workbook, sheet, cell);
           resolved.push({ editIndex, sheet: sheet.id, row: cell.row, col: cell.col, ...content(input) });
         });
       });
@@ -93,6 +104,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
       const resolved: ResolvedSheetEdit[] = [];
       for (let row = range.start.row; row <= range.end.row; row++) {
         for (let col = range.start.col; col <= range.end.col; col++) {
+          requireOutsideArray(workbook, sheet, { row, col });
           resolved.push({ editIndex, sheet: sheet.id, row, col, value: null, formula: null });
         }
       }

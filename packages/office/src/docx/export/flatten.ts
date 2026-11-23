@@ -7,7 +7,9 @@
  * out, and a paragraph whose mark is gone (a deleted mark in `final`, an
  * inserted one in `original`) runs on into the next paragraph, the rule
  * `getPlainText` applies. The merged paragraph keeps the properties of the
- * first paragraph that contributes visible content.
+ * first paragraph that contributes visible content. Such a paragraph with
+ * nothing to show and no paragraph after it is left out before a table and
+ * at the end of its container, as resolving the revision removes it.
  */
 
 import type {
@@ -64,6 +66,17 @@ export type RunFilter = (block: ParagraphBlock, view: DocxTextView) => InlineRun
 
 /** The filter that uses the revision mark of each run only. */
 export const markRunFilter: RunFilter = (block, view) => block.runs.filter((run) => !goneInView(run.revision?.kind, view));
+
+/**
+ * Whether a paragraph without a mark and without content goes when its
+ * revision is resolved: before a table, and at the end of its container
+ * after another paragraph. It stays when it carries a section break (the
+ * next block) or is all its container has. The same rule as `getPlainText`.
+ */
+function emptyParagraphGoes(next: DocxBlock | undefined, previous: DocxBlock | undefined): boolean {
+  if (next === undefined) return previous !== undefined && previous.type === "paragraph";
+  return next.type === "table";
+}
 
 /** Nesting bound for tables in table cells; deeper content is left out. */
 const MAX_TABLE_DEPTH = 32;
@@ -142,10 +155,13 @@ function flattenWith(blocks: readonly DocxBlock[], view: DocxTextView, filter: R
     }
     carry = null;
     const next = blocks[position + 1];
-    if (goneInView(block.markRevision?.kind, view) && next !== undefined && next.type === "paragraph") {
+    const gone = goneInView(block.markRevision?.kind, view);
+    if (gone && next !== undefined && next.type === "paragraph") {
       carry = paragraph;
       return;
     }
+    // Without a mark and without content there is no paragraph left once the revision is resolved.
+    if (gone && paragraph.runs.length === 0 && emptyParagraphGoes(next, blocks[position - 1])) return;
     out.push(paragraph);
   });
   return out;

@@ -51,10 +51,13 @@ export type * from "./xlsx-model.js";
  * `recalc()` runs. `save()` runs `recalc()` first when anything is out of date.
  * An array formula sits in the first cell of its range and is calculated like
  * any other; the other cells of the range hold its values without a formula
- * and are filled again at every calculation, also after a value was typed
- * over one of them. A data table, an array formula over more than 100 000
- * cells and a formula with an unknown function keep the values stored in the
- * file (`Cell.formulaUnsupported`).
+ * and are filled again at every calculation (`Cell.arrayRange` names the
+ * range on each of them). `setCell`, `setRange`, `setFormula`,
+ * `setCellInput` and `clearRange` throw `invalid_operation` when they would
+ * change part of such a range; an edit that covers the whole range removes
+ * the array formula, and is refused inside a proposal. A data table, an
+ * array formula over more than 100 000 cells and a formula with an unknown
+ * function keep the values stored in the file (`Cell.formulaUnsupported`).
  *
  * Change journal: between `beginProposal` and `endProposal` every content or
  * style edit to a cell is also recorded as a {@link CellChange}. The cell

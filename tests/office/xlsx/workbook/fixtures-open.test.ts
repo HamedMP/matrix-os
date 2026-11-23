@@ -128,7 +128,7 @@ describe("basic.xlsx values", () => {
   it("reads every cell type with its exact value and display text", async () => {
     const workbook = await openXlsx(loadFixture("basic.xlsx"));
     const cell = (a1: string) => at(workbook, "Basics", a1);
-    expect(cell("A1")).toEqual({ value: "Label", formula: null, styleId: 0, display: "Label", formulaUnsupported: false, pendingChangeId: null });
+    expect(cell("A1")).toEqual({ value: "Label", formula: null, styleId: 0, display: "Label", formulaUnsupported: false, arrayRange: null, pendingChangeId: null });
     expect(cell("B2")).toMatchObject({ value: 42, display: "42" });
     expect(cell("B3")).toMatchObject({ value: -17, display: "-17" });
     expect(cell("B4")).toMatchObject({ value: 3.14159, display: "3.14159" });
@@ -146,7 +146,7 @@ describe("basic.xlsx values", () => {
     expect(cell("A20").value).toBe("Isolated cell below empty rows");
     expect(cell("B21")).toMatchObject({ value: "Inline string cell", display: "Inline string cell" });
     // Empty cells inside and outside the used range.
-    const empty = { value: null, formula: null, styleId: 0, display: "", formulaUnsupported: false, pendingChangeId: null };
+    const empty = { value: null, formula: null, styleId: 0, display: "", formulaUnsupported: false, arrayRange: null, pendingChangeId: null };
     expect(cell("D2")).toEqual(empty);
     expect(cell("A15")).toEqual(empty);
     expect(cell("XFD1048576")).toEqual(empty);

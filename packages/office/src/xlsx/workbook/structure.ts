@@ -13,6 +13,7 @@ import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./r
 import { rewriteAllFormulas } from "./sheets.js";
 import { attachSheet } from "./sheet-read.js";
 import { sheetDimensions } from "./sheet-write.js";
+import { invalidateArrayRanges } from "./arrays.js";
 import { dropCalcChain, invalidateGraph } from "./state.js";
 import { isNamed, kid, kids } from "./xml-util.js";
 
@@ -180,6 +181,8 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
     }
   }
   moveCells(state, sheet, op);
+  // Array formulas moved with their cells, or went with deleted ones.
+  invalidateArrayRanges(sheet);
   const merges = [];
   for (const merge of sheet.merges) {
     const moved = moveRange(merge, op);

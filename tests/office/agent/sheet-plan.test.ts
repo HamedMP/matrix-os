@@ -91,6 +91,26 @@ describe("toSheetEdits", () => {
     expect(plan.edits.filter((edit) => edit.editIndex === 2)).toEqual([]);
   });
 
+  it("rejects an edit to a cell that an array formula fills", async () => {
+    const workbook = await openXlsxFixture("formulas.xlsx");
+    const plan = toSheetEdits(workbook, [
+      { op: "setCell", sheet: "Calc", cell: "D3", value: 1 },
+      { op: "setCell", sheet: "Calc", cell: "D2", value: "=1+1" },
+      { op: "setRange", sheet: "Calc", start: "C6", values: [["a", 1]] },
+      { op: "clearRange", sheet: "Calc", range: "D2:D6" },
+      { op: "setCell", sheet: "Calc", cell: "D7", value: 1 },
+    ]);
+    expect(plan.rejected.map((entry) => [entry.index, entry.code])).toEqual([
+      [0, "invalid_operation"],
+      [1, "invalid_operation"],
+      [2, "invalid_operation"],
+      [3, "invalid_operation"],
+    ]);
+    expect(plan.edits.map((edit) => edit.editIndex)).toEqual([4]);
+    // What is left applies as a proposal without an error.
+    expect(applySheetEdits(workbook, plan.edits, PROPOSAL).changeIds).toHaveLength(1);
+  });
+
   it("refuses to clear more cells than one edit may touch", () => {
     const workbook = createXlsx();
     const id = workbook.listSheets()[0]?.id ?? "";

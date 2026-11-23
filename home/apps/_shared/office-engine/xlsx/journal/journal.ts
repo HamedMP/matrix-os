@@ -103,6 +103,10 @@ export class ChangeJournal implements WorkbookJournal {
     ctx.store.prune(null);
   }
 
+  proposalOpen(): boolean {
+    return this.#ctx.open !== null;
+  }
+
   listProposals(): Proposal[] {
     return listProposals(this.#ctx);
   }

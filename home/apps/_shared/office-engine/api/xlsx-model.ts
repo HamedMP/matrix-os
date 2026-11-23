@@ -55,6 +55,13 @@ export interface Cell {
    * cell keeps the value stored in the file and is skipped by `recalc`.
    */
   formulaUnsupported: boolean;
+  /**
+   * The range of the array formula that fills this cell, or null. The
+   * formula is in the first cell of the range; the other cells hold its
+   * values. A cell of such a range cannot be edited on its own: an edit must
+   * cover the whole range, which removes the formula.
+   */
+  arrayRange: CellRange | null;
   /** Id of the pending proposed change on this cell, or null. */
   pendingChangeId: string | null;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
-import { at, buildXlsx, err, fx, loadFixture, num, sheetId, valueAt } from "./helpers.js";
+import { openXlsx, parseA1, parseA1Range } from "../../../../packages/office/src/xlsx/index.js";
+import { getWorkbookInternals } from "../../../../packages/office/src/xlsx/internal.js";
+import { at, buildXlsx, codeOf, err, fx, loadFixture, num, sheetId, valueAt } from "./helpers.js";
 
 const arrayFx = (ref: string, range: string, formula: string, cached: number): string =>
   `<c r="${ref}"><f t="array" ref="${range}">${formula}</f><v>${cached}</v></c>`;
@@ -48,11 +49,76 @@ describe("the array formula of formulas.xlsx", () => {
     expect(workbook.dependents(sheetId(workbook, "Data"), parseA1("D4")).some((cell) => cell.sheet === calc && cell.row === 1 && cell.col === 3)).toBe(true);
   });
 
-  it("writes a value typed over part of its range back at the next calculation", async () => {
+  it("writes a value that got into its range by another way back at the next calculation", async () => {
     const workbook = await openXlsx(loadFixture("formulas.xlsx"));
-    workbook.setCell(sheetId(workbook, "Calc"), parseA1("D3"), 1);
+    const calc = sheetId(workbook, "Calc");
+    getWorkbookInternals(workbook).writeRawCell(calc, parseA1("D3"), { value: 1, formula: null, styleId: 0 });
+    expect(valueAt(workbook, "Calc", "D3")).toBe(1);
     workbook.recalc();
     expect(valueAt(workbook, "Calc", "D3")).toBe(206.25);
+  });
+
+  it("names its range on every cell it fills", async () => {
+    const workbook = await openXlsx(loadFixture("formulas.xlsx"));
+    const range = parseA1Range("D2:D6");
+    expect(at(workbook, "Calc", "D2").arrayRange).toEqual(range);
+    expect(at(workbook, "Calc", "D6").arrayRange).toEqual(range);
+    expect(at(workbook, "Calc", "D7").arrayRange).toBeNull();
+    expect(at(workbook, "Calc", "B1").arrayRange).toBeNull();
+    expect(at(workbook, "Data", "D2").arrayRange).toBeNull();
+    workbook.insertRows(sheetId(workbook, "Calc"), 0, 3);
+    expect(at(workbook, "Calc", "D9").arrayRange).toEqual(parseA1Range("D5:D9"));
+    expect(at(workbook, "Calc", "D4").arrayRange).toBeNull();
+  });
+
+  it("refuses an edit to part of its range and changes nothing", async () => {
+    const workbook = await openXlsx(loadFixture("formulas.xlsx"));
+    const calc = sheetId(workbook, "Calc");
+    const before = workbook.getRange(calc, parseA1Range("C1:E7"));
+    expect(codeOf(() => workbook.setCell(calc, parseA1("D3"), 1))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setCell(calc, parseA1("D2"), 1))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setCellInput(calc, parseA1("D4"), "12"))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setFormula(calc, parseA1("D5"), "1+1"))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setFormula(calc, parseA1("D2"), null))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setRange(calc, parseA1("C5"), [["a", 1], ["b", 2], ["c", 3]]))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.clearRange(calc, parseA1Range("D3:D4")))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.clearRange(calc, parseA1Range("A1:D5"), "all"))).toBe("invalid_operation");
+    expect(workbook.getRange(calc, parseA1Range("C1:E7"))).toEqual(before);
+    // Formats are not content.
+    workbook.clearRange(calc, parseA1Range("D3:D4"), "formats");
+    workbook.setStyle(calc, parseA1Range("D2:D3"), { font: { bold: true } });
+    expect(at(workbook, "Calc", "D2").formula).toBe("Data!C2:C6*Data!D2:D6");
+    expect(workbook.recalc().changed).toEqual([]);
+  });
+
+  it("is removed by an edit that covers its whole range", async () => {
+    const cleared = await openXlsx(loadFixture("formulas.xlsx"));
+    cleared.clearRange(sheetId(cleared, "Calc"), parseA1Range("D2:D6"));
+    expect(["D2", "D3", "D6"].map((cell) => at(cleared, "Calc", cell))).toMatchObject([
+      { value: null, formula: null, arrayRange: null },
+      { value: null, formula: null, arrayRange: null },
+      { value: null, formula: null, arrayRange: null },
+    ]);
+    const replaced = await openXlsx(loadFixture("formulas.xlsx"));
+    const calc = sheetId(replaced, "Calc");
+    replaced.setRange(calc, parseA1("D1"), [["Totals"], [1], [2], [3], [4], [5], [6]]);
+    replaced.setCell(sheetId(replaced, "Data"), parseA1("D2"), 99);
+    replaced.recalc();
+    expect(["D2", "D3", "D6", "D7"].map((cell) => valueAt(replaced, "Calc", cell))).toEqual([1, 2, 5, 6]);
+    expect(at(replaced, "Calc", "D2")).toMatchObject({ formula: null, arrayRange: null });
+    const xml = await (await openXlsx(await replaced.save())).package.getPartText("/xl/worksheets/sheet2.xml");
+    expect(xml).not.toContain('t="array"');
+  });
+
+  it("cannot be changed inside a proposal, where the change could not be taken back", async () => {
+    const workbook = await openXlsx(loadFixture("formulas.xlsx"));
+    const calc = sheetId(workbook, "Calc");
+    workbook.beginProposal({ author: "a", date: "2026-11-23T00:00:00Z", label: "x" });
+    expect(codeOf(() => workbook.clearRange(calc, parseA1Range("D2:D6")))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.setRange(calc, parseA1("D2"), [[1], [2], [3], [4], [5]]))).toBe("invalid_operation");
+    workbook.endProposal();
+    expect(workbook.listChanges()).toEqual([]);
+    expect(at(workbook, "Calc", "D2").formula).toBe("Data!C2:C6*Data!D2:D6");
   });
 
   it("is saved with its range and the new values", async () => {
@@ -86,6 +152,17 @@ describe("array formulas in general", () => {
     workbook.setCell(sheetId(workbook, "S"), parseA1("B3"), 100);
     workbook.recalc();
     expect(valueAt(workbook, "S", "C1")).toBe(1 * 10 + 2 * 20 + 3 * 100);
+  });
+
+  it("lets a formula entered in one cell be replaced like any other cell, outside a proposal", async () => {
+    const workbook = await openXlsx(await source());
+    const id = sheetId(workbook, "S");
+    expect(at(workbook, "S", "C1").arrayRange).toEqual(parseA1Range("C1"));
+    workbook.beginProposal({ author: "a", date: "2026-11-23T00:00:00Z", label: "x" });
+    expect(codeOf(() => workbook.setCell(id, parseA1("C1"), 5))).toBe("invalid_operation");
+    workbook.endProposal();
+    workbook.setCell(id, parseA1("C1"), 5);
+    expect(at(workbook, "S", "C1")).toMatchObject({ value: 5, formula: null, arrayRange: null });
   });
 
   it("repeats a single column of results across the columns of its range", async () => {

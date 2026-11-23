@@ -3,6 +3,7 @@
 import type { Cell, CellRange, CellStylePatch, CellValue } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
+import { arrayRangeAt, invalidateArrayRanges } from "./arrays.js";
 import { arrayFormulaRange, callsUnknownFunction } from "./calc-graph.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
@@ -99,6 +100,8 @@ export function writeCell(
   const contentChanged = formulaChanged || !sameValue(before.value, next.value);
   const styleChanged = before.styleId !== next.styleId;
   if (!contentChanged && !styleChanged) return false;
+  // The cell holds an array formula: whatever happens to it, the ranges of the sheet are looked up again.
+  if (cell !== undefined && cell.extra !== null) invalidateArrayRanges(sheet);
   const wasCounted = before.value !== null || before.formula !== null;
   const isCounted = next.value !== null || next.formula !== null;
   if (isCounted && !wasCounted && state.cellCount >= state.maxCells) {
@@ -171,8 +174,10 @@ export function isUnsupportedFormula(state: WorkbookState, cell: CellRec, row: n
 export function cellView(state: WorkbookState, sheet: SheetModel, row: number, col: number): Cell {
   const cell = findCell(sheet, row, col);
   const pendingChangeId = state.journal === null ? null : state.journal.pendingChangeId(sheet.id, row, col);
+  const filled = arrayRangeAt(sheet, row, col);
+  const arrayRange = filled === null ? null : { start: { ...filled.start }, end: { ...filled.end } };
   if (cell === undefined) {
-    return { value: null, formula: null, styleId: 0, display: "", formulaUnsupported: false, pendingChangeId };
+    return { value: null, formula: null, styleId: 0, display: "", formulaUnsupported: false, arrayRange, pendingChangeId };
   }
   const styleId = state.styles.clamp(cell.styleId);
   return {
@@ -182,6 +187,7 @@ export function cellView(state: WorkbookState, sheet: SheetModel, row: number, c
     display:
       cell.value === null ? "" : formatValue(cell.value, state.styles.numberFormat(styleId), { date1904: state.date1904 }),
     formulaUnsupported: isUnsupportedFormula(state, cell, row, col),
+    arrayRange,
     pendingChangeId,
   };
 }

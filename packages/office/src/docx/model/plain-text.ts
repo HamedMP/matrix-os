@@ -3,7 +3,9 @@
  *
  * Paragraphs end with `\n`; a paragraph whose mark is gone in the view (a
  * deleted mark in `final`, an inserted one in `original`) runs on into the
- * next paragraph. Table cells are separated by `\t` and rows by `\n`; rows
+ * next paragraph. With no paragraph after it, it stays when it has content
+ * in the view and is left out when it has none, as resolving the revision
+ * removes it. Table cells are separated by `\t` and rows by `\n`; rows
  * that are gone in the view are left out. Inline objects are left out.
  */
 
@@ -48,19 +50,42 @@ function tableText(index: DocxIndex, record: BlockRecord, view: DocxTextView): s
   return text;
 }
 
+/** True when the paragraph shows something in the view: text or an inline object. */
+function hasContentInView(scan: ParagraphScan, view: DocxTextView): boolean {
+  for (const atom of scan.atoms) if (atomInView(atom, view)) return true;
+  return false;
+}
+
+/**
+ * Whether a paragraph without a mark and without content goes when its
+ * revision is resolved: it does before a table and at the end of its
+ * container after another paragraph, and it stays when it carries a section
+ * break (the next record) or is all its container has.
+ */
+export function emptyParagraphGoes(next: { type: string } | undefined, previous: { type: string } | undefined): boolean {
+  if (next === undefined) return previous !== undefined && previous.type === "paragraph";
+  return next.type === "table";
+}
+
 /** Plain text of a list of sibling blocks. */
 export function blocksText(index: DocxIndex, records: readonly BlockRecord[], view: DocxTextView): string {
   let text = "";
+  /** True while the paragraph being written, with those that ran on into it, shows something. */
+  let content = false;
   for (let position = 0; position < records.length; position++) {
     const record = records[position] as BlockRecord;
     if (record.type === "table") {
       text += tableText(index, record, view);
+      content = false;
     } else if (record.type === "paragraph") {
       const scan = index.scan(record.element);
       text += paragraphText(scan, view);
+      content ||= hasContentInView(scan, view);
       const next = records[position + 1];
-      const joins = goneInView(scan.mark?.name, view) && next !== undefined && next.type === "paragraph";
-      if (!joins) text += "\n";
+      const gone = goneInView(scan.mark?.name, view);
+      if (gone && next !== undefined && next.type === "paragraph") continue;
+      if (!(gone && !content && emptyParagraphGoes(next, records[position - 1]))) text += "\n";
+      content = false;
     }
   }
   return text;

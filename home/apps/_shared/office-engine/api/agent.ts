@@ -333,7 +333,9 @@ export interface SheetEditPlan {
  * Resolves agent edits against the current workbook without changing it.
  * A `clearRange` is cut down to the used part of the sheet (a whole column
  * clears its used rows) and is rejected as `invalid_operation` when more
- * than 10 000 cells remain.
+ * than 10 000 cells remain. An edit to a cell that an array formula fills
+ * (`Cell.arrayRange`) is rejected as `invalid_operation`: a proposal cannot
+ * change an array formula.
  */
 export type ToSheetEdits = (workbook: Workbook, edits: readonly AgentSheetEdit[]) => SheetEditPlan;
 

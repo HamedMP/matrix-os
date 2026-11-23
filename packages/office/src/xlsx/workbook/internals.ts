@@ -68,6 +68,12 @@ export interface WorkbookJournal {
   /** Number of pending changes on a sheet. Structural edits and removal are refused while it is above 0. */
   pendingChangeCount(sheet: SheetId): number;
   /**
+   * True between `beginProposal` and `endProposal`. Edits the journal could
+   * not take back (to an array formula) are refused while it is true. A
+   * journal without it never has such edits refused.
+   */
+  proposalOpen?(): boolean;
+  /**
    * Called by `save()` after recalculation and before the package is
    * serialised: write (or remove) the journal part here.
    */

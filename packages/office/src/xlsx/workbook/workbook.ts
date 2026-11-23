@@ -29,6 +29,7 @@ import { partNamesEqual, relativeTargetFor } from "../../opc/index.js";
 import { serializeXml } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, requireAddress, requireRange } from "./a1.js";
 import { checkFormula, dependents, needsRecalc, precedents, recalc } from "./calc.js";
+import { guardArrayWrite } from "./arrays.js";
 import {
   cellView,
   checkValue,
@@ -156,6 +157,7 @@ export class WorkbookHandle implements Workbook {
     const model = sheetOf(this.#state, sheet);
     requireAddress(address);
     const checked = checkValue(value);
+    guardArrayWrite(this.#state, model, { start: address, end: address }, null);
     const styleId = findCell(model, address.row, address.col)?.styleId ?? 0;
     writeCell(this.#state, model, address.row, address.col, { value: checked, formula: null, styleId }, "edit");
   }
@@ -170,8 +172,15 @@ export class WorkbookHandle implements Workbook {
       checked.push((line as readonly CellValue[]).map(checkValue));
     }
     if (start.row + checked.length > MAX_ROWS) throw new OfficeError("invalid_argument", "the values do not fit on the sheet");
+    let width = 0;
     for (const line of checked) {
       if (start.col + line.length > MAX_COLS) throw new OfficeError("invalid_argument", "the values do not fit on the sheet");
+      width = Math.max(width, line.length);
+    }
+    if (checked.length > 0 && width > 0) {
+      const bounds = { start, end: { row: start.row + checked.length - 1, col: start.col + width - 1 } };
+      // Rows may differ in length: a cell is written when its row reaches its column.
+      guardArrayWrite(this.#state, model, bounds, (row, col) => col - start.col < (checked[row - start.row] as CellValue[]).length);
     }
     for (let r = 0; r < checked.length; r++) {
       const line = checked[r] as CellValue[];
@@ -190,12 +199,14 @@ export class WorkbookHandle implements Workbook {
     const current = readRaw(model, address.row, address.col);
     if (formula === null) {
       if (current.formula === null) return;
+      guardArrayWrite(this.#state, model, { start: address, end: address }, null);
       writeCell(this.#state, model, address.row, address.col, { value: current.value, formula: null, styleId: current.styleId }, "edit");
       return;
     }
     if (typeof formula !== "string") throw new OfficeError("invalid_argument", "a formula is text or null");
     const text = formula.startsWith("=") ? formula.slice(1) : formula;
     checkFormula(this.#state, text);
+    guardArrayWrite(this.#state, model, { start: address, end: address }, null);
     if (text === current.formula) return;
     // The value is unknown until the next calculation.
     writeCell(this.#state, model, address.row, address.col, { value: null, formula: text, styleId: current.styleId }, "edit");
@@ -211,6 +222,7 @@ export class WorkbookHandle implements Workbook {
       this.setFormula(sheet, address, parsed.text);
       return;
     }
+    guardArrayWrite(state, model, { start: address, end: address }, null);
     let styleId = findCell(model, address.row, address.col)?.styleId ?? 0;
     const value = parsed.kind === "clear" ? null : checkValue(parsed.value);
     if (parsed.kind === "value" && parsed.format !== null && state.styles.numberFormat(styleId) === "General") {
@@ -224,7 +236,9 @@ export class WorkbookHandle implements Workbook {
     if (what !== "contents" && what !== "formats" && what !== "all") {
       throw new OfficeError("invalid_argument", "clear contents, formats or all");
     }
-    clearRange(this.#state, model, requireRange(range), what);
+    const checked = requireRange(range);
+    if (what !== "formats") guardArrayWrite(this.#state, model, checked, null);
+    clearRange(this.#state, model, checked, what);
   }
 
   setStyle(sheet: SheetId, range: CellRange, patch: CellStylePatch): void {
