@@ -57,14 +57,14 @@ export function defaultCalendar(calendars: readonly CalendarInfo[], preferredId?
 
 /** Lower-cased, valid, unique addresses, at most `MAX_FREE_BUSY_ADDRESSES`. */
 export function normalizeAttendeeAddresses(addresses: readonly string[]): string[] {
-  const result: string[] = [];
+  const result = new Set<string>();
   for (const raw of addresses) {
     const address = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-    if (!address || !isValidMailAddress(address) || result.includes(address)) continue;
-    result.push(address);
-    if (result.length >= MAX_FREE_BUSY_ADDRESSES) break;
+    if (!address || !isValidMailAddress(address) || result.has(address)) continue;
+    result.add(address);
+    if (result.size >= MAX_FREE_BUSY_ADDRESSES) break;
   }
-  return result;
+  return [...result];
 }
 
 /** The owner's own timed events in the range as busy blocks (declined and all-day events do not block). */

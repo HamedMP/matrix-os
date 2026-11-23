@@ -123,11 +123,21 @@ export function isValidTimeZone(timeZone: unknown): timeZone is string {
   }
 }
 
+let viewerZone: string | null = null;
+
+/** The viewer's zone, read once (the runtime's zone does not change while the app runs). */
+function viewerTimeZone(): string {
+  if (viewerZone === null) {
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    viewerZone = isValidTimeZone(zone) ? zone : "UTC";
+  }
+  return viewerZone;
+}
+
 /** The given zone when the runtime knows it, else the viewer's zone, else `UTC`. */
 export function resolveTimeZone(candidate?: string | null): string {
   if (candidate !== undefined && candidate !== null) return isValidTimeZone(candidate) ? candidate : "UTC";
-  const viewer = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return isValidTimeZone(viewer) ? viewer : "UTC";
+  return viewerTimeZone();
 }
 
 /** The calendar date a moment falls on in `timeZone`. */

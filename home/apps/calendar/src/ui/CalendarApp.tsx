@@ -60,9 +60,26 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
     store.openNewDraft();
   }
 
+  /** Escape closes the topmost side panel: the composer (discarding it, like Cancel), then the agent panel. */
+  function closeTopPanel(): boolean {
+    if (state.draft) {
+      if (state.draft.status === "saving") return false;
+      store.closeDraft();
+      return true;
+    }
+    if (!agentOpen) return false;
+    setAgentOpen(false);
+    return true;
+  }
+
   const onShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || isEditableTarget(event.target)) return;
+    if (event.defaultPrevented) return;
     if (event.target instanceof Element && event.target.closest("[role='dialog'], [role='alertdialog']")) return;
+    if (event.key === "Escape") {
+      if (closeTopPanel()) event.preventDefault();
+      return;
+    }
+    if (isEditableTarget(event.target)) return;
     const command = keyCommand({ key: event.key, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey });
     if (!command) return;
     event.preventDefault();

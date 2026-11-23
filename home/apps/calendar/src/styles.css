@@ -243,4 +243,14 @@ body { background: var(--app-bg); color: var(--app-fg); }
   .cal-agenda__title { grid-column: 1 / -1; }
   .cal-agenda__location { display: none; }
   .cal-range-title { font-size: 13px; }
+  /* The shared frame hides side panels on narrow windows; the composer and the
+   * agent must stay reachable, so they become a sheet over the grid instead. */
+  .cal-app .oui-frame__panel {
+    display: block;
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 30;
+    width: min(100%, 360px);
+    box-shadow: -12px 0 32px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
 }
