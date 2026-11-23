@@ -96,6 +96,21 @@ export interface LocalTerminalHostSink extends HcSessionSink {
   facts?(terminals: LocalTerminalFact[]): void;
 }
 
+/**
+ * Whether the machine listed now is the one the person picked. herdr-core's id
+ * for its core decides when either side has one (a re-add, even on the same
+ * address with another port, gets another core). Without one, the target and
+ * every ssh field (port, identity file, jump host, Tailscale SSH) must match.
+ */
+export function sameMachine(
+  current: { target: string; coreId?: string; ssh?: SshOptions },
+  picked: { target: string; coreId?: string; ssh?: SshOptions },
+): boolean {
+  if (current.coreId || picked.coreId) return current.coreId === picked.coreId;
+  const route = (ssh: SshOptions | undefined) => JSON.stringify([ssh?.port ?? null, ssh?.identity ?? null, ssh?.jump ?? null, ssh?.tailscaleSsh === true]);
+  return current.target === picked.target && route(current.ssh) === route(picked.ssh);
+}
+
 /** Machines' add, install and remove wait in a bounded queue (see forMachine). */
 const MACHINE_QUEUE_NAMES = 64;
 const MACHINE_QUEUE_DEPTH = 4;
@@ -435,10 +450,11 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * it refuses instead of updating that one. Queued with add, install and remove of the name, so
      * none of those from this app can land between the check and the update.
      */
-    updateMachine(input: { name: string; target: string }): Promise<MachineCoreResult> {
+    updateMachine(input: { name: string; target: string; coreId?: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
       return forMachine(input.name, async (): Promise<MachineCoreResult> => {
+        // Re-read right before running: the machine under the name must still be the one picked.
         const current = (await shownMachines()).find((machine) => machine.name === input.name);
-        if (current?.target !== input.target) return { ok: false, reason: "changed" };
+        if (!current || !sameMachine(current, input)) return { ok: false, reason: "changed" };
         return machineCore.update(input.name);
       }).catch((error: unknown) => {
         if (error instanceof MachineQueueFullError) return { ok: false, reason: "busy" } as const;

@@ -146,7 +146,10 @@ export function useSshMachines() {
     () => invoke("local-terminal:machine-install", { target, name, ...(ssh ? { ssh } : {}) })), [coreJob]);
   /** Brings a machine's core to the app's version; its terminals keep running. */
   /** Bound to the machine as listed (name and target), so a name reused meanwhile is refused. */
-  const update = useCallback((name: string, target: string) => coreJob(name, () => invoke("local-terminal:machine-update", { name, target })), [coreJob]);
+  const update = useCallback((machine: LocalMachine) => coreJob(machine.name, () => invoke("local-terminal:machine-update", {
+    name: machine.name, target: machine.target,
+    ...(machine.coreId ? { coreId: machine.coreId } : {}), ...(machine.ssh ? { ssh: machine.ssh } : {}),
+  })), [coreJob]);
 
   return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged };
 }

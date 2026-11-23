@@ -335,7 +335,7 @@ describe("Terminal window ssh machines", () => {
   it("forgets a machine's core update error once it is removed", async () => {
     installOperator({ failUpdate: ["vps"], machines: [{ name: "vps", target: "me@old", state: "connected", temporary: false }] });
     const { result } = renderHook(() => useSshMachines());
-    await act(async () => { await result.current.update("vps"); });
+    await act(async () => { await result.current.update({ name: "vps", target: "me@old", state: "connected", temporary: false }); });
     expect(result.current.coreFailed).toEqual(["vps"]);
     await act(async () => { await result.current.remove("vps"); });
     expect(result.current.coreFailed).toEqual([]);

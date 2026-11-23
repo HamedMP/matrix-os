@@ -152,7 +152,7 @@ function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: Ter
         <>
           <span>{changed ? "Not updated: this name now belongs to a different machine. Check it, then try again."
             : failed ? "Couldn't update its core." : `Its core is ${machine.version}; this app has ${LOCAL_TERMINAL_VERSION}.`}</span>
-          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine.name, machine.target); }}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine); }}>
             {failed ? "Try again" : "Update core"}
           </Button>
         </>

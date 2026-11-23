@@ -76,6 +76,8 @@ export const TailscalePeerSchema = z.strictObject({
 });
 export type TailscalePeer = z.infer<typeof TailscalePeerSchema>;
 export const LocalMachineStateSchema = z.enum(["connecting", "connected", "needs_login", "unreachable"]);
+/** herdr-core's id for an added machine's core. */
+export const MachineCoreIdSchema = z.string().regex(/^[0-9a-f]{8,64}$/);
 export const LocalMachineSchema = z.strictObject({
   name: LocalMachineNameSchema,
   target: z.string().max(255),
@@ -85,6 +87,8 @@ export const LocalMachineSchema = z.strictObject({
   ssh: z.lazy(() => SshOptionsSchema).optional(),
   /** Its core's version when last seen (spec 2706 layer 8). */
   version: z.string().max(32).regex(/^[0-9A-Za-z.+-]*$/).optional(),
+  /** Its core's own id as herdr-core reports it: tells a machine apart from another added under the same name. */
+  coreId: MachineCoreIdSchema.optional(),
 });
 export type LocalMachine = z.infer<typeof LocalMachineSchema>;
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
@@ -260,8 +264,15 @@ export const LOCAL_TERMINAL_INVOKE = {
     response: MachineCoreResponse,
   },
   // Replaces an added machine's core with the app's version; its terminals keep running.
-  // `target` as the machine was listed: the update refuses if the name now belongs to another host.
-  "local-terminal:machine-update": { request: z.strictObject({ name: LocalMachineNameSchema, target: z.string().min(1).max(255) }), response: MachineCoreResponse },
+  // The machine as it was listed when picked (its core's id, or its target and ssh fields): the
+  // update refuses if the name now belongs to another machine.
+  "local-terminal:machine-update": {
+    request: z.strictObject({
+      name: LocalMachineNameSchema, target: z.string().min(1).max(255),
+      coreId: MachineCoreIdSchema.optional(), ssh: z.lazy(() => SshOptionsSchema).optional(),
+    }),
+    response: MachineCoreResponse,
+  },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
     request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),

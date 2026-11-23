@@ -131,6 +131,35 @@ describe("added machines over ssh", () => {
     expect(runCoreCli).toHaveBeenCalledTimes(1);
   });
 
+  // Fault detected (Nima, #3579): an update picked for port 2222 went ahead after the same name and
+  // address were re-added on port 2223; the check left out the ssh port.
+  it("refuses an update once the machine was re-added on another port, or its core changed", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    let listed: Array<Record<string, unknown>> = [machine("box", "me@box")];
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: listed } });
+      if (call.method === "machine.rm") { listed = []; core.reply(call.id, { result: {} }); }
+      if (call.method === "machine.add") { listed = [machine("box", "me@box")]; core.reply(call.id, { result: machine("box", "me@box") }); }
+    }, { runCoreCli });
+    await host.addMachine({ target: "me@box", name: "box", ssh: { port: 2222 } });
+    const picked = (await host.machines()).find((entry) => entry.name === "box")!;
+    expect(picked.ssh).toEqual({ port: 2222 });
+    await host.removeMachine("box");
+    await host.addMachine({ target: "me@box", name: "box", ssh: { port: 2223 } });
+    expect(await host.updateMachine(picked)).toEqual({ ok: false, reason: "changed" });
+    expect(runCoreCli).not.toHaveBeenCalled();
+
+    // With herdr-core's id for the core, the id decides.
+    listed = [{ ...machine("box", "me@box"), id: "a".repeat(32) }];
+    const byId = (await host.machines()).find((entry) => entry.name === "box")!;
+    expect(byId.coreId).toBe("a".repeat(32));
+    listed = [{ ...machine("box", "me@box"), id: "b".repeat(32) }];
+    expect(await host.updateMachine(byId)).toEqual({ ok: false, reason: "changed" });
+    listed = [{ ...machine("box", "me@box"), id: "a".repeat(32) }];
+    expect(await host.updateMachine(byId)).toEqual({ ok: true });
+    expect(runCoreCli).toHaveBeenCalledTimes(1);
+  });
+
   // Fault detected (Nima, #3579): "Install core there" on user@host:2222 handed the raw address to
   // herdr-core's installer, which took host:2222 as the host name.
   it("installs the core over ssh with the port split out, typed inline or in the advanced field", async () => {
