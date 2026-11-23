@@ -67,7 +67,7 @@ const CODING_SETUP: Record<CodingDriverKind, {
   },
   pi: {
     command: "pi",
-    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installPackage: "@earendil-works/pi-coding-agent@1.6.0",
     installFlags: "--ignore-scripts",
   },
 };

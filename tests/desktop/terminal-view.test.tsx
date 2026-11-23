@@ -418,6 +418,30 @@ describe("TerminalView session switching", () => {
     expect(attachMock).toHaveBeenCalledTimes(1);
   });
 
+  it("claims its profile's keys from the main process while focused, so window arrangement keys reach pane focus", async () => {
+    const invoke = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("operator", { invoke, on: vi.fn(() => () => undefined) });
+    const get = vi.fn(async () => ({ preferences: { keyboard: { profile: "standard", overrides: {} } } }));
+    useConnection.setState({ api: { get, put: vi.fn(), post: vi.fn() } as never });
+    const { container, unmount } = render(<TerminalView sessionName="alpha" active />);
+    const events = attachMock.mock.calls.at(-1)![1] as ShellSocketEvents;
+    act(() => events.onState("attached"));
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    const textarea = document.createElement("textarea");
+    container.querySelector<HTMLElement>("[data-terminal-viewport] .xterm")!.append(textarea);
+    const claimCalls = () => invoke.mock.calls.filter(([channel]) => channel === "shortcuts:set-terminal-claims") as unknown as
+      Array<[string, { bindings: string[] }]>;
+
+    act(() => textarea.focus());
+    await waitFor(() => expect(claimCalls().at(-1)?.[1].bindings).toContain("Ctrl+Shift+Left"));
+    expect(claimCalls().at(-1)![1].bindings).toContain("Ctrl+Shift+Enter");
+    act(() => textarea.blur());
+    expect(claimCalls().at(-1)![1].bindings).toEqual([]);
+    act(() => textarea.focus());
+    unmount();
+    expect(claimCalls().at(-1)![1].bindings).toEqual([]);
+  });
+
   it("releases keyboard focus when a retained terminal becomes inactive", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" active />);
     const terminal = createdTerminals.at(-1)!;

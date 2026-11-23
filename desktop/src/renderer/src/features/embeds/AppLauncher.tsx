@@ -8,13 +8,14 @@ import {
 } from "@matrix-os/ui/share";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import { countGridColumns, isLauncherGridKey, launcherGridKeyNavigates, nextLauncherGridIndex } from "./launcher-grid-navigation";
 import {
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
@@ -137,6 +138,9 @@ export default function AppLauncher({
   const [contextError, setContextError] = useState<string | null>(null);
   const [placementPending, setPlacementPending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const gridId = useId();
+  const tileId = (index: number) => `${gridId}-tile-${index}`;
 
   // Launcher behavior: focus the search immediately like a desktop launcher.
   useEffect(() => {
@@ -247,14 +251,24 @@ export default function AppLauncher({
     openInstalled(entry.app);
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const moveActive = (next: number) => {
+    setActive(next);
+    gridRef.current?.children[next]?.scrollIntoView({ block: "nearest" });
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (filtered.length === 0) return;
-    if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+    if (presentation === "launchpad" && isLauncherGridKey(e.key)) {
+      if (!launcherGridKeyNavigates(e.key, e.currentTarget)) return;
       e.preventDefault();
-      setActive((i) => (i + 1) % filtered.length);
+      const offsetTops = Array.from(gridRef.current?.children ?? [], (tile) => (tile as HTMLElement).offsetTop);
+      moveActive(nextLauncherGridIndex({ index: activeIndex, count: filtered.length, columns: countGridColumns(offsetTops), key: e.key }));
+    } else if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+      e.preventDefault();
+      moveActive((activeIndex + 1) % filtered.length);
     } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
       e.preventDefault();
-      setActive((i) => (i - 1 + filtered.length) % filtered.length);
+      moveActive((activeIndex - 1 + filtered.length) % filtered.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
       const entry = filtered[activeIndex];
@@ -323,6 +337,8 @@ export default function AppLauncher({
             onKeyDown={onKeyDown}
             placeholder="Search apps…"
             aria-label="Search apps"
+            aria-controls={filtered.length > 0 ? gridId : undefined}
+            aria-activedescendant={filtered.length > 0 ? tileId(activeIndex) : undefined}
             className="h-11 w-full bg-transparent text-md outline-none"
             style={{ color: "var(--text-primary)", boxShadow: "none", borderRadius: 0 }}
           />
@@ -342,12 +358,13 @@ export default function AppLauncher({
         {filtered.length === 0 && !installedNotice && !shared.loading ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
-          <div data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
+          <div ref={gridRef} id={gridId} data-testid="desktop-launcher-grid" className={`grid ${presentation === "launchpad" ? "grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-x-5 gap-y-6" : "grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3"}`}>
             {filtered.map((entry, i) => {
               const highlighted = i === activeIndex;
               return (
                 <button
                   key={entry.key}
+                  id={tileId(i)}
                   type="button"
                   aria-label={sharedTileLabel(entry.name, organizationFor(entry), entry.type === "shared" && seen.isNew(entry.target.scopeId))}
                   data-launchpad-interactive={presentation === "launchpad" || undefined}

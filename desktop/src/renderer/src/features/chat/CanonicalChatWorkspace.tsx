@@ -2,7 +2,7 @@ import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-sc
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
-import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder, withPendingCanonicalTurn } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
@@ -416,7 +416,7 @@ function CanonicalChatWorkspaceContent({
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
   const transcript = controller.detail ? canonicalChatPresentation({
-    ...controller.detail,
+    ...withPendingCanonicalTurn(controller.detail, controller.pendingTurn),
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const pendingTool = pendingSupervisedTool(transcript);

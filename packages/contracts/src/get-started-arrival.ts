@@ -169,7 +169,9 @@ export interface GettingStartedTry {
 export type GettingStartedRow =
   | ({ kind: "step"; connect?: string; detail?: string; try?: GettingStartedTry } & GettingStartedStep)
   | { kind: "tool"; id: `tool:${string}`; label: string; status: GettingStartedStepStatus; service: string; connect?: string; try?: GettingStartedTry }
-  | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId; create?: true };
+  | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId; create?: true }
+  /** Electron Desktop only (specs/653): learn the keyboard shortcuts and where to change them. */
+  | { kind: "shortcuts"; id: "shortcuts"; label: string; status: GettingStartedStepStatus };
 
 /**
  * Each added bot's chat status: "missing" when its creation failed (it can be created again),
@@ -212,6 +214,22 @@ export function gettingStartedRows(
     rows.push({ kind: "bot", id: `bot:${recipeId}`, label: `Chat with ${bot.label}`, status: status ?? "incomplete", recipeId });
   }
   return { rows, completedCount: rows.filter((row) => row.status === "complete").length, total: rows.length };
+}
+
+export const KEYBOARD_SHORTCUTS_STEP_LABEL = "Learn keyboard shortcuts";
+
+type GettingStartedRowsResult = ReturnType<typeof gettingStartedRows>;
+
+/**
+ * Electron Desktop adds a last step for its keyboard shortcuts (specs/653); `seen` is whether
+ * Settings → Shortcuts has been opened on this computer. The step is a tip, not setup: when
+ * every other row is done and it is not, it is left out, so it never keeps the checklist open
+ * or brings back a checklist the owner already finished.
+ */
+export function withKeyboardShortcutsStep(result: GettingStartedRowsResult, { seen }: { seen: boolean }): GettingStartedRowsResult {
+  if (!seen && result.rows.every((row) => row.status === "complete")) return result;
+  const row: GettingStartedRow = { kind: "shortcuts", id: "shortcuts", label: KEYBOARD_SHORTCUTS_STEP_LABEL, status: seen ? "complete" : "incomplete" };
+  return { rows: [...result.rows, row], completedCount: result.completedCount + (seen ? 1 : 0), total: result.total + 1 };
 }
 
 /** Stable reorder: listed ids first in that order, everything else after in its original order. */

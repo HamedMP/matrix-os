@@ -10,6 +10,7 @@ import {
   emptyGettingStartedSnapshot,
   gettingStartedRows,
   mergeTrySuggestion,
+  withKeyboardShortcutsStep,
 } from "../../packages/contracts/src/index.js";
 
 describe("personalised arrival order", () => {
@@ -231,5 +232,44 @@ describe("widget tasks from the owner's choices", () => {
     // An edit after the suggestion is the owner's text now.
     draft = mergeTrySuggestion("my idea\n\nD, and more", draft, "E");
     expect(draft.text).toBe("my idea\n\nD, and more\n\nE");
+  });
+});
+
+// Electron Desktop only (specs/653): the keyboard shortcuts step joins the checklist there.
+describe("Keyboard shortcuts step", () => {
+  const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
+  function rows(done: boolean) {
+    return gettingStartedRows(deriveGettingStartedSnapshot({
+      github: fulfilled({ ready: done }),
+      integrations: fulfilled(done ? [{ id: "c1", service: "gmail" }, { id: "c2", service: "google_calendar" }] : []),
+      agents: fulfilled({ agents: done ? [{ agent: "codex", status: "available" }] : [] }),
+      projects: fulfilled({ projects: done ? [{}] : [] }),
+      chats: fulfilled({ items: [] }),
+      billing: fulfilled({ access: { runtimeProxyAllowed: true } }),
+    }), null);
+  }
+
+  it("is the last row and counts toward setup while other steps are unfinished", () => {
+    const result = withKeyboardShortcutsStep(rows(false), { seen: false });
+    expect(result.rows.at(-1)).toEqual({ kind: "shortcuts", id: "shortcuts", label: "Learn keyboard shortcuts", status: "incomplete" });
+    expect({ completedCount: result.completedCount, total: result.total }).toEqual({ completedCount: 1, total: 6 });
+  });
+
+  it("is complete once Settings → Shortcuts has been opened", () => {
+    const result = withKeyboardShortcutsStep(rows(false), { seen: true });
+    expect(result.rows.at(-1)?.status).toBe("complete");
+    expect({ completedCount: result.completedCount, total: result.total }).toEqual({ completedCount: 2, total: 6 });
+  });
+
+  it("never keeps a finished checklist open by itself", () => {
+    const finished = rows(true);
+    expect(finished.completedCount).toBe(finished.total);
+    expect(withKeyboardShortcutsStep(finished, { seen: false })).toEqual(finished);
+    const seen = withKeyboardShortcutsStep(finished, { seen: true });
+    expect({ completedCount: seen.completedCount, total: seen.total }).toEqual({ completedCount: 6, total: 6 });
+  });
+
+  it("is not part of the shared rows, so other surfaces never show it", () => {
+    expect(rows(false).rows.some((row) => row.kind === "shortcuts")).toBe(false);
   });
 });
