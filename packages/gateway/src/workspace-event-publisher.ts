@@ -1,7 +1,6 @@
 import { AgentThreadSummarySchema, type AgentThreadSummary } from "@matrix-os/contracts";
 import type { PreviewRecord } from "./preview-manager.js";
 import type { WorkspaceError } from "./project-manager.js";
-import type { TaskRecord } from "./task-manager.js";
 import type { WorkspaceSessionView } from "./agent-session-manager.js";
 import type { createWorkspaceEventStore } from "./workspace-events.js";
 
@@ -85,30 +84,6 @@ export function createWorkspaceEventPublisher(options: {
           threadId: thread.id,
           updatedAt: thread.updatedAt,
         },
-      });
-    },
-
-    async publishTaskCreated(task: Pick<TaskRecord, "id" | "projectSlug" | "title" | "status">): Promise<void> {
-      await publish({
-        type: "task.created",
-        scope: { projectSlug: task.projectSlug, taskId: task.id },
-        payload: { title: task.title, status: task.status },
-      });
-    },
-
-    async publishTaskUpdated(task: Pick<TaskRecord, "id" | "projectSlug" | "status" | "updatedAt">): Promise<void> {
-      await publish({
-        type: "task.updated",
-        scope: { projectSlug: task.projectSlug, taskId: task.id },
-        payload: { status: task.status, updatedAt: task.updatedAt },
-      });
-    },
-
-    async publishTaskDeleted(projectSlug: string, taskId: string): Promise<void> {
-      await publish({
-        type: "task.deleted",
-        scope: { projectSlug, taskId },
-        payload: {},
       });
     },
 
