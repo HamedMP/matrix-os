@@ -201,34 +201,42 @@ export function applyEdit(data: DocData, next: readonly SideItem[], options: Edi
     if (op.type === "delete" || op.type === "moveFrom") {
       const made: Item[] = [];
       let dropped: string | null = null;
-      let before: Item | undefined;
+      // Where the first new deletion landed in `out`; what follows it there are the
+      // new deletions and older pending deletions that sit between them.
+      let first = -1;
       takeOld(length, (item, piece) => {
         if (item.a === null) {
           if (mine(item.c, "insert")) dropped = item.c;
           return;
         }
         const deleted: Item = { k: item.k, t: piece, a: item.a, b: null, c: null };
-        if (made.length === 0) before = out[out.length - 1];
+        if (first === -1) first = out.length;
         made.push(deleted);
         out.push(deleted);
       });
       retracted = dropped;
       createdDelete = null;
       if (made.length === 0) continue;
-      let id: string;
-      const after = oOff === 0 ? old[oi] : undefined;
+      let id: string | null = null;
       if (op.type === "moveFrom") {
         id = create("moveFrom");
         const move = moves.get(op.moveId as string) ?? { from: null, to: null };
         move.from = id;
         moves.set(op.moveId as string, move);
-      } else if (before && before.b === null && mine(before.c, "delete")) {
-        id = before.c as string;
-      } else if (after && after.b === null && mine(after.c, "delete")) {
-        id = after.c as string;
       } else {
-        id = create("delete");
-        createdDelete = id;
+        // A deletion that touches a pending deletion by the same author continues it.
+        passDeleted();
+        for (let at = first - 1; at < out.length; at += 1) {
+          const neighbour = out[at];
+          if (neighbour && neighbour.b === null && neighbour.c !== null && mine(neighbour.c, "delete")) {
+            id = neighbour.c;
+            break;
+          }
+        }
+        if (id === null) {
+          id = create("delete");
+          createdDelete = id;
+        }
       }
       for (const item of made) item.c = id;
       continue;
@@ -251,9 +259,14 @@ export function applyEdit(data: DocData, next: readonly SideItem[], options: Edi
       id = after.c as string;
     } else {
       id = create("insert");
-      if (createdDelete !== null) {
-        (changes.get(id) as ChangeRecord).pairedWith = createdDelete;
-        (changes.get(createdDelete) as ChangeRecord).pairedWith = id;
+      // A replacement: the deletion just made, or an unpaired pending one by the same author right before.
+      let deletion = createdDelete;
+      if (deletion === null && before.b === null && mine(before.c, "delete") && changes.get(before.c as string)?.pairedWith === null) {
+        deletion = before.c;
+      }
+      if (deletion !== null) {
+        (changes.get(id) as ChangeRecord).pairedWith = deletion;
+        (changes.get(deletion) as ChangeRecord).pairedWith = id;
       }
     }
     takeNew(length, (fresh, piece) => {

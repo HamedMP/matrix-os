@@ -254,7 +254,7 @@ export const diffWords: DiffWords = (a, b, options) => {
   shiftBoundaries(al, it.table);
   findMoves(al, it.table, resolved, complete, granularity === "word" ? MAX_ABSORBED_WORDS : Number.MAX_SAFE_INTEGER);
   renumberMoves(al);
-  return readOps(al).map((op: TokenOp): DiffOp => {
+  const ops = readOps(al).map((op: TokenOp): DiffOp => {
     const aStart = aOff[op.aStart] as number;
     const aEnd = aOff[op.aEnd] as number;
     const bStart = bOff[op.bStart] as number;
@@ -270,7 +270,81 @@ export const diffWords: DiffWords = (a, b, options) => {
       moveId: op.move > 0 ? `m${op.move}` : null,
     };
   });
+  return granularity === "word" ? shareSpace(ops, a) : ops;
 };
+
+/**
+ * A whitespace run is one token, so `"a b"` against `"a  b"` replaces the
+ * run. Here the whitespace that a deletion and the insertion after it share
+ * at their start and end becomes equal text, leaving only the real change.
+ */
+function shareSpace(ops: DiffOp[], a: string): DiffOp[] {
+  const out: DiffOp[] = [];
+  const equal = (aStart: number, aEnd: number, bStart: number, bEnd: number): void => {
+    if (aEnd === aStart) return;
+    const last = out[out.length - 1];
+    if (last && last.type === "equal") {
+      last.aEnd = aEnd;
+      last.bEnd = bEnd;
+      last.text = a.slice(last.aStart, aEnd);
+    } else {
+      out.push({ type: "equal", text: a.slice(aStart, aEnd), aStart, aEnd, bStart, bEnd, moveId: null });
+    }
+  };
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i] as DiffOp;
+    const next = ops[i + 1];
+    if (op.type === "equal") {
+      equal(op.aStart, op.aEnd, op.bStart, op.bEnd);
+      continue;
+    }
+    if (op.type !== "delete" || !next || next.type !== "insert") {
+      out.push(op);
+      continue;
+    }
+    const gone = op.text;
+    const come = next.text;
+    const shortest = Math.min(gone.length, come.length);
+    let head = 0;
+    while (head < shortest && gone[head] === come[head] && SPACE.test(gone[head] as string)) head += 1;
+    let tail = 0;
+    while (tail < shortest - head && gone[gone.length - 1 - tail] === come[come.length - 1 - tail] && SPACE.test(gone[gone.length - 1 - tail] as string)) {
+      tail += 1;
+    }
+    if (head === 0 && tail === 0) {
+      out.push(op);
+      continue;
+    }
+    equal(op.aStart, op.aStart + head, next.bStart, next.bStart + head);
+    if (gone.length > head + tail) {
+      out.push({
+        type: "delete",
+        text: gone.slice(head, gone.length - tail),
+        aStart: op.aStart + head,
+        aEnd: op.aEnd - tail,
+        bStart: next.bStart + head,
+        bEnd: next.bStart + head,
+        moveId: null,
+      });
+    }
+    if (come.length > head + tail) {
+      out.push({
+        type: "insert",
+        text: come.slice(head, come.length - tail),
+        aStart: op.aEnd - tail,
+        aEnd: op.aEnd - tail,
+        bStart: next.bStart + head,
+        bEnd: next.bEnd - tail,
+        moveId: null,
+      });
+    }
+    equal(op.aEnd - tail, op.aEnd, next.bEnd - tail, next.bEnd);
+    i += 1;
+  }
+  return out;
+}
+
+const SPACE = /\s/;
 
 export const diffSequences: DiffSequences = (a, b, options) => {
   if (!Array.isArray(a) || !Array.isArray(b)) throw new OfficeError("invalid_argument", "diffSequences compares two arrays");

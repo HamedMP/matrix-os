@@ -328,6 +328,48 @@ describe("applyUserEdit (text)", () => {
     expect(doc.toFinalText()).toBe("one two three four");
   });
 
+  it("keeps one deletion while the same person backspaces through a sentence", () => {
+    const doc = createRedline("The quick brown fox", "The quick brown fox", ANN);
+    for (const text of ["The quick brown fo", "The quick brown f", "The quick brown ", "The quick brown", "The quick brow", "The quick"]) {
+      applyUserEdit(doc, text, BOB);
+      expect(doc.toFinalText()).toBe(text);
+      expect(doc.listChanges().filter((c) => c.kind === "delete").map((c) => c.id)).toEqual(["c1"]);
+    }
+    expect(doc.listChanges()).toEqual([
+      { id: "c1", kind: "delete", text: " brown fox", author: "Bob", date: BOB.date, pairedWith: null },
+    ]);
+  });
+
+  it("keeps a replacement as one pair while its new word is typed letter by letter", () => {
+    const doc = createRedline("Meet on Monday at noon", "Meet on Monday at noon", ANN);
+    const pairs: string[] = [];
+    for (const text of ["Meet on Monda at noon", "Meet on  at noon", "Meet on T at noon", "Meet on Tu at noon", "Meet on Tuesday at noon"]) {
+      applyUserEdit(doc, text, BOB);
+      expect(doc.toFinalText()).toBe(text);
+      expect(doc.toText("original")).toBe("Meet on Monday at noon");
+      pairs.push(doc.listChanges().map((c) => `${c.id}:${c.kind}:${c.text}`).join(" "));
+    }
+    expect(pairs).toEqual([
+      "c1:delete:Monday c2:insert:Monda",
+      "c1:delete:Monday",
+      "c1:delete:Monday c3:insert:T",
+      "c1:delete:Monday c3:insert:Tu",
+      "c1:delete:Monday c3:insert:Tuesday",
+    ]);
+    const [gone, come] = doc.listChanges();
+    expect(gone?.pairedWith).toBe(come?.id);
+    expect(come?.pairedWith).toBe(gone?.id);
+  });
+
+  it("keeps the id of an insertion that is edited in the middle", () => {
+    const doc = createRedline("Hello world", "Hello world", ANN);
+    for (const text of ["Hello bg world", "Hello big world", "Hello big bad world"]) {
+      applyUserEdit(doc, text, BOB);
+      expect(doc.listChanges().map((c) => c.id)).toEqual(["c1"]);
+    }
+    expect(doc.listChanges()[0]?.text).toBe("big bad ");
+  });
+
   it("keeps other people's pending deletions in place", () => {
     const doc = createRedline("alpha beta gamma", "alpha gamma", ANN);
     applyUserEdit(doc, "alpha gamma delta", BOB);

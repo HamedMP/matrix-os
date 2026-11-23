@@ -175,6 +175,15 @@ describe("diffWords: natural reading", () => {
     expect(brief(diffWords("the quick brown fox", "the quick fox"))).toEqual(["=the quick ", "-brown ", "=fox"]);
   });
 
+  it("keeps the whitespace a replacement has in common", () => {
+    expect(brief(diffWords("one two", "one  two"))).toEqual(["=one ", "+ ", "=two"]);
+    expect(brief(diffWords("Meet on Monda at noon", "Meet on  at noon"))).toEqual(["=Meet on ", "-Monda", "= at noon"]);
+    expect(brief(diffWords("a\n\nb", "a\nb"))).toEqual(["=a\n", "-\n", "=b"]);
+    const ops = diffWords("end.  Next", "end.\tNext");
+    expectValidDiff("end.  Next", "end.\tNext", ops);
+    expect(brief(ops)).toEqual(["=end.", "-  ", "+\t", "=Next"]);
+  });
+
   it("aligns a repeated-word insertion to the word boundary", () => {
     const ops = diffWords("we will will not", "we will will will not");
     expectValidDiff("we will will not", "we will will will not", ops);
