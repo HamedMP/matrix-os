@@ -336,8 +336,10 @@ running the branch locally with your own credentials. Only start it for PRs
 whose code you would run that way. Its shell is served on the production origin
 until spec 530 isolates Preview origins (#1951).
 
-Limits: two active Private Previews per person by default
-(`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most four) and one per PR. Starting the same
+Limits: eight active Private Previews per person by default
+(`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most 16) and one per PR. Shared `pr-<N>`
+previews are capped at 24 per owning account
+(`CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT`, at most 48). Starting the same
 PR again shows the existing machine, and points to `matrix preview update` when
 it is on an older bundle; a failed one must be destroyed first. Private Previews
 cannot be recovered; destroy and start again.

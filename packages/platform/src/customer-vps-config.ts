@@ -42,10 +42,10 @@ export interface CustomerVpsConfig {
 }
 
 const DEFAULT_POSTHOG_PUBLIC_HOST = 'https://eu.posthog.com';
-const DEFAULT_PREVIEW_PROVISIONING_LIMIT = 8;
-const MAX_PREVIEW_PROVISIONING_LIMIT = 16;
-const DEFAULT_PRIVATE_PREVIEW_LIMIT = 2;
-const MAX_PRIVATE_PREVIEW_LIMIT = 4;
+const DEFAULT_PREVIEW_PROVISIONING_LIMIT = 24;
+const MAX_PREVIEW_PROVISIONING_LIMIT = 48;
+const DEFAULT_PRIVATE_PREVIEW_LIMIT = 8;
+const MAX_PRIVATE_PREVIEW_LIMIT = 16;
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
