@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RedlineChange } from "../../../../_shared/office-engine/redline/index";
-import type { ProposalRegistry } from "../../agent/proposals";
+import type { DraftProposal, ProposalRegistry } from "../../agent/proposals";
 import { ASSISTANT_AUTHOR, textToBodyHtml } from "../../compose/assistant";
 import { ComposeBody, type EditAuthor } from "../../compose/compose-body";
 import { hasTrackedMarkup } from "../../compose/redline-body";
@@ -48,23 +48,31 @@ interface Options {
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** The agent's text in `bodyHtml` as tracked changes against the owner's text before it, or null when nothing differs. */
+function proposalRedline(proposal: DraftProposal, bodyHtml: string, now: () => number): ComposeBody | null {
+  if (!bodyHtml) return null;
+  const fresh = ComposeBody.fromDraftHtml(proposal.original ? textToBodyHtml(proposal.original) : "", iso(now()));
+  fresh.proposeRewrite(bodyHtml, { author: ASSISTANT_AUTHOR, date: iso(proposal.createdAt || now()) });
+  return fresh.pendingCount() > 0 ? fresh : null;
+}
+
+const sameText = (a: string, b: string) => a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+
 /** The body a composer opens with: the live session, or the stored HTML, or an agent proposal shown as a redline. */
-function openInitialBody(localId: string, bodyHtml: string, now: () => number, proposals: ProposalRegistry | undefined): ComposeBody {
+function openInitialBody(localId: string, bodyHtml: string, now: () => number, proposals: ProposalRegistry | undefined): { body: ComposeBody; proposalId: string | null } {
   const opened = peekBody(localId, bodyHtml, iso(now()));
   const proposal = opened.reused ? undefined : proposals?.forDraft(localId);
-  if (proposal && !opened.body.hasRedline() && bodyHtml) {
-    const fresh = ComposeBody.fromDraftHtml(proposal.original ? textToBodyHtml(proposal.original) : "", iso(now()));
-    fresh.proposeRewrite(bodyHtml, { author: ASSISTANT_AUTHOR, date: iso(proposal.createdAt || now()) });
-    if (fresh.pendingCount() > 0) return fresh;
-  }
-  return opened.body;
+  const redline = proposal && !opened.body.hasRedline() ? proposalRedline(proposal, bodyHtml, now) : null;
+  return redline ? { body: redline, proposalId: proposal!.id } : { body: opened.body, proposalId: proposal?.id ?? null };
 }
 
 export function useComposeBody({ store, draft, ownerName, now, proposals }: Options): ComposeBodyApi {
   const localId = draft.localId;
   // Computed once, without side effects; the mount effect below records it in the live sessions.
-  const [initialBody] = useState(() => openInitialBody(localId, draft.draft.bodyHtml, now, proposals));
-  const bodyRef = useRef<ComposeBody>(initialBody);
+  const [initial] = useState(() => openInitialBody(localId, draft.draft.bodyHtml, now, proposals));
+  const bodyRef = useRef<ComposeBody>(initial.body);
+  /** The proposal already shown (or deliberately not shown) in this composer. */
+  const shownProposal = useRef<string | null>(initial.proposalId);
   const writtenRef = useRef(draft.draft.bodyHtml);
   const past = useRef<string[]>([]);
   const future = useRef<string[]>([]);
@@ -123,6 +131,27 @@ export function useComposeBody({ store, draft, ownerName, now, proposals }: Opti
     }
     commit(true);
   }, [incoming, commit, now, snapshot, store, localId]);
+
+  // The agent wrote into the draft before this composer opened and recorded its proposal afterwards:
+  // show its text as tracked changes, unless the owner has changed the text since.
+  useEffect(() => {
+    if (!proposals) return undefined;
+    const check = () => {
+      const proposal = proposals.forDraft(localId);
+      if (!proposal || shownProposal.current === proposal.id) return;
+      shownProposal.current = proposal.id;
+      const current = bodyRef.current;
+      if (current.hasRedline() || !sameText(current.finalText(), proposal.proposed)) return;
+      const redline = proposalRedline(proposal, current.draftBody().bodyHtml, now);
+      if (!redline) return;
+      snapshot(true);
+      redline.setSuggesting(current.suggesting());
+      bodyRef.current = redline;
+      commit(true);
+    };
+    check();
+    return proposals.subscribe(check);
+  }, [proposals, localId, commit, now, snapshot]);
 
   const restore = (html: string) => {
     const restored = ComposeBody.fromDraftHtml(html, iso(now()));

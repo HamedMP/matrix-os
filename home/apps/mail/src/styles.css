@@ -8,6 +8,13 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .mail-app .oui-frame__main { position: relative; overflow: hidden; }
 .mail-split { height: 100%; }
 .mail-split > .oui-split__pane { overflow: hidden; }
+/* A narrow window shows the list or the open conversation, not both squeezed side by side. */
+@media (max-width: 900px) {
+  .mail-split--content { grid-template-columns: minmax(0, 1fr) !important; }
+  .mail-split--content > .oui-split__handle { display: none; }
+  .mail-app:not(.has-thread) .mail-split--content > .oui-split__pane:last-child { display: none; }
+  .mail-app.has-thread .mail-split--content > .oui-split__pane:first-child { display: none; }
+}
 @keyframes mail-spin { to { transform: rotate(360deg); } }
 .mail-spin { animation: mail-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .mail-spin { animation: none; } }

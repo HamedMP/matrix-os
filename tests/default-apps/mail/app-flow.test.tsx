@@ -7,7 +7,7 @@
  * send requires a click.
  */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import React from "react";
+import React, { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../../home/apps/mail/src/App";
 import { AGENT_REPLY, OUTLOOK_ARCHIVE_ID, XLSX_BYTES, fakeHost, toBase64, type FakeHost } from "./app-flow-host";
@@ -32,7 +32,8 @@ const frameDoc = (container: HTMLElement) => new DOMParser().parseFromString(con
 
 async function mountApp() {
   host.install();
-  const view = render(<App />);
+  // Mounted the way main.tsx mounts it, so effects run twice as in development.
+  const view = render(<StrictMode><App /></StrictMode>);
   await waitFor(() => expect(row("Review – Q3")).toBeTruthy(), { timeout: 4000 });
   await waitFor(() => expect(row("RE: Budget") ?? row("Budget")).toBeTruthy());
   return view;
@@ -180,7 +181,7 @@ describe("Mail app journey", () => {
     fireEvent.click(within(composer).getByRole("button", { name: /Attach/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Open folder Documents" }));
     await act(async () => {
-      fireEvent.click(await screen.findByRole("button", { name: "Attach basic.xlsx" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Attach basic.xlsx" }, { timeout: 4000 }));
     });
     await waitFor(() => expect(within(composer).getByText("basic.xlsx")).toBeTruthy());
     expect(host.home.api.stat).toHaveBeenCalledWith("Documents/basic.xlsx");

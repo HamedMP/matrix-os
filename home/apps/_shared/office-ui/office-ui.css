@@ -44,6 +44,12 @@
 
 /* App frame */
 .oui-frame { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; height: 100vh; height: 100dvh; background: var(--app-bg); }
+/* Fixed rows, so the body keeps the stretching row when the toolbar or banner is absent. */
+.oui-frame__titlebar { grid-row: 1; }
+.oui-frame__toolbar { grid-row: 2; }
+.oui-frame__banner { grid-row: 3; }
+.oui-frame__body { grid-row: 4; }
+.oui-frame__status { grid-row: 5; }
 .oui-frame__titlebar { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border-bottom: 1px solid var(--oui-line); background: var(--app-card); }
 .oui-frame__title-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; color: var(--oui-accent); }
 .oui-frame__title { margin: 0; flex: 1; min-width: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -161,7 +161,7 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
   return (
     <MailUiContext.Provider value={ui}>
       <AppFrame
-        className="mail-app"
+        className={state.openThread ? "mail-app has-thread" : "mail-app"}
         title="Mail"
         titleIcon={<Mail size={18} />}
         titleActions={titleActions}
@@ -185,7 +185,7 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
           first={<FolderRail state={state} />}
           second={(
             <SplitPane
-              className="mail-split"
+              className="mail-split mail-split--content"
               label="Resize conversation list"
               size={layout.list}
               minSize={LAYOUT_LIMITS.list.min}
