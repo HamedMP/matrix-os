@@ -62,7 +62,9 @@ export interface ProjectBoardClient {
   listComments(taskId: string): Promise<readonly TaskComment[]>;
   addComment(taskId: string, body: string): Promise<TaskComment>;
   listActivity(taskId: string): Promise<readonly TaskActivity[]>;
-  startSession(taskId: string, input: StartSessionInput): Promise<TaskSession>;
+  /** Prepare the task's own chat (`kind: "chat"`) or attach a new terminal (`kind: "terminal"`). */
+  startWork(taskId: string, input: StartSessionInput): Promise<StartedTaskWork>;
+  /** Terminal tabs of the project that no task owns yet. */
   listAttachableSessions(): Promise<readonly AttachableSession[]>;
   attachSession(taskId: string, session: AttachableSession): Promise<TaskSession>;
   detachSession(taskId: string, ref: string): Promise<ProjectTask>;
@@ -73,6 +75,17 @@ export interface ProjectBoardClient {
   updateSettings(input: UpdateBoardSettingsInput): Promise<BoardSettings>;
   /** Returns an unsubscribe function. */
   subscribe(listener: (event: ProjectBoardEvent) => void): () => void;
+}
+
+/**
+ * What Start work did: the task after it, the attached terminal (null for a
+ * chat start, whose chat is `task.chatId`), and the first message when the
+ * server did not send it (no model selected yet).
+ */
+export interface StartedTaskWork {
+  task: ProjectTask;
+  session: TaskSession | null;
+  firstMessage?: string;
 }
 
 export const PROJECT_BOARD_EVENT_TYPES = ["task.created", "task.updated", "task.moved", "task.deleted", "task.comment_added"] as const;

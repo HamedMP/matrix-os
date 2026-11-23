@@ -124,9 +124,15 @@ export function matchesBoardFilter(task: ProjectTask, filter: BoardFilter): bool
 // ---------------------------------------------------------------------------
 // Card facts.
 
-/** The card badge: Herdr's roll-up over the task's sessions (blocked and error first). */
-export function rollUpTaskAgentStatus(sessions: readonly TaskSession[]): TaskAgentStatus | undefined {
-  return rollUpTerminalStatus(sessions.map((session) => session.agentStatus));
+/**
+ * The card badge: Herdr's roll-up over the task's chat and its terminals
+ * (blocked and error first). A chat that has not run yet adds nothing, so a
+ * fresh card carries no badge.
+ */
+export function rollUpTaskAgentStatus(task: Pick<ProjectTask, "chatStatus" | "sessions">): TaskAgentStatus | undefined {
+  const statuses = task.sessions.map((session: TaskSession) => session.agentStatus);
+  if (task.chatStatus !== "idle") statuses.unshift(task.chatStatus);
+  return rollUpTerminalStatus(statuses);
 }
 
 export type TaskListColumn = "key" | "title" | "status" | "priority" | "updated";

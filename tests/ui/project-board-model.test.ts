@@ -3,20 +3,20 @@ import {
   EMPTY_BOARD_FILTER, applyPendingMoves, boardFilterIsActive, groupTasksByStatus, keyboardMoveTarget, matchesBoardFilter,
   planMove, rollUpTaskAgentStatus, sortTasksForList,
 } from "../../packages/ui/src/project-board/board-model";
-import type { ProjectTask, TaskSession } from "../../packages/ui/src/project-board/types";
+import type { ProjectTask, TaskAgentStatus, TaskSession } from "../../packages/ui/src/project-board/types";
 
 function task(id: string, overrides: Partial<ProjectTask> = {}): ProjectTask {
   return {
     id, projectId: "proj_1", number: Number(id.replace(/\D/g, "")) || 1, key: `MOS-${Number(id.replace(/\D/g, "")) || 1}`, title: `Task ${id}`, description: "",
     status: "todo", priority: "none", rank: "a", assignee: null, labels: [], parentTaskId: null, blockedBy: [],
-    dueAt: null, worktreeId: null, branch: null, pullRequest: null, externalLink: null, sessions: [], commentCount: 0,
+    dueAt: null, worktreeId: null, branch: null, pullRequest: null, externalLink: null, chatId: `chat_${id}`, chatStatus: "idle", sessions: [], commentCount: 0,
     createdBy: "user:owner", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
     archivedAt: null, revision: 1, ...overrides,
   };
 }
 
 function session(agentStatus: TaskSession["agentStatus"]): TaskSession {
-  return { ref: `chat_${agentStatus}`, kind: "chat", title: "Chat", role: "main", agentStatus };
+  return { ref: `term.main.tab_${agentStatus}`, kind: "terminal", title: "Terminal", role: "main", agentStatus };
 }
 
 describe("groupTasksByStatus", () => {
@@ -105,16 +105,22 @@ describe("matchesBoardFilter", () => {
 });
 
 describe("rollUpTaskAgentStatus", () => {
-  it("shows the most urgent session: blocked > done > working > idle", () => {
-    expect(rollUpTaskAgentStatus([])).toBeUndefined();
-    expect(rollUpTaskAgentStatus([session("idle")])).toBe("idle");
-    expect(rollUpTaskAgentStatus([session("idle"), session("working")])).toBe("working");
-    expect(rollUpTaskAgentStatus([session("working"), session("done")])).toBe("done");
-    expect(rollUpTaskAgentStatus([session("done"), session("blocked"), session("working")])).toBe("blocked");
+  const of = (chatStatus: TaskAgentStatus, ...sessions: TaskSession[]) => rollUpTaskAgentStatus({ chatStatus, sessions });
+
+  it("shows the most urgent of the chat and its terminals: blocked > done > working > idle", () => {
+    expect(of("idle", session("idle"))).toBe("idle");
+    expect(of("working")).toBe("working");
+    expect(of("idle", session("idle"), session("working"))).toBe("working");
+    expect(of("working", session("done"))).toBe("done");
+    expect(of("done", session("blocked"), session("working"))).toBe("blocked");
+  });
+
+  it("adds no badge for a chat that has not run yet", () => {
+    expect(of("idle")).toBeUndefined();
   });
 
   it("treats an errored agent as needing the person like a blocked one", () => {
-    expect(rollUpTaskAgentStatus([session("done"), session("error")])).toBe("error");
+    expect(of("done", session("error"))).toBe("error");
   });
 });
 
