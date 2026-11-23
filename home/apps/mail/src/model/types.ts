@@ -42,6 +42,8 @@ export interface ThreadView {
   fromCache: boolean;
   /** Epoch ms of the last successful provider listing, or null. */
   loadedAt: number | null;
+  /** Epoch ms the owner last opened this list, for evicting old search lists. */
+  openedAt: number | null;
 }
 
 /** What the store knows about who wrote last, learned from a full thread. */
@@ -101,12 +103,24 @@ export interface OpenThreadState {
 
 export type DraftKind = "new" | "reply" | "replyAll" | "forward";
 
+/**
+ * The quoted original of a reply or forward. It is kept apart from the owner's
+ * text and appended when the draft is saved, so editing never touches it.
+ * `html` is built from the plain-text body and escaped; provider HTML is never quoted.
+ */
+export interface DraftQuote {
+  text: string;
+  html: string;
+}
+
 export interface DraftState {
   localId: string;
   accountId: string;
   kind: DraftKind;
   sourceThreadKey: ThreadKey | null;
+  /** The owner's part of the draft. Save and send use `composeDraft`, which appends `quote`. */
   draft: Draft;
+  quote: DraftQuote | null;
   /** Increases with every local edit. */
   revision: number;
   /** The revision the provider holds, 0 before the first save. */
