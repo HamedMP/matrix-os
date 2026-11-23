@@ -35,7 +35,8 @@ function useInlineImages(provider: MailProvider | undefined, message: MailMessag
     void Promise.allSettled(wanted.map(async (attachment) => {
       const content = await provider.getAttachment(message.id, attachment.id);
       const dataUrl = attachmentToDataUrl(content);
-      return dataUrl ? { name: attachment.name, dataUrl } : null;
+      const contentId = attachment.contentId ?? content.contentId;
+      return dataUrl ? { name: attachment.name, ...(contentId ? { contentId } : {}), dataUrl } : null;
     })).then((results) => {
       if (!live) return;
       const found: InlineImageSource[] = [];

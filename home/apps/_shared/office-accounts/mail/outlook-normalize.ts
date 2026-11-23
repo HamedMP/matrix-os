@@ -12,7 +12,7 @@ import {
 } from "../types/mail.js";
 import { uniqueAddresses } from "./addresses.js";
 import { asArray, asNumber, asRecord, asString } from "./bridge.js";
-import { decodeEntities, htmlToText, oneLine, stripControl } from "./text.js";
+import { cleanContentId, decodeEntities, htmlToText, oneLine, stripControl } from "./text.js";
 
 /** Id of the computed starred view. It contains a dot, so it is never a Graph id. */
 export const OUTLOOK_STARRED_ID = "virtual.flagged";
@@ -155,6 +155,8 @@ export function readGraphAttachments(data: unknown): Array<MailAttachment & { si
       size: asNumber(item.size) ?? 0,
     };
     if (item.isInline === true) attachment.inline = true;
+    const contentId = cleanContentId(item.contentId);
+    if (contentId) attachment.contentId = contentId;
     return [attachment];
   });
 }

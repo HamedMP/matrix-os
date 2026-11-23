@@ -182,3 +182,13 @@ export function stripControl(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/[\u0000-\u001f\u007f]/g, "");
 }
+
+// eslint-disable-next-line no-control-regex
+const CONTENT_ID = /^[^\s<>"\\\u0000-\u001f\u007f]{1,250}$/;
+
+/** A Content-ID header value without angle brackets, or undefined when it is missing or malformed. */
+export function cleanContentId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const bare = value.trim().replace(/^<(.*)>$/s, "$1").trim();
+  return CONTENT_ID.test(bare) ? bare : undefined;
+}

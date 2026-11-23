@@ -12,7 +12,7 @@ import {
 } from "../types/mail.js";
 import { parseAddress, parseAddressList, uniqueAddresses } from "./addresses.js";
 import { asArray, asNumber, asRecord, asString } from "./bridge.js";
-import { decodeBase64Text, decodeEncodedWords, decodeEntities, htmlToText, oneLine } from "./text.js";
+import { cleanContentId, decodeBase64Text, decodeEncodedWords, decodeEntities, htmlToText, oneLine } from "./text.js";
 
 /** Id of the computed archive folder. It cannot match a Gmail label id, so it is never sent to Gmail. */
 export const GMAIL_ARCHIVE_ID = "virtual.archive";
@@ -157,6 +157,8 @@ function attachmentOf(part: GmailPart): MailAttachment | null {
     size: part.size,
   };
   if (/^\s*inline/i.test(part.headers.get("content-disposition") ?? "") || part.headers.has("content-id")) attachment.inline = true;
+  const contentId = cleanContentId(part.headers.get("content-id")) ?? cleanContentId(part.headers.get("x-attachment-id"));
+  if (contentId) attachment.contentId = contentId;
   return attachment;
 }
 

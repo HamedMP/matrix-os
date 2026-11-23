@@ -104,6 +104,8 @@ export interface MailAttachment {
   size: number;
   /** True for an image referenced from the body rather than a listed file. */
   inline?: boolean;
+  /** The part's Content-ID without angle brackets; a body refers to it as `cid:<contentId>`. */
+  contentId?: string;
 }
 
 export interface MailMessage {
@@ -214,6 +216,8 @@ export interface AttachmentContent {
   size: number;
   /** Standard base64 (not URL-safe), with padding. Untrusted file content. */
   contentBase64: string;
+  /** The Content-ID without angle brackets, when the provider returns it with the content. */
+  contentId?: string;
 }
 
 /**

@@ -21,7 +21,7 @@ import {
 } from "./outlook-normalize.js";
 import { createMessageCache, type MailAdapterOptions } from "./provider-options.js";
 import { GRAPH_ID, GRAPH_ID_MAX, LruCache, decodeCursor, encodeCursor, mapLimit, requireId } from "./support.js";
-import { stripControl } from "./text.js";
+import { cleanContentId, stripControl } from "./text.js";
 
 const PARALLEL = 4;
 const FOLDER_PAGE = 100;
@@ -297,9 +297,10 @@ export function createOutlookProvider(options: MailAdapterOptions): MailProvider
       }
       const size = base64DecodedBytes(contentBase64);
       if (size > MAX_ATTACHMENT_READ_BYTES) throw new ProviderError("not_supported", "This attachment is too large to open here.");
+      const contentId = cleanContentId(data.contentId) ?? meta.contentId;
       return {
         name: asString(data.name) || meta.name, mimeType: asString(data.contentType) || meta.mimeType,
-        size: asNumber(data.size) ?? size, contentBase64,
+        size: asNumber(data.size) ?? size, contentBase64, ...(contentId ? { contentId } : {}),
       };
     },
 
