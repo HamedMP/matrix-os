@@ -49,6 +49,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     homeMirrorLifecycle: { mirror: null, startup: null }, syncR2: null,
     canonicalChatEventStream: null, chatRepository: service("Chat database"), closeCanonicalChatEventLifecycle: vi.fn(),
     canvasRepository: service("canvas database"), socialRoutes: service("social"), appDb: service("app database"),
+    officeDocuments: service("office documents"),
     platformDb: service("platform database"), posthogErrorTracker: service("telemetry"), server: service("HTTP"),
   };
   // Exercise the actual production teardown sequence without booting a gateway.
