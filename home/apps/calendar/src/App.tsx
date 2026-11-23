@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { CalendarApp } from "./ui/CalendarApp";
-import { createAppStore, startAppStore } from "./ui/connect";
+import { createAppRuntime, startAppStore } from "./ui/connect";
 
 /** Calendar app entry: one store per window, loaded once, watching agent proposals. */
 export default function App() {
-  const [store] = useState(createAppStore);
+  const [runtime] = useState(createAppRuntime);
+  const { store, getFreeBusy } = runtime;
   useEffect(() => startAppStore(store), [store]);
-  return <CalendarApp store={store} />;
+  return <CalendarApp store={store} getFreeBusy={getFreeBusy} />;
 }

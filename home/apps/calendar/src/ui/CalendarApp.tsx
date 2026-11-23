@@ -9,7 +9,7 @@ import { AppFrame } from "../../../_shared/office-ui";
 import { instantToMs, type EventResponse } from "../../../_shared/office-accounts/types/calendar";
 import { dayKeyAt, defaultCalendar, type CalendarStore } from "../model";
 import { AgentSlot } from "./AgentSlot";
-import type { AgentHighlight } from "./agentSlotTypes";
+import type { AgentHighlight, AgentSlotPanelProps } from "./agentSlotTypes";
 import { CalendarMain } from "./CalendarMain";
 import { CalendarRail } from "./CalendarRail";
 import { CalendarToolbar } from "./CalendarToolbar";
@@ -28,6 +28,8 @@ export interface CalendarAppProps {
   store: CalendarStore;
   /** Clock for the current-time line; tests pass a fixed one. */
   now?: () => number;
+  /** Provider free-busy for the agent panel, so its lookups do not repaint the grid's overlays. */
+  getFreeBusy?: AgentSlotPanelProps["getFreeBusy"];
 }
 
 /** The element drawn for an event or proposal id, if it is on screen. */
@@ -36,7 +38,7 @@ function findDrawn(id: string): HTMLElement | undefined {
     .find((item) => item.dataset.eventId === id || item.dataset.proposalId === id);
 }
 
-export function CalendarApp({ store, now = Date.now }: CalendarAppProps) {
+export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppProps) {
   const state = useCalendarState(store);
   const currentTime = useNow(now);
   const calendarsById = useMemo(() => calendarIndex(state.calendars), [state.calendars]);
@@ -119,7 +121,7 @@ export function CalendarApp({ store, now = Date.now }: CalendarAppProps) {
   const rightPanel = state.draft
     ? <EventComposer store={store} state={state} draftState={state.draft} onApplyProposal={onProposal} />
     : agentOpen
-      ? <AgentSlot store={store} now={now} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
+      ? <AgentSlot store={store} now={now} getFreeBusy={getFreeBusy} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
       : undefined;
   const pendingCount = state.pendingEventIds.length;
 

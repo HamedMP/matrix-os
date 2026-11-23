@@ -4,9 +4,27 @@
  */
 import type { MatrixOSBridge } from "../../../_shared/matrix-os";
 import { createCalendarProvider, listCalendarAccounts } from "../../../_shared/office-accounts/calendar";
-import { createCalendarStore, createDbPersistence, createMemoryPersistence, PROPOSALS_TABLE, type CalendarStore } from "../model";
+import { ProviderError, type BusyBlock, type IsoInstant } from "../../../_shared/office-accounts/types/calendar";
+import {
+  createCalendarStore,
+  createDbPersistence,
+  createMemoryPersistence,
+  defaultCalendar,
+  PROPOSALS_TABLE,
+  type CalendarConnection,
+  type CalendarStore,
+} from "../model";
 
 type CalendarBridge = Pick<MatrixOSBridge, "service" | "integrations" | "db">;
+
+/** Free-busy for people, straight from a connected provider (read only). */
+export type FreeBusyLookup = (addresses: string[], start: IsoInstant, end: IsoInstant) => Promise<BusyBlock[]>;
+
+export interface CalendarRuntime {
+  store: CalendarStore;
+  /** Asks the account that owns the default calendar; the agent panel uses it without touching the grid. */
+  getFreeBusy: FreeBusyLookup;
+}
 
 function currentBridge(): Partial<CalendarBridge> | null {
   const host = globalThis as { MatrixOS?: Partial<CalendarBridge> };
@@ -17,16 +35,32 @@ function hasDb(bridge: Partial<CalendarBridge> | null): bridge is Partial<Calend
   return Boolean(bridge?.db && typeof bridge.db.find === "function" && typeof bridge.db.insert === "function");
 }
 
-/** The store the app runs on. Without a bridge (a plain browser tab) accounts fail with a generic message. */
-export function createAppStore(): CalendarStore {
+/** The store and provider lookups the app runs on. Without a bridge (a plain browser tab) accounts fail with a generic message. */
+export function createAppRuntime(): CalendarRuntime {
   const bridge = currentBridge();
-  return createCalendarStore({
+  let connections: CalendarConnection[] = [];
+  const store = createCalendarStore({
     connect: async () => {
       const accounts = await listCalendarAccounts();
-      return accounts.map((connected) => ({ account: connected.account, provider: createCalendarProvider(connected) }));
+      connections = accounts.map((connected) => ({ account: connected.account, provider: createCalendarProvider(connected) }));
+      return connections;
     },
     persistence: hasDb(bridge) ? createDbPersistence(bridge.db) : createMemoryPersistence(),
   });
+
+  async function getFreeBusy(addresses: string[], start: IsoInstant, end: IsoInstant): Promise<BusyBlock[]> {
+    const accountId = defaultCalendar(store.getSnapshot().calendars)?.accountId;
+    const connection = connections.find((item) => item.account.id === accountId) ?? connections[0];
+    if (!connection) throw new ProviderError("not_connected");
+    return connection.provider.getFreeBusy(addresses, start, end);
+  }
+
+  return { store, getFreeBusy };
+}
+
+/** The store alone, for callers that do not need provider lookups. */
+export function createAppStore(): CalendarStore {
+  return createAppRuntime().store;
 }
 
 const started = new WeakSet<CalendarStore>();
