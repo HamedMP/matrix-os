@@ -39,5 +39,6 @@ export { default as LockIcon } from "@hugeicons/core-free-icons/SquareLock02Icon
 
 export { default as EditIcon } from "@hugeicons/core-free-icons/PencilEdit02Icon";
 export { default as ShareIcon } from "@hugeicons/core-free-icons/Share08Icon";
+export { default as CopyIcon } from "@hugeicons/core-free-icons/Copy01Icon";
 export { default as ArchiveIcon } from "@hugeicons/core-free-icons/Archive02Icon";
 export { default as DeleteIcon } from "@hugeicons/core-free-icons/Delete02Icon";

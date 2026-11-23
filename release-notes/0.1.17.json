@@ -1,0 +1,19 @@
+{
+  "version": "0.1.17",
+  "channel": "stable",
+  "date": "2026-10-22T08:17:10Z",
+  "locale": "en",
+  "title": "Faster credit release",
+  "shortTitle": "Credit fix",
+  "summary": "A small fix for Matrix AI credit.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "fixed",
+      "text": "Credit held for a terminal run is released as soon as the run ends."
+    }
+  ],
+  "hidden": [
+    2812
+  ]
+}

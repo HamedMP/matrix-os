@@ -185,7 +185,7 @@ export function createClaudeNativeJobs(
         if (!tool || block.is_error === true || typeof block.content !== "string" || block.content.length > 65_536) continue;
         if (tool.name === "CronCreate") {
           const parsed = CronCreate.safeParse(tool.input);
-          const id = /^Scheduled (?:recurring |one-shot )?job ([a-f0-9]{8})\b/.exec(block.content)?.[1];
+          const id = /^Scheduled (?:recurring |one-shot )?(?:job|task) ([a-f0-9]{8})\b/.exec(block.content)?.[1];
           if (!parsed.success || !id || jobs.size >= 50) throw new Error("Native task receipt unavailable");
           const job = { id, cron: parsed.data.cron, promptSha256: promptDigest(parsed.data.prompt), recurring: parsed.data.recurring ?? true };
           const newId = !jobs.has(id);

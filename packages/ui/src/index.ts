@@ -34,6 +34,33 @@ export {
   parseGithubDeveloperAccessStatus,
 } from "./integrations/GithubDeveloperAccess.js";
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
+export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
+export { McpConnectionInventory, McpSectionHeading, McpStatusPill, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { MatrixMcpEndpointCard, type MatrixMcpEndpointCardProps } from "./integrations/MatrixMcpEndpointCard.js";
+export { DEFAULT_MATRIX_MCP_ENDPOINT, matrixMcpClientSetups, matrixMcpEndpointUrl, type MatrixMcpClientSetup } from "./integrations/matrix-mcp-endpoint.js";
+export { McpServiceLogo, McpServiceLogoStack, type McpServiceLogoProps } from "./integrations/McpServiceLogo.js";
+export { McpRowAction, McpToolPolicyList, type McpToolApproval, type McpToolPolicyListProps } from "./integrations/McpToolPolicyList.js";
+export { McpCustomServerForm, type McpCustomAuthMode, type McpCustomServerFormProps } from "./integrations/McpCustomServerForm.js";
+export { ExternalMcpApprovalsIndicator, ExternalMcpApprovalsPanel } from "./integrations/external-mcp-approvals.js";
+export { createExternalMcpApprovalsFetchTransport, type ExternalMcpApprovalsTransport } from "./integrations/external-mcp-approvals-client.js";
+export {
+  OrganizationConnectionsPanel,
+  OrganizationMcpSettings,
+  OrganizationMcpVisibilityNotice,
+  type WithOrganizationMcpClient,
+} from "./organization-mcp/OrganizationConnectionsPanel.js";
+export { useOrganizationMcpClient } from "./organization-mcp/use-organization-mcp-client.js";
+export { createOrganizationMcpAdminClient, createOrganizationMcpHttpApi, type OrganizationMcpAdminClient } from "./organization-mcp/client.js";
+export {
+  REMOTE_MCP_DEPARTMENT_LABELS,
+  buildMcpConnectionInventory,
+  connectedMcpServices,
+  customMcpErrorMessage,
+  filterRemoteMcpPresets,
+  parseRemoteMcpCatalog,
+  type McpInventoryEntry,
+  type RemoteMcpPreset,
+} from "./integrations/remote-mcp-presets.js";
 export type {
   GithubDeveloperAccessClient,
   GithubDeveloperAccessStatus,
@@ -48,6 +75,8 @@ export {
   ProviderSettingsTransportError,
   openProviderAgentSetup,
   useProviderSettingsController,
+  sessionProviderSettingsSnapshotCache,
+  createProviderSettingsSnapshotCache,
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
@@ -87,11 +116,13 @@ export { CODING_AGENT_ARTWORK } from "./coding-agent-artwork.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,
+  ProviderSettingsSnapshotCache,
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
+export { withPendingCanonicalTurn, type PendingCanonicalTurn } from "./canonical-chat-pending-turn.js";
 export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "./canonical-chat-admission.js";
 export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
@@ -198,7 +229,12 @@ export {
   useGettingStartedVisibility,
   useGettingStartedBlocker,
   useGettingStartedPopoverFocus,
+  useGettingStartedProgress,
+  usePublishGettingStartedProgress,
+  type GettingStartedProgress,
 } from "./getting-started-visibility.js";
+export { GettingStartedMenuSummary, GettingStartedPill } from "./getting-started-pill.js";
+export { gettingStartedNextStep, shouldShowGettingStartedPill } from "./getting-started-progress.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
@@ -268,6 +304,8 @@ export { useBotMentionNavigation, BOT_ATTACHMENT_HANDOFF_REASON } from './chat-a
 export { AgentAvatar } from './chat-agents/AgentAvatar.js';
 
 export { resolveCanonicalChatAttention, resolveCanonicalChatLifecycleGroup, type CanonicalChatAttentionState } from './chat/attention-state.js';
+export { ProjectConversationList, type ProjectConversationListProps } from './chat/ProjectConversationList.js';
+export { projectConversationPlacement, queryProjectConversations, toProjectConversationRow, type ProjectConversationRow, type ProjectConversationQuery } from './chat/project-conversations.js';
 
 export { useBotDraftRecovery } from './chat-agents/bots/use-bot-draft-recovery.js';
 export { BotDraftRecoveryPanel } from './chat-agents/bots/BotDraftRecoveryPanel.js';
@@ -319,7 +357,10 @@ export * from "./onboarding-widget/index.js";
 export * from "./get-started/index.js";
 export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
 
-export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
+export { DesktopTopBarActions, DesktopViewMenu } from "./desktop-top-bar.js";
+export { DesktopInboxMenu, DesktopActivityInbox } from "./desktop-agent-inbox.js";
+export { AGENT_INBOX_PILL_STYLE } from "./agent-inbox-pill-style.js";
+export { deriveAgentInbox, formatInboxTime, threadPlacement, type AgentInboxPill, type AgentInboxGroup, type ThreadPlacement, type AgentInboxItem, type AgentInboxModel, type AgentInboxTarget } from "./agent-inbox-model.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
 export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
@@ -334,6 +375,7 @@ export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
 export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
 export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";
 export { ChatPromptInput, ChatPromptStopButton } from "./chat/composer/ChatPromptInput.js";
+export { ChatHumanMessageBubble } from "./chat/ChatHumanMessageBubble.js";
 export { ChatComposerSelect, type ChatComposerSelectOption } from "./chat/composer/ChatComposerSelect.js";
 export { ChatComposerOptionControls, ChatComposerAttachButton, type ChatComposerOptionControl } from "./chat/composer/ChatComposerOptionControls.js";
 export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.js";
@@ -350,3 +392,18 @@ export { providerCatalogObservationRetryDelay } from "./provider-observation.js"
 export { ProjectAgentContextPanel } from "./chat/ProjectAgentContextPanel.js";
 
 export { useProjectChatSlashSkills, useProjectSkillDraft, ProjectSkillDraftChips, type ProjectChatSlashScope } from "./chat/project-chat-slash-skills.js";
+
+export { isRoutineOriginPath, createRoutineOriginClient, type RoutineOriginClient } from "./chat/routine-origin-client.js";
+export { useRoutineOrigin } from "./chat/use-routine-origin.js";
+export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
+export { routineApprovalPlacement, routineOriginHistoryStatus } from "./chat/routine-approval-placement.js";
+export { RoutineReceipt } from "./chat/RoutineReceipt.js";
+export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
+
+export { ScheduledInputText } from "./chat/ScheduledInputText.js";
+
+export { routineOriginChatEligible } from "./chat/routine-origin.js";
+
+export { DiscordIcon } from "./discord-icon.js";
+export { AgentLogo } from "./agent-logo.js";
+export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";

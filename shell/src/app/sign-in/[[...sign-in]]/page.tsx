@@ -1,5 +1,6 @@
 import { slackLinkReturnTarget } from "../../../../../packages/platform/src/slack/link-return";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { SignIn } from "@clerk/nextjs";
 import { shellAuthAppearance } from "@/components/auth/auth-brand";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
@@ -13,6 +14,9 @@ export const metadata: Metadata = {
 };
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // Self-hosted computers are gated by the local reverse proxy and render without
+  // ClerkProvider, so there is no Matrix account to sign in to.
+  if (process.env.MATRIX_SELF_HOSTED === "1") redirect("/");
   const params = await searchParams;
   // Only exact allowlisted return addresses survive; everything else lands on "/".
   const returnTarget =

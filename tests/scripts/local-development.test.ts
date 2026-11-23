@@ -652,6 +652,23 @@ describe("local development contracts", () => {
     }
   });
 
+  const localSupportKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMrlGlSs4Xu4/62cU98+lCMlTKWqs+8pl7DSzPndDSBk matrix-local-support";
+
+  it("refuses to render production cloud-init without a dedicated local support key", () => {
+    const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
+    expect(() => renderLocalParityCloudInit(template, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff112",
+      clerkUserId: "user_local",
+      handle: "local",
+      hostBundleUrl: "http://10.0.2.2:9876/matrix-host-bundle.tar.gz",
+      platformUrl: "http://10.0.2.2:9003",
+      platformSecret: "platform-secret",
+      registrationToken: "registration-token",
+      registrationTokenExpiresAt: "2026-09-29T00:00:00.000Z",
+      postgresPassword: "postgres-secret",
+    })).toThrow("Local support SSH public key is missing or invalid");
+  });
+
   it("renders the actual production cloud-init with only provider metadata adapted locally", () => {
     const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
     const rendered = renderLocalParityCloudInit(template, {
@@ -664,9 +681,11 @@ describe("local development contracts", () => {
       registrationToken: "registration-token",
       registrationTokenExpiresAt: "2026-09-29T00:00:00.000Z",
       postgresPassword: "postgres-secret",
+      supportPublicKey: localSupportKey,
     });
 
     expect(rendered).toContain("path: /etc/systemd/system/matrix-gateway.service");
+    expect(rendered).toContain(`path: /etc/matrix/support/public-key\n    content: |\n      ${localSupportKey}\n`);
     expect(rendered).toContain("/opt/matrix/user-systemd");
     expect(readFileSync(resolve(root, "distro/customer-vps/systemd-user/matrix-zellij@.service"), "utf8"))
       .toContain("/opt/matrix/terminal-runtime/current/matrix-terminal-user-keeper.mjs %i");

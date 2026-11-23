@@ -42,9 +42,11 @@ import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { NotificationRouter } from "@/components/NotificationRouter";
+import { PushRegistrationSync } from "@/components/PushRegistrationSync";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
+import { createNotificationChannelsAtStartup } from "@/lib/notification-channels";
 import { motion } from "@/lib/theme-v2";
 import { useStartupColors } from "@/lib/use-startup-colors";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
@@ -128,6 +130,7 @@ export default function RootLayout() {
   });
 
   useEffect(() => startMobileThemeController(), []);
+  useEffect(() => createNotificationChannelsAtStartup(), []);
 
   // The last session's chats, models and projects are on screen while this
   // launch's requests are still in flight. Clerk has to load before any query
@@ -405,6 +408,7 @@ function GatewayShell() {
             </Stack>
             <ToastHost />
             <NotificationRouter connected={gateway !== null} setGateway={setGateway} />
+            <PushRegistrationSync />
             <OtaUpdatePrompt />
             <AnalyticsScreenTracker />
           </CanonicalChatSessionProvider>

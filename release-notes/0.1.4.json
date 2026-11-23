@@ -1,0 +1,251 @@
+{
+  "version": "0.1.4",
+  "channel": "stable",
+  "date": "2026-09-27T15:59:52Z",
+  "locale": "en",
+  "title": "Talk, share and set up faster",
+  "shortTitle": "Dictation and sharing",
+  "summary": "Dictate with your voice, share work with your organization, and set up AI without the guesswork.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Dictate with your voice",
+      "body": "Record a message instead of typing it. A live waveform shows that Matrix is listening, in the browser and in the desktop app.",
+      "art": "sparkle",
+      "tone": "lime",
+      "prs": [
+        1615,
+        1617,
+        1822,
+        1823,
+        1824,
+        1620,
+        1662,
+        1670
+      ]
+    },
+    {
+      "tag": "Highlight",
+      "title": "Share with your organization",
+      "body": "Share projects, chats, files, folders and apps with people in your organization from every OS view. Your organization also gets a shared drive.",
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        1795,
+        1791,
+        1797,
+        1790,
+        1847,
+        1849,
+        1850,
+        1845,
+        1761,
+        1922,
+        1846,
+        1865
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "Setting up Matrix AI and your coding agents takes fewer steps."
+    },
+    {
+      "kind": "improved",
+      "text": "Settings shows which agents you saved separately from whether they are ready."
+    },
+    {
+      "kind": "new",
+      "text": "Chats show what delegated agents are doing."
+    },
+    {
+      "kind": "new",
+      "text": "Files and artifacts an agent creates appear in the chat with previews."
+    },
+    {
+      "kind": "new",
+      "text": "Markdown files preview in chat, and your own messages render formatting."
+    },
+    {
+      "kind": "new",
+      "text": "Project menus can show the project in Files."
+    },
+    {
+      "kind": "new",
+      "text": "Terminals keep a scrollable history pinned beside the live view."
+    },
+    {
+      "kind": "new",
+      "text": "An Inbox Triage agent can sort your Gmail inbox."
+    },
+    {
+      "kind": "improved",
+      "text": "New users are offered the desktop app first during setup."
+    },
+    {
+      "kind": "improved",
+      "text": "The unread filter in Chat takes less space."
+    },
+    {
+      "kind": "improved",
+      "text": "Custom app icons load faster."
+    },
+    {
+      "kind": "improved",
+      "text": "Approval requests show safe details and your decision."
+    },
+    {
+      "kind": "improved",
+      "text": "The model picker refreshes its list when you open it."
+    },
+    {
+      "kind": "fixed",
+      "text": "Terminal grids fill the window, including in full screen."
+    },
+    {
+      "kind": "fixed",
+      "text": "Terminal scrolling keeps following new output and remembers where you navigated."
+    },
+    {
+      "kind": "fixed",
+      "text": "Agent logos show correctly in the desktop app."
+    },
+    {
+      "kind": "fixed",
+      "text": "Chat shows Claude versions and keeps the Claude CLI up to date."
+    },
+    {
+      "kind": "fixed",
+      "text": "Agents you turned off stay off in Chat and in the model picker."
+    },
+    {
+      "kind": "fixed",
+      "text": "Tools found on custom MCP servers are turned on by default."
+    },
+    {
+      "kind": "fixed",
+      "text": "Connecting an app finishes even if the browser session ended."
+    },
+    {
+      "kind": "fixed",
+      "text": "Settings shows Pi and OpenCode accounts the agent manages itself."
+    },
+    {
+      "kind": "fixed",
+      "text": "Tool commands and results stay in the chat history."
+    },
+    {
+      "kind": "fixed",
+      "text": "Links in Claude replies stay intact while the reply streams."
+    },
+    {
+      "kind": "fixed",
+      "text": "If a payment fails, you're taken to billing to sort it out."
+    }
+  ],
+  "hidden": [
+    1747,
+    1749,
+    1748,
+    1751,
+    1752,
+    1753,
+    1762,
+    1754,
+    1755,
+    1713,
+    1769,
+    1773,
+    1665,
+    1784,
+    1785,
+    1788,
+    1786,
+    1787,
+    1779,
+    1774,
+    1801,
+    1765,
+    1789,
+    1811,
+    1793,
+    1814,
+    1794,
+    1817,
+    1792,
+    1611,
+    1818,
+    1796,
+    1820,
+    1819,
+    1827,
+    1825,
+    1802,
+    1835,
+    1840,
+    1803,
+    1804,
+    1805,
+    1806,
+    1807,
+    1808,
+    1856,
+    1861,
+    1848,
+    1863,
+    1868,
+    1851,
+    1869,
+    1852,
+    1872,
+    1867,
+    1876,
+    1860,
+    1877,
+    1878,
+    1879,
+    1853,
+    1854,
+    1864,
+    1874,
+    1885,
+    1886,
+    1884,
+    1883,
+    1889,
+    1890,
+    1888,
+    1894,
+    1895,
+    1897,
+    1899,
+    1901,
+    1903,
+    1904,
+    1906,
+    1908,
+    1909,
+    1911,
+    1914,
+    1912,
+    1924,
+    1915,
+    1921,
+    1919,
+    1910,
+    1925,
+    1916,
+    1917,
+    1932,
+    1935,
+    1937,
+    1936,
+    1920,
+    1942,
+    1939,
+    1944,
+    1947,
+    1949
+  ]
+}

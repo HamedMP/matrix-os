@@ -39,7 +39,7 @@ describe("IPC sender policy", () => {
     // reviewed change to this list, not a silent edit to the allowlist.
     const expected = [
       "app:get-version", "app:get-zoom", "app:set-zoom", "auth:status", "runtime:list-computers",
-      "terminal:read-clipboard-files", "terminal-window:focus-main",
+      "shortcuts:set-terminal-claims", "terminal:read-clipboard-files", "terminal-window:focus-main",
       "local-terminal:ack", "local-terminal:attach", "local-terminal:create", "local-terminal:detach",
       "local-terminal:input", "local-terminal:kill", "local-terminal:list", "local-terminal:put",
       "local-terminal:rename", "local-terminal:resize",
@@ -67,7 +67,7 @@ describe("IPC sender policy", () => {
 
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
-      ["auth:changed", "local-terminal:closed", "local-terminal:output", "window:focus-changed"],
+      ["auth:changed", "local-terminal:closed", "local-terminal:output", "shortcuts:changed", "window:focus-changed"],
     );
     for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });
@@ -99,6 +99,18 @@ describe("IPC sender policy", () => {
     expect(authorize(from(terminal), "auth:status")).toBe(false);
     main.webContents.isDestroyed = () => true;
     expect(authorize(from(main), "auth:status")).toBe(false);
+  });
+
+  it("lets only the two windows' own top-level frames claim Terminal keys", () => {
+    const { main, terminal, authorize, from } = setup();
+    const claims = { bindings: ["Ctrl+Shift+Left"] };
+    expect(authorize(from(main), "shortcuts:set-terminal-claims", claims)).toBe(true);
+    expect(authorize(from(terminal), "shortcuts:set-terminal-claims", claims)).toBe(true);
+    // An embedded app view is neither window's web contents.
+    const appView = fakeWindow("https://app.example/");
+    expect(authorize(from(appView), "shortcuts:set-terminal-claims", claims)).toBe(false);
+    expect(authorize({ sender: main.webContents, senderFrame: { name: "subframe" } }, "shortcuts:set-terminal-claims", claims))
+      .toBe(false);
   });
 
   it("rejects everything when the windows are absent", () => {

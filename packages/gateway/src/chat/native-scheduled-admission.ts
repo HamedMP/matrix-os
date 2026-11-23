@@ -80,7 +80,9 @@ export async function admitNativeScheduledPhase(
   if (!adapter?.resume || source.adapterState.schemaVersion !== adapter.stateSchemaVersion) throw new ChatConflictError(chatId, source.chat.chat.revision);
   const { instance, root } = await resolveNativeScheduledLaunch(deps, owner, source);
   const resumeState = adapter.parseState(source.adapterState.state);
-  const context = contextForChatSession(source.run.context, resumeState);
+  const sessionContext = contextForChatSession(source.run.context, resumeState);
+  const context = sessionContext ? { ...sessionContext } : undefined;
+  if (context) delete context.routineCreation;
   const timestamp = (deps.now ?? (() => new Date()))().toISOString();
   const turnId = `cturn_${randomUUID().replaceAll("-", "")}`;
   const message = CanonicalChatMessageSchema.parse({ id: `msg_${randomUUID().replaceAll("-", "")}`, chatId,

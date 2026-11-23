@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import SurfaceIcon from "./SurfaceIcon";
+import { taskbarOrder } from "./app-switching";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 function DockAppButton({
@@ -70,14 +71,11 @@ export default function DesktopTaskbar({
   launcherOpen: boolean;
   onActivate: (tabId: string) => void;
 }) {
-  const runningTabs = tabs.filter((tab) => {
-    const mode = surfaces[tab.id]?.mode;
-    return mode !== undefined && mode !== "closed";
-  });
-  const filesTab = runningTabs.find((tab) => tab.kind === "files");
+  const runningTabs = taskbarOrder(tabs, surfaces);
+  const filesTab = runningTabs[0]?.kind === "files" ? runningTabs[0] : undefined;
   const filesSurface = filesTab ? surfaces[filesTab.id] : undefined;
   const filesActive = Boolean(filesTab && filesSurface && activeTabId === filesTab.id && filesSurface.mode !== "minimized");
-  const otherRunningTabs = runningTabs.filter((tab) => tab.kind !== "files");
+  const otherRunningTabs = filesTab ? runningTabs.slice(1) : runningTabs;
   const filesLabel = !filesTab
     ? "Open Files"
     : filesSurface?.mode === "minimized"

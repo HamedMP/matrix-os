@@ -254,6 +254,29 @@ describe("shared Chat owner list and detail reads", () => {
       .toEqual(expectedCollaboration);
   });
 
+  it("projects organization project Chats without a legacy Chat binding or member rows", async () => {
+    const projectId = "project_org_shared";
+    const parentId = "6aed8d12-f6c8-4c10-90b2-1e51fcc738e4";
+    await repository.create(owner, { id: CHAT_ID, clientRequestId: "req_org_shared", title: "Org Chat" });
+    await fixture.db.updateTable("chats").set({ project_id: projectId }).where("id", "=", CHAT_ID).execute();
+    await fixture.db.insertInto("collaboration_scopes").values([
+      { id: parentId, kind: "project", resource_id: projectId, parent_scope_id: null, membership_mode: "direct" },
+      { id: SCOPE_ID, kind: "chat", resource_id: CHAT_ID, parent_scope_id: parentId, membership_mode: "inherited" },
+    ].map(scope => ({ ...scope, owner_type: "personal" as const, owner_id: OWNER_ID,
+      organization_id: "org_matrix_team", lifecycle: "shared" as const,
+      authority_runtime_id: "runtime_shared_chat_owner", execution_generation: null, execution_eligibility: null,
+      created_at: createdAt, updated_at: createdAt, deleted_at: null }))).execute();
+
+    expect((await repository.getDetailPage(owner, CHAT_ID, { limit: 100 }))?.record.chat.collaboration)
+      .toMatchObject({ mode: "shared", membership: { role: "owner" } });
+    expect((await repository.list(owner, { limit: 25 })).items[0]?.chat.collaboration)
+      .toMatchObject({ mode: "shared", membership: { role: "owner" } });
+
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "private" })
+      .where("id", "=", parentId).execute();
+    expect((await repository.getDetailPage(owner, CHAT_ID, { limit: 100 }))?.record.chat.collaboration).toBeUndefined();
+  });
+
   it("fails closed when an internal binding points at another owner's scope", async () => {
     await repository.create(owner, {
       id: CHAT_ID,

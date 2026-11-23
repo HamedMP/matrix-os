@@ -1,0 +1,38 @@
+[
+  {
+    "path": "/definitions/v2/AgentMessageDisplay",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/AnswerAnnotation",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/AnswerReplacement",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/BlockReason",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/HelplineSubject",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadGuardianReviewParams/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/TrustedContacts",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/UserVerificationBiometricType",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/UserVerificationVerifyResponse/properties/biometricType",
+    "operation": "remove"
+  }
+]

@@ -1,9 +1,20 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { CUSTOM_MCP_UNAVAILABLE } from "@matrix-os/contracts";
 import { CustomMcpBroker, CustomMcpBrokerError } from "./broker.js";
 import { MCP_TOOL_STREAM_TYPE } from "./tool-progress.js";
 import { toolProgressResponse } from "./tool-progress-response.js";
+import { REMOTE_MCP_DEPARTMENTS } from "@matrix-os/contracts/remote-mcp-catalog";
+import {
+  RegisteredMcpOAuthClients,
+  listConnectableCatalogPresets,
+  resolveConnectableCatalogPreset,
+} from "./catalog-presets.js";
+import { coreCallerFromContext, registerCoreMcpRoutes } from "./core-routes.js";
+import { registerCoreOwnerApprovalRoutes } from "./core-owner-approval-routes.js";
+import type { CustomMcpExternalApprovalStore } from "./external-approval-store.js";
+import type { CoreToolService } from "./core-tools.js";
 
 const MUTATION_BODY_LIMIT = 64 * 1024;
 const UUID = z.uuid();
@@ -27,6 +38,15 @@ const CreateSchema = z.object({
     });
   }
 });
+/** A preset pre-fills URL and auth; the caller may only rename it. */
+const CatalogCreateSchema = z.object({
+  catalogId: z.string().regex(/^[a-z][a-z0-9_]{1,39}$/),
+  name: z.string().trim().min(1).max(100).optional(),
+}).strict();
+const CatalogQuerySchema = z.object({
+  category: z.string().regex(/^[a-z][a-z_]{1,29}$/).optional(),
+  department: z.enum(REMOTE_MCP_DEPARTMENTS).optional(),
+}).strict();
 const PatchSchema = z.object({
   revision: z.number().int().min(1),
   name: z.string().trim().min(1).max(100).optional(),
@@ -52,9 +72,17 @@ export interface CustomMcpOAuthFlow {
 export interface CustomMcpRoutesOptions {
   broker: CustomMcpBroker;
   resolveUserId: (context: Context) => Promise<string | null>;
+  /** An outer authenticated router may classify missing account state as unavailable. */
+  unavailableUserStatus?: 503;
   resolveActorId?: (context: Context) => string | null;
   oauth?: CustomMcpOAuthFlow;
   allowToolCalls?: boolean;
+  /** Matrix-owned OAuth apps; without it only DCR and no-auth presets are offered. */
+  catalog?: RegisteredMcpOAuthClients;
+  /** Matrix Core MCP tools; legacy server-id calls also dispatch through it for usage records. */
+  core?: CoreToolService;
+  /** Owner-session router only (never the VPS-internal one): decides external-client writes. */
+  ownerApprovals?: CustomMcpExternalApprovalStore;
   now?: () => number;
 }
 
@@ -64,6 +92,7 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   const app = new Hono();
   const rateStates = new Map<string, RateState>();
   const now = options.now ?? Date.now;
+  const catalog = options.catalog ?? RegisteredMcpOAuthClients.empty();
 
   function checkRateLimit(userId: string): boolean {
     const current = now();
@@ -85,7 +114,9 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
 
   async function requireUser(context: Context, mutation = false): Promise<string | Response> {
     const userId = await options.resolveUserId(context);
-    if (!userId) return context.json({ error: "Unauthorized" }, 401);
+    if (!userId) return options.unavailableUserStatus === 503
+      ? context.json({ error: CUSTOM_MCP_UNAVAILABLE }, 503)
+      : context.json({ error: "Unauthorized" }, 401);
     if (mutation && !checkRateLimit(userId)) {
       return context.json({ error: "Too many requests" }, 429);
     }
@@ -114,6 +145,27 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     return context.json({ error: "Custom MCP request failed" }, 502);
   }
 
+  function createInput(body: unknown) {
+    if (body && typeof body === "object" && !Array.isArray(body) && Object.hasOwn(body, "catalogId")) {
+      const preset = CatalogCreateSchema.safeParse(body);
+      const entry = preset.success ? resolveConnectableCatalogPreset(catalog, preset.data.catalogId) : undefined;
+      if (!preset.success || !entry) return undefined;
+      return { name: preset.data.name ?? entry.name, url: entry.url, authMode: entry.auth === "none" ? "none" as const : "oauth" as const };
+    }
+    const parsed = CreateSchema.safeParse(body);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  // Registered before "/:id" routes so "/core/*" never reaches server-id handlers.
+  if (options.core) {
+    registerCoreMcpRoutes(app, { core: options.core, requireUser, resolveActorId: options.resolveActorId,
+      allowToolCalls: options.allowToolCalls });
+  }
+  if (options.ownerApprovals) {
+    registerCoreOwnerApprovalRoutes(app, { store: options.ownerApprovals, requireUser,
+      listServers: userId => options.broker.list(userId) });
+  }
+
   app.get("/", async (context) => {
     const userId = await requireUser(context);
     if (typeof userId !== "string") return userId;
@@ -137,6 +189,15 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     } catch (error) {
       return brokerError(context, error);
     }
+  });
+
+  app.get("/catalog", async (context) => {
+    const userId = await requireUser(context);
+    if (typeof userId !== "string") return userId;
+    const parsed = CatalogQuerySchema.safeParse(context.req.query());
+    if (!parsed.success) return context.json({ error: "Invalid catalog filter" }, 400);
+    context.header("Cache-Control", "private, no-store");
+    return context.json({ presets: listConnectableCatalogPresets(catalog, parsed.data) });
   });
 
   app.get("/:id", async (context) => {
@@ -164,10 +225,10 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
       );
       return context.json({ error: "Invalid request body" }, 400);
     }
-    const parsed = CreateSchema.safeParse(body);
-    if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
+    const input = createInput(body);
+    if (!input) return context.json({ error: "Invalid request body" }, 400);
     try {
-      return context.json(await options.broker.create(userId, parsed.data), 201);
+      return context.json(await options.broker.create(userId, input), 201);
     } catch (error) {
       return brokerError(context, error);
     }
@@ -250,6 +311,7 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   });
 
   if (options.allowToolCalls) {
+    const core = options.core;
     app.post("/:id/call", bodyLimit({ maxSize: MUTATION_BODY_LIMIT }), async (context) => {
       const userId = await requireUser(context, true);
       if (typeof userId !== "string") return userId;
@@ -272,14 +334,25 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
       }
       if (!parsed.success) return context.json({ error: "Invalid request body" }, 400);
       if (context.req.header("accept") === MCP_TOOL_STREAM_TYPE) {
-        return toolProgressResponse(context.req.raw.signal, (onProgress, signal) => options.broker.callSelectedTool({
-          userId, serverId: parsedId.data, toolName: parsed.data.tool, arguments: parsed.data.arguments,
-          approvalGranted: parsed.data.approvalGranted, approvalReceipt: parsed.data.approvalReceipt,
-          actorId: options.resolveActorId?.(context) ?? undefined, runId: context.req.header("x-matrix-mcp-run-id"),
-          onProgress, signal,
-        }));
+        return toolProgressResponse(context.req.raw.signal, (onProgress, signal) => core
+          ? core.dispatch(coreCallerFromContext(context, userId, options.resolveActorId?.(context)), {
+            serverId: parsedId.data, tool: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalReceipt: parsed.data.approvalReceipt, onProgress, signal,
+          })
+          : options.broker.callSelectedTool({
+            userId, serverId: parsedId.data, toolName: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalGranted: parsed.data.approvalGranted, approvalReceipt: parsed.data.approvalReceipt,
+            actorId: options.resolveActorId?.(context) ?? undefined, runId: context.req.header("x-matrix-mcp-run-id"),
+            onProgress, signal,
+          }));
       }
       try {
+        if (core) {
+          return context.json(await core.dispatch(coreCallerFromContext(context, userId, options.resolveActorId?.(context)), {
+            serverId: parsedId.data, tool: parsed.data.tool, arguments: parsed.data.arguments,
+            approvalReceipt: parsed.data.approvalReceipt, signal: context.req.raw.signal,
+          }));
+        }
         return context.json(await options.broker.callSelectedTool({
           userId,
           serverId: parsedId.data,

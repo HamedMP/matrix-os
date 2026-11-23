@@ -1,0 +1,83 @@
+{
+  "version": "0.1.22",
+  "channel": "stable",
+  "date": "2026-11-05T19:21:03Z",
+  "locale": "en",
+  "title": "Private links for your apps",
+  "shortTitle": "Private links",
+  "summary": "Share a published app privately with a one-time link, plus steadier agent setup.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Share a published app with a one-time private link."
+    },
+    {
+      "kind": "improved",
+      "text": "Settings puts agent setup first."
+    },
+    {
+      "kind": "improved",
+      "text": "Support is reachable from every OS view."
+    },
+    {
+      "kind": "fixed",
+      "text": "Codex chats continue after you switch accounts and keep their models."
+    },
+    {
+      "kind": "fixed",
+      "text": "Model choices are kept and stuck credit holds are cleared."
+    },
+    {
+      "kind": "fixed",
+      "text": "Existing Claude connections are recognized again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Questions from agents show their full description."
+    },
+    {
+      "kind": "fixed",
+      "text": "Scheduled inputs are labeled on every device."
+    }
+  ],
+  "hidden": [
+    2880,
+    2881,
+    3111,
+    2805,
+    3022,
+    3025,
+    3028,
+    3029,
+    3030,
+    3031,
+    3032,
+    3033,
+    3038,
+    3039,
+    3040,
+    3042,
+    3043,
+    3044,
+    3045,
+    3046,
+    3047,
+    3048,
+    3049,
+    3050,
+    3051,
+    3058,
+    3086,
+    3107,
+    3088,
+    3096,
+    3129,
+    3137,
+    3155,
+    3139,
+    3156,
+    3158,
+    3159
+  ]
+}

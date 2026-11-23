@@ -4,6 +4,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   platformSpeechControlState,
+  SPEECH_LIMIT_STOP_CANCEL_GUARD_MS,
+  speechLimitStopDelayMs,
   usePlatformSpeechDraft,
 } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
@@ -467,5 +469,125 @@ describe("platform speech draft recording", () => {
     expect(hook.result.current.isSupported).toBe(false);
     await act(async () => hook.result.current.start());
     expect(hook.result.current.phase).toBe("unavailable");
+  });
+
+  it("reports the longest dictation the policy records so the composer can show it", async () => {
+    const tenMinutes = {
+      ...ready,
+      fileTranscription: {
+        ...ready.fileTranscription,
+        dictation: { ...ready.fileTranscription.dictation, maxDurationMs: 600_000 },
+      },
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-limit",
+      client: client({ capabilities: vi.fn(async () => tenMinutes) }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    expect(hook.result.current.maxDurationMs).toBeNull();
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    expect(hook.result.current.maxDurationMs).toBe(600_000);
+  });
+
+  it("keeps a dictation that the duration limit stopped when a stop click lands as a cancel", async () => {
+    // The limit turns "Stop recording" into "Cancel transcription" under the
+    // pointer; a click meant to stop used to discard the whole recording.
+    const shortLimit = {
+      ...ready,
+      fileTranscription: {
+        ...ready.fileTranscription,
+        dictation: { ...ready.fileTranscription.dictation, maxDurationMs: 30 },
+      },
+    };
+    const transcription = Promise.withResolvers<Awaited<ReturnType<BrowserSpeechClient["transcribe"]>>>();
+    const speech = client({
+      capabilities: vi.fn(async () => shortLimit),
+      transcribe: vi.fn(() => transcription.promise),
+    });
+    const onDraft = vi.fn();
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-limit-stop",
+      client: speech,
+      captureAdapter: captureAdapter(),
+      onDraft,
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("transcribing"));
+
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("transcribing");
+    expect(speech.cancel).not.toHaveBeenCalled();
+
+    await act(async () => transcription.resolve({
+      contractVersion: 1,
+      requestId,
+      status: "succeeded",
+      outcome: "transcript",
+      text: "the whole dictation",
+      audioDurationMs: 30,
+    }));
+    await waitFor(() => expect(onDraft).toHaveBeenCalledWith("the whole dictation"));
+  });
+
+  it("still cancels a limit-stopped transcription once the accidental-click window has passed", async () => {
+    const shortLimit = {
+      ...ready,
+      fileTranscription: {
+        ...ready.fileTranscription,
+        dictation: { ...ready.fileTranscription.dictation, maxDurationMs: 30 },
+      },
+    };
+    const speech = client({
+      capabilities: vi.fn(async () => shortLimit),
+      transcribe: vi.fn(() => new Promise<never>(() => undefined)),
+    });
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-limit-cancel",
+      client: speech,
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    await waitFor(() => expect(hook.result.current.phase).toBe("transcribing"));
+
+    const later = Date.now() + SPEECH_LIMIT_STOP_CANCEL_GUARD_MS + 1;
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    act(() => hook.result.current.cancel());
+    await waitFor(() => expect(speech.cancel).toHaveBeenCalledWith(requestId));
+  });
+
+  it("stops recording a second before the limit so a late timer cannot produce a rejected recording", async () => {
+    // The service rejects audio even one sample over the limit; the previous
+    // timer fired exactly at it.
+    expect(speechLimitStopDelayMs(600_000)).toBe(599_000);
+    expect(speechLimitStopDelayMs(120_000)).toBe(119_000);
+    const tenMinutes = {
+      ...ready,
+      fileTranscription: {
+        ...ready.fileTranscription,
+        dictation: { ...ready.fileTranscription.dictation, maxDurationMs: 600_000 },
+      },
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-limit-margin",
+      client: client({ capabilities: vi.fn(async () => tenMinutes) }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    await act(async () => hook.result.current.start());
+    expect(hook.result.current.phase).toBe("recording");
+    const delays = timers.mock.calls.map(([, delay]) => delay);
+    expect(delays).toContain(599_000);
+    expect(delays).not.toContain(600_000);
+    act(() => hook.result.current.cancel());
   });
 });

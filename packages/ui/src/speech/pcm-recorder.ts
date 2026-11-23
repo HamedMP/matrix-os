@@ -14,7 +14,9 @@ export {
 } from "./pcm.js";
 
 const WAV_HEADER_BYTES = 44;
-const MAX_PCM_CHUNKS = 512;
+// The worklet posts 32 KiB chunks, so this bounds the queue at 32 MiB; the
+// policy byte limit (20 MiB for a ten-minute dictation) is reached first.
+const MAX_PCM_CHUNKS = 1_024;
 const MIN_SAMPLE_RATE = 8_000;
 const MAX_SAMPLE_RATE = 96_000;
 const WORKLET_ASSET_PATH = "speech-pcm-capture-worklet.js";

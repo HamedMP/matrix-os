@@ -9,6 +9,7 @@ import ArrowUp02Icon from "@hugeicons/core-free-icons/ArrowUp02Icon";
 import BlocksIcon from "@hugeicons/core-free-icons/BlocksIcon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CloudOffIcon from "@hugeicons/core-free-icons/CloudOffIcon";
+import Copy01Icon from "@hugeicons/core-free-icons/Copy01Icon";
 import CommandLineIcon from "@hugeicons/core-free-icons/CommandLineIcon";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
@@ -72,13 +73,14 @@ describe("role icons", () => {
       LockIcon: SquareLock02Icon,
       EditIcon: PencilEdit02Icon,
       ShareIcon: Share08Icon,
+      CopyIcon: Copy01Icon,
       ArchiveIcon: Archive02Icon,
       DeleteIcon: Delete02Icon,
     });
   });
 
-  it("exports nothing but the 36 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(36);
+  it("exports nothing but the 37 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(37);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }

@@ -4,6 +4,8 @@ Create a tagged release with changelog and push to GitHub. Usage: `/release [pat
 
 Requested bump: $ARGUMENTS
 
+For Desktop releases, write the user-facing What's New notes first with `/release-notes <version> <channel>` (`.claude/commands/release-notes.md`).
+
 ## Steps
 
 1. Run full test suite: `bun run test`. Stop if tests fail.

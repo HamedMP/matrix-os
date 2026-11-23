@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { canonicalChatApprovals, CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { createRealBotStateDatabase } from "./bot-state-support.js";
 import { retainRoutinePreviewSchema } from "./fixtures/retained-routine-preview-schema.js";
+import { BOT_MIGRATIONS } from "../../../packages/gateway/src/bots/database-migrations.js";
 import { bootstrapBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { requestFixture, propose, scope } from "./routine-cli-request-support.js";
 import { invocation } from "./routine-cli-source-support.js";
@@ -21,9 +22,10 @@ let controller: ReturnType<typeof createRoutineCliActionController>, registry: R
 afterEach(async () => { controller?.close(); registry?.close(); await canonical?.drain(); await canonical?.close(); await f?.close(); await data?.destroy(); });
 it("actual admitted Chat -> routine event -> canonical persistence/card projection -> actual owner route preserves exact digest and bypasses native approval", async () => {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL; if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL is required");
-  data = await createRealBotStateDatabase(url, { routineAuthority: true });
+  // Recreate the retained preview ledger from its v15 base before exercising normal startup.
+  data = await createRealBotStateDatabase(url, { migrations: BOT_MIGRATIONS.slice(0, 15), routineAuthority: true });
   await retainRoutinePreviewSchema(data.db);
-  await bootstrapBotDatabase(data.db);
+  await expect(bootstrapBotDatabase(data.db)).resolves.toEqual({ applied: [] });
   f = await requestFixture(data.db); registry = createRoutineActionSourceRegistry();
   const handle = "computer-one", secret = "fixture-platform-chat-owner-purpose", machineId = "fixture-chat-machine";
   const machine = { handle, machineId, runtimeSlot: "primary", clerkUserId: scope.ownerId, provisioningClass: "customer" as const };

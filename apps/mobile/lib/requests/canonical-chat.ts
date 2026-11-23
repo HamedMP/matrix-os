@@ -313,7 +313,7 @@ export function fetchChatDetail(
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
   return fetchAuthenticatedJson({
-    url,
+    url: url + "&routineReceiptVersion=1",
     token: clerkToken,
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
@@ -361,7 +361,7 @@ export async function admitChatTurn(
       computerGatewayUrl,
       `/api/chats/${encodeURIComponent(chatId)}/turns`,
       { fundingVersion: "1" },
-    ));
+    ), true);
   } catch {
     throw new Error(CHAT_TURN_ERROR);
   }

@@ -334,7 +334,7 @@ export async function startProviderAuthGateway(options: {
       }));
       return;
     }
-    if (req.url === "/api/coding-agents/summary") {
+    if (req.url?.split("?")[0] === "/api/coding-agents/summary") {
       const response = await fetch(`${upstream.url}${req.url}`, {
         headers: { authorization: req.headers.authorization ?? "" }, signal: AbortSignal.timeout(10_000),
       });

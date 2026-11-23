@@ -1,0 +1,57 @@
+{
+  "version": "0.1.18",
+  "channel": "stable",
+  "date": "2026-10-23T21:06:26Z",
+  "locale": "en",
+  "title": "Publish your apps",
+  "shortTitle": "Publish apps",
+  "summary": "Put your apps on the web for anyone to use, and set up the agent browser from anywhere.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Publish apps to the web",
+      "body": "Publish an app on matrix.page with one control. Each publish is versioned, and visitors can submit forms that save back to you.",
+      "art": "sparkle",
+      "tone": "teal",
+      "prs": [
+        2421,
+        2422,
+        2423,
+        2385
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Set up the agent browser from any OS view."
+    },
+    {
+      "kind": "fixed",
+      "text": "Connecting Claude with an Anthropic API key works again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Saved Codex connections recover on their own."
+    },
+    {
+      "kind": "fixed",
+      "text": "Owners can delete shared projects again."
+    },
+    {
+      "kind": "fixed",
+      "text": "Bot recipes and older chats run again."
+    },
+    {
+      "kind": "fixed",
+      "text": "The onboarding prompt no longer covers full-screen project chats."
+    }
+  ],
+  "hidden": [
+    2831,
+    2791,
+    2833,
+    2799,
+    2886
+  ]
+}

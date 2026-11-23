@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseDocument } from 'yaml';
 import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import {
   loadCustomerVpsCloudInitTemplate,
   redactCloudInitSecrets,
@@ -13,6 +14,78 @@ import {
 } from '../../packages/platform/src/customer-vps-cloud-init.js';
 
 describe('platform/customer-vps-cloud-init', () => {
+  const supportPublicKey = SUPPORT_PUBLIC_KEY_FIXTURE;
+
+  it('provisions an explicit support credential and invokes the protected installer', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), {
+      ...input, supportPublicKey,
+    });
+    const document = parseDocument(rendered).toJS() as {
+      write_files: { path: string; content: string }[];
+      runcmd: string[];
+    };
+    const source = document.write_files.find((file) => file.path === '/etc/matrix/support/public-key');
+    // cloud-init's write_files defaults (root:root 0644) are exactly what the helper enforces.
+    expect(source).toEqual({ path: '/etc/matrix/support/public-key', content: `${supportPublicKey}\n` });
+    const helper = readFileSync('distro/customer-vps/host-bin/matrix-support-access', 'utf8');
+    expect(helper).toContain(`|| fail 'support key must be root:root 0644'`);
+    expect(helper).toContain(`|| fail 'support key directory must be root:root 0700'`);
+    expect(document.runcmd.join('\n')).toContain('chmod 700 /etc/matrix/support');
+    expect(document.runcmd.join('\n')).toContain('/usr/local/libexec/matrix-support-access install');
+    expect(rendered).not.toContain('PRIVATE KEY');
+  });
+
+  it('renders a publishing location the nginx helper accepts, and gains the speech upload location from it', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
+    const document = parseDocument(rendered).toJS() as { write_files: { path: string; content: string }[] };
+    const nginx = document.write_files.find((file) => file.path === '/etc/nginx/sites-available/matrix')?.content;
+    expect(nginx).toMatch(/# matrix-sites-publish-timeout-v1\n\s*location ~ "\^\/api\/apps\//);
+    // User data is at Hetzner's size limit, so the speech upload location is
+    // not provisioned statically: host preparation adds it on first boot. Call
+    // the helper's transform directly so this holds on images without nginx.
+    const upgrade = (text: string) => {
+      const run = spawnSync('python3', ['-I', '-c', [
+        'import sys',
+        'from importlib.machinery import SourceFileLoader',
+        'helper = SourceFileLoader("matrix_nginx", sys.argv[1]).load_module()',
+        'sys.stdout.write(helper.upgrade(sys.stdin.read()))',
+      ].join('\n'), 'distro/customer-vps/host-bin/matrix-configure-sites-nginx'], {
+        input: text, encoding: 'utf8', timeout: 15_000,
+      });
+      expect(run.stderr).toBe('');
+      expect(run.status).toBe(0);
+      return run.stdout;
+    };
+    const speech = [
+      '  # matrix-speech-upload-limit-v1',
+      '  location = /api/speech/transcriptions {',
+      '    client_max_body_size 21m;',
+      '    proxy_read_timeout 90s;',
+      '    proxy_pass http://127.0.0.1:4000;',
+      '  }',
+      '',
+      '',
+    ].join('\n');
+    const publishing = '  # matrix-sites-publish-timeout-v1\n';
+    const prepared = upgrade(nginx ?? '');
+    expect(prepared).toBe((nginx ?? '').replace(publishing, speech + publishing));
+    expect(upgrade(prepared)).toBe(prepared);
+  });
+
+  it('rejects a missing or malformed operator key before rendering VPS user data', async () => {
+    const template = await loadCustomerVpsCloudInitTemplate();
+    for (const candidate of ['', 'ssh-rsa AAAA', 'ssh-ed25519 AAAA', `command="id" ${supportPublicKey}`, `${supportPublicKey}\nPermitRootLogin yes`]) {
+      expect(() => renderCloudInitTemplate(template, { ...input, supportPublicKey: candidate })).toThrow();
+    }
+  });
+
+  it('binds the protected support key in production and preview platform deployments', () => {
+    const production = readFileSync('.github/workflows/platform-cloud-run.yml', 'utf8');
+    const preview = readFileSync('.github/workflows/preview-platform.yml', 'utf8');
+    expect(production).toContain('MATRIX_SUPPORT_SSH_PUBLIC_KEY=matrix-support-ssh-public-key:latest');
+    expect(preview).toContain('MATRIX_SUPPORT_SSH_PUBLIC_KEY=matrix-support-ssh-public-key-preview:latest');
+  });
+
   it('ships scoped sync credentials in the canonical host environment', async () => {
     const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
     expect(rendered).toContain('MATRIX_SYNC_RUNTIME_TOKEN=sync-runtime-verification-secret');
@@ -77,6 +150,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformSpeechEnabled: 'true',
     platformSpeechOrigin: 'https://platform.example',
     platformSpeechRuntimeToken: 'speech-runtime-verification-secret',
+    supportPublicKey: SUPPORT_PUBLIC_KEY_FIXTURE,
   };
 
   it('renders the registration deadline used to bound service retries', async () => {
@@ -587,7 +661,7 @@ exit 99
     expect(toolPackInstaller).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(toolPackInstaller).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
-    expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
+    expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-1.6.0}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(toolPackInstaller).toContain('run_npm_install()');
     expect(toolPackInstaller).toContain('resolve_runtime_user()');

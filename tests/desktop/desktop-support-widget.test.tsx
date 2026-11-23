@@ -11,7 +11,6 @@ import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navig
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
-import { DesktopHelpMenu } from "@matrix-os/ui";
 
 const toastMock = vi.hoisted(() => ({
   error: vi.fn((_message: string, _options?: {
@@ -80,13 +79,11 @@ vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
 }));
 vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
-  default: ({ helpMenu }: { helpMenu?: { onSupport(): void; discordIcon: React.ReactNode } }) =>
-    helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={false} gettingStarted={null} /> : null,
+  default: () => null,
 }));
 
-function openSupportFromHelp() {
-  fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
-  fireEvent.click(screen.getByRole("button", { name: "Support chat", exact: true }));
+function openSupportFromTopBar() {
+  fireEvent.click(screen.getByRole("button", { name: "Support", exact: true }));
 }
 vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
   default: () => <button type="button" aria-label="Open account menu">Avatar</button>,
@@ -198,11 +195,11 @@ describe("Desktop support widget", () => {
     );
   });
 
-  it("offers the support email through Help when chat is unconfigured", async () => {
+  it("offers the support email from the top bar when chat is unconfigured", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
 
     render(<DesktopModeControls />);
-    openSupportFromHelp();
+    openSupportFromTopBar();
 
     await act(async () => Promise.resolve());
     expect(useTabs.getState().tabs).toEqual([]);
@@ -505,7 +502,6 @@ describe("Desktop support widget", () => {
         "Search",
         "Terminal window",
         "Inbox",
-        "Help",
         "Support",
         "Main computer",
         "Open account menu",
@@ -877,7 +873,7 @@ describe("Desktop support widget", () => {
       </>,
     );
 
-    openSupportFromHelp();
+    openSupportFromTopBar();
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     const resetCallsBeforeSignOut = posthogClient.reset.mock.calls.length;
 

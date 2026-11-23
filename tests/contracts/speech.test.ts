@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  SPEECH_DICTATION_MAX_BYTES,
+  SPEECH_DICTATION_MAX_DURATION_MS,
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
   SpeechLanguageHintsSchema,
@@ -7,6 +9,7 @@ import {
   SpeechSafeErrorResponseSchema,
   SpeechStatusResponseSchema,
   SpeechTranscriptionResponseSchema,
+  withLegacyDictationLimits,
 } from "../../packages/contracts/src/speech.js";
 
 describe("speech contracts", () => {
@@ -235,5 +238,49 @@ describe("speech contracts", () => {
     expect(() => SpeechSafeErrorResponseSchema.parse({
       error: { code: "unavailable", message: "OpenAI key missing at /opt/matrix" },
     })).toThrow();
+  });
+
+  it("allows a ten-minute dictation policy and narrows it for clients that predate it", () => {
+    const extended = SpeechCapabilitiesResponseSchema.parse({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: SPEECH_DICTATION_MAX_BYTES,
+          maxDurationMs: SPEECH_DICTATION_MAX_DURATION_MS,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+    });
+    expect(extended.fileTranscription.dictation.maxDurationMs).toBe(600_000);
+    // Ten minutes of 16 kHz mono PCM16 plus the WAV header must fit the byte limit.
+    expect(600 * 16_000 * 2 + 44).toBeLessThanOrEqual(SPEECH_DICTATION_MAX_BYTES);
+    expect(() => SpeechCapabilitiesResponseSchema.parse({
+      ...extended,
+      fileTranscription: {
+        ...extended.fileTranscription,
+        dictation: { ...extended.fileTranscription.dictation, maxDurationMs: 600_001 },
+      },
+    })).toThrow();
+
+    const legacy = withLegacyDictationLimits(extended);
+    expect(legacy.fileTranscription.dictation).toMatchObject({
+      enabled: true,
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationMs: 120_000,
+    });
+    // A policy an operator set below the legacy limits is passed through untouched.
+    const short = SpeechCapabilitiesResponseSchema.parse({
+      ...extended,
+      fileTranscription: {
+        ...extended.fileTranscription,
+        dictation: { ...extended.fileTranscription.dictation, maxBytes: 1_000_000, maxDurationMs: 30_000 },
+      },
+    });
+    expect(withLegacyDictationLimits(short)).toBe(short);
   });
 });

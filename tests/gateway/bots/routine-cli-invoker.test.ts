@@ -1,6 +1,7 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { createFixedNativeRoutineCliInvoker } from "../../../packages/gateway/src/bots/routine-cli-invoker.js";
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => { await Promise.all(closers.splice(0).map(close => close())); });
@@ -123,4 +124,47 @@ it("trusted fixed child environment excludes auth/provider secrets and NODE_OPTI
     expect(await invoker.invoke({ args: ["list"] })).toHaveProperty("error.code", "unavailable");
     const keys = JSON.parse(await readFile(file, "utf8")); expect(keys).not.toContain("NODE_OPTIONS"); expect(keys).not.toContain("MATRIX_AUTH_TOKEN"); expect(keys).not.toContain("ANTHROPIC_API_KEY");
   } finally { vi.unstubAllEnvs(); }
+});
+
+it("keeps the actual fixed child alive during a host owner decision beyond two minutes", async () => {
+  let entered!: () => void, release!: () => void, issued = 0;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), decision = new Promise<void>(resolve => { release = resolve; });
+  const operation = { operation: "pause", routineId: ROUTINE, baseRevision: 1, requestId: REQUEST } as const;
+  const invoker = createFixedNativeRoutineCliInvoker({ binPath: resolve("packages/sync-client/bin/matrix.mjs"),
+    endpoint: "http://127.0.0.1:1/api/routine-cli/execute", timeoutMs: 1_820_000,
+    authorize: async () => { entered(); await decision; return false; },
+    issue: async () => { issued++; throw new Error("Denied owner decision must never issue"); }, cancel: async () => undefined });
+  closers.push(invoker.close);
+  vi.useFakeTimers();
+  const result = invoker.invoke({ args: ["pause", ROUTINE, "--revision", "1", "--request-id", REQUEST], expectedOperation: operation });
+  let settled = false; void result.then(() => { settled = true; });
+  try {
+    await ready; await vi.advanceTimersByTimeAsync(120_001);
+    expect(settled).toBe(false); expect(issued).toBe(0);
+    release(); expect(await result).toHaveProperty("error.code", "permission_denied"); expect(issued).toBe(0);
+  } finally { release(); vi.useRealTimers(); await invoker.close(); }
+});
+
+it("caps an unclassified native argv call once the actual child identifies it as a read", async () => {
+  const entered = Promise.withResolvers<AbortSignal>();
+  const reasons: string[] = [];
+  const invoker = createFixedNativeRoutineCliInvoker({ binPath: resolve("packages/sync-client/bin/matrix.mjs"),
+    endpoint: "http://127.0.0.1:1/api/routine-cli/execute", timeoutMs: 1_820_000,
+    authorize: ({ signal }) => new Promise<boolean>(resolve => {
+      signal.addEventListener("abort", () => resolve(false), { once: true });
+      entered.resolve(signal);
+    }),
+    issue: async () => { throw new Error("A stalled read cannot issue"); },
+    cancel: async ({ reason }) => { reasons.push(reason); } });
+  closers.push(invoker.close);
+  vi.useFakeTimers();
+  const now = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2_000);
+  const result = invoker.invoke({ args: ["list"] });
+  try {
+    const signal = await entered.promise;
+    await vi.advanceTimersByTimeAsync(37_999); expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(signal.aborted).toBe(true);
+    await expect(result).resolves.toMatchObject({ error: { code: "unavailable" } });
+    expect(reasons).toEqual(["timeout"]);
+  } finally { now.mockRestore(); vi.useRealTimers(); await invoker.close(); }
 });
