@@ -86,3 +86,11 @@ export const createDocxFromMarkdown = (
 
 export { toHtml, toMarkdown, toPlainText } from "./export/index.js";
 export type { HtmlExportMode, HtmlExportOptions, MarkdownExportOptions, PlainTextExportOptions } from "./export/index.js";
+
+// Editing (applyOps with native tracked revisions), comments, and accepting or rejecting revisions.
+import { applyOps } from "./edit/index.js";
+import { acceptRevisions, rejectRevisions } from "./revisions/index.js";
+
+ENGINES.applyOps = applyOps;
+ENGINES.acceptRevisions = acceptRevisions;
+ENGINES.rejectRevisions = rejectRevisions;
