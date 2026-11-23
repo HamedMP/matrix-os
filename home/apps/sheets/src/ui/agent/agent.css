@@ -1,0 +1,86 @@
+/* Sheets assistant panel. Uses the shared --app-* tokens only. */
+
+.sheets-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  height: 100%;
+}
+
+.sheets-agent__quick {
+  flex-wrap: wrap;
+  padding: 6px 8px 0;
+}
+
+.sheets-agent__panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.sheets-agent__hint {
+  margin: 0 8px;
+  font-size: 0.85rem;
+  color: var(--app-muted-fg);
+}
+
+.sheets-agent__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sheets-agent__note {
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+}
+
+.sheets-agent__answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.sheets-agent__answer p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sheets-agent__findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheets-agent__finding {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--app-warning, #d99a1b);
+  background: color-mix(in srgb, var(--app-warning, #d99a1b) 8%, transparent);
+  border-radius: var(--app-radius, 6px);
+}
+
+.sheets-agent__finding.is-total-mismatch {
+  border-left-color: var(--app-danger, #c0392b);
+  background: color-mix(in srgb, var(--app-danger, #c0392b) 8%, transparent);
+}
+
+.sheets-agent__finding-kind {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--app-muted-fg);
+}
+
+.sheets-agent__finding-text {
+  overflow-wrap: anywhere;
+}

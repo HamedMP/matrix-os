@@ -62,6 +62,10 @@ export interface AssistantDeps {
 
 const FAILED = "Something went wrong. Nothing was changed.";
 
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 export class SheetsAssistant {
   private state: AssistantState = { messages: [], statusLines: [], results: [], busy: false };
   private readonly listeners = new Set<() => void>();
@@ -279,7 +283,7 @@ export class SheetsAssistant {
     this.addResult({
       kind: "proposal",
       id: `r${this.seq++}`,
-      title: outcome.label.replace(/^Assistant: /, ""),
+      title: capitalise(outcome.label.replace(/^Assistant: /, "")),
       summary: outcome.summary,
       status: "proposed",
       proposalId: outcome.proposalId,
