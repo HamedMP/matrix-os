@@ -1,7 +1,7 @@
 // How each added machine is reached (spec 2706 layer 7): its ssh target and
 // options, kept by the app beside its core's data so a recovery terminal
 // (Open in terminal) reaches it the same way. Fields only, never a command.
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { open, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -28,6 +28,31 @@ export function machineSshMatches(entry: MachineSsh, current: { target: string }
   return (entry.coreTarget ?? entry.target) === current.target;
 }
 
+/** 64 machines' fields fit in far less; a larger file is not this app's and is never buffered whole. */
+export const MACHINE_SSH_FILE_MAX_BYTES = 256 * 1024;
+
+class MachineSshFileTooLarge extends Error {
+  readonly code = "EFBIG";
+}
+
+/** Reads at most the cap (plus one byte, to tell a file at the cap from a larger one). */
+async function readCapped(path: string): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(MACHINE_SSH_FILE_MAX_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MACHINE_SSH_FILE_MAX_BYTES) throw new MachineSshFileTooLarge("machine ssh file too large");
+    return buffer.subarray(0, length).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export function createMachineSshStore(dataDir: string) {
   const path = join(dataDir, "machine-ssh.json");
   // Writes run one at a time, so two adds never lose each other's entry.
@@ -41,7 +66,7 @@ export function createMachineSshStore(dataDir: string) {
   async function read(forWrite = false): Promise<Record<string, MachineSsh>> {
     let raw: string;
     try {
-      raw = await readFile(path, "utf8");
+      raw = await readCapped(path);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return {};
       console.warn("[local-terminals] machine ssh unreadable:", describeError(error));
