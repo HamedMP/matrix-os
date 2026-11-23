@@ -3,7 +3,7 @@
  * pane in resizable panes, with search, bulk actions, keyboard commands, the
  * undo toast and the composer and agent slots.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AlertCircle, Bot, Keyboard, Mail, PenSquare, RefreshCw, X } from "lucide-react";
 import { AppFrame, SplitPane, useToast } from "../../../_shared/office-ui";
 import type { MailAi } from "../agent/ai";
@@ -57,6 +57,7 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
   const agent = useMailAgent(store, entries, ai);
   const toast = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
+  const agentToggleRef = useRef<HTMLButtonElement>(null);
   const dragKeys = useRef<ThreadKey[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
@@ -94,6 +95,19 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
     },
   }), [store, entries, bridge, now, zone, toast]);
 
+  const closeAgent = () => {
+    setAgentOpen(false);
+    agentToggleRef.current?.focus();
+  };
+  // Escape inside the panel closes it, unless a dialog opened from the panel took the key.
+  const onAgentKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const target = event.target as Element;
+    if (target.closest('[role="dialog"], [role="alertdialog"]')) return;
+    event.preventDefault();
+    closeAgent();
+  };
+
   const onEffect = (effect: MailCommandEffect) => {
     if (effect === "focusSearch") searchRef.current?.focus();
   };
@@ -124,6 +138,7 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
         <RefreshCw size={15} className={view?.status === "loading" ? "mail-spin" : undefined} />
       </button>
       <button
+        ref={agentToggleRef}
         type="button"
         className="oui-icon-button"
         aria-label="Mail agent"
@@ -153,8 +168,8 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
         toolbar={<SearchBar ref={searchRef} searching={view?.descriptor.kind === "search"} />}
         banner={banner}
         rightPanel={agentOpen ? (
-          <div className="mail-agent-dock" data-mail-keys="off">
-            <MailAgentPanelSlot agent={agent} store={store} state={state} entries={entries} onClose={() => setAgentOpen(false)} />
+          <div className="mail-agent-dock" data-mail-keys="off" onKeyDown={onAgentKeyDown}>
+            <MailAgentPanelSlot agent={agent} store={store} state={state} entries={entries} onClose={closeAgent} />
           </div>
         ) : undefined}
         rightPanelLabel="Mail agent"

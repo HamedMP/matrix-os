@@ -37,7 +37,14 @@ export function EmptyList({ state, view }: { state: MailState; view: ThreadView 
     <div className="mail-list mail-list--state">
       {searching
         ? <EmptyState icon={<SearchX />} headline="No matching conversations" description="Try fewer words or remove a filter." />
-        : <EmptyState icon={<Inbox />} headline="Nothing here" description="New conversations in this folder appear here." />}
+        : (
+          <EmptyState
+            icon={<Inbox />}
+            headline="Nothing here"
+            description="New conversations in this folder appear here."
+            action={{ label: "Refresh", onClick: () => void store.refresh() }}
+          />
+        )}
     </div>
   );
 }
