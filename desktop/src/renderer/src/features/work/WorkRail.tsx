@@ -461,7 +461,7 @@ export function WorkRail({
     } else if (event.altKey && key === "r" && !renamePending) {
       event.preventDefault(); setRenameError(null);
       const placement = target instanceof HTMLElement ? target.closest("[data-placement]")?.getAttribute("data-placement") : null;
-      setRenamingPlacement(placement === "project" || placement === "pinned" ? placement : "recent");
+      setRenamingPlacement(placement === "project" || placement === "pinned" ? placement : record.chat.userState?.pinned ? "pinned" : "recent");
       setRenamingChatId(record.chat.id);
     } else if (event.shiftKey && key === "u") {
       event.preventDefault(); void toggleRead(record);

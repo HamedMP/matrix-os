@@ -174,3 +174,19 @@ it.each(["rename", "pin", "read", "archive", "delete"] as const)("updates both p
     else await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1", exact: true })).toHaveLength(0));
   }
 });
+
+
+it("opens the pinned active chat editor from the rename shortcut outside its row", async () => {
+  const row = chat(1);
+  const { ownerScope: _owner, ...navigationChat } = row.chat;
+  const pinned = { ...row, chat: { ...navigationChat, userState: { pinned: true, muted: false, readThroughSeq: 0 } },
+    readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 0, markedUnread: false, unread: false },
+    classification: { kind: "ordinary" }, persistence: "personal" };
+  const client = { navigation: vi.fn(async () => ({ version: 1, items: [pinned], truncated: false })),
+    navigationPage: vi.fn(async ({ group }: { group: string }) => ({ items: group === "pinned" ? [pinned] : [], totalCount: group === "pinned" ? 1 : 0 })) };
+  render(<WorkRail client={client as never} projects={[]} active activeChatId={row.chat.id} onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+    onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
+  await screen.findByRole("button", { name: "Chat 1", exact: true });
+  fireEvent.keyDown(window, { key: "r", altKey: true, metaKey: true });
+  expect(await screen.findByRole("textbox", { name: "Rename Chat 1" })).toBeTruthy();
+});
