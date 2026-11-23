@@ -29,9 +29,18 @@ describe("published CLI package runners", () => {
     expect(cliRelease).not.toMatch(/^\s*[^#\s].*pnpm pack /m);
     expect(cliRelease).toContain('path: ${{ steps.pack.outputs.tarball }}');
     // npm versions are immutable, so a clean global install on macOS and Linux gates publication.
-    expect(cliRelease).toContain("os: [macos-latest, ubuntu-latest]");
-    expect(cliRelease).toContain('npm install --global --prefix "$PREFIX" "$TARBALL"');
-    expect(cliRelease).toContain("needs: [package, global-install-smoke]");
+    expect(cliRelease).toContain("uses: ./.github/workflows/cli-install-smoke.yml");
+    expect(cliRelease).toContain("artifact: cli-npm-package");
+    expect(cliRelease).toContain("needs: [package, install-smoke]");
+    const smoke = await readFile(resolve(repoRoot, ".github/workflows/cli-install-smoke.yml"), "utf8");
+    expect(smoke).toContain("os: [macos-latest, ubuntu-latest]");
+    expect(smoke).toContain('npm install --global --prefix "$PREFIX" "$TARBALL"');
+    // Homebrew repacks npm sources unless the formula installs the tarball itself; exercise the real formula.
+    expect(smoke).toContain('cp homebrew-tap/Formula/matrix.rb "$FORMULA"');
+    expect(smoke).toContain("brew install matrix-os/smoke/matrix");
+    expect(smoke).toContain("brew test matrix-os/smoke/matrix");
+    // Packaging changes are checked on the pull request, not first at release time.
+    expect(smoke).toMatch(/pull_request:\n\s+paths:[\s\S]*"homebrew-tap\/\*\*"[\s\S]*"packages\/sync-client\/scripts\/\*\*"/);
     expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
     expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
 
@@ -157,5 +166,20 @@ describe("published CLI package runners", () => {
 
     expect(formula).toContain('depends_on "node@20"');
     expect(formula).not.toContain('depends_on "node@24"');
+  });
+
+  it("installs the published tarball through Homebrew without repacking it", async () => {
+    const formula = await readFile(resolve(repoRoot, "homebrew-tap/Formula/matrix.rb"), "utf8");
+    const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
+
+    // `std_npm_args` runs `npm pack` on the unpacked sources, which drops the
+    // contracts files the tarball ships under node_modules.
+    expect(formula).toMatch(/^\s*url ".+\.tgz", using: :nounzip$/m);
+    expect(formula).not.toMatch(/^\s*system .*std_npm_args/m);
+    expect(formula).toContain('system "npm", "install", "--global", "--ignore-scripts", "--prefix=#{libexec}", tarball');
+    // The tap must receive this formula, not only a new url, or its install steps never change.
+    expect(cliRelease).toContain('cp ../source/homebrew-tap/Formula/matrix.rb "$FORMULA"');
+    // The rewrite must keep `, using: :nounzip` after the url.
+    expect(cliRelease).toContain(String.raw`re.sub(r'url\s+"[^"]*"', f'url "{tarball}"', text, count=1)`);
   });
 });

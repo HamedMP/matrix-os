@@ -41,9 +41,18 @@ package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
 package-runner check; it verifies bundled contract files and runs the
 tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo. The
-`CLI Release` workflow also installs the packed tarball globally into a clean
-prefix on macOS and Linux (Node 20 and 24) and blocks publication if
-`matrix --version` does not run.
+`CLI Install Smoke` workflow installs the packed tarball globally into a clean
+prefix on macOS and Linux (Node 20 and 24), and through the Homebrew formula on
+macOS, then runs `matrix --version`. `CLI Release` calls it and will not
+publish unless it passes; pull requests that touch CLI packaging or the formula
+run it too.
+
+Homebrew needs its own install steps. Its stock `std_npm_args` repacks the
+unpacked sources with `npm pack`, which drops the contracts files because the
+published manifest no longer declares them bundled. `homebrew-tap/Formula/matrix.rb`
+therefore downloads the tarball with `using: :nounzip` and installs that file
+directly. That file is the source of truth: the release copies it into
+`FinnaAI/homebrew-tap` and sets `url`, `sha256`, and `version`.
 
 Run these from the repo root before dispatching the release workflow:
 

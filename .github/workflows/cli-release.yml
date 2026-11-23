@@ -145,51 +145,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  global-install-smoke:
-    name: npm install -g (${{ matrix.os }}, Node ${{ matrix.node }})
+  # npm versions are immutable: the exact tarball must install and run through
+  # npm (macOS and Linux) and through the Homebrew formula before it is published.
+  install-smoke:
+    name: Install smoke
     needs: package
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-        node: [20, 24]
-    steps:
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-          package-manager-cache: false
-
-      - name: Download npm package
-        uses: actions/download-artifact@v7
-        with:
-          name: cli-npm-package
-          path: dist/npm-package
-
-      # The release tarball must install globally into a clean prefix on every
-      # supported platform before it is published; npm versions are immutable.
-      - name: Install the release tarball globally and run it
-        env:
-          EXPECTED_VERSION: ${{ needs.package.outputs.version }}
-        run: |
-          set -euo pipefail
-          TARBALL="$(find "$PWD/dist/npm-package" -maxdepth 1 -type f -name '*.tgz' -print)"
-          test -f "$TARBALL"
-          PREFIX="$RUNNER_TEMP/matrix-global-prefix"
-          export HOME="$RUNNER_TEMP/matrix-smoke-home"
-          mkdir -p "$PREFIX" "$HOME"
-          cd "$RUNNER_TEMP"
-          npm install --global --prefix "$PREFIX" "$TARBALL"
-          ACTUAL="$("$PREFIX/bin/matrix" --version)"
-          echo "matrix --version: $ACTUAL"
-          test "$ACTUAL" = "$EXPECTED_VERSION"
+    uses: ./.github/workflows/cli-install-smoke.yml
+    with:
+      artifact: cli-npm-package
 
   publish:
     name: Publish CLI to npm
-    needs: [package, global-install-smoke]
+    needs: [package, install-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -337,6 +304,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # The formula in this repository is the source of truth, including its
+      # install steps; the tap receives a copy with this release's url and sha.
+      - uses: actions/checkout@v6
+        with:
+          path: source
+          sparse-checkout: homebrew-tap
+
       - uses: actions/checkout@v6
         with:
           repository: FinnaAI/homebrew-tap
@@ -368,6 +342,7 @@ jobs:
             echo "formula $FORMULA missing in tap repo; bootstrap it first." >&2
             exit 1
           fi
+          cp ../source/homebrew-tap/Formula/matrix.rb "$FORMULA"
 
           python3 - <<'PY'
           import os, re, pathlib
@@ -376,9 +351,9 @@ jobs:
           sha = os.environ["SHA256"]
           version = os.environ["VERSION"]
           text = path.read_text()
-          text = re.sub(r'url\s+".*"', f'url "{tarball}"', text, count=1)
-          text = re.sub(r'sha256\s+".*"', f'sha256 "{sha}"', text, count=1)
-          text = re.sub(r'version\s+".*"', f'version "{version}"', text, count=1)
+          text = re.sub(r'url\s+"[^"]*"', f'url "{tarball}"', text, count=1)
+          text = re.sub(r'sha256\s+"[^"]*"', f'sha256 "{sha}"', text, count=1)
+          text = re.sub(r'version\s+"[^"]*"', f'version "{version}"', text, count=1)
           path.write_text(text)
           PY
           git diff -- Formula/matrix.rb
