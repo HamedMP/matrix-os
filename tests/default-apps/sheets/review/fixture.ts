@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { CellAddress, CellRange, SheetId } from "../../../../home/apps/_shared/office-engine/index";
 import type { CellDecoration } from "../../../../home/apps/sheets/src/grid";
 import { type SheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
@@ -7,7 +8,7 @@ import { harness } from "../session/fakes";
 export const MODEL_PATH = "Documents/model.xlsx";
 
 export function modelBytes(): Uint8Array {
-  return new Uint8Array(readFileSync(new URL("../../../office/fixtures/model.xlsx", import.meta.url)));
+  return new Uint8Array(readFileSync(path.resolve(__dirname, "../../../office/fixtures/model.xlsx")));
 }
 
 export interface ModelSession {
