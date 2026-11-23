@@ -130,7 +130,7 @@ export async function flush(): Promise<void> {
 export async function pick(menu: string | RegExp, item: string | RegExp): Promise<void> {
   const { fireEvent } = await import("@testing-library/react");
   fireEvent.click(screen.getByRole("button", { name: menu }));
-  const option = screen.getAllByRole(/menuitem/).find((element) => (typeof item === "string" ? element.textContent?.includes(item) : item.test(element.textContent ?? "")));
+  const option = Array.from(document.querySelectorAll<HTMLElement>("[role^='menuitem']")).find((element) => (typeof item === "string" ? element.textContent?.includes(item) : item.test(element.textContent ?? "")));
   if (option === undefined) throw new Error(`no menu item ${String(item)}`);
   fireEvent.click(option);
 }

@@ -58,8 +58,10 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
   const state = useSessionState(session);
   const controller = useMemo(() => createSheetGridController(session), [session]);
   useEffect(() => () => controller.dispose(), [controller]);
-  const selection = useGridSelection(controller);
+  const reported = useGridSelection(controller);
   const { revision } = state;
+  // Right after the active sheet changes (one was removed), the last reported selection may name the old sheet.
+  const selection = reported.sheet === state.activeSheetId ? reported : controller.getSelection();
   const style = useMemo(() => {
     void revision; // Formatting changes the style without moving the selection.
     return activeStyle(session, selection);
