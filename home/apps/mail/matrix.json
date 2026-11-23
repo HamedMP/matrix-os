@@ -9,6 +9,9 @@
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",
   "scope": "personal",
+  "permissions": [
+    "files"
+  ],
   "build": {
     "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "pnpm build",
@@ -64,6 +67,20 @@
         ],
         "uniqueIndexes": [
           "thread_key"
+        ]
+      },
+      "mail_voice_profiles": {
+        "columns": {
+          "profile_key": "text",
+          "account_id": "text",
+          "profile": "jsonb",
+          "derived_at": "number"
+        },
+        "indexes": [
+          "account_id"
+        ],
+        "uniqueIndexes": [
+          "profile_key"
         ]
       }
     }
