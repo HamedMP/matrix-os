@@ -438,6 +438,20 @@ describe("Terminal window menu", () => {
     expect(items.find((item) => item.label === "Settings…")?.accelerator).toBeUndefined();
   });
 
+  // Fault detected (Greptile, #3586): Cmd+Q set only on a Terminal window command took Quit's key in the main window too.
+  it("keeps Quit's key in the main window when only a Terminal window command holds it", () => {
+    const shortcuts = { ...resolveShortcuts(null, "mac"), "app.close": [], "terminal-window.close-window": ["Cmd+Q"] };
+    const menu = (terminal: boolean) => flat(createAppMenuTemplate({
+      appName: "Matrix OS", isPackaged: true, platform: "darwin", openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(), shortcuts, runShortcut: vi.fn(),
+      ...(terminal ? { terminalWindow: { command: vi.fn(), close: vi.fn() } } : {}),
+    }) as Item[]);
+    expect(menu(false).find((item) => item.label === "Quit Matrix OS")?.accelerator).toBe("Cmd+Q");
+    const terminal = menu(true);
+    expect(terminal.find((item) => item.label === "Quit Matrix OS")?.accelerator).toBeUndefined();
+    expect(terminal.filter((item) => item.accelerator === "Cmd+Q").map((item) => item.label)).toEqual(["Close Window"]);
+  });
+
   it("takes each command's keys from the Shortcuts settings", () => {
     const command = vi.fn();
     const shortcuts = { ...resolveShortcuts(null, "mac"), "terminal-window.split-right": ["Cmd+Alt+D", "F7"], "terminal-window.overview": [] };
