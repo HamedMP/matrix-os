@@ -31,6 +31,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { nearestEdge } from "@desktop/renderer/src/features/terminal-window/TerminalPaneTree";
 import { MAX_PANES_PER_TAB, splitPane, type PaneTab } from "@matrix-os/ui/terminal-pane-tree";
+import { MAX_OPEN_TABS, openTerminal } from "@desktop/renderer/src/features/terminal-window/use-open-tabs";
 
 // Spec 2706 layer 6: one terminal per pane, split, focus, swap, zoom, close,
 // resize and drag to re-split, saved per machine and restored.
@@ -463,5 +464,25 @@ describe("Terminal window panes", () => {
   it("picks the drop edge nearest the pointer", () => {
     const rect = { left: 0, top: 0, width: 100, height: 100 };
     expect([nearestEdge(rect, 5, 50), nearestEdge(rect, 95, 50), nearestEdge(rect, 50, 4), nearestEdge(rect, 50, 97)]).toEqual(["left", "right", "up", "down"]);
+  });
+});
+
+// Fault detected (Greptile, #3569): the tab bar's cap counted terminals, so the panes of one big tab
+// pushed unrelated tabs off the bar.
+describe("open tabs cap", () => {
+  const big = Array.from({ length: MAX_PANES_PER_TAB }, (_, index) => `big${index}`);
+  const groupOf = (key: string) => ({ id: key.startsWith("big") ? "big" : key });
+
+  it("counts tabs, not terminals, and drops the oldest whole tabs", () => {
+    const solo = Array.from({ length: 9 }, (_, index) => `solo${index}`);
+    let opened: readonly string[] = [...solo];
+    for (const key of big) opened = openTerminal(opened, key, groupOf);
+    expect(opened).toEqual([...solo, ...big]);
+    const many = Array.from({ length: MAX_OPEN_TABS }, (_, index) => `t${index}`);
+    let full: readonly string[] = [...big];
+    for (const key of many) full = openTerminal(full, key, groupOf);
+    // 25 tabs: the oldest tab (all 16 of its panes) leaves, the newest stays.
+    expect(full).toEqual(many);
+    expect(openTerminal(full, "t3", groupOf)).toBe(full);
   });
 });

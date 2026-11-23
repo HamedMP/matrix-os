@@ -5,10 +5,13 @@
 // storage as a per-viewer convenience that survives storage being unavailable.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
+import { MAX_PANES_PER_TAB } from "@matrix-os/ui/terminal-pane-tree";
 
 const STORAGE_KEY = "matrix.terminal-window.tabs.v1";
 export const MAX_OPEN_TABS = 24;
-const OpenSchema = z.array(z.string().min(1).max(256)).max(MAX_OPEN_TABS);
+// The bar holds at most MAX_OPEN_TABS tabs; a tab may hold a full pane tree.
+const MAX_OPEN_TERMINALS = MAX_OPEN_TABS * MAX_PANES_PER_TAB;
+const OpenSchema = z.array(z.string().min(1).max(256)).max(MAX_OPEN_TERMINALS);
 
 export interface OpenTab {
   /** The pane tab's id, or the terminal's key for a terminal on its own. */
@@ -34,6 +37,24 @@ export function openTabGroups(
   return [...tabs.values()];
 }
 
+/**
+ * The opened terminals with `key` added. Past MAX_OPEN_TABS tabs, the oldest
+ * whole tabs leave the bar (never the one `key` joins), so a big pane tab never
+ * pushes out unrelated tabs one terminal at a time.
+ */
+export function openTerminal(
+  current: readonly string[],
+  key: string,
+  groupOf: (key: string) => { id: string },
+): readonly string[] {
+  const next = current.includes(key) ? current : [...current, key];
+  const groups = [...new Set(next.map((entry) => groupOf(entry).id))];
+  if (groups.length <= MAX_OPEN_TABS && next.length <= MAX_OPEN_TERMINALS) return next;
+  const keep = groupOf(key).id;
+  const dropping = new Set(groups.filter((id) => id !== keep).slice(0, Math.max(1, groups.length - MAX_OPEN_TABS)));
+  return next.filter((entry) => !dropping.has(groupOf(entry).id)).slice(-MAX_OPEN_TERMINALS);
+}
+
 function read(): string[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -53,15 +74,17 @@ export function useOpenTabs(options: {
   exists(key: string): boolean | null;
 }) {
   const { selectedKey, groupOf, exists } = options;
-  const [opened, setOpened] = useState<string[]>(read);
+  const [opened, setOpened] = useState<readonly string[]>(read);
   const changed = useRef(false);
+  const groupOfRef = useRef(groupOf);
+  useEffect(() => { groupOfRef.current = groupOf; }, [groupOf]);
 
   // The selected terminal joins the bar.
   useEffect(() => {
     if (!selectedKey) return;
     // At worst this saves an unchanged list once.
     changed.current = true;
-    setOpened((current) => (current.includes(selectedKey) ? current : [...current, selectedKey].slice(-MAX_OPEN_TABS)));
+    setOpened((current) => openTerminal(current, selectedKey, groupOfRef.current));
   }, [selectedKey]);
 
   useEffect(() => {
