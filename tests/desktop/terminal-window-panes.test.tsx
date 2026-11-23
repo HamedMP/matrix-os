@@ -262,11 +262,11 @@ describe("Terminal window panes", () => {
   // The cap itself is the model's (tests/ui/terminal-pane-tree.test.ts); here the window's split
   // command goes through it. The tab starts restored at the cap instead of 15 live splits.
   it("refuses a split past 16 panes", async () => {
-    const terminals = Array.from({ length: MAX_PANES_PER_TAB }, (_, index) => fact(`t${index + 1}`, `pane ${index + 1}`));
+    const terminals = Array.from({ length: MAX_PANES_PER_TAB }, (_, index) => fact(`p${index + 1}`, `pane ${index + 1}`));
     let counter = 0;
-    let tab: PaneTab = { id: "tab1", root: { type: "leaf", id: "leaf0", terminal: "local|t1" }, focus: "leaf0", zoom: null };
+    let tab: PaneTab = { id: "tab1", root: { type: "leaf", id: "leaf0", terminal: "local|p1" }, focus: "leaf0", zoom: null };
     for (let index = 1; index < MAX_PANES_PER_TAB; index += 1) {
-      tab = splitPane(tab, tab.focus, index % 2 ? "right" : "down", `local|t${index + 1}`, () => `n${counter++}`)!;
+      tab = splitPane(tab, tab.focus, index % 2 ? "right" : "down", `local|p${index + 1}`, () => `n${counter++}`)!;
     }
     window.localStorage.setItem("matrix.terminal-window.panes.v1", JSON.stringify({ local: [tab] }));
     const operator = installOperator(terminals);
@@ -277,11 +277,14 @@ describe("Terminal window panes", () => {
     expect(await screen.findByText("A tab holds at most 16 panes.")).toBeTruthy();
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(0);
     // Fault detected (Greptile, #3569): with a pane's terminal gone, the split was refused against the stale tree.
-    operator.push(terminals.filter((entry) => entry.id !== "t16"));
+    operator.push(terminals.filter((entry) => entry.id !== "p16"));
     await waitFor(() => expect(paneNames()).toHaveLength(15));
     operator.command({ command: "split-right" });
     await waitFor(() => expect(paneNames()).toHaveLength(16));
     expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:create")).toHaveLength(1);
+    // The new pane holds the new terminal, and every pane a terminal of its own.
+    expect(paneNames()).toContain("shell t10");
+    expect(new Set(paneNames()).size).toBe(16);
   });
 
   // Fault detected (Greptile, #3569): a split that finished after another pane change replaced it.
