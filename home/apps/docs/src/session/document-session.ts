@@ -32,7 +32,7 @@ import type {
   SessionState,
 } from "./types";
 
-export const DEFAULT_AUTOSAVE_DELAY_MS = 2_000;
+export const DEFAULT_AUTOSAVE_DELAY_MS = 1_000;
 
 export interface DocumentSessionOptions {
   /** `window.MatrixOS.files`, or the part of it the session uses. */

@@ -4,8 +4,9 @@
  */
 import { FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type AiAccess, AppFrame, aiAccessMessage, useToast } from "../../../_shared/office-ui";
+import { type AiAccess, AppFrame, aiAccessMessage, useToast, watchLeave } from "../../../_shared/office-ui";
 import { SheetGrid, createSheetGridController } from "../grid";
+import { logFailure } from "./bridge";
 import type { SheetsAi } from "../agent";
 import type { SheetSession } from "../session/session";
 import { FindReplace } from "./FindReplace";
@@ -68,6 +69,19 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
     controller.focus();
     return () => controller.dispose();
   }, [controller]);
+  // The shell may remove the window at any moment: store the cell being typed and save as soon as it loses focus or is hidden.
+  useEffect(
+    () =>
+      watchLeave(window, {
+        flush: () => {
+          controller.commitEdit();
+          void session.flush();
+        },
+        dirty: () => session.getState().dirty || controller.context.store.getState().edit !== null,
+        log: logFailure,
+      }),
+    [session, controller],
+  );
   const reported = useGridSelection(controller);
   const { revision } = state;
   // Right after the active sheet changes (one was removed), the last reported selection may name the old sheet.

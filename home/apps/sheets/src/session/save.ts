@@ -26,7 +26,7 @@ import {
 } from "./file-io";
 import type { SaveOutcome, SaveState, SessionErrorCode, SessionFiles, SessionTimers, SheetFileFormat } from "./types";
 
-export const DEFAULT_AUTOSAVE_DELAY_MS = 1500;
+export const DEFAULT_AUTOSAVE_DELAY_MS = 1000;
 const MAX_AUTOSAVE_RETRIES = 5;
 const MAX_RETRY_DELAY_MS = 30_000;
 const MAX_COPY_ATTEMPTS = 20;

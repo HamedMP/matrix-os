@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { MatrixOSBridge } from "../../../_shared/matrix-os";
 import { createDocxFromMarkdown } from "../../../_shared/office-engine/docx/index";
-import { useToast } from "../../../_shared/office-ui";
+import { useToast, watchLeave } from "../../../_shared/office-ui";
 import { DocumentSession, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
 import { isDocxPath } from "./file-picker-model";
 
@@ -27,7 +27,20 @@ export function useDocsSession(bridge: MatrixOSBridge | undefined, author: strin
     const recents = bridge?.db === undefined ? null : new RecentFilesStore({ db: bridge.db });
     const session = new DocumentSession({ files, author, recents, autosave });
     setHandles({ session, recents });
+    // The shell may remove the window at any moment: save as soon as it loses focus or is hidden.
+    const stopLeave =
+      typeof window === "undefined"
+        ? () => undefined
+        : watchLeave(window, {
+            flush: () => {
+              const state = session.getState();
+              if (state.dirty && state.path !== null) void session.flush();
+            },
+            dirty: () => session.getState().dirty,
+            log: (message, error) => console.warn(`[docs] ${message}`, error instanceof Error ? error.name : error),
+          });
     return () => {
+      stopLeave();
       // Unsaved work of a closing app is saved when possible; the session is then dropped.
       void session.flush().finally(() => session.dispose());
     };

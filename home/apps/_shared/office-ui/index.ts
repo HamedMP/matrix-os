@@ -48,4 +48,5 @@ export {
 export { ReviewBar, type ReviewBarProps } from "./ReviewBar";
 export { ConfirmSend, type ConfirmSendProps } from "./ConfirmSend";
 export { cx } from "./internal";
+export { watchLeave, type LeaveGuard } from "./leave-guard";
 export { aiAccessMessage, readAiAccess, replyText, useAiAccess, type AiAccess, type AiAccessBridge } from "./ai-access";
