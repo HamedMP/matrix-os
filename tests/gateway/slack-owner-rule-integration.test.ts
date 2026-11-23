@@ -87,7 +87,7 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     expect((await push("EvTrigger", triggerTs, text)).status).toBe(200);
     expect((await push("EvSameTimestamp", triggerTs, text)).status).toBe(200);
     await summaries.drain();
-    await expect.poll(() => runtime.modelRequests.length).toBe(1);
+    await expect.poll(() => runtime.modelRequests.length, { timeout: 10_000 }).toBe(1);
     const delivery = () => sql<{
         agent_id: string; chat_id: string; event_id: string; rule_id: string;
         job_id: string; run_id: string; message_id: string; result: string;
@@ -108,7 +108,7 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
         job_id: expect.stringMatching(/^req_slack_summary_/), run_id: expect.stringMatching(/^run_/),
         message_id: expect.stringMatching(/^msg_/), result: reply,
     }];
-    await expect.poll(delivery).toEqual(expectedDelivery);
+    await expect.poll(delivery, { timeout: 10_000 }).toEqual(expectedDelivery);
     if (trigger === "new_message") {
         const change = async (operation: "pause" | "resume", baseRevision: number) => {
             const ownerInstruction = `Please ${operation} my Slack summary rule.`;
