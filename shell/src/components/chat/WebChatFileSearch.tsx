@@ -1,4 +1,5 @@
 "use client";
+import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { FileCode2 } from "lucide-react";
 import { searchWorktreeFiles, type WorktreeFileScope } from "./web-chat-worktree-files";
@@ -39,13 +40,13 @@ export function WebChatFileSearch({ gatewayUrl, rootPath, query, worktree, onOpe
     return () => { clearTimeout(timer); controller.abort(); };
   }, [gatewayUrl, rootPath, query, retry, worktree]);
   if (state?.query !== query) return <p role="status" className="px-3 py-1 text-xs text-muted-foreground">Searching files…</p>;
-  if (state.status === "error") return <p role="alert" className="px-3 py-1 text-xs">Files could not be searched. <button type="button" className="underline" onClick={() => { setState(null); setRetry(value => value + 1); }}>Retry</button></p>;
+  if (state.status === "error") return <p role="alert" className="px-3 py-1 text-xs">Files could not be searched. <Button variant="link" size="sm" type="button" className="h-auto p-0 text-xs font-normal text-inherit underline" onClick={() => { setState(null); setRetry(value => value + 1); }}>Retry</Button></p>;
   return <div aria-label="Matching chat files">
     {state.results.length === 0 ? <p className="px-3 py-1 text-xs text-muted-foreground">No matching files.</p> : null}
-    {state.results.map(entry => <button key={entry.path} type="button" aria-label={`Open search result ${rootPath ? entry.path.slice(rootPath.length + 1) : entry.path}`}
-      className="flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-3 text-left text-sm hover:bg-accent" onClick={() => onOpenFile(entry.path)}>
-      <FileCode2 size={14} aria-hidden/><span className="truncate" title={entry.path}>{rootPath ? entry.path.slice(rootPath.length + 1) : entry.path}</span>
-    </button>)}
+    {state.results.map(entry => <Button variant="ghost" size="xs" key={entry.path} type="button" aria-label={`Open search result ${rootPath ? entry.path.slice(rootPath.length + 1) : entry.path}`}
+      className="flex h-7 w-full min-w-0 items-center justify-start gap-2 rounded-md px-3 text-left text-sm font-normal has-[>svg]:px-3 hover:bg-accent" onClick={() => onOpenFile(entry.path)}>
+      <FileCode2 size={14} className="size-3.5" aria-hidden/><span className="truncate" title={entry.path}>{rootPath ? entry.path.slice(rootPath.length + 1) : entry.path}</span>
+    </Button>)}
     {state.truncated ? <p role="status" className="px-3 py-1 text-xs text-muted-foreground">More matches are available. Refine the filter.</p> : null}
   </div>;
 }

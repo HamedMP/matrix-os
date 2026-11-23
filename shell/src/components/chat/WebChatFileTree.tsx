@@ -93,15 +93,15 @@ function FileBranch({
       {status === "error" ? (
         <p role="alert" className="px-3 py-1 text-xs">
           Files could not be loaded.{" "}
-          <button type="button" className="underline" onClick={() => setRetry((value) => value + 1)}>
+          <Button variant="link" size="sm" type="button" className="h-auto p-0 text-xs font-normal text-inherit underline" onClick={() => setRetry((value) => value + 1)}>
             Retry
-          </button>
+          </Button>
         </p>
       ) : null}
       {range.total > 1000 ? <div role="group" aria-label={`File pages in ${path || "Home"}`} className="flex flex-wrap items-center gap-2 px-3 py-1 text-xs text-muted-foreground">
         <span>Showing {range.start + 1}–{Math.min(range.start + 1000, range.total)} of {range.total} files.</span>
-        {range.start > 0 ? <button type="button" disabled={status === "loading"} aria-label={`Previous files in ${path || "Home"}`} onClick={() => setPage({ query, start: Math.max(0, range.start - 1000), selection: selectedPath, request: revealKey })}>Previous</button> : null}
-        {range.start + 1000 < range.total ? <button type="button" disabled={status === "loading"} aria-label={`Next files in ${path || "Home"}`} onClick={() => setPage({ query, start: range.start + 1000, selection: selectedPath, request: revealKey })}>Next</button> : null}
+        {range.start > 0 ? <Button variant="link" size="sm" className="h-auto p-0 text-xs font-normal text-inherit" type="button" disabled={status === "loading"} aria-label={`Previous files in ${path || "Home"}`} onClick={() => setPage({ query, start: Math.max(0, range.start - 1000), selection: selectedPath, request: revealKey })}>Previous</Button> : null}
+        {range.start + 1000 < range.total ? <Button variant="link" size="sm" className="h-auto p-0 text-xs font-normal text-inherit" type="button" disabled={status === "loading"} aria-label={`Next files in ${path || "Home"}`} onClick={() => setPage({ query, start: range.start + 1000, selection: selectedPath, request: revealKey })}>Next</Button> : null}
       </div> : null}
       {entries
         .filter((entry) => entry.type === "directory" || entry.name.toLowerCase().includes(query.toLowerCase()))
@@ -280,15 +280,15 @@ export function WebChatFileTree({
     return (
       <p role="alert" className="p-3 text-sm">
         Project files could not be loaded.{" "}
-        <button
-          className="underline"
+        <Button variant="link" size="sm" type="button"
+          className="h-auto p-0 font-normal text-inherit underline"
           onClick={() => {
             setError(false);
             setAttempt((value) => value + 1);
           }}
         >
           Retry
-        </button>
+        </Button>
       </p>
     );
   if (root === null)
