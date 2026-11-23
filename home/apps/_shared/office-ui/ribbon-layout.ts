@@ -37,12 +37,12 @@ export function useGroupFit(containerRef: RefObject<HTMLElement | null>, tabKey:
   const [, setTick] = useState(0);
   const full = useRef(new Map<string, number>());
   const collapsed = useRef(new Map<string, number>());
-  const lastTab = useRef(tabKey);
+  const [shownTab, setShownTab] = useState(tabKey);
   const idsKey = groupIds.join("|");
 
-  // A new tab or group list starts fully expanded so every group is measured once.
-  if (lastTab.current !== tabKey) {
-    lastTab.current = tabKey;
+  // A new tab starts fully expanded so every group is measured once.
+  if (shownTab !== tabKey) {
+    setShownTab(tabKey);
     if (expanded !== groupIds.length) setExpanded(groupIds.length);
   }
 

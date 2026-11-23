@@ -34,7 +34,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 0; border-right: 1px solid var(--app-border); border-bottom: 1px solid var(--app-border);
   background: var(--app-card); color: var(--app-fg); font: inherit; font-size: 13px;
 }
-.sheets-namebox:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
+.sheets-namebox:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
 
 /* ---------------------------------------------------------------- ribbon and backstage */
 
@@ -51,7 +51,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
 }
 .sheets-functions__item:hover { background: var(--app-muted); }
-.sheets-functions__item:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
+.sheets-functions__item:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
 .sheets-functions__name { font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .sheets-functions__summary, .sheets-functions__empty { font-size: 12px; color: var(--app-muted-fg); }
 
@@ -64,8 +64,8 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: inherit; cursor: pointer;
 }
 .sheets-icon-btn:hover { background: var(--app-muted); }
-.sheets-icon-btn:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: 1px; }
-.sheets-link { border: 0; padding: 0; background: none; color: var(--identity-accent, var(--app-primary)); font: inherit; cursor: pointer; }
+.sheets-icon-btn:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: 1px; }
+.sheets-link { border: 0; padding: 0; background: none; color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); font: inherit; cursor: pointer; }
 .sheets-link:hover { text-decoration: underline; }
 
 /* ---------------------------------------------------------------- banners */
@@ -83,7 +83,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 1px solid var(--app-border); border-radius: var(--app-radius, 6px);
   background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px;
 }
-.sheets-find__input:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: 0; }
+.sheets-find__input:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: 0; }
 .sheets-find__count { min-width: 8ch; font-size: 12px; color: var(--app-muted-fg); }
 
 /* ---------------------------------------------------------------- tabs */
@@ -91,19 +91,19 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .sheets-tabs { display: flex; align-items: stretch; gap: 4px; min-height: 32px; padding: 0 6px; border-top: 1px solid var(--app-border); background: var(--app-card); }
 .sheets-tabs__list { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .sheets-tabs__tab { position: relative; display: flex; align-items: center; border-bottom: 3px solid transparent; }
-.sheets-tabs__tab.is-selected { background: var(--app-bg); border-bottom-color: var(--identity-accent, var(--app-primary)); }
+.sheets-tabs__tab.is-selected { background: var(--app-bg); border-bottom-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
 .sheets-tabs__tab::before { content: ""; position: absolute; left: 4px; right: 4px; top: 0; height: 3px; border-radius: 0 0 2px 2px; background: var(--sheets-tab-color, transparent); }
 .sheets-tabs__button {
   display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px;
   border: 0; background: transparent; color: var(--app-fg); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
 }
 .sheets-tabs__tab:not(.is-selected) .sheets-tabs__button { color: var(--app-muted-fg); }
-.sheets-tabs__button:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
+.sheets-tabs__button:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
 .sheets-tabs__pending { width: 6px; height: 6px; border-radius: 50%; background: var(--app-warning); }
 .sheets-tabs__menu { align-self: center; }
 /* The tabs sit at the bottom of the window, so their menu opens upwards. */
 .sheets-tabs__menu .oui-menu { top: auto; bottom: calc(100% + 4px); max-height: 60vh; overflow: auto; }
-.sheets-tabs__rename { width: 14ch; margin: 3px 0; padding: 0 6px; border: 1px solid var(--identity-accent, var(--app-primary)); border-radius: 4px; background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; }
+.sheets-tabs__rename { width: 14ch; margin: 3px 0; padding: 0 6px; border: 1px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); border-radius: 4px; background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; }
 .sheets-tabs__add { align-self: center; }
 
 /* Tab colours are owner data; they read well on both themes. */
@@ -131,9 +131,9 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 1px solid var(--app-border); border-radius: var(--app-radius, 8px);
   background: var(--app-card); color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
 }
-.sheets-start__card > svg { color: var(--identity-accent, var(--app-primary)); }
-.sheets-start__card:hover { border-color: var(--identity-accent, var(--app-primary)); }
-.sheets-start__card:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: 2px; }
+.sheets-start__card > svg { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.sheets-start__card:hover { border-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.sheets-start__card:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: 2px; }
 .sheets-start__card-title { font-weight: 600; font-size: 14px; }
 .sheets-start__card-hint { font-size: 12px; color: var(--app-muted-fg); }
 .sheets-start__recent h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--app-muted-fg); }
@@ -144,8 +144,8 @@ body { background: var(--app-bg); color: var(--app-fg); }
   width: 100%; padding: 10px 14px; border: 0; background: var(--app-card); color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
 }
 .sheets-start__file:hover { background: var(--app-muted); }
-.sheets-start__file:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
-.sheets-start__file > svg { color: var(--identity-accent, var(--app-primary)); }
+.sheets-start__file:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
+.sheets-start__file > svg { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
 .sheets-start__file-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sheets-start__file-meta { font-size: 12px; color: var(--app-muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 560px) {
@@ -167,7 +167,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
   border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: var(--app-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
 }
 .sheets-picker__entry:hover { background: var(--app-muted); }
-.sheets-picker__entry:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
+.sheets-picker__entry:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
 .sheets-picker__entry > svg { color: var(--app-muted-fg); flex: none; }
 .sheets-picker__error { margin: 12px; color: var(--app-danger); font-size: 13px; }
 .sheets-picker__note { margin: 6px 10px; font-size: 12px; color: var(--app-muted-fg); }

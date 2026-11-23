@@ -76,12 +76,12 @@
 }
 
 .docs-review__segment.is-selected {
-  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
   font-weight: 600;
 }
 
 .docs-review__segment:focus-visible {
-  outline: 2px solid var(--app-primary);
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
   outline-offset: -2px;
 }
 
@@ -154,7 +154,7 @@
 }
 
 .docs-review__item.is-current {
-  background: color-mix(in srgb, var(--app-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 12%, transparent);
 }
 
 .docs-review__item-main {
@@ -173,7 +173,7 @@
 }
 
 .docs-review__item-main:focus-visible {
-  outline: 2px solid var(--app-primary);
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
   outline-offset: -2px;
   border-radius: 4px;
 }
@@ -281,7 +281,7 @@
 }
 
 .docs-comments__anchor:focus-visible {
-  outline: 2px solid var(--app-primary);
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
   outline-offset: 2px;
 }
 
@@ -398,10 +398,10 @@
 
 /* The current revision (layer `review`). */
 .doc-hl-review {
-  outline: 2px solid color-mix(in srgb, var(--app-primary) 70%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 70%, transparent);
   outline-offset: 1px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--app-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 12%, transparent);
 }
 
 /* A paragraph with an open comment thread (layer `comment-mark`) shows a mark in its right margin. */

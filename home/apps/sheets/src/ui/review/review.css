@@ -29,8 +29,8 @@
 }
 
 .sheets-review__markup[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
-  color: var(--app-primary);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
+  color: var(--oui-accent-ink, var(--app-primary));
 }
 
 .sheets-review__bar {
@@ -99,7 +99,7 @@
 }
 
 .sheets-review__item.is-current {
-  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 10%, transparent);
 }
 
 .sheets-review__check .oui-checkbox__label {
@@ -128,7 +128,7 @@
 }
 
 .sheets-review__go:focus-visible {
-  outline: 2px solid var(--app-primary);
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
 }
 
 .sheets-review__where {

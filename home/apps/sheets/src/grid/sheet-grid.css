@@ -10,6 +10,8 @@
   --sg-head-bg: var(--app-muted, #f3f3f1);
   --sg-head-fg: var(--app-muted-fg, #5a5a5a);
   --sg-accent: var(--identity-accent, var(--app-primary, #1f7a4d));
+  /* Selection borders, outlines and tints: readable on a dark theme too. Filled surfaces use --sg-accent. */
+  --sg-accent-ink: var(--oui-accent-ink, var(--sg-accent));
   --sg-ref-0: #2f6fde;
   --sg-ref-1: #d14b3a;
   --sg-ref-2: #7b3fc4;
@@ -55,7 +57,7 @@
 }
 
 .sg-surface:focus-visible .sg-active {
-  box-shadow: 0 0 0 1px var(--sg-bg), 0 0 0 3px color-mix(in srgb, var(--sg-accent) 45%, transparent);
+  box-shadow: 0 0 0 1px var(--sg-bg), 0 0 0 3px color-mix(in srgb, var(--sg-accent-ink) 45%, transparent);
 }
 
 .sg-cells {
@@ -173,8 +175,8 @@
 .sg-selection {
   position: absolute;
   box-sizing: border-box;
-  background: color-mix(in srgb, var(--sg-accent) 14%, transparent);
-  border: 1px solid var(--sg-accent);
+  background: color-mix(in srgb, var(--sg-accent-ink) 14%, transparent);
+  border: 1px solid var(--sg-accent-ink);
 }
 
 .sg-selection.is-single {
@@ -185,7 +187,7 @@
 .sg-active {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid var(--sg-accent);
+  border: 2px solid var(--sg-accent-ink);
 }
 
 .sg-fill-handle {
@@ -194,7 +196,7 @@
   height: 7px;
   box-sizing: border-box;
   border: 1px solid var(--sg-bg);
-  background: var(--sg-accent);
+  background: var(--sg-accent-ink);
   cursor: crosshair;
   pointer-events: auto;
 }
@@ -203,7 +205,7 @@
 .sg-copy {
   position: absolute;
   box-sizing: border-box;
-  border: 2px dashed var(--sg-accent);
+  border: 2px dashed var(--sg-accent-ink);
 }
 
 .sg-copy.is-cut {
@@ -296,7 +298,7 @@
 }
 
 .sg-head.is-touched {
-  background: color-mix(in srgb, var(--sg-accent) 16%, var(--sg-head-bg));
+  background: color-mix(in srgb, var(--sg-accent-ink) 16%, var(--sg-head-bg));
   color: var(--sg-fg);
 }
 
@@ -351,7 +353,7 @@
 }
 
 .sg-corner.is-filtered::after {
-  border-bottom-color: var(--sg-accent);
+  border-bottom-color: var(--sg-accent-ink);
 }
 
 /* Read by screen readers only. */
@@ -375,6 +377,6 @@
 
 @keyframes sg-march {
   50% {
-    border-color: color-mix(in srgb, var(--sg-accent) 45%, transparent);
+    border-color: color-mix(in srgb, var(--sg-accent-ink) 45%, transparent);
   }
 }

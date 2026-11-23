@@ -126,7 +126,9 @@ Behaviour:
 
 - **Overflow**: a ResizeObserver measures the row. When it is too narrow, groups collapse
   from the right into one button each that opens the group in a popover. The row never
-  wraps and the content below never moves.
+  wraps and the content below never moves. The popover closes once a command ran (a
+  button, a menu entry, a colour, a style); it stays open for a list and for a button
+  that opens a menu.
 - **Collapse**: double-click a tab or press the chevron to show tabs only. A tab click
   then shows the groups as an overlay until focus or a click leaves it, Escape is
   pressed, or the same tab is clicked again.
@@ -180,6 +182,15 @@ downloadBytes("Report.docx", bytes, DOCX_MIME);
 | `DOCX_MIME`, `XLSX_MIME`, `CSV_MIME`, `TSV_MIME`, `MAX_LOCAL_FILE_BYTES` | Constants. |
 | `fileMatchesAccept(file, accept)`, `describeAccept(accept, maxBytes?)` | Helpers ("`.csv or .xlsx, up to 10 MB`"). |
 | `FileDropZone` | `accept`, `onFile(file)`, `onReject(error)`, `maxBytes?`, `label?` ("Drop a file to open it"), `hint?`, `disabled?`. Shows a window overlay only while files from outside the page are dragged in; text, cell and image drags inside the document are untouched, and a drop another handler already took is ignored. Mount it once per app. |
+
+## Colour
+
+`--oui-accent` (the app's `--identity-accent`) is for filled surfaces, with
+`--oui-on-accent` on top. For text, focus rings, outlines, borders and tints use
+`--oui-accent-ink`: the accent drawn toward `--app-fg`, so it stays readable when a
+dark host theme keeps the app's dark accent. In app styles write
+`var(--oui-accent-ink, var(--identity-accent, var(--app-primary)))`;
+`tests/default-apps/office-ui/accent-ink.test.ts` checks the kit, Docs and Sheets.
 
 ## Accessibility
 

@@ -138,7 +138,7 @@
 }
 
 .doc-link {
-  color: var(--app-primary);
+  color: var(--oui-accent-ink, var(--app-primary));
   text-decoration: underline;
   cursor: text;
 }
@@ -149,7 +149,7 @@
 }
 
 .doc-note-ref {
-  color: var(--app-primary);
+  color: var(--oui-accent-ink, var(--app-primary));
   font-size: 0.75em;
   padding: 0 1px;
 }
@@ -312,8 +312,8 @@
 }
 
 .doc-hl-proposal {
-  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
-  box-shadow: inset 0 -2px 0 var(--app-primary);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
+  box-shadow: inset 0 -2px 0 var(--oui-accent-ink, var(--app-primary));
 }
 
 .doc-page[data-view-mode="original"] .doc-content {

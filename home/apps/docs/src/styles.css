@@ -54,10 +54,10 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
   cursor: pointer;
   font: inherit;
 }
-.docs-start__card svg { color: var(--identity-accent, var(--app-primary)); }
-.docs-start__card:hover:not(:disabled) { border-color: var(--identity-accent, var(--app-primary)); }
+.docs-start__card svg { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.docs-start__card:hover:not(:disabled) { border-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
 .docs-start__card:focus-visible, .docs-start__recent:focus-visible, .docs-picker__entry:focus-visible, .docs-outline__item:focus-visible {
-  outline: 2px solid var(--identity-accent, var(--app-primary));
+  outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary)));
   outline-offset: 2px;
 }
 .docs-start__card:disabled { opacity: .6; cursor: default; }
@@ -109,7 +109,7 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 }
 .docs-picker__entry svg { color: var(--app-muted-fg); }
 .docs-picker__entry:hover { background: var(--app-muted); }
-.docs-picker__entry[aria-pressed="true"] { background: color-mix(in srgb, var(--identity-accent, var(--app-primary)) 16%, transparent); }
+.docs-picker__entry[aria-pressed="true"] { background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 16%, transparent); }
 .docs-picker__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .docs-picker__footer { display: flex; justify-content: flex-end; gap: 8px; }
 .docs-form { display: grid; gap: 12px; }
@@ -160,7 +160,7 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 .docs-find__close { margin-left: auto; }
 
 .docs-status { display: flex; align-items: center; gap: 16px; font-variant-numeric: tabular-nums; }
-.docs-status__tracking { color: var(--identity-accent, var(--app-primary)); font-weight: 600; }
+.docs-status__tracking { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); font-weight: 600; }
 
 /* ---------------------------------------------------------------- outline */
 
@@ -185,9 +185,9 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 .docs-outline__item:hover { background: color-mix(in srgb, var(--app-fg) 6%, transparent); }
 .docs-outline__item--clause { color: var(--app-muted-fg); font-size: 12px; }
 .docs-outline__item[aria-current="location"] {
-  background: color-mix(in srgb, var(--identity-accent, var(--app-primary)) 16%, transparent);
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 16%, transparent);
   color: var(--app-fg);
-  box-shadow: inset 2px 0 0 var(--identity-accent, var(--app-primary));
+  box-shadow: inset 2px 0 0 var(--oui-accent-ink, var(--identity-accent, var(--app-primary)));
 }
 .docs-outline__label { flex: none; font-variant-numeric: tabular-nums; color: var(--app-muted-fg); }
 .docs-outline__text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -201,10 +201,10 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 .docs-pane { --docs-min-page: 480px; }
 .docs-pane .doc-page { zoom: var(--docs-zoom, 1); min-width: var(--docs-min-page); }
 
-.doc-hl-terms { text-decoration: underline dotted color-mix(in srgb, var(--identity-accent, var(--app-primary)) 70%, transparent); text-underline-offset: 3px; cursor: pointer; }
-.doc-hl-xrefs { text-decoration: underline dashed var(--identity-accent, var(--app-primary)); text-underline-offset: 3px; cursor: pointer; }
+.doc-hl-terms { text-decoration: underline dotted color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 70%, transparent); text-underline-offset: 3px; cursor: pointer; }
+.doc-hl-xrefs { text-decoration: underline dashed var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); text-underline-offset: 3px; cursor: pointer; }
 .doc-hl-xrefs.is-broken { text-decoration-color: var(--app-danger); }
-.doc-hl-jump { background: color-mix(in srgb, var(--identity-accent, var(--app-primary)) 28%, transparent); }
+.doc-hl-jump { background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 28%, transparent); }
 
 .docs-refcard {
   position: fixed;

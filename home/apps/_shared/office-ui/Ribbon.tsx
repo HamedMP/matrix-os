@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { forwardRef, useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { BackstageView, defaultBackstageItem } from "./Backstage";
 import { cx, useIsomorphicLayoutEffect } from "./internal";
 import { Popover } from "./Popover";
@@ -143,6 +143,113 @@ function RibbonPanel({ tab, id, labelledBy, overlay }: { tab: RibbonPanelTab; id
   );
 }
 
+interface RibbonTabButtonProps {
+  tab: RibbonTab;
+  id: string;
+  /** The tab's groups are on screen. */
+  shown: boolean;
+  selected: boolean;
+  panelId: string;
+  /** Backstage tabs only: the backstage is open. */
+  expanded: boolean;
+  /** Holds the tab row's one tab stop. */
+  roving: boolean;
+  onActivate: () => void;
+  /** Panel tabs only: collapses or pins the ribbon. */
+  onDoubleClick?: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onFocus: () => void;
+}
+
+const RibbonTabButton = forwardRef<HTMLButtonElement, RibbonTabButtonProps>(function RibbonTabButton(
+  { tab, id, shown, selected, panelId, expanded, roving, onActivate, onDoubleClick, onKeyDown, onFocus },
+  ref,
+) {
+  const backstage = isBackstageTab(tab);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      role="tab"
+      id={id}
+      aria-selected={selected}
+      aria-controls={shown ? panelId : undefined}
+      aria-haspopup={backstage ? "dialog" : undefined}
+      aria-expanded={backstage ? expanded : undefined}
+      tabIndex={roving ? 0 : -1}
+      className={cx("oui-ribbon__tab", backstage && "oui-ribbon__tab--backstage", shown && "is-selected")}
+      onClick={onActivate}
+      onDoubleClick={backstage ? undefined : onDoubleClick}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
+    >
+      {tab.label}
+    </button>
+  );
+});
+
+function CollapseButton({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
+  const name = collapsed ? "Pin the ribbon" : "Collapse the ribbon";
+  return (
+    <button type="button" className={cx("oui-ribbon__collapse", collapsed && "is-collapsed")} aria-label={name} title={name} onClick={onClick}>
+      <Chevron />
+    </button>
+  );
+}
+
+/** The tab an arrow, Home or End key moves to from `index`, or -1 for any other key. */
+function tabKeyTarget(key: string, index: number, count: number): number {
+  switch (key) {
+    case "ArrowRight": return (index + 1) % count;
+    case "ArrowLeft": return (index - 1 + count) % count;
+    case "Home": return 0;
+    case "End": return count - 1;
+    default: return -1;
+  }
+}
+
+/** True when a press or focus target lies outside the ribbon and the floating surfaces it opened. */
+function isOutsideRibbon(root: HTMLElement | null, target: Node | null): boolean {
+  return target !== null && !root?.contains(target) && !isFloatingSurface(target);
+}
+
+/**
+ * Closes the overlay panel of a collapsed ribbon when a press or the focus
+ * leaves the ribbon, and on Escape (`focusTab` then returns the focus to the
+ * tab). Returns the root's blur and key handlers.
+ */
+function useOverlayDismiss(rootRef: RefObject<HTMLDivElement | null>, open: boolean, setOpen: (open: boolean) => void, focusTab: () => void) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (event: MouseEvent) => {
+      if (isOutsideRibbon(rootRef.current, event.target as Node | null)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, rootRef, setOpen]);
+  return {
+    onBlur(event: FocusEvent<HTMLDivElement>) {
+      if (open && isOutsideRibbon(rootRef.current, event.relatedTarget as Node | null)) setOpen(false);
+    },
+    onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+      if (event.key !== "Escape" || !open || event.defaultPrevented) return;
+      event.preventDefault();
+      focusTab();
+      setOpen(false);
+    },
+  };
+}
+
+/** The open backstage: the caller's when it controls it, else the ribbon's own. */
+function useBackstageState(controlled: BackstageState | null | undefined, onChange: ((state: BackstageState | null) => void) | undefined) {
+  const [own, setOwn] = useState<BackstageState | null>(null);
+  const set = (state: BackstageState | null) => {
+    if (controlled === undefined) setOwn(state);
+    onChange?.(state);
+  };
+  return [controlled !== undefined ? controlled : own, set] as const;
+}
+
 /**
  * Tabbed command surface. The tab row doubles as the menu bar; the active tab's
  * groups sit below it. Narrow windows collapse groups from the right into
@@ -168,8 +275,7 @@ export function Ribbon({
   const [focusedTab, setFocusedTab] = useState<string | null>(null);
   const [overlay, setOverlay] = useState(false);
   const [focusPanel, setFocusPanel] = useState(false);
-  const [ownBackstage, setOwnBackstage] = useState<BackstageState | null>(null);
-  const backstageState = backstage !== undefined ? backstage : ownBackstage;
+  const [backstageState, setBackstage] = useBackstageState(backstage, onBackstageChange);
 
   const panelTabs = tabs.filter((tab): tab is RibbonPanelTab => !isBackstageTab(tab));
   const activePanel = panelTabs.find((tab) => tab.id === activeTab) ?? panelTabs[0];
@@ -180,26 +286,14 @@ export function Ribbon({
   const panelId = `${uid}-panel`;
   const tabId = (id: string) => `${uid}-tab-${id}`;
 
-  const setBackstage = (state: BackstageState | null) => {
-    if (backstage === undefined) setOwnBackstage(state);
-    onBackstageChange?.(state);
-  };
-
   const toggleCollapsed = () => {
     setOverlay(false);
     onToggleCollapsed?.();
   };
 
-  useEffect(() => {
-    if (!overlayOpen) return undefined;
-    const onDown = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (!target || rootRef.current?.contains(target) || isFloatingSurface(target)) return;
-      setOverlay(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [overlayOpen]);
+  const dismiss = useOverlayDismiss(rootRef, overlayOpen, setOverlay, () => {
+    if (activePanel) tabRefs.current.get(activePanel.id)?.focus();
+  });
 
   useIsomorphicLayoutEffect(() => {
     if (!focusPanel) return;
@@ -224,35 +318,25 @@ export function Ribbon({
   };
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: RibbonTab, index: number) => {
-    const count = tabs.length;
-    let target = -1;
-    switch (event.key) {
-      case "ArrowRight": target = (index + 1) % count; break;
-      case "ArrowLeft": target = (index - 1 + count) % count; break;
-      case "Home": target = 0; break;
-      case "End": target = count - 1; break;
-      case "Enter":
-      case " ":
-        event.preventDefault();
-        activate(tab);
-        return;
-      case "ArrowDown":
-        event.preventDefault();
-        if (isBackstageTab(tab)) {
-          activate(tab);
-          return;
-        }
-        if (collapsed) setOverlay(true);
-        if (tab.id !== activeTab) onTabChange(tab.id);
-        setFocusPanel(true);
-        return;
-      default:
-        return;
+    const target = tabKeyTarget(event.key, index, tabs.length);
+    if (target >= 0) {
+      event.preventDefault();
+      const next = tabs[target];
+      setFocusedTab(next.id);
+      tabRefs.current.get(next.id)?.focus();
+      return;
     }
+    const opens = event.key === "Enter" || event.key === " ";
+    if (!opens && event.key !== "ArrowDown") return;
     event.preventDefault();
-    const next = tabs[target];
-    setFocusedTab(next.id);
-    tabRefs.current.get(next.id)?.focus();
+    if (opens || isBackstageTab(tab)) {
+      activate(tab);
+      return;
+    }
+    // Arrow down shows the tab's groups and moves into them.
+    if (collapsed) setOverlay(true);
+    if (tab.id !== activeTab) onTabChange(tab.id);
+    setFocusPanel(true);
   };
 
   const onTablistBlur = (event: FocusEvent<HTMLDivElement>) => {
@@ -260,74 +344,43 @@ export function Ribbon({
     if (!next || !event.currentTarget.contains(next)) setFocusedTab(null);
   };
 
-  const onRootBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!overlayOpen) return;
-    const next = event.relatedTarget as Node | null;
-    if (!next || rootRef.current?.contains(next) || isFloatingSurface(next)) return;
-    setOverlay(false);
-  };
-
-  const onRootKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== "Escape" || !overlayOpen || event.defaultPrevented) return;
-    event.preventDefault();
-    if (activePanel) tabRefs.current.get(activePanel.id)?.focus();
-    setOverlay(false);
-  };
-
   return (
     <div
       ref={rootRef}
       className={cx("oui-ribbon", collapsed && "is-collapsed", className)}
-      onKeyDown={onRootKeyDown}
-      onBlur={onRootBlur}
+      onKeyDown={dismiss.onKeyDown}
+      onBlur={dismiss.onBlur}
     >
       <div className="oui-ribbon__bar">
         {leading && <div className="oui-ribbon__leading">{leading}</div>}
         <div role="tablist" aria-label={label} className="oui-ribbon__tabs" onBlur={onTablistBlur}>
           {tabs.map((tab, index) => {
-            const backstageTab = isBackstageTab(tab);
-            const selected = !backstageTab && tab.id === activePanel?.id;
+            const selected = !isBackstageTab(tab) && tab.id === activePanel?.id;
             return (
-              <button
+              <RibbonTabButton
                 key={tab.id}
                 ref={(el) => {
                   if (el) tabRefs.current.set(tab.id, el);
                   else tabRefs.current.delete(tab.id);
                 }}
-                type="button"
-                role="tab"
+                tab={tab}
                 id={tabId(tab.id)}
-                aria-selected={selected}
-                aria-controls={selected && showPanel ? panelId : undefined}
-                aria-haspopup={backstageTab ? "dialog" : undefined}
-                aria-expanded={backstageTab ? backstageState?.tab === tab.id : undefined}
-                tabIndex={tab.id === rovingTab ? 0 : -1}
-                className={cx("oui-ribbon__tab", backstageTab && "oui-ribbon__tab--backstage", selected && showPanel && "is-selected")}
-                onClick={() => activate(tab)}
-                onDoubleClick={() => {
-                  if (!backstageTab && onToggleCollapsed) toggleCollapsed();
-                }}
+                shown={selected && showPanel}
+                selected={selected}
+                panelId={panelId}
+                expanded={backstageState?.tab === tab.id}
+                roving={tab.id === rovingTab}
+                onActivate={() => activate(tab)}
+                onDoubleClick={onToggleCollapsed ? toggleCollapsed : undefined}
                 onKeyDown={(event) => onTabKeyDown(event, tab, index)}
                 onFocus={() => setFocusedTab(tab.id)}
-              >
-                {tab.label}
-              </button>
+              />
             );
           })}
         </div>
         <div className="oui-ribbon__bar-end">
           {trailing}
-          {onToggleCollapsed && (
-            <button
-              type="button"
-              className={cx("oui-ribbon__collapse", collapsed && "is-collapsed")}
-              aria-label={collapsed ? "Pin the ribbon" : "Collapse the ribbon"}
-              title={collapsed ? "Pin the ribbon" : "Collapse the ribbon"}
-              onClick={toggleCollapsed}
-            >
-              <Chevron />
-            </button>
-          )}
+          {onToggleCollapsed && <CollapseButton collapsed={collapsed} onClick={toggleCollapsed} />}
         </div>
       </div>
       {showPanel && activePanel && <RibbonPanel tab={activePanel} id={panelId} labelledBy={tabId(activePanel.id)} overlay={overlayOpen} />}
