@@ -68,6 +68,13 @@ describe("Web Chat failure recovery", () => {
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])("keeps the Chat's project when New chat recovers a failure (mobile=%s)", (mobile) => {
+    const { onNewChat } = renderFailure({ code: "run_not_resumable", safeMessage: "Conversation is too long. Start a new chat.", retryable: false, recoveryActions: ["start_new_chat"] },
+      { mobile, chatProjectId: "matrix-os" });
+    fireEvent.click(screen.getByRole("button", { name: "New chat Codex could not finish" }));
+    expect(onNewChat).toHaveBeenCalledWith("matrix-os");
+  });
+
   it("retries a retryable failure through the existing turn retry", async () => {
     const onRetryTurn = vi.fn(async () => true);
     const { detail } = renderFailure({ code: "service_unavailable", safeMessage: "Service is busy. Try again shortly.", retryable: true, recoveryActions: ["retry"] }, { onRetryTurn });

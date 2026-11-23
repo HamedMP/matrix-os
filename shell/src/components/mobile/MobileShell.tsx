@@ -677,7 +677,7 @@ function MobileAppFrame({
         onAbortCurrent={chat.abortCurrent}
         connected={chat.connected}
         conversations={chat.conversations}
-        onNewChat={() => void chat.newChat()}
+        onNewChat={(projectId) => void chat.newChat(projectId)}
         onSwitchConversation={chat.switchConversation}
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}

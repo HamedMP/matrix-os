@@ -809,7 +809,7 @@ function ChatAppContent({
                           retry: onRetryTurn ? async (turnId) => { if (!await onRetryTurn(turnId)) throw new Error("RetryUnavailable"); } : undefined,
                           open_setup_terminal: collaborationView ? undefined : openProviderSettings,
                           select_provider: composerToolbar ? () => setModelPickerRequest((request) => request + 1) : undefined,
-                          start_new_chat: () => startNewChat(mobile ? undefined : chatProjectId ?? focusedProject?.id),
+                          start_new_chat: () => startNewChat(chatProjectId ?? (mobile ? undefined : focusedProject?.id)),
                         }} />
                       ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage
