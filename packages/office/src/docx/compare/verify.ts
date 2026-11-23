@@ -4,7 +4,7 @@
  * the original. A result that fails is never returned.
  *
  * Text is read like `DocxDocument.getPlainText` reads it, with one
- * difference: a paragraph that is wholly gone in a view (no content and no
+ * difference: a paragraph that is wholly gone in a view (no text and no
  * mark) leaves nothing behind even when no paragraph follows it to take its
  * place, which is what accepting or rejecting the revision does to it.
  */
@@ -33,11 +33,6 @@ function goneInView(revisionName: string | undefined, view: DocxTextView): boole
   return view === "final" ? removal : !removal;
 }
 
-function hasContentInView(scan: ParagraphScan, view: DocxTextView): boolean {
-  for (const atom of scan.atoms) if (atomInView(atom, view)) return true;
-  return false;
-}
-
 /** Calls `visit` for every paragraph that has a part in the view, in document order. */
 function eachParagraph(index: DocxIndex, records: readonly BlockRecord[], view: DocxTextView, visit: (scan: ParagraphScan) => void): void {
   for (const record of records) {
@@ -55,6 +50,8 @@ function eachParagraph(index: DocxIndex, records: readonly BlockRecord[], view: 
 /** Plain text of sibling blocks in a view; see the file comment. */
 export function textInView(index: DocxIndex, records: readonly BlockRecord[], view: DocxTextView): string {
   let text = "";
+  // Where the current line starts: text behind it waits for a paragraph mark.
+  let lineStart = 0;
   for (let position = 0; position < records.length; position++) {
     const record = records[position] as BlockRecord;
     if (record.type === "table") {
@@ -63,16 +60,16 @@ export function textInView(index: DocxIndex, records: readonly BlockRecord[], vi
         const cells = rowCells(row).map((cell) => textInView(index, index.blocksIn(cell), view).replace(/\n$/, ""));
         text += `${cells.join("\t")}\n`;
       }
+      lineStart = text.length;
     } else if (record.type === "paragraph") {
       const scan = index.scan(record.element);
       text += paragraphText(scan, view);
-      if (!goneInView(scan.mark?.name, view)) {
-        text += "\n";
-        continue;
-      }
       const next = records[position + 1];
-      const joins = next !== undefined && next.type === "paragraph";
-      if (!joins && hasContentInView(scan, view)) text += "\n";
+      const joins = goneInView(scan.mark?.name, view) && next !== undefined && next.type === "paragraph";
+      if (joins) continue;
+      // A mark that is gone with nothing after it to join ends the line only when the line has text.
+      if (!goneInView(scan.mark?.name, view) || text.length > lineStart) text += "\n";
+      lineStart = text.length;
     }
   }
   return text;
