@@ -188,8 +188,13 @@ export interface ListThreadsRequest {
  *
  * - Label providers (Gmail) apply `addFolders` and `removeFolders` as given.
  * - Folder providers (Outlook) hold a message in exactly one folder: they move
- *   the thread to `addFolders[0]` and ignore `removeFolders`. A change with
+ *   the messages that sit in a `removeFolders` folder (every message of the
+ *   thread when `removeFolders` is empty) to `addFolders[0]`. A change with
  *   only `removeFolders` is `not_supported` there.
+ * - `restore` marks the undo of an earlier change. Folder providers move each
+ *   message that change moved back to the folder it came from; when they no
+ *   longer know where a message came from they fall back to the rule above.
+ *   Label providers ignore it.
  * - A virtual folder id in either list is `not_supported`.
  * - Starring is `flagged`, never the starred folder.
  * - Nothing here deletes permanently. Trash is a move to the trash folder.
@@ -197,6 +202,7 @@ export interface ListThreadsRequest {
 export interface ThreadChange {
   addFolders?: string[];
   removeFolders?: string[];
+  restore?: boolean;
   read?: boolean;
   flagged?: boolean;
 }

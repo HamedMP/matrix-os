@@ -18,7 +18,10 @@ import type { TriageKind } from "./types";
 /** The summary as it will look once the provider has applied the change. */
 export function applyChangeToSummary(summary: ThreadSummary, change: ThreadChange, provider: MailProviderId): ThreadSummary {
   let folderIds = summary.folderIds;
-  if (provider === "outlook") {
+  if (provider === "outlook" && change.restore) {
+    const removed = new Set(change.removeFolders ?? []);
+    folderIds = [...new Set([...(change.addFolders ?? []), ...folderIds.filter((id) => !removed.has(id))])];
+  } else if (provider === "outlook") {
     if (change.addFolders?.length) folderIds = [change.addFolders[0]];
   } else if (change.addFolders?.length || change.removeFolders?.length) {
     const removed = new Set(change.removeFolders ?? []);
@@ -38,11 +41,14 @@ export function applyChangeToSummary(summary: ThreadSummary, change: ThreadChang
 export function inverseChange(before: ThreadSummary, change: ThreadChange, provider: MailProviderId): ThreadChange {
   const inverse: ThreadChange = {};
   if (provider === "outlook") {
+    // Messages of one conversation can sit in several folders; the provider
+    // remembers each moved message's folder and `restore` sends it back there.
     const target = change.addFolders?.[0];
-    const previous = before.folderIds[0];
-    if (target && previous && previous !== target) {
-      inverse.addFolders = [previous];
+    const previous = target ? before.folderIds.filter((id) => id !== target) : [];
+    if (target && previous.length) {
+      inverse.addFolders = previous;
       inverse.removeFolders = [target];
+      inverse.restore = true;
     }
   } else {
     const add = (change.removeFolders ?? []).filter((id) => before.folderIds.includes(id));
@@ -68,11 +74,15 @@ function roleId(folders: readonly MailFolder[], role: MailFolder["role"]): strin
   return folders.find((folder) => folder.role === role && !folder.virtual)?.id;
 }
 
-/** The real folder the thread is leaving. */
+/**
+ * The real folder the thread is leaving. Outside a real folder view an Outlook
+ * conversation has no single source (its messages can sit in Inbox, Sent Items
+ * and more), so none is guessed and the change applies to the whole thread.
+ */
 function sourceFolder(summary: ThreadSummary, ctx: TriageContext): string | undefined {
   const viewed = ctx.fromFolderId;
   if (viewed && summary.folderIds.includes(viewed) && !ctx.folders.find((f) => f.id === viewed)?.virtual) return viewed;
-  if (ctx.provider === "outlook") return summary.folderIds[0];
+  if (ctx.provider === "outlook") return undefined;
   const inbox = roleId(ctx.folders, "inbox");
   return inbox && summary.folderIds.includes(inbox) ? inbox : undefined;
 }

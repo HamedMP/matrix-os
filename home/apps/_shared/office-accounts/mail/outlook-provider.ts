@@ -55,6 +55,8 @@ export function createOutlookProvider(options: MailAdapterOptions): MailProvider
   const caller = createServiceCaller(options.bridge, "microsoft_outlook", options.label);
   const messages = createMessageCache();
   const refs = new LruCache<string, GraphMessageRef>(2000);
+  /** The folder each message was in before this adapter last moved it, for undo. */
+  const movedFrom = new LruCache<string, string>(2000);
   /** Complete message id lists of conversations, from `list_conversation`. */
   const conversations = new LruCache<string, string[]>(300);
   /** Conversation ids already returned on earlier pages of a listing, keyed by the page that follows. */
@@ -236,8 +238,17 @@ export function createOutlookProvider(options: MailAdapterOptions): MailProvider
       });
       // A move takes what is in the folder being left (all of the thread when none is named), so
       // archiving from the inbox never pulls the owner's sent replies out of Sent.
-      const moves = destination === undefined ? [] : all.filter((ref) => ref.parentFolderId !== destination
-        && (from.size === 0 || !ref.parentFolderId || from.has(ref.parentFolderId)));
+      const leaving = (ref: GraphMessageRef) => from.size === 0 || !ref.parentFolderId || from.has(ref.parentFolderId);
+      // An undo sends each message the earlier change moved back to where it was.
+      const restored = change.restore
+        ? all.flatMap((ref) => {
+          const back = movedFrom.get(ref.id);
+          return back && back !== ref.parentFolderId && leaving(ref) ? [{ ref, to: back }] : [];
+        })
+        : [];
+      const moves = restored.length ? restored : destination === undefined ? [] : all
+        .filter((ref) => ref.parentFolderId !== destination && leaving(ref))
+        .map((ref) => ({ ref, to: destination }));
       if (updates.length + moves.length > MAX_MESSAGE_WRITES) throw new ProviderError("not_supported", "Select fewer conversations.");
 
       await mapLimit(updates, PARALLEL, async ({ ref, patch }) => {
@@ -247,9 +258,11 @@ export function createOutlookProvider(options: MailAdapterOptions): MailProvider
         const cached = messages.get(ref.id);
         if (cached && patch.isRead !== undefined) messages.set(ref.id, { ...cached, unread: !patch.isRead });
       });
-      await mapLimit(moves, PARALLEL, async (ref) => {
-        await caller.write("move_message", { messageId: ref.id, destinationFolderId: destination });
-        refs.set(ref.id, { ...(refs.get(ref.id) ?? ref), parentFolderId: destination as string });
+      await mapLimit(moves, PARALLEL, async ({ ref, to }) => {
+        await caller.write("move_message", { messageId: ref.id, destinationFolderId: to });
+        if (restored.length) movedFrom.delete(ref.id);
+        else if (ref.parentFolderId) movedFrom.set(ref.id, ref.parentFolderId);
+        refs.set(ref.id, { ...(refs.get(ref.id) ?? ref), parentFolderId: to });
       });
     },
 

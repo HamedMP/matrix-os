@@ -33,9 +33,9 @@ describe("inverseChange", () => {
     expect(inverseChange(before, change, "gmail")).toEqual({ addFolders: ["INBOX"], removeFolders: ["Label_2"], read: false });
   });
 
-  it("moves an Outlook thread back to its previous folder", () => {
+  it("moves an Outlook thread's messages back to their previous folders", () => {
     const before = summary("t1", { accountId: OUTLOOK.id, folderIds: ["proj-id"] });
-    expect(inverseChange(before, { addFolders: ["trash-id"] }, "outlook")).toEqual({ addFolders: ["proj-id"], removeFolders: ["trash-id"] });
+    expect(inverseChange(before, { addFolders: ["trash-id"] }, "outlook")).toEqual({ addFolders: ["proj-id"], removeFolders: ["trash-id"], restore: true });
   });
 
   it("restores the flag state", () => {
@@ -65,9 +65,11 @@ describe("triageChangeFor", () => {
     expect(() => triageChangeFor("move", inbox, { folders: GMAIL_FOLDERS, provider: "gmail", toFolderId: "nope" })).toThrow();
   });
 
-  it("moves an Outlook thread from its only folder when no folder is viewed", () => {
+  it("moves a whole Outlook thread when no real folder is viewed, without guessing a source", () => {
     const outlook = summary("t2", { accountId: OUTLOOK.id, folderIds: ["proj-id"] });
     expect(triageChangeFor("move", outlook, { folders: OUTLOOK_FOLDERS, provider: "outlook", toFolderId: "inbox-id" }))
+      .toEqual({ addFolders: ["inbox-id"] });
+    expect(triageChangeFor("move", outlook, { folders: OUTLOOK_FOLDERS, provider: "outlook", fromFolderId: "proj-id", toFolderId: "inbox-id" }))
       .toEqual({ addFolders: ["inbox-id"], removeFolders: ["proj-id"] });
   });
 
