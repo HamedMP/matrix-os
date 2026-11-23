@@ -23,12 +23,20 @@ describe('platform/customer-vps', () => {
     expect(config.posthogHost).toBe('https://eu.i.posthog.com');
     expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
-  it('keeps the preview provisioning limit bounded for missing or invalid configuration', () => {
-    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(8);
+  it('allows 24 shared PR previews by default and bounds the configured limit', () => {
+    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(24);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '4' }).previewProvisioningLimit).toBe(4);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '48' }).previewProvisioningLimit).toBe(48);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(24);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '49' }).previewProvisioningLimit).toBe(24);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(24);
+  });
+  it('allows 8 Private Previews per person by default and bounds the configured limit', () => {
+    expect(loadCustomerVpsConfig({}).privatePreviewLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '2' }).privatePreviewLimit).toBe(2);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '16' }).privatePreviewLimit).toBe(16);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '0' }).privatePreviewLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '17' }).privatePreviewLimit).toBe(8);
   });
   it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
     expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({
