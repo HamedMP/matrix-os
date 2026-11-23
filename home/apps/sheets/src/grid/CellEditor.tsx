@@ -23,18 +23,20 @@ export interface CellEditorProps {
 
 const EDITOR_FONT = { fontPx: DEFAULT_FONT_PX, bold: false, italic: false, fontFamily: "system-ui, sans-serif" };
 const LINE_PX = DEFAULT_FONT_PX + 6;
+const OFF_SCREEN = { x: -20_000, y: -20_000, width: 80, height: 20 };
 
 /**
  * The text input over the cell being edited. It starts at the size of the
- * cell (or of its merged range) and grows with the text. Nothing is drawn
- * when the cell is on another sheet or scrolled out of view; the edit goes on
- * in the formula bar.
+ * cell (or of its merged range) and grows with the text. While the cell is
+ * on another sheet or scrolled out of view the input is kept out of sight and
+ * the text shows in the formula bar.
  */
 export function CellEditor({ ctx, layout, edit, areaWidth, listId, activeOptionId, onKey, popupAt }: CellEditorProps) {
-  if (edit.sheet !== layout.sheet) return null;
-  const merge = mergeAt(layout.info.mergedRanges, edit.cell.row, edit.cell.col);
-  const rect = rangeOnScreen(layout.axes, layout.viewport, merge ?? { start: edit.cell, end: edit.cell });
-  if (rect === null) return null;
+  const here = edit.sheet === layout.sheet;
+  const merge = here ? mergeAt(layout.info.mergedRanges, edit.cell.row, edit.cell.col) : null;
+  const shown = here ? rangeOnScreen(layout.axes, layout.viewport, merge ?? { start: edit.cell, end: edit.cell }) : null;
+  // Off screen the input stays mounted, out of sight, so that it keeps the keyboard.
+  const rect = shown ?? OFF_SCREEN;
   const lines = edit.text.split("\n");
   const longest = lines.reduce((a, b) => (a.length >= b.length ? a : b), "");
   const wanted = textWidth(longest, EDITOR_FONT) + CELL_PADDING_PX + 12;
@@ -64,7 +66,7 @@ export function CellEditor({ ctx, layout, edit, areaWidth, listId, activeOptionI
         }}
         onKey={onKey}
       />
-      {inCell ? popupAt(ROW_HEADER_WIDTH_PX + rect.x, HEADER_HEIGHT_PX + rect.y + height + 2) : null}
+      {inCell && shown !== null ? popupAt(ROW_HEADER_WIDTH_PX + rect.x, HEADER_HEIGHT_PX + rect.y + height + 2) : null}
     </>
   );
 }

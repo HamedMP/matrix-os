@@ -94,6 +94,14 @@ export function cellElementId(gridId: string, row: number, col: number): string 
   return `${gridId}-r${row}c${col}`;
 }
 
+/** True when a cell is in the rendered window, so that an element with its id exists. */
+export function activeOnScreen(layout: GridLayout, cell: { row: number; col: number }): boolean {
+  const { viewport } = layout;
+  const inRows = cell.row <= viewport.frozenRows.end || (cell.row >= viewport.rows.start && cell.row <= viewport.rows.end);
+  const inCols = cell.col <= viewport.frozenCols.end || (cell.col >= viewport.cols.start && cell.col <= viewport.cols.end);
+  return inRows && inCols;
+}
+
 /** Id of an entry of the function list. */
 export function optionId(listId: string, index: number): string {
   return `${listId}-option-${index}`;

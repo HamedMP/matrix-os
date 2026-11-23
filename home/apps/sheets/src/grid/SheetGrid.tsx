@@ -8,7 +8,7 @@ import { handleCopy, handleGridKey, handlePaste } from "./grid-keys";
 import { GridMouse } from "./grid-mouse";
 import { GridBody } from "./GridBody";
 import { GridMenu } from "./GridMenu";
-import { cellElementId, describeActiveCell } from "./render-model";
+import { activeOnScreen, cellElementId, describeActiveCell } from "./render-model";
 import "./sheet-grid.css";
 import "./sheet-grid-chrome.css";
 import { useGridEditing } from "./use-grid-editing";
@@ -79,7 +79,6 @@ export function SheetGrid({ session, controller, ref, showFormulaBar = true, rea
         <FormulaBar
           ctx={ctx}
           edit={edit}
-          revision={sessionState.revision}
           readOnly={readOnly}
           listId={listId}
           activeOptionId={editing.activeOptionId}
@@ -100,7 +99,7 @@ export function SheetGrid({ session, controller, ref, showFormulaBar = true, rea
             aria-colcount={layout.extent.cols + 1}
             aria-multiselectable="true"
             aria-readonly={readOnly ? true : undefined}
-            aria-activedescendant={cellElementId(gridId, selection.active.row, selection.active.col)}
+            aria-activedescendant={activeOnScreen(layout, selection.active) ? cellElementId(gridId, selection.active.row, selection.active.col) : undefined}
             style={{ width: surfaceWidth, height: surfaceHeight }}
             onKeyDown={(event) => {
               if (event.target === event.currentTarget && handleGridKey(ctx, event, readOnly)) event.preventDefault();

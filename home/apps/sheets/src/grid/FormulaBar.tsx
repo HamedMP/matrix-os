@@ -9,8 +9,6 @@ import type { EditState } from "./store";
 export interface FormulaBarProps {
   ctx: GridContext;
   edit: EditState | null;
-  /** Grows when the workbook changes, so that the shown content follows. */
-  revision: number;
   readOnly: boolean;
   listId: string;
   activeOptionId: string | undefined;

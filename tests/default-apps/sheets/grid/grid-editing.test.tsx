@@ -99,6 +99,27 @@ describe("SheetGrid editing", () => {
     expect(container.querySelectorAll(".sg-reference")).toHaveLength(0);
   });
 
+  it("takes a reference from another sheet while the formula is typed", async () => {
+    const { session, sheet, grid, container } = await renderGrid();
+    let other = "";
+    act(() => {
+      other = session.addSheet("My data").sheet as string;
+      session.setCellInput(other, { row: 1, col: 1 }, "40");
+      session.setActiveSheet(sheet);
+    });
+    click(grid, 5, 0);
+    press(grid, "=");
+    type(editor(container)!, "=A1+");
+    act(() => session.setActiveSheet(other));
+    // The editor stays alive, out of sight, while another sheet is shown.
+    expect(editor(container)).not.toBeNull();
+    click(grid, 1, 1);
+    expect(editor(container)!.value).toBe("=A1+'My data'!B2");
+    press(editor(container)!, "Enter");
+    expect(session.getState().activeSheetId).toBe(sheet);
+    expect(session.cell(sheet, 5, 0)).toMatchObject({ formula: "A1+'My data'!B2", value: 41 });
+  });
+
   it("points at cells with the arrow keys and cycles absolute references with F4", async () => {
     const { session, sheet, grid, container } = await renderGrid();
     click(grid, 3, 1);

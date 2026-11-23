@@ -202,7 +202,8 @@ export class SheetSession {
       this.editSeq += 1;
       this.saver.noteEdit();
     }
-    if (this.wb.listSheets().every((sheet) => sheet.id !== this.activeSheet)) this.activeSheet = this.firstVisibleSheet();
+    // Only a change made around the session can remove the active sheet.
+    if (cause !== "edit" && this.wb.listSheets().every((sheet) => sheet.id !== this.activeSheet)) this.activeSheet = this.firstVisibleSheet();
     this.refresh(false);
     this.emit({ type: "change", cause, recalculated: result.changed, affected });
   }

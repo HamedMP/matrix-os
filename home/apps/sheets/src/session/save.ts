@@ -96,7 +96,11 @@ export class SaveController {
   /** Runs `task` after every save that was asked for before it. */
   enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.chain.then(task, task);
-    this.chain = run.catch(() => undefined);
+    // The caller gets the rejection; the queue only needs to keep going after it.
+    this.chain = run.then(
+      () => undefined,
+      (error: unknown) => this.host.log("a queued file operation failed", error),
+    );
     return run;
   }
 
