@@ -88,7 +88,7 @@ export function registerProjectTaskRoutes(options: {
   if (service && options.repository && options.chatRepository) {
     // Every task is a chat: project chat writes create, rename, archive, move and delete their tasks in the same transaction.
     options.chatRepository.setProjectChatHook(createProjectChatHook({ repository: options.repository, projects: options.projectManager }));
-    options.chatRepository.registerOutboxSink(({ owner, event }) => {
+    options.chatRepository.addOutboxObserver(({ owner, event }) => {
       if (owner.type !== "personal") return;
       service.chatChanged({ type: "user", id: owner.ownerId }, event.chatId, event.eventType).catch((error: unknown) => {
         console.warn("[project-tasks] chat change not applied", error instanceof Error ? error.name : typeof error);

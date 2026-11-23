@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Kysely, sql } from "kysely";
 import { createTestPGlite } from "../../helpers/pglite-test-helper.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
@@ -220,5 +220,36 @@ describe("task chats over the owner chat store", () => {
     const task = await taskFor(first.chat.id);
     expect((await service.getTask(CALLER, "board-demo", task!.id)).chatStatus).toBe("blocked");
     expect(await chats.statuses({ type: "user", id: "someone_else" }, [first.chat.id])).toEqual({});
+  });
+});
+
+describe("task chat wiring beside the chat event stream", () => {
+  // Fault detected: the chat outbox held one sink, the event stream registers it first, so
+  // the board's registration threw and the gateway crashed at boot.
+  it("registers the board on a chat repository whose event stream already holds the sink, and both receive events", async () => {
+    const chatRepository = new ChatRepository((await createTestPGlite()).dialect);
+    try {
+      await chatRepository.bootstrap();
+      const db = chatRepository.kysely as unknown as Kysely<ProjectTaskDatabase>;
+      await bootstrapProjectTaskDatabase(db);
+      const streamed: string[] = [];
+      chatRepository.registerOutboxSink(({ event }) => { streamed.push(event.eventType); });
+      const published: string[] = [];
+      const { registerProjectTaskRoutes } = await import("../../../packages/gateway/src/server/project-task-routes.js");
+      const { Hono } = await import("hono");
+      expect(() => registerProjectTaskRoutes({
+        app: new Hono(), homePath: "/home/owner", repository: new ProjectTaskRepository(db),
+        projectManager: { getProject: async () => ({ ok: true, project: PROJECTS.proj_demo }), getProjectById: async (_scope: unknown, id: string) => (PROJECTS[id] ? { ok: true, project: PROJECTS[id] } : { ok: false, status: 404, error: { code: "not_found", message: "" } }) } as never,
+        eventPublisher: { publish: async (event: { type: string }) => { published.push(event.type); } } as never,
+        collaboration: null, worktreeManager: {} as never, chatRepository, chatOrchestrator: null, chatExecutionRoots: null,
+        terminalRuntime: {} as never,
+      })).not.toThrow();
+
+      await createCanonicalChatService(chatRepository).create(CHAT_OWNER, { clientRequestId: "req_wired", title: "Wired", projectId: "proj_demo" });
+      expect(streamed).toContain("chat.created");
+      await vi.waitFor(() => expect(published).toContain("task.created"));
+    } finally {
+      await chatRepository.kysely.destroy();
+    }
   });
 });

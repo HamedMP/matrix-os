@@ -534,6 +534,11 @@ export class ChatRepository {
     return this.outboxDelivery.registerSink(sink);
   }
 
+  /** A committed-event observer beside the event-stream sink (see ChatOutboxDelivery.addObserver). */
+  addOutboxObserver(observer: ChatOutboxSink): { dispose(): void } {
+    return this.outboxDelivery.addObserver(observer);
+  }
+
   /** Deliver an event written by another owner-database transaction after its commit. */
   publishCommittedExternalOutbox(owner: ChatOwner, event: ChatOutboxEvent): void {
     this.outboxDelivery.flush([{ owner, event }]);
