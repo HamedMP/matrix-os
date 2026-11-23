@@ -123,3 +123,9 @@ An isolated PR Preview may opt into the existing Slack adapter using the operato
 The core platform URL/token and their sync, AI, routine, update and generic-integration consumers remain unchanged. Deployment must atomically change only the Slack pair on the already authorized isolated host. Synthetic signed/client/actual-bot startup tests qualify this boundary; real provider acceptance remains a separate gate.
 
 Disabling Slack preserves the original core Preview eligibility for generic integration tools. Slack-only enrollment can use the existing unavailable-account fallback for native inventory, without creating a generic connected account or changing its transport.
+
+### Fresh authorized source setup
+
+A quiet, newly registered runtime may define its owner-authored Slack rule before the first channel event. The existing runtime credential can read only its exact configured owner/Bot/private-Chat grant via `POST /internal/slack/thread-context/enrollment`; input has the four target identity fields and no source selector. Current installation/link/organization/Slack membership and exact runtime are checked around provider metadata retrieval. The response contains only the unchanged access/grant identity, app/workspace/channel metadata and explicit channel/thread scope.
+
+Gateway discovery is authoritative when configured and checks the actual private direct-Chat/Bot binding before and after await. Denial, failure or malformed metadata cannot fall back to retained events. Discovery does not seed context, copy history or create work. Native reads and rule setup reuse `enrollment()`; thread-only sources remain pinned to their enrolled root. Rule activation still requires canonical positive owner-HTTP provenance, and automatic work still requires a genuinely signed qualifying source event after enabledAfter. No grant, scope, permission, routing or output expansion is introduced.

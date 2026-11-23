@@ -157,3 +157,22 @@ Live acceptance requires a fresh instruction-only owner request, actual successf
 - Apply/remove the pair atomically in the isolated host environment; restart the existing gateway to consume it. Keep enrollment, owner/runtime and existing inbound API authority unchanged. Configuration validity does not prove provider readiness or live Slack acceptance.
 
 Regression tests must exercise selected RPC origin/Bearer, selected receiver HMAC versus rejected core HMAC, actual bot startup/context access, explicit-disabled behavior, absent-override compatibility, and invalid-origin/token/runtime cases. Use synthetic Slack/provider fixtures and disposable PostgreSQL; do not consume live Slack or AI to test composition.
+
+## 11. Fresh enrollment discovery without an event prerequisite
+
+The registered runtime can discover its **already configured** exact owner/Bot/private-Chat enrollment before any channel event. `POST /internal/slack/thread-context/enrollment` uses the existing runtime-HMAC-derived Bearer and handle authority, a 4 KiB body limit, strict `{ownerId,botId,chatId,runtimeId}` input, no-store response, and the existing 1.5-second Slack access deadline. No grant ID, channel, workspace, scope, event, cursor or token selector is accepted.
+
+| Boundary | Required authority / result |
+| --- | --- |
+| Before provider access | Authenticated current owner/runtime and exact requested configured target; current installation generation, linked owner incarnation and Matrix membership. |
+| Provider metadata | App can access the internal conversation, linked owner remains a member, provider channel ID equals configured grant channel ID, bounded validated channel name. Missing/invalid display metadata makes discovery unavailable. |
+| After provider await | Reauthenticate the current runtime; recheck current installation/link/Matrix authority and cancellation before returning the same immutable configured grant. |
+| Owner gateway callback | Check actual active personal/private direct Chat and selected Bot before and after the callback. Strictly validate the returned full target, metadata identity and scope; a configured callback is authoritative. False, malformed, mismatched, unavailable or thrown results never fall back to cached events. |
+
+A success returns `available:true`, existing `access` (including unchanged grant digest), `appId`, `teamId`, `channelId`, provider `channel:{id,name}`, and `scope:"channel"` or `scope:"thread"` plus exact `threadTs`. Require `channel.id===channelId`. A denial returns only `{available:false}`; invalid authentication is 401, malformed body 400, oversized body 413 and provider failure a generic unavailable response. No credentials or discussion content are returned, and discovery writes no context, policy, job or Chat row.
+
+Example request: `{"ownerId":"user_fixture","botId":"bot_12345678","chatId":"chat_fixture","runtimeId":"runtime_fixture"}`. Channel identity is derived solely from the current configured grant. Do not mint a grant, seed a message or backfill history to make setup available.
+
+Native inventory/history and owner-native rule setup reuse `enrollment()`. Discovery metadata preserves thread-only grants: inventory advertises the exact root, native calls reject recent channel history or other roots, and the existing platform grant/event/private-read fences remain authoritative for rules and automatic jobs. Existing thread rule support is retained. Legacy callers with **no** discovery callback keep the cached-event path; a configured callback may never silently downgrade to it.
+
+Required local evidence: actual Hono/client + PostgreSQL zero-context success; identity/auth/metadata/size/provider and local sharing/retirement races; explicit-denial/no-cache fallback; original owner-HTTP rule provenance; then a new signed synthetic qualifying event after activation through existing job/canonical/Pi flow, deduplication, one private English result, empty tools and zero Slack output. Synthetic provider/model acceptance is separate from fresh real owner setup and live Slack acceptance.

@@ -130,7 +130,9 @@ it("retains the actual generic integration inventory fallback when Slack is null
 });
 it("exposes actual enrolled native inventory with Slack-only composition and no core transport", async () => {
   const observe = vi.spyOn(integrationToolsModule, "createBotIntegrationTools");
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ allowed: true, channel: { id: "C123", name: "tech" } })));
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => String(url).endsWith("/enrollment")
+    ? Response.json({available:true,access:{...JSON.parse(String(init?.body)),grantId:"d".repeat(64)},appId:"A123",teamId:"T123",channelId:"C123",scope:"channel",channel:{id:"C123",name:"tech"}})
+    : Response.json({ allowed: true, channel: { id: "C123", name: "tech" } })));
   const { services } = await startBotFixture(resolveSlackPlatform(preview).botConnection, false);
   expect(services.routineOrigin).toBeUndefined();
   const target = { ownerId: OWNER, botId: BOT, chatId: "chat_target_a", runtimeId: core.MATRIX_MACHINE_ID, grantId: "d".repeat(64) };

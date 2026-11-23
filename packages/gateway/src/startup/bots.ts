@@ -438,6 +438,7 @@ export async function startBots(options: {
       slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
       slackThreadContext = await createPrivateSlackThreadContext({
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
+        discoverEnrollment: slackClient.discoverThreadEnrollment,
         onReceive: slackMentionSummaries.receive,
         botAvailable: async target => {
           const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
