@@ -6,7 +6,8 @@
  * closed again and never shown. Before it leaves a document the host saves
  * its pending edits; when that is not possible (a conflict, a failed write)
  * it stays on the document and reports `unsaved`, unless the caller chose to
- * discard them.
+ * discard them. The old document stays on screen and editable while the new
+ * one loads, so its edits are saved again right before it is replaced.
  */
 
 import { toSessionError } from "./file-io";
@@ -30,6 +31,8 @@ export interface HostState {
 }
 
 const MAX_LISTENERS = 32;
+/** Saves tried in a row while new edits keep arriving during the write. */
+const MAX_RELEASE_SAVES = 3;
 
 export class SessionHost {
   private state: HostState = { session: null, opening: null, error: null };
@@ -59,15 +62,21 @@ export class SessionHost {
     for (const listener of [...this.listeners]) listener();
   }
 
-  /** Saves the current document's pending edits. False when they could not be saved. */
+  /**
+   * Saves the current document's pending edits, again when more arrived
+   * while the file was written. False when they could not all be saved.
+   */
   private async release(discardUnsaved: boolean): Promise<boolean> {
     const current = this.state.session;
     if (current === null || discardUnsaved) return true;
-    const state = current.getState();
-    if (!state.dirty) return true;
-    if (state.path === null) return false;
-    const outcome = await current.flush();
-    return outcome.status === "saved" || outcome.status === "unchanged";
+    for (let attempt = 0; attempt < MAX_RELEASE_SAVES; attempt++) {
+      const state = current.getState();
+      if (!state.dirty) return true;
+      if (state.path === null) return false;
+      const outcome = await current.flush();
+      if (outcome.status !== "saved" && outcome.status !== "unchanged") return false;
+    }
+    return !current.getState().dirty;
   }
 
   private replace(session: SheetSession | null): void {
@@ -96,6 +105,16 @@ export class SessionHost {
     }
     if (ticket !== this.ticket) {
       // A newer open won while this file was loading.
+      session.dispose();
+      return { status: "superseded" };
+    }
+    // The owner may have kept editing the old document while this one loaded.
+    if (!(await this.release(options.discardUnsaved === true))) {
+      session.dispose();
+      if (ticket === this.ticket) this.set({ opening: null });
+      return { status: "unsaved" };
+    }
+    if (ticket !== this.ticket) {
       session.dispose();
       return { status: "superseded" };
     }
