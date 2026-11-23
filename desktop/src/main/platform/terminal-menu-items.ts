@@ -1,83 +1,76 @@
-// Herdr's Terminal window shortcuts as menu accelerators (spec 2706). They
-// are in the application menu only while the Terminal window has focus, so
-// the main window keeps every key it uses today.
+// The Terminal window's shortcuts as menu accelerators (spec 2706). They are
+// in the application menu only while the Terminal window has focus, so the
+// main window keeps every key it uses. Each command is a registry action
+// (group "terminal-window"), so its keys follow the person's Shortcuts
+// settings; selecting a terminal (Cmd+1…9) and a space (Ctrl+0…9) are fixed
+// keys, like the main window's app switching digits.
 import type { MenuItemConstructorOptions } from "electron";
-import type { TerminalWindowCommand } from "../../shared/terminal-window";
+import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
+import { terminalWindowFixedKeys, type TerminalWindowCommand } from "../../shared/terminal-window";
+
+type Direction = "left" | "right" | "up" | "down";
+const DIRECTIONS: ReadonlyArray<[label: string, direction: Direction]> = [["Left", "left"], ["Right", "right"], ["Up", "up"], ["Down", "down"]];
 
 export function terminalWindowMenuItems(
+  shortcuts: EffectiveShortcuts,
   command: (command: TerminalWindowCommand) => void,
   closeWindow: () => void,
   isMac: boolean,
 ): MenuItemConstructorOptions[] {
-  // Herdr's keys are macOS ones; elsewhere the Super key stands in, so Ctrl stays with the shell.
-  const key = (keys: string) => keys.replace(/^Cmd\+/, isMac ? "Cmd+" : "Super+");
-  const item = (label: string, accelerator: string, sent: TerminalWindowCommand): MenuItemConstructorOptions => ({
-    label, accelerator: key(accelerator), click: () => command(sent),
-  });
-  const directions = [["Left", "left"], ["Right", "right"], ["Up", "up"], ["Down", "down"]] as const;
+  // The first binding shows; the others work hidden, as the main window's menu does.
+  const item = (id: ShortcutActionId, label: string, click: () => void): MenuItemConstructorOptions[] => {
+    const [first, ...rest] = shortcuts[id] ?? [];
+    return [
+      { label, ...(first ? { accelerator: first } : {}), click },
+      ...rest.map((accelerator): MenuItemConstructorOptions => ({ label, accelerator, visible: false, acceleratorWorksWhenHidden: true, click })),
+    ];
+  };
+  const run = (id: ShortcutActionId, label: string, sent: TerminalWindowCommand) => item(id, label, () => command(sent));
+  const fixed = terminalWindowFixedKeys(isMac);
   return [
-    item("New Terminal", "Cmd+N", { command: "new-terminal" }),
-    { ...item("New Terminal", "Cmd+T", { command: "new-terminal" }), visible: false, acceleratorWorksWhenHidden: true },
+    ...run("terminal-window.new", "New Terminal", { command: "new-terminal" }),
     // Herdr's Cmd+W closes the focused pane, ending its terminal (it asks first while a program runs).
-    item("Close Pane", "Cmd+W", { command: "close-terminal" }),
-    { label: "Close Window", accelerator: key("Cmd+Alt+W"), click: closeWindow },
+    ...run("terminal-window.close-pane", "Close Pane", { command: "close-terminal" }),
+    ...item("terminal-window.close-window", "Close Window", closeWindow),
     { type: "separator" },
-    item("Rename Terminal…", "F2", { command: "rename" }),
-    item("Find…", "Cmd+F", { command: "find" }),
+    ...run("terminal-window.rename", "Rename Terminal…", { command: "rename" }),
+    ...run("terminal-window.find", "Find…", { command: "find" }),
     { type: "separator" },
-    item("Go to Terminal…", "Cmd+P", { command: "picker" }),
-    item("Overview", "Cmd+Shift+O", { command: "overview" }),
-    { ...item("Commands…", "Cmd+Shift+P", { command: "picker" }), visible: false, acceleratorWorksWhenHidden: true },
-    item("Next Terminal", "Cmd+]", { command: "next" }),
-    item("Previous Terminal", "Cmd+[", { command: "previous" }),
+    ...run("terminal-window.picker", "Go to Terminal…", { command: "picker" }),
+    ...run("terminal-window.overview", "Overview", { command: "overview" }),
+    ...run("terminal-window.next", "Next Terminal", { command: "next" }),
+    ...run("terminal-window.previous", "Previous Terminal", { command: "previous" }),
     // Ctrl+Tab cycles the open tabs in the tab bar, as Herdr's does.
-    item("Next Tab", "Ctrl+Tab", { command: "next-tab" }),
-    item("Previous Tab", "Ctrl+Shift+Tab", { command: "previous-tab" }),
+    ...run("terminal-window.next-tab", "Next Tab", { command: "next-tab" }),
+    ...run("terminal-window.previous-tab", "Previous Tab", { command: "previous-tab" }),
     {
       label: "Select Terminal",
-      submenu: Array.from({ length: 9 }, (_, offset) => item(`Terminal ${offset + 1}`, `Cmd+${offset + 1}`, { command: "select", index: offset + 1 })),
+      submenu: fixed.select.map((accelerator, offset): MenuItemConstructorOptions => ({
+        label: `Terminal ${offset + 1}`, accelerator, click: () => command({ command: "select", index: offset + 1 }),
+      })),
     },
     {
       // Ctrl, not Cmd, on every platform: Cmd+digits pick a terminal within the space.
       label: "Switch Space",
-      submenu: [
-        { label: "All Spaces", accelerator: "Ctrl+0", click: () => command({ command: "space", index: 0 }) },
-        ...Array.from({ length: 9 }, (_, offset): MenuItemConstructorOptions => ({
-          label: `Space ${offset + 1}`, accelerator: `Ctrl+${offset + 1}`, click: () => command({ command: "space", index: offset + 1 }),
-        })),
-      ],
+      submenu: fixed.space.map((accelerator, digit): MenuItemConstructorOptions => ({
+        label: digit === 0 ? "All Spaces" : `Space ${digit}`, accelerator, click: () => command({ command: "space", index: digit }),
+      })),
     },
     { type: "separator" },
-    item("Split Right", "Cmd+D", { command: "split-right" }),
-    item("Split Down", "Cmd+Shift+D", { command: "split-down" }),
+    ...run("terminal-window.split-right", "Split Right", { command: "split-right" }),
+    ...run("terminal-window.split-down", "Split Down", { command: "split-down" }),
     // Takes the pane off screen; its terminal keeps running in the sidebar.
-    item("Hide Pane", "Cmd+Shift+W", { command: "close-pane" }),
-    item("Zoom Pane", "Cmd+Shift+Enter", { command: "zoom-pane" }),
+    ...run("terminal-window.hide-pane", "Hide Pane", { command: "close-pane" }),
+    ...run("terminal-window.zoom-pane", "Zoom Pane", { command: "zoom-pane" }),
     {
       label: "Focus Pane",
-      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+${label}`, { command: "focus-pane", direction })),
+      submenu: DIRECTIONS.flatMap(([label, direction]) => run(`terminal-window.focus-${direction}`, label, { command: "focus-pane", direction })),
     },
     {
       label: "Swap Pane",
-      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+Shift+${label}`, { command: "swap-pane", direction })),
+      submenu: DIRECTIONS.flatMap(([label, direction]) => run(`terminal-window.swap-${direction}`, label, { command: "swap-pane", direction })),
     },
     { type: "separator" },
-    item("Toggle Sidebar", "Cmd+B", { command: "toggle-sidebar" }),
+    ...run("terminal-window.toggle-sidebar", "Toggle Sidebar", { command: "toggle-sidebar" }),
   ];
-}
-
-/**
- * The keys the Terminal window's own menu uses. While that window has focus the
- * main window's Apps shortcuts (Ctrl+Tab, Cmd+digits) must not take them first.
- */
-export function terminalWindowBindings(isMac: boolean): ReadonlySet<string> {
-  const keys = new Set<string>();
-  const collect = (items: MenuItemConstructorOptions[]) => {
-    for (const entry of items) {
-      if (typeof entry.accelerator === "string") keys.add(entry.accelerator);
-      if (Array.isArray(entry.submenu)) collect(entry.submenu);
-    }
-  };
-  collect(terminalWindowMenuItems(() => undefined, () => undefined, isMac));
-  return keys;
 }

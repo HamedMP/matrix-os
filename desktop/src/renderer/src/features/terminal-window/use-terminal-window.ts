@@ -25,6 +25,7 @@ import { useSidebarPrefs } from "./use-sidebar-prefs";
 import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
 import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
+import { useTerminalWindowKeys } from "./use-terminal-window-keys";
 import {
   computerMachineId, localMachine, localRowKey, sshMachineId, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
 } from "./use-terminal-status";
@@ -431,7 +432,10 @@ export function useTerminalWindow() {
   const startLocal = useCallback((launch?: Parameters<typeof createLocal>[0]) => { setOverviewOpen(false); createLocal(launch); }, [createLocal]);
   const startCloud = useCallback((slot: string) => { setOverviewOpen(false); createCloud(slot); }, [createCloud]);
 
+  const reservedKeys = useTerminalWindowKeys();
+
   return {
+    reservedKeys,
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */

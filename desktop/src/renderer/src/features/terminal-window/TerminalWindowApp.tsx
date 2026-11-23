@@ -20,7 +20,6 @@ import { LocalTerminalAttention } from "./LocalTerminalAttention";
 import { TerminalWindowSidebar, filterRows, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
-import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
 import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
 import { compareCoreVersions, LOCAL_TERMINAL_VERSION, type LocalCreateFailure, type LocalMachine } from "../../../../shared/local-terminals";
@@ -244,8 +243,9 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction, reservedKeys }: {
   sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+  reservedKeys(event: KeyboardEvent): boolean;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
   useEffect(() => {
@@ -256,7 +256,7 @@ const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequ
   }, []);
   if (!manager) return null;
   return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    onPaneAction={onPaneAction} reservedKeys={reservedKeys}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
 });
@@ -316,7 +316,7 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         return (
           <>
             <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
-              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} reservedKeys={view.reservedKeys} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>
         );

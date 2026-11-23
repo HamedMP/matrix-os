@@ -5,6 +5,9 @@
 import { z } from "zod/v4";
 import type { EventChannel, InvokeChannel } from "./ipc-contract";
 import { LOCAL_TERMINAL_EVENT_CHANNELS, LOCAL_TERMINAL_INVOKE_CHANNELS } from "./local-terminals";
+import {
+  bindingFromKeyEvent, SHORTCUT_ACTIONS, terminalWindowFixedKeys as registryFixedKeys, type EffectiveShortcuts, type KeyEventLike, type ShortcutActionId,
+} from "@matrix-os/contracts/keyboard-shortcuts";
 
 export const TERMINAL_WINDOW_ARG = "--matrix-terminal-window";
 export const TERMINAL_WINDOW_QUERY_KEY = "window";
@@ -41,33 +44,30 @@ export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
 ]);
 export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
 
-export interface ShortcutKeyEvent {
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  shiftKey: boolean;
+/** Fixed keys, from the registry: Cmd+1…9 select a terminal, Ctrl+0…9 switch space. */
+export function terminalWindowFixedKeys(isMac: boolean): { select: string[]; space: string[] } {
+  return registryFixedKeys(isMac ? "mac" : "other");
 }
 
-const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "o", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
-const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
+const TERMINAL_WINDOW_ACTION_IDS: readonly ShortcutActionId[] = SHORTCUT_ACTIONS
+  .filter((action) => action.group === "terminal-window").map((action) => action.id);
 
 /**
- * The keys the Terminal window's menu owns (terminal-menu-items.ts). A focused
- * terminal leaves these to the menu instead of sending them to its program or
- * its own pane bindings, so every shortcut works while a terminal has focus.
- * Cmd (Super off macOS) is the menu's modifier; Ctrl stays with the shell
- * except for Ctrl+Tab and Ctrl+0…9 (spaces). Cmd+C/V/A stay with the terminal's clipboard.
+ * Every key the Terminal window's menu owns now (terminal-menu-items.ts): its
+ * registry actions' bindings, as the person set them, plus the fixed digits.
+ * While that window has focus, the main window's Apps shortcuts leave these
+ * keys alone, and a focused terminal hands them to the menu instead of its
+ * program, so every shortcut works while a terminal has focus.
  */
-export function isTerminalWindowShortcut(event: ShortcutKeyEvent): boolean {
-  const key = event.key.toLowerCase();
-  if (key === "f2" && !event.metaKey && !event.ctrlKey && !event.altKey) return true;
-  if (key === "tab" && event.ctrlKey && !event.metaKey && !event.altKey) return true;
-  // Ctrl+0…9 switch space.
-  if (/^[0-9]$/.test(key) && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) return true;
-  if (!event.metaKey || event.ctrlKey) return false;
-  if (event.altKey) return ARROWS.has(key) || (key === "w" && !event.shiftKey);
-  return PRIMARY_KEYS.has(key);
+export function terminalWindowKeys(shortcuts: EffectiveShortcuts, isMac: boolean): ReadonlySet<string> {
+  const fixed = terminalWindowFixedKeys(isMac);
+  return new Set([...TERMINAL_WINDOW_ACTION_IDS.flatMap((id) => shortcuts[id] ?? []), ...fixed.select, ...fixed.space]);
+}
+
+/** Whether a key press is one of those keys. */
+export function isTerminalWindowKey(keys: ReadonlySet<string>, event: KeyEventLike, isMac: boolean): boolean {
+  const binding = bindingFromKeyEvent(event, isMac ? "mac" : "other");
+  return binding !== null && keys.has(binding);
 }
 
 export const TERMINAL_WINDOW_EVENTS = {
@@ -97,6 +97,8 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   "terminal:read-clipboard-files",
   // So its Terminal keeps the keys its profile binds (specs/653).
   "shortcuts:set-terminal-claims",
+  // Its own commands' keys follow the Shortcuts settings (spec 2706); read only.
+  "shortcuts:get",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 

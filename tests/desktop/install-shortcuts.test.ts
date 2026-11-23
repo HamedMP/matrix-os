@@ -220,6 +220,19 @@ describe("installShortcuts", () => {
     expect(run).toHaveBeenCalledWith("app.next");
   });
 
+  // ENG-521: a key moved onto a Terminal window command in Shortcuts settings belongs to that window there.
+  it("follows the Terminal window's keys as set in Shortcuts settings", async () => {
+    const TILE_LEFT = { ...CTRL_TAB, key: "ArrowLeft", code: "ArrowLeft", shift: true };
+    const { app, run, terminal, installed } = await setup();
+    app.createContents(terminal!.webContents);
+    press(terminal!.webContents, TILE_LEFT);
+    expect(run).toHaveBeenLastCalledWith("app.tile-left");
+    run.mockClear();
+    await installed.service.set({ version: 1, overrides: { "terminal-window.focus-left": ["Ctrl+Shift+Left"] } });
+    expect(press(terminal!.webContents, TILE_LEFT)).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not watch DevTools web contents", async () => {
     const { app, run } = await setup();
     const devtools = fakeContents("devtools");

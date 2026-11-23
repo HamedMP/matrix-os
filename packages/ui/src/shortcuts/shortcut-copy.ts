@@ -30,6 +30,7 @@ export const GROUP_TITLES = {
   tabs: "Tabs",
   chat: "Chat",
   terminal: "Terminal",
+  "terminal-window": "Terminal window",
 } as const;
 
 /** Inline text for a binding: "⌃⇥" on macOS, "Ctrl+Tab" elsewhere. */

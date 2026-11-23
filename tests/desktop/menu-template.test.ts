@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
-import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
+import { isTerminalWindowKey, terminalWindowKeys } from "@desktop/shared/terminal-window";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
 import { terminalWindowMenuItems } from "../../desktop/src/main/platform/terminal-menu-items";
 import { isShortcutActionAvailable } from "../../desktop/src/main/shortcuts/shortcut-availability";
@@ -374,6 +374,7 @@ describe("Terminal window menu", () => {
       ["Cmd+Shift+Enter", { command: "zoom-pane" }], ["Cmd+Alt+Left", { command: "focus-pane", direction: "left" }],
       ["Cmd+Alt+Down", { command: "focus-pane", direction: "down" }], ["Cmd+Alt+Shift+Right", { command: "swap-pane", direction: "right" }],
       ["Cmd+Alt+Shift+Up", { command: "swap-pane", direction: "up" }],
+      ["Ctrl+0", { command: "space", index: 0 }], ["Ctrl+5", { command: "space", index: 5 }],
     ];
     for (const [accelerator, sent] of expected) {
       const matches = byKey(accelerator);
@@ -389,7 +390,9 @@ describe("Terminal window menu", () => {
 
   // Fault detected (Hamed, 2026-11-22): a focused terminal kept some of these keys, so the shortcut did nothing.
   it("reserves every menu shortcut from a focused terminal", () => {
-    const items = flat(terminalWindowMenuItems(vi.fn(), vi.fn(), true) as Item[]);
+    const shortcuts = resolveShortcuts(null, "mac");
+    const keys = terminalWindowKeys(shortcuts, true);
+    const items = flat(terminalWindowMenuItems(shortcuts, vi.fn(), vi.fn(), true) as Item[]);
     const arrows: Record<string, string> = { Left: "ArrowLeft", Right: "ArrowRight", Up: "ArrowUp", Down: "ArrowDown" };
     const accelerators = items.flatMap((item) => (item.accelerator ? [item.accelerator] : []));
     expect(accelerators.length).toBeGreaterThan(20);
@@ -397,10 +400,10 @@ describe("Terminal window menu", () => {
       const parts = accelerator.split("+");
       const last = parts.at(-1)!;
       const event = {
-        key: arrows[last] ?? last, metaKey: parts.includes("Cmd"), ctrlKey: parts.includes("Ctrl"),
+        key: arrows[last] ?? last, code: "", metaKey: parts.includes("Cmd"), ctrlKey: parts.includes("Ctrl"),
         altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
       };
-      expect(isTerminalWindowShortcut(event), accelerator).toBe(true);
+      expect(isTerminalWindowKey(keys, event, true), accelerator).toBe(true);
     }
   });
 
@@ -411,9 +414,25 @@ describe("Terminal window menu", () => {
     expect(items.find((item) => item.accelerator === "Ctrl+Tab")?.label).toBe("Next App");
   });
 
-  it("leaves Ctrl to the shell on Linux by using the Super key", () => {
+  it("leaves Ctrl alone to the shell on Linux", () => {
     const { items } = build("linux", true);
-    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Super+N");
+    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Ctrl+Shift+N");
+    expect(items.find((item) => item.label === "Split Right")?.accelerator).toBe("Ctrl+Shift+D");
     expect(items.some((item) => item.accelerator?.startsWith("Cmd+"))).toBe(false);
+    expect(items.some((item) => item.accelerator === "Ctrl+W" || item.accelerator === "Ctrl+D")).toBe(false);
+  });
+
+  // ENG-521: the Terminal window's commands are registry actions, so a key set in Shortcuts settings
+  // is the key its menu uses, and only while that window has focus.
+  it("takes each command's keys from the Shortcuts settings", () => {
+    const command = vi.fn();
+    const shortcuts = { ...resolveShortcuts(null, "mac"), "terminal-window.split-right": ["Cmd+Alt+D", "F7"], "terminal-window.overview": [] };
+    const items = flat(terminalWindowMenuItems(shortcuts, command, vi.fn(), true) as Item[]);
+    const splits = items.filter((item) => item.label === "Split Right");
+    expect(splits.map((item) => [item.accelerator, item.visible])).toEqual([["Cmd+Alt+D", undefined], ["F7", false]]);
+    splits[1]!.click!();
+    expect(command).toHaveBeenCalledWith({ command: "split-right" });
+    expect(items.find((item) => item.label === "Overview")?.accelerator).toBeUndefined();
+    expect(items.some((item) => item.accelerator === "Cmd+D")).toBe(false);
   });
 });

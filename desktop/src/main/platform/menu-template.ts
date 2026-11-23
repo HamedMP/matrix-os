@@ -153,7 +153,7 @@ export function createAppMenuTemplate({
   const settingsItems = item("nav.settings", "Settings…");
   const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = terminalWindow
-    ? terminalWindowMenuItems(terminalWindow.command, terminalWindow.close, isMac)
+    ? terminalWindowMenuItems(shortcuts, terminalWindow.command, terminalWindow.close, isMac)
     : [
     ...item("tabs.new-context", "New"),
     ...item("chat.new-thread", "New Agent Thread"),

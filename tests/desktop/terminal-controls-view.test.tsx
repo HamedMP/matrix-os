@@ -5,7 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
-import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
+import { resolveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isTerminalWindowKey, terminalWindowKeys } from "@desktop/shared/terminal-window";
+
+const TERMINAL_WINDOW_KEYS = terminalWindowKeys(resolveShortcuts(null, "mac"), true);
+const isTerminalWindowShortcut = (event: { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) =>
+  isTerminalWindowKey(TERMINAL_WINDOW_KEYS, {
+    key: event.key, code: event.code ?? "", metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey,
+  }, true);
 
 const { terminals, attach, write } = vi.hoisted(() => ({
   terminals: [] as Array<{ key?: (event: KeyboardEvent) => boolean; selection: string; selectAll: ReturnType<typeof vi.fn>; paste: ReturnType<typeof vi.fn> }>,

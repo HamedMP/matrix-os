@@ -5,6 +5,7 @@ import {
   EMPTY_SHORTCUT_OVERRIDES,
   MAX_BINDINGS_PER_ACTION,
   SHORTCUT_ACTIONS,
+  shortcutScope,
   ShortcutOverridesSchema,
   resolveShortcuts,
   validateBinding,
@@ -63,8 +64,10 @@ export function sanitizeOverrides(overrides: ShortcutOverrides, platform: Shortc
     const bindings: string[] = [];
     for (const binding of stored) {
       if (bindings.length >= MAX_BINDINGS_PER_ACTION) break;
-      if (claimed.has(binding) || !validateBinding(binding, platform).ok) continue;
-      claimed.add(binding);
+      // Unique within its scope: the Terminal window's actions may reuse main-window keys.
+      const scoped = `${shortcutScope(id)} ${binding}`;
+      if (claimed.has(scoped) || !validateBinding(binding, platform).ok) continue;
+      claimed.add(scoped);
       bindings.push(binding);
     }
     if (bindings.length > 0 || stored.length === 0) kept[id] = bindings;
