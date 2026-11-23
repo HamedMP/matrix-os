@@ -37,6 +37,8 @@ export async function createLiveBoard() {
   const as = (actor: BoardActor) => ({ ownerId: "owner_1", actor });
   return {
     runtime, client, state, as,
+    /** The board routes, for clients built outside this harness (Electron Desktop). */
+    app,
     async close() {
       runtime.close();
       await db.destroy();

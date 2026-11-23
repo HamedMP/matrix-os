@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { shouldHydrateCanvasWindow } from "../../shell/src/components/canvas/CanvasRenderer.js";
+import { canvasWindowIconUrl } from "../../shell/src/lib/web-desktop-app-launch.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useCanvasTransform, INTERACTION_THRESHOLD } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
@@ -18,6 +19,14 @@ function resetStores() {
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false });
   useDesktopMode.setState({ mode: "canvas", previousMode: null });
 }
+
+describe("Canvas window artwork", () => {
+  // Fault detected (browser run): a Message Board window showed a generic grid in its title bar.
+  it("gives a launcher-only built-in its shipped artwork and keeps catalog artwork first", () => {
+    expect(canvasWindowIconUrl([], "__message-board__")).toContain("/system-app-icons/v2/message-board.svg");
+    expect(canvasWindowIconUrl([{ name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/owner.png" }], "apps/notes/index.html")).toBe("/icons/owner.png");
+  });
+});
 
 describe("Canvas Renderer Integration", () => {
   beforeEach(() => {

@@ -288,6 +288,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       "cloud-desktop": () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-cloud-desktop", title: "Cloud desktop", icon: fixedApps.find(app => app.id === "cloud-desktop")?.iconUrl })),
       notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
       whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
+      "message-board": () => openRoot(() => openTab({ kind: "message-board", title: "Message Board", icon: fixedApps.find((app) => app.id === "message-board")?.iconUrl })),
     };
     const fixed = fixedApps.map((app) => ({
       ...app,

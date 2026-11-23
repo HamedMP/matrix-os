@@ -1023,7 +1023,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
             const appIconMap = new Map(apps.map((a) => [a.path, a.iconUrl]));
             const getIconForWindow = (winPath: string) => {
               const basePath = winPath.split(":")[0];
-              return appIconMap.get(basePath) ?? appIconMap.get(winPath);
+              return appIconMap.get(basePath) ?? appIconMap.get(winPath) ?? webShellIconUrlForApp({ path: basePath });
             };
             return (
               <div className={isHorizontal

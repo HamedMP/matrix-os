@@ -14,6 +14,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
   "cloud-desktop": "installed_app",
   notes: "notes",
   whiteboard: "whiteboard",
+  "message-board": "message_board",
 };
 
 const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
@@ -22,6 +23,7 @@ const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   editor: "editor",
   vscode: "vscode",
   notes: "notes",
+  "message-board": "message_board",
   settings: "settings",
   terminal: "terminal",
   terminals: "terminal",

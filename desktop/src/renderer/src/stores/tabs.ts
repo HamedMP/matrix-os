@@ -20,6 +20,7 @@ export type TabKind =
   | "editor"
   | "vscode"
   | "notes"
+  | "message-board"
   | "apps"
   | "app"
   | "settings"

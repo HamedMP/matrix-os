@@ -92,7 +92,7 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   return [...firstClass.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) })), ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }
 
-const messageBoardLauncherApp = (): AppEntry => ({ name: "Message Board", path: "__message-board__", iconUrl: iconUrlForSlug("messages") });
+const messageBoardLauncherApp = (): AppEntry => ({ name: "Message Board", path: "__message-board__", iconUrl: webShellIconUrlForApp({ path: "__message-board__" }) });
 
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
@@ -124,4 +124,9 @@ export function webShellIconUrlForApp(app: { path: string; iconUrl?: string; ico
 export function webGalleryLauncherIconUrl(apps: readonly { path: string; iconUrl?: string }[] = []): string {
   const gallery = apps.filter(app => app.path === "matrix-app:app-gallery" || /^apps\/app-gallery\/(?:dist\/)?index\.html$/.test(app.path));
   return gallery.length === 1 && gallery[0]?.iconUrl ? gallery[0].iconUrl : gatewayAssetUrl("/icons/v3-app-gallery.png")!;
+}
+
+/** Catalog artwork first; launcher-only built-ins (Message Board) are not catalog apps, so use their shipped artwork. */
+export function canvasWindowIconUrl(apps: readonly { path: string; iconUrl?: string }[], path: string): string | undefined {
+  return apps.find((app) => app.path === path)?.iconUrl ?? webShellIconUrlForApp({ path });
 }

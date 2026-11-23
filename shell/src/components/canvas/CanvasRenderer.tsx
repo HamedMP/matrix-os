@@ -14,6 +14,7 @@ import { CanvasTextLabel } from "./CanvasTextLabel";
 import { SelectionRect } from "./SelectionRect";
 import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { CanvasMinimap } from "./CanvasMinimap";
+import { canvasWindowIconUrl } from "@/lib/web-desktop-app-launch";
 
 const GROUP_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
 const APP_HYDRATION_MARGIN_PX = 320;
@@ -175,7 +176,7 @@ export function CanvasRenderer({ children, apps = [] }: CanvasRendererProps = {}
               panY={panY}
               viewportWidth={viewportWidth}
               viewportHeight={viewportHeight}
-              iconUrl={apps.find((app) => app.path === win.path)?.iconUrl}
+              iconUrl={canvasWindowIconUrl(apps, win.path)}
             />
           );
         })}
