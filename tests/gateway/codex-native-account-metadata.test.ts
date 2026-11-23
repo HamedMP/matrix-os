@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hasNativeAccountCredentialIdentity, nativeAccountPrincipalFingerprint, sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
@@ -628,6 +628,42 @@ describe("native Codex account metadata", () => {
       result = account;
       expect((await reader.observeIdentity!()).state).toBe("observed"); await settle();
       expect(spawnProcess).toHaveBeenCalledTimes(3);
+    });
+    it("drops a reusable identity when a later fresh account read fails", async () => {
+      let time = now.getTime();
+      let result: unknown = account;
+      const spawnProcess = vi.fn(() => fixture(false, false, result, undefined, undefined, undefined, "file").spawnProcess());
+      const reader = createCodexNativeAccountMetadataReader({ executable: "/opt/codex/bin/codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" },
+        now: () => new Date(time), timeoutMs: 40, spawnProcess: spawnProcess as never, identityReuseMs: CODEX_IDENTITY_REUSE_MAX_MS,
+        readCredentialFileProof: async () => "stable-proof", readExecutableFingerprint: async () => "codex-1", readConfigFingerprint: async () => "config-1" });
+      expect((await reader.observeIdentity!()).state).toBe("observed"); await settle();
+      time += 60_000;
+      result = { account: null }; // the ordinary usage read now fails its account proof
+      expect(await reader()).toBeNull(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      result = account;
+      time += 60_000;
+      expect((await reader.observeIdentity!()).state).toBe("observed"); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(3);
+    });
+    it("notices a change to the target of a symlinked Codex config", async () => {
+      const home = await mkdtemp(join(tmpdir(), "matrix-codex-config-link-"));
+      try {
+        await mkdir(join(home, ".codex"));
+        const target = join(home, "shared-config.toml");
+        await writeFile(target, 'cli_auth_credentials_store = "file"\n');
+        await symlink(target, join(home, ".codex", "config.toml"));
+        const spawnProcess = vi.fn(() => fixture(false, false, account, undefined, undefined, undefined, "file").spawnProcess());
+        const reader = createCodexNativeAccountMetadataReader({ executable: "/opt/codex/bin/codex", cwd: home, environment: { HOME: home },
+          now: () => now, timeoutMs: 40, spawnProcess: spawnProcess as never, identityReuseMs: CODEX_IDENTITY_REUSE_MAX_MS,
+          readCredentialFileProof: async () => "stable-proof", readExecutableFingerprint: async () => "codex-1" });
+        await reader.observeIdentity!(); await settle();
+        await reader.observeIdentity!(); await settle();
+        expect(spawnProcess).toHaveBeenCalledTimes(1);
+        await writeFile(target, 'cli_auth_credentials_store = "keyring"\n');
+        await reader.observeIdentity!(); await settle();
+        expect(spawnProcess).toHaveBeenCalledTimes(2);
+      } finally { await rm(home, { recursive: true, force: true }); }
     });
     it("marks admission reuse hit or miss on the active send timing without private values", async () => {
       vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
