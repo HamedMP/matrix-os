@@ -1,9 +1,11 @@
 /**
  * Finds the ranges of one sheet that contain a cell.
  *
- * Ranges are filed in two grids of blocks, a fine one and a coarse one, so
- * that a lookup reads the few ranges near the cell instead of every range
- * of the sheet. A range that would fill too many blocks of the coarse grid
+ * Ranges are filed in grids of blocks, from fine to coarse, so that a
+ * lookup reads the few ranges near the cell instead of every range of the
+ * sheet. The fine grids are one column wide: a column of running totals
+ * (`SUM(A$1:A1)`, `SUM(A$1:A2)`, …) is then only looked at for cells of
+ * that column. A range that would fill too many blocks of the coarsest grid
  * (a whole column, a whole row) is kept in a short list that every lookup
  * scans.
  */
@@ -33,7 +35,8 @@ interface Grid {
 /** A range filed in more blocks than this moves to the next coarser grid. */
 const MAX_BLOCKS_PER_RANGE = 64;
 const GRID_SIZES: ReadonlyArray<{ rows: number; cols: number }> = [
-  { rows: 64, cols: 16 },
+  { rows: 64, cols: 1 },
+  { rows: 4096, cols: 1 },
   { rows: 4096, cols: 256 },
 ];
 const LAST_COL = 16_383;
