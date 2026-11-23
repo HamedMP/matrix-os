@@ -1,21 +1,8 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { AgentPanel, Toolbar, ToolbarButton } from "../../../../_shared/office-ui";
 import type { AssistantState, SheetSelection, SheetsAssistant } from "../../agent";
-import type { CellRange, SheetId } from "../../session/engine";
 import { toAgentResult } from "./ResultBody";
 import "./agent.css";
-
-/** The parts of `SheetGridController` the panel reads the selection from. */
-export interface SelectionSource {
-  getSelection(): { sheet: SheetId };
-  getActiveRange(): CellRange;
-}
-
-/** The grid's current selection as the assistant takes it. */
-export function selectionFromGrid(grid: SelectionSource | null): SheetSelection | null {
-  if (grid === null) return null;
-  return { sheet: grid.getSelection().sheet, range: grid.getActiveRange() };
-}
 
 export function useAssistantState(assistant: SheetsAssistant): AssistantState {
   return useSyncExternalStore(

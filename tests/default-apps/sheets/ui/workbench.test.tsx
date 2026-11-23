@@ -18,8 +18,26 @@ function selectDown(app: Awaited<ReturnType<typeof renderWithWorkbook>>, steps: 
   for (let i = 0; i < steps; i++) fireEvent.keyDown(grid, { key: "ArrowDown", shiftKey: true });
 }
 
-describe("Sheets toolbar", () => {
-  it("sends formatting commands to the engine for the selection", async () => {
+function openTab(name: string): void {
+  fireEvent.click(screen.getByRole("tab", { name }));
+}
+
+function chooseColor(name: string, swatch: string): void {
+  fireEvent.click(screen.getByRole("button", { name: `${name} options` }));
+  fireEvent.click(within(screen.getByRole("dialog", { name })).getByRole("button", { name: swatch }));
+}
+
+describe("Sheets ribbon", () => {
+  it("shows the menu bar tabs with the Home tab first", async () => {
+    await renderWithWorkbook();
+    const tabs = within(screen.getByRole("tablist", { name: "Menu bar" })).getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabs).toEqual(["File", "Home", "Insert", "Formulas", "Data", "Review", "View", "Assistant"]);
+    expect(screen.getByRole("tab", { name: "Home" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "Bold" }).getAttribute("title")).toContain("Ctrl+B");
+    expect(screen.getByRole("button", { name: /^Undo/ }).getAttribute("aria-keyshortcuts")).toBe("Ctrl+Z");
+  });
+
+  it("sends Home formatting commands to the engine for the selection", async () => {
     const app = await renderWithWorkbook();
     selectDown(app, 2);
     fireEvent.click(screen.getByRole("button", { name: "Bold" }));
@@ -27,17 +45,21 @@ describe("Sheets toolbar", () => {
     expect(styleAt(app, 2, 0).font.bold).toBe(true);
     expect(screen.getByRole("button", { name: "Bold" }).getAttribute("aria-pressed")).toBe("true");
 
-    await pick(/^Font size/, "14");
+    const size = screen.getByRole("combobox", { name: "Font size" });
+    fireEvent.change(size, { target: { value: "14" } });
+    fireEvent.keyDown(size, { key: "Enter" });
     expect(styleAt(app, 1, 0).font.sizePt).toBe(14);
-    await pick(/^Font,/, "Georgia");
+    fireEvent.change(screen.getByRole("combobox", { name: "Font" }), { target: { value: "Georgia" } });
     expect(styleAt(app, 1, 0).font.name).toBe("Georgia");
-    await pick("Number format", "Currency");
+    fireEvent.change(screen.getByRole("combobox", { name: "Number format" }), { target: { value: "currency" } });
     expect(styleAt(app, 2, 0).numberFormat).toBe("$#,##0.00");
     fireEvent.click(screen.getByRole("button", { name: "Increase decimals" }));
     expect(styleAt(app, 2, 0).numberFormat).toBe("$#,##0.000");
-    await pick("Fill colour", "Yellow");
+    fireEvent.click(screen.getByRole("button", { name: "Percent" }));
+    expect(styleAt(app, 2, 0).numberFormat).toBe("0%");
+    chooseColor("Fill colour", "Yellow");
     expect(styleAt(app, 0, 0).fill.color).toBe("#fff2a8");
-    await pick("Text colour", "Red");
+    chooseColor("Text colour", "Red");
     expect(styleAt(app, 0, 0).font.color).toBe("#c00000");
     fireEvent.click(screen.getByRole("button", { name: "Center" }));
     fireEvent.click(screen.getByRole("button", { name: "Wrap text" }));
@@ -55,12 +77,13 @@ describe("Sheets toolbar", () => {
     expect(styleAt(app, 1, 0).border.left.style).toBe("thin");
   });
 
-  it("inserts rows, freezes panes and sorts through the toolbar", async () => {
+  it("inserts rows, freezes panes and sorts from the Home, View and Data tabs", async () => {
     const app = await renderWithWorkbook();
     const session = app.session();
     const sheet = session.getState().activeSheetId;
-    await pick("Rows", "Insert row above");
+    await pick("Insert", "Insert row above");
     expect(session.cell(sheet, 1, 0).value).toBe(1);
+    openTab("View");
     await pick("Freeze panes", "Freeze top row");
     expect(session.sheet(sheet).frozen).toEqual({ rows: 1, cols: 0 });
     act(() => {
@@ -69,10 +92,23 @@ describe("Sheets toolbar", () => {
     const box = screen.getByLabelText(/^Name box/);
     fireEvent.change(box, { target: { value: "F1:F3" } });
     fireEvent.keyDown(box, { key: "Enter" });
+    openTab("Data");
     fireEvent.click(screen.getByRole("button", { name: "Sort Z to A" }));
     expect([0, 1, 2].map((row) => session.cell(sheet, row, 5).value)).toEqual([3, 2, 1]);
     fireEvent.click(screen.getByRole("button", { name: "Sort A to Z" }));
     expect([0, 1, 2].map((row) => session.cell(sheet, row, 5).value)).toEqual([1, 2, 3]);
+  });
+
+  it("hides the formula bar and gridlines from the View tab", async () => {
+    const app = await renderWithWorkbook();
+    openTab("View");
+    expect(screen.getByLabelText(/^Name box/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Formula bar" }));
+    expect(screen.queryByLabelText(/^Name box/)).toBeNull();
+    expect(app.container.querySelector(".sg-bar")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Gridlines" }));
+    expect(app.container.querySelector(".sheets-grid-host")?.className).toContain("is-gridless");
+    expect(screen.getByRole("button", { name: "Gridlines" }).getAttribute("aria-pressed")).toBe("false");
   });
 });
 
@@ -157,7 +193,8 @@ describe("Sheets status bar and name box", () => {
     fireEvent.change(box, { target: { value: "B7" } });
     fireEvent.keyDown(box, { key: "Enter" });
     expect(box.value).toBe("B7");
-    expect(app.container.querySelector("datalist option")?.getAttribute("value")).toBe("Inputs");
+    const names = document.getElementById(box.getAttribute("list") ?? "");
+    expect(names?.querySelector("option")?.getAttribute("value")).toBe("Inputs");
   });
 });
 

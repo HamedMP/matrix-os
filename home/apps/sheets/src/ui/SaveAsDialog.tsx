@@ -9,9 +9,11 @@ export interface SaveAsDialogProps {
   onCancel: () => void;
   /** Resolves with a message when saving failed, or null when it worked. */
   onSave: (path: string) => Promise<string | null>;
+  /** Dialog title. Default "Save workbook". */
+  title?: string;
 }
 
-export function SaveAsDialog({ open, initialName, onCancel, onSave }: SaveAsDialogProps) {
+export function SaveAsDialog({ open, initialName, onCancel, onSave, title = "Save workbook" }: SaveAsDialogProps) {
   const [folder, setFolder] = useState("Documents");
   const [name, setName] = useState(initialName);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function SaveAsDialog({ open, initialName, onCancel, onSave }: SaveAsDial
     <Dialog
       open={open}
       onClose={onCancel}
-      title="Save workbook"
+      title={title}
       description="Choose a folder in your home and a file name. A name ending in .csv keeps the values of the first sheet only."
       size="sm"
       footer={

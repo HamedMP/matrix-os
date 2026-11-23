@@ -6,11 +6,21 @@ body { background: var(--app-bg); color: var(--app-fg); }
 
 /* ---------------------------------------------------------------- frame */
 
-.sheets-app .oui-frame__main { overflow: hidden; display: flex; flex-direction: column; }
-.sheets-title { overflow: hidden; text-overflow: ellipsis; }
-.sheets-title-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.sheets-save-state { font-size: 12px; color: var(--app-muted-fg); padding: 0 6px; white-space: nowrap; }
-.sheets-save-state.is-warning { color: var(--app-warning); font-weight: 600; }
+.sheets-app .oui-frame__main { overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+/*
+ * The grid keeps a readable width when the right panel opens: in a wide
+ * window it never shrinks below 480px (the body scrolls sideways instead),
+ * and in a narrow one the panel lies over the grid rather than squeezing it.
+ */
+.sheets-app .oui-frame__body { position: relative; overflow-x: auto; }
+.sheets-app.has-right .oui-frame__body { grid-template-columns: minmax(480px, 1fr) minmax(280px, 360px); }
+@media (max-width: 900px) {
+  .sheets-app.has-right .oui-frame__body { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+  .sheets-app .oui-frame__panel {
+    display: block; position: absolute; top: 0; right: 0; bottom: 0; z-index: 5;
+    width: min(360px, 100%); box-shadow: -8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
+}
 
 .sheets-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .sheets-grid-host { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -26,15 +36,28 @@ body { background: var(--app-bg); color: var(--app-fg); }
 }
 .sheets-namebox:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
 
-/* ---------------------------------------------------------------- ribbon */
+/* ---------------------------------------------------------------- ribbon and backstage */
 
-.sheets-ribbon { flex-wrap: wrap; row-gap: 2px; }
-.sheets-ribbon__dd { display: inline-flex; align-items: center; gap: 4px; }
-.sheets-ribbon__text { display: inline-block; min-width: 2ch; font-size: 12px; white-space: nowrap; }
-.sheets-ribbon__font .sheets-ribbon__text { min-width: 9ch; text-align: left; }
-.sheets-ribbon__format .sheets-ribbon__text { min-width: 7ch; text-align: left; }
-.sheets-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--app-border); }
-.sheets-swatch--none { background: linear-gradient(135deg, transparent 45%, var(--app-danger) 45%, var(--app-danger) 55%, transparent 55%); }
+.sheets-backstage-info { max-width: 640px; padding: 24px 32px; }
+.sheets-backstage-info h2 { margin: 0 0 16px; font-size: 20px; font-weight: 650; overflow-wrap: anywhere; }
+.sheets-backstage-info dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: 13px; }
+.sheets-backstage-info dt { color: var(--app-muted-fg); }
+.sheets-backstage-info dd { margin: 0; overflow-wrap: anywhere; }
+
+.sheets-functions { display: flex; flex-direction: column; gap: 10px; }
+.sheets-functions__list { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow: auto; border: 1px solid var(--app-border); border-radius: var(--app-radius, 6px); }
+.sheets-functions__item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px 8px;
+  border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.sheets-functions__item:hover { background: var(--app-muted); }
+.sheets-functions__item:focus-visible { outline: 2px solid var(--identity-accent, var(--app-primary)); outline-offset: -2px; }
+.sheets-functions__name { font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.sheets-functions__summary, .sheets-functions__empty { font-size: 12px; color: var(--app-muted-fg); }
+
+/* View options: gridlines off; without the formula bar the name box goes too. */
+.sheets-grid-host.is-gridless .sg-lines { display: none; }
+.sheets-grid-host.is-gridless .sg-cell.is-merged { box-shadow: none; }
 
 .sheets-icon-btn {
   display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0;

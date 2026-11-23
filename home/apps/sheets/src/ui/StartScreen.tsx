@@ -1,5 +1,5 @@
 /** What Sheets shows with no workbook open: recent files and ways to start. */
-import { ClipboardPaste, FileSpreadsheet, FolderOpen, Plus, Table } from "lucide-react";
+import { ClipboardPaste, FileSpreadsheet, FolderOpen, Laptop, Plus, Table } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, Spinner } from "../../../_shared/office-ui";
 import type { RecentFile, RecentFiles } from "../session";
@@ -10,6 +10,8 @@ export interface StartScreenProps {
   opening: string | null;
   onNew: () => void;
   onOpen: () => void;
+  /** Opens the system file chooser. */
+  onOpenLocal: () => void;
   onImport: () => void;
   onOpenPath: (path: string) => void;
 }
@@ -25,7 +27,7 @@ function when(iso: string): string {
   return new Date(time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-export function StartScreen({ recents, opening, onNew, onOpen, onImport, onOpenPath }: StartScreenProps) {
+export function StartScreen({ recents, opening, onNew, onOpen, onOpenLocal, onImport, onOpenPath }: StartScreenProps) {
   const [files, setFiles] = useState<RecentFile[] | null>(null);
 
   useEffect(() => {
@@ -48,8 +50,13 @@ export function StartScreen({ recents, opening, onNew, onOpen, onImport, onOpenP
         </button>
         <button type="button" className="sheets-start__card" onClick={onOpen}>
           <FolderOpen size={22} aria-hidden="true" />
-          <span className="sheets-start__card-title">Open</span>
+          <span className="sheets-start__card-title">Open from Matrix</span>
           <span className="sheets-start__card-hint">.xlsx, .csv or .tsv from your home</span>
+        </button>
+        <button type="button" className="sheets-start__card" onClick={onOpenLocal}>
+          <Laptop size={22} aria-hidden="true" />
+          <span className="sheets-start__card-title">Open from this computer</span>
+          <span className="sheets-start__card-hint">Or drop a file on this window</span>
         </button>
         <button type="button" className="sheets-start__card" onClick={onImport}>
           <ClipboardPaste size={22} aria-hidden="true" />

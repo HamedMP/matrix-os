@@ -80,8 +80,16 @@ export async function workbookBytes(build?: (workbook: Workbook, sheet: string) 
   return workbook.save();
 }
 
+export interface Downloaded {
+  name: string;
+  bytes: Uint8Array;
+  mimeType: string;
+}
+
 export interface AppHarness {
   bridge: FakeBridge;
+  /** Files the app handed to the computer, in order. */
+  downloads: Downloaded[];
   timers: FakeTimers;
   host: SessionHost;
   container: HTMLElement;
@@ -95,9 +103,11 @@ export async function renderApp(setup?: (bridge: FakeBridge) => void | Promise<v
   await setup?.(bridge);
   const timers = new FakeTimers();
   const host = new SessionHost({ files: bridge.files, db: bridge.db, timers, autosaveDelayMs: 60_000 });
+  const downloads: Downloaded[] = [];
+  const download = (name: string, bytes: Uint8Array, mimeType: string): void => void downloads.push({ name, bytes, mimeType });
   const view = render(
     <ToastProvider>
-      <SheetsApp bridge={bridge} host={host} />
+      <SheetsApp bridge={bridge} host={host} download={download} />
     </ToastProvider>,
   );
   await act(async () => {
@@ -108,7 +118,7 @@ export async function renderApp(setup?: (bridge: FakeBridge) => void | Promise<v
     if (open === null) throw new Error("no workbook is open");
     return open;
   };
-  return { bridge, timers, host, container: view.container, session, unmount: view.unmount };
+  return { bridge, downloads, timers, host, container: view.container, session, unmount: view.unmount };
 }
 
 /** Opens `path` (put into the fake files first) through an open request and waits for the workbook. */

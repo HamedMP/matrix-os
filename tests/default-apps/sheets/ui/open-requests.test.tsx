@@ -68,7 +68,8 @@ describe("Sheets open requests", () => {
     await flush();
     const dialog = screen.getByRole("alertdialog");
     expect(dialog.textContent).toContain("never saved");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Discard edits" }));
+    for (const choice of ["Save", "Discard", "Cancel"]) expect(within(dialog).getByRole("button", { name: choice })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
     await flush();
     expect(screen.getByRole("heading", { name: "Other.xlsx" })).toBeTruthy();
   });
@@ -83,7 +84,7 @@ describe("Sheets start screen", () => {
     });
     expect(screen.getByRole("button", { name: /Q3\.xlsx/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open from Matrix/ }));
     await flush();
     fireEvent.click(screen.getByRole("button", { name: "Reports" }));
     await flush();

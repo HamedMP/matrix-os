@@ -11,6 +11,8 @@
  * ```
  */
 
-export { SheetsAgentPanel, selectionFromGrid, useAssistantState } from "./SheetsAgentPanel";
-export type { SelectionSource, SheetsAgentPanelProps } from "./SheetsAgentPanel";
+export { SheetsAgentPanel, useAssistantState } from "./SheetsAgentPanel";
+export type { SheetsAgentPanelProps } from "./SheetsAgentPanel";
+export { selectionFromGrid } from "./selection";
+export type { SelectionSource } from "./selection";
 export { toAgentResult } from "./ResultBody";

@@ -1,27 +1,43 @@
 /**
- * One open workbook: title bar, toolbar, grid with name box, sheet tabs,
- * status bar, find and replace and the right panel.
+ * One open workbook: title bar with the way back to the start screen, the
+ * menu bar ribbon, grid with name box, sheet tabs, status bar, find and
+ * replace and the right panel.
  */
-import { FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type AiAccess, AppFrame, aiAccessMessage, useToast, watchLeave } from "../../../_shared/office-ui";
 import { SheetGrid, createSheetGridController } from "../grid";
-import { logFailure } from "./bridge";
 import type { SheetsAi } from "../agent";
 import type { SheetSession } from "../session/session";
+import { useAssistantState } from "./agent";
+import { logFailure } from "./bridge";
+import { type Download, type Notify, downloadActiveSheetCsv, downloadWorkbook, saveCopyNow, saveDocument } from "./file-actions";
 import { FindReplace } from "./FindReplace";
-import { type Notify, csvOfActiveSheet, describeSave, downloadText, saveCopyNow, saveNow } from "./file-actions";
 import { useGridSelection, useSessionState } from "./hooks";
 import { NameBox } from "./NameBox";
 import { AgentPanelSlot, ReviewPanelSlot, useSheetPanels } from "./panel-slots";
-import { Ribbon } from "./Ribbon";
+import { useReviewState } from "./review";
+import { type FileCommands, type PanelId, type SheetCommandContext, type ViewOptions } from "./ribbon/commands";
+import { namesFor } from "./ribbon/formula-tools";
+import { SheetsRibbon } from "./ribbon/SheetsRibbon";
 import { activeStyle } from "./ribbon-commands";
-import { SaveAsDialog } from "./SaveAsDialog";
 import { SaveBanner } from "./SaveBanner";
 import { SheetTabs } from "./SheetTabs";
-import { EMPTY_LOOK, type TabLook, type TabLookStore } from "./sheet-tabs-model";
+import { useTabLook } from "./tab-look";
+import type { TabLookStore } from "./sheet-tabs-model";
 import { StatusBar } from "./StatusBar";
-import { type FileMenuId, type PanelId, TitleActions } from "./TitleActions";
+import { SheetsTitleBar } from "./TitleActions";
+
+/** What the app shell does for the workbook: other documents, pickers and choosing a Matrix path. */
+export interface WorkbenchFiles {
+  newWorkbook(): void;
+  openFromMatrix(): void;
+  openFromComputer(): void;
+  importCsv(): void;
+  /** Asks for a Matrix path: to save a workbook without one, or to save a copy of a local one. */
+  saveAs(purpose: "save" | "copy"): void;
+  /** Back to the start screen, asking first when edits cannot be saved. */
+  close(): void;
+}
 
 export interface WorkbenchProps {
   session: SheetSession;
@@ -30,36 +46,13 @@ export interface WorkbenchProps {
   ai: SheetsAi | null;
   /** Whether the owner allowed AI for Sheets. Default `available`. */
   aiAccess?: AiAccess;
-  onNew: () => void;
-  onOpen: () => void;
-  onClose: () => void;
+  files: WorkbenchFiles;
+  download: Download;
 }
 
-/** Tab order and colours of the open file, loaded once per path. */
-function useTabLook(store: TabLookStore, path: string | null): [TabLook, (look: TabLook) => void] {
-  const [entry, setEntry] = useState<{ path: string | null; look: TabLook }>({ path, look: EMPTY_LOOK });
-  useEffect(() => {
-    if (path === null) return undefined;
-    let live = true;
-    void store.load(path).then((look) => {
-      if (live) setEntry((current) => (current.path === null && current.look !== EMPTY_LOOK ? { path, look: current.look } : { path, look }));
-    });
-    return () => {
-      live = false;
-    };
-  }, [store, path]);
-  const look = entry.path === path || entry.path === null ? entry.look : EMPTY_LOOK;
-  const change = useCallback(
-    (next: TabLook) => {
-      setEntry({ path, look: next });
-      if (path !== null) void store.save(path, next);
-    },
-    [store, path],
-  );
-  return [look, change];
-}
+const DEFAULT_VIEW: ViewOptions = { formulaBar: true, gridlines: true };
 
-export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew, onOpen, onClose }: WorkbenchProps) {
+export function Workbench({ session, tabLooks, ai, aiAccess = "available", files, download }: WorkbenchProps) {
   const toast = useToast();
   const state = useSessionState(session);
   const controller = useMemo(() => createSheetGridController(session), [session]);
@@ -90,10 +83,12 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
     void revision; // Formatting changes the style without moving the selection.
     return activeStyle(session, selection);
   }, [session, selection, revision]);
+  // `revision` refreshes the list when names change with an edit or reload.
+  const names = useMemo(() => (revision >= 0 ? namesFor(session.workbook, selection.sheet) : []), [session, revision, selection.sheet]);
   const [look, setLook] = useTabLook(tabLooks, state.path);
   const [find, setFind] = useState<{ replace: boolean } | null>(null);
   const [panel, setPanel] = useState<PanelId | null>(null);
-  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [view, setViewState] = useState<ViewOptions>(DEFAULT_VIEW);
   const pendingChanges = useMemo(() => (revision >= 0 ? session.sheets().reduce((sum, sheet) => sum + sheet.pendingChangeCount, 0) : 0), [session, revision]);
 
   const notify: Notify = useCallback((message, tone = "info") => {
@@ -101,36 +96,11 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
   }, [toast]);
 
   const save = useCallback(() => {
-    if (session.getState().path === null) setSaveAsOpen(true);
-    else void saveNow(session, controller, notify);
-  }, [session, controller, notify]);
-
-  const onFileMenu = (id: FileMenuId): void => {
-    if (id === "new") onNew();
-    else if (id === "open") onOpen();
-    else if (id === "close") onClose();
-    else if (id === "copy") {
-      if (session.getState().path === null) setSaveAsOpen(true);
-      else void saveCopyNow(session, controller, notify);
-    } else if (id === "csv") {
-      controller.commitEdit();
-      const csv = csvOfActiveSheet(session);
-      if (!downloadText(csv.name, csv.text)) notify("This window cannot download files. Save a copy as .csv instead.", "warning");
-    }
-  };
-
-  const saveAs = async (path: string): Promise<string | null> => {
     controller.commitEdit();
-    const outcome = await session.saveAs(path);
-    if (outcome.status === "saved") {
-      setSaveAsOpen(false);
-      const text = describeSave(outcome);
-      if (text !== null) notify(text.message, text.tone);
-      return null;
-    }
-    if (outcome.status === "error") return outcome.code === "exists" ? "A file with that name already exists in this folder." : outcome.message;
-    return describeSave(outcome)?.message ?? null;
-  };
+    void saveDocument(session, download, notify).then((result) => {
+      if (result === "needs-path") files.saveAs("save");
+    });
+  }, [session, controller, download, notify, files]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -149,18 +119,61 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
     return () => window.removeEventListener("keydown", onKey, true);
   }, [save]);
 
-  const togglePanel = (id: PanelId): void => setPanel((current) => (current === id ? null : id));
+  const togglePanel = useCallback((id: PanelId): void => setPanel((current) => (current === id ? null : id)), []);
   const closePanel = useCallback(() => setPanel(null), []);
   const openReview = useCallback(() => setPanel("review"), []);
   const { review, assistant } = useSheetPanels(session, controller, ai, openReview);
+  const reviewState = useReviewState(review);
+  const assistantBusy = useAssistantState(assistant).busy;
+  const aiAvailable = ai !== null && aiAccess === "available";
+
+  const fileCommands: FileCommands = useMemo(() => {
+    const commit = (action: () => void) => () => {
+      controller.commitEdit();
+      action();
+    };
+    return {
+      newWorkbook: commit(files.newWorkbook),
+      openFromMatrix: commit(files.openFromMatrix),
+      openFromComputer: commit(files.openFromComputer),
+      importCsv: commit(files.importCsv),
+      save,
+      saveCopy: commit(() => {
+        if (session.getState().path === null) files.saveAs("copy");
+        else void saveCopyNow(session, controller, notify);
+      }),
+      downloadXlsx: commit(() => void downloadWorkbook(session, download, notify, "xlsx")),
+      downloadCsv: commit(() => void downloadActiveSheetCsv(session, download, notify)),
+      close: commit(files.close),
+    };
+  }, [files, save, session, controller, download, notify]);
+
+  const context = useMemo<Omit<SheetCommandContext, "openFunctionPicker">>(
+    () => ({
+      controller,
+      style,
+      review,
+      assistant,
+      notify,
+      file: fileCommands,
+      togglePanel,
+      openPanel: setPanel,
+      view,
+      setView: (patch) => setViewState((current) => ({ ...current, ...patch })),
+      openFind: (replace) => setFind({ replace }),
+    }),
+    [controller, style, review, assistant, notify, fileCommands, togglePanel, view],
+  );
+  const model = useMemo(
+    () => ({ state, style, review: reviewState, panel, view, filtered: controller.isFiltered, names, aiAvailable, assistantBusy }),
+    [state, style, reviewState, panel, view, controller.isFiltered, names, aiAvailable, assistantBusy],
+  );
 
   return (
     <AppFrame
       className="sheets-app"
-      title={<span className="sheets-title">{state.name}</span>}
-      titleIcon={<FileSpreadsheet size={18} />}
-      titleActions={<TitleActions state={state} pendingChanges={pendingChanges} panel={panel} onSave={save} onFileMenu={onFileMenu} onPanel={togglePanel} />}
-      toolbar={<Ribbon controller={controller} state={state} style={style} onFailure={(message) => notify(message, "warning")} onFind={() => setFind({ replace: false })} />}
+      titleBar={<SheetsTitleBar state={state} pendingChanges={pendingChanges} panel={panel} onHome={fileCommands.close} onSave={save} onPanel={togglePanel} />}
+      toolbar={<SheetsRibbon context={context} model={model} />}
       banner={<SaveBanner session={session} state={state} controller={controller} notify={notify} />}
       rightPanel={
         panel === null ? undefined : panel === "review" ? (
@@ -169,7 +182,7 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
           <AgentPanelSlot
             assistant={assistant}
             grid={controller}
-            aiAvailable={ai !== null && aiAccess === "available"}
+            aiAvailable={aiAvailable}
             unavailableMessage={aiAccessMessage(ai === null ? "unavailable" : aiAccess, "Sheets", "sheets")}
             onClose={closePanel}
           />
@@ -191,13 +204,12 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew
             onMessage={notify}
           />
         )}
-        <div className="sheets-grid-host">
-          <SheetGrid session={session} controller={controller} label={`${state.name}, ${session.sheet(state.activeSheetId).name}`} />
-          <NameBox controller={controller} selection={selection} revision={revision} onFailure={(message) => notify(message, "warning")} />
+        <div className={`sheets-grid-host${view.gridlines ? "" : " is-gridless"}${view.formulaBar ? "" : " is-barless"}`}>
+          <SheetGrid session={session} controller={controller} showFormulaBar={view.formulaBar} label={`${state.name}, ${session.sheet(state.activeSheetId).name}`} />
+          {view.formulaBar && <NameBox controller={controller} selection={selection} revision={revision} onFailure={(message) => notify(message, "warning")} />}
         </div>
         <SheetTabs session={session} activeSheetId={state.activeSheetId} revision={revision} look={look} onLookChange={setLook} onFailure={(message) => notify(message, "warning")} />
       </div>
-      <SaveAsDialog open={saveAsOpen} initialName={state.name} onCancel={() => setSaveAsOpen(false)} onSave={saveAs} />
     </AppFrame>
   );
 }

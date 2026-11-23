@@ -3,7 +3,7 @@ import { ChevronRight, FileSpreadsheet, Folder } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Dialog, EmptyState, Spinner } from "../../../_shared/office-ui";
 import type { BridgeFileEntry } from "../../../_shared/matrix-os";
-import { formatOfPath } from "../session";
+import { pickable } from "./file-picker-model";
 import { logFailure, type SheetsBridge } from "./bridge";
 
 export interface FilePickerProps {
@@ -20,11 +20,6 @@ function listingMessage(error: unknown): string {
   if (code === "forbidden") return "Sheets may not look in this folder.";
   if (code === "not_found") return "This folder no longer exists.";
   return "The folder could not be read. Try again.";
-}
-
-/** Folders, then spreadsheet files, as the bridge sorts them. */
-export function pickable(entries: readonly BridgeFileEntry[]): BridgeFileEntry[] {
-  return entries.filter((entry) => entry.kind === "dir" || formatOfPath(entry.path) !== null);
 }
 
 function crumbs(dir: string): Array<{ label: string; path: string }> {

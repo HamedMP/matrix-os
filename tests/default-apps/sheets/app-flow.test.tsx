@@ -270,7 +270,7 @@ describe("Sheets app journey", () => {
     const { container } = await mountApp(os);
     expect(screen.getByText("No recent workbooks")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open from Matrix/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Documents" }));
     fireEvent.click(await screen.findByRole("button", { name: "data.csv" }));
     await screen.findByRole("tablist", { name: "Sheets" }, { timeout: 5000 });
