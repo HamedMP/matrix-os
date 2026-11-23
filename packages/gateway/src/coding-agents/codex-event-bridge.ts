@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { performance } from "node:perf_hooks";
+import { captureChatSendStage } from "../chat/send-timing.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
@@ -72,6 +74,8 @@ type WatchEntry = {
   pendingOccurredAt?: string;
   stopRequestedAt?: number;
   nextDriftCheckAt?: number;
+  /** Opt-in send diagnostics: records only the first durable line after watch. */
+  firstLineTiming?: { record: NonNullable<ReturnType<typeof captureChatSendStage>>; watchedAt: number };
 };
 
 const execFileAsync = promisify(execFile);
@@ -299,6 +303,10 @@ export function createCodexEventBridge(options: {
       const consumedBytes = lastNewline + 1;
       if (closed || watchers.get(entry.sessionId) !== entry) return false;
       const { terminal, ready } = await ingest(entry, data, consumedBytes);
+      if (entry.firstLineTiming) {
+        entry.firstLineTiming.record("provider_event_file_first_line", entry.firstLineTiming.watchedAt);
+        entry.firstLineTiming = undefined;
+      }
       entry.offset += consumedBytes;
       entry.supervision.ready ||= ready;
       entry.supervision.terminal ||= terminal;
@@ -415,7 +423,9 @@ export function createCodexEventBridge(options: {
         }
       }
       const watchId = randomUUID();
+      const recordTiming = captureChatSendStage();
       watchers.set(parsed.sessionId, {
+        ...(recordTiming ? { firstLineTiming: { record: recordTiming, watchedAt: performance.now() } } : {}),
         watchId,
         generation: prepared?.generation ?? parsed.generation ?? existing?.generation,
         checkpoint: parsed.checkpoint ?? existing?.checkpoint,
