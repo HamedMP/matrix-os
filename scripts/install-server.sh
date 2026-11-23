@@ -17,6 +17,8 @@ MATRIX_RUN_USER_HOME=""
 MATRIX_HERDR_CORE_BIN=""
 MATRIX_TAILSCALE_OWNER_LOGIN=""
 MATRIX_TAILNET_URL=""
+# The account the browser desktop runs as (spec 2701): no matrix or docker group.
+MATRIX_BROWSER_ACCOUNT=matrix-browser
 # Install choices (spec 2701). Flags win over env; with no TTY the defaults apply.
 OPT_RUN_USER="${MATRIX_RUN_USER_REQUEST:-}"
 OPT_HERDR="${MATRIX_HERDR_CHOICE:-}"
@@ -1071,17 +1073,28 @@ stop_browser_use() {
   return 0
 }
 
-# The browser desktop always runs as the matrix account. When Matrix itself runs as
-# a separate owner, only the owner's user manager lingers, so the desktop's
-# Files/Terminal buttons had no /run/user/<matrix uid>/bus to launch into. Give the
-# matrix account its own lingering manager and a private working home; it never
-# gains access to the owner's home.
+# The browser desktop runs as a dedicated account. It is in neither the matrix
+# group (host.env and postgres.env hold MATRIX_AUTH_TOKEN and DATABASE_URL) nor
+# the docker group (root), so a compromised browser reaches no owner secret. It
+# gets its own lingering user manager (the desktop's Files/Terminal buttons need
+# its user bus) and a private home; it never gains access to the owner's home.
 prepare_browser_account() {
-  local home="${MATRIX_BROWSER_ACCOUNT_HOME:-/home/matrix/home}"
-  [ "$MATRIX_RUN_USER" != "matrix" ] || return 0
-  [ -d "$home" ] || install -d -o matrix -g matrix -m 0700 "$home"
-  run_required "keeping the browser account's session" loginctl enable-linger matrix
-  run_required "starting the browser account's session" systemctl start "user@$(id -u matrix).service"
+  local home="${MATRIX_BROWSER_ACCOUNT_HOME:-/var/lib/matrix-browser}" account="$MATRIX_BROWSER_ACCOUNT" group primary
+  if ! id "$account" >/dev/null 2>&1; then
+    run_required "creating the browser account" useradd --system --user-group --home-dir "$home" --shell /usr/sbin/nologin "$account"
+  fi
+  for group in $(id -nG "$account"); do
+    case "$group" in
+      matrix | docker) run_required "removing the browser account from the ${group} group" gpasswd -d "$account" "$group" ;;
+    esac
+  done
+  primary="$(id -gn "$account")"
+  case "$primary" in
+    matrix | docker) fail "the browser account ${account} has primary group ${primary}; give it its own group" ;;
+  esac
+  [ -d "$home" ] || install -d -o "$account" -g "$primary" -m 0700 "$home"
+  run_required "keeping the browser account's session" loginctl enable-linger "$account"
+  run_required "starting the browser account's session" systemctl start "user@$(id -u "$account").service"
 }
 
 configure_browser() {
@@ -1230,7 +1243,7 @@ ensure_matrix_user() {
   if ! getent group docker >/dev/null 2>&1; then
     run_required "creating docker group" groupadd --system docker
   fi
-  # The matrix account runs Matrix on legacy installs and the browser sidecar on all of them.
+  # The matrix account runs Matrix on legacy installs; the browser desktop has its own account.
   service_shell=/usr/sbin/nologin
   [ "$MATRIX_RUN_USER" != "matrix" ] || service_shell=/bin/bash
   if ! id matrix >/dev/null 2>&1; then
@@ -1363,6 +1376,7 @@ MATRIX_TAILSCALE_OWNER_LOGIN=${MATRIX_TAILSCALE_OWNER_LOGIN}
 MATRIX_TAILNET_URL=${MATRIX_TAILNET_URL}
 MATRIX_HERDR=${OPT_HERDR:-off}
 MATRIX_HERDR_CORE_BIN=${MATRIX_HERDR_CORE_BIN}
+MATRIX_BROWSER_ACCOUNT=${MATRIX_BROWSER_ACCOUNT}
 EOF
   if [ -n "$browser_lab" ]; then
     printf 'MATRIX_BROWSER_LAB=%s\n' "$browser_lab" >>/opt/matrix/env/host.env

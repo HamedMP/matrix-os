@@ -622,47 +622,78 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_SYSTEMD_UNIT_DIR="${units}" OPT_BROWSER=off 
     ]);
   });
 
-  describe("browser account session", () => {
-    // Found in review: with --user alice only alice's user manager runs, but the
-    // browser desktop runs as matrix and its Files/Terminal buttons need matrix's
-    // own user bus (/run/user/<uid>/bus) and its /home/matrix/home working dir.
-    function prepare(runUser: string, existingHome = false) {
+  describe("browser account", () => {
+    // Found in review (P1): the browser desktop ran as the matrix account, which
+    // reads host.env and postgres.env (MATRIX_AUTH_TOKEN, DATABASE_URL) through
+    // the matrix group and gets root through the docker group. It now runs as a
+    // dedicated matrix-browser account with neither group, its own lingering user
+    // manager (the desktop's Files/Terminal buttons need its user bus) and a
+    // private home.
+    function prepare(options: { exists?: boolean; groups?: string; primary?: string; existingHome?: boolean } = {}) {
       const root = join(dir, "root");
-      spawnSync("mkdir", ["-p", join(root, "home/matrix")]);
-      if (existingHome) spawnSync("mkdir", ["-p", join(root, "home/matrix/home/kept")]);
+      spawnSync("mkdir", ["-p", root]);
+      if (options.existingHome) spawnSync("mkdir", ["-p", join(root, "var/lib/matrix-browser")]);
+      const calls = join(dir, "calls");
       const result = run(
-        `install() { printf 'install %s\\n' "$*" >>"${join(dir, "calls")}"; }
-loginctl() { printf 'loginctl %s\\n' "$*" >>"${join(dir, "calls")}"; }
-systemctl() { printf 'systemctl %s\\n' "$*" >>"${join(dir, "calls")}"; }
-id() { if [ "$*" = "-u matrix" ]; then echo 998; else command id "$@"; fi; }
-MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=${runUser} MATRIX_BROWSER_ACCOUNT_HOME="${root}/home/matrix/home" prepare_browser_account`,
+        `install() { printf 'install %s\\n' "$*" >>"${calls}"; }
+useradd() { printf 'useradd %s\\n' "$*" >>"${calls}"; }
+gpasswd() { printf 'gpasswd %s\\n' "$*" >>"${calls}"; }
+usermod() { printf 'usermod %s\\n' "$*" >>"${calls}"; }
+loginctl() { printf 'loginctl %s\\n' "$*" >>"${calls}"; }
+systemctl() { printf 'systemctl %s\\n' "$*" >>"${calls}"; }
+id() {
+  case "$*" in
+    "matrix-browser") ${options.exists ? "return 0" : "return 1"} ;;
+    "-u matrix-browser") echo 997 ;;
+    "-nG matrix-browser") echo "${options.groups ?? "matrix-browser"}" ;;
+    "-gn matrix-browser") echo "${options.primary ?? "matrix-browser"}" ;;
+    *) command id "$@" ;;
+  esac
+}
+MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=alice MATRIX_BROWSER_ACCOUNT_HOME="${root}/var/lib/matrix-browser" prepare_browser_account`,
       );
-      const calls = existsSync(join(dir, "calls")) ? readFileSync(join(dir, "calls"), "utf8").trim().split("\n") : [];
-      return { result, root, calls };
+      const lines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+      return { result, root, calls: lines };
     }
 
-    it("gives the matrix browser account its own lingering user manager and private home", () => {
-      const { result, root, calls } = prepare("alice");
+    it("creates a dedicated account with no matrix or docker group, a private home and its own session", () => {
+      const { result, root, calls } = prepare();
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toEqual([
-        `install -d -o matrix -g matrix -m 0700 ${root}/home/matrix/home`,
-        "loginctl enable-linger matrix",
-        "systemctl start user@998.service",
+        `useradd --system --user-group --home-dir ${root}/var/lib/matrix-browser --shell /usr/sbin/nologin matrix-browser`,
+        `install -d -o matrix-browser -g matrix-browser -m 0700 ${root}/var/lib/matrix-browser`,
+        "loginctl enable-linger matrix-browser",
+        "systemctl start user@997.service",
       ]);
-      // The owner's private home is never shared with the browser account.
+      // No supplementary groups at all: never matrix, never docker.
+      expect(calls.join("\n")).not.toMatch(/--groups|-G\b|-aG|usermod/);
       expect(calls.join("\n")).not.toMatch(/alice/);
     });
 
-    it("keeps an existing browser account home as it is", () => {
-      const { result, calls } = prepare("alice", true);
+    it("takes an existing browser account out of the matrix and docker groups", () => {
+      const { result, calls } = prepare({ exists: true, groups: "matrix-browser matrix docker" });
       expect(result.status, result.stderr).toBe(0);
-      expect(calls).toEqual(["loginctl enable-linger matrix", "systemctl start user@998.service"]);
+      expect(calls).toContain("gpasswd -d matrix-browser matrix");
+      expect(calls).toContain("gpasswd -d matrix-browser docker");
+      expect(calls.filter((call) => call.startsWith("useradd"))).toEqual([]);
     });
 
-    it("changes nothing when Matrix itself runs as matrix", () => {
-      const { result, calls } = prepare("matrix");
-      expect(result.status, result.stderr).toBe(0);
-      expect(calls).toEqual([]);
+    it("refuses a browser account whose primary group is matrix or docker", () => {
+      for (const primary of ["matrix", "docker"]) {
+        const { result, calls } = prepare({ exists: true, primary });
+        expect(result.status, primary).not.toBe(0);
+        expect(result.stdout + result.stderr).toMatch(/browser account/i);
+        expect(calls.filter((call) => call.startsWith("loginctl"))).toEqual([]);
+      }
+    });
+
+    it("tells the browser runtime which account to use, and keeps host.env readable only by root and the matrix group", () => {
+      const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+      expect(writeEnv).toContain("MATRIX_BROWSER_ACCOUNT=${MATRIX_BROWSER_ACCOUNT}");
+      expect(writeEnv).toContain("chmod 0640 /opt/matrix/env/host.env");
+      expect(writeEnv).toContain("chown root:matrix /opt/matrix/env/host.env");
+      expect(writeEnv).toContain("chmod 0640 /opt/matrix/env/postgres.env");
+      expect(writeEnv).toContain("chown root:matrix /opt/matrix/env/postgres.env");
     });
 
     it("prepares the account before installing the browser desktop", () => {
