@@ -29,15 +29,18 @@ finished is reported and left exactly as it was.
 - `--keep-open`: do everything except closing the chat.
 - Never wrap up work that belongs to another chat, agent, or person, even when
   it looks finished. Report it in one line instead.
+- Run only when the requester asks for a wrap-up in this chat. A request to
+  open, monitor, or merge a PR is not a request to clean up after it.
 
 ## Rules
 
 - This skill cleans up after shipped work. It never merges, approves,
   force-pushes, rebases, or deploys. If a PR is not merged, say what it is
   waiting on and stop for that item.
-- Never use `--force` to remove a worktree or `git branch -D` on a branch whose
-  PR is not `MERGED`. Uncommitted or unpushed work is a finding to report, not
-  something to discard.
+- Never use `--force` to remove a worktree, `git branch -D`, or a plain
+  `git push --delete`. Delete a branch only with the conditional commands in
+  step 3, and only for a PR that is `MERGED`. Uncommitted, unpushed, or
+  ignored local work is a finding to report, not something to discard.
 - Never delete a branch that an open PR uses as its base (a later layer of a
   stack). See the stacked-PR merge rules in `AGENTS.md`.
 - A ticket is Done when its "Done when" check holds, not when a PR merged. If
@@ -67,22 +70,36 @@ finished is reported and left exactly as it was.
    - When the change can be checked from here (a URL, a published version, a
      health endpoint), check it once and put the result in the report.
 
-3. **Remove worktrees and branches** for merged PRs only.
-   - `git -C <worktree> status --short` must be empty and
-     `git -C <worktree> log --oneline @{u}..HEAD` must be empty. Otherwise
-     leave the worktree and report what is in it.
-   - The branch must still be what merged. Run `git fetch origin`, then compare
-     the local tip (`git rev-parse <branch>`) and, if the remote branch exists,
-     its tip (`git rev-parse origin/<branch>`) with the PR's `headRefOid`. A
-     tip that differs holds commits pushed after the merge that never shipped:
-     keep the worktree and both branches, and report them.
-   - From the main checkout: `git worktree remove <path>`, then
-     `git branch -D <branch>` (a squash merge leaves the branch unmerged in
-     Git's eyes, so `-d` refuses; the `MERGED` PR state is the proof).
+3. **Remove worktrees and branches** for merged PRs only. Each check below
+   guards work that exists nowhere else; when one fails, keep the worktree and
+   both branches and report what you found.
+   - Nothing uncommitted or unpushed: `git -C <worktree> status --short` and
+     `git -C <worktree> log --oneline @{u}..HEAD` must both be empty.
+   - No local-only files. `git status --short` hides ignored files, and
+     `git worktree remove` deletes them without `--force`. Run
+     `git -C <worktree> status --short --ignored` and read the `!!` lines.
+     Only dependency and build output that an install or build recreates may
+     be deleted: `node_modules/`, `dist/`, `build/`, `.next/`, `.turbo/`,
+     `coverage/`, `.wrangler/`. Anything else, such as `.env*`, credentials,
+     local databases, logs, or notes, is someone's local data: keep the
+     worktree and list those paths. When unsure, keep it.
+   - The branch is still what merged. Run `git fetch origin`, then compare the
+     local tip (`git rev-parse <branch>`) and, if the remote branch exists, its
+     tip (`git rev-parse origin/<branch>`) with the PR's `headRefOid`. A tip
+     that differs holds commits pushed after the merge that never shipped.
+   - From the main checkout: `git worktree remove <path>` (never `--force`).
+   - Local branch: `git update-ref -d refs/heads/<branch> <headRefOid>`. It
+     deletes the branch only while it still points at the merged commit. A
+     squash merge leaves the branch unmerged in Git's eyes, so
+     `git branch -d` refuses; the `MERGED` PR state is the proof.
    - Remote branch: skip when GitHub already deleted it. Otherwise confirm no
      open PR has it as base
-     (`gh pr list --base <branch> --state open --json number`) and run
-     `git push origin --delete <branch>`.
+     (`gh pr list --base <branch> --state open --json number`) and delete it
+     with a lease on the merged commit:
+     `git push origin --delete <branch> --force-with-lease=<branch>:<headRefOid>`.
+     Someone can push between your check and the delete; the lease makes
+     GitHub reject the delete in that case. A rejection means new commits:
+     keep the branch and report it. Never retry with a plain `--delete`.
    - `git worktree prune`.
 
 4. **Stop what the chat started.** Background tasks, dev servers, tunnels, and

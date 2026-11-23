@@ -109,8 +109,9 @@ this file and `AGENTS.md` disagree, follow `AGENTS.md` and say so.
    - Approval state: Greptile-approved, or waiting on a human.
    - If blocked: the exact blocker and the next action.
 
-10. **After the merge.** Run the `wrap-up` skill to check post-merge deploys,
-    remove the worktree and branch, and close the ticket.
+10. **After the merge.** Stop here. Do not remove the worktree, delete
+    branches, or close tickets as part of this skill. Tell the requester that
+    the `wrap-up` skill does that cleanup, and run it only when they ask.
 
 ## Useful Commands
 

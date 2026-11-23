@@ -43,6 +43,28 @@ describe("matrix-dev plugin", () => {
     });
   });
 
+  it("wrap-up cannot discard work that exists nowhere else", async () => {
+    const wrapUp = await read(".agents/skills/wrap-up/SKILL.md");
+    // Ignored files such as .env are invisible to `git status --short` and die with the worktree.
+    expect(wrapUp).toContain("git -C <worktree> status --short --ignored");
+    // A push can land between the tip check and the delete; both deletes are conditional on the merged commit.
+    expect(wrapUp).toContain(
+      "git push origin --delete <branch> --force-with-lease=<branch>:<headRefOid>",
+    );
+    expect(wrapUp).toContain("git update-ref -d refs/heads/<branch> <headRefOid>");
+    expect(wrapUp).not.toMatch(/^\s*`?git push origin --delete <branch>`?\.?$/m);
+    expect(wrapUp).not.toMatch(/then\s+`git branch -D/);
+  });
+
+  it("monitoring a PR never cleans up after it without a separate request", async () => {
+    const monitor = await read(".agents/skills/worktree-pr-monitor/SKILL.md");
+    expect(monitor).toContain("run it only when they ask");
+    expect(monitor).not.toMatch(/After the merge\.\*\* Run the `wrap-up` skill/);
+    expect(await read(".agents/skills/wrap-up/SKILL.md")).toContain(
+      "is not a request to clean up after it",
+    );
+  });
+
   it("is listed in a dev marketplace that customers do not see", async () => {
     const marketplace = await readJson("dev/.claude-plugin/marketplace.json");
     expect(marketplace.name).toBe("matrix-os-dev");
