@@ -1294,18 +1294,31 @@ async function startNativeSession(lease) {
   childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
   if (startupReconnecting) { await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" }); startupReconnecting = false; }
   startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
-  const proofStartedAt = sendTiming.now();
-  await verifyNativeSubscription?.(request);
-  sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
-  const threadStartedAt = sendTiming.now();
-  const started = await request(resumeId ? "thread/resume" : "thread/start", {
+  const threadParams = {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
     config: codexBrowserThreadConfig(lease, { tokenFile: Boolean(browserTokenFile) }),
-  });
+  };
+  // The account proof and thread/start (or resume) run concurrently: opening a
+  // thread only loads local state and starts MCP servers; no model request or
+  // billing happens until turn/start, which runTurn re-proves first. Nothing
+  // below (thread checks, persisted thread.started, turn/start) runs until both
+  // settle, and a proof failure wins over a thread failure, as when sequential.
+  const proofStartedAt = sendTiming.now();
+  const proof = verifyNativeSubscription?.(request);
+  const threadStartedAt = sendTiming.now();
+  // Settled into a value so a thread failure while the proof is pending (or
+  // after the proof already failed) is never an unhandled rejection.
+  const threadOutcome = request(resumeId ? "thread/resume" : "thread/start", threadParams)
+    .then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
+  await proof;
+  sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
+  const threadResult = await threadOutcome;
+  if (!threadResult.ok) throw threadResult.error;
+  const started = threadResult.value;
   if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
   const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");

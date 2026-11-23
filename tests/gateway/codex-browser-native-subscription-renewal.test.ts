@@ -114,7 +114,15 @@ it.each([false, true])("rechecks native browser renewal and settles an admitted 
         const between = trace.slice(turns[0]! + 1, turns[1]).filter(row => row.event === method);
         expect(between.length, method).toBeGreaterThan(0);
       }
-      expect(trace.findIndex(row => row.event === "config/read")).toBeLessThan(thread);
+      // The initial proof runs concurrently with thread/start but finishes
+      // before the Browser MCP check and the first turn/start.
+      const browserCheck = trace.findIndex(row => row.event === "mcpServerStatus/list");
+      for (const method of ["config/read", "account/read"]) {
+        const proof = trace.findIndex(row => row.event === method);
+        expect(proof, method).toBeGreaterThan(-1);
+        expect(proof, method).toBeLessThan(browserCheck);
+        expect(proof, method).toBeLessThan(turns[0]!);
+      }
     }
   } catch (error) { throw new Error(`${String(error)} ${f.diagnostics()} ${JSON.stringify(await records(f.trace))}`); }
   finally { await stop(f.child); await rm(f.home, { recursive: true, force: true }); }
