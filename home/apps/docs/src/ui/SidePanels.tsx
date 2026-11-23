@@ -3,21 +3,21 @@
  * The right panel: Review, Assistant and Compare tabs. Their content comes
  * from modules other engineers own, loaded lazily; a missing module or a
  * load or render failure shows a fallback instead of breaking the app.
- * Review is wired through `./review-integration.tsx`, which needs the review
+ * Review is wired through `./ReviewIntegration.tsx`, which needs the review
  * controller the workspace creates.
  */
 
 import { GitCompareArrows, ListChecks, Sparkles, X } from "lucide-react";
-import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
+import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense } from "react";
 import { EmptyState, Spinner, Tabs } from "../../../_shared/office-ui";
 import type { DocsPanelId, DocsPanelProps } from "./panel-types";
-import { ReviewTab } from "./review-integration";
+import { type PanelLoader, createPanelLoader } from "./panel-loader";
+import { ReviewTab } from "./ReviewIntegration";
 
 type PanelModule = Record<string, unknown>;
-type Loader = () => Promise<PanelModule>;
 
 // Literal patterns: Vite resolves them at build time and leaves out files that do not exist.
-const MODULES: Record<string, Loader> = {
+const MODULES: Record<string, PanelLoader> = {
   ...import.meta.glob<PanelModule>("./agent/DocsAgentPanel.tsx"),
   ...import.meta.glob<PanelModule>("./compare/ComparePanel.tsx"),
 };
@@ -37,28 +37,6 @@ const PANELS: readonly PanelSpec[] = [
   { id: "compare", label: "Compare", icon: <GitCompareArrows size={14} />, path: "./compare/ComparePanel.tsx", exportName: "ComparePanel", missing: "Comparing documents is not available in this build." },
 ];
 
-function fallback<P>(message: string): ComponentType<P> {
-  return function PanelFallback() {
-    return <EmptyState headline="Not available" description={message} />;
-  };
-}
-
-/** A lazy component for a panel module, or a fallback when the module is absent, fails to load or exports no component. */
-export function createPanelLoader<P extends DocsPanelProps = DocsPanelProps>(modules: Readonly<Record<string, Loader>>, path: string, exportName: string, missing: string): ComponentType<P> {
-  const load = modules[path];
-  if (load === undefined) return fallback<P>(missing);
-  return lazy(async () => {
-    try {
-      const module = await load();
-      const component = module.default ?? module[exportName];
-      if (typeof component === "function" || (typeof component === "object" && component !== null)) return { default: component as ComponentType<P> };
-      console.warn(`docs: ${path} exports no panel component`);
-    } catch (error) {
-      console.warn(`docs: could not load ${path}`, error);
-    }
-    return { default: fallback<P>("This panel could not be loaded. Reopen Docs to try again.") };
-  });
-}
 
 /** Extra props every panel receives besides `DocsPanelProps`. */
 export interface ShellPanelProps extends DocsPanelProps {

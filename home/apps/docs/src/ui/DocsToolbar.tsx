@@ -7,7 +7,7 @@ import type { ActiveFormat, DocumentEditorController, ToggleFormat, ViewMode } f
 import type { SessionState } from "../session/index";
 import type { ExportFormat } from "./exports";
 
-export const ZOOM_LEVELS = [50, 75, 90, 100, 110, 125, 150, 175, 200] as const;
+const ZOOM_LEVELS = [50, 75, 90, 100, 110, 125, 150, 175, 200] as const;
 
 interface StyleChoice {
   id: string;

@@ -92,7 +92,7 @@ export function FindReplaceBar({ session, editor, viewMode, docVersion, focusTok
 
   const count = query === "" ? "" : matches.length === 0 ? "No results" : `${index + 1} of ${matches.length}${result.truncated ? "+" : ""}`;
   return (
-    <div role="search" className="docs-find" aria-label="Find and replace">
+    <search className="docs-find" aria-label="Find and replace">
       <div className="docs-find__row">
         <label className="docs-find__field">
           <span className="oui-sr-only">Find</span>
@@ -157,6 +157,6 @@ export function FindReplaceBar({ session, editor, viewMode, docVersion, focusTok
         </button>
         {readOnly && <span className="docs-muted">The original view is read-only.</span>}
       </div>
-    </div>
+    </search>
   );
 }

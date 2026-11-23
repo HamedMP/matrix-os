@@ -31,3 +31,13 @@ export function parentOf(dir: string): string {
   const at = dir.lastIndexOf("/");
   return at < 0 ? "" : dir.slice(0, at);
 }
+
+/** The path for a folder and a name, with `.docx` added when missing; null when it cannot be used. */
+export function savePath(folder: string, name: string): string | null {
+  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, "");
+  let cleanName = name.trim();
+  if (cleanName === "") return null;
+  if (!cleanName.toLowerCase().endsWith(DOCX_EXTENSION)) cleanName += DOCX_EXTENSION;
+  const path = cleanFolder === "" ? cleanName : `${cleanFolder}/${cleanName}`;
+  return isDocxPath(path) ? path : null;
+}

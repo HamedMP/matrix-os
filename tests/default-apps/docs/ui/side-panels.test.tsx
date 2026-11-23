@@ -4,7 +4,8 @@ import React, { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
 import type { DocsPanelProps } from "../../../../home/apps/docs/src/ui/panel-types";
-import { SidePanels, createPanelLoader } from "../../../../home/apps/docs/src/ui/SidePanels";
+import { SidePanels } from "../../../../home/apps/docs/src/ui/SidePanels";
+import { createPanelLoader } from "../../../../home/apps/docs/src/ui/panel-loader";
 import { DocumentSession } from "../../../../home/apps/docs/src/session/index";
 import { createFakeFiles } from "../session/fakes";
 

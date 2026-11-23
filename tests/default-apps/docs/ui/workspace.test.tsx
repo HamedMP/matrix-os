@@ -33,7 +33,7 @@ describe("Docs find and replace", () => {
     renderApp();
     const surface = await findSurface();
     fireEvent.keyDown(surface, { key: "h", ctrlKey: true });
-    const bar = await screen.findByRole("search", { name: "Find and replace" });
+    const bar = await screen.findByLabelText("Find and replace", { selector: "search" });
     fireEvent.change(within(bar).getByLabelText("Find"), { target: { value: "cat" } });
     await waitFor(() => expect(within(bar).getByTestId("find-count").textContent).toBe("1 of 3"));
     await waitFor(() => expect(surface.querySelectorAll(".doc-hl-search")).toHaveLength(3));
@@ -53,7 +53,7 @@ describe("Docs find and replace", () => {
     await waitFor(() => expect(within(bar).getByTestId("find-count").textContent).toBe("No results"));
 
     fireEvent.keyDown(within(bar).getByLabelText("Find"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("search", { name: "Find and replace" })).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("Find and replace", { selector: "search" })).toBeNull());
     expect(surface.querySelectorAll(".doc-hl-search")).toHaveLength(0);
   });
 
@@ -62,7 +62,7 @@ describe("Docs find and replace", () => {
     renderApp();
     const surface = await findSurface();
     fireEvent.keyDown(surface, { key: "f", ctrlKey: true });
-    const bar = await screen.findByRole("search", { name: "Find and replace" });
+    const bar = await screen.findByLabelText("Find and replace", { selector: "search" });
     fireEvent.change(within(bar).getByLabelText("Find"), { target: { value: "cat" } });
     await waitFor(() => expect(within(bar).getByTestId("find-count").textContent).toBe("1 of 3"));
     fireEvent.click(within(bar).getByLabelText("Whole words"));

@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { Dialog, TextField } from "../../../_shared/office-ui";
-import { DOCX_EXTENSION, type DocumentSession, directoryOf, fileName } from "../session/index";
-import { isDocxPath } from "./file-picker-model";
+import { type DocumentSession, directoryOf, fileName } from "../session/index";
+import { savePath } from "./file-picker-model";
 import type { BlockedReason } from "./use-docs-session";
 import { MAX_MARKDOWN_LENGTH } from "./use-docs-session";
 
@@ -38,16 +38,6 @@ export function MarkdownDialog({ open, onClose, onCreate }: { open: boolean; onC
   );
 }
 
-/** The path for a folder and a name, with `.docx` added when missing; null when it cannot be used. */
-export function savePath(folder: string, name: string): string | null {
-  const cleanFolder = folder.trim().replace(/^\/+|\/+$/g, "");
-  let cleanName = name.trim();
-  if (cleanName === "") return null;
-  if (!cleanName.toLowerCase().endsWith(DOCX_EXTENSION)) cleanName += DOCX_EXTENSION;
-  const path = cleanFolder === "" ? cleanName : `${cleanFolder}/${cleanName}`;
-  return isDocxPath(path) ? path : null;
-}
-
 export function SaveAsDialog({ open, session, onClose, onSaved }: { open: boolean; session: DocumentSession; onClose: () => void; onSaved: (path: string) => void }) {
   return open ? <SaveAsBody session={session} onClose={onClose} onSaved={onSaved} /> : null;
 }
@@ -65,8 +55,12 @@ function SaveAsBody({ session, onClose, onSaved }: { session: DocumentSession; o
     if (path === null) return;
     setBusy(true);
     setError(null);
-    const result = await session.saveAs(path, { overwrite });
-    setBusy(false);
+    let result: Awaited<ReturnType<DocumentSession["saveAs"]>>;
+    try {
+      result = await session.saveAs(path, { overwrite });
+    } finally {
+      setBusy(false);
+    }
     if (result.status === "saved") {
       onSaved(result.path);
       onClose();

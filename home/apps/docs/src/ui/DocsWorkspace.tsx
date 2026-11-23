@@ -4,7 +4,7 @@
  */
 
 import { FileText } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useCallback, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useRef, useState } from "react";
 import { AppFrame, useToast } from "../../../_shared/office-ui";
 import { DocumentEditor, type DocumentEditorController, type ViewMode, useEditorSnapshot } from "../editor/index";
 import type { DocumentSession, SessionState } from "../session/index";
@@ -16,7 +16,8 @@ import { useDocVersion } from "./hooks";
 import { OutlinePane } from "./OutlinePane";
 import type { DocsPanelId } from "./panel-types";
 import { ReferenceLayer } from "./ReferenceLayer";
-import { ReviewDocumentLayer } from "./review-integration";
+import { useReviewController } from "./review-integration";
+import { ReviewDocumentLayer } from "./ReviewIntegration";
 import { SidePanels } from "./SidePanels";
 
 /** Quiet time before outline, references and word count are rebuilt after an edit. */
@@ -44,11 +45,11 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
   const [findFocus, setFindFocus] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [panel, setPanel] = useState<DocsPanelId | null>(null);
-  const [lastPanel, setLastPanel] = useState<DocsPanelId>("review");
+  const lastPanel = useRef<DocsPanelId>("review");
   const [pane, setPane] = useState<HTMLDivElement | null>(null);
-  const [review, setReview] = useState<unknown>(null);
   const derivedVersion = useDocVersion(session, DERIVED_DELAY_MS);
   const findVersion = useDocVersion(session, FIND_DELAY_MS);
+  const review = useReviewController(session, editor);
 
   const save = useCallback(async () => {
     if (session.getState().path === null) {
@@ -93,9 +94,9 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
   };
 
   const togglePanel = () => {
-    if (panel === null) setPanel(lastPanel);
+    if (panel === null) setPanel(lastPanel.current);
     else {
-      setLastPanel(panel);
+      lastPanel.current = panel;
       setPanel(null);
     }
   };
@@ -184,7 +185,7 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
               review={review}
               readOnly={readOnly}
               onClose={() => {
-                setLastPanel(panel);
+                lastPanel.current = panel;
                 setPanel(null);
               }}
             />
@@ -196,7 +197,7 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
         <div ref={setPane} className="docs-pane" style={{ "--docs-zoom": zoom / 100 } as CSSProperties}>
           <DocumentEditor session={session} ref={setEditor} viewMode={viewMode} ariaLabel="Document" />
           <ReferenceLayer session={session} editor={editor} docVersion={derivedVersion} container={pane} />
-          <ReviewDocumentLayer session={session} editor={editor} container={pane} readOnly={readOnly} onController={setReview} />
+          <ReviewDocumentLayer controller={review} container={pane} readOnly={readOnly} />
         </div>
       </AppFrame>
     </div>
