@@ -219,6 +219,26 @@ describe("tracked changes", () => {
   });
 });
 
+describe("agent drafts", () => {
+  it("shows a body written by the mail agent into an open draft as tracked changes", async () => {
+    const { store } = await setup();
+    let id = "";
+    act(() => {
+      id = store.compose()!;
+    });
+    typeInto("<div>Thanks!</div>");
+    act(() => {
+      // What the mail agent does when it fills a draft (agent/drafting.ts).
+      store.editDraft(id, { bodyText: "Thanks, see you Friday.", bodyHtml: "<div>Thanks, see you Friday.</div>" });
+    });
+    const review = await screen.findByRole("toolbar", { name: "Review changes" });
+    expect(review.textContent).toContain("by Assistant");
+    expect(hasTrackedMarkup(draftOf(store).draft.bodyHtml)).toBe(true);
+    fireEvent.click(within(review).getByRole("button", { name: /Reject all/ }));
+    expect(draftOf(store).draft.bodyHtml).toBe("<div>Thanks!</div>");
+  });
+});
+
 describe("drafting", () => {
   it("asks before discarding", async () => {
     const { store } = await setup();
