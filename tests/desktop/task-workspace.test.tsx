@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TaskWorkspace from "../../desktop/src/renderer/src/features/workspace/TaskWorkspace";
 import { useBoard, type Card } from "../../desktop/src/renderer/src/stores/board";
@@ -129,5 +129,46 @@ describe("TaskWorkspace", () => {
 
     expect(screen.queryByRole("button", { name: /start controls/i })).toBeNull();
     expect(screen.getByText("Terminal matrix-agent-1")).toBeTruthy();
+  });
+
+  function renderWorkspace() {
+    render(
+      <Tooltip.Provider>
+        <TaskWorkspace taskId="task_a" />
+      </Tooltip.Provider>,
+    );
+  }
+
+  function terminalVisible(): boolean {
+    return Boolean(useWorkspace.getState().layoutFor("task_a").visible.terminal);
+  }
+
+  it("toggles a panel with Cmd+Alt+digit, reading the digit from the key code", () => {
+    renderWorkspace();
+    const before = terminalVisible();
+
+    fireEvent.keyDown(window, { metaKey: true, altKey: true, code: "Digit1", key: "¡" });
+
+    expect(terminalVisible()).toBe(!before);
+  });
+
+  it("leaves Cmd+digit to the app switcher", () => {
+    renderWorkspace();
+    const before = terminalVisible();
+
+    fireEvent.keyDown(window, { metaKey: true, key: "1", code: "Digit1" });
+    fireEvent.keyDown(window, { metaKey: true, altKey: true, shiftKey: true, key: "1", code: "Digit1" });
+
+    expect(terminalVisible()).toBe(before);
+  });
+
+  it.each([
+    ["MacIntel", "Terminal (⌘⌥1)"],
+    ["Win32", "Terminal (Ctrl+Alt+1)"],
+  ])("labels panel toggles with the Cmd+Alt chord on %s", (platform, label) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    renderWorkspace();
+
+    expect(screen.getByRole("button", { name: label })).toBeTruthy();
   });
 });

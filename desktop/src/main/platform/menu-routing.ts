@@ -28,7 +28,7 @@ function live(win: MenuWindow | null): MenuWindow | null {
 }
 
 function isCloseTab(channel: string, payload: unknown): boolean {
-  return channel === "menu:action" && (payload as { action?: unknown } | null)?.action === "close-tab";
+  return channel === "shortcut:action" && (payload as { id?: unknown } | null)?.id === "tabs.close";
 }
 
 export function createMenuRouter(options: MenuRouterOptions) {

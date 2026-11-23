@@ -1,6 +1,7 @@
 import { useEffect } from "react";
+import type { ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
 import { requestChatSearchShortcut } from "@matrix-os/ui";
-import { onEvent } from "../../lib/operator";
+import { invoke, onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
 import { useBoard } from "../../stores/board";
@@ -14,12 +15,16 @@ import {
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
-
-interface CycleTabShortcutState {
-  activeTabId: string | null;
-  tabs: Array<{ id: string }>;
-  focusTab(id: string): void;
-}
+import {
+  closeApp,
+  cycleApp,
+  minimizeActiveApp,
+  openFilesApp,
+  reopenClosedApp,
+  switchToApp,
+  toggleActiveAppFullSize,
+  toggleShowDesktop,
+} from "../desktop-shell/app-switching";
 
 interface TerminalFocusShortcutState {
   tabs: Array<{ id: string; kind: string }>;
@@ -35,13 +40,6 @@ interface NewAgentRunShortcutUiState {
 interface NewAgentRunShortcutWorkspaceState {
   summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null;
   requestComposerFocus(): void;
-}
-
-export function isTerminalFocusShortcut(
-  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
-): boolean {
-  const meta = event.metaKey || event.ctrlKey;
-  return meta && event.altKey && !event.shiftKey && event.key.toLowerCase() === "t";
 }
 
 export function handleMenuNavigate(kind: string): void {
@@ -77,25 +75,19 @@ export function handleCloseSelectedAppShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
 ): void {
   event.preventDefault();
-  const tabs = useTabs.getState();
   const activeTab = activeShortcutTab();
   if (!activeTab) return;
-  const surfaces = useDesktopSurfaces.getState();
   const fallbackId = topmostVisibleDesktopSurfaceId(
-    tabs.tabs.map((tab) => tab.id),
-    surfaces,
+    useTabs.getState().tabs.map((tab) => tab.id),
+    useDesktopSurfaces.getState(),
     activeTab.id,
   );
-
-  surfaces.closeSurface(activeTab.id);
-  if (activeTab.closable) tabs.closeTab(activeTab.id);
-  if (!fallbackId) {
-    const selectedTabId = useTabs.getState().activeTabId;
-    if (selectedTabId) tabs.clearActiveTab(selectedTabId);
-    return;
-  }
-  tabs.focusTab(fallbackId);
-  surfaces.activateSurface(fallbackId);
+  // closeApp focuses the visible fallback app, as a click on the close button does.
+  closeApp(activeTab);
+  if (fallbackId) return;
+  // Nothing visible remains: select nothing rather than an app the user cannot see.
+  const selectedTabId = useTabs.getState().activeTabId;
+  if (selectedTabId) useTabs.getState().clearActiveTab(selectedTabId);
 }
 
 function activeShortcutTab() {
@@ -170,21 +162,6 @@ export function handleNewContextShortcut(
   }, "source");
 }
 
-export function handleCycleTabShortcut(
-  event: Pick<KeyboardEvent, "preventDefault">,
-  tabs: CycleTabShortcutState,
-  direction: 1 | -1,
-): void {
-  if (tabs.tabs.length <= 1) return;
-  event.preventDefault();
-  const idx = tabs.tabs.findIndex((t) => t.id === tabs.activeTabId);
-  const nextIndex = idx === -1
-    ? direction === 1 ? 0 : tabs.tabs.length - 1
-    : (idx + direction + tabs.tabs.length) % tabs.tabs.length;
-  const next = tabs.tabs[nextIndex];
-  if (next) tabs.focusTab(next.id);
-}
-
 export function handleTerminalFocusShortcut(
   event: Pick<KeyboardEvent, "preventDefault">,
   tabs: TerminalFocusShortcutState,
@@ -232,94 +209,70 @@ function openChatSearchOrPalette(): void {
   ui.setPaletteOpen(!ui.paletteOpen);
 }
 
+const noEvent = { preventDefault: () => undefined };
+
+function switchTo(position: number): () => void {
+  return () => switchToApp(position);
+}
+
+// Main matches the keys and the app menu; the renderer only runs the action.
+const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
+  "app.next": () => cycleApp(1),
+  "app.previous": () => cycleApp(-1),
+  "app.launcher": () => {
+    const ui = useUi.getState();
+    ui.setAppLauncherOpen(!ui.appLauncherOpen);
+  },
+  "app.close": () => handleCloseSelectedAppShortcut(noEvent),
+  "app.minimize": minimizeActiveApp,
+  "app.reopen": reopenClosedApp,
+  "app.switch-1": switchTo(1),
+  "app.switch-2": switchTo(2),
+  "app.switch-3": switchTo(3),
+  "app.switch-4": switchTo(4),
+  "app.switch-5": switchTo(5),
+  "app.switch-6": switchTo(6),
+  "app.switch-7": switchTo(7),
+  "app.switch-8": switchTo(8),
+  "app.switch-9": switchTo(9),
+  "app.show-desktop": toggleShowDesktop,
+  "app.toggle-full-size": toggleActiveAppFullSize,
+  "app.open-files": openFilesApp,
+  "nav.palette": openChatSearchOrPalette,
+  "nav.quick-open": () => {
+    const ui = useUi.getState();
+    ui.setQuickOpenOpen(!ui.quickOpenOpen);
+  },
+  "nav.settings": () => handleMenuNavigate("settings"),
+  "tabs.new-context": () => handleNewContextShortcut(noEvent),
+  "tabs.new": () => { handleNewTopLevelTabShortcut(noEvent); },
+  "tabs.close": () => handleCloseTopLevelTabShortcut(noEvent),
+  "chat.new-thread": () => handleNewAgentRunShortcut(noEvent, useUi.getState(), useCodingAgentWorkspace.getState()),
+  "chat.open": () => { useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }); },
+  "terminal.focus": () => handleTerminalFocusShortcut(noEvent, useTabs.getState()),
+  "terminal.window": () => {
+    void invoke("terminal-window:open", {}).catch((error: unknown) => {
+      console.warn("[shortcuts] could not open the Terminal window:", error);
+    });
+  },
+};
+
+export function runShortcutAction(id: ShortcutActionId): void {
+  SHORTCUT_HANDLERS[id]();
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const ui = useUi.getState();
+    const offShortcut = onEvent("shortcut:action", ({ id }) => runShortcutAction(id));
+    const offMenu = onEvent("menu:action", ({ action }) => {
+      if (action !== "refresh-home") return;
       const tabs = useTabs.getState();
-      const meta = e.metaKey || e.ctrlKey;
-      const key = e.key.toLowerCase();
-
-      if (meta && !e.altKey && !e.shiftKey && !e.repeat && key === "k") {
-        e.preventDefault();
-        openChatSearchOrPalette();
-        return;
-      }
-      if (meta && key === "j") {
-        handleNewAgentRunShortcut(e, ui, useCodingAgentWorkspace.getState());
-        return;
-      }
-      if (meta && !e.altKey && !e.shiftKey && key === "q") {
-        handleCloseSelectedAppShortcut(e);
-        return;
-      }
-      if (meta && !e.altKey && !e.shiftKey && key === "n") {
-        handleNewContextShortcut(e);
-        return;
-      }
-      if (meta && key === "p") {
-        e.preventDefault();
-        ui.setQuickOpenOpen(!ui.quickOpenOpen);
-        return;
-      }
-      if (isTerminalFocusShortcut(e)) {
-        handleTerminalFocusShortcut(e, tabs);
-        return;
-      }
-      // New chat with the OS agent.
-      if (meta && e.shiftKey && key === "o") {
-        e.preventDefault();
-        tabs.openTab({ kind: "chat", title: "Chat", closable: false });
-        return;
-      }
-      if (meta && !e.altKey && !e.shiftKey && key === "t") {
-        handleNewTopLevelTabShortcut(e);
-        return;
-      }
-      if (meta && !e.altKey && !e.shiftKey && key === "w") {
-        handleCloseTopLevelTabShortcut(e);
-        return;
-      }
-      // Cycle tabs with Ctrl+Tab / Ctrl+Shift+Tab.
-      if (e.ctrlKey && e.key === "Tab" && tabs.tabs.length > 1) {
-        handleCycleTabShortcut(e, tabs, e.shiftKey ? -1 : 1);
-        return;
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    const offAction = onEvent("menu:action", ({ action }) => {
-      const ui = useUi.getState();
-      if (action === "new-context") {
-        handleNewContextShortcut({ preventDefault: () => undefined });
-      }
-      if (action === "close-app") {
-        handleCloseSelectedAppShortcut({ preventDefault: () => undefined });
-      }
-      if (action === "new-tab" || action === "close-tab") {
-        if (action === "new-tab") {
-          handleNewTopLevelTabShortcut({ preventDefault: () => undefined });
-        } else {
-          handleCloseTopLevelTabShortcut({ preventDefault: () => undefined });
-        }
-      }
-      if (action === "new-thread") {
-        handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useCodingAgentWorkspace.getState());
-      }
-      if (action === "palette") openChatSearchOrPalette();
-      if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
-      if (action === "refresh-home") {
-        const tabs = useTabs.getState();
-        const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-        if (activeTab?.kind === "home") ui.requestHomeRefresh();
-      }
-    });
-    const offNavigate = onEvent("menu:navigate", ({ kind }) => {
-      handleMenuNavigate(kind);
+      const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
+      if (activeTab?.kind === "home") useUi.getState().requestHomeRefresh();
     });
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      offAction();
-      offNavigate();
+      offShortcut();
+      offMenu();
     };
   }, []);
 }

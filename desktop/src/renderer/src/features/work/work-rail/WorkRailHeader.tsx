@@ -1,5 +1,6 @@
 import { chatSearchShortcutLabel } from "@matrix-os/ui";
 import { PanelLeftOpen as PanelLeftOpenIcon, Plus, Search } from "lucide-react";
+import { useShortcutLabel } from "../../../stores/shortcuts";
 
 export function WorkRailHeader({
   onNewChat,
@@ -12,6 +13,7 @@ export function WorkRailHeader({
   showCollapseControl: boolean;
   shortcutAvailable?: boolean;
 }) {
+  const newChatLabel = useShortcutLabel("tabs.new-context");
   return (
     <>
       <div data-slot="chat-sidebar-new-chat" className="ml-2.5 mr-[9px] flex shrink-0 items-center gap-0.5">
@@ -24,7 +26,7 @@ export function WorkRailHeader({
         >
           <Plus size={15} aria-hidden />
           <span className="flex-1">New chat</span>
-          {shortcutAvailable ? <kbd aria-hidden="true" className="text-[12px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))", fontFamily: "inherit" }}>{/^(Mac|iPhone|iPad|iPod)/i.test(navigator.platform) ? "⌘N" : "Ctrl+N"}</kbd> : null}
+          {shortcutAvailable && newChatLabel ? <kbd aria-hidden="true" className="text-[12px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))", fontFamily: "inherit" }}>{newChatLabel}</kbd> : null}
         </button>
         {showCollapseControl ? (
           <button

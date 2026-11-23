@@ -73,7 +73,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
-import { installAppMenu } from "./platform/menu";
+import { installAppMenu, runShortcut } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
 import {
@@ -361,7 +361,7 @@ if (!gotLock) {
 
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
-      const shortcuts = await installShortcuts({ app, store, platform: process.platform,
+      const shortcuts = await installShortcuts({ app, store, platform: process.platform, run: runShortcut,
         mainWindow: () => mainWindow, terminalWindow: () => terminalWindows?.current() ?? null });
       shortcutWiring = shortcuts;
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
@@ -899,7 +899,7 @@ if (!gotLock) {
       installAppMenu({
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
-        thirdPartyNoticesPath: localRuntime.noticesPath,
+        thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,
         focusMain: focusMainWindow,
         restoreMain: () => {
           void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));

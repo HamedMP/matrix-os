@@ -190,6 +190,32 @@ handles the key when no web contents has focus. Hidden menu items are not used.
 Still to confirm on macOS: that cancelling in `before-input-event` prevents the
 menu accelerator there too.
 
+**Only the Apps group is matched in the main process.** Apps inside Matrix
+already claim some keys for themselves by cancelling them: Notes uses Cmd+N for
+"new note", for example, and the menu accelerator then does not fire. A matcher
+that runs before the page would take those keys away, against the non-goal that
+in-app shortcuts stay as they are. So the matcher handles only the actions in
+the Apps group (next, previous, launcher, close, minimize, reopen, switch to app
+N, show desktop, full size, open Files), which must work with focus anywhere.
+Navigation, Tabs, Chat and Terminal actions run through menu accelerators only,
+exactly as they did before this change, so a focused page can still claim the
+key. Every second or later binding of those actions gets a hidden menu item.
+
+**Terminal control keys are left to the page.** A binding that is Ctrl plus a
+single letter (or `[`, `\`, `]`) with no other modifier is a terminal control
+character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history. On Windows and
+Linux several defaults have that form (Ctrl+W, Ctrl+K, Ctrl+P, Ctrl+N, Ctrl+T,
+Ctrl+J, Ctrl+Q). The matcher does not handle these bindings; they run only
+through the menu accelerator, which a page can claim by cancelling the key. So
+in the terminal they go to the shell, as they do today, and everywhere else they
+run the Matrix action. A second or later binding of this form gets a hidden menu
+item, since the matcher will not carry it. Every other binding, including
+Ctrl+Tab and all Cmd bindings, works with focus anywhere.
+
+Other matcher rules: it skips DevTools web contents; it ignores auto-repeat for
+every action except Next app and Previous app; and it never matches an action
+that does not exist on the current platform (Terminal window on Windows).
+
 ## Architecture
 
 **Shared registry** — `packages/contracts/src/keyboard-shortcuts.ts` (pure

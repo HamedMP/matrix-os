@@ -284,6 +284,25 @@ describe("shortcut service", () => {
     expect(target.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
   });
 
+  it("reports recording from start until the matching stop or the guard time", () => {
+    vi.useFakeTimers();
+    const service = makeService();
+    const recorder = fakeTarget();
+    const other = fakeTarget();
+    expect(service.isRecording()).toBe(false);
+
+    service.setRecording(recorder, true);
+    expect(service.isRecording()).toBe(true);
+    service.setRecording(other, false);
+    expect(service.isRecording()).toBe(true);
+    service.setRecording(recorder, false);
+    expect(service.isRecording()).toBe(false);
+
+    service.setRecording(recorder, true);
+    vi.advanceTimersByTime(RECORDING_GUARD_MS);
+    expect(service.isRecording()).toBe(false);
+  });
+
   it("clears the guard timer on dispose", () => {
     vi.useFakeTimers();
     const service = makeService();

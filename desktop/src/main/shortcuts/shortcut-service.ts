@@ -33,6 +33,8 @@ export interface ShortcutService {
   set(overrides: ShortcutOverrides): Promise<ShortcutSnapshot>;
   onChange(listener: (snapshot: ShortcutSnapshot) => void): () => void;
   setRecording(target: RecordingTarget, recording: boolean): void;
+  /** True from a recording start until its matching stop or the guard time. */
+  isRecording(): boolean;
   dispose(): void;
 }
 
@@ -189,6 +191,10 @@ export function createShortcutService(deps: {
         recordingTarget = null;
         setIgnore(target, false);
       }, RECORDING_GUARD_MS);
+    },
+
+    isRecording() {
+      return recordingTarget !== null;
     },
 
     dispose() {

@@ -2,35 +2,60 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installShortcuts } from "@desktop/main/shortcuts/install-shortcuts";
 import { RECORDING_GUARD_MS } from "@desktop/main/shortcuts/shortcut-service";
 
-type Listener = () => void;
+type Listener = (...args: unknown[]) => void;
+
+function emitter() {
+  const listeners = new Map<string, Listener[]>();
+  return {
+    listeners,
+    on: vi.fn((event: string, listener: Listener) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    }),
+    removeListener: vi.fn((event: string, listener: Listener) => {
+      listeners.set(event, (listeners.get(event) ?? []).filter((candidate) => candidate !== listener));
+    }),
+    emit(event: string, ...args: unknown[]) { for (const listener of listeners.get(event) ?? []) listener(...args); },
+    count(event: string) { return listeners.get(event)?.length ?? 0; },
+  };
+}
+
+function fakeContents(type = "window") {
+  const events = emitter();
+  return {
+    getType: vi.fn(() => type),
+    send: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    on: events.on,
+    removeListener: events.removeListener,
+    setIgnoreMenuShortcuts: vi.fn(),
+    events,
+  };
+}
+type FakeContents = ReturnType<typeof fakeContents>;
 
 function fakeWindow() {
-  const windowListeners = new Map<string, Listener[]>();
-  const contentsListeners = new Map<string, Listener[]>();
-  const add = (map: Map<string, Listener[]>) => vi.fn((event: string, listener: Listener) => {
-    map.set(event, [...(map.get(event) ?? []), listener]);
-  });
+  const events = emitter();
+  const webContents = fakeContents();
   return {
     isDestroyed: vi.fn(() => false),
-    on: add(windowListeners),
-    webContents: {
-      send: vi.fn(),
-      isDestroyed: vi.fn(() => false),
-      on: add(contentsListeners),
-      setIgnoreMenuShortcuts: vi.fn(),
-    },
-    emit(event: string) { for (const listener of windowListeners.get(event) ?? []) listener(); },
-    emitContents(event: string) { for (const listener of contentsListeners.get(event) ?? []) listener(); },
+    on: events.on,
+    removeListener: events.removeListener,
+    webContents,
+    events,
+    emit(event: string) { events.emit(event); },
+    emitContents(event: string, ...args: unknown[]) { webContents.events.emit(event, ...args); },
   };
 }
 type FakeWindow = ReturnType<typeof fakeWindow>;
 
 function fakeApp() {
-  let created: ((event: unknown, win: FakeWindow) => void) | null = null;
+  const events = emitter();
   return {
-    on: vi.fn((_event: "browser-window-created", listener: (event: unknown, win: FakeWindow) => void) => { created = listener; }),
-    removeListener: vi.fn(() => { created = null; }),
-    create(win: FakeWindow) { created?.({}, win); },
+    on: events.on,
+    removeListener: events.removeListener,
+    events,
+    create(win: FakeWindow) { events.emit("browser-window-created", {}, win); },
+    createContents(contents: FakeContents) { events.emit("web-contents-created", {}, contents); },
   };
 }
 
@@ -38,19 +63,35 @@ function fakeStore(initial: unknown = null) {
   return { get: vi.fn(async () => initial), set: vi.fn(async () => undefined) };
 }
 
-async function setup(options: { main?: FakeWindow | null; terminal?: FakeWindow | null; stored?: unknown } = {}) {
+async function setup(options: {
+  main?: FakeWindow | null; terminal?: FakeWindow | null; stored?: unknown; platform?: NodeJS.Platform;
+} = {}) {
   const app = fakeApp();
   const store = fakeStore(options.stored ?? null);
   let main = options.main === undefined ? fakeWindow() : options.main;
   const terminal = options.terminal === undefined ? fakeWindow() : options.terminal;
+  const run = vi.fn();
   const installed = await installShortcuts({
     app: app as never,
     store: store as never,
-    platform: "darwin",
+    platform: options.platform ?? "darwin",
     mainWindow: () => main as never,
     terminalWindow: () => terminal as never,
+    run,
   });
-  return { app, store, main, terminal, installed, setMain(win: FakeWindow | null) { main = win; } };
+  return { app, store, main, terminal, run, installed, setMain(win: FakeWindow | null) { main = win; } };
+}
+
+const MAIN_FRAME_NAVIGATION = { isMainFrame: true, isSameDocument: false };
+const CTRL_TAB = {
+  type: "keyDown", key: "Tab", code: "Tab", meta: false, control: true, alt: false, shift: false, isAutoRepeat: false,
+};
+const F6 = { ...CTRL_TAB, key: "F6", code: "F6", control: false };
+
+function press(contents: FakeContents, input: typeof CTRL_TAB) {
+  const event = { preventDefault: vi.fn() };
+  contents.events.emit("before-input-event", event, input);
+  return event.preventDefault;
 }
 
 const CHANGE = { version: 1 as const, overrides: { "app.close": ["F6"] } };
@@ -100,16 +141,26 @@ describe("installShortcuts", () => {
     expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(false);
 
     installed.service.setRecording(main!.webContents, true);
-    main!.emitContents("did-start-navigation");
+    main!.emitContents("did-start-navigation", MAIN_FRAME_NAVIGATION);
     expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(false);
     expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps recording through subframe and same-document navigations", async () => {
+    const { app, main, installed } = await setup();
+    app.create(main!);
+    installed.service.setRecording(main!.webContents, true);
+    main!.emitContents("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+    main!.emitContents("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+    expect(installed.service.isRecording()).toBe(true);
+    expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenCalledTimes(1);
   });
 
   it("leaves windows other than the main window alone", async () => {
     const { app, terminal } = await setup();
     app.create(terminal!);
     terminal!.emit("blur");
-    terminal!.emitContents("did-start-navigation");
+    terminal!.emitContents("did-start-navigation", MAIN_FRAME_NAVIGATION);
     expect(terminal!.webContents.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
   });
 
@@ -119,7 +170,100 @@ describe("installShortcuts", () => {
     installed.service.setRecording(main!.webContents, true);
     installed.dispose();
     vi.advanceTimersByTime(RECORDING_GUARD_MS);
-    expect(app.removeListener).toHaveBeenCalledWith("browser-window-created", expect.any(Function));
+    expect(app.events.count("browser-window-created")).toBe(0);
+    expect(app.events.count("web-contents-created")).toBe(0);
     expect(main!.webContents.setIgnoreMenuShortcuts).toHaveBeenCalledTimes(1);
+  });
+
+  it("detaches window listeners on dispose", async () => {
+    const { app, main, installed } = await setup();
+    app.create(main!);
+    installed.dispose();
+    expect(main!.events.count("blur")).toBe(0);
+    expect(main!.events.count("closed")).toBe(0);
+    expect(main!.webContents.events.count("did-start-navigation")).toBe(0);
+  });
+
+  it("does not touch a window after it closes, because Electron throws on a destroyed window", async () => {
+    const { app, terminal, installed } = await setup();
+    app.create(terminal!);
+    // What Electron does once "closed" fires: every access throws.
+    terminal!.isDestroyed.mockReturnValue(true);
+    Object.defineProperty(terminal!, "webContents", {
+      get() { throw new TypeError("Object has been destroyed"); },
+    });
+    terminal!.removeListener.mockImplementation(() => { throw new TypeError("Object has been destroyed"); });
+    expect(() => terminal!.emit("closed")).not.toThrow();
+    expect(() => installed.dispose()).not.toThrow();
+  });
+
+  it("runs a bound action from any web contents and stops the page from seeing the key", async () => {
+    const { app, run } = await setup();
+    const contents = fakeContents();
+    app.createContents(contents);
+    const preventDefault = press(contents, CTRL_TAB);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.next");
+    expect(press(contents, F6)).not.toHaveBeenCalled();
+  });
+
+  it("does not watch DevTools web contents", async () => {
+    const { app, run } = await setup();
+    const devtools = fakeContents("devtools");
+    app.createContents(devtools);
+    expect(devtools.events.count("before-input-event")).toBe(0);
+    press(devtools, CTRL_TAB);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("leaves keys outside the Apps group to the page, so an app can claim Cmd+N", async () => {
+    const { app, run } = await setup();
+    const contents = fakeContents();
+    app.createContents(contents);
+    expect(press(contents, { ...CTRL_TAB, key: "n", code: "KeyN", meta: true, control: false })).not.toHaveBeenCalled();
+    expect(press(contents, { ...CTRL_TAB, key: "T", code: "KeyT", meta: true, control: false, alt: true, shift: true }))
+      .not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("does not take the Terminal window key on Windows", async () => {
+    const { app, run } = await setup({ platform: "win32" });
+    const contents = fakeContents();
+    app.createContents(contents);
+    expect(press(contents, { ...CTRL_TAB, key: "T", code: "KeyT", alt: true, shift: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("matches the bindings saved after install", async () => {
+    const { app, run, installed } = await setup();
+    const contents = fakeContents();
+    app.createContents(contents);
+    await installed.service.set(CHANGE);
+    press(contents, F6);
+    expect(run).toHaveBeenCalledWith("app.close");
+  });
+
+  it("lets keys through while a shortcut is being recorded", async () => {
+    const { app, main, run, installed } = await setup();
+    const contents = fakeContents();
+    app.createContents(contents);
+    installed.service.setRecording(main!.webContents, true);
+    expect(press(contents, CTRL_TAB)).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("detaches the key matcher on dispose and forgets destroyed web contents", async () => {
+    const { app, run, installed } = await setup();
+    const live = fakeContents();
+    const destroyed = fakeContents();
+    app.createContents(live);
+    app.createContents(destroyed);
+    destroyed.removeListener.mockImplementation(() => { throw new TypeError("Object has been destroyed"); });
+    expect(() => destroyed.events.emit("destroyed")).not.toThrow();
+    installed.dispose();
+    expect(live.events.count("before-input-event")).toBe(0);
+    expect(live.events.count("destroyed")).toBe(0);
+    press(live, CTRL_TAB);
+    expect(run).not.toHaveBeenCalled();
   });
 });
