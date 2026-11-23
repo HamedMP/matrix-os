@@ -1,5 +1,5 @@
 import type {} from "../../../desktop/src/renderer/src/lib/operator";
-import { createServer, request, type ServerResponse } from "node:http";
+import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -11,6 +11,7 @@ import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatContentFrameSchema,
   CanonicalChatListResponseSchema,
+  CanonicalChatNavigationItemSchema,
   CanonicalChatNavigationResponseSchema,
   CanonicalChatRecordSchema,
   ProjectSetupResponseSchema,
@@ -139,54 +140,23 @@ function setupFixture() {
     publishedTurnCount = turns.length;
     publishedRunCount = runs.length;
   };
-  const navigation = () => {
-    const {
-      id,
-      title,
-      titleVersion,
-      activityAt,
-      lifecycle,
-      attention,
-      revision,
-      messageCount,
-      userState,
-      createdAt,
-      updatedAt,
-    } = record().chat;
-    return CanonicalChatNavigationResponseSchema.parse({
-      version: 1,
-      truncated: false,
-      items: draft
-        ? [
-            {
-              chat: {
-                id,
-                title,
-                titleVersion,
-                activityAt,
-                lifecycle,
-                attention,
-                revision,
-                messageCount,
-                userState,
-                createdAt,
-                updatedAt,
-              },
-              projectId: project.id,
-              classification: { kind: "ordinary" },
-              persistence: "personal",
-              readState: {
-                version: 0,
-                unread: false,
-                markedUnread: false,
-                latestIncomingSeq: messages.length,
-                readThroughSeq: messages.length,
-              },
-            },
-          ]
-        : [],
-    });
-  };
+  const navigation = () => CanonicalChatNavigationResponseSchema.parse({
+    version: 1,
+    truncated: false,
+    items: draft ? [{
+      chat: CanonicalChatNavigationItemSchema.shape.chat.strip().parse(record().chat),
+      projectId: project.id,
+      classification: { kind: "ordinary" },
+      persistence: "personal",
+      readState: {
+        version: 0,
+        unread: false,
+        markedUnread: false,
+        latestIncomingSeq: messages.length,
+        readThroughSeq: messages.length,
+      },
+    }] : [],
+  });
   return {
     streams,
     messages,
@@ -247,23 +217,13 @@ function setupFixture() {
   };
 }
 
-function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
-  return new Promise((done, reject) => {
-    let text = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => {
-      text += chunk;
-      if (text.length > 256 * 1024) req.destroy(new Error("Fixture body too large"));
-    });
-    req.on("end", () => {
-      try {
-        done(JSON.parse(text));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    req.on("error", reject);
-  });
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  let text = "";
+  for await (const chunk of req.setEncoding("utf8")) {
+    text += chunk;
+    if (text.length > 256 * 1024) throw new Error("Fixture body too large");
+  }
+  return JSON.parse(text);
 }
 
 describe.skipIf(!built)("Electron Desktop guided project setup contract fixture", () => {
@@ -291,48 +251,22 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
       res.on("close", () => state.streams.delete(res));
       return;
     }
-    if (path === "/api/workspace/projects") {
-      json({ projects: [project] });
-      return;
-    }
-    if (path === "/api/chat-providers") {
-      json(fixture.providerCatalog);
-      return;
-    }
-    if (path === "/api/chat-agents") {
-      json({ enabled: true, agents: [] });
-      return;
-    }
-    if (path === `/api/chats/${chatId}/bot`) {
-      json({ agentId: null });
-      return;
-    }
-    if (path === "/api/chat-navigation") {
-      json(state.navigation());
-      return;
-    }
-    if (path === "/api/chats") {
-      json(CanonicalChatListResponseSchema.parse({ items: state.draft ? [state.record()] : [] }));
-      return;
-    }
-    if (path === `/api/chats/${chatId}`) {
-      json(state.detail());
-      return;
-    }
+    if (path === "/api/workspace/projects") return json({ projects: [project] });
+    if (path === "/api/chat-providers") return json(fixture.providerCatalog);
+    if (path === "/api/chat-agents") return json({ enabled: true, agents: [] });
+    if (path === `/api/chats/${chatId}/bot`) return json({ agentId: null });
+    if (path === "/api/chat-navigation") return json(state.navigation());
+    if (path === "/api/chats")
+      return json(CanonicalChatListResponseSchema.parse({ items: state.draft ? [state.record()] : [] }));
+    if (path === `/api/chats/${chatId}`) return json(state.detail());
     if (path === `/api/chats/${chatId}/read-state`) {
       req.resume();
-      json(state.record());
-      return;
+      return json(state.record());
     }
-    if (path.endsWith("/routine-origin")) {
-      json({ sourceChatId: chatId, pending: [], deliveries: [], deliveryPending: false, hasMore: false });
-      return;
-    }
+    if (path.endsWith("/routine-origin"))
+      return json({ sourceChatId: chatId, pending: [], deliveries: [], deliveryPending: false, hasMore: false });
     if (path === `/api/projects/${project.id}/setup` || path === `/api/chats/${chatId}/project-setup`) {
-      if (req.method === "GET") {
-        json(ProjectSetupResponseSchema.parse({ draft: state.draft }));
-        return;
-      }
+      if (req.method === "GET") return json(ProjectSetupResponseSchema.parse({ draft: state.draft }));
       void readBody(req)
         .then((body) => {
           json(req.method === "POST" ? state.start(body) : state.update(body));
@@ -345,8 +279,8 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
         });
       return;
     }
-    if (path === `/api/projects/${project.id}/agent-context`) {
-      json({
+    if (path === `/api/projects/${project.id}/agent-context`)
+      return json({
         instructions: ["AGENTS.md", "CLAUDE.md"].filter((file) => state.files.has(file)),
         configFiles: [],
         skills: state.files.has(".agents/skills/release-check/SKILL.md")
@@ -355,12 +289,7 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
         mcpServers: [],
         incompleteSources: [],
       });
-      return;
-    }
-    if (path === "/api/mcp-servers" || path === "/api/settings/skills") {
-      json([]);
-      return;
-    }
+    if (path === "/api/mcp-servers" || path === "/api/settings/skills") return json([]);
     const upstream = request(
       new URL(req.url ?? "/", base.url),
       { method: req.method, headers: req.headers, timeout: 10_000 },
