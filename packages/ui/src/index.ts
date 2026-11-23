@@ -15,6 +15,8 @@ export type { DialogProps } from "./Dialog.js";
 export { DialogTitle } from "./DialogTitle.js";
 export type { DialogTitleProps } from "./DialogTitle.js";
 export { DialogFooter } from "./DialogFooter.js";
+export { DestructiveConfirmDialog } from "./DestructiveConfirmDialog.js";
+export type { DestructiveConfirmDialogProps } from "./DestructiveConfirmDialog.js";
 export type { DialogFooterProps } from "./DialogFooter.js";
 
 export { Badge } from "./Badge.js";

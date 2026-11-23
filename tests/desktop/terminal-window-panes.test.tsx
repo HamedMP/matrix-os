@@ -224,9 +224,9 @@ describe("Terminal window panes", () => {
 
     // Close ends that pane's terminal, asking first while it runs.
     fireEvent.click(screen.getByRole("button", { name: "Close pane editor" }));
-    const dialog = await screen.findByRole("dialog", { name: "End terminal" });
+    const dialog = await screen.findByRole("alertdialog", { name: /^End “/ });
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
-    fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "End pane" }));
     await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t1" }));
     await waitFor(() => expect(paneNames()).toEqual(["shell t11", "shell t10"]));
   });
@@ -239,7 +239,7 @@ describe("Terminal window panes", () => {
     operator.command({ command: "split-right" });
     await waitFor(() => expect(focusedPane()).toBe("shell t10"));
     operator.command({ command: "close-terminal" });
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: /^End “/ })).getByRole("button", { name: "End pane" }));
     await waitFor(() => expect(paneNames()).toEqual(["editor"]));
     expect(focusedPane()).toBe("editor");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t10" });
@@ -416,7 +416,7 @@ describe("Terminal window panes", () => {
     operator.command({ command: "split-down" });
     await waitFor(() => expect(focusedPane()).toBe("shell t11"));
     operator.command({ command: "close-terminal" });
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: /^End “/ })).getByRole("button", { name: "End pane" }));
     await waitFor(() => expect(paneNames()).toEqual(["editor", "shell t10"]));
     expect(focusedPane()).toBe("shell t10");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t11" });
@@ -436,7 +436,7 @@ describe("Terminal window panes", () => {
     operator.command({ command: "focus-pane", direction: "left" });
     await waitFor(() => expect(focusedPane()).toBe("editor"));
     operator.command({ command: "close-terminal" });
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: /^End “/ })).getByRole("button", { name: "End pane" }));
     await waitFor(() => expect(paneNames()).toEqual(["shell t10", "shell t11"]));
     expect(focusedPane()).toBe("shell t10");
   });
