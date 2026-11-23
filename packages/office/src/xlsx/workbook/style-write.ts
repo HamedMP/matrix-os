@@ -21,7 +21,7 @@ import {
 import { FIRST_CUSTOM_FORMAT_ID, builtinFormatId } from "../format/builtin.js";
 import { isHexColor, toArgb } from "./colors.js";
 import type { StyleTable } from "./styles.js";
-import { insertInOrder, kid, qualify } from "./xml-util.js";
+import { boolAttr, insertInOrder, kid, qualify } from "./xml-util.js";
 
 const STYLE_SHEET_ORDER = [
   "numFmts",
@@ -163,7 +163,7 @@ function setValueChild(parent: XmlElement, local: string, value: string | null, 
   if (value === null) {
     if (existing !== null) remove(existing);
   } else if (existing !== null) {
-    setAttr(existing, "val", value);
+    if (getAttr(existing, "val") !== value) setAttr(existing, "val", value);
   } else {
     insertInOrder(parent, createElement(qualify(parent, local), { val: value }), order);
   }
@@ -171,6 +171,8 @@ function setValueChild(parent: XmlElement, local: string, value: string | null, 
 
 function setFlagChild(parent: XmlElement, local: string, on: boolean, order: readonly string[]): void {
   const existing = kid(parent, local);
+  const current = existing !== null && boolAttr(getAttr(existing, "val"), true);
+  if (current === on) return;
   if (existing !== null) remove(existing);
   if (on) insertInOrder(parent, createElement(qualify(parent, local)), order);
 }
@@ -193,8 +195,11 @@ function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: 
   if (patch.sizePt !== undefined) setValueChild(font, "sz", String(patch.sizePt), FONT_ORDER);
   if (patch.color !== undefined) {
     const existing = kid(font, "color");
-    if (existing !== null) remove(existing);
-    if (patch.color !== null) insertInOrder(font, colorElement(font, "color", patch.color), FONT_ORDER);
+    const same = patch.color === null ? existing === null : existing !== null && getAttr(existing, "rgb") === toArgb(patch.color);
+    if (!same) {
+      if (existing !== null) remove(existing);
+      if (patch.color !== null) insertInOrder(font, colorElement(font, "color", patch.color), FONT_ORDER);
+    }
   }
   if (patch.name !== undefined) {
     setValueChild(font, "name", patch.name, FONT_ORDER);

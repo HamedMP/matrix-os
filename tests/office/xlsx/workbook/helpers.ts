@@ -60,3 +60,84 @@ export function valueAt(workbook: Workbook, sheet: string, a1: string): CellValu
 }
 
 export const err = (code: string): CellValue => ({ kind: "error", code }) as CellValue;
+
+const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+
+export interface HandmadeSheet {
+  name: string;
+  /** Content of `<sheetData>`. */
+  rows?: string;
+  /** Markup placed after `<sheetData>` (merges, conditional formats, …). */
+  after?: string;
+  /** Markup placed before `<sheetData>` (columns, sheet views, …). */
+  before?: string;
+  /** The whole part, instead of the pieces above. */
+  xml?: string;
+  state?: "hidden" | "veryHidden";
+}
+
+export interface HandmadeWorkbook {
+  sheets: HandmadeSheet[];
+  /** Content of `<sst>`: a list of `<si>` elements. */
+  sharedStrings?: string;
+  /** Content of `<definedNames>`. */
+  definedNames?: string;
+  /** Attributes of `<workbookPr>`. */
+  workbookPr?: string;
+  /** The whole styles part. */
+  styles?: string;
+  /** A calculation chain part, to check that it is dropped. */
+  calcChain?: boolean;
+}
+
+/** Builds a small workbook from markup, for cases the generated fixtures do not cover. */
+export async function buildXlsx(spec: HandmadeWorkbook): Promise<Uint8Array> {
+  const { createPackage } = await import("../../../../packages/office/src/opc/index.js");
+  const pkg = createPackage();
+  const sheetType = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+  pkg.setPart("/xl/workbook.xml", "<workbook/>", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml");
+  pkg.addRelationship("/", { type: `${REL}/officeDocument`, target: "xl/workbook.xml" });
+  let entries = "";
+  spec.sheets.forEach((sheet, index) => {
+    const xml =
+      sheet.xml ??
+      `${HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}">${sheet.before ?? ""}<sheetData>${sheet.rows ?? ""}</sheetData>${sheet.after ?? ""}</worksheet>`;
+    pkg.setPart(`/xl/worksheets/sheet${index + 1}.xml`, xml, sheetType);
+    const relationship = pkg.addRelationship("/xl/workbook.xml", { type: `${REL}/worksheet`, target: `worksheets/sheet${index + 1}.xml` });
+    const state = sheet.state === undefined ? "" : ` state="${sheet.state}"`;
+    entries += `<sheet name="${sheet.name}" sheetId="${index + 1}"${state} r:id="${relationship.id}"/>`;
+  });
+  if (spec.sharedStrings !== undefined) {
+    pkg.setPart(
+      "/xl/sharedStrings.xml",
+      `${HEADER}<sst xmlns="${MAIN}">${spec.sharedStrings}</sst>`,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml",
+    );
+    pkg.addRelationship("/xl/workbook.xml", { type: `${REL}/sharedStrings`, target: "sharedStrings.xml" });
+  }
+  if (spec.styles !== undefined) {
+    pkg.setPart("/xl/styles.xml", spec.styles, "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml");
+    pkg.addRelationship("/xl/workbook.xml", { type: `${REL}/styles`, target: "styles.xml" });
+  }
+  if (spec.calcChain === true) {
+    pkg.setPart(
+      "/xl/calcChain.xml",
+      `${HEADER}<calcChain xmlns="${MAIN}"><c r="A1" i="1"/></calcChain>`,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml",
+    );
+    pkg.addRelationship("/xl/workbook.xml", { type: `${REL}/calcChain`, target: "calcChain.xml" });
+  }
+  const names = spec.definedNames === undefined ? "" : `<definedNames>${spec.definedNames}</definedNames>`;
+  pkg.setPart(
+    "/xl/workbook.xml",
+    `${HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><workbookPr${spec.workbookPr ?? ""}/><bookViews><workbookView activeTab="0"/></bookViews><sheets>${entries}</sheets>${names}</workbook>`,
+  );
+  return pkg.save();
+}
+
+/** `<c>` markup for a number cell. */
+export const num = (ref: string, value: number): string => `<c r="${ref}"><v>${value}</v></c>`;
+/** `<c>` markup for a formula cell with a cached number. */
+export const fx = (ref: string, formula: string, cached: number): string => `<c r="${ref}"><f>${formula}</f><v>${cached}</v></c>`;

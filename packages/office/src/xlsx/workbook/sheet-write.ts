@@ -129,9 +129,11 @@ function syncAttr(element: XmlElement, name: string, value: string | null): void
   else setAttr(element, name, value);
 }
 
-/** True when a row element carries nothing but its number. */
+const ROW_MODEL_ATTRS: ReadonlySet<string> = new Set(["r", "spans", "ht", "customHeight", "hidden"]);
+
+/** True when a row element carries nothing beyond what the model holds (number, height, visibility). */
 function isBareRow(element: XmlElement): boolean {
-  for (const attr of element.attrs) if (attr.name !== "r" && attr.name !== "spans") return false;
+  for (const attr of element.attrs) if (!ROW_MODEL_ATTRS.has(attr.name)) return false;
   return true;
 }
 
