@@ -137,4 +137,19 @@ describe("Docs toolbar and status bar", () => {
     await waitFor(() => expect(document.querySelector(".doc-page")?.getAttribute("data-view-mode")).toBe("final"));
     expect(screen.getByRole("button", { name: /^View: Final/ })).toBeTruthy();
   });
+
+  it("opens the side panel with the review module's revisions and comments", async () => {
+    await openContract();
+    const toggle = screen.getByRole("button", { name: "Side panel" });
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: /Review/ }).getAttribute("aria-selected")).toBe("true");
+    const panel = screen.getByRole("tabpanel");
+    expect(await within(panel).findByText("No tracked changes", {}, { timeout: 3000 })).toBeTruthy();
+    expect(within(panel).getByText("No comments yet")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /Assistant/ }));
+    expect(screen.getByRole("tab", { name: /Assistant/ }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Close side panel" }));
+    await waitFor(() => expect(screen.queryByRole("tabpanel")).toBeNull());
+  });
 });
