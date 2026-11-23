@@ -18,29 +18,7 @@ export type BrowserSortDirection = "asc" | "desc";
 // hostile or runaway listing can buffer into renderer memory.
 export const MAX_BROWSER_ENTRIES = 1000;
 
-// Mirrors the Gateway's protected top-level owner/tool state for presentation.
-// This is only a renderer hint; the Gateway remains the security authority.
-export function isManagedBrowserPath(path: string): boolean {
-  const firstSegment = path.replace(/^\/+/, "").split("/")[0];
-  return firstSegment === "system" || firstSegment === "agents" || firstSegment?.startsWith(".") === true;
-}
-
-// Mirrors the Gateway's folder-project/new-folder exclusions without making
-// ordinary owner workspace paths read-only in the Files browser. In
-// particular, MAT-340 deliberately makes projects/** selectable while browser
-// profile state remains unavailable as a workspace or folder parent.
-export function isProtectedFolderCreationParentPath(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
-  return isManagedBrowserPath(normalized)
-    || normalized === "data/browser-profiles"
-    || normalized.startsWith("data/browser-profiles/");
-}
-
-export function isProtectedFolderPickerPath(path: string): boolean {
-  const normalized = path.replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
-  return isProtectedFolderCreationParentPath(normalized)
-    || normalized === "data";
-}
+export { isManagedBrowserPath, isProtectedFolderCreationParentPath, isProtectedFolderPickerPath } from "@matrix-os/ui";
 
 export function parseBrowserEntries(value: unknown): BrowserEntry[] {
   if (!Array.isArray(value)) return [];

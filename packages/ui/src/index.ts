@@ -407,3 +407,25 @@ export { routineOriginChatEligible } from "./chat/routine-origin.js";
 export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
+export {
+  parseGitHubHttpsUrl, slugifyProjectName, isValidProjectSlug, isValidBranchName, isManagedBrowserPath,
+  isProtectedFolderCreationParentPath, isProtectedFolderPickerPath, projectForFolderPath, resolveProjectFolderChoice, folderPickerAction,
+  type ParsedGitHubUrl, type AddProjectRecord, type FolderPickerChoice,
+} from "./projects/add-project-model.js";
+export {
+  openExistingProject, submitClone, submitExistingFolder, submitNewFolder, cloneErrorMessage,
+  CLONE_FAILED_COPY, FOLDER_CONFLICT_COPY, SESSION_EXPIRED_COPY, COMPUTER_UNREACHABLE_COPY,
+  type AddProjectOutcome, type AddProjectSubmitContext,
+} from "./projects/add-project-submit.js";
+export { AddProjectForm, type AddProjectFormProps, type ProjectShareAvailability } from "./projects/AddProjectForm.js";
+export { type AddProjectButtonProps, type AddProjectFolderPickerProps } from "./projects/AddProjectStepFields.js";
+export {
+  projectLifecycleErrorMessage, projectLifecyclePath, PROJECT_ACTIONS_UNAVAILABLE, PROJECT_UPDATE_INCOMPLETE, PROJECT_LISTS_STALE,
+} from "./projects/project-lifecycle-copy.js";
+export { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./projects/ProjectActionsMenu.js";
+export { ProjectDeleteConfirmation, type ProjectDeleteButtonProps } from "./projects/ProjectDeleteConfirmation.js";
+export {
+  PROJECT_UPDATE_FAILED, PROJECT_FOLDER_OPEN_FAILED, parseProjectFilesLocation, projectShareMenuItem, projectManagementMenuItems,
+} from "./projects/project-menu-items.js";
+export { ProjectEditForm, type ProjectEditButtonProps } from "./projects/ProjectEditForm.js";
+export { ProjectSharingHost, type ProjectSharingContext, type ProjectSharingHandle } from "./projects/ProjectSharingHost.js";

@@ -17,7 +17,6 @@ import {
   parseBrowserEntries,
   isManagedBrowserPath,
   isProtectedFolderCreationParentPath,
-  isProtectedFolderPickerPath,
   sortBrowserEntries,
   type BrowserEntry,
   type BrowserSortDirection,
@@ -37,13 +36,10 @@ import {
 } from "./browser-views";
 import { canMoveFileToTrash, FileTrashDialogs, OpenTrashButton, useFileTrash } from "./FileTrashControls";
 import { useFileUploads } from "./use-file-uploads";
+import { folderPickerAction, type FolderPickerChoice } from "@matrix-os/ui";
 
 type BrowserStatus = "loading" | "ready" | "error";
 
-export type FolderPickerChoice =
-  | { kind: "choose" }
-  | { kind: "blocked"; message: string }
-  | { kind: "alternate"; label: string; message: string };
 
 export interface BrowserSelection {
   path: string;
@@ -388,18 +384,7 @@ export default function ComputerFileBrowser({
     return segments.map((label, index) => ({ label, path: segments.slice(0, index + 1).join("/") }));
   }, [viewCurrentPath]);
 
-  const chosenName = (viewCandidatePath.split("/").pop() || "Matrix home");
-  const resolvedFolderChoice = viewCandidatePath
-    ? resolveFolderChoice?.(viewCandidatePath) ?? { kind: "choose" as const }
-    : null;
-  const folderChoice = viewCandidatePath
-    ? isProtectedFolderPickerPath(viewCandidatePath)
-      ? {
-          kind: "blocked" as const,
-          message: "This folder is protected by Matrix OS and can't be used as a workspace.",
-        }
-      : resolvedFolderChoice
-    : null;
+  const pickerAction = folderPickerAction(viewCandidatePath, resolveFolderChoice);
   // Name flexes (minmax(0,1fr) + truncate); Size/Modified are fixed-width
   // right-aligned columns sized to the format.ts outputs, so long names only
   // truncate once the pane is genuinely out of room.
@@ -618,13 +603,13 @@ export default function ComputerFileBrowser({
       {onChooseFolder ? (
         <FolderPickerFooter
           path={viewCandidatePath}
-          message={folderChoice && folderChoice.kind !== "choose" ? folderChoice.message : undefined}
-          actionLabel={folderChoice?.kind === "alternate" ? folderChoice.label : `Choose ${chosenName}`}
-          disabled={folderChoice?.kind === "alternate" ? false : !viewCandidatePath || folderChoice?.kind === "blocked"}
-          onCreateFolder={onCreateFolder && resolvedFolderChoice?.kind === "choose" && !isProtectedFolderCreationParentPath(viewCandidatePath)
+          message={pickerAction.choice && pickerAction.choice.kind !== "choose" ? pickerAction.choice.message : undefined}
+          actionLabel={pickerAction.label}
+          disabled={pickerAction.disabled}
+          onCreateFolder={onCreateFolder && pickerAction.canCreateFolder
             ? () => onCreateFolder(viewCandidatePath)
             : undefined}
-          onAction={() => folderChoice?.kind === "alternate"
+          onAction={() => pickerAction.choice?.kind === "alternate"
             ? onAlternateFolderAction?.(viewCandidatePath)
             : onChooseFolder(viewCandidatePath)}
         />

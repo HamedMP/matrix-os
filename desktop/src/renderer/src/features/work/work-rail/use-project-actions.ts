@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PROJECT_FOLDER_OPEN_FAILED, PROJECT_UPDATE_FAILED, parseProjectFilesLocation } from "@matrix-os/ui";
 import { projectAgentContextFileLocationRequest } from "@matrix-os/ui/project-agent-context";
 import { parseProject, useBoard, type Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
@@ -39,7 +40,7 @@ export function useProjectActions(project: Project) {
       return true;
     } catch (err: unknown) {
       console.warn("[project-actions] Update failed:", err instanceof Error ? err.name : "UnknownError");
-      if (current()) setError("The project could not be updated. Try again.");
+      if (current()) setError(PROJECT_UPDATE_FAILED);
       return false;
     } finally {
       if (current()) { busy.current = false; setPending(false); }
@@ -57,14 +58,14 @@ export function useProjectActions(project: Project) {
         : `/api/projects/${encodeURIComponent(project.slug)}/files-location`;
       const response = await api.get<{ path: unknown }>(pathRequest);
       if (!current()) return;
-      const path = response.path;
-      if (typeof path !== "string" || !path || path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f]/.test(path) || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Invalid folder location");
+      const path = parseProjectFilesLocation(response.path);
+      if (!path) throw new Error("Invalid folder location");
       useFilesNavigation.getState().navigate(path);
       const tabId = useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
       useDesktopSurfaces.getState().activateSurface(tabId);
     } catch (err: unknown) {
       console.warn("[project-actions] Locate failed:", err instanceof Error ? err.name : "UnknownError");
-      if (current()) setError("The project folder could not be opened. Try again.");
+      if (current()) setError(PROJECT_FOLDER_OPEN_FAILED);
     } finally {
       if (current()) { busy.current = false; setPending(false); }
     }
