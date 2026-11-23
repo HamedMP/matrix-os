@@ -32,7 +32,8 @@
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
     "./app-files": "./src/app-files.ts",
-    "./office-open-with": "./src/office-open-with.ts"
+    "./office-open-with": "./src/office-open-with.ts",
+    "./office-documents": "./src/office-documents.ts"
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",
