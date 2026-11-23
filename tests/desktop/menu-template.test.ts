@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
+import { terminalWindowMenuItems } from "../../desktop/src/main/platform/terminal-menu-items";
 import { isShortcutActionAvailable } from "../../desktop/src/main/shortcuts/shortcut-availability";
 
 type Platform = "darwin" | "linux" | "win32";
@@ -366,8 +368,12 @@ describe("Terminal window menu", () => {
       ["Cmd+N", { command: "new-terminal" }], ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }],
       ["Cmd+Shift+P", { command: "picker" }], ["F2", { command: "rename" }],
       ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
-      ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next" }], ["Ctrl+Shift+Tab", { command: "previous" }],
+      ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next-tab" }], ["Ctrl+Shift+Tab", { command: "previous-tab" }],
       ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
+      ["Cmd+D", { command: "split-right" }], ["Cmd+Shift+D", { command: "split-down" }], ["Cmd+Shift+W", { command: "close-pane" }],
+      ["Cmd+Shift+Enter", { command: "zoom-pane" }], ["Cmd+Alt+Left", { command: "focus-pane", direction: "left" }],
+      ["Cmd+Alt+Down", { command: "focus-pane", direction: "down" }], ["Cmd+Alt+Shift+Right", { command: "swap-pane", direction: "right" }],
+      ["Cmd+Alt+Shift+Up", { command: "swap-pane", direction: "up" }],
     ];
     for (const [accelerator, sent] of expected) {
       const matches = byKey(accelerator);
@@ -379,6 +385,23 @@ describe("Terminal window menu", () => {
     expect(close).toHaveBeenCalled();
     // Main-window shortcuts that would collide are not in this menu, the Apps menu included.
     expect(items.some((item) => item.label === "Go to File" || item.label === "Command Palette" || item.label === "Next App")).toBe(false);
+  });
+
+  // Fault detected (Hamed, 2026-11-22): a focused terminal kept some of these keys, so the shortcut did nothing.
+  it("reserves every menu shortcut from a focused terminal", () => {
+    const items = flat(terminalWindowMenuItems(vi.fn(), vi.fn(), true) as Item[]);
+    const arrows: Record<string, string> = { Left: "ArrowLeft", Right: "ArrowRight", Up: "ArrowUp", Down: "ArrowDown" };
+    const accelerators = items.flatMap((item) => (item.accelerator ? [item.accelerator] : []));
+    expect(accelerators.length).toBeGreaterThan(20);
+    for (const accelerator of accelerators) {
+      const parts = accelerator.split("+");
+      const last = parts.at(-1)!;
+      const event = {
+        key: arrows[last] ?? last, metaKey: parts.includes("Cmd"), ctrlKey: parts.includes("Ctrl"),
+        altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
+      };
+      expect(isTerminalWindowShortcut(event), accelerator).toBe(true);
+    }
   });
 
   it("keeps the main window's menu free of Terminal window shortcuts", () => {

@@ -1,7 +1,7 @@
 // Everything the Terminal window shows and does (spec 651, spec 2706): the
 // inventories, live status rows, the one terminal on screen, and Herdr's
 // shortcuts. Kept apart from the view so the rules stay testable.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   terminalSidebarOrder,
   terminalStatusSections,
@@ -13,11 +13,15 @@ import { onEvent } from "../../lib/operator";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
-import { closeComputerTab, renameComputerTab } from "./computer-terminals";
+import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
+import { useTerminalPanes } from "./use-terminal-panes";
+import { useOpenTabs } from "./use-open-tabs";
+import { leaves } from "@matrix-os/ui/terminal-pane-tree";
+import type { PaneButton } from "./TerminalPaneTree";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
-import { filterRows, spacesInOrder } from "./TerminalWindowSidebar";
+import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
 import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
@@ -44,7 +48,8 @@ export function useTerminalWindow() {
   // A local terminal and a cloud terminal are never attached at once. The
   // title is kept so the pane can stay, labelled, after its program exits.
   const [localOpen, setLocalOpen] = useState<{ id: string; title: string } | null>(null);
-  const [findRequest, setFindRequest] = useState(0);
+  // Each Cmd+F belongs to the terminal it was pressed on.
+  const [find, setFind] = useState<{ request: number; key: string | null }>({ request: 0, key: null });
   const [pickerOpen, setPickerOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
   const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
@@ -77,7 +82,13 @@ export function useTerminalWindow() {
     () => terminalSidebarOrder(terminalStatusSections(visibleRows, { view: sidebar.prefs.view, pinned: sidebar.prefs.pinned })),
     [visibleRows, sidebar.prefs.view, sidebar.prefs.pinned],
   );
+  // The signed-in session now, for work that finishes after it may have changed.
+  const sessionRef = useRef(ready?.sessionKey ?? "");
+  useEffect(() => { sessionRef.current = ready?.sessionKey ?? ""; }, [ready?.sessionKey]);
   const selectedRow: TerminalSidebarRow | undefined = status.rows.find((row) => row.key === selectedKey);
+  // The selection when an end finishes, which may differ from when it started.
+  const selectedRef = useRef(selectedKey);
+  useEffect(() => { selectedRef.current = selectedKey; }, [selectedKey]);
   const { markSeen } = status;
 
   // Done since the person last looked: looking at it now counts, in this window and theirs elsewhere.
@@ -144,27 +155,6 @@ export function useTerminalWindow() {
     });
   }, [cloud, local]);
 
-  /** Ends a live terminal or removes a finished one; the pane stays until that is confirmed. */
-  const close = useCallback((key: string) => {
-    const target = terminalRowTarget(key);
-    if (!target) return;
-    if (target.kind === "local") {
-      const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
-      const ending = finished ? local.remove(target.id) : local.end(target.id);
-      void ending.then((done) => { if (done) setLocalOpen((current) => (current?.id === target.id ? null : current)); });
-      return;
-    }
-    const api = cloud.api(target.slot);
-    if (!api) { setComputerNotice("end-failed"); return; }
-    void closeComputerTab(api, target.ref).then(() => {
-      setComputerNotice(null);
-      if (cloudActive.current?.refKey === terminalRefKey(target.ref)) clearActive();
-    }, (error: unknown) => {
-      console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
-      setComputerNotice("end-failed");
-    });
-  }, [clearActive, cloud, local]);
-
   // The machines whose spaces the sidebar lists, in its order: this device, then every usable computer.
   const spaceMachines = useMemo(() => inOrder([here.id, ...computers.filter((computer) => computer.availability === "available")
     .map((computer) => computerMachineId(computer.runtimeSlot))], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder]);
@@ -177,12 +167,6 @@ export function useTerminalWindow() {
     select(key);
   }, [select, sidebar, status.rows]);
 
-  /** Closes a terminal by ending it: a finished one goes at once, a running program asks first. */
-  const requestClose = useCallback((key: string) => {
-    if (isFinished(key, local.state, status.states)) { close(key); return; }
-    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
-  }, [close, local.state, status.rows, status.states]);
-
   const step = useCallback((offset: number) => {
     if (order.length === 0) return;
     const index = order.findIndex((entry) => entry.key === selectedKey);
@@ -190,47 +174,218 @@ export function useTerminalWindow() {
     select(order[next]!.key);
   }, [order, select, selectedKey]);
 
+  const createBeside = useCallback(async (key: string): Promise<string | null> => {
+    const machineId = key.slice(0, Math.max(0, key.indexOf("|")));
+    if (machineId === here.id) {
+      const id = await local.create({});
+      return id ? `${here.id}|${id}` : null;
+    }
+    const target = terminalRowTarget(key);
+    if (target?.kind !== "computer") return null;
+    const api = cloud.api(target.slot);
+    if (!api) return null;
+    // In the same workspace and folder; a folder the stream had to shorten is not guessed at.
+    const cwd = status.states[target.slot]?.tabs[terminalRefKey(target.ref)]?.cwd ?? "";
+    try {
+      return `${machineId}|${await createComputerTab(api, "Terminal", { workspaceId: target.ref.workspaceId, cwd: cwd.length < 256 ? cwd : "" })}`;
+    } catch (error: unknown) {
+      console.warn("[terminal-window] pane terminal failed:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }, [cloud, here.id, local, status.states]);
+  const listed = useCallback((machineId: string) => (machineId === here.id
+    ? local.state.status === "ready"
+    : status.states[machineId.slice("computer:".length)]?.connected === true), [here.id, local.state.status, status.states]);
+  const panes = useTerminalPanes({ selectedKey, rows: status.rows, select, createBeside, listed });
+  const { dropTerminal } = panes;
+
+  const rowKeys = useMemo(() => new Set(status.rows.map((row) => row.key)), [status.rows]);
+  const exists = useCallback((key: string) => {
+    if (rowKeys.has(key)) return true;
+    return listed(key.slice(0, Math.max(0, key.indexOf("|")))) ? false : null;
+  }, [listed, rowKeys]);
+  const openTabs = useOpenTabs({ selectedKey, groupOf: panes.groupOf, exists });
+  const { forget: forgetTab } = openTabs;
+  // With a space (or machine) chosen, the tab bar shows only its tabs, as the agents list does.
+  const shownTabs = useMemo(() => {
+    if (!sidebar.prefs.filter) return openTabs.tabs;
+    const shown = new Set(visibleRows.map((row) => row.key));
+    return openTabs.tabs.filter((tab) => tab.terminals.some((key) => shown.has(key)));
+  }, [openTabs.tabs, sidebar.prefs.filter, visibleRows]);
+
+  /** A new terminal beside one of the active space's (same machine, workspace and folder), then shown. */
+  const createInSpace = useCallback((neighbour: string) => {
+    const chosen = localChoice.current;
+    const session = sessionRef.current;
+    void createBeside(neighbour).then((created) => {
+      // Shown only if the person chose nothing else meanwhile and is still signed in to the same session.
+      if (created && localChoice.current === chosen && sessionRef.current === session) select(created);
+    });
+  }, [createBeside, select]);
+
+  /** Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab in the tab bar, wrapping around. */
+  const stepTab = useCallback((offset: number) => {
+    const tabs = shownTabs;
+    if (tabs.length === 0) return;
+    const index = tabs.findIndex((tab) => selectedKey !== null && tab.terminals.includes(selectedKey));
+    const next = index < 0 ? (offset > 0 ? 0 : tabs.length - 1) : (index + offset + tabs.length) % tabs.length;
+    const tab = tabs[next];
+    if (tab && tab.key !== selectedKey) select(tab.key);
+  }, [shownTabs, select, selectedKey]);
+
+
+  /**
+   * Ends a live terminal or removes a finished one. Its pane stays until that
+   * is confirmed, then leaves its tab, and the pane beside it takes focus.
+   */
+  const close = useCallback((key: string) => {
+    const target = terminalRowTarget(key);
+    if (!target) return;
+    const ended = () => {
+      forgetTab(key);
+      const successor = dropTerminal(key);
+      if (successor && selectedRef.current === key) select(successor);
+      return successor;
+    };
+    if (target.kind === "local") {
+      const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
+      // Closing a running terminal's pane ends it and takes it off the list, as Herdr does.
+      const ending = finished ? local.remove(target.id) : local.close(target.id);
+      void ending.then((done) => {
+        if (!done) return;
+        if (!ended()) setLocalOpen((current) => (current?.id === target.id ? null : current));
+      });
+      return;
+    }
+    const api = cloud.api(target.slot);
+    if (!api) { setComputerNotice("end-failed"); return; }
+    void closeComputerTab(api, target.ref).then(() => {
+      setComputerNotice(null);
+      if (!ended() && cloudActive.current?.refKey === terminalRefKey(target.ref)) clearActive();
+    }, (error: unknown) => {
+      console.warn("[terminal-window] close failed:", error instanceof Error ? error.name : "UnknownError");
+      setComputerNotice("end-failed");
+    });
+  }, [clearActive, cloud, dropTerminal, forgetTab, local, select]);
+
+  /** Closes a terminal's pane by ending it: a finished one goes at once, a running program asks first. */
+  const requestClose = useCallback((key: string) => {
+    if (isFinished(key, local.state, status.states)) { close(key); return; }
+    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
+  }, [close, local.state, status.rows, status.states]);
+
+  /** Shows nothing: the last tab on the bar was closed. */
+  const deselect = useCallback(() => {
+    localChoice.current += 1;
+    setLocalOpen(null);
+    clearActive();
+  }, [clearActive]);
+
+  /**
+   * Makes a space active (null is All). The terminal on screen stays when it is
+   * in that space; otherwise the space's first open tab shows, or nothing.
+   */
+  const chooseSpace = useCallback((filter: SidebarFilter | null) => {
+    // A new choice: a terminal still starting elsewhere does not take the screen afterwards.
+    localChoice.current += 1;
+    sidebar.setFilter(filter);
+    if (!filter) return;
+    const inSpace = new Set(filterRows(status.rows, filter).map((row) => row.key));
+    if (selectedKey && inSpace.has(selectedKey)) return;
+    const first = openTabs.tabs.find((tab) => tab.terminals.some((key) => inSpace.has(key)));
+    if (first) select(first.terminals.find((key) => inSpace.has(key)) ?? first.key);
+    else deselect();
+  }, [deselect, openTabs.tabs, select, selectedKey, sidebar, status.rows]);
+
+  /** Takes a tab off the bar (its terminals keep running); the tab beside it opens when it was on screen. */
+  const closeTab = useCallback((id: string) => {
+    const index = shownTabs.findIndex((tab) => tab.id === id);
+    const wasOnScreen = shownTabs[index]?.terminals.includes(selectedKey ?? "") ?? false;
+    openTabs.closeTab(id);
+    if (!wasOnScreen) return;
+    // The tab beside it in the bar as shown (the active space), or nothing when the space has no other tab.
+    const next = shownTabs[index + 1] ?? shownTabs[index - 1];
+    if (next) select(next.key);
+    else deselect();
+  }, [deselect, openTabs, select, selectedKey, shownTabs]);
+
+  /** A pane header button. */
+  const paneButton = useCallback((leafId: string, button: PaneButton) => {
+    if (button !== "close") { panes.headerAction(leafId, button === "zoom" ? "zoom" : button); return; }
+    const terminal = panes.tab ? leaves(panes.tab.root).find((leaf) => leaf.id === leafId)?.terminal : undefined;
+    if (terminal) requestClose(terminal);
+  }, [panes, requestClose]);
+
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
+      case "split-right": case "split-down": case "close-pane": case "zoom-pane":
+        panes.run({ command: command.command });
+        return;
+      case "focus-pane": case "swap-pane":
+        panes.run({ command: command.command, direction: command.direction });
+        return;
       case "new-terminal": {
+        // Cmd+T / Cmd+N start the terminal in the active space: in a project, beside one of its terminals
+        // (same workspace and folder); on a machine, on that machine.
+        const space = sidebar.prefs.filter;
+        if (space) {
+          const neighbour = space.space ? visibleRows[0] : undefined;
+          if (neighbour) { createInSpace(neighbour.key); return; }
+          if (space.machineId.startsWith("computer:")) { createCloud(space.machineId.slice("computer:".length)); return; }
+          createLocal({});
+          return;
+        }
         const target = selectedKey ? terminalRowTarget(selectedKey) : null;
         if (target?.kind === "computer") createCloud(target.slot);
         else createLocal({});
         return;
       }
       case "close-terminal":
-        if (selectedRow) requestClose(selectedRow.key);
+        // Cmd+W closes the focused pane, ending its terminal.
+        if (selectedKey) requestClose(selectedKey);
         return;
       case "space": {
         // Ctrl+0 is All; Ctrl+1…9 the spaces in the sidebar's order.
-        if (command.index === 0) { sidebar.setFilter(null); return; }
+        if (command.index === 0) { chooseSpace(null); return; }
         const space = spaces[command.index - 1];
-        if (space) sidebar.setFilter(space);
+        if (space) chooseSpace(space);
         return;
       }
       case "select": {
-        const entry = order[command.index - 1];
-        if (entry) select(entry.key);
+        // Cmd+1…9: that tab of the active space, in tab-bar order.
+        const tab = shownTabs[command.index - 1];
+        if (tab) select(tab.key);
         return;
       }
       case "next": step(1); return;
       case "previous": step(-1); return;
+      case "next-tab": stepTab(1); return;
+      case "previous-tab": stepTab(-1); return;
       case "rename":
         if (selectedRow) setRenaming({ key: selectedRow.key, name: selectedRow.name });
         return;
       case "toggle-sidebar": sidebar.toggleRail(); return;
       case "picker": setPickerOpen(true); return;
-      case "find": setFindRequest((request) => request + 1); return;
+      case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
     }
-  }, [createCloud, createLocal, order, requestClose, select, selectedKey, selectedRow, sidebar, spaces, step]);
-  useEffect(() => onEvent("terminal-window:command", run), [run]);
+  }, [chooseSpace, createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
+  // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
+  // right after a selection change must act on the new selection, not wait for a passive effect.
+  const latestRun = useRef(run);
+  useLayoutEffect(() => { latestRun.current = run; }, [run]);
+  useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
-    machines, ready, cloud, local, here, sidebar, status, now, computerNotice,
-    localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[], findRequest,
+    machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes,
+    localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
+    /** The find request for this terminal: only the one it was made on sees it. */
+    findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close, requestClose, openInTab,
+    select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
+    tabs: shownTabs, closeTab, chooseSpace,
+    /** The bar's +: a new terminal on the machine on screen. */
+    newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
   };
 }

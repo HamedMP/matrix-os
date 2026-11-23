@@ -27,16 +27,48 @@ const Ok = z.object({ ok: z.boolean() }).strict();
  */
 export const TERMINAL_WINDOW_COMMANDS = [
   "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
-  "space",
+  "split-right", "split-down", "close-pane", "zoom-pane", "focus-pane", "swap-pane",
+  "next-tab", "previous-tab", "space",
 ] as const;
 export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
+const PaneDirectionSchema = z.enum(["left", "right", "up", "down"]);
 export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
   z.strictObject({ command: z.literal("select"), index: z.number().int().min(1).max(9) }),
   // Ctrl+1…9 switches to that space in the sidebar's order; Ctrl+0 is All.
   z.strictObject({ command: z.literal("space"), index: z.number().int().min(0).max(9) }),
-  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space"]) }),
+  z.strictObject({ command: z.enum(["focus-pane", "swap-pane"]), direction: PaneDirectionSchema }),
+  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space", "focus-pane", "swap-pane"]) }),
 ]);
 export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
+
+export interface ShortcutKeyEvent {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}
+
+const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
+
+/**
+ * The keys the Terminal window's menu owns (terminal-menu-items.ts). A focused
+ * terminal leaves these to the menu instead of sending them to its program or
+ * its own pane bindings, so every shortcut works while a terminal has focus.
+ * Cmd (Super off macOS) is the menu's modifier; Ctrl stays with the shell
+ * except for Ctrl+Tab and Ctrl+0…9 (spaces). Cmd+C/V/A stay with the terminal's clipboard.
+ */
+export function isTerminalWindowShortcut(event: ShortcutKeyEvent): boolean {
+  const key = event.key.toLowerCase();
+  if (key === "f2" && !event.metaKey && !event.ctrlKey && !event.altKey) return true;
+  if (key === "tab" && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  // Ctrl+0…9 switch space.
+  if (/^[0-9]$/.test(key) && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) return true;
+  if (!event.metaKey || event.ctrlKey) return false;
+  if (event.altKey) return ARROWS.has(key) || (key === "w" && !event.shiftKey);
+  return PRIMARY_KEYS.has(key);
+}
 
 export const TERMINAL_WINDOW_EVENTS = {
   "terminal-window:command": TerminalWindowCommandSchema,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerLocalTerminalIpc } from "@desktop/main/local-terminals/ipc";
 import type { LocalTerminalHost, LocalTerminalHostStatus } from "@desktop/main/local-terminals/host";
 import { LOCAL_TERMINAL_INVOKE_CHANNELS } from "@desktop/shared/local-terminals";
+import { HcCallError } from "@desktop/main/local-terminals/hc-client";
 
 function setup(authorized = true) {
   let status: LocalTerminalHostStatus = "ready";
@@ -119,6 +120,19 @@ describe("local terminal IPC", () => {
     // A call that fails while the core is otherwise healthy is still a failure.
     setStatus("ready");
     await expect(invoke("local-terminal:list", {})).resolves.toEqual({ status: "unavailable" });
+  });
+
+  // Fault detected (Mac, 2026-11-22): every pane of a finished terminal logged a failure with no reason.
+  it("logs a failed attach with the core's reason, but not a finished terminal's expected refusal", async () => {
+    const { host, invoke } = setup();
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    host.attach.mockRejectedValueOnce(new HcCallError("finished"));
+    await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: false });
+    expect(warn).not.toHaveBeenCalled();
+    host.attach.mockRejectedValueOnce(new HcCallError("not_found"));
+    await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: false });
+    expect(warn).toHaveBeenCalledWith("[local-terminals] local-terminal:attach failed:", "HcCallError (not_found): local terminal call failed");
   });
 
   it("reports a start that came too fast, a failed end, and typing into a released attachment", async () => {

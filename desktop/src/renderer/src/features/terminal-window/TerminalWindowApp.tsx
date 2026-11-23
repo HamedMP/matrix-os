@@ -1,20 +1,32 @@
 // The Electron Desktop Terminal window (specs/651-desktop-terminal-window,
 // specs/2706-terminal-window-herdr). Herdr's layout: machines and every
 // terminal by status on the left, the terminal on screen on the right.
-import { useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
 import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
+import { createPaneAttachManager } from "../terminal/terminal-runtime";
+import type { AttachManager } from "../terminal/attach-manager";
+import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
+import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "../terminal/terminal-agent-options";
+import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import type { TerminalMachinesState } from "./use-terminal-machines";
 import { localSessionName, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import { LocalTerminalAttention } from "./LocalTerminalAttention";
 import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
-import { computerMachineId } from "./use-terminal-status";
+import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
+import { computerMachineId, terminalRowTarget } from "./use-terminal-status";
+import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
+import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
+import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
+import { terminalRefKey } from "../../lib/terminal-workspaces";
+import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -32,6 +44,11 @@ const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "rename-failed": "Couldn't rename that terminal. Try again.",
   "end-failed": "Couldn't end that terminal. Try again.",
 };
+
+const PANE_NOTICE = {
+  "split-limit": "A tab holds at most 16 panes.",
+  "split-failed": "Couldn't start a terminal for the new pane. Try again.",
+} as const;
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -135,35 +152,94 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-function TerminalPane({ sessionName, findRequest, ended }: {
-  sessionName: string; findRequest: number; ended?: { title: string; onClose(): void } | null;
+/**
+ * A pane's terminal, with an attachment of its own so every visible pane
+ * streams live, not only the focused one. Disposed with its pane.
+ */
+// Memoized: the window redraws on every status event, and a terminal must not redraw with it.
+const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+  sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
 }) {
+  const [manager, setManager] = useState<AttachManager | null>(null);
+  useEffect(() => {
+    const created = createPaneAttachManager();
+    // react-doctor-disable-next-line react-doctor/no-derived-state-effect -- an external resource made and disposed with the pane
+    setManager(created);
+    return () => created.dispose();
+  }, []);
+  if (!manager) return null;
+  return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
+    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
+    controlsHost={null} />;
+});
+
+function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
   return (
-    <main aria-label="Terminal" className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <TerminalView key={sessionName} sessionName={sessionName} active findRequest={findRequest} />
-      {ended ? (
-        <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
-          style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
-          <span>{ended.title} ended</span>
-          <button type="button" aria-label={`Close ${ended.title}`} onClick={ended.onClose}
-            className="flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
-            <X size={11} aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
-    </main>
+    <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
+      style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
+      <span>{title} ended</span>
+      <button type="button" aria-label={`Close ${title}`} onClick={onClose}
+        className="flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
+        <X size={11} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+/** The terminal a pane shows, by its sidebar row key. */
+function paneSessionName(key: string): string | null {
+  const target = terminalRowTarget(key);
+  if (!target) return null;
+  return target.kind === "local" ? localSessionName(target.id) : terminalRefKey(target.ref);
+}
+
+function isAgentId(agent: string | undefined): agent is TerminalAgentId {
+  return TERMINAL_AGENT_OPTIONS.some((option) => option.id === agent);
+}
+
+/** A pane header: the agent's icon, the terminal's name, and where it runs. */
+export function paneInfoFor(row: TerminalSidebarRow | undefined, fallback: string): PaneInfo {
+  if (!row) return { title: fallback, icon: <SquareTerminal size={13} aria-hidden="true" style={secondaryText} /> };
+  const where = [row.machine.name, row.space ?? row.detail].filter(Boolean).join(" · ");
+  return {
+    title: row.name,
+    detail: where,
+    working: row.status === "working",
+    icon: isAgentId(row.agent) ? <DesktopTerminalAgentLogo agent={row.agent} compact /> : <SquareTerminal size={13} aria-hidden="true" style={secondaryText} />,
+  };
+}
+
+function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
+  const rows = new Map(view.status.rows.map((row) => [row.key, row]));
+  // One callback for every pane's terminal that always runs the latest handler, so status updates leave panes alone.
+  const latestPaneAction = useRef(view.panes.paneAction);
+  useEffect(() => { latestPaneAction.current = view.panes.paneAction; }, [view.panes.paneAction]);
+  const paneAction = useCallback((action: TerminalPaneAction) => latestPaneAction.current(action), []);
+  const ended = view.endedLocal;
+  return (
+    <TerminalPaneTree tab={tab}
+      paneInfo={(leaf) => paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal")}
+      onPaneButton={view.paneButton}
+      onFocus={view.panes.focusLeaf} onResize={view.panes.resize} onMove={view.panes.move}
+      renderPane={(leaf, focused) => {
+        const sessionName = paneSessionName(leaf.terminal);
+        if (!sessionName) return null;
+        // A session change remounts each pane so it attaches again with the new credentials.
+        return (
+          <>
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
+            {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
+          </>
+        );
+      }} />
   );
 }
 
 function ActivePane({ view }: { view: TerminalWindowView }) {
-  // A session change resets the shared attach manager; the epoch remounts the
-  // local pane so it attaches again instead of staying on a disposed attachment.
-  if (view.localTerminal) {
-    return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)}
-      findRequest={view.findRequest} ended={view.endedLocal ? { title: view.endedLocal.title, onClose: view.dismissEndedLocal } : null} />;
-  }
-  const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} findRequest={view.findRequest} />;
+  // A terminal on its own is a one-pane tab, so every terminal has a header and buttons.
+  if (view.panes.tab) return <Panes view={view} tab={view.panes.tab} />;
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 
@@ -195,13 +271,29 @@ export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const view = useTerminalWindow();
   const machines = useMemo(() => sidebarMachines(view), [view]);
+  const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
+  const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
+    const filter = prefs.filter;
+    if (!filter) return null;
+    // A machine is a space itself; a project is a space under it.
+    const machineName = prefs.spaceStyles[filter.machineId]?.name ?? machines.find((machine) => machine.id === filter.machineId)?.name ?? "";
+    const style = prefs.spaceStyles[filter.space ? spaceId(filter.machineId, filter.space) : filter.machineId];
+    const label = style?.name ?? filter.space ?? machineName;
+    return {
+      label,
+      machine: machineName,
+      color: style?.color ?? defaultSpaceColor(label),
+      ...(style?.icon ? { icon: style.icon } : {}),
+    };
+  }, [machines, prefs.filter, prefs.spaceStyles]);
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
 
   const failed = view.local.notice ?? view.computerNotice;
-  const notice = failed ? <p role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[failed]}</p> : null;
+  const noticeText = failed ? LOCAL_NOTICE[failed] : view.panes.notice ? PANE_NOTICE[view.panes.notice] : null;
+  const notice = noticeText ? <p role="alert" className="px-2 py-1 text-[12px]">{noticeText}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
       <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(`${view.here.id}|${id}`)} />
@@ -221,7 +313,7 @@ export default function TerminalWindowApp() {
           onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
           onOpenInTab={view.openInTab}
           filter={prefs.filter}
-          onFilter={view.sidebar.setFilter}
+          onFilter={view.chooseSpace}
           onSettings={() => focusMainWindow("settings")}
           machineOrder={prefs.machineOrder}
           onMachineOrder={view.sidebar.setMachineOrder}
@@ -248,7 +340,11 @@ export default function TerminalWindowApp() {
           onResize={view.sidebar.setWidth}
           notices={notice}
         />
-        <ActivePane view={view} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+            icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
+          <ActivePane view={view} />
+        </div>
       </div>
       <StatusBar view={view} />
       <TerminalPicker open={view.picker.open} entries={view.order} onClose={view.picker.close}

@@ -14,10 +14,12 @@ export function terminalWindowMenuItems(
   const item = (label: string, accelerator: string, sent: TerminalWindowCommand): MenuItemConstructorOptions => ({
     label, accelerator: key(accelerator), click: () => command(sent),
   });
+  const directions = [["Left", "left"], ["Right", "right"], ["Up", "up"], ["Down", "down"]] as const;
   return [
     item("New Terminal", "Cmd+N", { command: "new-terminal" }),
     { ...item("New Terminal", "Cmd+T", { command: "new-terminal" }), visible: false, acceleratorWorksWhenHidden: true },
-    item("Close Terminal", "Cmd+W", { command: "close-terminal" }),
+    // Herdr's Cmd+W closes the focused pane, ending its terminal (it asks first while a program runs).
+    item("Close Pane", "Cmd+W", { command: "close-terminal" }),
     { label: "Close Window", accelerator: key("Cmd+Alt+W"), click: closeWindow },
     { type: "separator" },
     item("Rename Terminal…", "F2", { command: "rename" }),
@@ -27,9 +29,9 @@ export function terminalWindowMenuItems(
     { ...item("Commands…", "Cmd+Shift+P", { command: "picker" }), visible: false, acceleratorWorksWhenHidden: true },
     item("Next Terminal", "Cmd+]", { command: "next" }),
     item("Previous Terminal", "Cmd+[", { command: "previous" }),
-    // Ctrl+Tab cycles like Herdr's; it is hidden so the menu shows one entry per action.
-    { ...item("Next Terminal", "Ctrl+Tab", { command: "next" }), visible: false, acceleratorWorksWhenHidden: true },
-    { ...item("Previous Terminal", "Ctrl+Shift+Tab", { command: "previous" }), visible: false, acceleratorWorksWhenHidden: true },
+    // Ctrl+Tab cycles the open tabs in the tab bar, as Herdr's does.
+    item("Next Tab", "Ctrl+Tab", { command: "next-tab" }),
+    item("Previous Tab", "Ctrl+Shift+Tab", { command: "previous-tab" }),
     {
       label: "Select Terminal",
       submenu: Array.from({ length: 9 }, (_, offset) => item(`Terminal ${offset + 1}`, `Cmd+${offset + 1}`, { command: "select", index: offset + 1 })),
@@ -43,6 +45,20 @@ export function terminalWindowMenuItems(
           label: `Space ${offset + 1}`, accelerator: `Ctrl+${offset + 1}`, click: () => command({ command: "space", index: offset + 1 }),
         })),
       ],
+    },
+    { type: "separator" },
+    item("Split Right", "Cmd+D", { command: "split-right" }),
+    item("Split Down", "Cmd+Shift+D", { command: "split-down" }),
+    // Takes the pane off screen; its terminal keeps running in the sidebar.
+    item("Hide Pane", "Cmd+Shift+W", { command: "close-pane" }),
+    item("Zoom Pane", "Cmd+Shift+Enter", { command: "zoom-pane" }),
+    {
+      label: "Focus Pane",
+      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+${label}`, { command: "focus-pane", direction })),
+    },
+    {
+      label: "Swap Pane",
+      submenu: directions.map(([label, direction]) => item(label, `Cmd+Alt+Shift+${label}`, { command: "swap-pane", direction })),
     },
     { type: "separator" },
     item("Toggle Sidebar", "Cmd+B", { command: "toggle-sidebar" }),

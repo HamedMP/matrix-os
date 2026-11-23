@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
 import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
@@ -22,9 +22,14 @@ export const localSessionName = (id: string) => `${LOCAL_TERMINAL_SESSION_PREFIX
  * trusted core (spec 2706), so a change, a completion included, shows as it
  * happens, whether or not the window has focus; nothing is polled.
  */
+
+const CLOSE_REMOVE_ATTEMPTS = 5;
+const CLOSE_REMOVE_DELAY_MS = 200;
 export function useLocalTerminals() {
   const { state: facts, retry } = useLocalTerminalFacts();
   const [creating, setCreating] = useState(false);
+  // One start at a time, read at call time: a shortcut can fire before the render that cleared it.
+  const starting = useRef(false);
   const [notice, setNotice] = useState<LocalTerminalsNotice>(null);
 
   const state = useMemo<LocalTerminalsState>(() => {
@@ -42,7 +47,8 @@ export function useLocalTerminals() {
 
   /** Starts a login shell, or a known agent in one, and returns its id, or null when it could not start. */
   const create = useCallback(async (launch: { agent?: LocalTerminalAgent } = {}): Promise<string | null> => {
-    if (creating) return null;
+    if (starting.current) return null;
+    starting.current = true;
     setCreating(true);
     try {
       const result = await invoke("local-terminal:create", { cols: 100, rows: 30, ...(launch.agent ? { agent: launch.agent } : {}) });
@@ -57,11 +63,12 @@ export function useLocalTerminals() {
     } catch (error: unknown) {
       console.warn("[local-terminal] create failed:", error instanceof Error ? error.name : "UnknownError");
     } finally {
+      starting.current = false;
       setCreating(false);
     }
     setNotice("create-failed");
     return null;
-  }, [creating]);
+  }, []);
 
   /** Ends a terminal. Resolves true only once the trusted core confirmed it. */
   const end = useCallback(async (id: string): Promise<boolean> => {
@@ -87,6 +94,25 @@ export function useLocalTerminals() {
     return removed;
   }, []);
 
+  /**
+   * Ends a terminal and takes it off the list, as closing its pane does.
+   * The core refuses to remove a terminal until its program has exited, so
+   * the removal is retried briefly. Resolves true once it has ended.
+   */
+  const close = useCallback(async (id: string): Promise<boolean> => {
+    if (!(await end(id))) return false;
+    for (let attempt = 0; attempt < CLOSE_REMOVE_ATTEMPTS; attempt += 1) {
+      try {
+        if ((await invoke("local-terminal:remove", { id })).ok) return true;
+      } catch (error: unknown) {
+        console.warn("[local-terminal] remove after end failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      await new Promise((resolve) => setTimeout(resolve, CLOSE_REMOVE_DELAY_MS));
+    }
+    // Ended but still listed as finished: it can be removed from the sidebar later.
+    return true;
+  }, [end]);
+
   /** Renames a terminal; the new name shows on every client of this core. */
   const rename = useCallback(async (id: string, name: string): Promise<boolean> => {
     let renamed = false;
@@ -99,5 +125,5 @@ export function useLocalTerminals() {
     return renamed;
   }, []);
 
-  return { state, creating, notice, retry, create, end, remove, rename };
+  return { state, creating, notice, retry, create, end, remove, close, rename };
 }

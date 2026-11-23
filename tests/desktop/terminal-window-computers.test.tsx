@@ -132,6 +132,18 @@ describe("Terminal window computers", () => {
     fireEvent.click(space("neo spaces", "web"));
     await waitFor(() => expect(within(sidebar()).getAllByRole("button").map((button) => button.textContent).join()).toContain("site"));
     expect(within(sidebar()).queryByRole("button", { name: /build/ })).toBeNull();
+
+    // The tab bar follows the chosen space too; All shows every open tab again.
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
+    fireEvent.click(within(sidebar()).getByRole("button", { name: /site/ }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site"]));
+    fireEvent.click(within(within(machines).getByRole("list", { name: "neo spaces" })).getAllByRole("button", { name: /web/ })
+      .find((button) => button.hasAttribute("aria-pressed"))!);
+    await waitFor(() => expect(tabNames()).toEqual(["site"]));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site"]));
   });
 
   // Hamed, 2026-11-22 (navigation model): Ctrl+1…9 switch space in the sidebar's order, Ctrl+0 is All.
@@ -160,6 +172,90 @@ describe("Terminal window computers", () => {
     fireEvent.click(within(actions).getByRole("button", { name: "Open in a tab" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /Show all machines/ }).getAttribute("aria-label")).toBe("Show all machines (now neo · web)"));
     expect(within(sidebar()).getByRole("button", { name: /site/ }).getAttribute("aria-current")).toBe("true");
+  });
+
+  // Hamed, 2026-11-22 (navigation model): the top bar shows the active space as a chip and only its
+  // tabs; Cmd+1…9 pick among them; Cmd+T starts a terminal in that space.
+  it("keeps tabs, Cmd+digits and new terminals inside the active space", async () => {
+    const WEB_WS = `tws_${"b".repeat(32)}`;
+    const TAB_3 = `tt_${"3".repeat(32)}`;
+    const TAB_4 = `tt_${"4".repeat(32)}`;
+    const NEW_TAB = `tt_${"5".repeat(32)}`;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).endsWith("/tabs")) return json({ tab: { id: NEW_TAB, name: "Terminal" } }, 201);
+      return json(workspace([]));
+    });
+    render(<TerminalWindowApp />);
+    await stream("primary", [
+      tabFacts(TAB_1, "build"),
+      { ...tabFacts(TAB_3, "site"), ref: { workspaceId: WEB_WS, tabId: TAB_3 }, projectId: "web", cwd: "/srv/web" },
+      { ...tabFacts(TAB_4, "docs"), ref: { workspaceId: WEB_WS, tabId: TAB_4 }, projectId: "web", cwd: "/srv/web" },
+    ]);
+    for (const name of [/build/, /site/, /docs/]) fireEvent.click(await within(sidebar()).findByRole("button", { name }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["build", "site", "docs"]));
+    expect(screen.getByRole("status", { name: "All spaces" })).toBeTruthy();
+    // Space 3: This Computer's home, neo's main, then neo's web.
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    await waitFor(() => expect(tabNames()).toEqual(["site", "docs"]));
+    expect(screen.getByRole("status", { name: "Space web on neo" })).toBeTruthy();
+    // The terminal on screen (docs) is in web, so it stays.
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`));
+    // A space with no open tab shows nothing until one is opened there.
+    act(() => emit("terminal-window:command", { command: "space", index: 4 }));
+    await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
+    // Back in web with nothing on screen: its first tab shows.
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_3}`));
+    act(() => emit("terminal-window:command", { command: "select", index: 2 }));
+    await waitFor(() => expect(within(sidebar()).getByRole("button", { name: /docs/ }).getAttribute("aria-current")).toBe("true"));
+    act(() => emit("terminal-window:command", { command: "select", index: 1 }));
+    await waitFor(() => expect(within(sidebar()).getByRole("button", { name: /site/ }).getAttribute("aria-current")).toBe("true"));
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WEB_WS}/tabs`));
+    const createCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/tabs") && (init as RequestInit).method === "POST")!;
+    expect(JSON.parse(String((createCall[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "/srv/web" });
+
+    // A computer is a space itself: its chip names it, and Cmd+T starts the terminal on it (its main workspace).
+    act(() => emit("terminal-window:command", { command: "space", index: 2 }));
+    await waitFor(() => expect(screen.getByRole("status", { name: "Space neo" })).toBeTruthy());
+    fetchMock.mockClear();
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/ensure`));
+  });
+
+  // Fault detected (Greptile, #3569): closing a tab opened a hidden tab from another space, and a terminal
+  // that finished starting late took the screen from a newer choice.
+  it("closes a tab to its neighbour in the space, and keeps a newer choice over a late new terminal", async () => {
+    const WEB_WS = `tws_${"b".repeat(32)}`;
+    const TAB_3 = `tt_${"3".repeat(32)}`;
+    const TAB_4 = `tt_${"4".repeat(32)}`;
+    let finish: (value: unknown) => void = () => undefined;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && String(url).endsWith("/tabs")) return new Promise((resolve) => { finish = resolve; });
+      return json(workspace([]));
+    });
+    render(<TerminalWindowApp />);
+    await stream("primary", [
+      tabFacts(TAB_1, "build"),
+      { ...tabFacts(TAB_3, "site"), ref: { workspaceId: WEB_WS, tabId: TAB_3 }, projectId: "web" },
+      { ...tabFacts(TAB_4, "docs"), ref: { workspaceId: WEB_WS, tabId: TAB_4 }, projectId: "web" },
+    ]);
+    // Opened in this order, so the bar interleaves spaces: site, build, docs.
+    for (const name of [/site/, /build/, /docs/]) fireEvent.click(await within(sidebar()).findByRole("button", { name }));
+    act(() => emit("terminal-window:command", { command: "space", index: 3 }));
+    const tabNames = () => within(screen.getByRole("tablist", { name: "Open terminals" })).getAllByRole("tab").map((tab) => tab.textContent);
+    await waitFor(() => expect(tabNames()).toEqual(["site", "docs"]));
+    fireEvent.click(screen.getByRole("button", { name: "Close tab docs" }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_3}`));
+
+    act(() => emit("terminal-window:command", { command: "new-terminal" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WEB_WS}/tabs`));
+    // While it starts, the person opens docs; the late terminal must not take the screen.
+    fireEvent.click(within(sidebar()).getByRole("button", { name: /docs/ }));
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`));
+    await act(async () => { finish(json({ tab: { id: `tt_${"5".repeat(32)}`, name: "Terminal" } }, 201)); });
+    expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`);
   });
 
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
@@ -321,6 +417,22 @@ describe("Terminal window computers", () => {
     fireEvent.click(within(sidebar()).getByRole("button", { name: /old/ }));
     act(() => emit("terminal-window:command", { command: "close-terminal" }));
     await waitFor(() => expect(requests()).toContain(`DELETE ${HOST}/api/terminal/workspaces/${WS}/tabs/${TAB_2}`));
+  });
+
+  // Fault detected (Greptile, #3569): a split put the new terminal in main at home instead of beside the source.
+  it("splits a computer terminal with a new tab in the same workspace and folder", async () => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => (init?.method === "POST"
+      ? json({ tab: { id: TAB_2, name: "Terminal" } }, 201)
+      : json(workspace([{ id: TAB_1, name: "build" }, { id: TAB_2, name: "Terminal" }]))));
+    window.localStorage.clear();
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build", { cwd: "projects/app" })]);
+    fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
+    act(() => emit("terminal-window:command", { command: "split-right" }));
+    await waitFor(() => expect(requests()).toContain(`POST ${HOST}/api/terminal/workspaces/${WS}/tabs`));
+    expect(requests()).not.toContain(`POST ${HOST}/api/terminal/workspaces/ensure`);
+    const create = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST")!;
+    expect(JSON.parse(String((create[1] as RequestInit).body))).toEqual({ name: "Terminal", cwd: "projects/app" });
   });
 
   it("refreshes a newly committed listing when focus arrives before passive effects", async () => {

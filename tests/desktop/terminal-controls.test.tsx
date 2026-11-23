@@ -94,6 +94,44 @@ describe("Electron Desktop shared terminal controls", () => {
     );
   });
 
+  // Spec 2706 layer 6: in the Terminal window the pane buttons drive its own split tree, not Zellij.
+  it("hands pane actions to the host's panes, keeping scroll on the computer", async () => {
+    const { api, initialProps } = setup();
+    const onPaneAction = vi.fn();
+    const { result } = renderHook(() => useDesktopTerminalControls({ ...initialProps, onPaneAction }));
+    await act(async () => { await result.current.runAction({ type: "split", direction: "down" }); });
+    await act(async () => { await result.current.runAction({ type: "scroll", edge: "top" }); });
+    expect(onPaneAction).toHaveBeenCalledExactlyOnceWith({ type: "split", direction: "down" });
+    expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/terminal/sessions/session-one/pane-actions", { type: "scroll", edge: "top" });
+  });
+
+  // Fault detected (Greptile, #3569): History top in pane A, then a click on pane B before it settled,
+  // gave the keyboard back to A.
+  it("does not take the keyboard back after the person moved to another pane", async () => {
+    const { api, focus, initialProps } = setup();
+    let settle: (value: unknown) => void = () => undefined;
+    api.post.mockImplementation(() => new Promise((resolve) => { settle = resolve; }));
+    const { result, rerender } = renderHook((props: typeof initialProps & { focused: boolean }) => useDesktopTerminalControls({ ...props, onPaneAction: vi.fn() }),
+      { initialProps: { ...initialProps, focused: true } });
+    let running: Promise<void> = Promise.resolve();
+    act(() => { running = result.current.runAction({ type: "scroll", edge: "top" }); });
+    rerender({ ...initialProps, focused: false });
+    await act(async () => { settle({ ok: true }); await running; });
+    expect(focus).not.toHaveBeenCalled();
+    rerender({ ...initialProps, focused: true });
+    await act(async () => { await result.current.runAction({ type: "split", direction: "right" }); });
+    expect(focus).toHaveBeenCalled();
+  });
+
+  it("enables the host's pane actions for a terminal on this device, which has no computer API", async () => {
+    const { initialProps } = setup();
+    const onPaneAction = vi.fn();
+    const { result } = renderHook(() => useDesktopTerminalControls({ ...initialProps, api: null, onPaneAction }));
+    expect(result.current.paneActionsEnabled).toBe(true);
+    await act(async () => { await result.current.runAction({ type: "fullscreen" }); });
+    expect(onPaneAction).toHaveBeenCalledWith({ type: "fullscreen" });
+  });
+
   it("includes Chat authorization context for an embedded Chat terminal", async () => {
     const { api, initialProps } = setup();
     const { result } = renderHook(() =>

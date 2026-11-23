@@ -109,6 +109,7 @@ describe("This Computer terminals", () => {
     const operator = installOperator({
       "local-terminal:watch": watching([fact("t1", "zsh", { status: "working" })]),
       "local-terminal:kill": () => ({ ok: true }),
+      "local-terminal:remove": () => ({ ok: true }),
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await findRow(/zsh/));
@@ -119,6 +120,8 @@ describe("This Computer terminals", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t1" });
+    // Closing the pane takes the ended terminal off the list too.
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:remove", { id: "t1" });
     operator.push([]);
     expect(await screen.findByText(/No terminals yet/)).toBeTruthy();
   });
@@ -348,18 +351,24 @@ describe("Terminal window shortcuts", () => {
 
   const three = [fact("t1", "alpha", { statusAt: 3_000 }), fact("t2", "beta", { statusAt: 2_000 }), fact("t3", "gamma", { statusAt: 1_000 })];
 
-  it("selects by number and steps through terminals in sidebar order", async () => {
+  // Cmd+] / Cmd+[ step through the sidebar; Cmd+1…9 pick a tab of the active space (navigation model).
+  it("steps through terminals in sidebar order and selects tabs by number", async () => {
     const operator = installOperator({ "local-terminal:watch": watching(three) });
     render(<TerminalWindowApp />);
     await findRow(/alpha/);
-    operator.command({ command: "select", index: 2 });
-    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t2");
+    operator.command({ command: "next" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
+    operator.command({ command: "next" });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2");
     operator.command({ command: "next" });
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
-    operator.command({ command: "next" });
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
     operator.command({ command: "previous" });
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t2");
+    // The tab bar now holds t1, t2, t3 in the order they were opened.
+    operator.command({ command: "select", index: 1 });
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1"));
+    operator.command({ command: "select", index: 3 });
+    await waitFor(() => expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3"));
     operator.command({ command: "select", index: 9 });
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
   });
@@ -473,12 +482,14 @@ describe("local terminal socket", () => {
   it("attaches at the requested size, relays output in order and forwards input and resize", async () => {
     const operator = installOperator({ "local-terminal:attach": () => ({ ok: true, attachId: 5 }), "local-terminal:ack": () => ({ ok: true }),
       "local-terminal:input": () => ({ ok: true }), "local-terminal:resize": () => ({ ok: true }), "local-terminal:detach": () => ({ ok: true }) });
-    const handlers = events();
+    const handlers = { ...events(), onCanonicalSize: vi.fn() };
     const socket = createLocalTerminalSocket("local:t3", handlers);
     socket.resize(132, 43);
     socket.connect();
     await waitFor(() => expect(handlers.onState).toHaveBeenCalledWith("attached"));
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:attach", { id: "t3", cols: 132, rows: 43 });
+    // Fault detected (Mac, 2026-11-22): a local pane never took a new grid after a split, only scaled.
+    expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 132, rows: 43 });
 
     operator.emit("local-terminal:output", { attachId: 9, data: "someone else" });
     operator.emit("local-terminal:output", { attachId: 5, data: "one" });
@@ -494,6 +505,7 @@ describe("local terminal socket", () => {
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "ls\r" });
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:input", { attachId: 5, data: "\x1b[M", binary: true });
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:resize", { attachId: 5, cols: 80, rows: 24 });
+    await waitFor(() => expect(handlers.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 80, rows: 24 }));
 
     socket.detach();
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:detach", { attachId: 5 });
