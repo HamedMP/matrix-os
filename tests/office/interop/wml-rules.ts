@@ -233,6 +233,15 @@ export async function wordProblems(bytes: Uint8Array): Promise<string[]> {
     }
     for (const problem of structureProblems(root)) problems.push(`${part}: ${problem}`);
     if (stories.includes(part)) for (const problem of anchorProblems(root, revisionIds)) problems.push(`${part}: ${problem}`);
+    if (stories.includes(part) && part !== documentPart && !related(pkg, documentPart, "/comments").includes(part)) {
+      // The comments part belongs to the main document; no other story can refer to it.
+      for (const element of walk(root)) {
+        if (["w:commentRangeStart", "w:commentRangeEnd", "w:commentReference"].includes(element.name)) {
+          problems.push(`${part}: <${element.name}> outside the main document`);
+          break;
+        }
+      }
+    }
   }
   const shared = repeated(revisionIds);
   if (shared.length > 0) problems.push(`revision w:id used in more than one place across the parts: ${shared.slice(0, 8).join(", ")}`);

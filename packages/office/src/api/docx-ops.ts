@@ -159,7 +159,12 @@ export interface SetCellTextOp {
   granularity?: ReplaceGranularity;
 }
 
-/** Starts a comment thread anchored to a non-empty range. Comments are never tracked changes. */
+/**
+ * Starts a comment thread anchored to a non-empty range of the body (table
+ * cells included). A range in a header, a footer or a note throws
+ * `invalid_operation`: the file format has no place for such a comment.
+ * Comments are never tracked changes.
+ */
 export interface AddCommentOp {
   type: "addComment";
   range: TextRange;

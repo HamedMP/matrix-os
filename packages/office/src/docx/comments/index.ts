@@ -95,6 +95,10 @@ function topInline(node: XmlElement): XmlElement {
 export function addComment(context: EditContext, range: ResolvedRange, text: string): CommentId {
   const { index } = context;
   if (range.empty) throw new OfficeError("invalid_argument", "a comment needs a range that is not empty");
+  // The comments part belongs to the main document: a header, a footer or a note cannot refer to it.
+  if (index.story(range.start.record.storyId)?.kind !== "body") {
+    throw new OfficeError("invalid_operation", "a comment can only be anchored in the body of the document");
+  }
   const id = index.allocateCommentId();
   const endPosition = { blockId: range.end.record.id, offset: range.end.offset };
   const startPosition = { blockId: range.start.record.id, offset: range.start.offset };
