@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AllSpacesRow, SpaceList, defaultSpaceColor, inOrder, type SpaceEntry,
 } from "@desktop/renderer/src/features/terminal-window/SidebarSpaces";
-import type { SpaceStyle } from "@desktop/renderer/src/features/terminal-window/use-sidebar-prefs";
+import { mergeOrder, type SpaceStyle } from "@desktop/renderer/src/features/terminal-window/use-sidebar-prefs";
 
 // Hamed, 2026-11-22: Herdr's Spaces. Each machine is a space: one row with a colored letter (or
 // icon) badge and its name; a computer's real projects sit under it behind a chevron that only
@@ -115,5 +115,14 @@ describe("Terminal window Spaces", () => {
 
   it("keeps a space's default color steady for its name", () => {
     expect(defaultSpaceColor("matrix-os")).toBe(defaultSpaceColor("matrix-os"));
+  });
+});
+
+// Fault detected (Greptile, #3567): reordering while a machine was offline dropped its saved place.
+describe("saved row order", () => {
+  it("keeps rows not on screen in their saved places", () => {
+    expect(mergeOrder(["a", "offline", "b", "c"], ["c", "a", "b"])).toEqual(["c", "offline", "a", "b"]);
+    expect(mergeOrder([], ["b", "a"])).toEqual(["b", "a"]);
+    expect(mergeOrder(["a", "b"], ["b", "a", "new"])).toEqual(["b", "a", "new"]);
   });
 });

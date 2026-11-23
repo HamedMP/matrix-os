@@ -65,6 +65,18 @@ function write(prefs: SidebarPrefs): void {
   }
 }
 
+/**
+ * A new order for the rows on screen, merged into the saved one: rows not on
+ * screen now (a machine that is offline) keep their saved places, and the
+ * visible rows take the visible slots in their new order.
+ */
+export function mergeOrder(saved: readonly string[], visible: readonly string[]): string[] {
+  const shown = new Set(visible);
+  const queue = [...visible];
+  const merged = saved.map((id) => (shown.has(id) ? queue.shift()! : id));
+  return [...merged, ...queue];
+}
+
 function toggled(list: readonly string[], id: string): string[] {
   return list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id].slice(-MAX_FOLDS);
 }
@@ -100,9 +112,11 @@ export function useSidebarPrefs() {
       return { ...current, spaceStyles };
     }), [update]),
     setSpaceOrder: useCallback((machineId: string, order: readonly string[]) => update((current) => ({
-      ...current, spaceOrder: { ...current.spaceOrder, [machineId]: order.slice(0, MAX_SPACES) },
+      ...current, spaceOrder: { ...current.spaceOrder, [machineId]: mergeOrder(current.spaceOrder[machineId] ?? [], order).slice(0, MAX_SPACES) },
     })), [update]),
-    setMachineOrder: useCallback((order: readonly string[]) => update((current) => ({ ...current, machineOrder: order.slice(0, MAX_FOLDS) })), [update]),
+    setMachineOrder: useCallback((order: readonly string[]) => update((current) => ({
+      ...current, machineOrder: mergeOrder(current.machineOrder, order).slice(0, MAX_FOLDS),
+    })), [update]),
     toggleSpaceExpanded: useCallback((id: string) => update((current) => ({
       ...current,
       expandedSpaces: current.expandedSpaces.includes(id)
