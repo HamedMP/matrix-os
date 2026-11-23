@@ -201,14 +201,17 @@ export const tasksCommand = defineCommand({
         ...(text(args, "worktree") ? { worktree: oneOf(["new", "existing", "none"] as const, text(args, "worktree")) } : {}),
         ...(text(args, "message") ? { message: text(args, "message") } : {}),
       });
-      const opened = `${result.session.kind} ${clean(result.session.title)} for ${clean(result.task.key)}`;
+      // A chat start prepares the task's own chat (every task is a chat); a terminal start attaches a tab.
+      const opened = result.session
+        ? `terminal ${clean(result.session.title)} for ${clean(result.task.key)}`
+        : `the chat of ${clean(result.task.key)}`;
       if (result.firstMessage === undefined) {
         return { data: { task: result.task, session: result.session, agentStarted: true }, human: [`Started ${opened}`] };
       }
-      // Without a model selection the gateway opens the session but sends nothing: say so and hand over the message.
-      const where = result.session.kind === "chat"
-        ? "Open the chat from the task on the board and send this first message:"
-        : "Send this first message to the agent in the terminal tab:";
+      // Without a model selection the gateway prepares the work but sends nothing: say so and hand over the message.
+      const where = result.session
+        ? "Send this first message to the agent in the terminal tab:"
+        : "Open the task's chat from the board and send this first message:";
       return {
         data: { task: result.task, session: result.session, firstMessage: result.firstMessage, agentStarted: false },
         human: [`Opened ${opened}. No agent turn was started.`, where, "", clean(result.firstMessage, true)],

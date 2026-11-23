@@ -123,25 +123,26 @@ describe("matrix tasks inside a task session", () => {
     inTaskSession();
     const firstMessage = "MOS-42 Fix login\n\nThe form \u001b[31mbreaks\u001b[0m.\n\nUse the new endpoint";
     gateway((call) => call.path.endsWith("/start")
-      ? json({ task: taskFixture(), session: { ref: "chat_9", kind: "chat", title: "MOS-42", role: "main", agentStatus: "idle" }, firstMessage }, 201)
+      ? json({ task: taskFixture(), session: null, firstMessage }, 201)
       : undefined);
     const { out } = capture();
     await run("start", { message: "Use the new endpoint" });
     const printed = out.join("\n");
     expect(printed).toMatch(/no agent turn was started/i);
+    expect(printed).toContain("the chat of MOS-42");
     expect(printed).toContain("The form breaks.");
     expect(printed).toContain("Use the new endpoint");
     expect(printed).not.toContain("\u001b");
 
     out.length = 0;
     await run("start", { json: true });
-    expect(JSON.parse(out[0]!)).toMatchObject({ ok: true, data: { session: { ref: "chat_9" }, firstMessage, agentStarted: false } });
+    expect(JSON.parse(out[0]!)).toMatchObject({ ok: true, data: { session: null, firstMessage, agentStarted: false } });
   });
 
   it("reports an agent turn as started when the gateway sent the first message", async () => {
     inTaskSession();
     gateway((call) => call.path.endsWith("/start")
-      ? json({ task: taskFixture(), session: { ref: "chat_9", kind: "chat", title: "MOS-42", role: "main", agentStatus: "working" } }, 201)
+      ? json({ task: taskFixture(), session: null }, 201)
       : undefined);
     const { out } = capture();
     await run("start", { json: true });
@@ -261,10 +262,11 @@ describe("matrix tasks get output", () => {
       parentTaskId: "task_parent",
       blockedBy: ["task_blocker"],
       commentCount: 2,
-      sessions: [{ ref: "chat_gone", kind: "chat", title: "Old chat", role: "main", agentStatus: "idle", unavailable: true }],
+      chatStatus: "working",
+      sessions: [{ ref: "term.ws_1.tab_gone", kind: "terminal", title: "Old tab", role: "main", agentStatus: "idle", unavailable: true }],
     });
     expect(lines).toEqual(expect.arrayContaining([
-      "due: 2026-11-24", "parent: task_parent", "blocked by: task_blocker", "comments: 2", "chat: Old chat (unavailable)",
+      "due: 2026-11-24", "parent: task_parent", "blocked by: task_blocker", "comments: 2", "chat: chat_42 (working)", "terminal: Old tab (unavailable)",
     ]));
   });
 });

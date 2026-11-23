@@ -119,6 +119,7 @@ export function taskDetail(task: ProjectTask): string[] {
   if (task.commentCount > 0) lines.push(`comments: ${task.commentCount}`);
   if (task.branch) lines.push(`branch: ${clean(task.branch)}`);
   if (task.pullRequest) lines.push(`pull request: #${task.pullRequest.number} ${task.pullRequest.state} ${clean(task.pullRequest.url)}`);
+  if (task.chatId) lines.push(`chat: ${clean(task.chatId)} (${task.chatStatus})`);
   for (const session of task.sessions) {
     lines.push(`${session.kind}: ${clean(session.title)} (${session.unavailable ? "unavailable" : session.agentStatus})`);
   }
