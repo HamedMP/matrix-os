@@ -201,7 +201,6 @@ it.each(["Projects", "Shared"])("finishes local %s filtering without an unissued
   expect(search).not.toHaveBeenCalled();
   if(scope==="Projects") expect(screen.getByRole("option",{name:/Local project/})).toBeTruthy();
 });
-
 it.each(['Agents','Schedules','Shared with me','Shared from Search'])('leaves the archive when opening %s',async destination=>{
  vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
  const client={...clientFixture(),bots:createBotClient(async()=>{throw new Error('ScheduleFixtureUnavailable');})};vi.stubGlobal('fetch',vi.fn(async()=>Response.json(await client.catalog())));
@@ -217,7 +216,6 @@ it.each(['Agents','Schedules','Shared with me','Shared from Search'])('leaves th
  expect(screen.queryByRole('region',{name:'Archived chats'})).toBeNull();
  if(destination.startsWith('Shared'))expect(shared).toHaveBeenCalledOnce();
 });
-
 it.each(['keyboard','drag'])('reorders independently paged status and project rows using %s, including chats outside the initial rail',async action=>{
  vi.stubGlobal('ResizeObserver',class{observe(){}unobserve(){}disconnect(){}});
  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({projects:[{id:'proj_local',slug:'local',name:'Local project'}]})));
@@ -235,7 +233,6 @@ it.each(['keyboard','drag'])('reorders independently paged status and project ro
  await waitFor(()=>expect(ids(done)).toEqual(['b','a']));
  expect(ids(projects)).toEqual(['b','a']);
 });
-
 it.each(["Chats", "All"])("finds restored chats in %s first and subsequent search pages without reopening", async scope => {
   const archived = { chat: { id: "chat_restored", title: "Restored answer", revision: 1, lifecycle: "archived" as const,
     attention: "none" as const, messageCount: 1, createdAt: "2026-11-17T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" } };
@@ -264,8 +261,6 @@ it.each(["Chats", "All"])("finds restored chats in %s first and subsequent searc
   fireEvent.click(screen.getByRole("button",{name:"Show more"}));
   expect(await screen.findByText("Restored answer")).toBeTruthy();
 });
-
-
 it("updates an older paged Canvas chat read mark through the real window and ChatApp", async () => {
   vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
   const client = clientFixture();

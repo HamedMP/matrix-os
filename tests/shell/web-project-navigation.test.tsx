@@ -662,7 +662,7 @@ it("opens project configuration in the main pane and keeps project chat navigati
   expect(screen.getByRole("navigation", { name: "Projects" })).toBeTruthy();
 });
 
-function renderFocusable(request: (url: string) => Response, extra: { mobile?: boolean; loadNavigationPage?: React.ComponentProps<typeof ChatApp>["loadNavigationPage"] } = {}) {
+function renderFocusable(request: (url: string) => Response, extra: Partial<React.ComponentProps<typeof ChatApp>> = {}) {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] }) : request(url)));
@@ -671,6 +671,21 @@ function renderFocusable(request: (url: string) => Response, extra: { mobile?: b
     authorityKey="owner/main" {...extra} /></OrganizationStateProvider>);
 }
 
+it("uses the saved title version when the active header chat is outside navigation", async () => {
+  const old = projectConversation(99).canonicalRecord!;
+  const page = { ...old, chat: { ...old.chat, title: "Old header title", titleVersion: 5 } };
+  const rename = vi.fn(async (_id: string, _title: string, saved?: (version: number) => void) => { saved?.(6); return true; });
+  renderFocusable(() => Response.json({ items: [] }), { conversations: [], sessionId: old.chat.id,
+    activeConversationTitle: "Old header title", onRenameConversation: rename,
+    loadNavigationPage: async input => ({ items: input.group === "project" ? [page] : [], totalCount: 1 }) });
+  fireEvent.click(await screen.findByRole("button", { name: "Expand France chats" }));
+  await screen.findByRole("button", { name: "Old header title" });
+  fireEvent.click(screen.getByRole("button", { name: "Rename Old header title" }));
+  const input = screen.getByRole("textbox", { name: "Rename Old header title" });
+  fireEvent.change(input, { target: { value: "Saved header title" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByRole("button", { name: "Saved header title" })).toBeTruthy();
+});
 it("keeps Show more available in a focused project when nothing on the first page matches", async () => {
   vi.stubGlobal("fetch",vi.fn(async(url:string)=>!url.includes("projectId=proj_france")?Response.json({items:[],nextCursor:null}):url.includes("cursor=")?Response.json({items:[{chat:{id:"chat_needle",title:"Needle chat"}}],nextCursor:null}):Response.json({items:[{chat:{id:"chat_other",title:"Other chat"}}],nextCursor:"chatcur_page2"})));
   render(<FocusedWebProject project={{id:"proj_france",slug:"france",name:"France"}} gatewayUrl="https://example.test" chats={[]} listedChatIds={new Set()} onSelectChat={vi.fn()} renamedTitles={{}} onBack={vi.fn()} mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="Needle" renderRow={chat=><button>{chat.title}</button>}/>);

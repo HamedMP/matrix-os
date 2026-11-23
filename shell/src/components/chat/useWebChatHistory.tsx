@@ -2,7 +2,6 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { archiveRestoreLocation, type ChatArchiveClient } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { RenameableConversation } from "./ChatTitleRename";
-
 type Ref = { chatId: string; revision: number };
 type Bulk = { archived: Ref[]; archivedCount: number; skippedCount: number };
 type Undo = {
@@ -225,7 +224,6 @@ export function useWebChatHistory({
     toast,
   };
 }
-
 type SearchConversationMeta = RenameableConversation & {
   projectId?: string;
   importSource?: import("@matrix-os/contracts").CanonicalChatImportSource;

@@ -863,7 +863,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, loadDetail, isCurrent]);
 
-  const renameConversation = useCallback(async (chatId: string, title: string) => {
+  const renameConversation = useCallback(async (chatId: string, title: string, onSavedVersion?: (version: number) => void) => {
     if (!isCurrent()) return false;
     let current = detailRef.current?.record.chat.id === chatId
       ? detailRef.current.record
@@ -888,6 +888,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         setDetail(next);
       }
       setSafeError(null);
+      if (updated.chat.titleVersion !== undefined) onSavedVersion?.(updated.chat.titleVersion);
       return true;
     } catch (error: unknown) {
       if (!isCurrent()) return false;

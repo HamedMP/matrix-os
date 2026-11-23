@@ -56,7 +56,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       {loading ? <p role="status" className="matrix-web-project-note">Loading projects…</p> : null}
       {error ? <div className="matrix-web-project-note">
         <p role="alert">Projects could not be loaded.</p>
-        <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry projects</button>
+        <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry projects</Button>
       </div> : null}
       {!loading && !error && projects.length === 0 ? <div className="matrix-web-project-note">
         <p className="matrix-web-project-note-title">No projects on this computer yet.</p>
@@ -122,7 +122,6 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
       {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
     </div>
     {expanded ? <div className="matrix-web-project-chats">
-
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} />
@@ -166,7 +165,7 @@ export function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, f
     {loading && rowCount === 0 ? <p role="status" className="matrix-web-project-note">Loading chats…</p> : null}
     {error ? <div className="matrix-web-project-note">
       <p role="alert">Project chats could not be loaded.</p>
-      <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry chats</button>
+      <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry chats</Button>
     </div> : null}
     {/* One quiet line, as on Electron Desktop. */}
     {!loading && !error && !hasMore && rowCount === 0 ? <p className="matrix-web-project-note">
@@ -180,21 +179,18 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
   showMore(): void; loadMore(): void;
 }) {
   return <>
-    {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
-      data-mobile={mobile || undefined} disabled={loading} onClick={() => { showMore(); if (hasMore) loadMore(); }}>Show more</button> : null}
-    {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
-      data-mobile={mobile || undefined} aria-label={`Show more ${projectName} chats`} onClick={() => { showMore(); loadMore(); }}>Show more</button> : null}
+    {hiddenCount > 0 ? <Button variant="ghost" size="sm" type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
+      data-mobile={mobile || undefined} disabled={loading} onClick={() => { showMore(); if (hasMore) loadMore(); }}>Show more</Button> : null}
+    {!loading && !error && hiddenCount <= 0 && hasMore ? <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more"
+      data-mobile={mobile || undefined} aria-label={`Show more ${projectName} chats`} onClick={() => { showMore(); loadMore(); }}>Show more</Button> : null}
     {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">More chats can be found through search.</p> : null}
   </>;
 }
-
-
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Archive, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-
 export function WebProjectArchiveAction({ projectId, projectSlug, projectName, onArchive }: {
   projectId: string;
   projectSlug: string;

@@ -55,7 +55,6 @@ it('retains explicit Done collapse for the mounted scope and starts the next sco
  expect(screen.getByRole('button', {name:'Done'}).getAttribute('aria-expanded')).toBe('true');
  expect(screen.getByRole('button', {name:'ordinary'})).toBeTruthy();
 });
-
 it('loads status groups independently, starting at ten and fetching twenty more', async () => {
  const rows = Array.from({length:31}, (_,index)=>entry(`done_${index}`));
  const loadPage = vi.fn(async (input: {group:string; limit:number; cursor?:string}) => ({

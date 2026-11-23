@@ -3,7 +3,6 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useWebChatHistory } from "../../shell/src/components/chat/useWebChatHistory";
-
 afterEach(cleanup);
 it.each(["rejected", "partial"])("keeps a newer archive notice when an older Undo is %s", async outcome=>{
  let finish!: (ids: readonly string[])=>void, fail!: (cause: Error)=>void;

@@ -402,8 +402,6 @@ it("rejects an unsafe Chat id before building the project route", async () => {
   await expect(client.updateProject("../chat", { baseRevision: 0, projectId: null })).rejects.toThrow();
   expect(fetchFn).not.toHaveBeenCalled();
 });
-
-
 it("pins a chat through the validated owner user-state route", async () => {
  const fetchFn=vi.fn(async()=>Response.json(record));
  const client=createCanonicalShellChatClient({gatewayUrl:"https://matrix.test",fetchFn});

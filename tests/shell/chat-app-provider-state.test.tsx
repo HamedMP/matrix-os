@@ -174,7 +174,6 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Preview notes.txt" }));
     expect(screen.getByRole("complementary", { name: "Chat file preview" })).toBeTruthy();
   });
-
   it("closes a desktop file preview through its visible host control", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/files/list")
       ? Response.json({ entries: [] }) : Response.json(providerCatalog())));
@@ -188,7 +187,6 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(screen.getByRole("button", { name: /^(?:Close preview|Toggle chat inspector)$/ }));
     expect(screen.queryByRole("complementary", { name: "Chat file preview" })).toBeNull();
   });
-
   it("keeps an arriving answer unread until its transcript replaces the archive page", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -221,7 +219,6 @@ describe("Chat canonical provider state", () => {
       type: "mark_read", throughSeq: 2, baseVersion: 2,
     }));
   });
-
   it("keeps archive Undo available if restoring the chat rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     const restore = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(true);
@@ -240,7 +237,6 @@ describe("Chat canonical provider state", () => {
     await waitFor(() => expect(restore).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
   });
-
   it("does not show an old restore error on a newer archive", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
     let rejectFirstRestore: (error: Error) => void = () => {};
@@ -266,7 +262,6 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByText("Archived Second chat")).toBeTruthy();
     expect(screen.queryByText("Chats could not be restored. Try again.")).toBeNull();
   });
-
   it("opens Agents & providers directly from Settings even while the model catalog is pending", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
     const openSettings = vi.fn();
@@ -322,7 +317,7 @@ describe("Chat canonical provider state", () => {
     expect(screen.getByRole("textbox", { name: "Rename Old title" })).toBeVisible();
     fireEvent.change(headerEditor, { target: { value: "Header title" } });
     fireEvent.keyDown(headerEditor, { key: "Enter" });
-    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_shared", "Header title"));
+    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_shared", "Header title", expect.any(Function)));
 
     renameConversation.mockClear();
     rerender(<ChatApp
@@ -361,7 +356,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.change(editor, { target: { value: "Renamed on mobile" } });
     fireEvent.keyDown(editor, { key: "Enter" });
 
-    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_mobile", "Renamed on mobile"));
+    await waitFor(() => expect(renameConversation).toHaveBeenCalledWith("chat_mobile", "Renamed on mobile", expect.any(Function)));
   });
 
   it("does not let an earlier pending rename close a later editor", async () => {

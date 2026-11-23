@@ -17,7 +17,6 @@ it.each(["budget%20draft.txt", "100%.txt", " note.txt ", "report.txt:42"])("open
   expect(new URL(fetcher.mock.calls[0]![0]).searchParams.get("path")).toBe(path);
   expect(new URL(fetcher.mock.calls[1]![0]).searchParams.get("path")).toBe(path);
 });
-
 it("keeps an open text preview loaded across unrelated parent renders", async () => {
   const fetcher = vi.fn(async (url: string) => url.includes("/metadata?") ? Response.json({
     resource: { kind: "home", path: "notes.txt" }, name: "notes.txt", mimeType: "text/plain", sizeBytes: 7,
@@ -30,7 +29,6 @@ it("keeps an open text preview loaded across unrelated parent renders", async ()
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(screen.getByText("Content")).toBeTruthy();
 });
-
 it("keeps a binary preview's object URL across unrelated parent renders", async () => {
   const createObjectURL = vi.fn(() => "blob:preview");
   const revokeObjectURL = vi.fn();
@@ -47,7 +45,6 @@ it("keeps a binary preview's object URL across unrelated parent renders", async 
   expect(createObjectURL).toHaveBeenCalledTimes(1);
   expect(revokeObjectURL).not.toHaveBeenCalled();
 });
-
 it("keeps focus in the preview and supports retry and Escape", async () => {
   const fetcher = vi.fn()
     .mockRejectedValueOnce(new Error("Offline"))

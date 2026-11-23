@@ -165,7 +165,7 @@ interface ChatAppProps {
   onNewChat: (projectId?: string) => void;
   onSwitchConversation: (id: string) => void;
   activeConversationTitle?: string;
-  onRenameConversation?: (id: string, title: string) => Promise<boolean>;
+  onRenameConversation?: (id: string, title: string, onSavedVersion?: (version: number) => void) => Promise<boolean>;
   onDeleteConversation?: (id: string) => Promise<boolean>;
   onArchiveConversation?: (id: string) => Promise<{ chatId: string; revision: number } | null>;
   onRestoreConversation?: (id: string, revision: number) => Promise<boolean>;
@@ -534,8 +534,8 @@ function ChatAppContent({
     onRenameCommit={(title) => {
       if (!onRenameConversation || renamePending) return;
       setRenamePending(true);
-      void onRenameConversation(conv.id, title).then((saved) => {
-        if (saved) { setEditingChat(null); rememberRenamedTitle(conv.id, title, (conv.canonicalRecord?.chat.titleVersion ?? 0) + 1); setSearchRefreshVersion(version => version + 1); }
+      void onRenameConversation(conv.id, title, version => rememberRenamedTitle(conv.id, title, version)).then((saved) => {
+        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
       }).catch((error: unknown) => {
         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => setRenamePending(false));
@@ -764,8 +764,8 @@ function ChatAppContent({
                     onCommit={(title) => {
                       if (!sessionId || !onRenameConversation || renamePending) return;
                       setRenamePending(true);
-                      void onRenameConversation(sessionId, title).then((saved) => {
-                        if (saved) { setEditingChat(null); rememberRenamedTitle(sessionId, title, (conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.chat.titleVersion ?? 0) + 1); setSearchRefreshVersion(version => version + 1); }
+                      void onRenameConversation(sessionId, title, version => rememberRenamedTitle(sessionId, title, version)).then((saved) => {
+                        if (saved) { setEditingChat(null); setSearchRefreshVersion(version => version + 1); }
                       }).catch((error: unknown) => {
                         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
                       }).finally(() => setRenamePending(false));

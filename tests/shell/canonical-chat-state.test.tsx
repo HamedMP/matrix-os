@@ -198,9 +198,11 @@ describe("canonical shell Chat state", () => {
 
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.conversations[0]?.title).toBe("Old title"));
+    const savedVersion = vi.fn();
     await act(async () => {
-      await expect(result.current.renameConversation?.("chat_a", "New title")).resolves.toBe(true);
+      await expect(result.current.renameConversation?.("chat_a", "New title", savedVersion)).resolves.toBe(true);
     });
+    expect(savedVersion).toHaveBeenCalledWith(4);
 
     expect(result.current.conversations[0]?.title).toBe("New title");
     expect(result.current.activeConversationTitle).toBe("New title");
@@ -344,7 +346,6 @@ describe("canonical shell Chat state", () => {
     await act(async () => { await expect(result.current.renameConversation?.("chat_paged", "Renamed")).resolves.toBe(true); });
     expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining("/api/chats/chat_paged/title?"), expect.objectContaining({ method: "PATCH" }));
   });
-
   it("does not let an older rename response regress a newer canonical refresh", async () => {
     let resolveRename!: (response: Response) => void;
     const renameResponse = new Promise<Response>((resolve) => { resolveRename = resolve; });
@@ -870,7 +871,6 @@ it("cleans an attachment uploaded before a project Skill's Chat moved", async ()
   const deletion = fetchFn.mock.calls.find(([, init]) => init?.method === "DELETE");
   expect(deletion?.[0] && new URL(deletion[0]).searchParams.get("path")).toBe(uploadedPath);
 });
-
 it("publishes successful versioned read updates for older paged chats outside navigation", async () => {
   const selected = record("chat_selected", "Selected");
   const old = { ...record("chat_older", "Older"), readState: { unread: true, markedUnread: true, version: 2, readThroughSeq: 0, latestIncomingSeq: 1 } };

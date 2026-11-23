@@ -25,7 +25,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import type { WebProject } from "./web-projects";
-
 type Scope = "All" | "Chats" | "Projects" | "Archived" | "Shared";
 type SearchChats = (
   query: string,
@@ -303,9 +302,9 @@ export function WebChatSearchDialog({
                 }
               }}
             />
-            <button type="button" aria-label="Close search" onClick={onClose}>
+            <Button variant="ghost" size="icon-sm" type="button" aria-label="Close search" onClick={onClose}>
               <X size={16} />
-            </button>
+            </Button>
           </div>
           <div role="tablist" aria-label="Search scope" className="chat-search-filters">
             {(["All", "Chats", "Projects", "Archived", ...(onShared ? ["Shared"] : [])] as Scope[]).map((value) => (
@@ -373,7 +372,7 @@ export function WebChatSearchDialog({
                     </button>
                     {scope === "Archived" && row.record ? (
                       <div className="chat-search-row-actions">
-                        <button
+                        <Button variant="ghost" size="icon-sm"
                           type="button"
                           disabled={busy}
                           aria-label={`Restore ${row.label}`}
@@ -382,17 +381,17 @@ export function WebChatSearchDialog({
                             if (row.record) void apply("restore", row.record);
                           }}
                         >
-                          <ArchiveRestore size={14} />
-                        </button>
-                        <button
+                          <ArchiveRestore size={14} className="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon-sm"
                           type="button"
                           disabled={busy}
                           aria-label={`Delete ${row.label}`}
                           title="Delete"
                           onClick={() => setDeletion(row.record!)}
                         >
-                          <Trash2 size={14} />
-                        </button>
+                          <Trash2 size={14} className="size-3.5" />
+                        </Button>
                       </div>
                     ) : null}
                   </div>
@@ -400,9 +399,9 @@ export function WebChatSearchDialog({
               })}
             </div>
             {scope === "Shared" && onShared ? (
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
-                className="flex h-12 w-full items-center gap-3 rounded-lg px-2 text-left hover:bg-accent"
+                className="flex h-12 w-full items-center justify-start gap-3 rounded-lg px-2 text-left font-normal has-[>svg]:px-2 hover:bg-accent"
                 onClick={() => {
                   onShared();
                   onClose();
@@ -410,7 +409,7 @@ export function WebChatSearchDialog({
               >
                 <Users size={16} />
                 Shared with me
-              </button>
+              </Button>
             ) : null}
             {!rows.length && !page.loading && scope !== "Shared" ? (
               <p className="px-2 py-4 text-sm text-muted-foreground">
@@ -418,7 +417,7 @@ export function WebChatSearchDialog({
               </p>
             ) : null}
             {page.cursor ? (
-              <button
+              <Button variant="ghost" size="sm"
                 type="button"
                 className="w-full p-2 text-xs text-muted-foreground"
                 disabled={page.loading}
@@ -427,11 +426,11 @@ export function WebChatSearchDialog({
                 }}
               >
                 Show more
-              </button>
+              </Button>
             ) : null}
           </div>
           {scope === "Archived" ? (
-            <button
+            <Button variant="ghost" size="sm"
               type="button"
               className="chat-search-open-archive"
               onClick={() => {
@@ -442,7 +441,7 @@ export function WebChatSearchDialog({
               <Archive size={16} />
               <span>Open archived list</span>
               <CornerDownLeft size={14} />
-            </button>
+            </Button>
           ) : null}
           <footer className="chat-search-footer">
             <span>↑ ↓ to navigate</span>

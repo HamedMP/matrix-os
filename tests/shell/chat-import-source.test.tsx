@@ -35,7 +35,6 @@ it("keeps source filtering and inline search combined in the existing phone layo
   fireEvent.change(filter, { target: { value: "all" } });
   expect(screen.getByRole("button", { name: "claude release" })).toBeTruthy();
 });
-
 it("filters the desktop rail and keeps global Search available through its dialog", async () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
   const conversations = ["claude", "codex"].map(name => ({ id: `chat_${name}`, title: `${name} release`, preview: "", messageCount: 1, updatedAt: 0,
