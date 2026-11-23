@@ -27,6 +27,7 @@ import {
   insertBefore,
   serializeXml,
 } from "../../../../packages/office/src/xml/index.js";
+import { buildDocument, buildPackage, p, r } from "./build.js";
 import { loadFixture, openFixture, paragraphStarting } from "./helpers.js";
 
 async function open(name: string): Promise<{ document: DocxDocument; index: DocxIndex }> {
@@ -379,6 +380,42 @@ describe("internal index: edits, dirty tracking and snapshots", () => {
     const again = await openDocx(await document.save());
     expect(again.package.hasPart("/word/comments.xml")).toBe(false);
     expect(again.package.getRelationships("/word/document.xml").some((r) => r.target === "comments.xml")).toBe(false);
+  });
+
+  it("forgets styles that a restore removes", () => {
+    const document = buildDocument({ body: p(r("text")) });
+    const index = getDocxIndex(document);
+    const block = document.getView().body.blocks[0] as ParagraphBlock;
+    const snapshot = document.snapshot();
+    const styles = index.ensurePart("styles");
+    appendChild(
+      styles,
+      createElement("w:style", { "w:type": "paragraph", "w:default": "1", "w:styleId": "Normal" }, [
+        createElement("w:name", { "w:val": "Normal" }),
+        createElement("w:rPr", [], [createElement("w:b")]),
+      ]),
+    );
+    index.markDirty(styles);
+    expect(document.getBlock(block.id)).toMatchObject({ style: { styleId: "Normal" }, runs: [{ bold: true }] });
+    document.restore(snapshot);
+    expect(document.getBlock(block.id)).toMatchObject({ style: { styleId: null }, runs: [{ bold: false }] });
+  });
+
+  it("writes an edited part back in UTF-16 when its declaration says so", async () => {
+    const { pkg } = buildPackage({ body: p(r("caf\u00E9 \u{1F680}")) });
+    const text = (await pkg.getPartText("/word/document.xml")).replace('encoding="UTF-8"', 'encoding="UTF-16"');
+    const bytes = new Uint8Array(2 + text.length * 2);
+    bytes.set([0xff, 0xfe]);
+    for (let at = 0; at < text.length; at++) bytes.set([text.charCodeAt(at) & 0xff, text.charCodeAt(at) >> 8], 2 + at * 2);
+    pkg.setPart("/word/document.xml", bytes);
+    const document = await openDocx(await pkg.save());
+    const block = document.getView().body.blocks[0] as ParagraphBlock;
+    expect(block.text).toBe("caf\u00E9 \u{1F680}");
+    splitRunAt(getDocxIndex(document), { blockId: block.id, offset: 3 });
+    const saved = await openDocx(await document.save());
+    const written = await saved.package.getPartBytes("/word/document.xml");
+    expect([written[0], written[1]]).toEqual([0xff, 0xfe]);
+    expect(saved.getPlainText()).toBe("caf\u00E9 \u{1F680}\n");
   });
 
   it("sets and clears the track-revisions flag in settings.xml", async () => {

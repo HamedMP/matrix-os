@@ -20,8 +20,11 @@ const AFTER_TERM = new RegExp(`^[\\s,:\\u2013\\u2014-]*${DEFINING}`, "i");
 const BEFORE_PARENTHETICAL = /\((?:[^()\n]{0,80}[\s,])?(?:the|an?|as|or|and|each|together)\s+$|\(\s*$/i;
 const AFTER_PARENTHETICAL = /^(?:\s*(?:,|or|and|\/)\s*[\u201C"][^\u201C\u201D"\n]{1,80}[\u201D"])*\s*\)/;
 
-/** Longest paragraph searched for definitions. */
+/** Longest paragraph searched for definitions, and the most quoted stretches looked at in one paragraph. */
 const MAX_PARAGRAPH = 20_000;
+const MAX_QUOTED = 200;
+/** How far back from a quoted term the opening parenthesis of a definition in passing is looked for. */
+const PARENTHETICAL_WINDOW = 120;
 
 interface Found {
   /** Offsets of the term (without quotation marks) in the `final` text. */
@@ -66,7 +69,9 @@ function findInParagraph(index: DocxIndex, record: BlockRecord, scan: ParagraphS
   if (text.length === 0 || text.length > MAX_PARAGRAPH) return [];
   const found: Found[] = [];
   QUOTED.lastIndex = 0;
-  for (let match = QUOTED.exec(text); match !== null; match = QUOTED.exec(text)) {
+  let quoted = 0;
+  for (let match = QUOTED.exec(text); match !== null && quoted < MAX_QUOTED; match = QUOTED.exec(text)) {
+    quoted += 1;
     const inner = match[1] ?? match[2] ?? "";
     const term = inner.trim();
     if (term === "" || term.includes(OBJECT_CHAR)) continue;
@@ -81,7 +86,10 @@ function findInParagraph(index: DocxIndex, record: BlockRecord, scan: ParagraphS
         marker: "quoted",
         definitionStart: match.index,
       });
-    } else if (AFTER_PARENTHETICAL.test(after) && BEFORE_PARENTHETICAL.test(text.slice(0, match.index))) {
+    } else if (
+      AFTER_PARENTHETICAL.test(after) &&
+      BEFORE_PARENTHETICAL.test(text.slice(Math.max(0, match.index - PARENTHETICAL_WINDOW), match.index))
+    ) {
       const open = text.lastIndexOf("(", match.index);
       found.push({
         start,

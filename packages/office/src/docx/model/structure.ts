@@ -83,22 +83,19 @@ export interface IdState {
 /** Children of `parent` named in `wanted`, looking through content-control and custom-XML wrappers. */
 export function expandChildren(parent: XmlElement, wanted: ReadonlySet<string>): XmlElement[] {
   const found: XmlElement[] = [];
-  // An explicit stack of reversed child lists keeps document order without recursion.
-  const pending: XmlChildNode[][] = [[...parent.children].reverse()];
-  while (pending.length > 0) {
-    const list = pending[pending.length - 1] as XmlChildNode[];
-    const node = list.pop();
-    if (node === undefined) {
-      pending.pop();
-      continue;
-    }
+  collectChildren(parent, wanted, found, 0);
+  return found;
+}
+
+function collectChildren(parent: XmlElement, wanted: ReadonlySet<string>, found: XmlElement[], depth: number): void {
+  const nodes = parent.children;
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index] as XmlChildNode;
     if (node.kind !== "element") continue;
     if (wanted.has(node.name)) found.push(node);
-    else if (TRANSPARENT_BLOCK.has(node.name)) {
-      pending.push([...node.children].reverse());
-    }
+    // Wrappers nest a few levels at most; the parser bounds the depth of the tree.
+    else if (TRANSPARENT_BLOCK.has(node.name) && depth < 512) collectChildren(node, wanted, found, depth + 1);
   }
-  return found;
 }
 
 const BLOCK_NAMES: ReadonlySet<string> = new Set(["w:p", "w:tbl", "w:bookmarkStart"]);
@@ -239,10 +236,12 @@ class Builder {
   }
 }
 
+const SECTION_SOURCES: ReadonlySet<string> = new Set(["w:p", "w:sectPr"]);
+
 function sectionProperties(body: XmlElement): XmlElement[] {
   const found: XmlElement[] = [];
   let last: XmlElement | null = null;
-  for (const element of expandChildren(body, new Set(["w:p", "w:sectPr"]))) {
+  for (const element of expandChildren(body, SECTION_SOURCES)) {
     if (element.name === "w:sectPr") last = element;
     else {
       const sectPr = paragraphSectPr(element);

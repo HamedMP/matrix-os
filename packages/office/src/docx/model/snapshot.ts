@@ -29,6 +29,8 @@ export interface SnapshotData extends DocxSnapshot {
 
 interface UnitCopy {
   readonly stamp: number;
+  /** `PartStore.retagEpoch` when the copy was made; ids on the live unit may differ after it moves on. */
+  readonly epoch: number;
   readonly frozen: XmlChildNode;
 }
 
@@ -86,24 +88,26 @@ export class SnapshotManager {
   }
 
   private freeze(slot: PartSlot): FrozenPart {
-    if (slot.frozen !== null && slot.frozen.version === slot.version) return slot.frozen.part;
+    if (slot.frozen !== null && slot.frozen.version === slot.version && slot.frozen.epoch === this.store.retagEpoch) {
+      return slot.frozen.part;
+    }
     const store = this.store;
     const skeleton = this.skeletonOf(slot);
     const units: XmlChildNode[] = [];
     for (const live of containerOf(slot.doc).children) {
       const stamp = store.unitStamp(live, slot);
       const known = this.copies.get(live);
-      if (known !== undefined && known.stamp === stamp) {
+      if (known !== undefined && known.stamp === stamp && known.epoch === store.retagEpoch) {
         units.push(known.frozen);
         continue;
       }
       const frozen = cloneNode(live);
       copyTags(store, live, frozen);
-      this.copies.set(live, { stamp, frozen });
+      this.copies.set(live, { stamp, epoch: store.retagEpoch, frozen });
       units.push(frozen);
     }
     const part: FrozenPart = { skeleton, units };
-    slot.frozen = { version: slot.version, part };
+    slot.frozen = { version: slot.version, epoch: store.retagEpoch, part };
     return part;
   }
 
@@ -121,7 +125,9 @@ export class SnapshotManager {
     const reusable = new Map<XmlChildNode, XmlChildNode>();
     for (const live of containerOf(slot.doc).children) {
       const known = this.copies.get(live);
-      if (known !== undefined && known.stamp === store.unitStamp(live, slot)) reusable.set(known.frozen, live);
+      if (known !== undefined && known.stamp === store.unitStamp(live, slot) && known.epoch === store.retagEpoch) {
+        reusable.set(known.frozen, live);
+      }
     }
     const doc = cloneDocument(entry.part.skeleton);
     const container = containerOf(doc);
@@ -130,7 +136,7 @@ export class SnapshotManager {
       if (live === undefined) {
         live = cloneNode(frozen);
         copyTags(store, frozen, live);
-        this.copies.set(live, { stamp: slot.wholeStamp, frozen });
+        this.copies.set(live, { stamp: slot.wholeStamp, epoch: store.retagEpoch, frozen });
       } else {
         reusable.delete(frozen);
       }
@@ -138,7 +144,7 @@ export class SnapshotManager {
     }
     store.replaceDoc(slot, doc);
     slot.version = entry.version;
-    slot.frozen = { version: entry.version, part: entry.part };
+    slot.frozen = { version: entry.version, epoch: store.retagEpoch, part: entry.part };
     slot.skeleton = { stamp: slot.wholeStamp, doc: entry.part.skeleton };
   }
 

@@ -94,14 +94,7 @@ export class FormatResolver {
     Object.assign(props, direct);
 
     const chain = this.styles.chain(styleId);
-    let numbering: ResolvedParagraph["numbering"] = null;
-    if (props.numId !== undefined && props.numId !== "0") {
-      let level = props.numLevel ?? null;
-      for (let index = chain.length - 1; level === null && index >= 0; index--) {
-        level = this.numbering.levelForStyle(props.numId, (chain[index] as { id: string }).id);
-      }
-      numbering = { numId: props.numId, level: level ?? 0 };
-    }
+    const numbering = this.numberingFor(props.numId, props.numLevel, styleId);
 
     let headingLevel = 0;
     if (props.outlineLevel !== undefined) {
@@ -127,6 +120,40 @@ export class FormatResolver {
       keepWithNext: props.keepWithNext ?? false,
     };
     return { style, runBase: base.run, numbering };
+  }
+
+  private numberingFor(
+    numId: string | undefined,
+    numLevel: number | undefined,
+    styleId: string | null,
+  ): ResolvedParagraph["numbering"] {
+    if (numId === undefined || numId === "0") return null;
+    let level = numLevel ?? null;
+    const chain = this.styles.chain(styleId);
+    for (let index = chain.length - 1; level === null && index >= 0; index--) {
+      level = this.numbering.levelForStyle(numId, (chain[index] as { id: string }).id);
+    }
+    return { numId, level: level ?? 0 };
+  }
+
+  /** The numbering instance and level of a paragraph, without resolving the rest of its formatting. */
+  numberingOf(paragraph: XmlElement, tableStyleId: string | null): ResolvedParagraph["numbering"] {
+    const pPr = firstChild(paragraph, "w:pPr");
+    let styleId: string | null = null;
+    let numId: string | undefined;
+    let numLevel: number | undefined;
+    if (pPr !== null) {
+      styleId = childVal(pPr, "w:pStyle");
+      const numPr = firstChild(pPr, "w:numPr");
+      if (numPr !== null) {
+        const direct = readParagraphProps(pPr);
+        numId = direct.numId;
+        numLevel = direct.numLevel;
+      }
+    }
+    styleId ??= this.styles.defaultParagraphStyleId;
+    const inherited = this.inherited(styleId, tableStyleId).paragraph;
+    return this.numberingFor(numId ?? inherited.numId, numLevel ?? inherited.numLevel, styleId);
   }
 
   paragraph(paragraph: XmlElement, tableStyleId: string | null): ResolvedParagraph {

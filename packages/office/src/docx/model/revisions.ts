@@ -110,8 +110,12 @@ function assignIds(store: PartStore, state: RevisionIdState, drafts: readonly Dr
     draft.id = chosen;
     for (const member of draft.members) {
       const tags = store.tags.get(member.element);
-      if (tags === undefined) store.tags.set(member.element, { revisionId: chosen });
-      else tags.revisionId = chosen;
+      if (tags === undefined) {
+        store.tags.set(member.element, { revisionId: chosen });
+      } else if (tags.revisionId !== chosen) {
+        if (tags.revisionId !== undefined) store.retagEpoch += 1;
+        tags.revisionId = chosen;
+      }
     }
   }
 }

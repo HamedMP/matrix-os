@@ -45,7 +45,7 @@ export interface PartSlot {
   wholeStamp: number;
   /** Set for a part the model created: how to register it in the package on save. */
   readonly created: { readonly relationshipType: string; readonly contentType: string } | null;
-  frozen: { readonly version: number; readonly part: FrozenPart } | null;
+  frozen: { readonly version: number; readonly epoch: number; readonly part: FrozenPart } | null;
   skeleton: { readonly stamp: number; readonly doc: XmlDocument } | null;
 }
 
@@ -114,11 +114,37 @@ export function discoverParts(pkg: OpcPackage): Array<{ name: PartName; kind: Do
   return found;
 }
 
+/**
+ * The bytes of a serialised part. Parts are written as UTF-8 unless their XML
+ * declaration names UTF-16, which is then honoured so the declaration stays true.
+ */
+function encodePart(doc: XmlDocument): Uint8Array | string {
+  const text = serializeXml(doc);
+  const first = doc.children[0];
+  const encoding = first !== undefined && first.kind === "declaration" ? first.encoding : null;
+  if (encoding === null || !/^utf-?16/i.test(encoding)) return text;
+  const bytes = new Uint8Array(2 + text.length * 2);
+  bytes[0] = 0xff;
+  bytes[1] = 0xfe;
+  for (let index = 0; index < text.length; index++) {
+    const unit = text.charCodeAt(index);
+    bytes[2 + index * 2] = unit & 0xff;
+    bytes[3 + index * 2] = unit >> 8;
+  }
+  return bytes;
+}
+
 export class PartStore {
   readonly package: OpcPackage;
   readonly mainPartName: PartName;
   /** Identity attached to elements; see {@link ElementTags}. */
   readonly tags = new WeakMap<XmlElement, ElementTags>();
+  /**
+   * Counts the times an id that an element already carried was replaced
+   * (revisions regrouped by an edit elsewhere). Frozen copies made before
+   * such a change no longer describe the live elements.
+   */
+  retagEpoch = 0;
 
   private readonly slots = new Map<string, PartSlot>();
   private readonly slotByDoc = new WeakMap<XmlDocument, PartSlot>();
@@ -327,7 +353,7 @@ export class PartStore {
     }
     for (const [key, slot] of this.slots) {
       if (slot.version === slot.packageVersion) continue;
-      const text = serializeXml(slot.doc);
+      const text = encodePart(slot.doc);
       if (slot.created !== null && !pkg.hasPart(slot.name)) {
         pkg.setPart(slot.name, text, slot.created.contentType);
         const existing = pkg

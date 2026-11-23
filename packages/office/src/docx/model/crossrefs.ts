@@ -29,6 +29,10 @@ const TYPED = new RegExp(
 );
 const LIST_ITEM = new RegExp(`^(\\s*(?:,|and|or|to|&)\\s*|\\s*,\\s*(?:and|or)\\s+)(${NUMBER})(?![\\w%])`, "i");
 
+/** Bounds for a list such as `clauses 6, 7, 8 and 12`: its length and how far ahead one item is looked for. */
+const MAX_LIST_ITEMS = 50;
+const LIST_ITEM_WINDOW = 48;
+
 interface Draft {
   readonly start: number;
   readonly end: number;
@@ -69,7 +73,9 @@ function typedReferences(scan: ParagraphScan, record: BlockRecord, labels: Label
     if (!clauseWord.toLowerCase().endsWith("s")) continue;
     // `clauses 6, 7, 8 and 12`: each further number is a reference of its own.
     let cursor = match.index + whole.length;
-    for (let item = LIST_ITEM.exec(text.slice(cursor)); item !== null; item = LIST_ITEM.exec(text.slice(cursor))) {
+    for (let items = 0; items < MAX_LIST_ITEMS; items++) {
+      const item = LIST_ITEM.exec(text.slice(cursor, cursor + LIST_ITEM_WINDOW));
+      if (item === null) break;
       const start = cursor + (item[1] as string).length;
       const end = start + (item[2] as string).length;
       add(start, end, item[2] as string);
@@ -90,6 +96,16 @@ function fieldReferences(index: DocxIndex, scan: ParagraphScan, headings: Map<st
   const text = scanText(scan, "final");
   const fields = new Map<XmlElement, { frame: FieldFrame; stretch: Stretch }>();
   const links = new Map<XmlElement, Stretch>();
+  const kindOf = new Map<XmlElement, string>();
+  const kindsOf = (frames: readonly FieldFrame[]): string[] =>
+    frames.map((frame) => {
+      let kind = kindOf.get(frame.key);
+      if (kind === undefined) {
+        kind = parseFieldInstruction(frame.instruction).kind;
+        kindOf.set(frame.key, kind);
+      }
+      return kind;
+    });
   let offset = 0;
   let nestedInToc = false;
   let tocOnly = scan.atoms.length > 0;
@@ -109,7 +125,7 @@ function fieldReferences(index: DocxIndex, scan: ParagraphScan, headings: Map<st
     if (context.hyperlink !== null && attr(context.hyperlink, "w:anchor") !== null) {
       links.set(context.hyperlink, extend(links.get(context.hyperlink), offset, end));
     }
-    const kinds = context.fields.map((frame) => parseFieldInstruction(frame.instruction).kind);
+    const kinds = kindsOf(context.fields);
     if (!kinds.includes("toc")) tocOnly = false;
     else if (kinds.some((kind) => kind !== "toc") || context.hyperlink !== null) nestedInToc = true;
     offset = end;

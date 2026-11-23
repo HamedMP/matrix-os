@@ -127,7 +127,7 @@ export class DocxIndex {
         for (const element of story.paragraphs) {
           const record = structure.blockByElement.get(element);
           const table = record?.parentTableId == null ? null : structure.blockById.get(record.parentTableId);
-          const numbering = resolver.paragraph(element, tableStyleIdOf(table?.element ?? null)).numbering;
+          const numbering = resolver.numberingOf(element, tableStyleIdOf(table?.element ?? null));
           if (numbering !== null) numbered.push({ element, numId: numbering.numId, level: numbering.level });
         }
       }
@@ -287,11 +287,21 @@ export class DocxIndex {
   }
 
   snapshot(): DocxSnapshot {
+    // Ids are handed out when the derived data is built; do that first so the copies carry them.
+    void this.structure;
+    void this.flow;
+    void this.revisions;
     return this.snapshots.take();
   }
 
   restore(snapshot: DocxSnapshot): void {
     this.snapshots.restore(snapshot);
+    // A restore can drop or bring back whole parts, styles and numbering among them.
+    this.structureCache = null;
+    this.flowCache = null;
+    this.labelCache = null;
+    this.revisionCache = null;
+    this.resolverCache = null;
   }
 
   save(): Promise<Uint8Array> {

@@ -92,6 +92,8 @@ export interface ParagraphScan {
   readonly mark: XmlElement | null;
   /** `w:pPr/w:pPrChange`, or null. */
   readonly propertiesChange: XmlElement | null;
+  /** `w:pPr/w:rPr/w:rPrChange`: a formatting change of the paragraph mark, or null. */
+  readonly markFormatChange: XmlElement | null;
   /** Fields open at the start and at the end of the paragraph. */
   readonly fieldsIn: readonly FieldFrame[];
   readonly fieldsOut: readonly FieldFrame[];
@@ -133,21 +135,25 @@ export function atomInView(atom: InlineAtom, view: DocxTextView): boolean {
   return true;
 }
 
-/** The tracked change of a paragraph mark and the paragraph property change, read from `w:pPr`. */
-export function paragraphMarkRevision(paragraph: XmlElement): { mark: XmlElement | null; propertiesChange: XmlElement | null } {
+/** The tracked changes a paragraph carries in its `w:pPr`: of the mark, of the mark's formatting, of the properties. */
+export function paragraphMarkRevision(paragraph: XmlElement): {
+  mark: XmlElement | null;
+  propertiesChange: XmlElement | null;
+  markFormatChange: XmlElement | null;
+} {
   const pPr = firstChild(paragraph, "w:pPr");
-  if (pPr === null) return { mark: null, propertiesChange: null };
+  if (pPr === null) return { mark: null, propertiesChange: null, markFormatChange: null };
   let mark: XmlElement | null = null;
+  let markFormatChange: XmlElement | null = null;
   const rPr = firstChild(pPr, "w:rPr");
   if (rPr !== null) {
     for (const node of rPr.children) {
-      if (node.kind === "element" && REVISION_CONTAINERS.has(node.name)) {
-        mark = node;
-        break;
-      }
+      if (node.kind !== "element") continue;
+      if (mark === null && REVISION_CONTAINERS.has(node.name)) mark = node;
+      else if (markFormatChange === null && node.name === "w:rPrChange") markFormatChange = node;
     }
   }
-  return { mark, propertiesChange: firstChild(pPr, "w:pPrChange") };
+  return { mark, propertiesChange: firstChild(pPr, "w:pPrChange"), markFormatChange };
 }
 
 class Scanner {
@@ -313,7 +319,7 @@ export function scanParagraph(paragraph: XmlElement, fieldsIn: readonly FieldFra
   scanner.inline(paragraph, NO_REVISIONS, null);
   let text = "";
   for (const atom of scanner.atoms) text += atom.text;
-  const { mark, propertiesChange } = paragraphMarkRevision(paragraph);
+  const { mark, propertiesChange, markFormatChange } = paragraphMarkRevision(paragraph);
   return {
     paragraph,
     text,
@@ -323,6 +329,7 @@ export function scanParagraph(paragraph: XmlElement, fieldsIn: readonly FieldFra
     formatSpans: scanner.formatSpans,
     mark,
     propertiesChange,
+    markFormatChange,
     fieldsIn,
     fieldsOut: scanner.fields.length === 0 ? NO_FIELDS : scanner.fields,
     stamp,

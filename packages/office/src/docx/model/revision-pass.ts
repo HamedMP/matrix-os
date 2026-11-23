@@ -238,6 +238,19 @@ export class StoryPass {
     const scan = this.flow.scans.get(paragraph) as ParagraphScan;
     const length = scan.text.length;
     const base = this.base;
+    if (
+      scan.contentSpans.length === 0 &&
+      scan.formatSpans.length === 0 &&
+      scan.markers.length === 0 &&
+      scan.mark === null &&
+      scan.propertiesChange === null &&
+      scan.markFormatChange === null
+    ) {
+      // Nothing tracked here: the paragraph only moves the position on.
+      this.base = base + length + 1;
+      this.ordinal += 1;
+      return;
+    }
     const blockId = record.id;
     const markers = scan.markers;
     let markerIndex = 0;
@@ -291,8 +304,7 @@ export class StoryPass {
       }
     }
     const pPr = firstChild(paragraph, "w:pPr");
-    const markProps = pPr === null ? null : firstChild(pPr, "w:rPr");
-    const markChange = markProps === null ? null : firstChild(markProps, "w:rPrChange");
+    const markChange = scan.markFormatChange;
     if (markChange !== null && pPr !== null) {
       const draft = this.extend(
         "runFormat",
@@ -305,7 +317,7 @@ export class StoryPass {
         { blockId, offset: length },
       );
       if (draft.formatChange === null) {
-        draft.formatChange = this.resolver.runFormatChange(firstChild(markChange, "w:rPr"), markProps);
+        draft.formatChange = this.resolver.runFormatChange(firstChild(markChange, "w:rPr"), firstChild(pPr, "w:rPr"));
       }
     }
     if (scan.propertiesChange !== null) {
