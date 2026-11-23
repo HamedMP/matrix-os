@@ -88,6 +88,20 @@ describe("taskbarOrder", () => {
 });
 
 describe("cycleApp", () => {
+  it("cycles through a second Files tab that the taskbar folds into one icon", () => {
+    const first = useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+    const second = useTabs.getState().openTabInstance({ ...FILES_WORKSPACE_TAB_SPEC });
+    reconcile();
+    select(first);
+
+    cycleApp(1);
+    expect(active()).toBe(second);
+    cycleApp(1);
+    expect(active()).toBe(first);
+    cycleApp(-1);
+    expect(active()).toBe(second);
+  });
+
   it("cycles forward and backward through apps in taskbar order and wraps", () => {
     const { files, notes, terminal } = threeApps();
 

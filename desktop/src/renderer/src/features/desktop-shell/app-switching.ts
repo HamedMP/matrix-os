@@ -75,6 +75,21 @@ export function taskbarOrder(
   return filesTab ? [filesTab, ...others] : others;
 }
 
+/**
+ * Running apps for Next and Previous app. Unlike the taskbar, which shows one
+ * Files icon, this keeps every Files tab, so a second Files tab can be reached.
+ */
+function cycleOrder(
+  tabs: readonly Tab[],
+  surfaces: Readonly<Record<string, DesktopSurface>>,
+): Tab[] {
+  const running = tabs.filter((tab) => {
+    const mode = surfaces[tab.id]?.mode;
+    return mode !== undefined && mode !== "closed";
+  });
+  return [...running.filter((tab) => tab.kind === "files"), ...running.filter((tab) => tab.kind !== "files")];
+}
+
 function currentTaskbarOrder(): Tab[] {
   return taskbarOrder(useTabs.getState().tabs, useDesktopSurfaces.getState().surfaces);
 }
@@ -139,8 +154,8 @@ function visibleActiveTab(): Tab | undefined {
 }
 
 export function cycleApp(direction: 1 | -1): void {
-  const order = currentTaskbarOrder();
   const surfaces = useDesktopSurfaces.getState().surfaces;
+  const order = cycleOrder(useTabs.getState().tabs, surfaces);
   const candidates = order.filter((tab) => surfaces[tab.id]?.mode !== "minimized");
   if (candidates.length < 2) return;
   const activeTabId = useTabs.getState().activeTabId;
