@@ -6,7 +6,7 @@
 import { sql, type Selectable } from "kysely";
 import {
   TASK_LIMITS, TaskRankError, formatTaskKey, rankBetween, spreadRanks,
-  type ActorRef, type ProjectTask, type TaskActivity, type TaskActivityKind, type TaskPriority, type TaskStatus,
+  type ActorRef, type ProjectTask, type TaskActivity, type TaskActivityKind, type TaskAgentStatus, type TaskPriority, type TaskPullRequest, type TaskSession, type TaskStatus,
 } from "@matrix-os/contracts/project-tasks";
 import type { BoardAutomationColumn, ProjectTaskDatabase, ProjectTaskDb, ProjectTaskTrx } from "./database.js";
 import { ProjectTaskError } from "./errors.js";
@@ -90,6 +90,16 @@ const isoOrNull = (value: Date | string | null) => (value === null ? null : iso(
 
 export interface TaskExtras {
   blockedBy?: readonly string[];
+  sessions?: readonly TaskSession[];
+  chatStatus?: TaskAgentStatus;
+}
+
+export function pullRequestFromRow(row: TaskRow): TaskPullRequest | null {
+  if (row.pr_number === null || !row.pr_state || !row.pr_checks || !row.pr_review || !row.pr_url) return null;
+  return {
+    number: Number(row.pr_number), url: row.pr_url, state: row.pr_state as TaskPullRequest["state"],
+    checks: row.pr_checks as TaskPullRequest["checks"], review: row.pr_review as TaskPullRequest["review"],
+  };
 }
 
 export function toProjectTask(row: TaskRow, keyPrefix: string, extras: TaskExtras = {}): ProjectTask {
@@ -110,9 +120,11 @@ export function toProjectTask(row: TaskRow, keyPrefix: string, extras: TaskExtra
     dueAt: isoOrNull(row.due_at),
     worktreeId: row.worktree_id,
     branch: row.branch,
-    pullRequest: null,
+    pullRequest: pullRequestFromRow(row),
     externalLink: null,
-    sessions: [],
+    chatId: row.chat_id,
+    chatStatus: extras.chatStatus ?? "idle",
+    sessions: [...(extras.sessions ?? [])],
     commentCount: Number(row.comment_count),
     createdBy: row.created_by as ActorRef,
     createdAt: iso(row.created_at),
@@ -362,6 +374,8 @@ export class ProjectTaskRepository {
         .where("owner_id", "=", scope.ownerId).where("parent_task_id", "=", taskId).where("deleted_at", "is", null).execute();
       await trx.deleteFrom("project_task_relations").where("owner_id", "=", scope.ownerId)
         .where((eb) => eb.or([eb("task_id", "=", taskId), eb("blocked_by_task_id", "=", taskId)])).execute();
+      // The sessions keep running as ordinary chats and tabs; only their links go with the task.
+      await trx.deleteFrom("project_task_sessions").where("owner_id", "=", scope.ownerId).where("task_id", "=", taskId).execute();
       await this.log(trx, scope, taskId, actor, "deleted", "Deleted the task", at);
       return row;
     });

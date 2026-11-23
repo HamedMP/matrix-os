@@ -17,6 +17,7 @@ import { ChatBusyError, ChatNotFoundError } from "./errors.js";
 import { dispatchAdmissionKey } from "./dispatch-ownership.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from "./provider-adapter.js";
+import { chatDefaultExecutionRoot } from "./execution-defaults.js";
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
@@ -25,7 +26,8 @@ import { performance } from "node:perf_hooks";
 import { chatSendTimingsEnabled, createChatSendTimer, type ChatSendTimer } from "./send-timing.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">
+    & Partial<Pick<ChatRepository, "getExecutionDefault">>;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
@@ -155,8 +157,12 @@ async function admitTimedTurn(
         400,
       );
     }
-    const rootRef = input.executionRoot
-      ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
+    // A turn that names no root runs where the Chat was set up to run: its default worktree, else its Project.
+    const rootRef = input.executionRoot ?? chatDefaultExecutionRoot(
+      record,
+      record.projectId && deps.repository.getExecutionDefault ? await deps.repository.getExecutionDefault(owner, chatId) : null,
+      validated.instance.supports,
+    );
     if (input.executionRoot && record.projectId
       && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
       throw new CanonicalChatOrchestrationError(

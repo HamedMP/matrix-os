@@ -204,7 +204,7 @@ export class CanonicalChatOrchestrator {
       | "getTurnRunContext"
       | "admitRetry"
       | "listActiveRunContexts"
-    > & Partial<Pick<ChatRepository, "getNativeScheduledSource" | "admitNativeScheduledTurn">>;
+    > & Partial<Pick<ChatRepository, "getNativeScheduledSource" | "admitNativeScheduledTurn" | "getExecutionDefault">>;
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;

@@ -12,6 +12,14 @@ import { requireRequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
 import { createTaskManager } from "../task-manager.js";
 import type { WorkspaceEventPublisher } from "../workspace-event-publisher.js";
+import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
+import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { ChatRepository } from "../chat/repository.js";
+import { createCanonicalChatService } from "../chat/service.js";
+import { ProjectTaskSessionRepository } from "../project-tasks/sessions.js";
+import { ProjectTaskWork } from "../project-tasks/work.js";
+import type { createWorktreeManager } from "../worktree-manager.js";
+import { createTaskSessionPorts, type TaskSessionPortOptions } from "./project-task-sessions.js";
 
 /**
  * Construct the board service once and mount its routes. Without the owner
@@ -28,8 +36,28 @@ export function registerProjectTaskRoutes(options: {
   getOwnerScope?(c: Context): OwnerScope;
   /** Push delivery for task notifications (the gateway's channel manager). */
   sendPush?(reply: ChannelReply): Promise<void> | void;
+  /** Start work: worktrees, the owner chat store and orchestrator, and the terminal runtime. */
+  worktreeManager: ReturnType<typeof createWorktreeManager>;
+  chatRepository: ChatRepository | null;
+  chatOrchestrator: CanonicalChatOrchestrator | null;
+  chatExecutionRoots: ChatExecutionRootResolver | null;
+  terminalRuntime: TaskSessionPortOptions["terminalRuntime"];
 }): ProjectTaskService | null {
   const admitProjectTaskWrite = createProjectTaskAdmission(options.collaboration?.projectOperationAdmission);
+  const ports = createTaskSessionPorts({
+    homePath: options.homePath,
+    projectManager: options.projectManager,
+    worktreeManager: options.worktreeManager,
+    chats: options.chatRepository ? {
+      service: createCanonicalChatService(options.chatRepository, {
+        ...(options.chatOrchestrator ? { orchestrator: options.chatOrchestrator } : {}),
+        ...(options.chatExecutionRoots ? { executionRoots: options.chatExecutionRoots } : {}),
+      }),
+      repository: options.chatRepository,
+    } : null,
+    terminalRuntime: options.terminalRuntime,
+  });
+  const sessions = options.repository ? new ProjectTaskSessionRepository(options.repository.db) : null;
   const service = options.repository ? new ProjectTaskService({
     repository: options.repository,
     comments: new ProjectTaskCommentRepository(options.repository.db),
@@ -52,10 +80,16 @@ export function registerProjectTaskRoutes(options: {
       scope: { projectSlug: event.projectSlug, taskId: event.taskId },
       payload: { revision: event.revision },
     }),
+    ...(sessions ? { sessions } : {}),
+    ...(options.chatRepository ? { chats: ports.chats } : {}),
+    agentStatus: { terminals: ports.terminals },
   }) : null;
+  const work = service && sessions ? new ProjectTaskWork({ tasks: service, sessions, ports }) : null;
   options.app.route("/", createProjectTaskRoutes({
     service,
+    work,
     getOwnerScope: options.getOwnerScope ?? ((c) => ({ type: "user", id: requireRequestPrincipal(c).userId })),
+    getPrincipal: (c) => requireRequestPrincipal(c),
     ...(options.collaboration ? { projectOperationAdmission: options.collaboration.projectOperationAdmission } : {}),
   }));
   return service;

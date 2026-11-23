@@ -7,7 +7,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   ActorRef, BoardMember, BoardSettings, CreateTaskBodySchema, TaskComment, ListTasksQuerySchema, MoveTaskBodySchema, ProjectTask, TaskActivity,
-  UpdateTaskBodySchema,
+  TaskAgentStatus, TaskSession, UpdateTaskBodySchema,
 } from "@matrix-os/contracts/project-tasks";
 import type { z } from "zod/v4";
 import type { ProjectConfig } from "../project-manager.js";
@@ -20,6 +20,8 @@ import { mapLegacyTasks, readLegacyTasks } from "./legacy-import.js";
 import {
   ProjectTaskRepository, RevisionConflict, toProjectTask, toTaskActivity, type BoardRow, type TaskRow, type TaskScope,
 } from "./repository.js";
+import type { ChatPort, TerminalPort } from "./session-ports.js";
+import type { ProjectTaskSessionRepository, SessionRow } from "./sessions.js";
 
 type ProjectLookup = {
   getProject(slug: string, ownerScope?: OwnerScope): Promise<
@@ -48,6 +50,14 @@ export interface ProjectTaskServiceOptions {
    * through here even when a read triggered it.
    */
   admit?<T>(caller: TaskCaller, project: ProjectConfig, write: () => Promise<T>): Promise<T>;
+  /** Terminals attached to tasks; without it tasks carry no sessions. */
+  sessions?: ProjectTaskSessionRepository;
+  /** The owner's chats: each task's own chat and its live agent status. */
+  chats?: Pick<ChatPort, "statuses">;
+  /** Live agent status of attached terminals, read once per request. */
+  agentStatus?: {
+    terminals?: Pick<TerminalPort, "statuses"> & Partial<Pick<TerminalPort, "existingRefs">>;
+  };
 }
 
 /** The caller resolved from the request principal; never from a body. */
@@ -58,6 +68,7 @@ export interface TaskCaller {
 
 export interface BoardContext {
   slug: string;
+  ownerScope: OwnerScope;
   project: ProjectConfig;
   scope: TaskScope;
   board: BoardRow;
@@ -98,7 +109,7 @@ export class ProjectTaskService {
   async open(caller: TaskCaller, slug: string): Promise<BoardContext> {
     const { project, scope } = await this.resolve(caller, slug);
     const existing = await this.options.repository.getBoard(scope);
-    if (existing && existing.legacy_import_at !== null) return { slug, project, scope, board: existing };
+    if (existing && existing.legacy_import_at !== null) return { slug, ownerScope: caller.ownerScope, project, scope, board: existing };
     const prepare = async () => {
       const board = await this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
       if (board.legacy_import_at !== null) return board;
@@ -109,13 +120,56 @@ export class ProjectTaskService {
       return this.options.repository.ensureBoard(scope, defaultTaskKey(slug));
     };
     const board = this.options.admit ? await this.options.admit(caller, project, prepare) : await prepare();
-    return { slug, project, scope, board };
+    return { slug, ownerScope: caller.ownerScope, project, scope, board };
   }
 
-  /** Wire tasks for rows, with their relations loaded in one query. */
+  /** Wire tasks for rows, with relations, terminals and live agent status loaded once per request. */
   async tasks(context: BoardContext, rows: readonly TaskRow[]): Promise<ProjectTask[]> {
-    const blockedBy = await this.options.repository.blockedByFor(context.scope, rows.map((row) => row.id));
-    return rows.map((row) => toProjectTask(row, context.board.task_key, { blockedBy: blockedBy[row.id] ?? [] }));
+    const ids = rows.map((row) => row.id);
+    const [blockedBy, links] = await Promise.all([
+      this.options.repository.blockedByFor(context.scope, ids),
+      this.options.sessions?.listForTasks(context.scope, ids) ?? Promise.resolve({} as Record<string, SessionRow[]>),
+    ]);
+    const all = Object.values(links).flat();
+    const chatIds = rows.flatMap((row) => (row.chat_id ? [row.chat_id] : []));
+    const [statuses, unavailable] = await Promise.all([this.agentStatuses(context, chatIds, all), this.unavailableSessions(context, all)]);
+    return rows.map((row) => toProjectTask(row, context.board.task_key, {
+      blockedBy: blockedBy[row.id] ?? [],
+      chatStatus: row.chat_id ? statuses[row.chat_id] ?? "idle" : "idle",
+      sessions: (links[row.id] ?? []).map((link) => toTaskSession(link, statuses[link.session_ref] ?? "idle", unavailable.has(link.session_ref))),
+    }));
+  }
+
+  /** Terminal links whose tab closed. A source that fails or is not wired proves nothing, so its links stay available. */
+  async unavailableSessions(context: BoardContext, links: readonly SessionRow[]): Promise<Set<string>> {
+    const existingTabs = this.options.agentStatus?.terminals?.existingRefs;
+    if (!existingTabs || links.length === 0) return new Set();
+    try {
+      const live = new Set(await existingTabs(context.project.id));
+      return new Set(links.map((link) => link.session_ref).filter((ref) => !live.has(ref)));
+    } catch (error: unknown) {
+      console.warn("[project-tasks] terminal liveness unavailable", error instanceof Error ? error.name : typeof error);
+      return new Set();
+    }
+  }
+
+  /** Agent status per chat id and terminal ref; a status source that fails reads as idle rather than failing the board. */
+  async agentStatuses(context: BoardContext, chatIds: readonly string[], links: readonly SessionRow[]): Promise<Record<string, TaskAgentStatus>> {
+    const read = async (source: string, run: () => Promise<Record<string, TaskAgentStatus>>) => {
+      try {
+        return await run();
+      } catch (error: unknown) {
+        console.warn("[project-tasks] agent status unavailable", source, error instanceof Error ? error.name : typeof error);
+        return {};
+      }
+    };
+    const chats = this.options.chats;
+    const terminals = this.options.agentStatus?.terminals;
+    const [fromChats, fromTerminals] = await Promise.all([
+      chats && chatIds.length > 0 ? read("chat", () => chats.statuses(context.ownerScope, chatIds)) : {},
+      terminals && links.length > 0 ? read("terminal", () => terminals.statuses()) : {},
+    ]);
+    return { ...fromTerminals, ...fromChats };
   }
 
   async task(context: BoardContext, row: TaskRow): Promise<ProjectTask> {
@@ -169,6 +223,7 @@ export class ProjectTaskService {
 
   async moveTask(caller: TaskCaller, slug: string, taskId: string, body: MoveTaskBody): Promise<ProjectTask> {
     const context = await this.open(caller, slug);
+    if ((body.status === "done" || body.status === "canceled") && body.force !== true) await this.assertNoAgentWorking(context, taskId);
     const { row } = await this.options.repository.moveTask(context.scope, taskId, body, caller.actor);
     const task = await this.task(context, row);
     await this.signal("task.moved", context, task);
@@ -252,7 +307,17 @@ export class ProjectTaskService {
     };
   }
 
-  private async requireRow(context: BoardContext, taskId: string): Promise<TaskRow> {
+  /** Closing guard: a task whose chat or terminal agent is still working closes only with `force`. Closing never removes either. */
+  private async assertNoAgentWorking(context: BoardContext, taskId: string): Promise<void> {
+    const row = await this.requireRow(context, taskId);
+    const links = (await this.options.sessions?.listForTasks(context.scope, [taskId]))?.[taskId] ?? [];
+    const chatIds = row.chat_id ? [row.chat_id] : [];
+    if (links.length === 0 && chatIds.length === 0) return;
+    const statuses = await this.agentStatuses(context, chatIds, links);
+    if ([...chatIds, ...links.map((link) => link.session_ref)].some((ref) => statuses[ref] === "working")) throw new ProjectTaskError("task_agent_working");
+  }
+
+  async requireRow(context: BoardContext, taskId: string): Promise<TaskRow> {
     const row = await this.options.repository.getTask(context.scope, taskId);
     if (!row) throw new ProjectTaskError("task_not_found");
     return row;
@@ -275,11 +340,19 @@ export class ProjectTaskService {
   }
 
   /** Change signals go out after commit; a failed publish never undoes the write. */
-  private async signal(type: TaskEventType, context: BoardContext, task: ProjectTask): Promise<void> {
+  async signal(type: TaskEventType, context: BoardContext, task: ProjectTask): Promise<void> {
     try {
       await this.options.publish({ type, projectSlug: context.slug, taskId: task.id, revision: task.revision });
     } catch (error: unknown) {
       console.warn("[project-tasks] change signal failed", error instanceof Error ? error.name : typeof error);
     }
   }
+}
+
+export function toTaskSession(link: SessionRow, agentStatus: TaskAgentStatus, unavailable = false): TaskSession {
+  return {
+    ref: link.session_ref, kind: link.kind as TaskSession["kind"], title: link.title, role: link.role as TaskSession["role"],
+    agentStatus: unavailable ? "idle" : agentStatus, ...(link.harness ? { harness: link.harness } : {}),
+    ...(unavailable ? { unavailable: true } : {}),
+  };
 }

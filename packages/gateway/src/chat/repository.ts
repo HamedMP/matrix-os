@@ -45,7 +45,8 @@ import {
   type CanonicalChatTurn,
   type CanonicalChatUserState,
 } from "@matrix-os/contracts";
-import { Kysely, sql, type Dialect, type Selectable, type Transaction } from "kysely";
+import { Kysely, sql, type Dialect, type QueryExecutorProvider, type Selectable, type Transaction } from "kysely";
+import { readChatExecutionDefault, writeChatExecutionDefault } from "./execution-defaults.js";
 import { z } from "zod/v4";
 import { bootstrapChatDatabase, type ChatDatabase, type ChatRunsTable, type ChatsTable } from "./database.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
@@ -154,6 +155,8 @@ export interface CreateChatInput {
   title: string;
   projectId?: string;
   currentSelection?: CanonicalChatModelSelection;
+  /** Server-only: the worktree turns without a root run in (see execution-defaults.ts). Requires `projectId`. */
+  defaultWorktreeId?: string;
 }
 
 export interface UpdateChatInput {
@@ -649,7 +652,11 @@ export class ChatRepository {
     CanonicalChatRequestIdSchema.parse(input.clientRequestId);
     if (input.projectId !== undefined) requireSafeRef(input.projectId);
     if (input.currentSelection !== undefined) CanonicalChatModelSelectionSchema.parse(input.currentSelection);
+    if (input.defaultWorktreeId !== undefined && input.projectId === undefined) throw new TypeError("A default worktree needs a Project");
     const timestamp = new Date().toISOString();
+    const bindDefault = (trx: QueryExecutorProvider, chatId: string) => input.defaultWorktreeId === undefined || input.projectId === undefined
+      ? Promise.resolve()
+      : writeChatExecutionDefault(trx, owner, chatId, { projectId: input.projectId, worktreeId: input.defaultWorktreeId });
 
     return this.transact(async (trx) => {
       const candidate = toChatRecord({
@@ -709,6 +716,8 @@ export class ChatRepository {
           .where("create_request_id", "=", input.clientRequestId)
           .executeTakeFirst();
         if (!existing) throw new ChatConflictError(input.id, 0);
+        // A retried create keeps the same Chat and still binds its default root.
+        await bindDefault(trx, existing.id);
         const record = await hydrateRecord(trx, owner, existing.id);
         if (!record) throw new ChatNotFoundError(existing.id);
         return record;
@@ -729,6 +738,7 @@ export class ChatRepository {
         attention_acknowledged_at: null,
         last_opened_at: null,
       }).execute();
+      await bindDefault(trx, inserted.id);
       await this.appendOutbox(trx, owner, inserted.id, 0, "chat.created");
       return toPrincipalRecord(trx, owner, inserted);
     });
@@ -738,6 +748,11 @@ export class ChatRepository {
     const owner = validateOwner(ownerInput);
     CanonicalChatIdSchema.parse(chatId);
     return hydrateRecord(this.kysely, owner, chatId);
+  }
+
+  /** The worktree a turn without a root runs in, while the Chat still belongs to its Project. */
+  async getExecutionDefault(ownerInput: ChatOwner, chatId: string): Promise<{ projectId: string; worktreeId: string } | null> {
+    return readChatExecutionDefault(this.kysely, validateOwner(ownerInput), CanonicalChatIdSchema.parse(chatId));
   }
 
   async getTerminalBinding(

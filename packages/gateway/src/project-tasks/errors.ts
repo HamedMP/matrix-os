@@ -14,6 +14,8 @@ const STATUS: Record<ProjectTaskErrorCode, ContentfulStatusCode> = {
   board_unavailable: 503,
   board_sync_unavailable: 503,
   task_session_unavailable: 503,
+  task_session_not_found: 404,
+  task_session_taken: 409,
 };
 
 const MESSAGE: Record<ProjectTaskErrorCode, string> = {
@@ -29,6 +31,8 @@ const MESSAGE: Record<ProjectTaskErrorCode, string> = {
   board_unavailable: "The board is unavailable right now.",
   board_sync_unavailable: "Sync is unavailable right now.",
   task_session_unavailable: "The session could not be started right now.",
+  task_session_not_found: "That chat or terminal was not found in this project.",
+  task_session_taken: "That chat or terminal already belongs to another task.",
 };
 
 /** Typed board failure; the route mapper turns it into a stable code and generic message. */

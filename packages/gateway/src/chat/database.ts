@@ -1,6 +1,7 @@
 import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
 import { bootstrapBrowserApprovalMetadata } from "./browser-approval-database.js";
 import { bootstrapChatDriveProjects } from "./drive-project-database.js";
+import { bootstrapChatExecutionDefaults } from "./execution-defaults.js";
 import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
 export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
 import { bootstrapChatMetadata } from "./metadata-schema.js";
@@ -778,6 +779,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
   await bootstrapChatReadState(db);
   await bootstrapChatDriveProjects(db);
+  await bootstrapChatExecutionDefaults(db);
   await bootstrapCompanyDriveSharingIndexes(db);
   await bootstrapBrowserApprovalMetadata(db);
 }
