@@ -42,7 +42,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
-import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED } from "../coding-agents/codex-chat-speed.mjs";
+import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED, CODEX_SERVICE_TIER_OPTION } from "./codex-chat-speed.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -845,8 +845,8 @@ export function validateChatProviderSelection(input: {
   if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
     return selectionError("capability_mismatch", "The selected model does not support images.");
   }
-  const effectiveSelection = instance.driverKind === "codex" && selection.data.options?.some(({ id }) => id === "service_tier")
-    ? { ...selection.data, options: selection.data.options.filter(({ id }) => id !== "service_tier") }
+  const effectiveSelection = instance.driverKind === "codex" && selection.data.options?.some(({ id }) => id === CODEX_SERVICE_TIER_OPTION)
+    ? { ...selection.data, options: selection.data.options.filter(({ id }) => id !== CODEX_SERVICE_TIER_OPTION) }
     : selection.data;
   if (!optionsMatch(effectiveSelection, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

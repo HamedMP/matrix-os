@@ -1,10 +1,9 @@
-import { CODEX_CHAT_SPEED_OPTION, codexNativeServiceTier } from "./codex-chat-speed.mjs";
 import { createCodexRoutineChannel, CODEX_ROUTINE_TOOL } from "./codex-routine-channel.mjs";
 import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolLifecycleTypeSchema, ItemLifecycleSchema, RpcResponseSchema, RpcErrorSchema, ToolOutputDeltaSchema, AgentDeltaSchema, TokenUsageUpdatedSchema, TurnCompletedSchema } from "./codex-app-server-protocol.mjs";
 import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
 import { createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
 import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
-import { codexInitialTurn, RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
+import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
 import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
@@ -120,7 +119,9 @@ const browserBootstrap = createCodexBrowserBootstrap(config.browserAttemptId);
 let currentBrowserLease;
 let nativeSession;
 let nativeGeneration, routineFeatureThread = false;
-const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => codexInitialTurn(config), enqueue: (turn, requestId) => { const accepted = enqueuePendingTurn(turn); if (accepted && requestId) executionObservation.admitted(requestId); return accepted; }, sendNative: value => sendProvider(value),
+const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => PendingTurnSchema.parse({ prompt: config.prompt, model: config.model, modelOptions: [
+  ...(config.effort ? [{ id: "effort", value: config.effort }] : []), ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
+] }), enqueue: (turn, requestId) => { const accepted = enqueuePendingTurn(turn); if (accepted && requestId) executionObservation.admitted(requestId); return accepted; }, sendNative: value => sendProvider(value),
   current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId,
   ownerWaitChanged: (callId, turnId, waiting) => executionWatchdog.setToolOwnerWait(itemIdentity(turnId, callId), waiting),
 });
@@ -1106,10 +1107,7 @@ function turnOption(turn, id) {
 
 function turnStartParams(threadId, turn) {
   const effort = EffortSchema.parse(turnOption(turn, "effort"));
-  const serviceTier = codexNativeServiceTier(
-    ServiceTierSchema.parse(turnOption(turn, CODEX_CHAT_SPEED_OPTION)),
-    ServiceTierSchema.parse(turnOption(turn, "service_tier")),
-  );
+  const serviceTier = ServiceTierSchema.parse(turnOption(turn, "service_tier"));
   return {
     threadId,
     input: [{ type: "text", text: turn.prompt, text_elements: [] }],
@@ -1289,7 +1287,7 @@ async function startNativeSession(lease) {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
-    serviceTier: codexNativeServiceTier(config.chatSpeed, config.serviceTier), cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
+    serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
     config: codexBrowserThreadConfig(lease),
   });
@@ -1327,7 +1325,14 @@ try {
   const releaseStartedAt = sendTiming.now();
   await browserBootstrap.waitRelease(startupController.signal);
   sendTiming.mark("browser_release_wait", releaseStartedAt, 1);
-  let turn = initialRoutineTurn ?? codexInitialTurn(config);
+  let turn = initialRoutineTurn ?? PendingTurnSchema.parse({
+    prompt: config.prompt,
+    model: config.model,
+    modelOptions: [
+      ...(config.effort ? [{ id: "effort", value: config.effort }] : []),
+      ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
+    ],
+  });
   let firstTurn = true;
   while (turn && !stopping) {
     pendingAdmittedTurn = true;

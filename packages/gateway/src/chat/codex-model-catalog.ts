@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { performance } from "node:perf_hooks";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
-import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED } from "../coding-agents/codex-chat-speed.mjs";
+import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED, CODEX_DEFAULT_SERVICE_TIER } from "./codex-chat-speed.js";
 import { recordCodexCatalogTiming, type CodexCatalogTimingResult } from "./send-timing.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -83,7 +83,7 @@ export function normalizeCodexModelCatalog(raw: unknown): CodingModelCatalogProj
   const serviceTiers = new Map<string, string>([[CODEX_CHAT_STANDARD_SPEED, "Standard"]]);
   for (const tier of visible.flatMap((model) => model.serviceTiers)) {
     if (serviceTiers.size >= MAX_OPTIONS) break;
-    if (tier.id !== "default" && !serviceTiers.has(tier.id)) serviceTiers.set(tier.id, tier.name);
+    if (tier.id !== CODEX_DEFAULT_SERVICE_TIER && !serviceTiers.has(tier.id)) serviceTiers.set(tier.id, tier.name);
   }
   const defaultModel = visible.find((model) => model.isDefault) ?? visible[0]!;
 

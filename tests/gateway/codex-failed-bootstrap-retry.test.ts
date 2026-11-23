@@ -136,7 +136,7 @@ it.each([
     expect(requests[1]).toMatchObject({
       prompt: "NEW retry only: open the public website.", model: "gpt-6.1-sol",
       approvalPolicy: "never", sandboxMode: "full_access",
-      modelOptions: [{ id: "effort", value: "low" }, { id: "codex_speed", value: "standard" }],
+      modelOptions: [{ id: "effort", value: "low" }, { id: "service_tier", value: "default" }],
     });
     const replacementIds = collected.map(events => {
       const replacement = events.find(event => event.type === "state.updated");

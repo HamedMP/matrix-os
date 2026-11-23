@@ -1,4 +1,4 @@
-import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED } from "../coding-agents/codex-chat-speed.mjs";
+import { codexChatRunnerModelOptions } from "./codex-chat-speed.js";
 import { createCodexRoutineSources } from "./codex-routine-source.js";
 import { createPiRoutineSources } from "./pi-routine-source.js";
 import { createOpenCodeRoutineSources } from "./opencode-routine-source.js";
@@ -65,12 +65,7 @@ function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | 
 
 function chatModelOptions(input: CanonicalProviderRunInput, providerId: string) {
   const options = input.selection.options ?? [];
-  if (providerId !== "codex") return options;
-  // Queued and recovered runs can carry an older selection than admission.
-  const current = options.filter(({ id }) => id !== "service_tier");
-  return current.some(({ id }) => id === CODEX_CHAT_SPEED_OPTION)
-    ? current
-    : [...current, { id: CODEX_CHAT_SPEED_OPTION, value: CODEX_CHAT_STANDARD_SPEED }];
+  return providerId === "codex" ? codexChatRunnerModelOptions(options) : options;
 }
 
 function legacyRequestId(runId: string): string {

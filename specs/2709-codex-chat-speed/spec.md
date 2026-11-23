@@ -11,12 +11,12 @@ Prior Chat versions could save Fast without the user's choice. Those saved optio
 ## Execution contract
 
 - The native Codex model catalog identifies available paid speed tiers. The Chat catalog and admission path enforce the explicit choice.
-- A Standard request clears an inherited paid tier. Native app-server omission can restore the previous tier, so the outgoing start, resume and turn requests must distinguish Standard from omission where the provider caches the setting.
+- A Standard request clears an inherited paid tier. Host upgrades preserve background Codex runners, which read the existing `service_tier` option in the `modelOptions` array. The gateway translates the public `codex_speed` choice into that runner option. Standard maps to `{ id: "service_tier", value: "default" }`. Omitting the option on the native request inherits the previous paid tier.
 - The user's existing Chat, model selection, reasoning effort, account binding and conversation history remain usable when speed changes.
 - Existing owner authorization and provider admission continue to govern execution. No new endpoint, grant, storage table or file is required.
 
 ## Verification
 
-Exercise new Chats, legacy saved Fast, explicit Fast, and the switch back to Standard during a warm continuation and after thread resume. Check the resulting app-server request and the visible composer setting. Cover Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile on eligible builds.
+Exercise new Chats, legacy saved Fast, explicit Fast, and the switch back to Standard during a warm continuation and after thread resume. Check the resulting app-server request and the visible composer setting. Also start a pre-upgrade runner in Fast and submit Standard through the updated gateway's control path. Its native `turn/start` must carry an explicit Standard reset. Cover Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile on eligible builds.
 
 Update the public Coding Agents guide alongside the product change.

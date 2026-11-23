@@ -76,7 +76,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
       projectId: "matrix-os",
       worktreeId: "wt_feature",
       model: "gpt-5.6-sol",
-      modelOptions: [{ id: "codex_speed", value: "standard" }],
+      modelOptions: [{ id: "service_tier", value: "default" }],
       mode: "default",
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",
@@ -662,7 +662,7 @@ describe("canonical coding Chat Provider adapter", () => {
       .map((item) => item.delta).join("")).toBe("# Verification\n\n- Complete");
   });
 
-  it("resumes and cancels only the same persisted coding thread", async () => {
+  it("resumes the same persisted Codex thread with Standard on the existing runner wire", async () => {
     const accepted = event({
       type: "turn.accepted",
       eventId: "evt_accepted",
@@ -689,7 +689,7 @@ describe("canonical coding Chat Provider adapter", () => {
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
       expect.objectContaining({ message: "ship it", modelOptions: [
-        { id: "effort", value: "low" }, { id: "codex_speed", value: "standard" },
+        { id: "effort", value: "low" }, { id: "service_tier", value: "default" },
       ] }),
     );
 
