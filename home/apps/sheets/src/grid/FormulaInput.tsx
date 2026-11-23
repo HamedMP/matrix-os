@@ -25,7 +25,7 @@ export interface FormulaInputProps {
 }
 
 /** The text split into plain parts and coloured references. */
-export function highlightParts(text: string, references: readonly FormulaRef[]): ReactNode[] {
+function highlightParts(text: string, references: readonly FormulaRef[]): ReactNode[] {
   const parts: ReactNode[] = [];
   let at = 0;
   for (const reference of references) {

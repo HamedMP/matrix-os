@@ -10,7 +10,7 @@ import type { CellRange, SheetInfo } from "../session/engine";
 import { MAX_COLS, MAX_ROWS } from "../session/engine";
 
 export const HEADER_HEIGHT_PX = 24;
-export const ROW_HEADER_WIDTH_PX = 48;
+export const ROW_HEADER_WIDTH_PX = 56;
 export const MIN_COLUMN_PX = 12;
 export const MIN_ROW_PX = 8;
 

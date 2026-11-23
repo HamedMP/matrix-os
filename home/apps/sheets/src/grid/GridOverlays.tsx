@@ -38,7 +38,7 @@ export const GridOverlays = memo(function GridOverlays({ layout, selection, refe
         const rect = box(layout, entry);
         if (rect === null) return null;
         const single = entry.start.row === entry.end.row && entry.start.col === entry.end.col;
-        return <div key={index} className={`sg-selection${single ? " is-single" : ""}${index === selection.ranges.length - 1 ? " is-current" : ""}`} style={rect} />;
+        return <div key={`${entry.start.row}:${entry.start.col}:${entry.end.row}:${entry.end.col}:${index}`} className={`sg-selection${single ? " is-single" : ""}${index === selection.ranges.length - 1 ? " is-current" : ""}`} style={rect} />;
       })}
       {references.map((reference, index) => {
         const rect = box(layout, reference.range);

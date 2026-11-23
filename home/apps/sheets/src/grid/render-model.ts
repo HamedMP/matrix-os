@@ -94,6 +94,11 @@ export function cellElementId(gridId: string, row: number, col: number): string 
   return `${gridId}-r${row}c${col}`;
 }
 
+/** Id of an entry of the function list. */
+export function optionId(listId: string, index: number): string {
+  return `${listId}-option-${index}`;
+}
+
 const looks = new WeakMap<object, Map<string, CellLook>>();
 const MAX_LOOKS = 8192;
 

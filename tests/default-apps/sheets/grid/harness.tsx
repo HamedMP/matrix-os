@@ -3,14 +3,15 @@ import React from "react";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
 import { SheetGrid, type SheetGridController, type SheetGridProps, createSheetGridController } from "../../../../home/apps/sheets/src/grid";
+import { HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../../../home/apps/sheets/src/grid/geometry";
 import { type SheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
 import { harness } from "../session/fakes";
 
 /** Default column width and row height of a new workbook, and the header sizes, in pixels. */
 export const COL = 64;
 export const ROW = 20;
-export const HEAD_W = 48;
-export const HEAD_H = 24;
+export const HEAD_W = ROW_HEADER_WIDTH_PX;
+export const HEAD_H = HEADER_HEIGHT_PX;
 
 export interface GridHarness {
   session: SheetSession;

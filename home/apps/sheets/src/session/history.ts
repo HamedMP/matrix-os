@@ -232,9 +232,9 @@ export function applyEntry(internals: WorkbookInternals, entry: HistoryEntry, fo
 
 /** The sheets whose rows or columns an entry inserts or deletes. */
 export function structuralSheets(entry: HistoryEntry): SheetId[] {
-  const sheets: SheetId[] = [];
-  for (const step of entry.steps) if (step.kind === "axis" && !sheets.includes(step.sheet)) sheets.push(step.sheet);
-  return sheets;
+  const sheets = new Set<SheetId>();
+  for (const step of entry.steps) if (step.kind === "axis") sheets.add(step.sheet);
+  return [...sheets];
 }
 
 /** The smallest range on one sheet that holds every cell an entry changed, for scrolling to it. */

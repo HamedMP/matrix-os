@@ -92,4 +92,4 @@ export type { FormulaRef } from "./formula-edit";
 export { createFunctionCatalog } from "./function-hints";
 export type { FunctionCatalog, FunctionHint } from "./function-hints";
 export { editTextOf } from "./actions-edit";
-export { writeSystemClipboard } from "./GridMenu";
+export { readSystemClipboard, writeSystemClipboard } from "./system-clipboard";

@@ -92,7 +92,7 @@ export function createRecentFiles(
         // Rows for the same path beyond the first (two windows opened it at once) and rows past the cap go.
         const others = all.filter((row) => row.path !== path);
         const surplus = [...same.slice(1), ...others.slice(Math.max(0, MAX_RECENT_FILES - 1))];
-        for (const row of surplus) await db.delete(RECENT_FILES_TABLE, row.id);
+        await Promise.all(surplus.map((row) => db.delete(RECENT_FILES_TABLE, row.id)));
       } catch (error: unknown) {
         log("recent files could not be updated", error);
       }
@@ -101,7 +101,8 @@ export function createRecentFiles(
     async remove(path: string): Promise<void> {
       if (db === null || db === undefined) return;
       try {
-        for (const row of await rows()) if (row.path === path) await db.delete(RECENT_FILES_TABLE, row.id);
+        const matching = (await rows()).filter((row) => row.path === path);
+        await Promise.all(matching.map((row) => db.delete(RECENT_FILES_TABLE, row.id)));
       } catch (error: unknown) {
         log("recent files could not be updated", error);
       }

@@ -216,11 +216,11 @@ export class Recorder {
     const open = this.requireOpen();
     const info = this.workbook.getSheet(sheet);
     const changes: Array<{ index: number; before: number | null; after: number | null }> = [];
+    const current = new Map<number, number>();
+    if (axis === "row") for (const row of info.rows) current.set(row.index, row.heightPt);
+    else for (const col of info.columns) current.set(col.index, col.width);
     for (const index of indexes) {
-      const before =
-        axis === "row"
-          ? (info.rows.find((row) => row.index === index)?.heightPt ?? null)
-          : (info.columns.find((col) => col.index === index)?.width ?? null);
+      const before = current.get(index) ?? null;
       if (before === size) continue;
       if (axis === "row") this.workbook.setRowHeight(sheet, index, size);
       else this.workbook.setColumnWidth(sheet, index, size);

@@ -1,4 +1,5 @@
 import type { FunctionHint } from "./function-hints";
+import { optionId } from "./render-model";
 
 export interface FunctionPopupProps {
   /** Id of the list element, referenced by the input's `aria-controls`. */
@@ -13,10 +14,6 @@ export interface FunctionPopupProps {
   left: number;
   top: number;
   onPick(name: string): void;
-}
-
-export function optionId(listId: string, index: number): string {
-  return `${listId}-option-${index}`;
 }
 
 /** The function list and the argument hint shown under the text being edited. */
@@ -48,7 +45,7 @@ export function FunctionPopup({ listId, items, activeIndex, summaryOf, hint, lef
         <div className="sg-popup__hint" role="status">
           <span className="sg-popup__name">{hint.hint.name}</span>(
           {hint.hint.args.map((arg, index) => (
-            <span key={index}>
+            <span key={arg}>
               {index > 0 ? ", " : ""}
               <span className={index === hint.active ? "sg-popup__arg is-active" : "sg-popup__arg"}>{arg}</span>
             </span>

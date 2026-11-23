@@ -275,7 +275,7 @@ describe("SheetGrid editing", () => {
     expect(editor(container)).toBeNull();
     press(grid, "Delete");
     fireEvent.paste(grid, { clipboardData: { getData: () => "7" } });
-    fireEvent.doubleClick(grid, { clientX: 60, clientY: 30 });
+    fireEvent.doubleClick(grid, { clientX: 70, clientY: 30 });
     expect(editor(container)).toBeNull();
     expect(session.cell(sheet, 0, 0).value).toBe(1);
     expect(session.getState().dirty).toBe(false);
