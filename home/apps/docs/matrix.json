@@ -28,5 +28,19 @@
       "vite.config.ts"
     ]
   },
-  "listingTrust": "first_party"
+  "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "recent_documents": {
+        "columns": {
+          "path": "text",
+          "name": "text",
+          "opened_at": "text"
+        },
+        "indexes": [
+          "opened_at"
+        ]
+      }
+    }
+  }
 }
