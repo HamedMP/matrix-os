@@ -121,6 +121,31 @@ function projectDetail(chatId: string, sessionId?: string): {
 }
 
 describe("Work Files and Terminal inspector", () => {
+  it.each(["replace-client", "unmount"])("cancels a Side question when %s happens while its thread is created", async change => {
+    let finish!: (value: CanonicalSideChatSnapshot) => void;
+    const oldClient = {
+      getSideChat: vi.fn(async () => ({ threadId: null, messages: [] })),
+      createSideChat: vi.fn(() => new Promise<CanonicalSideChatSnapshot>(resolve => { finish = resolve; })),
+      askSideChat: vi.fn(async () => ({ threadId: "side_original", messages: [] })),
+    };
+    const replacement = { ...oldClient, getSideChat: vi.fn(async () => ({ threadId: "side_replacement", messages: [] })), askSideChat: vi.fn(async () => ({ threadId: "side_replacement", messages: [] })) };
+    const view = render(<SideChatPanel chatId="chat_original" client={oldClient} onSendToMain={vi.fn()} />);
+    await screen.findByText(/Ask about this chat/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Ask side chat" }), { target: { value: "Original private question" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+    await waitFor(() => expect(oldClient.createSideChat).toHaveBeenCalledOnce());
+    if (change === "unmount") view.unmount();
+    else view.rerender(<SideChatPanel chatId="chat_original" client={replacement} onSendToMain={vi.fn()} />);
+    await act(async () => finish({ threadId: "side_original", messages: [] }));
+    expect(oldClient.askSideChat).not.toHaveBeenCalled();
+    expect(replacement.askSideChat).not.toHaveBeenCalled();
+    if (change === "replace-client") {
+      fireEvent.change(screen.getByRole("textbox", { name: "Ask side chat" }), { target: { value: "New session question" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+      await waitFor(() => expect(replacement.askSideChat).toHaveBeenCalledWith("chat_original", expect.objectContaining({ text: "New session question" })));
+    }
+  });
+
   it("retains the real unsent Side chat question while visiting Archives", async () => {
     const getSideChat = vi.fn(async () => ({ threadId: "side_fixture", messages: [] }));
     const client = { getSideChat, list: vi.fn(async () => ({ items: [] })), askSideChat: vi.fn() } as unknown as CanonicalChatClient;

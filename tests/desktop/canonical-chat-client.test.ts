@@ -3,6 +3,8 @@ import {
   createCanonicalChatClient,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { createApiClient } from "@desktop/renderer/src/lib/api";
+import { installHeaderInjection } from "@desktop/main/auth/header-injection";
 import { AppError } from "@desktop/shared/app-error";
 
 const record = {
@@ -37,6 +39,47 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it.each(["same", "account", "runtime"])("keeps a Side chat follow-up on its original session while %s changes during creation", async change => {
+    const original = { authGeneration: 3, runtimeSlot: "computer-a" };
+    let current = { ...original };
+    let listener!: (details: { url: string; requestHeaders: Record<string, string> }, callback: (decision: { requestHeaders: Record<string, string>; cancel?: boolean }) => void) => void;
+    installHeaderInjection({ webRequest: { onBeforeSendHeaders: value => { listener = value; }, onHeadersReceived: () => {} } },
+      () => `fixture-owner-${current.authGeneration}`, () => "https://matrix.test", "null", () => current);
+    const saved = { threadId: `side_${"a".repeat(32)}`, messages: [] };
+    let created!: (value: Response) => void;
+    const creation = new Promise<Response>(resolve => { created = resolve; });
+    const delivered = vi.fn();
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      let decision!: { requestHeaders: Record<string, string>; cancel?: boolean };
+      listener({ url, requestHeaders: Object.fromEntries(new Headers(init?.headers)) }, result => { decision = result; });
+      if (decision.cancel) throw new DOMException("Canceled", "AbortError");
+      if (new URL(url).pathname.endsWith("/turns")) { delivered(url, init?.body, decision.requestHeaders); return Response.json(saved); }
+      return creation;
+    });
+    const transport = createApiClient({ baseUrl: "https://matrix.test", getRuntimeSlot: () => current.runtimeSlot, fetchFn });
+    const client = createCanonicalChatClient(transport, { sideChatSession: original });
+    const pending = client.createSideChat("chat_private");
+    if (change === "account") current = { ...current, authGeneration: 4 };
+    if (change === "runtime") current = { ...current, runtimeSlot: "computer-b" };
+    created(Response.json(saved));
+    await pending;
+    const turn = client.askSideChat("chat_private", { clientRequestId: "req_private", text: "Original owner's private question" });
+    if (change === "same") {
+      await expect(turn).resolves.toEqual(saved);
+      expect(delivered).toHaveBeenCalledWith(expect.stringContaining("runtime=computer-a"), expect.stringContaining("private question"), expect.objectContaining({ Authorization: "Bearer fixture-owner-3" }));
+    } else {
+      await expect(turn).rejects.toBeInstanceOf(Error);
+      expect(delivered).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects an unbound Side chat request before sending any private text", async () => {
+    const post = vi.fn(async () => ({ threadId: null, messages: [] }));
+    const client = createCanonicalChatClient(api({ post }));
+    await expect(client.askSideChat("chat_private", { clientRequestId: "req_unbound", text: "Private question" })).rejects.toBeInstanceOf(Error);
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("negotiates Schedule origin metadata on reads without retrying a typed transport error", async () => {
     const get = vi.fn().mockResolvedValueOnce({ items: [], pending: [], nextCursor: null })
       .mockRejectedValueOnce(new AppError("unauthorized", { httpStatus: 401 }));

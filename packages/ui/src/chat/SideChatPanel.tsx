@@ -32,6 +32,7 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
     const current = ++generation.current;
     setSnapshot(null);
     setLoading(true);
+    setPending(false);
     setError(null);
     setCopied(null);
     void client.getSideChat(chatId).then(value => {
@@ -56,6 +57,7 @@ export function SideChatPanel({ chatId, chatTitle = "the main chat", client, onS
     setError(null);
     try {
       if (!snapshot.threadId) await client.createSideChat(chatId);
+      if (generation.current !== current) return;
       const response = await client.askSideChat(chatId, { clientRequestId: attempt.id, text });
       if (generation.current !== current) return;
       setSnapshot(response);

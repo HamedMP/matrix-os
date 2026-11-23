@@ -234,7 +234,7 @@ function WorkTabContent({
   const maxInspectorWidth = Math.max(MIN_INSPECTOR_WIDTH, Math.min(MAX_INSPECTOR_WIDTH, surfaceWidth - navigationSpace - MIN_CHAT_WIDTH));
   const inspectorWidth = Math.max(MIN_INSPECTOR_WIDTH, Math.min(maxInspectorWidth,
     Number.isFinite(requestedInspectorWidth) ? requestedInspectorWidth : DEFAULT_INSPECTOR_WIDTH));
-  const localClient = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
+  const localClient = useMemo(() => api ? createCanonicalChatClient(api, { sideChatSession: { authGeneration, runtimeSlot } }) : null, [api, authGeneration, runtimeSlot]);
   const localEventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({

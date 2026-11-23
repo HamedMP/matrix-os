@@ -78,6 +78,7 @@ export type {
   CanonicalChatInvalidation,
 } from "@matrix-os/ui";
 import type { ApiClient } from "./api";
+import type { DesktopRequestSession } from "../../../shared/request-session";
 import { AppError } from "../../../shared/app-error";
 import {
   trackDesktopEvent,
@@ -229,9 +230,10 @@ function withQuery(path: string, values: Record<string, string | number | undefi
 }
 
 export function createCanonicalChatClient(
-  transport: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
+  transport: Pick<ApiClient, "get" | "post" | "patch" | "delete"> & Partial<Pick<ApiClient, "forSession">>,
   options: {
     trackEvent?: (detail: DesktopAnalyticsDetail) => unknown;
+    sideChatSession?: DesktopRequestSession;
   } = {},
 ): CanonicalChatClient {
   const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
@@ -241,6 +243,12 @@ export function createCanonicalChatClient(
     delete: (path, ...args) => transport.delete(chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), ...args),
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
+  const sideTransport = options.sideChatSession ? transport.forSession?.(options.sideChatSession) : undefined;
+  const sideRequest = (path: string, body?: unknown, timeoutMs?: number): Promise<unknown> => {
+    if (!sideTransport) throw new AppError("unauthorized");
+    const versioned = chatImportSourceVersionUrl(chatReadStateVersionUrl(path));
+    return body === undefined ? sideTransport.get(versioned) : sideTransport.post(versioned, body, timeoutMs ? { timeoutMs } : undefined);
+  };
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
     agents: createChatAgentClient((path, method, body, requestOptions) => {
@@ -329,16 +337,16 @@ export function createCanonicalChatClient(
     },
     async getSideChat(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalSideChatSnapshotSchema.parse(await api.get(`/api/chats/${encodeURIComponent(id)}/side-chat`));
+      return CanonicalSideChatSnapshotSchema.parse(await sideRequest(`/api/chats/${encodeURIComponent(id)}/side-chat`));
     },
     async createSideChat(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
-      return CanonicalSideChatSnapshotSchema.parse(await api.post(`/api/chats/${encodeURIComponent(id)}/side-chat`, {}));
+      return CanonicalSideChatSnapshotSchema.parse(await sideRequest(`/api/chats/${encodeURIComponent(id)}/side-chat`, {}));
     },
     async askSideChat(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalSideChatTurnRequestSchema.parse(input);
-      return CanonicalSideChatSnapshotSchema.parse(await api.post(`/api/chats/${encodeURIComponent(id)}/side-chat/turns`, body, { timeoutMs: 100_000 }));
+      return CanonicalSideChatSnapshotSchema.parse(await sideRequest(`/api/chats/${encodeURIComponent(id)}/side-chat/turns`, body, 100_000));
     },
 
     async updateTitle(chatId, input) {

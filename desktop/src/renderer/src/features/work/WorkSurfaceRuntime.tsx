@@ -48,7 +48,7 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     titles: CanonicalChatTitleProjection[];
   } | null>(null);
   const pendingDisposalRef = useRef<{ source: CanonicalChatEventSource; cancelled: boolean } | null>(null);
-  const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
+  const client = useMemo(() => api ? createCanonicalChatClient(api, { sideChatSession: { authGeneration, runtimeSlot } }) : null, [api, authGeneration, runtimeSlot]);
   const { agentDraftRequest, requestAgentDraft, consumeAgentDraft } = useWorkAgentDraftRequest();
   useCompanyDriveChatHandoff(active,tabId,requestAgentDraft);
   const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
