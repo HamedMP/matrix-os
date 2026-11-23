@@ -4,6 +4,7 @@ export { normalizeLeadingGlobalFlags } from "../../sync-client/src/cli/global-fl
 
 export const PUBLISHED_CLI_COMMANDS = new Set([
   "routines",
+  "tasks",
   "login",
   "logout",
   "sync",

@@ -63,7 +63,7 @@ import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { registerWorkspaceLifecycle } from "./server/workspace-lifecycle.js";
-import { registerProjectTaskRoutes } from "./server/project-task-routes.js";
+import { createProjectTaskAgentAccess, registerProjectTaskRoutes } from "./server/project-task-routes.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
@@ -1544,6 +1544,7 @@ export async function createGateway(config: GatewayConfig) {
     driveContextReady: () => chatDriveContext.service !== null,
   });
   let canonicalChatProviderCatalog = baseCanonicalChatProviderCatalog;
+  const projectTaskAgentAccess = createProjectTaskAgentAccess();
   if (chatRepository && canonicalChatExecutionRoots) {
     // Extraction plan for this 1,000+ line composition entrypoint:
     // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
@@ -1605,7 +1606,7 @@ export async function createGateway(config: GatewayConfig) {
       initial: { homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
         ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
         ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
-        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port },
+        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port, projectTasks: projectTaskAgentAccess.kernelBinding },
       providers: codingAgentProviders, threads: codingAgentThreadStore,
       claude: { resolveCredentialLaunch: resolveClaudeCredentialLaunch, matrixMcpCapabilityIssuer: matrixMcpCapabilities,
         ...(previewDriveClient ? { previewDriveClient } : {}) },
@@ -1755,10 +1756,9 @@ export async function createGateway(config: GatewayConfig) {
       codingAgentThreadStore,
     },
   });
-
   registerProjectTaskRoutes({ app, homePath, repository: ownerDatabaseServices?.projectTaskRepository ?? null, projectManager: codingAgentProjectManager,
     eventPublisher: workspaceEventPublisher, collaboration: gatewayCollaboration, sendPush: (reply) => channelManager.send(reply), worktreeManager: codingAgentWorktreeManager,
-    chatRepository, chatOrchestrator: canonicalChatOrchestrator, chatExecutionRoots: canonicalChatExecutionRoots, terminalRuntime: terminalWorkspaceRuntime });
+    chatRepository, chatOrchestrator: canonicalChatOrchestrator, chatExecutionRoots: canonicalChatExecutionRoots, terminalRuntime: terminalWorkspaceRuntime, agentAccess: projectTaskAgentAccess });
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const githubSettingsStore = providerSettingsStore;
   const githubDeveloperSetup = registerGithubDeveloperSetup({

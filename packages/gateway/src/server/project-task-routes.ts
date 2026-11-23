@@ -16,11 +16,17 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { createCanonicalChatService } from "../chat/service.js";
+import { createTaskSessionCredentials } from "../project-tasks/session-credentials.js";
 import { ProjectTaskSessionRepository } from "../project-tasks/sessions.js";
 import { createProjectChatHook } from "../project-tasks/task-chats.js";
 import { ProjectTaskWork } from "../project-tasks/work.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { createTaskSessionPorts, type TaskSessionPortOptions } from "./project-task-sessions.js";
+import {
+  createProjectTaskAgentBindings, createProjectTaskKernelBindings, type ProjectTaskInternalEnv,
+} from "./project-task-agents.js";
+
+export { createProjectTaskAgentAccess } from "./project-task-agents.js";
 
 /**
  * Construct the board service once and mount its routes. Without the owner
@@ -43,10 +49,15 @@ export function registerProjectTaskRoutes(options: {
   chatOrchestrator: CanonicalChatOrchestrator | null;
   chatExecutionRoots: ChatExecutionRootResolver | null;
   terminalRuntime: TaskSessionPortOptions["terminalRuntime"];
+  /** Receives the kernel chat runs' board binding once the board exists (spec 2699 section 5). */
+  agentAccess?: { bind(bindings: ReturnType<typeof createProjectTaskKernelBindings>): void };
 }): ProjectTaskService | null {
   const admitProjectTaskWrite = createProjectTaskAdmission(options.collaboration?.projectOperationAdmission);
+  // One signer for task tabs and the board binding; its secret is read or created on first use.
+  const sessionCredentials = createTaskSessionCredentials({ homePath: options.homePath });
   const ports = createTaskSessionPorts({
     homePath: options.homePath,
+    sessionCredentials,
     projectManager: options.projectManager,
     worktreeManager: options.worktreeManager,
     chats: options.chatRepository ? {
@@ -96,12 +107,27 @@ export function registerProjectTaskRoutes(options: {
     });
   }
   const work = service && sessions ? new ProjectTaskWork({ tasks: service, sessions, ports }) : null;
-  options.app.route("/", createProjectTaskRoutes({
+  const shared = {
     service,
     work,
+    sessionTask: sessions
+      ? (ownerScope: OwnerScope, binding: { projectId: string; ref: string }) => sessions.taskForSession(ownerScope.id, binding.projectId, binding.ref)
+      : undefined,
+    ...(options.collaboration ? { projectOperationAdmission: options.collaboration.projectOperationAdmission } : {}),
+  };
+  options.app.route("/", createProjectTaskRoutes({
+    ...shared,
     getOwnerScope: options.getOwnerScope ?? ((c) => ({ type: "user", id: requireRequestPrincipal(c).userId })),
     getPrincipal: (c) => requireRequestPrincipal(c),
-    ...(options.collaboration ? { projectOperationAdmission: options.collaboration.projectOperationAdmission } : {}),
+    // Task tab and chat run credentials stay inside their own project, as agent:<session ref>.
+    getAgentBinding: createProjectTaskAgentBindings({ projects: options.projectManager, credentials: sessionCredentials }),
   }));
+  // Kernel chat runs call the same routes in process; the binding comes only from this env.
+  const internal = createProjectTaskRoutes({
+    ...shared,
+    getOwnerScope: (c) => (c.env as ProjectTaskInternalEnv).projectTaskAgent.ownerScope,
+    getAgentBinding: async (c) => (c.env as ProjectTaskInternalEnv).projectTaskAgent.binding,
+  });
+  options.agentAccess?.bind(createProjectTaskKernelBindings({ routes: internal, projects: options.projectManager, sessions }));
   return service;
 }

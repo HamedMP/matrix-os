@@ -10,7 +10,9 @@ import { promisify } from "node:util";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { CanonicalOwnerScope, TerminalWorkspace } from "@matrix-os/contracts";
-import { ProjectIdSchema, TaskIdSchema, type TaskAgentStatus, type TaskPullRequest } from "@matrix-os/contracts/project-tasks";
+import {
+  ProjectIdSchema, TASK_SESSION_TOKEN_ENV, TaskIdSchema, type TaskAgentStatus, type TaskPullRequest,
+} from "@matrix-os/contracts/project-tasks";
 import { writeChatExecutionDefault } from "../chat/execution-defaults.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { ProjectTaskTrx } from "../project-tasks/database.js";
@@ -19,6 +21,7 @@ import { githubOwnerEnvironment } from "../github-owner-environment.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { OwnerScope } from "../state-ops.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
+import type { TaskSessionCredentials } from "../project-tasks/session-credentials.js";
 import {
   TaskPortUnavailableError, type ChatPort, type GitPort, type ProjectRootPort, type PullRequestLookup, type PullRequestPort,
   type TaskSessionPorts, type TerminalPort, type WorktreePort,
@@ -125,6 +128,8 @@ export interface TaskSessionPortOptions {
   /** The canonical chat service and the owner chat repository; null without the owner database. */
   chats: { service: Pick<CanonicalChatRouteService, "create" | "admitTurn">; repository: ChatRepository } | null;
   terminalRuntime: TerminalRuntime;
+  /** Signs each task tab's credential; the board binds local-token callers only from it. */
+  sessionCredentials: Pick<TaskSessionCredentials, "issue">;
   runCommand?: TaskCommandRunner;
 }
 
@@ -305,10 +310,10 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
       const cwd = relative(homePath, target);
       if (cwd.startsWith(`..${sep}`) || cwd === ".." || isAbsolute(cwd)) throw new TaskPortUnavailableError("terminals", "cwd_outside_home");
       // Environment comes only from server-validated ids; the shell script is a constant.
-      const assignments = [
-        `MATRIX_TASK_ID=${TaskIdSchema.parse(input.env.MATRIX_TASK_ID)}`,
-        `MATRIX_PROJECT_ID=${ProjectIdSchema.parse(input.env.MATRIX_PROJECT_ID)}`,
-      ];
+      const taskId = TaskIdSchema.parse(input.env.MATRIX_TASK_ID);
+      const projectId = ProjectIdSchema.parse(input.env.MATRIX_PROJECT_ID);
+      const credential = await options.sessionCredentials.issue({ workspaceId: input.workspaceId, tabId: input.tabId, projectId, taskId });
+      const assignments = [`MATRIX_TASK_ID=${taskId}`, `MATRIX_PROJECT_ID=${projectId}`, `${TASK_SESSION_TOKEN_ENV}=${credential}`];
       const harness = input.harness ? HARNESS_COMMANDS[input.harness] : undefined;
       if (input.harness && !harness) throw new TaskPortUnavailableError("terminals", "unsupported_harness");
       const command = harness
@@ -317,6 +322,8 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
       const tab = await options.terminalRuntime.createTab(input.workspaceId, {
         tabId: input.tabId, name: input.name.slice(0, 120), cwd, accessScope: "owner", command,
       });
+      // The credential signs the requested tab; a runtime that picked another id has a tab it cannot prove.
+      if (tab.id !== input.tabId) throw new TaskPortUnavailableError("terminals", "tab_id_mismatch");
       return { tabId: tab.id };
     },
     async listForProject(projectId) {
