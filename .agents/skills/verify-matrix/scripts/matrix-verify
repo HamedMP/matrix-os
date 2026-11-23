@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Launch, check, drive, and tear down a disposable local Matrix OS stack
+# (gateway + Next.js shell) for agent verification. See ../SKILL.md.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$SKILL_DIR/../../.." && pwd)"
+ROOT="${MATRIX_VERIFY_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/matrix-verify}"
+RUNS="$ROOT/runs"
+EVIDENCE_ROOT="$ROOT/evidence"
+
+die() { echo "matrix-verify: $*" >&2; exit 1; }
+log() { echo "[matrix-verify] $*" >&2; }
+
+usage() {
+  cat <<EOF
+usage: matrix-verify <command> [options]
+
+  launch [--run ID] [--gateway-port N] [--shell-port N] [--skip-build]
+      Build gateway/shell deps, start a scratch gateway and shell, wait until usable.
+  doctor [--run ID]      Read-only health check of a run this tool started.
+  drive <journey.mjs> [--run ID]
+      Run a Playwright journey against the run's Web Desktop.
+  stop [--run ID]        Kill only this run's process groups, delete scratch home. Keeps evidence.
+  list                   Show runs and their evidence directories.
+
+State:    $RUNS/<run-id>/   (deleted by stop)
+Evidence: $EVIDENCE_ROOT/<run-id>/   (kept by stop)
+--run defaults to the most recent run.
+EOF
+}
+
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+resolve_run() {
+  local id="${1:-}"
+  if [[ -z "$id" ]]; then
+    [[ -L "$RUNS/latest" ]] || die "no runs found under $RUNS; run 'matrix-verify launch' first"
+    id="$(basename "$(readlink "$RUNS/latest")")"
+  fi
+  [[ -f "$RUNS/$id/run.env" ]] || die "unknown run '$id' (no $RUNS/$id/run.env)"
+  RUN_ID="$id"
+  # shellcheck disable=SC1090
+  source "$RUNS/$id/run.env"
+}
+
+group_alive() { [[ -n "${1:-}" ]] && kill -0 -- "-$1" 2>/dev/null; }
+
+wait_http() { # url timeout_s pattern
+  local url="$1" deadline=$((SECONDS + $2)) pattern="${3:-}" body
+  while ((SECONDS < deadline)); do
+    if body="$(curl -sf -m 10 "$url" 2>/dev/null)"; then
+      if [[ -z "$pattern" ]] || grep -q "$pattern" <<<"$body"; then return 0; fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+cmd_launch() {
+  local id="" gport="${MATRIX_VERIFY_GATEWAY_PORT:-4410}" sport="${MATRIX_VERIFY_SHELL_PORT:-3410}" build=1
+  while (($#)); do
+    case "$1" in
+      --run) id="$2"; shift 2 ;;
+      --gateway-port) gport="$2"; shift 2 ;;
+      --shell-port) sport="$2"; shift 2 ;;
+      --skip-build) build=0; shift ;;
+      *) die "unknown launch option: $1" ;;
+    esac
+  done
+  [[ "$id" =~ ^[A-Za-z0-9._-]*$ ]] || die "run id must match [A-Za-z0-9._-]"
+  id="${id:-$(date +%Y%m%d-%H%M%S)-$$}"
+  local dir="$RUNS/$id"
+  [[ ! -e "$dir" ]] || die "run '$id' already exists; pick another --run or stop it"
+  for p in "$gport" "$sport"; do
+    port_busy "$p" && die "port $p is already in use (another Matrix instance?). Pass a free --gateway-port/--shell-port; never drive or kill an instance you did not start."
+  done
+  command -v pnpm >/dev/null || die "pnpm not on PATH"
+  [[ -d "$REPO/node_modules" ]] || die "no node_modules in $REPO; run 'pnpm install --frozen-lockfile' first"
+
+  mkdir -p "$dir/home" "$dir/logs" "$EVIDENCE_ROOT/$id"
+  ln -sfn "$dir" "$RUNS/latest"
+
+  # Remember which shell files `next dev` rewrites so stop can restore only what this run changed.
+  local agents_md_preexisting=0 next_env_clean=0
+  [[ -e "$REPO/shell/AGENTS.md" ]] && agents_md_preexisting=1
+  git -C "$REPO" diff --quiet -- shell/next-env.d.ts && next_env_clean=1
+
+  cat >"$dir/run.env" <<EOF
+RUN_DIR='$dir'
+REPO='$REPO'
+GATEWAY_PORT='$gport'
+SHELL_PORT='$sport'
+GATEWAY_URL='http://127.0.0.1:$gport'
+SHELL_URL='http://127.0.0.1:$sport'
+MATRIX_HOME_DIR='$dir/home'
+EVIDENCE_DIR='$EVIDENCE_ROOT/$id'
+AGENTS_MD_PREEXISTING='$agents_md_preexisting'
+NEXT_ENV_CLEAN='$next_env_clean'
+BUILD_SHA='$(git -C "$REPO" rev-parse --short HEAD)'
+EOF
+
+  if ((build)); then
+    log "building gateway dependencies + brand (logs/build.log)"
+    (cd "$REPO" && pnpm --filter '@matrix-os/gateway^...' --filter '@matrix-os/brand' build) >"$dir/logs/build.log" 2>&1 \
+      || die "dependency build failed; see $dir/logs/build.log"
+  fi
+
+  log "starting gateway on :$gport with MATRIX_HOME=$dir/home"
+  # setsid makes each server its own process group, so stop can kill exactly what this run started.
+  (cd "$REPO/packages/gateway"
+   PORT="$gport" MATRIX_HOME="$dir/home" MATRIX_AUTH_ALLOW_INSECURE_DEV=1 \
+     setsid pnpm run dev >"$dir/logs/gateway.log" 2>&1 </dev/null &
+   echo "GATEWAY_PGID='$!'" >>"$dir/run.env")
+  # shellcheck disable=SC1090
+  source "$dir/run.env"
+  wait_http "http://127.0.0.1:$gport/health" 180 '"status":"ok"' \
+    || die "gateway not healthy within 180s; see $dir/logs/gateway.log (then run: matrix-verify stop --run $id)"
+
+  log "starting shell on :$sport (first page compile takes ~1 min)"
+  (cd "$REPO/shell"
+   GATEWAY_URL="http://127.0.0.1:$gport" E2E_TEST_BYPASS=1 NEXT_PUBLIC_E2E_TEST_BYPASS=1 \
+     setsid pnpm exec next dev --webpack -p "$sport" -H 127.0.0.1 >"$dir/logs/shell.log" 2>&1 </dev/null &
+   echo "SHELL_PGID='$!'" >>"$dir/run.env")
+  # shellcheck disable=SC1090
+  source "$dir/run.env"
+  # Usable = the Desktop page compiled and renders, and the shell proxies to *our* gateway.
+  wait_http "http://127.0.0.1:$sport/" 300 '' \
+    || die "shell did not serve / within 300s; see $dir/logs/shell.log (then run: matrix-verify stop --run $id)"
+  wait_http "http://127.0.0.1:$sport/health" 60 '"status":"ok"' \
+    || die "shell is up but does not proxy /health to the gateway; see logs (then run: matrix-verify stop --run $id)"
+
+  log "ready: run=$id shell=http://127.0.0.1:$sport gateway=http://127.0.0.1:$gport"
+  log "evidence dir: $EVIDENCE_ROOT/$id"
+  echo "$id"
+}
+
+cmd_doctor() {
+  local id=""
+  while (($#)); do case "$1" in --run) id="$2"; shift 2 ;; *) die "unknown doctor option: $1" ;; esac; done
+  resolve_run "$id"
+  local ok=1
+  check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; ok=0; fi; }
+  echo "run $RUN_ID  build $BUILD_SHA  (repo HEAD $(git -C "$REPO" rev-parse --short HEAD))"
+  check "gateway process group $GATEWAY_PGID alive" 'group_alive "${GATEWAY_PGID:-}"'
+  check "shell process group ${SHELL_PGID:-?} alive" 'group_alive "${SHELL_PGID:-}"'
+  check "gateway :$GATEWAY_PORT owned by this run" 'ss -ltnpH "sport = :$GATEWAY_PORT" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2 | xargs -r ps -o pgid= -p | grep -qw "$GATEWAY_PGID"'
+  check "shell :$SHELL_PORT owned by this run" 'ss -ltnpH "sport = :$SHELL_PORT" 2>/dev/null | grep -o "pid=[0-9]*" | cut -d= -f2 | xargs -r ps -o pgid= -p | grep -qw "$SHELL_PGID"'
+  check "gateway /health status ok" 'curl -sf -m 5 "$GATEWAY_URL/health" | grep -q "\"status\":\"ok\""'
+  check "gateway home is the scratch home" 'grep -qF "Home directory: $MATRIX_HOME_DIR" "$RUN_DIR/logs/gateway.log"'
+  check "shell proxies /health to the gateway" 'curl -sf -m 10 "$SHELL_URL/health" | grep -q "\"status\":\"ok\""'
+  check "shell serves the Desktop page" '[[ "$(curl -s -m 60 -o /dev/null -w "%{http_code}" "$SHELL_URL/")" == 200 ]]'
+  echo "evidence: $EVIDENCE_DIR"
+  ((ok)) || { echo "doctor: NOT drivable. Read $RUN_DIR/logs/*.log, then stop and relaunch." >&2; return 1; }
+}
+
+cmd_drive() {
+  local journey="" id=""
+  while (($#)); do
+    case "$1" in --run) id="$2"; shift 2 ;; *) [[ -z "$journey" ]] || die "one journey at a time"; journey="$1"; shift ;; esac
+  done
+  [[ -n "$journey" && -f "$journey" ]] || die "drive needs an existing journey file"
+  resolve_run "$id"
+  journey="$(cd "$(dirname "$journey")" && pwd)/$(basename "$journey")"
+  mkdir -p "$EVIDENCE_DIR"
+  (cd "$REPO" && SHELL_URL="$SHELL_URL" GATEWAY_URL="$GATEWAY_URL" MATRIX_HOME_DIR="$MATRIX_HOME_DIR" \
+    EVIDENCE_DIR="$EVIDENCE_DIR" RUN_ID="$RUN_ID" BUILD_SHA="$BUILD_SHA" \
+    node "$SKILL_DIR/scripts/drive.mjs" "$journey")
+}
+
+stop_group() { # name pgid
+  local name="$1" pgid="${2:-}"
+  [[ -n "$pgid" ]] || return 0
+  if group_alive "$pgid"; then
+    log "stopping $name process group $pgid"
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+    for _ in $(seq 1 20); do group_alive "$pgid" || return 0; sleep 0.5; done
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  fi
+}
+
+cmd_stop() {
+  local id=""
+  while (($#)); do case "$1" in --run) id="$2"; shift 2 ;; *) die "unknown stop option: $1" ;; esac; done
+  resolve_run "$id"
+  stop_group shell "${SHELL_PGID:-}"
+  stop_group gateway "${GATEWAY_PGID:-}"
+  for p in "$GATEWAY_PORT" "$SHELL_PORT"; do port_busy "$p" && log "warning: port $p still in use after stop"; done
+  # Restore files `next dev` rewrites, but only if this run created the change.
+  [[ "$AGENTS_MD_PREEXISTING" == 1 ]] || rm -f "$REPO/shell/AGENTS.md"
+  [[ "$NEXT_ENV_CLEAN" == 1 ]] && git -C "$REPO" checkout -- shell/next-env.d.ts 2>/dev/null || true
+  mkdir -p "$EVIDENCE_DIR/logs" && cp "$RUN_DIR"/logs/*.log "$EVIDENCE_DIR/logs/" 2>/dev/null || true
+  rm -rf "$RUN_DIR"
+  [[ "$(readlink "$RUNS/latest" 2>/dev/null)" == "$RUN_DIR" ]] && rm -f "$RUNS/latest"
+  log "stopped run $RUN_ID; evidence kept at $EVIDENCE_DIR"
+  ls -1 "$EVIDENCE_DIR" 2>/dev/null | sed 's/^/  /' >&2 || true
+}
+
+cmd_list() {
+  echo "runs ($RUNS):"; ls -1 "$RUNS" 2>/dev/null | grep -v '^latest$' | sed 's/^/  /' || true
+  echo "evidence ($EVIDENCE_ROOT):"; ls -1 "$EVIDENCE_ROOT" 2>/dev/null | sed 's/^/  /' || true
+}
+
+case "${1:-}" in
+  launch) shift; cmd_launch "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
+  drive) shift; cmd_drive "$@" ;;
+  stop) shift; cmd_stop "$@" ;;
+  list) shift; cmd_list "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) usage; exit 2 ;;
+esac
