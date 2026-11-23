@@ -66,3 +66,16 @@ export const defaultMailLogger: MailLogger = (event, error) => {
   const name = error instanceof Error ? error.name : error === undefined ? "" : typeof error;
   console.warn(`[mail] ${event}${name ? ` (${name})` : ""}`);
 };
+
+/** Keeps a `MailError` this module produced; reduces anything else with `toMailError`. */
+export function asMailError(value: unknown): MailError {
+  if (typeof value === "object" && value !== null) {
+    const candidate = value as Partial<MailError>;
+    if (typeof candidate.message === "string" && typeof candidate.code === "string" && typeof candidate.retryable === "boolean"
+      && candidate.code in MAIL_LOCAL_ERROR_MESSAGES
+      && MAIL_LOCAL_ERROR_MESSAGES[candidate.code as MailLocalErrorCode] === candidate.message) {
+      return { code: candidate.code, message: candidate.message, retryable: candidate.retryable };
+    }
+  }
+  return toMailError(value);
+}
