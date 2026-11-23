@@ -849,6 +849,7 @@ detect_herdr() {
 restore_saved_access_mode() {
   local env="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}" mode server
   PREVIOUS_ACCESS_MODE="$(read_env_value "$env" MATRIX_ACCESS_MODE 2>/dev/null || true)"
+  PREVIOUS_SHELL_ORIGIN="$(read_env_value "$env" SHELL_ORIGIN 2>/dev/null || true)"
   [ "$OPT_ACCESS_EXPLICIT" != "1" ] && [ -z "$OPT_LOGIN_SERVER" ] || return 0
   mode="$PREVIOUS_ACCESS_MODE"
   case "$mode" in tailscale|headscale|public) ;; *) return 0 ;; esac
@@ -872,8 +873,7 @@ require_private_access_ready() {
   if [ "${line%%$'\t'*}" = "Running" ] && [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ] && [ -n "$MATRIX_TAILNET_URL" ]; then
     return 0
   fi
-  OPT_ACCESS=public
-  write_env
+  restore_previous_listener || fail "private access is not ready (sign-in did not finish), and public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager"
   fail "private access is not ready (sign-in did not finish); keeping your public listener. Sign in with: sudo tailscale up, then rerun the installer with --access ${requested}"
 }
 
@@ -1218,6 +1218,12 @@ table inet matrix_browser_isolation {
 EOF
 }
 
+# Each browser unit, its lifecycle and the account's user manager are bound to
+# the table: none starts without it, and all stop if it stops.
+render_browser_isolation_dropin() {
+  printf '[Unit]\nBindsTo=matrix-browser-isolation.service\nAfter=matrix-browser-isolation.service\n'
+}
+
 render_browser_isolation_unit() {
   cat <<'EOF'
 [Unit]
@@ -1237,9 +1243,15 @@ EOF
 
 # install_browser_isolation: applied now and at every boot before the browser units.
 install_browser_isolation() {
+  local unit_dir="${MATRIX_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" uid unit
+  uid="$(id -u "$MATRIX_BROWSER_ACCOUNT")" || return 1
+  for unit in matrix-browser-runtime.service "${BROWSER_NATIVE_UNITS[@]}" "user@${uid}.service"; do
+    install -d -m 0755 "${unit_dir}/${unit}.d" || return 1
+    render_browser_isolation_dropin >"${unit_dir}/${unit}.d/matrix-isolation.conf" || return 1
+  done
   install -d -o root -g root -m 0755 /etc/matrix
   render_browser_isolation "$MATRIX_BROWSER_ACCOUNT" >/etc/matrix/browser-isolation.nft || return 1
-  render_browser_isolation_unit >/etc/systemd/system/matrix-browser-isolation.service || return 1
+  render_browser_isolation_unit >"${unit_dir}/matrix-browser-isolation.service" || return 1
   systemctl daemon-reload >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
   systemctl enable matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
   systemctl restart matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
@@ -1474,7 +1486,7 @@ public_ui_origin() {
 write_env() {
   local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   local platform_speech_enabled platform_speech_origin platform_speech_runtime_token
-  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin
+  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin saved_origin
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
@@ -1495,7 +1507,13 @@ write_env() {
     MATRIX_TAILNET_URL="$(read_env_value /opt/matrix/env/host.env MATRIX_TAILNET_URL || true)"
   fi
   browser_lab="$(browser_lab_value "$OPT_BROWSER" "$browser_lab")"
-  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)" "$(public_ui_origin)")"
+  saved_origin="$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)"
+  if [ "$OPT_ACCESS" = "public" ]; then
+    # A rollback to public restores the public origin, never the tailnet one.
+    [ "$PREVIOUS_ACCESS_MODE" != "public" ] || saved_origin="${PREVIOUS_SHELL_ORIGIN:-$saved_origin}"
+    [ -z "$MATRIX_TAILNET_URL" ] || [ "$saved_origin" != "$MATRIX_TAILNET_URL" ] || saved_origin=""
+  fi
+  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$saved_origin" "$(public_ui_origin)")"
   skip_legacy_migration=0
   [ "$MATRIX_RUN_USER" = "matrix" ] || skip_legacy_migration=1
 
@@ -1850,13 +1868,15 @@ verify_loopback_listeners() {
 # listener before failing, so the owner keeps a reachable UI.
 private_access_failed() {
   if [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ]; then
-    restore_previous_listener
+    restore_previous_listener || fail "$1 Restoring public access failed: a WebSocket through nginx did not upgrade. Check: journalctl -u matrix-gateway -n 200 --no-pager"
     fail "$1 Kept your public listener; finish private-network sign-in, then rerun the installer."
   fi
   fail "$1"
 }
 
-# restore_previous_listener: the public site saved by configure_nginx, and the public mode.
+# restore_previous_listener: the public site saved by configure_nginx, the public
+# mode and origin in host.env, and a gateway and shell running with them. Succeeds
+# only once a WebSocket through public nginx upgrades (HTTP 101).
 restore_previous_listener() {
   local site=/etc/nginx/sites-available/matrix-self-host backup=/etc/nginx/matrix-self-host.previous-site
   if [ -f "$backup" ]; then
@@ -1866,6 +1886,30 @@ restore_previous_listener() {
   fi
   OPT_ACCESS=public
   write_env
+  systemctl restart matrix-gateway.service matrix-shell.service >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || warn "could not restart matrix-gateway and matrix-shell"
+  verify_public_websocket
+}
+
+# verify_public_websocket: a /ws upgrade through public nginx, with the UI
+# password and the recorded browser origin, returns HTTP 101.
+verify_public_websocket() {
+  local password origin code attempt
+  password="$(cat /opt/matrix/env/initial-ui-password 2>/dev/null || true)"
+  origin="$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)"
+  [ -n "$password" ] || { warn "cannot check public WebSockets: no saved UI password"; return 1; }
+  for attempt in $(seq 1 30); do
+    code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 --http1.1 --user "matrix:${password}" \
+      -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+      -H "Sec-WebSocket-Key: bWF0cml4LW9zLWNoZWNrIQ==" -H "Origin: ${origin}" \
+      "http://127.0.0.1/ws" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    if [ "$code" = "101" ]; then
+      ok "public access works: a WebSocket through nginx upgraded"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 # verify_private_access: reports private access verified only after an

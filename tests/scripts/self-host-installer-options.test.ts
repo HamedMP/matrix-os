@@ -865,6 +865,28 @@ capture_install_telemetry matrix_manual_install_started started 0`,
       expect(body).toMatch(/install_browser_isolation \|\| \{[^}]*browser use stays off/);
       expect(readFileSync(script, "utf8")).toMatch(/apt-get install -y [^\n]*nftables/);
     });
+
+    // Review P1 (#3532 at 0b159db3): ordering alone let a browser unit start without the table.
+    it("binds every browser unit and the account's user manager to the table, so a failed load starts none", () => {
+      const units = join(dir, "units");
+      spawnSync("mkdir", ["-p", units]);
+      const result = run(`install() { case "\${@: -1}" in /etc/*) ;; *) mkdir -p "\${@: -1}" ;; esac; }
+id() { echo 1234; }
+render_browser_isolation() { :; }
+systemctl() { :; }
+nft() { return 1; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_BROWSER_ACCOUNT=matrix-browser MATRIX_SYSTEMD_UNIT_DIR="${units}" install_browser_isolation`);
+      expect(result.status).not.toBe(0);
+      const bound = ["matrix-browser-runtime.service", "matrix-browser-lab-vnc.service", "matrix-browser-lab-wm.service", "matrix-browser-lab-desktop.service", "matrix-browser-lab-panel.service", "matrix-browser-lab-chrome.service", "matrix-browser-lab.service", "user@1234.service"];
+      for (const unit of bound) {
+        const dropin = readFileSync(join(units, `${unit}.d/matrix-isolation.conf`), "utf8");
+        expect(dropin).toContain("BindsTo=matrix-browser-isolation.service");
+        expect(dropin).toContain("After=matrix-browser-isolation.service");
+      }
+      // The units are bound first, so any later failure leaves them unstartable.
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body).toMatch(/install_browser_isolation \|\| \{[^}]*stop_browser_use; return 0; \}/);
+    });
   });
 
   describe("unattended reruns keep a working access mode", () => {
@@ -891,6 +913,8 @@ capture_install_telemetry matrix_manual_install_started started 0`,
       const calls = join(dir, "switch-calls");
       const result = run(`tailscale_status_line() { printf 'NeedsLogin\\t\\t\\n'; }
 write_env() { printf 'write_env %s\\n' "$OPT_ACCESS" >>"${calls}"; }
+systemctl() { :; }
+verify_public_websocket() { :; }
 PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= MATRIX_TAILNET_URL= require_private_access_ready`);
       expect(result.status).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/keeping your public/i);
@@ -914,6 +938,44 @@ restore_previous_listener() { echo restored; }
 MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= verify_private_access`);
       expect(switching.status).not.toBe(0);
       expect(switching.stdout).toContain("restored");
+    });
+  });
+
+  // Review P1 (#3532 at 0b159db3): a rollback restored public nginx but left the
+  // gateway on the tailnet origin and private mode, so public terminals got 403.
+  describe("rolling back to public access", () => {
+    it("restores the public mode and origin, restarts the gateway and shell, and requires a public WebSocket upgrade", () => {
+      const env = join(dir, "host.env");
+      writeFileSync(env, "MATRIX_ACCESS_MODE=public\nSHELL_ORIGIN=http://matrix.example.com\n");
+      const calls = join(dir, "rollback-calls");
+      const body = (code: string) => `read_env_value() { sed -n "s/^$2=//p" "$1" | grep . ; }
+parse_args
+MATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode >/dev/null
+printf 'MATRIX_ACCESS_MODE=tailscale\\nSHELL_ORIGIN=https://box.ts.net\\n' >"${env}"
+write_env() { printf 'write_env %s origin=%s\\n' "$OPT_ACCESS" "$(MATRIX_TAILNET_URL=https://box.ts.net self_host_shell_origin "$OPT_ACCESS" https://box.ts.net "$([ "$PREVIOUS_ACCESS_MODE" = public ] && echo "$PREVIOUS_SHELL_ORIGIN")" http://203.0.113.7)" >>"${calls}"; }
+systemctl() { echo "systemctl $*" >>"${calls}"; }
+nginx() { :; }
+cat() { echo secret; }
+sleep() { :; }
+curl() { echo "curl $*" >>"${calls}"; printf '${code}'; }
+MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale restore_previous_listener`;
+      const ok = run(body("101"));
+      expect(ok.status, ok.stderr).toBe(0);
+      const log = readFileSync(calls, "utf8");
+      expect(log).toContain("write_env public origin=http://matrix.example.com");
+      expect(log).toContain("systemctl restart matrix-gateway.service matrix-shell.service");
+      expect(log.indexOf("systemctl restart")).toBeLessThan(log.indexOf("curl"));
+      expect(log).toMatch(/curl .*Upgrade: websocket.*http:\/\/127\.0\.0\.1\/ws/);
+      const refused = run(body("403"));
+      expect(refused.status).not.toBe(0);
+    });
+
+    it("never keeps a stale tailnet origin for a public install", () => {
+      const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+      expect(writeEnv).toContain('saved_origin="${PREVIOUS_SHELL_ORIGIN:-$saved_origin}"');
+      expect(writeEnv).toContain('[ "$saved_origin" != "$MATRIX_TAILNET_URL" ] || saved_origin=""');
+      const failing = readFileSync(script, "utf8").split("\nprivate_access_failed() {")[1]!.split("\n}\n")[0]!;
+      expect(failing).toMatch(/restore_previous_listener \|\| fail "\$1 Restoring public access failed/);
     });
   });
 
