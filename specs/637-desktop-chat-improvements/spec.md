@@ -24,6 +24,8 @@
 
 ## Security and wiring
 
+Side-chat requests retain the original Electron account/credential generation and runtime. The shared panel checks its active session immediately after child-chat creation; its native transport pins the runtime and supplies a non-secret session fence. Before injecting credentials or forwarding request bytes, the trusted core rejects a changed/signed-out session or gateway origin and strips the fence from allowed requests. Session-bound requests reject redirects. Production-boundary tests hold creation/network dispatch open across account and runtime switches and verify no question reaches the replacement runtime. Renderer network setup in the existing large main entrypoint is an extraction boundary before further growth.
+
 | Route | Method | Authentication and authorization | Public |
 | --- | --- | --- | --- |
 | `/api/chats/:chatId/lifecycle` | PATCH | Gateway verified principal; personal chat owner; matching revision; archive excludes active runs | No |

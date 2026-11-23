@@ -447,6 +447,7 @@ if (!gotLock) {
         () => auth.getToken(),
         () => auth.getGatewayOrigin(),
         rendererOrigin,
+        () => { const status = auth.getStatus(); return status.signedIn ? status : null; },
       );
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
