@@ -4,7 +4,7 @@ import type { DocxDocument, ParagraphBlock } from "../../../../home/apps/_shared
 import { findMatches, replaceOps } from "../../../../home/apps/docs/src/ui/find-model";
 import { visibleParagraphs } from "../../../../home/apps/docs/src/ui/text-index";
 import { blockOrder, buildOutline, currentOutlineEntry } from "../../../../home/apps/docs/src/ui/outline-model";
-import { buildReferenceIndex, referenceIdsAt } from "../../../../home/apps/docs/src/ui/references-model";
+import { buildReferenceIndex, referenceIdsAt, referenceInfo } from "../../../../home/apps/docs/src/ui/references-model";
 import { breadcrumbs, isDocxPath, parentOf, pickerEntries } from "../../../../home/apps/docs/src/ui/file-picker-model";
 import { countWords, describeSaveState } from "../../../../home/apps/docs/src/ui/status-model";
 import { buildExport } from "../../../../home/apps/docs/src/ui/exports";
@@ -119,20 +119,21 @@ describe("references model", () => {
     const usePara = paragraphs(doc).find((block) => block.id === use.range.start.blockId)!;
     expect(usePara.text.slice(use.range.start.offset, use.range.end.offset)).toBe("Agreement");
     expect(usePara.text.startsWith("The Agreement")).toBe(true);
-    const term = index.info.get(use.id!);
+    const term = referenceInfo(index, use.id!);
+    expect(index.ranges.get(use.id!)).toEqual(use.range);
     expect(term).toMatchObject({ kind: "term", term: "Agreement", definition: "means this agreement between the parties." });
 
     expect(index.xrefs).toHaveLength(2);
-    const good = index.info.get(index.xrefs[0]!.id!);
+    const good = referenceInfo(index, index.xrefs[0]!.id!);
     expect(good).toMatchObject({ kind: "xref", text: "Clause 1", label: "1.", preview: "Scope", broken: false });
-    const broken = index.info.get(index.xrefs[1]!.id!);
+    const broken = referenceInfo(index, index.xrefs[1]!.id!);
     expect(broken).toMatchObject({ kind: "xref", text: "Clause 9", broken: true, targetBlockId: null });
     expect(index.xrefs[1]!.className).toContain("is-broken");
   });
 
   it("reads reference ids from highlighted elements", () => {
-    const span = { getAttribute: (name: string) => (name === "data-hl-id" ? "find:1 term:0 xref:2" : null) } as unknown as Element;
-    expect(referenceIdsAt(span)).toEqual(["term:0", "xref:2"]);
+    const span = { getAttribute: (name: string) => (name === "data-hl-id" ? "find:1 term:0.3 xref:2" : null) } as unknown as Element;
+    expect(referenceIdsAt(span)).toEqual(["term:0.3", "xref:2"]);
   });
 });
 

@@ -2,7 +2,8 @@
  * Defined terms and cross-references as editor highlights. Every use of a
  * defined term (whole word, same case) outside its definition gets a
  * `terms` highlight; every cross-reference the engine found gets an `xrefs`
- * highlight. Highlight ids key into `info` for the hover card.
+ * highlight. Each highlight has its own id (`term:<term>.<use>`, `xref:<n>`);
+ * `referenceInfo` finds what the hover card shows for it.
  */
 
 import type { BlockId, DocxDocument, TextRange } from "../../../_shared/office-engine/index";
@@ -24,7 +25,10 @@ export type ReferenceInfo =
 export interface ReferenceIndex {
   terms: EditorHighlight[];
   xrefs: EditorHighlight[];
+  /** By term (`term:<n>`) and cross-reference (`xref:<n>`). */
   info: Map<string, ReferenceInfo>;
+  /** The range of each highlight, by highlight id. */
+  ranges: Map<string, TextRange>;
 }
 
 function overlaps(a: TextRange, b: TextRange): boolean {
@@ -38,6 +42,7 @@ function clip(text: string): string {
 
 export function buildReferenceIndex(doc: DocxDocument, paragraphs: readonly ParagraphText[] = visibleParagraphs(doc, "final")): ReferenceIndex {
   const info = new Map<string, ReferenceInfo>();
+  const ranges = new Map<string, TextRange>();
   const terms: EditorHighlight[] = [];
   doc
     .getDefinedTerms()
@@ -51,7 +56,9 @@ export function buildReferenceIndex(doc: DocxDocument, paragraphs: readonly Para
       for (const match of findMatches(paragraphs, defined.term, { matchCase: true, wholeWord: true }, room + 1).matches) {
         if (overlaps(match.range, defined.range)) continue;
         if (terms.length === MAX_REFERENCE_HIGHLIGHTS) break;
-        terms.push({ id, range: match.range });
+        const useId = `${id}.${terms.length}`;
+        ranges.set(useId, match.range);
+        terms.push({ id: useId, range: match.range });
       }
     });
   const xrefs: EditorHighlight[] = [];
@@ -68,9 +75,15 @@ export function buildReferenceIndex(doc: DocxDocument, paragraphs: readonly Para
         targetBlockId: reference.targetBlockId,
         broken: reference.broken,
       });
+      ranges.set(id, reference.range);
       xrefs.push({ id, range: reference.range, className: reference.broken ? "is-broken" : undefined });
     });
-  return { terms, xrefs, info };
+  return { terms, xrefs, info, ranges };
+}
+
+/** What the hover card shows for a highlight id. */
+export function referenceInfo(index: ReferenceIndex, highlightId: string): ReferenceInfo | null {
+  return index.info.get(highlightId.split(".")[0] ?? "") ?? null;
 }
 
 /** The term and cross-reference ids on a highlighted span (`data-hl-id`). */
