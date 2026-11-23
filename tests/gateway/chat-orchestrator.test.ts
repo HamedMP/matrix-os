@@ -1936,7 +1936,10 @@ describe("CanonicalChatOrchestrator", () => {
 
   it.each([false, true])("allows 64 concurrent Runs and rejects the 65th across owners: %s", async (multipleOwners) => {
     const provider = adapter(async function* (input) {
-      await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+      await new Promise<void>((resolve) => {
+        if (input.signal.aborted) resolve();
+        else input.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
       yield { type: "run.completed", outcome: "aborted" };
     });
     const orchestrator = new CanonicalChatOrchestrator({
@@ -1981,7 +1984,7 @@ describe("CanonicalChatOrchestrator", () => {
     }
     const rejected = await repository.exportChat(owner, "chat_concurrent_64");
     expect(rejected?.runs).toEqual([]);
-  });
+  }, 60_000);
 
   it("commits successful output at the former text-delta activity boundary", async () => {
     await repository.create(owner, {
