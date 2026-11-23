@@ -194,6 +194,23 @@ it("shows project Chats six at a time, with start times and the open Chat always
   expect(within(projectsNav).queryByRole("button", { name: "Show more France chats" })).toBeNull();
 });
 
+it.each([false, true])("shows pinned and recent Chat start dates in the Web rail (mobile=%s)", async (mobile) => {
+  const pinned = projectConversation(2, "");
+  pinned.canonicalRecord!.chat.userState = { readThroughSeq: 0, pinned: true, muted: false };
+  const recent = projectConversation(3, "");
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], items: [], nextCursor: null })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    mobile={mobile} conversations={[pinned, recent]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/dates" /></OrganizationStateProvider>);
+  for (const [title, age, startedAt] of [["Chat 2", "2h", pinned.canonicalRecord!.chat.createdAt],
+    ["Chat 3", "3h", recent.canonicalRecord!.chat.createdAt]]) {
+    const date = within(screen.getByRole("button", { name: title })).getByText(age);
+    expect(date.tagName).toBe("TIME");
+    expect(date.getAttribute("datetime")).toBe(startedAt);
+  }
+});
+
 it("matches project Chats by project slug as well as id", async () => {
   renderChatApp([projectConversation(1, "france")]);
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });

@@ -1,4 +1,5 @@
 "use client";
+import { useMinuteClock } from "@matrix-os/ui";
 import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -250,6 +251,7 @@ function ChatAppContent({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
+  const railNowMs = useMinuteClock(active && visible);
   // Explicit computer changes take effect immediately. The fallback is fixed
   // at mount so shared-chat history routes cannot silently retarget the rail.
   const [mountedGatewayUrl] = useState(getGatewayUrl);
@@ -477,7 +479,7 @@ function ChatAppContent({
   const listedConversations = trimmedSearch ? visibleConversations : visibleConversations.filter(item => !projectChatIds.has(item.id));
 
   const listedChatIds = new Set([...conversations.map(conv => conv.id), ...deletedChatIds]);
-  const renderConversationRow = (conv: ConversationMeta, nowMs?: number) => <RenameableConversationRow
+  const renderConversationRow = (conv: ConversationMeta, nowMs = railNowMs) => <RenameableConversationRow
     key={conv.id}
     nowMs={nowMs}
     conversation={conv}

@@ -152,6 +152,20 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("shows start dates for pinned and recent Chats as well as project Chats", async () => {
+    setup();
+    await screen.findByRole("button", { name: "Pinned global" });
+    for (const [title, startedAt] of [
+      ["Pinned global", pinned.chat.createdAt], ["Recent global", recent.chat.createdAt],
+    ]) {
+      const date = screen.getByRole("button", { name: title }).querySelector("time");
+      expect(date, `${title} has a visible start date`).not.toBeNull();
+      expect(date?.getAttribute("datetime")).toBe(startedAt);
+      expect(date?.textContent).not.toBe("");
+      expect(date?.getAttribute("title")).toMatch(/^Started /);
+    }
+  });
+
   it("displays ordinary Chats as one identity cohort despite out-of-order results and rerenders", async () => {
     const slow=record("chat_slow", "Slow fixture", {updatedAt:"2026-08-28T09:00:00.000Z"});
     let finish!: (value:string|null)=>void;

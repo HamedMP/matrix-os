@@ -1,4 +1,4 @@
-import { ChatImportSourceFilter, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import { ChatImportSourceFilter, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { useWorkNavigation } from "./use-work-navigation";
 import {
@@ -129,6 +129,7 @@ export function WorkRail({
     });
   };
   const projectChatMoveRefresh = useUi(state => state.projectChatMoveRefreshRequest);
+  const nowMs = useMinuteClock(active && visible);
   const projectChatMoveError = useUi(state => state.projectChatMoveError);
   const [readPending, setReadPending] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
@@ -476,7 +477,7 @@ export function WorkRail({
     );
   };
 
-  const renderChatRow = (record: ChatNavigationRecord, placement: "pinned" | "recent") => <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={placement === "pinned" ? "pinned-chats" : resolveCanonicalChatLifecycleGroup(record) === "recent" ? "done" : resolveCanonicalChatLifecycleGroup(record)}><WorkRailChatRow fresh={navigation.fresh} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
+  const renderChatRow = (record: ChatNavigationRecord, placement: "pinned" | "recent") => <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={placement === "pinned" ? "pinned-chats" : resolveCanonicalChatLifecycleGroup(record) === "recent" ? "done" : resolveCanonicalChatLifecycleGroup(record)}><WorkRailChatRow nowMs={nowMs} fresh={navigation.fresh} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
     pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id}
     renamePending={renamePending && renamingChatId === record.chat.id} renameDisabled={renamePending}
     onToggleRead={() => { void toggleRead(record); }} readPending={readPending}
