@@ -21,6 +21,8 @@ export interface SheetsAppProps {
   bridge: SheetsBridge;
   /** Overrides for the session (timers, clock, autosave delay), for tests. */
   sessionDeps?: Partial<SessionDeps>;
+  /** A host made by the caller, for tests that read the open session. */
+  host?: SessionHost;
 }
 
 type Action = { kind: "open"; path: string } | { kind: "new"; rows?: string[][] } | { kind: "close" };
@@ -53,9 +55,9 @@ function sessionKey(session: object): number {
   return key;
 }
 
-export function SheetsApp({ bridge, sessionDeps }: SheetsAppProps) {
+export function SheetsApp({ bridge, sessionDeps, host: givenHost }: SheetsAppProps) {
   const toast = useToast();
-  const host = useMemo(() => new SessionHost({ files: bridge.files, db: bridge.db ?? null, log: logFailure, ...sessionDeps }), [bridge, sessionDeps]);
+  const host = useMemo(() => givenHost ?? new SessionHost({ files: bridge.files, db: bridge.db ?? null, log: logFailure, ...sessionDeps }), [givenHost, bridge, sessionDeps]);
   const recents = useMemo(() => createRecentFiles(bridge.db ?? null, { log: logFailure }), [bridge]);
   const tabLooks = useMemo(() => new TabLookStore(bridge, logFailure), [bridge]);
   const hostState = useHostState(host);

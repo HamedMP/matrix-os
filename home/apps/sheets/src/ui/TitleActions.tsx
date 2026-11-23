@@ -1,5 +1,5 @@
 /** Save state, Save, the file menu and the right panel toggles in the title bar. */
-import { Bot, ChevronDown, ListChecks, Save } from "lucide-react";
+import { Bot, ListChecks, Save } from "lucide-react";
 import { Dropdown, ToolbarButton } from "../../../_shared/office-ui";
 import type { SessionState } from "../session/types";
 
@@ -43,11 +43,7 @@ export function TitleActions({ state, pendingChanges, panel, onSave, onFileMenu,
       </span>
       <ToolbarButton label="Save" shortcut="Ctrl+S" icon={<Save size={16} />} disabled={!state.dirty && state.path !== null} onClick={onSave} />
       <Dropdown
-        label={
-          <span className="sheets-ribbon__dd">
-            File <ChevronDown size={14} aria-hidden="true" />
-          </span>
-        }
+        label={<span className="sheets-ribbon__text">File</span>}
         ariaLabel="File"
         align="end"
         items={[
