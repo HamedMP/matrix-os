@@ -147,6 +147,7 @@
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
     "#sites": "./src/sites.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
+    "#app-files": "./src/app-files.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",

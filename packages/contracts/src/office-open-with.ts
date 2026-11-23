@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { APP_FILE_MAX_BYTES, AppFilePathSchema, isAppReachableFilePath } from "./app-files.js";
+import { APP_FILE_MAX_BYTES, AppFilePathSchema, isAppReachableFilePath } from "#app-files";
 
 /**
  * Open-with contract: which default app owns a file type, and how Files hands

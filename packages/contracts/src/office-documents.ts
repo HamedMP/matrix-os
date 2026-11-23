@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { AppFilePathSchema, AppFileVersionSchema } from "./app-files.js";
+import { AppFilePathSchema, AppFileVersionSchema } from "#app-files";
 
 /**
  * Contract for the gateway document service: agents read and edit the
