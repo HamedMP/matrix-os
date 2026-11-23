@@ -39,8 +39,8 @@ export class SheetsAgentError extends Error {
 
 /** The model behind the injected bridge, or null when this host has none. */
 export function bridgeSheetsAi(target: unknown = typeof window === "undefined" ? undefined : window): SheetsAi | null {
-  const ai = (target as { MatrixOS?: { ai?: BridgeAi } } | undefined)?.MatrixOS?.ai;
-  if (ai === undefined || typeof ai.generate !== "function") return null;
+  const ai = (target as { MatrixOS?: { ai?: BridgeAi | null } } | undefined)?.MatrixOS?.ai;
+  if (ai === undefined || ai === null || typeof ai.generate !== "function") return null;
   return {
     async generate(prompt) {
       const reply = await ai.generate({ prompt });

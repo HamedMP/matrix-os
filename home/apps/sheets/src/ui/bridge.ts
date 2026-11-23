@@ -4,7 +4,7 @@
  * small fake. Electron Desktop may lack members: every optional one is
  * checked before use.
  */
-import type { MatrixOSDb, MatrixOSFiles } from "../../../_shared/matrix-os";
+import type { MatrixOSAi, MatrixOSDb, MatrixOSFiles } from "../../../_shared/matrix-os";
 
 export interface SheetsBridge {
   files: Pick<MatrixOSFiles, "list" | "read" | "write" | "openRequest" | "onOpenRequest">;
@@ -12,6 +12,8 @@ export interface SheetsBridge {
   /** Key-value store private to the app; used for tab order and colours. */
   readData?: (key: string) => Promise<unknown>;
   writeData?: (key: string, value: unknown) => Promise<void>;
+  /** The model behind the assistant; without it the assistant's model actions are off. */
+  ai?: Pick<MatrixOSAi, "generate"> | null;
 }
 
 /** The injected bridge, or null when this window has no file access. */

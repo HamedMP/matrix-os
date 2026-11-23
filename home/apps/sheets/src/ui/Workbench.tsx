@@ -6,12 +6,13 @@ import { FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppFrame, useToast } from "../../../_shared/office-ui";
 import { SheetGrid, createSheetGridController } from "../grid";
+import type { SheetsAi } from "../agent";
 import type { SheetSession } from "../session/session";
 import { FindReplace } from "./FindReplace";
 import { type Notify, csvOfActiveSheet, describeSave, downloadText, saveCopyNow, saveNow } from "./file-actions";
 import { useGridSelection, useSessionState } from "./hooks";
 import { NameBox } from "./NameBox";
-import { AgentPanelSlot, ReviewPanelSlot } from "./panel-slots";
+import { AgentPanelSlot, ReviewPanelSlot, useSheetPanels } from "./panel-slots";
 import { Ribbon } from "./Ribbon";
 import { activeStyle } from "./ribbon-commands";
 import { SaveAsDialog } from "./SaveAsDialog";
@@ -24,6 +25,8 @@ import { type FileMenuId, type PanelId, TitleActions } from "./TitleActions";
 export interface WorkbenchProps {
   session: SheetSession;
   tabLooks: TabLookStore;
+  /** The model behind the assistant, or null when this host has none. */
+  ai: SheetsAi | null;
   onNew: () => void;
   onOpen: () => void;
   onClose: () => void;
@@ -53,7 +56,7 @@ function useTabLook(store: TabLookStore, path: string | null): [TabLook, (look: 
   return [look, change];
 }
 
-export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: WorkbenchProps) {
+export function Workbench({ session, tabLooks, ai, onNew, onOpen, onClose }: WorkbenchProps) {
   const toast = useToast();
   const state = useSessionState(session);
   const controller = useMemo(() => createSheetGridController(session), [session]);
@@ -74,7 +77,6 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
   const [look, setLook] = useTabLook(tabLooks, state.path);
   const [find, setFind] = useState<{ replace: boolean } | null>(null);
   const [panel, setPanel] = useState<PanelId | null>(null);
-  const [reviewFocus, setReviewFocus] = useState<string | null>(null);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const pendingChanges = useMemo(() => (revision >= 0 ? session.sheets().reduce((sum, sheet) => sum + sheet.pendingChangeCount, 0) : 0), [session, revision]);
 
@@ -133,11 +135,8 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
 
   const togglePanel = (id: PanelId): void => setPanel((current) => (current === id ? null : id));
   const closePanel = useCallback(() => setPanel(null), []);
-  const openReview = useCallback((changeId: string | null) => {
-    setReviewFocus(changeId);
-    setPanel("review");
-  }, []);
-  const panelProps = { session, controller, onClose: closePanel };
+  const openReview = useCallback(() => setPanel("review"), []);
+  const { review, assistant } = useSheetPanels(session, controller, ai, openReview);
 
   return (
     <AppFrame
@@ -147,7 +146,13 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
       titleActions={<TitleActions state={state} pendingChanges={pendingChanges} panel={panel} onSave={save} onFileMenu={onFileMenu} onPanel={togglePanel} />}
       toolbar={<Ribbon controller={controller} state={state} style={style} onFailure={(message) => notify(message, "warning")} onFind={() => setFind({ replace: false })} />}
       banner={<SaveBanner session={session} state={state} controller={controller} notify={notify} />}
-      rightPanel={panel === null ? undefined : panel === "review" ? <ReviewPanelSlot {...panelProps} focusChangeId={reviewFocus} /> : <AgentPanelSlot {...panelProps} onOpenReview={openReview} />}
+      rightPanel={
+        panel === null ? undefined : panel === "review" ? (
+          <ReviewPanelSlot review={review} onClose={closePanel} />
+        ) : (
+          <AgentPanelSlot assistant={assistant} grid={controller} aiAvailable={ai !== null} onClose={closePanel} />
+        )
+      }
       rightPanelLabel={panel === "review" ? "Review changes" : "Assistant"}
       statusBar={<StatusBar session={session} state={state} selection={selection} filtered={controller.isFiltered} />}
     >

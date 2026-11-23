@@ -193,21 +193,33 @@ describe("Sheets find and replace", () => {
 });
 
 describe("Sheets right panel", () => {
-  it("opens and closes the review and assistant panels, with a fallback when a module is missing", async () => {
-    await renderWithWorkbook();
+  it("opens the real review and assistant panels and keeps the assistant conversation across panel switches", async () => {
+    await renderWithWorkbook("Budget.xlsx", (workbook, sheet) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [[10], [20]]);
+      workbook.setFormula(sheet, { row: 2, col: 0 }, "A1+A2+5");
+    });
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     await flush();
-    expect(screen.getByRole("complementary", { name: "Review changes" })).toBeTruthy();
-    expect(screen.queryByText("Change review is not available")).toBeNull();
+    const review = screen.getByRole("complementary", { name: "Review changes" });
+    expect(within(review).getByText("No changes to review")).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
     await flush();
-    expect(screen.getByRole("complementary", { name: "Assistant" })).toBeTruthy();
-    expect(screen.queryByText("The assistant is not available")).toBeNull();
+    const assistant = screen.getByRole("complementary", { name: "Assistant" });
+    // No `ai` on the bridge: model actions are off, the checks still work.
+    expect((within(assistant).getByRole("button", { name: "Explain" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(assistant).getByRole("button", { name: "Check for hard-coded values" }));
+    await flush();
+    const before = assistant.textContent ?? "";
+    expect(before).toContain("No hard-coded values or mismatched totals found");
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
+    await flush();
+    expect(screen.getByRole("complementary", { name: "Assistant" }).textContent).toBe(before);
+
     fireEvent.click(screen.getByRole("button", { name: "Assistant" }));
     expect(screen.queryByRole("complementary")).toBeNull();
-
-    const { lazyPanel } = await import("../../../../home/apps/sheets/src/ui/panel-slots");
-    const Fallback = () => null;
-    expect(lazyPanel({}, "Missing", Fallback)).toBe(Fallback);
   });
 });

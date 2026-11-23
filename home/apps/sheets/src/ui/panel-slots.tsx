@@ -1,47 +1,58 @@
-/// <reference types="vite/client" />
 /**
- * The right panel's modules, built by other owners: the change review
- * (`ui/review/SheetReviewPanel` over the `review/` controller) and the
- * assistant (`ui/agent/SheetsAgentPanel` over the `agent/` assistant).
+ * The right panel: change review (`ui/review` over the `review/` controller)
+ * and the assistant (`ui/agent` over the `agent/` assistant).
  *
- * Each loads lazily through `import.meta.glob`, so a build without the
- * modules still succeeds and shows a short fallback; `panel-adapters.tsx`
- * makes the review controller and the assistant for the open session. A
- * render error inside a panel shows the fallback instead of taking the app
- * down.
+ * `useSheetPanels` makes one review controller and one assistant per open
+ * workbook, so the review position and the assistant conversation survive
+ * switching or closing the panel. A render error inside a panel shows a
+ * short notice instead of taking the app down.
  */
-import { Component, Suspense, type ComponentType, type ErrorInfo, type ReactNode } from "react";
-import { Bot, ListChecks } from "lucide-react";
-import { EmptyState, Spinner } from "../../../_shared/office-ui";
+import { Component, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
+import { EmptyState } from "../../../_shared/office-ui";
+import { SheetsAssistant, type SheetsAi } from "../agent";
 import type { SheetGridController } from "../grid";
+import { SheetReviewController } from "../review";
 import type { SheetSession } from "../session/session";
-import { type PanelModule, buildAgentPanel, buildReviewPanel, lazyFromModules } from "./panel-adapters";
+import { SheetsAgentPanel, selectionFromGrid } from "./agent";
+import { logFailure } from "./bridge";
+import { SheetReviewPanel } from "./review";
 
-/** Props the shell passes to `SheetReviewPanel` and `SheetsAgentPanel`. */
-export interface SheetPanelProps {
-  session: SheetSession;
-  controller: SheetGridController;
-  /** Closes the right panel. */
-  onClose: () => void;
-  /** Review only: the change to bring into view, for example one the assistant just proposed. */
-  focusChangeId?: string | null;
-  /** Assistant only: opens the review panel, at a change when one is given. */
-  onOpenReview?: (changeId: string | null) => void;
+export interface SheetPanels {
+  review: SheetReviewController;
+  assistant: SheetsAssistant;
+}
+
+/**
+ * The review controller and assistant of one workbook. `onReview` runs when
+ * the assistant asks to show its proposal, with the first changed cell.
+ */
+export function useSheetPanels(session: SheetSession, grid: SheetGridController, ai: SheetsAi | null, onReview: (changeId: string | null) => void): SheetPanels {
+  const review = useMemo(() => new SheetReviewController(session, grid, logFailure), [session, grid]);
+  useEffect(() => () => review.dispose(), [review]);
+  const assistant = useMemo(
+    () =>
+      new SheetsAssistant({
+        session,
+        ai,
+        grid,
+        log: logFailure,
+        onReview: (_proposalId, changeId) => {
+          if (changeId !== null) review.goTo(changeId);
+          onReview(changeId);
+        },
+      }),
+    [session, ai, grid, review, onReview],
+  );
+  useEffect(() => () => assistant.dispose(), [assistant]);
+  return { review, assistant };
 }
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
-/** A lazy component from the first matching module, or `fallback` when there is none. */
-export function lazyPanel(modules: Record<string, () => Promise<PanelModule>>, exportName: string, fallback: ComponentType<SheetPanelProps>): ComponentType<SheetPanelProps> {
-  return lazyFromModules(exportName, [modules], ([mod]) => {
-    const candidate = (mod?.default ?? mod?.[exportName]) as ComponentType<SheetPanelProps> | undefined;
-    return typeof candidate === "function" || (typeof candidate === "object" && candidate !== null) ? candidate : null;
-  }, fallback);
-}
-
-class PanelBoundary extends Component<{ name: string; fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+class PanelBoundary extends Component<{ name: string; onClose: () => void; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError(): { failed: boolean } {
@@ -53,71 +64,39 @@ class PanelBoundary extends Component<{ name: string; fallback: ReactNode; child
   }
 
   render(): ReactNode {
-    return this.state.failed ? this.props.fallback : this.props.children;
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="sheets-panel-fallback">
+        <EmptyState
+          icon={<AlertTriangle />}
+          headline="This panel stopped working"
+          description="Your workbook is not affected. Close the panel and open it again."
+          action={{ label: "Close", onClick: this.props.onClose }}
+        />
+      </div>
+    );
   }
 }
 
-function ReviewFallback({ onClose }: SheetPanelProps) {
+export function ReviewPanelSlot({ review, onClose }: { review: SheetReviewController; onClose: () => void }) {
   return (
-    <div className="sheets-panel-fallback">
-      <EmptyState
-        icon={<ListChecks />}
-        headline="Change review is not available"
-        description="This build of Sheets does not include the review panel. Cells with proposed changes are still tinted in the grid."
-        action={{ label: "Close", onClick: onClose }}
-      />
-    </div>
-  );
-}
-
-function AgentFallback({ onClose }: SheetPanelProps) {
-  return (
-    <div className="sheets-panel-fallback">
-      <EmptyState
-        icon={<Bot />}
-        headline="The assistant is not available"
-        description="This build of Sheets does not include the assistant panel."
-        action={{ label: "Close", onClick: onClose }}
-      />
-    </div>
-  );
-}
-
-const ReviewImpl = lazyFromModules(
-  "SheetReviewPanel",
-  [import.meta.glob<PanelModule>("./review/index.ts"), import.meta.glob<PanelModule>("../review/index.ts")],
-  buildReviewPanel,
-  ReviewFallback,
-);
-const AgentImpl = lazyFromModules(
-  "SheetsAgentPanel",
-  [import.meta.glob<PanelModule>("./agent/index.ts"), import.meta.glob<PanelModule>("../agent/index.ts")],
-  buildAgentPanel,
-  AgentFallback,
-);
-
-const loading = (
-  <div className="sheets-panel-loading">
-    <Spinner size={16} label="Loading panel" />
-  </div>
-);
-
-export function ReviewPanelSlot(props: SheetPanelProps) {
-  return (
-    <PanelBoundary name="SheetReviewPanel" fallback={<ReviewFallback {...props} />}>
-      <Suspense fallback={loading}>
-        <ReviewImpl {...props} />
-      </Suspense>
+    <PanelBoundary name="SheetReviewPanel" onClose={onClose}>
+      <SheetReviewPanel review={review} onClose={onClose} />
     </PanelBoundary>
   );
 }
 
-export function AgentPanelSlot(props: SheetPanelProps) {
+export interface AgentPanelSlotProps {
+  assistant: SheetsAssistant;
+  grid: SheetGridController;
+  aiAvailable: boolean;
+  onClose: () => void;
+}
+
+export function AgentPanelSlot({ assistant, grid, aiAvailable, onClose }: AgentPanelSlotProps) {
   return (
-    <PanelBoundary name="SheetsAgentPanel" fallback={<AgentFallback {...props} />}>
-      <Suspense fallback={loading}>
-        <AgentImpl {...props} />
-      </Suspense>
+    <PanelBoundary name="SheetsAgentPanel" onClose={onClose}>
+      <SheetsAgentPanel assistant={assistant} getSelection={() => selectionFromGrid(grid)} beforeAction={() => grid.commitEdit()} onClose={onClose} aiAvailable={aiAvailable} />
     </PanelBoundary>
   );
 }
