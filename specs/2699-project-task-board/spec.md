@@ -96,8 +96,12 @@ constraints mirror the Zod bounds in `packages/contracts/src/project-tasks.ts`.
   with a `projectId`, so the chat row and its task row commit together. Every
   path that creates a project chat goes through it. A board "New task" is a
   chat create that carries ticket fields (title, description, status Backlog
-  or To do, priority, labels, assignee); a plain chat create gets
-  `in_progress`. The chat row is created eagerly with no turns, so a board task
+  or To do, priority, labels, assignee); a plain chat create gets `todo` and
+  moves to `in_progress` on its first accepted turn. (Refinement of the
+  requester's "a new chat lands In progress": an empty chat is not yet work in
+  progress. One constant, `DIRECT_CHAT_STATUS`, reverts it.) A Chat app "New
+  chat" that is only a client draft has no chat row and so no task until its
+  first message. The chat row is created eagerly with no turns, so a board task
   starts its agent only when its first message is sent. Retries reuse the
   chat's `clientRequestId` (`ON CONFLICT` on the chat's request key and on
   `(owner_id, chat_id)`).
@@ -111,8 +115,11 @@ constraints mirror the Zod bounds in `packages/contracts/src/project-tasks.ts`.
   tasks with organization sharing (section 7).
 - Moving a chat to another project moves its task (a new number on the target
   board, history kept); removing a chat's project archives its task.
-- Backfill, once per chat, bounded per boot (500 rows) and safe to re-run:
-  project chats without a task become tasks in `done`; tasks without a chat
+- Backfill, once per chat, bounded per board open (500 rows) and safe to
+  re-run: project chats without a task become tasks in `done`, or in
+  `in_progress` when the chat's latest run is accepted, running or waiting for
+  approval or input (refinement of the requester's "existing chats go to Done";
+  one mapping, `backfillStatus`, reverts it); tasks without a chat
   (for example from the file import) get an empty chat titled after the task.
   Chats outside any project get no task.
 - The first turn on a `backlog` or `todo` task's chat moves it to
@@ -549,7 +556,7 @@ secret is written to task rows, activity or logs.
 | Task deleted while a session is running | The session keeps running as an ordinary chat or tab; the link row goes with the task |
 | Chat and task created at the same time from two paths | One transaction inserts both; the unique indexes on the chat request key and `(owner_id, chat_id)` make the loser return the existing pair |
 | The ticket hook fails inside a chat create | The whole chat create rolls back with a generic error; no chat without a task is committed |
-| Backfill interrupted or run by two gateways | Each row is inserted with `ON CONFLICT DO NOTHING` under the board schema lock; the next boot continues where it stopped, at most 500 rows per boot |
+| Backfill interrupted or run by two gateways | Each chat is checked under a row lock and linked at most once (unique `(owner_id, chat_id)`); the next board open continues where it stopped, at most 500 rows per open |
 | A chat is deleted | Its task is soft-deleted in the same transaction; terminals attached to it keep running |
 
 ## Resource management
