@@ -265,7 +265,9 @@ export interface EvalContext {
  * spreadsheet precedence, function calls and array constants.
  * Not supported (`formula_error`): the union and intersection operators,
  * references across several sheets, references to other workbooks and
- * structured table references.
+ * structured table references. (`parseFormulaExtended` of
+ * `src/xlsx/formula/index.ts` accepts the reference operators and
+ * references across a span of sheets, with tree nodes of its own.)
  *
  * Throws `formula_error` with `details.offset`, and `limit_exceeded` for a
  * formula longer than 8192 characters.
@@ -309,6 +311,10 @@ export type MapReferences = (ast: FormulaAst, map: (node: ReferenceNode) => Form
  * DATE, YEAR, MONTH, DAY, WEEKDAY, TODAY, NOW, EDATE, EOMONTH, DAYS, DATEDIF,
  * ISBLANK, ISNUMBER, ISTEXT, ISLOGICAL, ISERROR, ISERR, ISNA, NA,
  * PMT, PV, FV, NPV, IRR.
+ *
+ * There is no `#CALC!` error value: an empty result of FILTER, UNIQUE or
+ * SORT is `#VALUE!`. INDEX reads the first area only, INDIRECT reads A1
+ * notation only, and SUBTOTAL and AGGREGATE do not skip hidden rows.
  */
 export type CreateFunctionRegistry = (options?: { builtins?: boolean }) => FunctionRegistry;
 

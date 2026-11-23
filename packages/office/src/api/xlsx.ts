@@ -66,7 +66,17 @@ export type * from "./xlsx-model.js";
  * - An edit outside a proposal to a cell with a pending change accepts that
  *   change first.
  * - While a sheet has pending changes, inserting or deleting its rows or
- *   columns and removing the sheet throw `invalid_operation`.
+ *   columns and removing the sheet throw `invalid_operation`, inside a
+ *   proposal too.
+ * - Inside a proposal, inserting or deleting rows or columns of a sheet
+ *   without pending changes, adding a sheet and renaming one are recorded
+ *   as changes of their own kind; removing a sheet throws
+ *   `invalid_operation`. Such a change is listed by `listChanges()` with
+ *   null values (`row` or `col` is the first row or column); its kind,
+ *   count and a one-line summary are on the `JournalChange` objects that
+ *   `listJournalChanges(workbook)` of `src/xlsx/index.ts` returns. Rejecting
+ *   a structural change or an added sheet also rejects every later change
+ *   on that sheet.
  * - The journal is saved in the file as the part `/matrix/changeJournal.json`
  *   (content type `application/vnd.matrix-os.change-journal+json`, related
  *   from the workbook part with the type
@@ -173,8 +183,10 @@ export interface Workbook {
 
 /**
  * Opens an `.xlsx`. Throws the errors of `openPackage`, `unsupported_format`
- * when the package is not a spreadsheet, `corrupt_package` or `malformed_xml`
- * for a missing or broken required part, and `limit_exceeded` for too many cells.
+ * when the package is not a spreadsheet or holds a chart or macro sheet,
+ * `corrupt_package` or `malformed_xml` for a missing or broken required
+ * part, and `limit_exceeded` for too many cells. A change journal that
+ * cannot be read is ignored and reported by `getJournalWarnings(workbook)`.
  */
 export type OpenXlsx = (bytes: Uint8Array, options?: OpenXlsxOptions) => Promise<Workbook>;
 

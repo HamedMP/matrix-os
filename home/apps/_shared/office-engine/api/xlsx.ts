@@ -49,6 +49,12 @@ export type * from "./xlsx-model.js";
  * Calculation: an edit marks the cells that depend on it as out of date but
  * does not calculate. `getCell` returns the last calculated value until
  * `recalc()` runs. `save()` runs `recalc()` first when anything is out of date.
+ * An array formula sits in the first cell of its range and is calculated like
+ * any other; the other cells of the range hold its values without a formula
+ * and are filled again at every calculation, also after a value was typed
+ * over one of them. A data table, an array formula over more than 100 000
+ * cells and a formula with an unknown function keep the values stored in the
+ * file (`Cell.formulaUnsupported`).
  *
  * Change journal: between `beginProposal` and `endProposal` every content or
  * style edit to a cell is also recorded as a {@link CellChange}. The cell
@@ -60,7 +66,17 @@ export type * from "./xlsx-model.js";
  * - An edit outside a proposal to a cell with a pending change accepts that
  *   change first.
  * - While a sheet has pending changes, inserting or deleting its rows or
- *   columns and removing the sheet throw `invalid_operation`.
+ *   columns and removing the sheet throw `invalid_operation`, inside a
+ *   proposal too.
+ * - Inside a proposal, inserting or deleting rows or columns of a sheet
+ *   without pending changes, adding a sheet and renaming one are recorded
+ *   as changes of their own kind; removing a sheet throws
+ *   `invalid_operation`. Such a change is listed by `listChanges()` with
+ *   null values (`row` or `col` is the first row or column); its kind,
+ *   count and a one-line summary are on the `JournalChange` objects that
+ *   `listJournalChanges(workbook)` of `src/xlsx/index.ts` returns. Rejecting
+ *   a structural change or an added sheet also rejects every later change
+ *   on that sheet.
  * - The journal is saved in the file as the part `/matrix/changeJournal.json`
  *   (content type `application/vnd.matrix-os.change-journal+json`, related
  *   from the workbook part with the type
@@ -167,8 +183,10 @@ export interface Workbook {
 
 /**
  * Opens an `.xlsx`. Throws the errors of `openPackage`, `unsupported_format`
- * when the package is not a spreadsheet, `corrupt_package` or `malformed_xml`
- * for a missing or broken required part, and `limit_exceeded` for too many cells.
+ * when the package is not a spreadsheet or holds a chart or macro sheet,
+ * `corrupt_package` or `malformed_xml` for a missing or broken required
+ * part, and `limit_exceeded` for too many cells. A change journal that
+ * cannot be read is ignored and reported by `getJournalWarnings(workbook)`.
  */
 export type OpenXlsx = (bytes: Uint8Array, options?: OpenXlsxOptions) => Promise<Workbook>;
 

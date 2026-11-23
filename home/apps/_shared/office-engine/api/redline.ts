@@ -24,8 +24,10 @@ export interface DiffOptions {
   minMoveTokens?: number;
   /**
    * Bound on the work done. Above this many tokens in either text the
-   * common prefix and suffix are still matched and the middle is reported as
-   * one deletion and one insertion. Default 20 000.
+   * common prefix and suffix are still matched, the middle is compared line
+   * by line and only the lines that differ are compared word by word. A
+   * middle that is still too large is reported as one deletion and one
+   * insertion. Default 20 000.
    */
   maxTokens?: number;
 }
@@ -142,7 +144,9 @@ export interface RedlineState {
  * `object` and `embed`, which are dropped whole. `toHtml` therefore returns
  * markup that is safe to insert into a page. The comparison is made on the
  * text; a change inside formatting keeps the formatting of the side it comes
- * from.
+ * from. A `br` counts as the character U+2028 in the compared text, and a
+ * paragraph moved to the very start or end is reported with one deleted and
+ * one inserted paragraph boundary beside the move.
  */
 export interface RedlineDoc {
   readonly format: RedlineFormat;

@@ -21,22 +21,29 @@ function canonicalEscapes(segment: string): string {
   });
 }
 
-function joinSegments(base: readonly string[], path: string): string {
+/**
+ * Appends the segments of `path` to `base`. A relationship target may walk
+ * with `.` and `..`; a part name may not contain either.
+ */
+function joinSegments(base: readonly string[], path: string, allowDotSegments: boolean): string {
   if (path.includes("\\") || path.includes("\0")) {
     throw fault("invalid_part_name", "part name contains a forbidden character");
   }
   const out = [...base];
   for (const segment of path.split("/")) {
-    if (segment === "..") {
-      if (out.length === 0) {
-        throw fault("invalid_part_name", "part name points outside the package");
-      }
-      out.pop();
-    } else if (segment === "") {
+    if (segment === "") {
       // The caller already consumed a leading slash, so this is `a//b` or a trailing slash.
       throw fault("invalid_part_name", "part name contains an empty segment");
-    } else if (segment !== ".") {
+    }
+    if (segment !== "." && segment !== "..") {
       out.push(segment);
+    } else if (!allowDotSegments) {
+      throw fault("invalid_part_name", "part name contains a dot segment");
+    } else if (segment === "..") {
+      if (out.length === 0) {
+        throw fault("invalid_part_name", "relationship target points outside the package");
+      }
+      out.pop();
     }
   }
   if (out.length === 0) {
@@ -47,15 +54,18 @@ function joinSegments(base: readonly string[], path: string): string {
 
 /**
  * Returns the canonical form of a part name. Accepts a ZIP entry name
- * (`word/document.xml`) or a part name (`/word/document.xml`), resolves `.` and
- * `..` segments and refuses anything that would leave the package.
+ * (`word/document.xml`) or a part name (`/word/document.xml`) and refuses a
+ * backslash and any empty, `.` or `..` segment.
  */
 export function normalizePartName(name: string): string {
+  if (typeof name !== "string") {
+    throw fault("invalid_part_name", "part name is not a string");
+  }
   const path = name.startsWith("/") ? name.slice(1) : name;
   if (path === "") {
     throw fault("invalid_part_name", "part name is empty");
   }
-  return joinSegments([], path);
+  return joinSegments([], path, false);
 }
 
 /** Key under which two part names are the same part. */
@@ -134,9 +144,9 @@ export function resolveRelationshipTarget(source: string, target: string): strin
   if (path === "") {
     throw fault("invalid_part_name", "relationship target is empty");
   }
-  if (path.startsWith("/")) return normalizePartName(path);
+  if (path.startsWith("/")) return joinSegments([], path.slice(1), true);
   const base = source === PACKAGE_ROOT ? [] : normalizePartName(source).slice(1).split("/").slice(0, -1);
-  return joinSegments(base, path);
+  return joinSegments(base, path, true);
 }
 
 /**

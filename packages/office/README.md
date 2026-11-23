@@ -60,11 +60,31 @@ const contract: DocxModule = docx;
 ```
 
 `src/index.ts` exports `OfficeError`, `isOfficeError`, `OFFICE_ERROR_CODES`,
-every contract type, and one namespace per implementation module that has
-landed (`opc` today; `xml`, `docx`, `xlsx`, `formula`, `redline` and `agent`
-are added there, one line each, as their `index.ts` lands). Namespaces keep
-short helper names such as the XML module's `find` and `remove` out of the
-root. A module can always be imported from its own index.
+every contract type, one namespace per module (`opc`, `xml`, `docx`, `xlsx`,
+`formula`, `redline`, `agent`) and the main entry points by name:
+
+| Area     | Named exports of `src/index.ts` |
+| -------- | ------------------------------- |
+| docx     | `openDocx`, `createDocx`, `createDocxFromMarkdown`, `compareDocx`, `compareDocxDetailed`, `toHtml`, `toMarkdown`, `toPlainText` |
+| xlsx     | `openXlsx`, `createXlsx`, `parseCsv`, `toCsv`, `formatValue`, `listJournalChanges`, `getJournalWarnings`, `columnLabel`, `columnIndex`, `parseA1`, `formatA1`, `parseA1Range`, `formatA1Range`, `parseSheetRange`, `MAX_ROWS`, `MAX_COLS` |
+| formula  | `parseFormula`, `serializeFormula`, `evaluate`, `createFunctionRegistry` |
+| redline  | `diffWords`, `diffSequences`, `createRedline`, `loadRedline` |
+| agent    | `describeDocx`, `describeSheet`, `parseAgentEdits`, `agentEditInstructions`, `toDocxOps`, `toSheetEdits`, `applySheetEdits` |
+
+Namespaces keep short helper names such as the XML module's `find` and
+`remove` out of the root, and hold what a module adds to its contract
+(`redline.diffParagraphs`, `xlsx.serialToIso`, `formula.DependencyGraph`).
+A module can always be imported from its own index.
+
+How the modules fit together:
+
+- `docx` builds on `opc` and `xml`. Document comparison uses `redline` for
+  the paragraph alignment and the word-level diff.
+- `xlsx` builds on `opc` and `xml`. A workbook calculates with the formula
+  engine in `src/xlsx/formula/` and its whole function library (`TEXT` is
+  rendered by the workbook's number formats), keeps array formulas filled,
+  and records proposed changes in the journal in `src/xlsx/journal/`.
+- `agent` uses only the public handles of `docx` and `xlsx`.
 
 Conventions shared by all contracts:
 
@@ -89,12 +109,34 @@ Subpaths: `./errors`, `./opc`, `./xml`, `./docx`, `./xlsx`, `./formula`,
 
 From a test, by relative path: `../../packages/office/src/docx/index.js`.
 
-From a default app under `home/apps/**`, by relative path into the mirror:
+From a default app under `home/apps/**`, by relative path into the mirror
+(from `home/apps/<app>/src/`; one module index, or everything from the root):
 
 ```ts
-import { openDocx } from "../../_shared/office-engine/docx/index.js";
-import type { DocxView } from "../../_shared/office-engine/index.js";
+import { describeDocx, openDocx, openXlsx, parseAgentEdits, toDocxOps } from "../../_shared/office-engine/index";
+import type { DocxView, Revision } from "../../_shared/office-engine/index";
+import { createRedline } from "../../_shared/office-engine/redline/index";
 ```
+
+## The agent flow
+
+```ts
+const document = await openDocx(bytes);
+const description = describeDocx(document, { maxChars: 24_000 });   // text for the prompt, with block ids
+const parsed = parseAgentEdits(answer, "docx");                      // strict validation, never throws
+if (parsed.ok && parsed.envelope.kind === "docx") {
+  const plan = toDocxOps(document, parsed.envelope.edits);           // plan.rejected lists what did not resolve
+  document.applyOps(plan.ops, { track: true, author, date });        // native tracked revisions
+}
+document.listRevisions();                                            // the owner accepts or rejects each
+document.acceptRevisions([id]); document.rejectRevisions([id]);
+const saved = await document.save();
+```
+
+For a workbook: `describeSheet`, `parseAgentEdits(answer, "sheet")`,
+`toSheetEdits`, then `applySheetEdits(workbook, plan.edits, { author, date, label })`
+records the edits as one proposal; `workbook.listChanges()`,
+`acceptChanges` and `rejectChanges` resolve them.
 
 ## The mirror
 
@@ -117,5 +159,9 @@ stale, so run the sync and commit the mirror with the source change.
 node_modules/.bin/tsc --noEmit -p packages/office/tsconfig.json
 NODE_OPTIONS=--no-experimental-webstorage node node_modules/vitest/vitest.mjs run tests/office
 ```
+
+`tests/office/e2e/` runs the acceptance flows of the spec through the public
+API only. With `OFFICE_E2E_OUT=<directory>` those tests also keep every file
+they produce, for checking with the independent readers in `tests/office/tools/`.
 
 The package is also part of `bun run typecheck` (`scripts/typecheck.mjs`).

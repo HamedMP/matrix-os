@@ -168,11 +168,18 @@ export type CreateDocx = (options?: CreateDocxOptions) => DocxDocument;
  * relocated paragraphs a move. Accepting everything gives the text of
  * `revised`; rejecting everything gives the text of `original`.
  *
- * The result is built on the package of `original` (its styles, numbering,
- * headers and settings). Revisions already pending in an input are treated as
- * accepted for the comparison. The body, and notes referenced from it, are
- * compared; headers and footers are taken from `original`. Neither input is
- * modified.
+ * The result is built on the package of `original` (its styles, numbering
+ * and settings). Revisions already pending in an input are treated as
+ * accepted for the comparison. The body, the notes both versions refer to at
+ * the same place, and the headers and footers of the same section and type
+ * are compared; a header or footer only one version has is taken from
+ * `original`. Formatting that differs on unchanged text is a formatting
+ * revision. The result is checked against the texts of both inputs before it
+ * is returned, and neither input is modified.
+ *
+ * `compareDocxDetailed` of `src/docx/index.ts` returns the same document
+ * with a summary of its revisions (counts by kind, each change classified as
+ * substantive or formatting only).
  */
 export type CompareDocx = (
   original: Uint8Array | DocxDocument,

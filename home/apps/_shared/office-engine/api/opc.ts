@@ -97,8 +97,12 @@ export interface ListPartsOptions {
  * data, CRC, sizes, method and timestamp are reused; it is never inflated and
  * deflated again). The same holds for a relationships part whose
  * relationships were not changed and for `[Content_Types].xml` when no content
- * type was changed. Entries keep their original order; new parts are appended.
- * The archive as a whole need not be byte-identical to the input.
+ * type was changed. `[Content_Types].xml` is written first and `/_rels/.rels`
+ * second, as readers that stream the archive expect; the other entries keep
+ * their original order and new parts are appended. An untouched entry keeps
+ * its timestamp; a new or changed one gets the fixed stamp 1980-01-01, so
+ * saving is deterministic. The archive as a whole need not be byte-identical
+ * to the input.
  *
  * `[Content_Types].xml` and every relationships part are inflated and parsed
  * by `openPackage`, so content-type and relationship reads are synchronous.
@@ -170,8 +174,10 @@ export interface OpcPackage {
  * - a limit exceeded: `zip_limit_exceeded`
  * - damaged archive, CRC mismatch, missing or malformed `[Content_Types].xml`
  *   or relationships part, duplicate or unsafe entry names: `corrupt_package`
- * - encrypted entries, multi-disk archives, or a compression method other
- *   than stored (0) and deflate (8): `unsupported_format`
+ * - encrypted entries, multi-disk archives, ZIP64 archives, or a compression
+ *   method other than stored (0) and deflate (8): `unsupported_format`
+ * - an entry that inflates to more than its declared size: `corrupt_package`
+ *   (a declared size over a limit is `zip_limit_exceeded` at open)
  *
  * `bytes` is not copied and must not be mutated while the package is in use.
  */
