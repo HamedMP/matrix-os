@@ -21,10 +21,26 @@ serialized background admission, existing resource isolation and cancellation.
 Canonical records stay in owner Postgres; active admission stays in the gateway
 orchestrator's existing registry. Do not change terminal or Zellij policy.
 
+Direct sends, retries, native scheduled runs and both queue paths must reserve
+from one global allowance before asynchronous admission/claim preparation.
+Transfer the slot synchronously into active registration; release it when
+admission, an empty claim or preparation ends without dispatch. Restart-idle
+accounting remains separate from capacity so pending work is not counted twice.
+Recovery must recognize reserved run IDs as live preparation, including personal
+queued claims that have committed but have not registered an active dispatch.
+
+Extraction plan: move slot accounting and personal queued dispatch into focused
+helpers, preserving the orchestrator callback ports and database-backed
+regressions as integration contracts.
+
 ## Acceptance and qualification
 
 - Admit 64 held runs for one owner; reject the 65th with the existing busy error.
 - Apply the same total across two owners and preserve execution fences.
+- With 63 active runs, pause personal/shared queue preparation and reject a
+  competing direct send; resume the queue into the 64th slot.
+- Pause direct admission in the last slot; leave shared work queued. Verify
+  failed shared preparation releases its slot for a subsequent direct send.
 - Admit 64 mocked systemd jobs with the default supervisor; reject the 65th.
 - Rerun the parent's ingestion/replay tests alongside the changed suites.
 - Update the developer limits guide. Extend the companion public documentation

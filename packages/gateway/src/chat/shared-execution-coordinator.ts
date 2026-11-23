@@ -43,6 +43,8 @@ export interface SharedChatExecutionCoordinatorOptions {
   repository: SharedExecutionRepository;
   isClosing(): boolean;
   atCapacity(owner: ChatOwner): boolean;
+  reserveDispatchSlot(runId: string): void;
+  releaseDispatchSlot(runId: string): void;
   hasActiveRun(owner: ChatOwner, chatId: string): boolean;
   getActiveRun(runId: string): SharedActiveRunHandle | undefined;
   startDispatch(input: StartSharedDispatchInput): void;
@@ -91,74 +93,80 @@ export class SharedChatExecutionCoordinator {
     try {
       for (let offset = 0; offset < MAX_SHARED_QUEUE_CLAIMS
         && !this.options.isClosing() && !this.options.atCapacity(owner); offset += 1) {
-        const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
-        const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
-          chatId,
-          collaborationScopeId: scopeId,
-          turnId: identifier("cturn_"),
-          runId: identifier("run_"),
-          messageId: identifier("msg_"),
-          claimedAt: timestamp,
-        });
-        if (!claimed) {
-          await this.notify(scopeId);
-          return;
-        }
-        // S09: a rooted run is dispatched on the owner's sandboxed root; the adapter
-        // factory refuses it when no sandbox capability or root resolver exists.
-        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId) {
-          await this.finishPreparationFailure(
-            owner,
-            chatId,
-            claimed.run.id,
-            timestamp,
-            "interrupted",
-            { stage: "preparation", category: "authorization" },
-          );
-          await this.notify(scopeId);
-          continue;
-        }
-
-        let adapter: CanonicalChatProviderAdapter;
+        const runId = identifier("run_");
+        this.options.reserveDispatchSlot(runId);
         try {
-          adapter = await createAdapter(claimed.sharedExecution, {
-            id: claimed.run.id,
-            turnId: claimed.run.turnId,
-            executionRoot: claimed.run.executionRoot ?? null,
-            executionRootFingerprint: claimed.run.executionRootFingerprint ?? null,
-          });
-          if (adapter.driverKind !== claimed.run.driverKind) {
-            throw new Error("Shared adapter driver mismatch");
-          }
-          this.options.startDispatch({
-            owner,
-            message: claimed.message,
-            run: claimed.run,
-            adapter,
-            scopeId,
-            onComplete: () => this.dispatchNextQueued(owner, chatId, scopeId, createAdapter),
-          });
-          return;
-        } catch (error: unknown) {
-          console.warn(
-            "[chat/shared-execution] Shared Run preparation failed:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-          const requestState = error instanceof SharedChatRunPreparationError ? error.requestState : "interrupted";
-          await this.finishPreparationFailure(
-            owner,
+          const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+          const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
             chatId,
-            claimed.run.id,
-            timestamp,
-            requestState,
-            diagnoseChatRunFailure(error, "preparation"),
-          );
-          await this.notify(scopeId);
-          // An unavailable owner source or scope is not a per-request fault: stop
-          // claiming so the remaining requests stay queued until the next wake
-          // instead of draining the whole queue into `unavailable`.
-          if (requestState === "unavailable") return;
-          continue;
+            collaborationScopeId: scopeId,
+            turnId: identifier("cturn_"),
+            runId,
+            messageId: identifier("msg_"),
+            claimedAt: timestamp,
+          });
+          if (!claimed) {
+            await this.notify(scopeId);
+            return;
+          }
+          // S09: a rooted run is dispatched on the owner's sandboxed root; the adapter
+          // factory refuses it when no sandbox capability or root resolver exists.
+          if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId) {
+            await this.finishPreparationFailure(
+              owner,
+              chatId,
+              claimed.run.id,
+              timestamp,
+              "interrupted",
+              { stage: "preparation", category: "authorization" },
+            );
+            await this.notify(scopeId);
+            continue;
+          }
+
+          let adapter: CanonicalChatProviderAdapter;
+          try {
+            adapter = await createAdapter(claimed.sharedExecution, {
+              id: claimed.run.id,
+              turnId: claimed.run.turnId,
+              executionRoot: claimed.run.executionRoot ?? null,
+              executionRootFingerprint: claimed.run.executionRootFingerprint ?? null,
+            });
+            if (adapter.driverKind !== claimed.run.driverKind) {
+              throw new Error("Shared adapter driver mismatch");
+            }
+            this.options.startDispatch({
+              owner,
+              message: claimed.message,
+              run: claimed.run,
+              adapter,
+              scopeId,
+              onComplete: () => this.dispatchNextQueued(owner, chatId, scopeId, createAdapter),
+            });
+            return;
+          } catch (error: unknown) {
+            console.warn(
+              "[chat/shared-execution] Shared Run preparation failed:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            const requestState = error instanceof SharedChatRunPreparationError ? error.requestState : "interrupted";
+            await this.finishPreparationFailure(
+              owner,
+              chatId,
+              claimed.run.id,
+              timestamp,
+              requestState,
+              diagnoseChatRunFailure(error, "preparation"),
+            );
+            await this.notify(scopeId);
+            // An unavailable owner source or scope is not a per-request fault: stop
+            // claiming so the remaining requests stay queued until the next wake
+            // instead of draining the whole queue into `unavailable`.
+            if (requestState === "unavailable") return;
+            continue;
+          }
+        } finally {
+          this.options.releaseDispatchSlot(runId);
         }
       }
     } finally {

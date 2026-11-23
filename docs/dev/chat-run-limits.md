@@ -10,7 +10,11 @@ separate per-owner quota. One personal owner can use the full allowance; runs
 belonging to other ownership scopes count toward the same total. The 65th
 ordinary admission is rejected with a retryable busy response, rather than
 being routed to another gateway. Saved Chats and idle sessions do not consume
-orchestrator run slots.
+orchestrator run slots. Direct sends, retries, scheduled runs and personal/shared
+queue dispatches reserve from the same allowance before admission or queue setup
+can yield. Preparing work counts toward 64; registration transfers its reservation
+to the active run. Failed admission, empty queue claims and failed preparation
+release the reservation. A direct send rejected before admission creates no run.
 
 The background agent supervisor also defaults to 64 live jobs, so its former
 32-job default does not impose a lower ceiling on Codex execution. Physical

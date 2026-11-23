@@ -1980,7 +1980,7 @@ describe("CanonicalChatOrchestrator", () => {
       await orchestrator.close();
     }
     const rejected = await repository.exportChat(owner, "chat_concurrent_64");
-    expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(rejected?.runs).toEqual([]);
   });
 
   it("commits successful output at the former text-delta activity boundary", async () => {
