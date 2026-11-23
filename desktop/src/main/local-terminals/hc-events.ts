@@ -96,7 +96,7 @@ function trackedFrom(raw: unknown): [string, Tracked] | null {
 function factFrom(id: string, tracked: Tracked): LocalTerminalFact {
   const seen = Number.parseInt(tracked.labels[HERDR_SEEN_LABEL] ?? "", 10);
   const labelled = tracked.labels[AGENT_LABEL];
-  const agent = labelled && AGENTS.has(labelled) ? labelled as LocalTerminalFact["agent"] : tracked.app ? AGENT_APPS[tracked.app] : undefined;
+  const agent = labelled && AGENTS.has(labelled) ? labelled as LocalTerminalFact["agent"] : tracked.app && Object.hasOwn(AGENT_APPS, tracked.app) ? AGENT_APPS[tracked.app] : undefined;
   return {
     id,
     title: safeTerminalTitle(tracked.labels[TERMINAL_TITLE_LABEL], tracked.title, tracked.name),

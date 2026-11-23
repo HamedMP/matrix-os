@@ -99,7 +99,11 @@ export function reduceTerminalEvents(state: TerminalEventsState, input: unknown)
     parsed.sort((left, right) => Number(left.state === "finished") - Number(right.state === "finished"));
     const tabs: Record<string, TerminalTabFacts> = {};
     for (const facts of parsed.slice(0, MAX_TABS)) tabs[terminalFactsKey(facts.ref)] = facts;
-    return { ...state, connected: true, seq: frame.seq, tabs };
+    // A new connection's attention comes in its own frame right after; the old one must not
+    // outlive it (a gateway that sends none would otherwise keep stale seen marks).
+    const { attention: _previous, ...rest } = state;
+    void _previous;
+    return { ...rest, connected: true, seq: frame.seq, tabs };
   }
   if (frame.type === "attention") return { ...state, seq: frame.seq, attention: frame.tabs };
   if (frame.type !== "event") return state;

@@ -61,6 +61,16 @@ describe("attention frames", () => {
     expect(reduceTerminalEvents(state, { type: "attention", seq: 3, tabs: { [keyA]: { doneAt: "x".repeat(65), seen: true } } })).toBe(before);
     expect(reduceTerminalEvents(state, { type: "attention", seq: 3, tabs: { "../etc": { doneAt: "now", seen: true } } })).toBe(before);
   });
+
+  // Fault detected (Greptile, #3566): a reconnect kept the old connection's attention, so on a gateway
+  // that sends none (after a rollback) tabs that finished new work stayed marked seen.
+  it("drops the previous connection's attention with a new snapshot", () => {
+    let state = reduceTerminalEvents(EMPTY_TERMINAL_EVENTS_STATE, snapshot());
+    state = reduceTerminalEvents(state, attention(true));
+    state = reduceTerminalEvents(state, snapshot(5));
+    expect(state.attention).toBeUndefined();
+    expect(reduceTerminalEvents(state, attention(false, 6)).attention?.[keyA]?.seen).toBe(false);
+  });
 });
 
 describe("marking a computer tab seen", () => {

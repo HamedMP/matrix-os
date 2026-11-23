@@ -62,6 +62,19 @@ describe("local terminal events", () => {
     ]);
   });
 
+  // Fault detected (Greptile, #3566): an app named like an Object property ("constructor") gave a
+  // function as the agent, which failed validation and stopped every local status update.
+  it("ignores an app name that is not one of the known agents", async () => {
+    const h = harness();
+    h.events.start();
+    const core = h.cores[0]!;
+    core.hello();
+    core.snapshot([terminal("t1", { status: { state: "working", app: "constructor" }, status_ms: 1_000 })]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.latest()?.[0]?.agent).toBeUndefined();
+    expect(h.latest()?.[0]?.status).toBe("working");
+  });
+
   it("applies events in order: status, turn, labels, finished, removed, created", async () => {
     const h = harness();
     h.events.start();
