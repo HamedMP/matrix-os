@@ -8,6 +8,7 @@ import { createApiClient } from "@desktop/renderer/src/lib/api";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useBoardDetailsRequest } from "@desktop/renderer/src/lib/project-navigation";
 
 const actions = vi.hoisted(() => ({ showInFiles: vi.fn(), setDialog: vi.fn(), update: vi.fn(), dialog: null, pending: false, error: null, available: true }));
 vi.mock("@desktop/renderer/src/features/work/work-rail/use-project-actions", () => ({ useProjectActions: () => actions }));
@@ -20,11 +21,8 @@ const TASK = {
   id: "task_1", projectId: "proj_1", number: 1, key: "AL-1", title: "Fix login", description: "", status: "in_progress", priority: "high",
   rank: "V", assignee: null, labels: [], parentTaskId: null, blockedBy: [], dueAt: null, worktreeId: null, branch: null, pullRequest: null,
   externalLink: null, commentCount: 0, createdBy: "user:owner", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
-  archivedAt: null, revision: 1,
-  sessions: [
-    { ref: "chat_abc", kind: "chat", title: "Login chat", role: "main", agentStatus: "working", harness: "claude" },
-    { ref: `term.${WORKSPACE}.${TAB}`, kind: "terminal", title: "Tests", role: "extra", agentStatus: "idle" },
-  ],
+  archivedAt: null, revision: 1, chatId: "chat_abc", chatStatus: "working",
+  sessions: [{ ref: `term.${WORKSPACE}.${TAB}`, kind: "terminal", title: "Tests", role: "main", agentStatus: "idle" }],
 };
 
 function gateway() {
@@ -51,8 +49,8 @@ function connect(runtimeSlot = "primary") {
   return fetchFn;
 }
 
-function renderLanding(showMetadata = true) {
-  return render(<ProjectLanding project={project} showMetadata={showMetadata}><textarea aria-label="Project draft" /></ProjectLanding>);
+function renderLanding(showMetadata = true, chatId?: string) {
+  return render(<ProjectLanding project={project} showMetadata={showMetadata} chatId={chatId}><textarea aria-label="Project draft" /></ProjectLanding>);
 }
 
 const initialConnection = useConnection.getState();
@@ -69,6 +67,7 @@ afterEach(() => {
   useConnection.setState(initialConnection, true);
   useTabs.setState(initialTabs, true);
   useProjectView.setState(initialViews, true);
+  useBoardDetailsRequest.setState({ request: null });
 });
 
 it("switches the project page between Overview and Board and remembers Board for the project", async () => {
@@ -111,21 +110,36 @@ it("keeps an open chat in front of the remembered Board", () => {
   expect(screen.getByRole("textbox", { name: "Project draft" })).toBeTruthy();
 });
 
-it("opens a task's chat in the project's Chat and its terminal in the Terminal app", async () => {
+it("opens a card's chat in the project's Chat, keeping Board remembered", async () => {
   connect();
   useProjectView.getState().setView("alpha", "board");
   renderLanding();
 
   fireEvent.click(await screen.findByRole("button", { name: /AL-1: Fix login/ }));
-  const sheet = await screen.findByRole("dialog", { name: /AL-1: Fix login/ });
-
-  fireEvent.click(within(sheet).getByRole("tab", { name: /Login chat, chat/ }));
-  fireEvent.click(within(sheet).getByRole("button", { name: "Open in Chat" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)).toMatchObject({
     kind: "work", workRoute: "project", projectSlug: "alpha", chatId: "chat_abc", chatView: "conversation",
   });
   expect(useProjectView.getState().viewFor("alpha")).toBe("board");
+});
 
+it("shows an open project chat's ticket and opens its details on the Board", async () => {
+  connect();
+  renderLanding(false, "chat_abc");
+  const header = await screen.findByRole("group", { name: "Ticket AL-1" });
+  fireEvent.click(within(header).getByRole("button", { name: /Details/ }));
+  expect(useProjectView.getState().viewFor("alpha")).toBe("board");
+  expect(useBoardDetailsRequest.getState().request).toEqual({ projectSlug: "alpha", taskId: "task_1" });
+});
+
+it("opens a task's details from the request with Open chat and its terminal in the Terminal app", async () => {
+  connect();
+  useProjectView.getState().setView("alpha", "board");
+  useBoardDetailsRequest.setState({ request: { projectSlug: "alpha", taskId: "task_1" } });
+  renderLanding();
+
+  const sheet = await screen.findByRole("dialog", { name: /AL-1: Fix login/ });
+  expect(within(sheet).queryByRole("button", { name: "Start chat" })).toBeNull();
   fireEvent.click(within(sheet).getByRole("tab", { name: /Tests, terminal/ }));
   fireEvent.click(within(sheet).getByRole("button", { name: "Open in Terminal" }));
   expect(useTabs.getState().tabs.some((tab) => tab.kind === "terminals")).toBe(true);

@@ -432,6 +432,11 @@ describe("WorkTab rail integration", () => {
       api: {
         baseUrl: "https://matrix.test",
         get,
+        // A project chat looks up its board ticket; these chats have none.
+        forRuntime: () => ({
+          fetchGateway: vi.fn(async (url: string) => new URL(url).pathname.endsWith("/tasks")
+            ? Response.json({ tasks: [], nextCursor: null }) : new Response("{}", { status: 404 })),
+        }),
         post: vi.fn(async (path: string) => {
           if (path === "/api/chats?readStateVersion=1&importSourceVersion=1") return chat("chat_draft_terminal", "New chat");
           throw new Error("Unexpected WorkTab test request");

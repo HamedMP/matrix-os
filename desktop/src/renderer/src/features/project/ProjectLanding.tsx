@@ -9,7 +9,7 @@ import { useProjectLandingChats } from "./use-project-landing-chats";
 import type { Project } from "../../stores/board";
 import { useProjectView } from "../../stores/project-view";
 import { endComposerRequest, useProjectChatLauncher } from "../../lib/project-chat";
-import { DesktopProjectBoard } from "./DesktopProjectBoard";
+import { DesktopChatTicketBar, DesktopProjectBoard } from "./DesktopProjectBoard";
 import { ProjectEditDialog } from "../work/work-rail/ProjectActionDialogs";
 import { useProjectActions } from "../work/work-rail/use-project-actions";
 
@@ -22,8 +22,10 @@ const chipClass = "flex h-7 min-w-0 shrink items-center gap-1.5 rounded-lg borde
  * configuration) above one row per conversation, with the canonical draft
  * below. Board: the project's task board. The choice is remembered per project.
  */
-export function ProjectLanding({ project, children, showMetadata = true, records, onSelectChat, client, eventSource, active = true }: {
+export function ProjectLanding({ project, children, showMetadata = true, records, onSelectChat, client, eventSource, active = true, chatId }: {
   project: Project; children: ReactNode; showMetadata?: boolean; records?: ChatNavigationRecord[];
+  /** The open project chat; its ticket shows above the conversation. */
+  chatId?: string;
   onSelectChat?: (record: ChatNavigationRecord) => void;
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
@@ -71,6 +73,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
     {/* Metadata owns spare height; the draft uses its content height and may
         shrink for scrollable provider guidance in a short window. It stays
         mounted, hidden, behind the Board so switching back keeps it. */}
+    {chatId && !board ? <DesktopChatTicketBar project={project} chatId={chatId} /> : null}
     <div hidden={board} className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink" : "flex-1"}`}>{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
