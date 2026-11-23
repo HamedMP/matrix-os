@@ -43,7 +43,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   searchQuery?: string;
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
-  refreshVersion?: number;
+  refreshVersion?: number | string;
   chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
   const { projects, loading, error, retry } = state;
@@ -87,7 +87,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   searchQuery: string;
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
-  refreshVersion: number;
+  refreshVersion: number | string;
   chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
   const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"), chatReadStateUpdates);

@@ -36,7 +36,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   searchQuery: string;
   onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
   loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
-  refreshVersion?: number;
+  refreshVersion?: number | string;
   chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
   const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"), chatReadStateUpdates);

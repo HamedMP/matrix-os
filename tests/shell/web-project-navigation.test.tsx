@@ -808,3 +808,47 @@ it("reorders adjacent older project chats across lifecycle states without moving
   expect(listedTitles()).toEqual(listedBefore);
   expect(region.querySelectorAll("[data-rail-order-id]")).toHaveLength(3);
 });
+
+
+it("refreshes all loaded project run states while retaining rows and cursors", async () => {
+  let completed = false;
+  const item = (id: string) => ({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
+    createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
+    ...(completed ? {} : { activeRun: { runId: "run_old", turnId: "cturn_old", status: "running" } }) });
+  const load = vi.fn(async ({ cursor }: { cursor?: string }) => ({ items: [item(cursor ? "chat_older" : "chat_first")], totalCount: 3, nextCursor: cursor ? "navcur_third" : "navcur_second" }));
+  const project = { id: "proj_one", slug: "proj_one", name: "One" };
+  const hook = renderHook(({ version }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, version), { initialProps: { version: 0 } });
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(1));
+  act(() => hook.result.current.loadMore());
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(2));
+  completed = true;
+  hook.rerender({ version: 1 });
+  expect(hook.result.current.fetched).toHaveLength(2);
+  await waitFor(() => expect(hook.result.current.loading).toBe(false));
+  expect(hook.result.current.fetched.every(row => !row.canonicalRecord?.activeRun)).toBe(true);
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(["chat_first", "chat_older"]);
+  act(() => hook.result.current.loadMore());
+  await waitFor(() => expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_third" })));
+});
+
+it.each(["navigation", "run", "selection"])("unblocks an older project chat after %s refresh", async trigger => {
+  vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })));
+  const original = CanonicalChatNavigationItemSchema.parse({ ...projectConversation(10).canonicalRecord,
+    activeRun: { runId: "run_old", turnId: "cturn_old", status: "running" }, classification: { kind: "ordinary" }, persistence: "personal",
+    readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 0, markedUnread: false, unread: false } });
+  let current = original;
+  const loadNavigationPage = vi.fn(async ({ group }: { group: string }) => ({ items: group === "project" ? [current] : [], totalCount: group === "project" ? 1 : 0 }));
+  const props = { messages: [], busy: false, connected: true, conversations: [], onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn(), onArchiveConversation: vi.fn(), loadNavigationPage: loadNavigationPage as never };
+  const view = render(<ChatApp {...props}/>);
+  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
+  const older = await screen.findByRole("region", { name: "Older chats" });
+  expect(await within(older).findByText(/Working…/)).toBeTruthy();
+  const { activeRun: _run, ...finished } = original; current = finished;
+  const change = trigger === "navigation" ? { navigationUpdatedAt: 2 } : trigger === "run"
+    ? { chatRunStatusChange: { revision: 1, changes: [{ revision: 1, chatId: original.chat.id }] } } : { sessionId: original.chat.id };
+  view.rerender(<ChatApp {...props} {...change}/>);
+  await waitFor(() => expect(within(older).queryByText(/Working…/)).toBeNull());
+  fireEvent.contextMenu(within(older).getByRole("button", { name: /^Chat 10/ }));
+  expect((await screen.findByRole("menuitem", { name: "Archive", exact: true })).getAttribute("aria-disabled")).not.toBe("true");
+});

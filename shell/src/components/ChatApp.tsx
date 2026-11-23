@@ -543,6 +543,7 @@ function ChatAppContent({
   />;
 
   // Reorderable within its lifecycle group, in the main list and in a focused project alike.
+  const projectRefreshVersion = JSON.stringify([projectArchiveVersion, navigationUpdatedAt, chatChangeRevision, chatRunStatusChange?.revision, sessionId, activeRunId]);
   const renderRailRow = (conv: ConversationMeta) => <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}>{renderConversationRow(conv)}</ChatRailOrderItem>;
 
   useWebChatRowShortcuts({ active: active && !mobile && !searchOpen && !archivesOpen, record: conversations.find(conv => conv.id === sessionId),
@@ -699,12 +700,12 @@ function ChatAppContent({
             </section> : focusedProject ? <FocusedWebProject key={`${webProjects.identity}/${focusedProject.id}/${unreadOnly}`} project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
               listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
               onSelectChat={onSwitchConversation} renderRow={renderRailRow} renderOlderRow={renderConversationRow} onBack={() => setProjectFocus(null)} onOpenHome={mobile ? undefined : () => openProjectHome(focusedProject)} mobile={mobile}
-              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion} chatReadStateUpdates={chatReadStateUpdates}/> : <>
+              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectRefreshVersion} chatReadStateUpdates={chatReadStateUpdates}/> : <>
             <WebChatLifecycleGroups chatReadStateUpdates={chatReadStateUpdates} conversations={listedConversations} scopeKey={railOrder.scopeKey} navigationUpdatedAt={navigationUpdatedAt} loadPage={loadNavigationPage} excludedChatIds={deletedChatIds} unreadOnly={unreadOnly} sourceFilter={sourceFilter} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle} renamedTitles={renamedTitles}
                 onSelectChat={onSwitchConversation} onFocusProject={openProjectHome} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
-                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectArchiveVersion} chatReadStateUpdates={chatReadStateUpdates}/>
+                sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProjectChats ? archiveProject : undefined} loadNavigationPage={loadNavigationPage} refreshVersion={projectRefreshVersion} chatReadStateUpdates={chatReadStateUpdates}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={renderRailRow}/>

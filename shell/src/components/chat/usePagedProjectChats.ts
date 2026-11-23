@@ -38,7 +38,7 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion = 0, membershipVersion = "", readUpdates: readonly ChatNavigationRecord[] = NO_READ_UPDATES) {
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false, loadNavigationPage?: LoadNavigationPage, refreshVersion: number | string = 0, membershipVersion = "", readUpdates: readonly ChatNavigationRecord[] = NO_READ_UPDATES) {
   const initialCursors = useCallback((): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) }), [project.id, project.slug]);
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
@@ -47,27 +47,17 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const [loading, setLoading] = useState(initiallyExpanded);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const previousRefreshVersion = useRef(refreshVersion);
+  const previousVersion = useRef({ refreshVersion, membershipVersion });
+  const reloading = useRef(false);
+  const retainedCursors = useRef<{ id: Array<string | null>; slug: Array<string | null> }>({ id: [], slug: [] });
   useEffect(() => {
-    if (previousRefreshVersion.current === refreshVersion) return;
-    previousRefreshVersion.current = refreshVersion;
-    setFetched([]);
-    setPageCursors(initialCursors());
-    setNextCursors({});
+    if (previousVersion.current.refreshVersion === refreshVersion && previousVersion.current.membershipVersion === membershipVersion) return;
+    previousVersion.current = { refreshVersion, membershipVersion };
+    reloading.current = true;
     setLoading(expanded);
     setError(false);
     setRetryCount(value => value + 1);
-  }, [refreshVersion, expanded, initialCursors]);
-
-  const previousMembership = useRef(membershipVersion);
-  useEffect(() => {
-    if (previousMembership.current === membershipVersion) return;
-    previousMembership.current = membershipVersion;
-    setPageCursors(initialCursors());
-    setError(false);
-    setLoading(expanded);
-    setRetryCount(value => value + 1);
-  }, [membershipVersion, expanded, initialCursors]);
+  }, [refreshVersion, membershipVersion, expanded]);
 
   // Each project source is paged independently, and closing or changing the
   // authority aborts both reads.
@@ -75,20 +65,27 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   useEffect(() => {
     if (!expanded) return;
     const controller = new AbortController();
+    const reload = reloading.current;
+    const cursors = reload ? initialCursors() : pageCursors;
     const sources: Array<{ key: "id" | "slug"; value: string; cursor: string | null }> = [];
-    if (pageCursors.id !== undefined) sources.push({ key: "id", value: project.id, cursor: pageCursors.id });
-    if (pageCursors.slug !== undefined) sources.push({ key: "slug", value: project.slug, cursor: pageCursors.slug });
+    if (cursors.id !== undefined) sources.push({ key: "id", value: project.id, cursor: cursors.id });
+    if (cursors.slug !== undefined) sources.push({ key: "slug", value: project.slug, cursor: cursors.slug });
     void Promise.all(sources.map(async source => {
-      if (loadNavigationPage) {
-        const page = await loadNavigationPage({ group: "project", projectId: source.value, limit: source.cursor ? 20 : 5, ...(source.cursor ? { cursor: source.cursor } : {}) });
-        return { key: source.key, nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.unread).map(item => ({
-          id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
-          importSource: item.importSource, canonicalRecord: item,
-        })) satisfies FetchedProjectChat[] };
-      }
-      const page = await loadProjectChats(gatewayUrl, source.value, source.cursor, unreadOnly, controller.signal);
-      return { key: source.key, nextCursor: page.nextCursor, rows: page.items.map(item => ({ id: item.chat.id,
-        title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0, importSource: item.importSource })) satisfies FetchedProjectChat[] };
+      const loaded = retainedCursors.current[source.key];
+      const pageWindow = reload && loaded.length ? [...loaded] : [source.cursor];
+      const pages = await Promise.all(pageWindow.map(async cursor => {
+        if (loadNavigationPage) {
+          const page = await loadNavigationPage({ group: "project", projectId: source.value, limit: cursor ? 20 : 5, ...(cursor ? { cursor } : {}) });
+          return { nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.unread).map(item => ({
+            id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
+            importSource: item.importSource, canonicalRecord: item,
+          })) satisfies FetchedProjectChat[] };
+        }
+        const page = await loadProjectChats(gatewayUrl, source.value, cursor, unreadOnly, controller.signal);
+        return { nextCursor: page.nextCursor, rows: page.items.map(item => ({ id: item.chat.id,
+          title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0, importSource: item.importSource })) satisfies FetchedProjectChat[] };
+      }));
+      return { key: source.key, cursors: pageWindow, nextCursor: pages.at(-1)?.nextCursor, rows: pages.flatMap(page => page.rows) };
     })).then(pages => {
       if (controller.signal.aborted) return;
       const rows: FetchedProjectChat[] = pages.flatMap(({ rows }) => rows);
@@ -98,14 +95,20 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
           if (!previous.some(item => item.id === row.id) && !additions.some(item => item.id === row.id)) additions.push(row);
         }
         // Keep a bounded window while the cursor continues through full history.
-        if (sources.some(source => source.cursor === null)) {
+        if (reload || sources.some(source => source.cursor === null)) {
           const uniqueRows = rows.filter((row, index) => rows.findIndex(item => item.id === row.id) === index);
-          return [...uniqueRows, ...previous.filter(row => !uniqueRows.some(item => item.id === row.id))].slice(0, MAX_RETAINED_PROJECT_ROWS);
+          return reload ? uniqueRows.slice(-MAX_RETAINED_PROJECT_ROWS)
+            : [...uniqueRows, ...previous.filter(row => !uniqueRows.some(item => item.id === row.id))].slice(0, MAX_RETAINED_PROJECT_ROWS);
         }
         return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};
-      for (const { key, nextCursor } of pages) next[key] = nextCursor ?? undefined;
+      for (const { key, nextCursor, cursors } of pages) {
+        next[key] = nextCursor ?? undefined;
+        // At most 26 pages cover the bounded 500-row window, including its partial edge.
+        retainedCursors.current[key] = (reload || cursors[0] === null ? cursors : [...retainedCursors.current[key], ...cursors]).slice(-26);
+      }
+      reloading.current = false;
       setNextCursors(next);
     }).catch((cause: unknown) => {
       if (controller.signal.aborted) return;
@@ -113,10 +116,12 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
       setError(true);
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [expanded, gatewayUrl, project.id, project.slug, pageCursors, retryCount, unreadOnly, loadNavigationPage]);
+  }, [expanded, gatewayUrl, project.id, project.slug, pageCursors, retryCount, unreadOnly, loadNavigationPage, initialCursors]);
 
   const toggleExpanded = () => {
     if (expanded) {
+      retainedCursors.current = { id: [], slug: [] };
+      reloading.current = false;
       setExpanded(false);
       setFetched([]);
       setPageCursors(initialCursors());
