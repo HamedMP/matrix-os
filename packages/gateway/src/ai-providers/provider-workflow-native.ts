@@ -1,3 +1,4 @@
+import { PI_VERIFIED_VERSION } from "./pi-settings-auth.js";
 import { createHermesTerminalWorkflow } from "./hermes-terminal-workflow.js";
 import type { createHermesTerminalLoginRuntime } from "./hermes-terminal-login.js";
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
@@ -291,7 +292,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
             if (!(packageName || system && hostControl.available) || request.kind === 'uninstall' && !(managed || system && hostControl.available))
               throw new ProviderWorkflowError('unavailable');
             const workspace = await options.terminal.ensureWorkspace();
-            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : harness.harness === 'pi' ? `${packageName}@1.0.0` : `${packageName}@latest`;
+            const versioned = harness.harness === 'codex' ? CODEX_VERIFIED_NPM_PACKAGE : harness.harness === 'pi' ? `${packageName}@${PI_VERIFIED_VERSION}` : `${packageName}@latest`;
             const command = system ? `sudo -n /opt/matrix/bin/matrix-agent-runtime-control ${request.kind} ${harness.harness}` : `${quote(`${prefix}/bin/npm`)} ${request.kind === 'install' ? 'install' : 'uninstall'} -g --prefix ${quote(prefix)} ${request.kind === 'uninstall' || harness.harness === 'pi' ? '--ignore-scripts ' : ''}${quote(request.kind === 'install' ? versioned : packageName!)}`;
             launchRequested = true; launchMayExist = true;
             const tab = await options.terminal.createTab(workspace.id, { name: tabName, cwd: '', ...(harness.harness === 'codex' || harness.harness === 'claude' ? { agent: { providerId: harness.harness } } : {}), command: ['sh', '-lc', command] });

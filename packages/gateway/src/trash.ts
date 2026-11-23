@@ -1,78 +1,111 @@
-import {
-  stat as fsStat,
-  mkdir,
-  rename,
-  readFile,
-  writeFile,
-  rm,
-} from "node:fs/promises";
-import { join, basename, dirname } from "node:path";
-import { existsSync } from "node:fs";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, rename, rm, unlink } from "node:fs/promises";
+import { basename, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod/v4";
+import { restoreWithoutReplacing } from "./trash-restore.js";
+import { withOwnerFileMutation } from "./owner-file-mutations.js";
 import {
-  isDeniedFileApiPath,
   isDeniedFileApiMutationPath,
-  resolveExistingFileApiPath,
+  isProtectedHomeSubpath,
   resolveWithinHome,
   resolveWritableFileApiPath,
 } from "./path-security.js";
 
-interface TrashManifestEntry {
-  name: string;
-  originalPath: string;
-  deletedAt: string;
-  trashPath: string;
+const MANIFEST_NAME = ".manifest.json";
+const STAGING_NAME = ".manifest.json.tmp";
+const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+const MAX_MANIFEST_ENTRIES = 10_000;
+
+function isStoredTrashPath(path: string): boolean {
+  if (!path.startsWith(".trash/")) return false;
+  const name = path.slice(".trash/".length);
+  return name !== "" && ![".", "..", MANIFEST_NAME, STAGING_NAME].includes(name)
+    && !name.includes("/") && !name.includes("\0")
+    && (process.platform !== "win32" || !name.includes("\\"));
 }
 
-interface TrashListEntry {
-  name: string;
-  originalPath: string;
-  deletedAt: string;
-  trashPath: string;
+const TrashManifestSchema = z.array(z.object({
+  name: z.string().min(1).max(4096),
+  originalPath: z.string().min(1).max(4096),
+  deletedAt: z.string().min(1).max(128),
+  trashPath: z.string().max(4096).refine(isStoredTrashPath),
+})).max(MAX_MANIFEST_ENTRIES);
+type TrashManifestEntry = z.infer<typeof TrashManifestSchema>[number];
+
+interface TrashListEntry extends TrashManifestEntry {
   size?: number;
   type: "file" | "directory";
 }
 
-const mutexes = new Map<string, Promise<unknown>>();
-
-function withMutex<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = mutexes.get(key) ?? Promise.resolve();
-  const next = prev
-    .then(() => fn(), () => fn())
-    .finally(() => {
-      if (mutexes.get(key) === next) mutexes.delete(key);
-    }) as Promise<T>;
-  mutexes.set(key, next);
-  return next;
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-async function readManifest(trashDir: string): Promise<TrashManifestEntry[]> {
-  const manifestPath = join(trashDir, ".manifest.json");
-  try {
-    const data = await readFile(manifestPath, "utf-8");
-    return JSON.parse(data);
-  } catch (err: unknown) {
-    console.warn("[trash] Could not read trash manifest:", err instanceof Error ? err.message : String(err));
-    return [];
+async function statIfPresent(path: string) {
+  try { return await lstat(path); }
+  catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
   }
 }
 
-async function writeManifest(
-  trashDir: string,
-  manifest: TrashManifestEntry[],
-): Promise<void> {
-  const manifestPath = join(trashDir, ".manifest.json");
-  const tmpPath = manifestPath + ".tmp";
-  await writeFile(tmpPath, JSON.stringify(manifest, null, 2));
-  await rename(tmpPath, manifestPath);
+async function readManifest(trashDir: string): Promise<TrashManifestEntry[]> {
+  const directory = await statIfPresent(trashDir);
+  if (!directory) return [];
+  if (!directory.isDirectory()) throw new Error("Trash directory unavailable");
+  let file;
+  try {
+    file = await open(join(trashDir, MANIFEST_NAME), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if (isMissing(error)) return [];
+    throw error;
+  }
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size > MAX_MANIFEST_BYTES) throw new Error("Trash index unavailable");
+    const contents = Buffer.alloc(info.size + 1);
+    let count = 0;
+    while (count < contents.length) {
+      const { bytesRead } = await file.read(contents, count, contents.length - count, count);
+      if (bytesRead === 0) break;
+      count += bytesRead;
+    }
+    if (count !== info.size) throw new Error("Trash index changed");
+    return TrashManifestSchema.parse(JSON.parse(contents.toString("utf8", 0, count)));
+  } finally {
+    await file.close();
+  }
 }
 
-const PROTECTED_PATHS = new Set([
-  "system/config.json",
-  "system/matrix.db",
-  "system/soul.md",
-  "agents",
-]);
+async function writeManifest(trashDir: string, manifest: TrashManifestEntry[]): Promise<void> {
+  const data = JSON.stringify(manifest, null, 2);
+  if (manifest.length > MAX_MANIFEST_ENTRIES || Buffer.byteLength(data) > MAX_MANIFEST_BYTES) {
+    throw new Error("Trash index is full");
+  }
+  const tmpPath = join(trashDir, STAGING_NAME);
+  const stale = await statIfPresent(tmpPath);
+  if (stale) {
+    // A process exit may leave the single reserved staging file behind.
+    if (!stale.isFile()) throw new Error("Trash staging unavailable");
+    await unlink(tmpPath);
+  }
+  const staging = await open(tmpPath, "wx", 0o600);
+  try {
+    await staging.writeFile(data, "utf8");
+    await staging.sync();
+  } finally {
+    await staging.close();
+  }
+  await rename(tmpPath, join(trashDir, MANIFEST_NAME));
+}
+
+const LEGACY_RESTORE_PROTECTED_PATHS = ["system/config.json", "system/matrix.db", "system/soul.md", "agents"];
+
+function unavailable(operation: string, error: unknown) {
+  console.warn(`[trash] ${operation} failed:`, error instanceof Error ? error.name : "UnknownError");
+  return { ok: false as const, error: "Trash is unavailable", status: 503 };
+}
 
 export async function fileDelete(
   homePath: string,
@@ -80,73 +113,50 @@ export async function fileDelete(
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
   const lexicalPath = resolveWithinHome(homePath, requestedPath);
   if (!lexicalPath || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
-
-  const normalized = requestedPath.replace(/^\/+/, "");
-  if (PROTECTED_PATHS.has(normalized) || [...PROTECTED_PATHS].some((p) => normalized.startsWith(p + "/"))) {
+  if (isProtectedHomeSubpath(homePath, lexicalPath)) {
     return { ok: false, error: "Protected path cannot be deleted", status: 403 };
   }
 
-  if (!existsSync(lexicalPath)) {
-    return { ok: false, error: "Not found", status: 404 };
-  }
-
-  const resolved = resolveExistingFileApiPath(homePath, requestedPath);
-  if (!resolved) return { ok: false, error: "Invalid path" };
-
   const trashDir = join(homePath, ".trash");
+  try {
+    return await withOwnerFileMutation(trashDir, async () => {
+      const resolved = resolveWritableFileApiPath(homePath, requestedPath);
+      if (!resolved) return { ok: false, error: "Invalid path" };
+      const info = await statIfPresent(resolved);
+      if (!info) return { ok: false, error: "Not found", status: 404 };
+      if (!info.isFile() && !info.isDirectory()) return { ok: false, error: "Invalid path" };
+      await mkdir(trashDir, { recursive: true, mode: 0o700 });
 
-  return withMutex(trashDir, async () => {
-    await mkdir(trashDir, { recursive: true });
-
-    const name = basename(resolved);
-    let trashName = name;
-
-    if (existsSync(join(trashDir, trashName))) {
-      trashName = `${randomUUID()}-${name}`;
-    }
-
-    const trashFullPath = join(trashDir, trashName);
-    await rename(resolved, trashFullPath);
-
-    const manifest = await readManifest(trashDir);
-    manifest.push({
-      name,
-      originalPath: requestedPath,
-      deletedAt: new Date().toISOString(),
-      trashPath: `.trash/${trashName}`,
+      const name = basename(resolved);
+      const entries = await trashList(homePath);
+      const manifest = entries.entries.map(({ type: _type, size: _size, ...entry }) => entry);
+      // Never reuse restore tokens, even if the same source is moved again.
+      const trashPath = `.trash/${randomUUID()}`;
+      const entry = { name, originalPath: relative(homePath, resolved), deletedAt: new Date().toISOString(), trashPath };
+      // Recovery is recorded first. A stopped operation with no destination
+      // file leaves an invisible reservation that the next mutation drops.
+      await writeManifest(trashDir, [...manifest, entry]);
+      const liveSource = await statIfPresent(resolved);
+      if (liveSource?.ino !== info.ino || liveSource.dev !== info.dev
+        || resolveWritableFileApiPath(homePath, requestedPath) !== resolved) {
+        return { ok: false, error: "Source changed", status: 409 };
+      }
+      await rename(resolved, join(homePath, trashPath));
+      return { ok: true, trashPath };
     });
-    await writeManifest(trashDir, manifest);
-
-    return { ok: true, trashPath: `.trash/${trashName}` };
-  });
+  } catch (error) {
+    return unavailable("Move to Trash", error);
+  }
 }
 
-export async function trashList(
-  homePath: string,
-): Promise<{ entries: TrashListEntry[] }> {
-  const trashDir = join(homePath, ".trash");
-  const manifest = await readManifest(trashDir);
-
-  const trashBase = join(homePath, ".trash");
+export async function trashList(homePath: string): Promise<{ entries: TrashListEntry[] }> {
+  const manifest = await readManifest(join(homePath, ".trash"));
   const entries: TrashListEntry[] = [];
   for (const entry of manifest) {
-    const fullPath = join(homePath, entry.trashPath);
-    if (!fullPath.startsWith(trashBase + "/")) continue;
-    try {
-      const stats = await fsStat(fullPath);
-      entries.push({
-        name: entry.name,
-        originalPath: entry.originalPath,
-        deletedAt: entry.deletedAt,
-        trashPath: entry.trashPath,
-        size: stats.isFile() ? stats.size : undefined,
-        type: stats.isDirectory() ? "directory" : "file",
-      });
-    } catch (err: unknown) {
-      console.warn("[trash] Could not inspect trash entry:", err instanceof Error ? err.message : String(err));
-    }
+    const stats = await statIfPresent(join(homePath, entry.trashPath));
+    if (stats?.isDirectory()) entries.push({ ...entry, type: "directory" });
+    if (stats?.isFile()) entries.push({ ...entry, size: stats.size, type: "file" });
   }
-
   return { entries };
 }
 
@@ -154,83 +164,70 @@ export async function trashRestore(
   homePath: string,
   trashPath: string,
 ): Promise<{ ok: boolean; restoredTo?: string; error?: string; status?: number }> {
+  const normalized = trashPath.replace(/^\/+/, "");
+  if (!isStoredTrashPath(normalized)) return { ok: false, error: "Invalid trash path" };
   const trashDir = join(homePath, ".trash");
-  const resolvedTrash = resolveWithinHome(homePath, trashPath);
-  const trashBase = join(homePath, ".trash");
-  if (!resolvedTrash || (!resolvedTrash.startsWith(trashBase + "/") && resolvedTrash !== trashBase)) {
-    return { ok: false, error: "Invalid trash path" };
+
+  try {
+    return await withOwnerFileMutation(trashDir, async () => {
+      const manifest = await readManifest(trashDir);
+      const entry = manifest.find((item) => item.trashPath === normalized);
+      const source = join(homePath, normalized);
+      const sourceInfo = entry && await statIfPresent(source);
+      if (!entry || (!sourceInfo?.isFile() && !sourceInfo?.isDirectory())) {
+        return { ok: false, error: "Not found in trash", status: 404 };
+      }
+
+      const lexicalPath = resolveWithinHome(homePath, entry.originalPath);
+      const originalPath = lexicalPath && relative(homePath, lexicalPath);
+      if (!originalPath || isDeniedFileApiMutationPath(homePath, entry.originalPath) || originalPath.startsWith(".trash/")
+        || originalPath === ".trash" || LEGACY_RESTORE_PROTECTED_PATHS.some((path) => originalPath === path || originalPath.startsWith(`${path}/`))) {
+        return { ok: false, error: "Cannot restore to a protected path", status: 403 };
+      }
+      const restorePath = resolveWritableFileApiPath(homePath, entry.originalPath);
+      if (!restorePath) {
+        // A regular or dangling link in the destination slot is a conflict.
+        if ((await statIfPresent(lexicalPath))?.isSymbolicLink()) {
+          return { ok: false, error: "Destination already exists", status: 409 };
+        }
+        return { ok: false, error: "Invalid restore path" };
+      }
+      if (await statIfPresent(restorePath)
+        || !await restoreWithoutReplacing(resolve(homePath), basename(source), originalPath)) {
+        return { ok: false, error: "Destination already exists", status: 409 };
+      }
+      try {
+        await writeManifest(trashDir, manifest.filter((item) => item.trashPath !== normalized));
+      } catch (error) {
+        // The file was restored. A stale row without a file is invisible.
+        unavailable("Restore index cleanup", error);
+      }
+      return { ok: true, restoredTo: entry.originalPath };
+    });
+  } catch (error) {
+    return unavailable("Restore", error);
   }
-
-  if (!existsSync(resolvedTrash)) {
-    return { ok: false, error: "Not found in trash", status: 404 };
-  }
-
-  return withMutex(trashDir, async () => {
-    const manifest = await readManifest(trashDir);
-    const normalizedTrash = trashPath.replace(/^\/+/, "");
-    const entryIndex = manifest.findIndex((e) => e.trashPath === normalizedTrash);
-    if (entryIndex === -1) {
-      return { ok: false, error: "Not found in trash", status: 404 };
-    }
-
-    const entry = manifest[entryIndex];
-    const normalizedRestore = entry.originalPath.replace(/^\/+/, "");
-    if (
-      isDeniedFileApiPath(homePath, entry.originalPath) ||
-      PROTECTED_PATHS.has(normalizedRestore) ||
-      [...PROTECTED_PATHS].some((p) => normalizedRestore.startsWith(p + "/"))
-    ) {
-      return { ok: false, error: "Cannot restore to a protected path", status: 403 };
-    }
-    const resolvedRestore = resolveWritableFileApiPath(homePath, entry.originalPath);
-    if (!resolvedRestore) {
-      return { ok: false, error: "Invalid restore path" };
-    }
-    const restorePath = resolvedRestore;
-
-    if (existsSync(restorePath)) {
-      return { ok: false, error: "Destination already exists", status: 409 };
-    }
-
-    // Ensure parent directory exists
-    const parentDir = dirname(restorePath);
-    await mkdir(parentDir, { recursive: true });
-
-    await rename(resolvedTrash, restorePath);
-
-    manifest.splice(entryIndex, 1);
-    await writeManifest(trashDir, manifest);
-
-    return { ok: true, restoredTo: entry.originalPath };
-  });
 }
 
-export async function trashEmpty(
-  homePath: string,
-): Promise<{ ok: boolean; deleted: number }> {
+export async function trashEmpty(homePath: string): Promise<{ ok: boolean; deleted: number }> {
   const trashDir = join(homePath, ".trash");
-
-  const trashBase = join(homePath, ".trash");
-
-  return withMutex(trashDir, async () => {
+  return withOwnerFileMutation(trashDir, async () => {
     const manifest = await readManifest(trashDir);
-
     if (manifest.length === 0) return { ok: true, deleted: 0 };
-
     let deleted = 0;
+    const remaining: TrashManifestEntry[] = [];
     for (const entry of manifest) {
-      const fullPath = join(homePath, entry.trashPath);
-      if (!fullPath.startsWith(trashBase + "/")) continue;
       try {
-        await rm(fullPath, { recursive: true, force: true });
+        const file = join(homePath, entry.trashPath);
+        if (!await statIfPresent(file)) continue;
+        await rm(file, { recursive: true, force: true });
         deleted++;
-      } catch (err: unknown) {
-        console.warn("[trash] Could not remove trash entry:", err instanceof Error ? err.message : String(err));
+      } catch (error) {
+        unavailable("Empty Trash", error);
+        remaining.push(entry);
       }
     }
-
-    await writeManifest(trashDir, []);
-
-    return { ok: true, deleted };
+    await writeManifest(trashDir, remaining);
+    return { ok: remaining.length === 0, deleted };
   });
 }

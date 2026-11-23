@@ -1,11 +1,11 @@
 import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { AgentThreadChatSchema, AgentThreadIdSchema, CanonicalChatNavigationResponseSchema, type AgentThreadChat, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { botRoutineOriginReadAccept, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -133,6 +133,8 @@ export interface CanonicalChatClient {
   agents?: ChatAgentClient;
   browserPermissions?: BrowserPermissionClient;
   navigation?(): Promise<CanonicalChatNavigationResponse>;
+  /** The canonical Chat that owns a coding-agent thread; null when none does (or the runtime predates the lookup). */
+  chatForAgentThread?(threadId: string): Promise<AgentThreadChat | null>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
     query: string,
@@ -231,13 +233,26 @@ export function createCanonicalChatClient(
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
-    agents: createChatAgentClient((path, method, body, requestOptions) => method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
-      : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
-        : method === "DELETE" ? transport.delete(path)
-          : transport.patch(path, body)),
+    agents: createChatAgentClient((path, method, body, requestOptions) => {
+      const accept = botRoutineOriginReadAccept(path, method);
+      if (accept) return transport.get(path, { ...requestOptions, headers: { Accept: accept } });
+      return method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
+        : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
+          : method === "DELETE" ? transport.delete(path)
+            : transport.patch(path, body);
+    }),
     async navigation() {
       markChatNavigation("request");
       return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024, headers:{"X-Matrix-Chat-Import-Source":"1"}}));
+    },
+    async chatForAgentThread(threadId) {
+      const id = AgentThreadIdSchema.parse(threadId);
+      try {
+        return AgentThreadChatSchema.parse(await transport.get(`/api/chats/by-agent-thread/${encodeURIComponent(id)}`, { cache: "no-store" }));
+      } catch (error: unknown) {
+        if (error instanceof AppError && error.category === "notFound") return null;
+        throw error;
+      }
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");
@@ -337,7 +352,7 @@ export function createCanonicalChatClient(
       const response = await api.get(chatMessageVersionUrl(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
         limit: parsed.limit,
         cursor: parsed.cursor,
-      })));
+      }), true));
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 
@@ -404,7 +419,7 @@ export function createCanonicalChatClient(
         const response = await (async () => {
           try {
             return CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
-              chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`), request,
+              chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`, true), request,
               // Fresh funded observation has a 14s deadline; allow bounded transport margin.
               { timeoutMs: 30_000 },
             ));
@@ -413,8 +428,8 @@ export function createCanonicalChatClient(
               || (error.category === "server" && error.httpStatus !== undefined && error.httpStatus >= 500));
             if (ambiguous) {
               const recovered = await recoverCanonicalChatAdmission(parsedChatId, request,
-                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`)),
-                () => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`)));
+                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`, true)),
+                () => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`, true)));
               if (recovered) return recovered;
             }
             throw error;
@@ -465,7 +480,7 @@ export function createCanonicalChatClient(
       const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
       const request = CanonicalSteerChatRunRequestSchema.parse(input);
       return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
-        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`),
+        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/steer`, true),
         request,
       ));
     },
@@ -476,7 +491,7 @@ export function createCanonicalChatClient(
       const parsedQueuedTurnId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
       const request = CanonicalSteerQueuedChatTurnRequestSchema.parse(input);
       return CanonicalChatRunSteeringResponseSchema.parse(await api.post(
-        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`),
+        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(parsedQueuedTurnId)}/steer`, true),
         request,
       ));
     },

@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import { statSync } from "node:fs";
 import { isAbsolute, basename } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -84,7 +85,7 @@ export function createManagedPiRoutineSource(options: ManagedRoutineCliPort & { 
       const operation = RoutineCliOperationSchema.parse(raw);
       if (!live() || !isDeepStrictEqual(actual, binding) || calls.has(callId) || calls.size >= 60 || activeCalls >= 8 || callSignal.aborted) throw new BotBrokerActionError("stale_generation");
       const call = { terminal: false, abort: new AbortController() }; calls.set(callId, call); activeCalls++;
-      const actionSignal = AbortSignal.any([signal, callSignal, call.abort.signal, AbortSignal.timeout(120_000)]);
+      const actionSignal = AbortSignal.any([signal, callSignal, call.abort.signal, AbortSignal.timeout(ROUTINE_CLI_NATIVE_TIMEOUT_MS)]);
       const aborted = () => terminal(callId); actionSignal.addEventListener("abort", aborted, { once: true });
       let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined;
       try {
@@ -105,7 +106,7 @@ export function createManagedPiRoutineSource(options: ManagedRoutineCliPort & { 
             if (invocations.size >= 60 || !live() || actionSignal.aborted) return Promise.resolve(false);
             invocations.set(input.invocationId, { callId, digest: routineActionHash(input.operation), signal: actionSignal });
             return registered.authorize(input);
-          }, issue: registered.issue, cancel: registered.cancel, timeoutMs: 120_000 });
+          }, issue: registered.issue, cancel: registered.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
         invokers.add(invoker);
         return text(RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...command(operation), expectedOperation: operation, signal: actionSignal })));
       } catch (error) {

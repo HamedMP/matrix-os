@@ -11,6 +11,7 @@ import {
   type CanonicalChatQueuedTurn,
   type CanonicalSteerChatRunRequest,
 } from "@matrix-os/contracts";
+import { hasAttestedCreationChoice } from "./queued-context.js";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import {
@@ -114,7 +115,7 @@ export class ChatSteeringRepository {
       const capability = typeof run.capability_snapshot === "string"
         ? JSON.parse(run.capability_snapshot) as { steering?: unknown }
         : run.capability_snapshot as { steering?: unknown };
-      if (capability.steering !== "same_run") {
+      if (capability.steering !== "same_run" || hasAttestedCreationChoice(run.context_snapshot)) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       await trx.insertInto("chat_run_steers").values({
@@ -205,7 +206,7 @@ export class ChatSteeringRepository {
         .where("status", "=", "queued")
         .forUpdate()
         .executeTakeFirst();
-      if (!queued) throw new ChatConflictError(chatId, Number(chat.revision));
+      if (!queued || hasAttestedCreationChoice(queued.context_snapshot)) throw new ChatConflictError(chatId, Number(chat.revision));
       const pending = await trx.selectFrom("chat_run_steers").select("id")
         .where("queued_turn_id", "=", queuedTurnId)
         .where("status", "=", "pending")
@@ -223,7 +224,7 @@ export class ChatSteeringRepository {
       const capability = typeof run.capability_snapshot === "string"
         ? JSON.parse(run.capability_snapshot) as { steering?: unknown }
         : run.capability_snapshot as { steering?: unknown };
-      if (capability.steering !== "same_run") {
+      if (capability.steering !== "same_run" || hasAttestedCreationChoice(run.context_snapshot)) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(

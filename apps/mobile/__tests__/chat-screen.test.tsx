@@ -131,7 +131,7 @@ const flowers = {
 
 function chatDetail(overrides: Record<string, unknown> = {}) {
   return {
-    record: { projectId: null, chat: { id: "chat_habits", title: "Habit tracker app", revision: 4 } },
+    record: { projectId: null, chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app", revision: 4 } },
     runs: [], turns: [], activities: [], messages: [],
     ...overrides,
   };
@@ -514,7 +514,7 @@ describe("chat screen: open chat", () => {
 
   it("takes the title from the chat list while the chat itself is still loading", () => {
     mockActiveChatId = "chat_habits";
-    mockChats = [{ chat: { id: "chat_habits", title: "Habit tracker app" } }];
+    mockChats = [{ chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app" } }];
     render(<ChatScreen />);
 
     expect(screen.getByRole("header", { name: "Habit tracker app" })).toBeTruthy();
@@ -607,7 +607,7 @@ describe("chat screen: open chat", () => {
     mockApps = [{ name: "Habit tracker", slug: "habit-tracker",
       file: "apps/habit-tracker/index.html", path: "apps/habit-tracker/index.html" }];
     openChat({
-      record: { projectId: "project_a", chat: { id: "chat_habits", title: "Habit tracker app", revision: 4 } },
+      record: { projectId: "project_a", chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app", revision: 4 } },
       runs: [finishedRun], messages: [reply("Done. I saved it to `apps/habit-tracker`.")],
     });
     render(<ChatScreen />);
@@ -714,7 +714,7 @@ describe("chat screen: recovering from failures", () => {
   it("shows the chat loading until it has been read, and sends nothing to it meanwhile", () => {
     mockActiveChatId = "chat_habits";
     mockDetail = null;
-    mockChats = [{ chat: { id: "chat_habits", title: "Habit tracker app" } }];
+    mockChats = [{ chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app" } }];
     render(<ChatScreen />);
 
     expect(screen.getByLabelText("Loading chat")).toBeTruthy();

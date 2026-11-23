@@ -1,4 +1,5 @@
 import { PreviewPairProfileBindingSchema } from "@matrix-os/contracts/preview-pair-launch";
+import { ShortcutOverridesSchema } from "@matrix-os/contracts/keyboard-shortcuts";
 // Local UI state (FR-084): only recreatable data lives here — profile pointer,
 // window bounds, panel layouts, appearance. Atomic writes (tmp + rename),
 // schema-validated keys, bounded panel-layout retention.
@@ -101,6 +102,7 @@ const KEY_SCHEMAS = {
   projectViews: ProjectViewsStateSchema,
   providerPreferences: ProviderPreferencesSchema,
   desktopUpdateRelease: DesktopUpdateReleaseSchema,
+  keyboardShortcuts: ShortcutOverridesSchema,
 } as const;
 
 export type LocalStoreKey = keyof typeof KEY_SCHEMAS;

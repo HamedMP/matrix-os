@@ -1,15 +1,21 @@
 import {
+  SPEECH_DICTATION_LIMITS_QUERY,
+  SPEECH_DICTATION_MAX_BYTES,
+  SPEECH_EXTENDED_DICTATION_LIMITS,
+  SPEECH_LEGACY_DICTATION_MAX_BYTES,
+  SPEECH_LEGACY_DICTATION_MAX_DURATION_MS,
   SpeechCapabilitiesResponseSchema,
   SpeechRequestIdSchema,
   SpeechSafeErrorResponseSchema,
   SpeechTranscriptionResponseSchema,
+  withLegacyDictationLimits,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { PlatformSpeechClientError, type PlatformSpeechClient } from "./platform-client.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 
-const MAX_RECORDING_BYTES = 10 * 1024 * 1024;
+const MAX_RECORDING_BYTES = SPEECH_DICTATION_MAX_BYTES;
 const MAX_MULTIPART_BYTES = MAX_RECORDING_BYTES + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
 const MAX_ACTIVE_GATEWAY_TRANSCRIPTIONS = 2;
@@ -21,8 +27,8 @@ const unavailableCapabilities = SpeechCapabilitiesResponseSchema.parse({
     reason: "disabled",
     dictation: {
       enabled: false,
-      maxBytes: MAX_RECORDING_BYTES,
-      maxDurationMs: 120_000,
+      maxBytes: SPEECH_LEGACY_DICTATION_MAX_BYTES,
+      maxDurationMs: SPEECH_LEGACY_DICTATION_MAX_DURATION_MS,
       maxTranscriptChars: 32_000,
       supportedMediaTypes: ["audio/wav"],
       languageHints: false,
@@ -134,7 +140,11 @@ export function createSpeechGatewayRoutes(options: {
       return c.json(unavailableCapabilities, 200);
     }
     try {
-      return c.json(SpeechCapabilitiesResponseSchema.parse(await client.capabilities(c.req.raw.signal)), 200);
+      const capabilities = SpeechCapabilitiesResponseSchema.parse(await client.capabilities(c.req.raw.signal));
+      // Shells and desktop apps released before extended dictation reject a
+      // policy above the legacy limits; only callers that opt in see it.
+      const extended = c.req.query(SPEECH_DICTATION_LIMITS_QUERY) === SPEECH_EXTENDED_DICTATION_LIMITS;
+      return c.json(extended ? capabilities : withLegacyDictationLimits(capabilities), 200);
     } catch (error: unknown) {
       return clientError(c, error);
     }

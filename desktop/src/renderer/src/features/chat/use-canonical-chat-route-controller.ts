@@ -2,7 +2,7 @@ import { useDesktopRoutineConfirmation } from "./use-desktop-routine-confirmatio
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import { useChatReadState, mergeChatReadState, type CanonicalChatClientAdmission } from "@matrix-os/ui";
-import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatDisplayedIncomingSeq, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -24,8 +24,8 @@ import { createCanonicalChatRefresh, applyCanonicalChatContent, useCanonicalChat
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
-import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitDesktopChatTurn } from "./canonical-chat-turn-admission";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, type PendingCanonicalTurn } from "@matrix-os/ui";
+import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -84,6 +84,8 @@ export function useCanonicalChatRouteController({
   admissionIdentity?: unknown;
 }) {
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
+  // The message being sent, shown before admission confirms its turn.
+  const [pendingTurn, setPendingTurn] = useState<PendingCanonicalTurn | null>(null);
   const admissionSequence = useRef(0);
   const latestAdmissionId = useRef<string | undefined>(undefined);
   const selectionEpoch = useRef(0);
@@ -474,6 +476,7 @@ export function useCanonicalChatRouteController({
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
       && activeChatIdRef.current === selectedChatId && authority.valid && admissionAuthority.current === authority);
     if (!isCurrentScope()) return null;
+    let pendingRequestId: string | undefined;
     try {
       const current = detail;
       const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
@@ -484,7 +487,13 @@ export function useCanonicalChatRouteController({
         canAcknowledge: () => admissionAuthority.current.mounted && admissionAuthority.current.client === client
           && admissionAuthority.current.identity === admissionIdentity,
         mayDispatch: isCurrentScope,
-        onPrepared: id => { latestAdmissionId.current = id; },
+        onPrepared: id => {
+          latestAdmissionId.current = id;
+          if (selectedChatId) {
+            pendingRequestId = id;
+            setPendingTurn({ requestId: id, chatId: selectedChatId, parts: input.parts, createdAt: new Date().toISOString() });
+          }
+        },
         onAccepted: () => onAccepted?.(), onRejected,
         onConfirmed: id => {
           const current = admissionAuthority.current;
@@ -501,16 +510,7 @@ export function useCanonicalChatRouteController({
       });
       if (!admitted) return null;
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
-      const streamed = detailRef.current;
-      const next: CanonicalChatDetailResponse = admitted.recoveredDetail ?? {
-        ...(current ?? { activities: [] }),
-        record: admitted.record,
-        messages: [...(current?.messages ?? []), admitted.message],
-        turns: [...(current?.turns ?? []), admitted.turn],
-        runs: [...(current?.runs ?? []), admitted.run],
-      };
-      const resolved = streamed?.record.chat.id === next.record.chat.id
-        && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
+      const resolved = resolveDesktopAdmittedDetail(admitted, current, detailRef.current);
       setActiveChatId(admitted.record.chat.id);
       activeChatIdRef.current = admitted.record.chat.id;
       detailRef.current = resolved;
@@ -526,6 +526,10 @@ export function useCanonicalChatRouteController({
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
+    } finally {
+      // Accepted turns now come from the detail; a rejected send keeps its draft.
+      // Clear only this send's message, even after a chat switch, never a newer one.
+      if (pendingRequestId) setPendingTurn(pending => pending?.requestId === pendingRequestId ? null : pending);
     }
   }, [client, detail, projectId, admissions, admissionIdentity]);
 
@@ -954,7 +958,7 @@ export function useCanonicalChatRouteController({
   useChatReadState({
     chatId: activeChatId,
     state: detail?.record.chat.id === activeChatId ? detail.record.readState : undefined,
-    throughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    throughSeq: canonicalChatDisplayedIncomingSeq(detail?.messages ?? []),
     active, onRead: updateReadState,
   });
 
@@ -963,6 +967,7 @@ export function useCanonicalChatRouteController({
     items,
     activeChatId,
     detail,
+    pendingTurn,
     streamedMessageIds: streamedMessagesRef.current.chatId === activeChatId
       ? streamedMessagesRef.current.ids
       : [],

@@ -1,0 +1,20 @@
+{
+  "version": "0.1.6",
+  "channel": "stable",
+  "date": "2026-09-30T12:27:12Z",
+  "locale": "en",
+  "title": "Share a whole project",
+  "shortTitle": "Whole-project sharing",
+  "summary": "A small update that lets you share an entire project at once.",
+  "highlights": [],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Share a whole project, with its chats, in one step."
+    }
+  ],
+  "hidden": [
+    2060,
+    2013
+  ]
+}

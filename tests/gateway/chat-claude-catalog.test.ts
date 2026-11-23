@@ -3,6 +3,8 @@ import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createClaudeModelCatalogSource } from "../../packages/gateway/src/chat/claude-model-catalog.js";
+import { createSharedNativeModelResolver } from "../../packages/gateway/src/collaboration/shared-provider-authority.js";
+import type { SharedRunOwnerSourceDecision } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import { EventEmitter } from "node:events";
 import { KyselyPGlite } from "kysely-pglite";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
@@ -30,6 +32,34 @@ function catalogService(overrides: Partial<Parameters<typeof createChatProviderC
 }
 
 describe("Claude catalog selection and CLI handoff", () => {
+  it("resolves a legacy standalone shared instance without replacing its saved binding", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },
+    ] });
+    const selection = { instanceId: "claude_shared", model: "opus" };
+    const decision: SharedRunOwnerSourceDecision = { authorityKind: "standalone_policy", policyRevision: "1",
+      settingsRevision: "1", routeGeneration: "a".repeat(64), harness: "claude_code", modelId: "opus",
+      providerInstanceId: "claude_shared", providerAccessSourceId: "owner_claude_profile", accessSourceId: "owner_claude_profile",
+      allowedModelIds: ["opus"], effectiveSubmitMode: "members" };
+    const resolve = createSharedNativeModelResolver({ providerCatalog: catalogService({ codingModelCatalogSource: source }),
+      ownerId: principal.userId, decision, selection });
+    expect(await resolve("opus")).toBe("claude-opus-5");
+    expect(await resolve("invented")).toBeNull();
+    expect(selection).toEqual({ instanceId: "claude_shared", model: "opus" });
+  });
+  it("keeps the selectable alias but resolves isolated execution to the native wire model", async () => {
+    const source = createClaudeModelCatalogSource({ discover: async () => [
+      { value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus" },
+    ] });
+    const service = catalogService({ codingModelCatalogSource: source });
+    expect(await service.resolveExecutionModel?.(principal, { instanceId: "claude_code_default", model: "opus" }))
+      .toBe("claude-opus-5");
+    expect(await service.resolveExecutionModel?.(principal, { instanceId: "claude_code_default", model: "invented" }))
+      .toBeNull();
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find(instance => instance.id === "claude_code_default")?.models.some(model => model.id === "opus")).toBe(true);
+    expect(JSON.stringify(catalog)).not.toContain("executionModels");
+  });
   afterEach(() => vi.useRealTimers());
   it("shows resolved versions for moving aliases and a pinned Opus 5.5 only when the runtime reports it", async () => {
     const source = createClaudeModelCatalogSource({ discover: async () => [
@@ -333,6 +363,84 @@ describe("Claude catalog selection and CLI handoff", () => {
     const result = await catalogService({ codingModelCatalogSource: source }).getCatalog(principal);
     expect(result.instances.find((entry) => entry.id === "claude_code_default")?.models.map((entry) => entry.id))
       .toEqual(["default", "opus", "sonnet"]);
+  });
+
+  it("serves a recently verified profile inventory at once while one background read refreshes it", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    let models = [{ value: "claude-fable-5", displayName: "Fable" }];
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key: "owner_profile", retainOnRefresh: false, maxAgeMs: 5_000,
+      discover: async () => { reads++; await gate; return models; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source });
+    await service.getCatalog(principal);
+    expect(reads).toBe(1);
+    // A send after the short profile cache expired must not wait for a fresh CLI read.
+    await vi.advanceTimersByTimeAsync(6_000);
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    models = [...models, { value: "claude-fable-5-1", displayName: "Fable 5.1" }];
+    const served = await service.getCatalog(principal);
+    expect(served.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-fable-5")).toBe(true);
+    expect(reads).toBe(2);
+    await service.getCatalog(principal);
+    expect(reads).toBe(2);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    const refreshed = await service.getCatalog(principal);
+    expect(refreshed.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-fable-5-1")).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  it("does not serve a read that finished after Refresh as recently verified", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let gate: Promise<void> = Promise.resolve();
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key: "explicit_key", retainOnRefresh: true, maxAgeMs: 60_000,
+      discover: async () => { reads++; await gate; return [{ value: `claude-model-${reads}`, displayName: "Model" }]; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source, invalidateCodingModelCatalog: source.invalidate });
+    gate = new Promise<void>((resolve) => { release = resolve; });
+    const inFlight = service.getCatalog(principal);
+    await vi.waitFor(() => expect(reads).toBe(1));
+    const refreshed = service.refresh(principal);
+    gate = Promise.resolve();
+    release();
+    await inFlight;
+    const catalog = await refreshed;
+    // Refresh waited for a discovery started after it, not the one already running.
+    expect(reads).toBe(2);
+    expect(catalog.instances.find((entry) => entry.id === "claude_code_default")?.models
+      .some((entry) => entry.id === "claude-model-2")).toBe(true);
+  });
+
+  it("waits for a fresh read once a profile inventory is older than the stale window or its credential context changed", async () => {
+    vi.useFakeTimers();
+    let key = "generation_one";
+    let reads = 0;
+    const source = createClaudeModelCatalogSource({ resolveContext: async () => ({
+      key, retainOnRefresh: false, maxAgeMs: 5_000,
+      discover: async () => { reads++; if (key !== "generation_one") throw new Error("private detail"); return [{ value: "claude-fable-5", displayName: "Fable" }]; },
+    }) });
+    const service = catalogService({ codingModelCatalogSource: source });
+    await service.getCatalog(principal);
+    key = "generation_two";
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect((await service.getCatalog(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .map((entry) => entry.id)).toEqual(["default", "opus", "sonnet"]);
+    expect(reads).toBe(2);
+    key = "generation_one";
+    await service.getCatalog(principal);
+    await vi.advanceTimersByTimeAsync(300_001);
+    key = "generation_three";
+    expect((await service.getCatalog(principal)).instances.find((entry) => entry.id === "claude_code_default")?.models
+      .map((entry) => entry.id)).toEqual(["default", "opus", "sonnet"]);
   });
 
   it("expires last-good data and deduplicates metadata without leaking stale account models", async () => {

@@ -1,3 +1,9 @@
+import {
+  SPEECH_DICTATION_MAX_BYTES,
+  SPEECH_DICTATION_MAX_DURATION_MS,
+  SPEECH_LEGACY_DICTATION_MAX_BYTES,
+  SPEECH_LEGACY_DICTATION_MAX_DURATION_MS,
+} from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 const IdentifierSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
@@ -24,7 +30,14 @@ interface EnabledSpeechConfigBase {
   microusdPerMinute: number;
   ownerAudioEnabled: boolean;
   admission: SpeechAdmissionConfig;
+  /** Chat dictation limits. */
   limits: SpeechLimitsConfig;
+  /**
+   * Channel and kernel audio imports. They keep the limits they shipped with:
+   * raising them changes which imports are accepted and how much each one
+   * reserves, and needs its own review (spec 120, FR-005).
+   */
+  ownerAudioLimits: SpeechLimitsConfig;
 }
 
 type OpenAiSpeechConfig = {
@@ -78,6 +91,16 @@ function commonConfig(env: NodeJS.ProcessEnv): Omit<EnabledSpeechConfigBase, "mi
   const maximumActiveOperations = integer(env.PLATFORM_SPEECH_GLOBAL_CONCURRENCY, 16, 1, 1_000);
   const maximumActiveOperationsPerOwner = integer(env.PLATFORM_SPEECH_OWNER_CONCURRENCY, 2, 1, 100);
   if (maximumActiveOperationsPerOwner > maximumActiveOperations) return invalid();
+  const limits = {
+    maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, SPEECH_DICTATION_MAX_BYTES, 44, SPEECH_DICTATION_MAX_BYTES),
+    maxDurationMs: integer(
+      env.PLATFORM_SPEECH_MAX_DURATION_MS,
+      SPEECH_DICTATION_MAX_DURATION_MS,
+      1_000,
+      SPEECH_DICTATION_MAX_DURATION_MS,
+    ),
+    maxTranscriptChars: integer(env.PLATFORM_SPEECH_MAX_TRANSCRIPT_CHARS, 32_000, 1, 32_000),
+  };
   return {
     enabled: true,
     policyRevision: policyRevision.data,
@@ -89,10 +112,11 @@ function commonConfig(env: NodeJS.ProcessEnv): Omit<EnabledSpeechConfigBase, "mi
       maximumAdmissionsPerOwner: integer(env.PLATFORM_SPEECH_OWNER_REQUESTS_PER_MINUTE, 10, 1, 10_000),
       admissionWindowMs: 60_000,
     },
-    limits: {
-      maxBytes: integer(env.PLATFORM_SPEECH_MAX_BYTES, 10 * 1024 * 1024, 44, 10 * 1024 * 1024),
-      maxDurationMs: integer(env.PLATFORM_SPEECH_MAX_DURATION_MS, 120_000, 1_000, 60 * 60_000),
-      maxTranscriptChars: integer(env.PLATFORM_SPEECH_MAX_TRANSCRIPT_CHARS, 32_000, 1, 32_000),
+    limits,
+    ownerAudioLimits: {
+      ...limits,
+      maxBytes: Math.min(limits.maxBytes, SPEECH_LEGACY_DICTATION_MAX_BYTES),
+      maxDurationMs: Math.min(limits.maxDurationMs, SPEECH_LEGACY_DICTATION_MAX_DURATION_MS),
     },
   };
 }

@@ -16,6 +16,7 @@ import OnboardingWidgetHost from "./features/onboarding-widget/OnboardingWidgetH
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
 import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
 import { useAppearance } from "./stores/appearance";
+import { useShortcuts } from "./stores/shortcuts";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 import { wireNativeAppOpening } from "./lib/native-app-opening";
 import { SharedAppDeepLinkOpener, wireSharedAppDeepLinks } from "./features/collaboration/shared-app-deep-links";
@@ -25,6 +26,7 @@ export default function App() {
   const status = useConnection((s) => s.status);
   const refresh = useConnection((s) => s.refresh);
   const loadAppearance = useAppearance((s) => s.load);
+  const loadShortcuts = useShortcuts((s) => s.load);
 
   useEffect(() => wireNativeAppOpening(), []);
   useEffect(() => wireSharedAppDeepLinks(), []);
@@ -36,7 +38,9 @@ export default function App() {
     // Apply the persisted theme once at boot; tokens.css keeps the first paint
     // on the Matrix palette until this resolves.
     void loadAppearance();
-  }, [loadAppearance, refresh]);
+    // Shortcut hints stay hidden until the bindings arrive from main.
+    void loadShortcuts();
+  }, [loadAppearance, loadShortcuts, refresh]);
 
   return (
     <GettingStartedVisibilityProvider scope={scope}>

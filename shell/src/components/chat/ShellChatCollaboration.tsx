@@ -1,11 +1,11 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { ChatCollaboration, type ChatCollaborationView } from "@matrix-os/ui";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 import { createShellCollaborationApi } from "@/lib/collaboration";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
@@ -29,10 +29,10 @@ export function ShellChatCollaboration({
   const nativeActorId = useNativeCollaborationActor();
   return nativeActorId
     ? <ShellChatCollaborationContent {...props} actorId={nativeActorId} nativeSession />
-    : <ClerkShellChatCollaboration {...props} />;
+    : <AccountShellChatCollaboration {...props} />;
 }
 
-function ClerkShellChatCollaboration(props: {
+function AccountShellChatCollaboration(props: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
   onOpenProject?: (scopeId: string) => void;
@@ -40,7 +40,7 @@ function ClerkShellChatCollaboration(props: {
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
 }) {
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, userId } = useShellAuthIdentity();
   const actorId = userId ?? (e2eBypass ? "user_e2e" : null);
   if (!isLoaded && !e2eBypass) return <p role="status" className="p-8">Loading shared Chat…</p>;
   return <ShellChatCollaborationContent {...props} actorId={actorId} nativeSession={false} />;

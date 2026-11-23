@@ -63,6 +63,19 @@ describe("Claude live receipt evidence for recovery", () => {
     expect(jobs.verifiedSnapshot()[0]).not.toHaveProperty("replay");
   });
 
+  it("retains a task receipt without treating its text as restart replay proof", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(structured.nextFireAt - 60_000);
+    const jobs = observed("msg_synthetic");
+    expect(jobs.authorizeCreate(toolUseId)).toBe(true);
+    jobs.handle(receipt({ message: { content: [
+      { type: "tool_result", tool_use_id: toolUseId, content: `Scheduled recurring task ${id}.` },
+    ] } }));
+    expect(jobs.matches(args.prompt)).toMatchObject({ id, recurring: true });
+    expect(jobs.verifiedSnapshot()).toHaveLength(1);
+    expect(jobs.verifiedSnapshot()[0]).not.toHaveProperty("replay");
+  });
+
   it("keeps digest-only evidence when replay cannot validate message identity or timing", () => {
     vi.useFakeTimers();
     vi.setSystemTime(structured.nextFireAt + 61_000);

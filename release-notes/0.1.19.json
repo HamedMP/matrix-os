@@ -1,0 +1,47 @@
+{
+  "version": "0.1.19",
+  "channel": "stable",
+  "date": "2026-10-24T11:18:36Z",
+  "locale": "en",
+  "title": "Matrix in Slack",
+  "shortTitle": "Slack",
+  "summary": "Install Matrix in your Slack workspace and get answers grounded in your company's sources.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Matrix for Slack",
+      "body": "Install the Matrix app in Slack and chat with Matrix there. Replies can draw on your company's sources, and work stays separated per company.",
+      "art": "notification",
+      "tone": "teal",
+      "prs": [
+        2076,
+        2077,
+        2078,
+        2124,
+        2079
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "WhatsApp sign-up opens to more people in the EEA."
+    },
+    {
+      "kind": "fixed",
+      "text": "Bot model lists finish loading and can be retried."
+    },
+    {
+      "kind": "fixed",
+      "text": "Picking Matrix models and Gateway entries responds reliably."
+    },
+    {
+      "kind": "fixed",
+      "text": "Project sharing reports when it's ready again."
+    }
+  ],
+  "hidden": [
+    2889,
+    2896
+  ]
+}

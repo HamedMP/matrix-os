@@ -1,6 +1,6 @@
 # Codex 0.157.0 provider contract qualification
 
-Latest exact qualification: [0.169.0 / ENG-467](evidence/qualification-01690.md). Historical evidence below remains scoped to its recorded version.
+Latest exact qualification: [0.171.0 / ENG-467](evidence/qualification-01710.md) (also 0.169.1 and 0.170.0; previous: [0.169.0](evidence/qualification-01690.md)). Historical evidence below remains scoped to its recorded version.
 
 **Status:** Exact 0.157.0 contract records implemented. Review and final-head CI remain required; installer promotion is out of scope.
 

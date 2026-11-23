@@ -1,4 +1,4 @@
-import type { ChatAgentDraftRequest } from "@matrix-os/ui";
+import { chatAttachmentSubmissionError, type ChatAgentDraftRequest } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -17,6 +17,7 @@ import { useProviderPreferences } from "../settings/provider-preferences";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
 import { appendHermesAttachmentPaths } from "./attachments/local-attachment-controller";
 import { useConversationAttachments } from "./attachments/use-conversation-attachments";
+import { useMatrixAttachmentControls } from "./attachments/use-matrix-attachment-controls";
 import { ChatStarterCards } from "./ChatStarterCards";
 import { chatSendFailureMessage } from "./chat-send-error";
 import {
@@ -153,6 +154,21 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     || contextMutationPending
     || !api
     || !sessionId;
+  const attachmentInstance = providerCatalog.instances.find(candidate => candidate.id === canonicalSelection?.instanceId);
+  const attachmentProject = conversationContext?.status === "ready" ? conversationContext : null;
+  const matrixAttachments = useMatrixAttachmentControls({
+    api,
+    scopeKey: `legacy-chat:${sessionId ?? "new"}`,
+    project: attachmentProject ? {
+      kind: "project", projectId: attachmentProject.projectId, chatId: "attachment-picker",
+      label: attachmentProject.projectName,
+    } : undefined,
+    enabled: active && Boolean(attachmentInstance?.supports.attachments.some(kind => kind === "file" || kind === "image")),
+    locked: uploadingAttachments || status !== "idle",
+    queue: attachments,
+    deviceInput: fileInputRef,
+    validate: files => chatAttachmentSubmissionError(attachmentInstance, canonicalSelection?.model, files, canonicalSelection?.options),
+  });
 
   const submit = async (submission: SharedChatComposerSubmission) => {
     const selectedInstance = providerCatalog.instances.find((candidate) => (
@@ -163,6 +179,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     )) ?? false;
     if (
       uploadingAttachments
+      || matrixAttachments.pending
       || liveProviderCatalog.initialLoading
       || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
       || !canSubmitChatDraft(
@@ -205,7 +222,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
   const attachmentPreviews = (
     <AttachmentPreviewRow
       items={attachments.items}
-      selectionError={attachments.selectionError}
+      selectionError={matrixAttachments.error ?? attachments.selectionError}
       disabled={uploadingAttachments}
       onRemove={attachments.remove}
       onRetry={(localId) => void attachments.retry(localId)}
@@ -215,7 +232,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     if (!api || !sessionId || contextControlsDisabled) return;
     void updateConversationContext(api, sessionId, projectId);
   }, [api, contextControlsDisabled, sessionId, updateConversationContext]);
-  const composerReady = legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
+  const composerReady = !matrixAttachments.pending && legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
     && canSubmitChatDraft(
     draft,
     status,
@@ -285,7 +302,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
             label: project.name,
           }))}
           resourceSearch={resourceSearch}
-          onAttach={() => fileInputRef.current?.click()}
+          onAttach={matrixAttachments.onAttach}
           attachments={attachmentPreviews}
           autoFocus={autoFocus}
           placeholder={placeholder}
@@ -320,8 +337,9 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     <SharedChatSurface
       ariaLabel="Hermes conversation"
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-      {...attachments.paneProps}
+      {...matrixAttachments.paneProps}
     >
+      {matrixAttachments.dialog}
       {errorBanner}
       {empty ? (
         <div data-testid="chat-empty-content" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center gap-[26px] px-5 py-8", CHAT_CONTENT_WIDTH_CLASS)}>

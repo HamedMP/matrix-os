@@ -6,6 +6,7 @@ import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeRes
 import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
+import type { RecordingTarget, ShortcutService } from "../shortcuts/shortcut-service";
 import type { DesktopReleaseNotes, DesktopUpdateSnapshot } from "../../shared/desktop-update";
 import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ProjectAgentWorkspace, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse, SupportIdentityResponse } from "@matrix-os/contracts";
 import type { CodingAgentProjectWorkspaceRequest } from "../../shared/coding-agent-project-workspace";
@@ -25,6 +26,7 @@ interface IpcMainLike {
 export interface HandlerContext {
   auth: AuthService;
   store: LocalStore;
+  shortcuts: Pick<ShortcutService, "snapshot" | "set" | "setRecording" | "setTerminalClaims">;
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
   setBadgeCount: (count: number) => void;
@@ -37,7 +39,8 @@ export interface HandlerContext {
   /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
   authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
   openTerminalWindow: () => Promise<void>;
-  focusMainWindow: () => void;
+  /** Brings the main window forward, opening Settings there when asked. */
+  focusMainWindow: (to?: "settings") => void;
   setTitlebarOverlay: (colors: InvokeRequest<"window:set-titlebar-overlay">) => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
@@ -169,6 +172,19 @@ function zoomTarget(event: unknown): ZoomTarget | null {
   return null;
 }
 
+// Only the sender's own webContents may pause its menu shortcuts.
+function recordingTarget(event: unknown): RecordingTarget | null {
+  const sender = (event as { sender?: Partial<RecordingTarget> } | null)?.sender;
+  if (
+    sender &&
+    typeof sender.setIgnoreMenuShortcuts === "function" &&
+    typeof sender.isDestroyed === "function"
+  ) {
+    return sender as RecordingTarget;
+  }
+  return null;
+}
+
 function toWebContentsViewBounds(
   bounds: InvokeRequest<"embed:set-bounds">["bounds"],
   event: unknown,
@@ -197,6 +213,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
     || typeof ctx.focusMainWindow !== "function" || typeof ctx.setTitlebarOverlay !== "function") {
     throw new Error("window services unavailable");
+  }
+  const { shortcuts } = ctx;
+  if (!shortcuts || typeof shortcuts.snapshot !== "function" || typeof shortcuts.set !== "function"
+    || typeof shortcuts.setRecording !== "function" || typeof shortcuts.setTerminalClaims !== "function") {
+    throw new Error("shortcut service unavailable");
   }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
@@ -319,8 +340,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.openTerminalWindow();
     return { ok: true };
   });
-  handle("terminal-window:focus-main", () => {
-    ctx.focusMainWindow();
+  handle("terminal-window:focus-main", ({ to }) => {
+    ctx.focusMainWindow(to);
     return { ok: true };
   });
   handle("window:toggle-maximize", () => {
@@ -356,6 +377,24 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
       );
       throw new Error("invalid request");
     }
+    return { ok: true };
+  });
+
+  handle("shortcuts:get", () => shortcuts.snapshot());
+  // The service rejects invalid or unsaved overrides with "invalid request".
+  handle("shortcuts:set", ({ overrides }) => shortcuts.set(overrides));
+  handle("shortcuts:set-recording", ({ recording }, event) => {
+    const target = recordingTarget(event);
+    if (!target) throw new Error("invalid request");
+    shortcuts.setRecording(target, recording);
+    return { ok: true };
+  });
+  // authorizeSender admits only the main and Terminal windows' own top-level
+  // frames, so an embedded app view cannot claim keys; each sender sets its own.
+  handle("shortcuts:set-terminal-claims", ({ bindings }, event) => {
+    const sender = (event as { sender?: unknown } | null)?.sender;
+    if (typeof sender !== "object" || sender === null) throw new Error("invalid request");
+    shortcuts.setTerminalClaims(sender, bindings);
     return { ok: true };
   });
 

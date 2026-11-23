@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @source "../../../../../packages/ui/src/desktop-top-bar.tsx";
+@source "../../../../../packages/ui/src/desktop-agent-inbox.tsx";
+@source "../../../../../packages/ui/src/getting-started-pill.tsx";
 @source "../../../../../packages/ui/src/integrations";
 @source "../../../../../packages/ui/src/chat-import";
 @source "../../../../../packages/ui/src/organization-drive";
@@ -7,6 +9,8 @@
 @source "../../../../../packages/ui/src/chat-agents";
 @source "../../../../../packages/ui/src/collaboration";
 @source "../../../../../packages/ui/src/share";
+@source "../../../../../packages/ui/src/terminal-status-sidebar";
+@source "../../../../../packages/ui/src/terminal-agents";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/instrument-sans/400.css";

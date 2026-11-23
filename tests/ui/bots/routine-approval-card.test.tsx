@@ -89,3 +89,14 @@ it("shows weekday-list frequency and exposes an exact fallback for an uncommon r
   view.rerender(<InteractionCard interaction={{...interaction, payload: {...payload, preview: JSON.stringify(envelope)}}} onResolve={vi.fn()}/>);
   expect(screen.getByText("Custom repeat rule: */17 9-17 * * 1-5")).toBeTruthy();
 });
+
+it("keeps a saved routine decision closed when continuation admission is unconfirmed",async()=>{
+ const resolve=vi.fn(async()=>({interaction:{interactionId:interaction.interactionId,status:"resolved" as const,revision:8},continuationPending:true as const}));
+ render(<InteractionCard interaction={interaction} onResolve={resolve}/>);fireEvent.click(screen.getByRole("button",{name:"Approve schedule"}));
+ await screen.findByText("Your decision was saved. Continuation was not confirmed. Check execution history for current status.");
+ expect(screen.queryByRole("button",{name:"Approve schedule"})).toBeNull();expect(resolve).toHaveBeenCalledTimes(1);
+});
+it("shows the exact scheduled model alongside the actual executor before approval",()=>{
+ render(<InteractionCard interaction={interaction} agentName="Existing executor" onResolve={vi.fn()}/>);
+ expect(screen.getByText("Model")).toBeTruthy();expect(screen.getByText("gpt-6-luna")).toBeTruthy();expect(screen.getByText("Existing executor")).toBeTruthy();
+});

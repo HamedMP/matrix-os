@@ -201,6 +201,17 @@ describe("shared coding execution (S09)", () => {
       });
       expect(requestDispatch).toHaveBeenCalledWith(collaborationIds.scope, collaborationIds.chat);
 
+      // Inherited Chats have no legacy marker. Personal recovery must not steal
+      // the queued request and feed sandbox state to a native Provider adapter.
+      await fixture.db.updateTable("chats").set({ collaboration: null })
+        .where("id", "=", collaborationIds.chat).execute();
+      await expect(repository.claimNextQueuedTurn(owner, {
+        chatId: collaborationIds.chat, turnId: "cturn_personal_recovery", runId: "run_personal_recovery",
+        messageId: "msg_personal_recovery", claimedAt: now,
+      })).resolves.toBeNull();
+      await expect(repository.listQueuedChatIds(owner)).resolves.not.toContain(collaborationIds.chat);
+      expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
+
       await expect(repository.claimNextQueuedTurn(owner, {
         chatId: collaborationIds.chat,
         collaborationScopeId: collaborationIds.scope,
@@ -215,6 +226,14 @@ describe("shared coding execution (S09)", () => {
           selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
         },
       });
+      await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat)).resolves.toMatchObject([
+        { id: "qturn_default_contributor_prompt", messageId: "msg_default_contributor_prompt" },
+      ]);
+      await expect(adapter.list(await authority.authorize({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "read",
+      }))).resolves.toMatchObject([
+        { id: "qturn_default_contributor_prompt", messageId: "msg_default_contributor_prompt" },
+      ]);
       await expect(fixture.db.selectFrom("chats")
         .select(["bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
         .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
@@ -512,6 +531,7 @@ describe("shared coding execution (S09)", () => {
       await repository.enqueueSharedQueuedTurn(owner, { ...aiRequest(27, collaborationActors.editor), chatId: secondChat, scopeId: secondScope });
       const first = await claim("batch_1");
       const second = await repository.claimNextQueuedTurn(owner, {
+        collaborationScopeId: secondScope,
         chatId: secondChat, turnId: "cturn_batch_2", runId: "run_batch_2", messageId: "msg_batch_2", claimedAt: now,
       });
       expect(second).not.toBeNull();
@@ -532,6 +552,7 @@ describe("shared coding execution (S09)", () => {
       });
       const departed = await claim("member_departed");
       const retained = await repository.claimNextQueuedTurn(owner, {
+        collaborationScopeId: secondScope,
         chatId: secondChat,
         turnId: "cturn_member_retained",
         runId: "run_member_retained",
@@ -692,6 +713,7 @@ describe("shared coding execution (S09)", () => {
       });
       const first = await claim("partition_write_fail");
       const second = await repository.claimNextQueuedTurn(owner, {
+        collaborationScopeId: secondScope,
         chatId: secondChat, turnId: "cturn_partition_ok", runId: "run_partition_ok",
         messageId: "msg_partition_ok", claimedAt: now,
       });
@@ -910,6 +932,7 @@ describe("shared coding execution (S09)", () => {
 
   async function claim(tag: string, allowNull = false) {
     const claimed = await repository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: `cturn_${tag}`, runId: `run_${tag}`, messageId: `msg_${tag}`, claimedAt: now,
     });
     if (!claimed && !allowNull) throw new Error("Expected claimed run");

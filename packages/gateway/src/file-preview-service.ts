@@ -101,6 +101,35 @@ function trustedMimeType(name: string, prefix: Uint8Array): { mimeType: string; 
     return checked(Buffer.from(prefix.subarray(0, 4)).toString("ascii") === "RIFF"
       && Buffer.from(prefix.subarray(8, 12)).toString("ascii") === "WEBP");
   }
+  if (declared === "image/avif") {
+    const header = Buffer.from(prefix);
+    if (header.length < 16 || header.toString("ascii", 4, 8) !== "ftyp") return checked(false);
+    let boxSize = header.readUInt32BE(0);
+    let brandStart = 8;
+    if (boxSize === 1) {
+      if (header.length < 24) return checked(false);
+      const largeSize = header.readBigUInt64BE(8);
+      if (largeSize > BigInt(Number.MAX_SAFE_INTEGER)) return checked(false);
+      boxSize = Number(largeSize);
+      brandStart = 16;
+    }
+    if (boxSize < brandStart + 8 || boxSize % 4 !== 0) return checked(false);
+    for (let offset = brandStart; offset + 4 <= Math.min(boxSize, header.length); offset += 4) {
+      if (offset === brandStart + 4) continue; // Minor version is not a compatible brand.
+      const brand = header.toString("ascii", offset, offset + 4);
+      if (brand === "avif" || brand === "avis") return checked(true);
+    }
+    return checked(false);
+  }
+  if (declared === "image/bmp") return checked(startsWithBytes(prefix, [0x42, 0x4d]));
+  if (declared === "image/tiff") {
+    return checked(startsWithBytes(prefix, [0x49, 0x49, 0x2a, 0x00])
+      || startsWithBytes(prefix, [0x4d, 0x4d, 0x00, 0x2a]));
+  }
+  if (declared === "image/x-icon") {
+    return checked(prefix.length >= 6 && startsWithBytes(prefix, [0x00, 0x00, 0x01, 0x00])
+      && (prefix[4] !== 0 || prefix[5] !== 0));
+  }
   if (declared === "image/svg+xml") {
     // SVG is active markup and may reference network resources. Keep it out of
     // the generic image renderer until a dedicated sanitizer/isolated viewer

@@ -4,11 +4,19 @@
 // sockets live in app-private directories; the user's own herdr is untouched.
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import type { LocalTerminalAgent } from "../../shared/local-terminals";
+import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
+import { sshLoginArgv, sshVia } from "./ssh-command";
+import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
+import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
+import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import { createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import {
+  createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
+  type LocalTerminalEvents, type LocalTerminalEventsOptions,
+} from "./hc-events";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -72,9 +80,20 @@ export interface LocalTerminalHostOptions {
   /** Shared with the window's other hosts, so the attachment budget holds across them. */
   slots?: AttachmentSlots;
   now?: () => number;
+  /** Follows status changes; replaced in tests. */
+  createEvents?: (options: LocalTerminalEventsOptions) => LocalTerminalEvents;
 }
 
-export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: HcSessionSink) {
+export class LocalTerminalUnknownError extends Error {
+  constructor() { super("local terminal is not listed"); this.name = "LocalTerminalUnknownError"; }
+}
+
+export interface LocalTerminalHostSink extends HcSessionSink {
+  /** Status facts changed (spec 2706 layer 4). */
+  facts?(terminals: LocalTerminalFact[]): void;
+}
+
+export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: LocalTerminalHostSink) {
   const now = options.now ?? Date.now;
   const socketPath = join(options.runtimeDir, "herdr-core", `${SESSION}.sock`);
   const starts: number[] = [];
@@ -166,6 +185,15 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   }
 
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  const machineSsh = createMachineSshStore(options.dataDir);
+  // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
+  let watchEpoch = 0;
+  const events = (options.createEvents ?? createLocalTerminalEvents)({
+    open: () => options.openSocket(socketPath),
+    expectedVersion: options.expectedVersion,
+    onChange: (terminals) => sink.facts?.(terminals),
+    now,
+  });
 
   /** A real folder under home, resolved through symlinks; anything else is refused. */
   async function folderUnderHome(folder: string): Promise<string> {
@@ -191,8 +219,13 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      */
     async create(
       size: { cols: number; rows: number },
-      launch: { agent?: LocalTerminalAgent; folder?: string } = {},
+      launch: { agent?: LocalTerminalAgent; folder?: string; machine?: string } = {},
     ): Promise<string | null> {
+      if (launch.machine) {
+        // That machine's own shell, in its home (spec 2706 layer 7). Its address is `machine/t7`.
+        const id = await sessions.run({ on: launch.machine, size, no_parent: true, no_notify: true, wait: false });
+        return id && !id.includes("/") ? `${launch.machine}/${id}` : id;
+      }
       const cwd = launch.folder ? await folderUnderHome(launch.folder) : options.home;
       const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
       return sessions.run({
@@ -210,6 +243,126 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       });
     },
 
+    /**
+     * Follows status (herdr-core `events.subscribe`) once the core is running,
+     * and returns what is known now; changes go to the sink's `facts`.
+     */
+    async watch(): Promise<LocalTerminalFact[]> {
+      const startedIn = watchEpoch;
+      await ensure();
+      if (watchEpoch !== startedIn) throw new Error("local terminal watch ended");
+      events.start();
+      return events.facts();
+    },
+
+    /** Stops following status: the Terminal window closed or reloaded. */
+    unwatch(): void {
+      watchEpoch += 1;
+      events.stop();
+    },
+
+    /**
+     * The person opened this terminal. Uses Herdr's own label (the turn they
+     * saw), so every client of this core agrees; a finished terminal gets
+     * its own label, since its turn no longer changes.
+     */
+    async seen(id: string): Promise<void> {
+      const fact = events.fact(id);
+      if (!fact) throw new LocalTerminalUnknownError();
+      const labels = fact.finished ? { [FINISHED_SEEN_LABEL]: "1" } : { [HERDR_SEEN_LABEL]: String(fact.turn) };
+      const core = await ensure();
+      await core.call("terminal.label", { terminal: id, labels });
+    },
+
+    /**
+     * A terminal on this device running `ssh <target>`: where the person checks
+     * a host key they have not accepted yet, or types a password, themselves.
+     * The target was validated (never an option); `--` ends ssh's options anyway.
+     */
+    sshLogin(target: string, size: { cols: number; rows: number }, ssh?: SshOptions): Promise<string | null> {
+      const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
+      // `user@host:port` is herdr-core's form; OpenSSH takes the port as `-p`. No BatchMode: the person answers here.
+      return sessions.run({
+        argv: ["/usr/bin/env", ...unset, ...sshLoginArgv(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)],
+        cwd: options.home,
+        env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
+        labels: { [TERMINAL_TITLE_LABEL]: `ssh ${target}`.slice(0, 64) },
+        size, no_parent: true, no_notify: true, wait: false,
+      });
+    },
+
+    /** Machines this core reaches over ssh, with their line state now and how the app added them. */
+    async machines(): Promise<LocalMachine[]> {
+      const [machines, saved] = await Promise.all([ensure().then(listMachines), machineSsh.all()]);
+      return machines.map((machine) => {
+        const entry = saved[machine.name];
+        if (!entry) return machine;
+        if (!machineSshMatches(entry, machine)) {
+          // The name now belongs to another host: its old settings must not reach it.
+          // Only the entry that was checked: settings saved by a re-add while this listing waited stay.
+          void machineSsh.removeIfUnchanged(machine.name, entry).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
+          return machine;
+        }
+        return { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) };
+      });
+    },
+
+    /** Open in terminal for an added machine, the way it was added. Null when the core does not know it. */
+    async machineLogin(name: string, size: { cols: number; rows: number }): Promise<string | null> {
+      const [entry, current] = await Promise.all([
+        machineSsh.get(name), ensure().then(listMachines).then((machines) => machines.find((machine) => machine.name === name)),
+      ]);
+      if (!current) return null;
+      const saved = entry && machineSshMatches(entry, current) ? entry : undefined;
+      const target = saved?.target ?? current.target;
+      // A machine added with a command (via) elsewhere has no target to ssh to.
+      if (!target || !SshTargetSchema.safeParse(target).success) return null;
+      return this.sshLogin(target, size, saved?.ssh);
+    },
+
+    async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
+      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+      const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
+      if (result.ok) {
+        try {
+          await machineSsh.set(result.machine.name, {
+            target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), coreTarget: result.machine.target,
+          });
+        } catch (error: unknown) {
+          // Without its settings the machine would be reached the wrong way later: take it back out so a retry starts clean.
+          await (await ensure()).call("machine.rm", { machine: result.machine.name })
+            .catch((rollback: unknown) => console.warn("[local-terminals] add rollback failed:", describeError(rollback)));
+          throw error;
+        }
+        return { ok: true, machine: { ...result.machine, target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) } };
+      }
+      return result;
+    },
+
+    /** This Mac's tailnet peers, for one-click Add machine. */
+    tailscalePeers(): Promise<TailscalePeersResult> {
+      return tailscalePeers();
+    },
+
+    /** Forgets a machine; its terminals keep running there. */
+    async removeMachine(name: string): Promise<void> {
+      await (await ensure()).call("machine.rm", { machine: name });
+      // The machine is gone, so this is done. Settings left behind are inert: a later add of the
+      // name overwrites them, and they never reach a different host (machineSshMatches).
+      await machineSsh.remove(name).catch((error: unknown) => console.warn("[local-terminals] removed machine's ssh not cleared:", describeError(error)));
+    },
+
+    /** Dials a machine now (after a login in a terminal) instead of at its next retry. */
+    async connectMachine(name: string): Promise<void> {
+      await (await ensure()).call("machine.connect", { machine: name }, 30_000);
+    },
+
+    /** Removes a finished terminal from the list; the core refuses a live one. */
+    async remove(id: string): Promise<void> {
+      const core = await ensure();
+      await core.call("terminal.rm", { terminal: id });
+    },
+
     kill: sessions.kill,
     rename: sessions.rename,
     put: sessions.put,
@@ -223,6 +376,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** Detaches from the core. The core and its terminals keep running. */
     dispose(): void {
       disposed = true;
+      events.stop();
       sessions.drop();
       connection?.close();
       connection = null;

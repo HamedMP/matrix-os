@@ -32,6 +32,15 @@ it("routes web links and file references through separate Chat actions", () => {
   expect(openFile).toHaveBeenCalledWith("reports/result.md");
 });
 
+it("hands off a remote Markdown image to the browser through the existing native bridge", () => {
+  const invoke = vi.fn().mockResolvedValue({ ok: true });
+  vi.stubGlobal("operator", { invoke });
+  render(<MessageResponse copyText={vi.fn()}>{"![Remote image](https://example.com/chart.png)"}</MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open image Remote image" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open in browser" }));
+  expect(invoke).toHaveBeenCalledWith("shell:open-external", { url: "https://example.com/chart.png" });
+});
+
 it("turns a local Markdown image into File Preview navigation instead of a broken image", () => {
   const openFile = vi.fn(() => true);
   render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{"![Generated whale](data/chat-artifacts/whale.png)"}</MessageResponse>);

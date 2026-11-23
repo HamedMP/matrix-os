@@ -1,13 +1,9 @@
 "use client";
 
-import type { CSSProperties, ReactNode, Ref } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import * as Popover from "@radix-ui/react-popover";
-import { Bell, ChevronDown, CircleCheck, CircleHelp, ExternalLink, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
-
-const useHelpPopoverScope = Popover.createPopoverScope();
+import { ChevronDown, CircleCheck, LayoutGrid, MessageCircle, Monitor, Search, SquareTerminal } from "lucide-react";
 
 const colors: CSSProperties = {
   color: "var(--text-primary, var(--foreground))",
@@ -27,49 +23,19 @@ function useMenuOverlay(open: boolean, overlay?: MenuOverlay) {
 }
 
 /** Shared structure and ordering; each renderer supplies authenticated actions. */
-export function DesktopTopBarActions({ onSearch, onSupport, onTerminal, inbox, help, computer, update, account }: {
+export function DesktopTopBarActions({ onSearch, onSupport, onTerminal, setup, inbox, computer, update, account }: {
   onSearch(): void; onSupport(): void;
   /** Opens the native Terminal window. Only Electron Desktop has one, so other renderers omit it. */
-  onTerminal?(): void; inbox: ReactNode; help: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
+  onTerminal?(): void;
+  /** Getting started pill; the renderer renders nothing once setup is complete. */
+  setup?: ReactNode; inbox: ReactNode; computer: ReactNode; update?: ReactNode; account: ReactNode;
 }) {
   return <nav aria-label="Desktop controls" className="no-drag flex h-full shrink-0 items-center gap-2" style={{ color: colors.color }}>
+    {setup}
     <button type="button" aria-label="Search" title="Search (Cmd+K)" className={actionClass} onClick={onSearch}><Search size={14} aria-hidden="true" /></button>
     {onTerminal ? <button type="button" aria-label="Terminal window" title="Open Terminal window" className={actionClass} onClick={onTerminal}><SquareTerminal size={14} aria-hidden="true" /></button> : null}
-    {inbox}{help}<button type="button" aria-label="Support" title="Support chat" className={actionClass} onClick={onSupport}><MessageCircle size={14} aria-hidden="true" /></button><div className="min-w-0 w-[156px] max-[600px]:w-28">{computer}</div>{update}{account}
+    {inbox}<button type="button" aria-label="Support" title="Support chat" className={actionClass} onClick={onSupport}><MessageCircle size={14} aria-hidden="true" /></button><div className="min-w-0 w-[156px] max-[600px]:w-28">{computer}</div>{update}{account}
   </nav>;
-}
-
-export function DesktopHelpMenu({ gettingStarted, gettingStartedOpen = false, onGettingStartedClose, triggerRef, anchorTrigger, incomplete, onSupport, discordIcon, overlay }: {
-  gettingStarted: ReactNode | ((closeHelp: () => void) => ReactNode);
-  gettingStartedOpen?: boolean; onGettingStartedClose?(): void; triggerRef?: Ref<HTMLButtonElement>;
-  /** The checklist owner supplies its Anchor so it shares that owner's Radix context. */
-  anchorTrigger?: (trigger: ReactNode) => ReactNode;
-  incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
-}) {
-  const helpScope = useHelpPopoverScope(undefined);
-  const [open, setOpen] = useState(false);
-  const helpOpen = open && !gettingStartedOpen;
-  useMenuOverlay(helpOpen, overlay);
-  const trigger = <Popover.Trigger {...helpScope} asChild><button ref={triggerRef} type="button" aria-label="Help" className={actionClass}>
-      <CircleHelp size={14} aria-hidden="true" />
-      {incomplete ? <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
-    </button></Popover.Trigger>;
-  return <Popover.Root {...helpScope} open={helpOpen} onOpenChange={(nextOpen) => {
-    if (nextOpen) onGettingStartedClose?.();
-    setOpen(nextOpen);
-  }}>
-    {anchorTrigger ? anchorTrigger(trigger) : trigger}
-    <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!helpOpen} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
-      onCloseAutoFocus={(event) => { if (gettingStartedOpen) event.preventDefault(); }}
-      forceMount className="data-[state=closed]:hidden no-drag w-[240px] rounded-xl border p-1.5 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
-      {typeof gettingStarted === "function" ? gettingStarted(() => setOpen(false)) : gettingStarted}
-      <div className="my-0.5 h-px" style={{ background: colors.borderColor }} />
-      <button type="button" className={rowClass} onClick={() => { setOpen(false); onSupport(); }}><MessageCircle size={14} aria-hidden="true" />Support chat</button>
-      <a href="https://discord.gg/WHbvTG33w" target="_blank" rel="noopener noreferrer" className={rowClass} onClick={() => setOpen(false)}>
-        {discordIcon}<span className="flex-1">Join Discord</span><ExternalLink size={12} aria-hidden="true" />
-      </a>
-    </Popover.Content></Popover.Portal>
-  </Popover.Root>;
 }
 
 export function DesktopViewMenu({ mode, onModeChange, onShowDesktop, selected, tab = false, overlay }: {
@@ -98,68 +64,4 @@ export function DesktopViewMenu({ mode, onModeChange, onShowDesktop, selected, t
       </DropdownMenu.RadioGroup>
     </DropdownMenu.Content></DropdownMenu.Portal>
   </DropdownMenu.Root>;
-}
-
-export function DesktopInboxMenu({ children, count = 0, open, onOpenChange }: { children: ReactNode; count?: number; open?: boolean; onOpenChange?: (open: boolean) => void }) {
-  return <Popover.Root open={open} onOpenChange={onOpenChange}><Popover.Trigger asChild><button type="button" aria-label="Inbox" className={actionClass}>
-    <Bell size={14} aria-hidden="true" />{count > 0 ? <span aria-label={`${count} tasks need attention`} className="absolute right-0 top-0 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
-  </button></Popover.Trigger><Popover.Portal><Popover.Content aria-label="Inbox" side="bottom" align="end" sideOffset={6} collisionPadding={8}
-    className="no-drag w-[320px] max-w-[calc(100vw-16px)] rounded-xl border p-3 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
-    <h2 className="mb-2 text-sm font-medium">Inbox</h2>{children}
-  </Popover.Content></Popover.Portal></Popover.Root>;
-}
-
-
-/** Bounded runtime activity shared by Web and Electron; no local notification database. */
-export function DesktopActivityInbox({ scope, load, onOpenTask, overlay }: {
-  scope: string; load(): Promise<unknown>; onOpenTask?: (id: string) => void; overlay?: MenuOverlay;
-}) {
-  // Remount on an owner/computer change so even an already-open popup cannot flash old data.
-  return <ScopedActivityInbox key={scope} load={load} onOpenTask={onOpenTask} overlay={overlay} />;
-}
-
-function ScopedActivityInbox({ load, onOpenTask, overlay }: { load(): Promise<unknown>; onOpenTask?: (id: string) => void; overlay?: MenuOverlay }) {
-  const [open, setOpen] = useState(false);
-  useMenuOverlay(open, overlay);
-  const [retry, setRetry] = useState(0);
-  const [snapshot, setSnapshot] = useState<RuntimeSummary | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  useEffect(() => {
-    let active = true;
-    let inFlight = false;
-    const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const result = RuntimeSummarySchema.parse(await load());
-        if (active) { setSnapshot(result); setStatus("ready"); }
-      } catch (error: unknown) {
-        // Never log raw names/messages or schema issues containing owner data.
-        const category = error instanceof Error
-          ? (["AbortError", "TimeoutError", "ZodError"].includes(error.name) ? error.name : "Error")
-          : "non-error";
-        console.warn("[desktop-inbox] load failed:", category);
-        if (active) { setSnapshot(null); setStatus("error"); }
-      } finally { inFlight = false; }
-    };
-    setStatus("loading");
-    void refresh();
-    const timer = setInterval(() => { if (open) void refresh(); }, 30_000);
-    return () => { active = false; clearInterval(timer); };
-  }, [load, open, retry]);
-  const attention = snapshot?.attentionThreads.items ?? [];
-  const activity = (snapshot?.recentActivity.items ?? []).slice(0, 20);
-  return <DesktopInboxMenu open={open} onOpenChange={setOpen} count={attention.length}>
-    {status === "loading" ? <p role="status" className="text-xs">Loading notifications…</p> : null}
-    {status === "error" ? <><p role="alert" className="text-xs">Notifications are unavailable.</p><button type="button" className={rowClass} aria-label="Retry notifications" onClick={() => setRetry(value => value + 1)}>Retry</button></> : null}
-    {status === "ready" ? <div className="max-h-[min(420px,70vh)] overflow-y-auto">
-      {attention.length === 0 && activity.length === 0 ? <p className="text-xs">No app or task notifications yet.</p> : null}
-      {attention.map(thread => <div key={thread.id} className="border-b py-2" style={{ borderColor: colors.borderColor }}>
-        {onOpenTask ? <button type="button" className={rowClass} onClick={() => { setOpen(false); onOpenTask(thread.id); }}>{thread.title}</button> : <p className="text-sm">{thread.title}</p>}
-        <p className="text-xs opacity-70">{thread.attention === "approval_required" ? "Approval needed" : thread.attention === "input_required" ? "Input needed" : "Task needs attention"}</p>
-      </div>)}
-      {activity.map(event => <div key={event.id} className="py-2"><p className="text-sm">{event.label}</p><time dateTime={event.occurredAt} className="text-xs opacity-70">{new Date(event.occurredAt).toLocaleString()}</time></div>)}
-      {snapshot?.recentActivity.hasMore || snapshot?.attentionThreads.hasMore ? <p className="text-xs opacity-70">Showing recent activity.</p> : null}
-    </div> : null}
-  </DesktopInboxMenu>;
 }

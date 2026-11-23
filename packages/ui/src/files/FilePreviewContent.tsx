@@ -1,5 +1,6 @@
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
 import { useEffect, useState, type ReactNode } from "react";
+import { chatImageDownloadFilename, savePreviewBlob } from "./file-image-actions.js";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_BINARY_BYTES = 50 * 1024 * 1024;
@@ -18,6 +19,8 @@ export interface FilePreviewContentProps {
   /** Surface-owned Markdown/code renderer; loading and byte limits stay shared. */
   renderText?: (text: string) => ReactNode;
   renderPdf?: (blob: Blob) => ReactNode;
+  /** Show a download action for the original bytes already read by this preview. */
+  showImageDownload?: boolean;
 }
 
 function parseDelimited(source: string, separator: "," | "\t"): string[][] {
@@ -110,7 +113,7 @@ function TablePreview({ name, rows }: { name: string; rows: string[][] }) {
   </div>;
 }
 
-function BinaryPreview({ descriptor, contentUrl, loadBlob, retry, renderPdf }: FilePreviewContentProps) {
+function BinaryPreview({ descriptor, contentUrl, loadBlob, retry, renderPdf, showImageDownload }: FilePreviewContentProps) {
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; url: string; blob: Blob } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
     let active = true;
@@ -136,7 +139,17 @@ function BinaryPreview({ descriptor, contentUrl, loadBlob, retry, renderPdf }: F
   if (state.status === "loading") return <Loading />;
   if (state.status === "failed") return <Failure retry={retry} />;
   if (descriptor.kind === "pdf" && renderPdf) return <>{renderPdf(state.blob)}</>;
-  if (descriptor.kind === "image") return <img src={state.url} alt={descriptor.name} className="max-h-full max-w-full object-contain" />;
+  if (descriptor.kind === "image") {
+    const filename = showImageDownload && descriptor.canDownload ? chatImageDownloadFilename(descriptor.name, state.blob) : null;
+    const image = <img src={state.url} alt={descriptor.name} onError={() => setState({ status: "failed" })} className="max-h-full max-w-full object-contain" />;
+    if (!filename) return image;
+    const blob = state.blob;
+    return <div className="flex h-full w-full min-w-0 flex-col items-center gap-2">
+      <button type="button" aria-label="Download image" onClick={() => savePreviewBlob(blob, filename)}
+        className="shrink-0 self-end rounded-lg border px-3 py-1 text-sm">Download</button>
+      <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">{image}</div>
+    </div>;
+  }
   if (descriptor.kind === "audio") return <audio controls preload="metadata" aria-label={`Audio preview: ${descriptor.name}`} src={state.url} className="w-full max-w-xl" />;
   if (descriptor.kind === "video") return <video controls preload="metadata" aria-label={`Video preview: ${descriptor.name}`} src={state.url} className="max-h-full max-w-full" />;
   return <object aria-label={`Document preview: ${descriptor.name}`} data={state.url} type="application/pdf" className="h-full min-h-96 w-full">

@@ -1,6 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 import { useFileDownload, type FileDownloadController } from "@matrix-os/ui";
 import { DownloadIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -11,7 +11,7 @@ const DownloadContext = createContext<FileDownloadController | null>(null);
 export const useWebFileDownload = () => useContext(DownloadContext);
 
 export function FileDownloadProvider({ children }: { children: ReactNode }) {
-  const { userId, sessionId } = useAuth();
+  const { userId, sessionId } = useShellAuthIdentity();
   const gateway = getGatewayUrl();
   const scope = `${gateway}|${userId ?? ""}|${sessionId ?? ""}`;
   const client = useMemo(() => createBrowserFileDownload(gateway), [gateway, scope]);

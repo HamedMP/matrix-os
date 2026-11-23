@@ -1,7 +1,8 @@
 "use client";
 
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, useGetStartedAnswers, useGetStartedEnded,
+  GettingStartedPill, gettingStartedNextStep, shouldShowGettingStartedPill, usePublishGettingStartedProgress,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -16,9 +17,9 @@ import {
   type GettingStartedStepId,
   type GettingStartedStepStatus,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { Bot, CheckIcon, ClipboardCheck, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
+import { Bot, CheckIcon, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { useGettingStartedConnections } from "./use-getting-started-connections";
@@ -121,8 +122,6 @@ interface GettingStartedPopoverProps {
   onOpenSettings: (section: GettingStartedSettingsSection) => void;
   /** Opens Chat (a bot's own chat when given) or App Gallery. */
   onOpenFirstWork: (destination?: GettingStartedDestination) => void;
-  triggerClassName?: string;
-  helpMenu?: { onSupport(): void; discordIcon: ReactNode };
 }
 
 type GettingStartedFetcher = (
@@ -283,14 +282,11 @@ export function GettingStartedPopover(props: GettingStartedPopoverProps) {
 function GettingStartedPopoverContent({
   onOpenSettings,
   onOpenFirstWork,
-  helpMenu,
-  triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 }: GettingStartedPopoverProps) {
   const {
     visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
   } = useGettingStartedVisibility();
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
-  const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
   // Rows start an app's own sign-in, like the onboarding widget, and reload when any connection changes.
@@ -341,11 +337,15 @@ function GettingStartedPopoverContent({
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- checklist state is sourced from independent authenticated APIs and refreshed when the popover opens.
   useEffect(() => {
     const controller = new AbortController();
+    let superseded = false;
+    // A timed-out request still applies: its steps show as unavailable, so the
+    // Setup pill stays reachable instead of waiting on a load that never lands.
     const timeoutId = window.setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
     void loadWebGettingStartedSnapshot(fetch, controller.signal).then((next) => {
-      if (!controller.signal.aborted) setSnapshot(next);
+      if (!superseded) setSnapshot(next);
     });
     return () => {
+      superseded = true;
       window.clearTimeout(timeoutId);
       controller.abort();
     };
@@ -437,33 +437,26 @@ function GettingStartedPopoverContent({
     }
   }, [open, isBlocked, autoOpenKey]);
 
-  const label = `Getting started — ${completedCount} of ${total}`;
   const progress = `${(completedCount / total) * 100}%`;
+  const next = useMemo(() => gettingStartedNextStep(rows), [rows]);
+  // The account menu's Getting started row opens this checklist as an explicit, focus-moving open.
+  const openFromMenu = useCallback(() => {
+    if (isBlocked()) return;
+    markManualOpen();
+    setOpen(true);
+    requestRefresh();
+  }, [isBlocked, markManualOpen, requestRefresh, setOpen]);
+  usePublishGettingStartedProgress(useMemo(() => (
+    snapshot.loaded ? { completed: completedCount, total, next, open: openFromMenu } : null
+  ), [completedCount, next, openFromMenu, snapshot.loaded, total]));
+  const showPill = shouldShowGettingStartedPill({ loaded: snapshot.loaded, completed: completedCount, total, open: requestedOpen });
 
-  const trigger = (closeHelp?: () => void) => <PopoverPrimitive.Trigger asChild>
-        <button
-          type="button"
-          aria-label={label}
-          title={label}
-          disabled={blocked}
-          className={helpMenu ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-md p-2 text-left text-[13px] outline-none hover:bg-foreground/5 focus-visible:bg-foreground/5" : `relative ${triggerClassName}`}
-          onClick={() => {
-            if (requestedOpen) setOpen(false);
-            closeHelp?.();
-          }}
-        >
-          <ClipboardCheck className="size-4" aria-hidden="true" />
-          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{completedCount} of {total}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
-          {!helpMenu && completedCount < total ? (
-            <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
-          ) : null}
-        </button>
-      </PopoverPrimitive.Trigger>;
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={completedCount < total} gettingStarted={trigger}
-        gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
-        anchorTrigger={(helpTrigger) => <PopoverPrimitive.Anchor asChild>{helpTrigger}</PopoverPrimitive.Anchor>} /> : trigger()}
+      {showPill ? <PopoverPrimitive.Trigger asChild>
+        <GettingStartedPill completed={completedCount} total={total} disabled={blocked}
+          onClick={() => { if (requestedOpen) setOpen(false); }} />
+      </PopoverPrimitive.Trigger> : null}
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           role="dialog"
@@ -473,13 +466,7 @@ function GettingStartedPopoverContent({
           sideOffset={7}
           collisionPadding={12}
           onOpenAutoFocus={onOpenAutoFocus}
-          onCloseAutoFocus={(event) => {
-            onCloseAutoFocus(event);
-            if (helpMenu && !requestedOpen) {
-              event.preventDefault();
-              helpTriggerRef.current?.focus();
-            }
-          }}
+          onCloseAutoFocus={onCloseAutoFocus}
           onEscapeKeyDown={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           className="w-[252px] overflow-hidden rounded-[12px] border outline-none"

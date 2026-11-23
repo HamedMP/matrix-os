@@ -27,6 +27,47 @@ function committed(request: CanonicalCreateChatTurnRequest): CanonicalChatDetail
 }
 
 describe("canonical send admission receipts", () => {
+  it("preserves a result streamed during successful admission without duplicating the accepted rows", async () => {
+    const client = createCanonicalChatWorkspaceClient();
+    let fresh = await client.getDetail(snapshot.chat.id);
+    vi.mocked(client.getDetail).mockImplementation(async () => fresh);
+    let release!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(client.admitTurn).mockImplementation(async (_chatId, request) => {
+      await hold;
+      const receipt = committed(request);
+      return { record: receipt.record, message: receipt.messages.at(-1)!, turn: receipt.turns.at(-1)!,
+        run: receipt.runs.at(-1)!, admission: "accepted" };
+    });
+    let notify!: (event: CanonicalChatInvalidation) => void;
+    const eventSource = { subscribe: (listener: typeof notify) => { notify = listener; return { dispose() {} }; } };
+    const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: "matrix-os", active: true,
+      initialChatId: snapshot.chat.id, eventSource }));
+    await waitFor(() => expect(hook.result.current.detail).not.toBeNull());
+    let pending!: Promise<unknown>;
+    act(() => { pending = hook.result.current.submitTurn(input, "continue"); });
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledOnce());
+    const receipt = committed(vi.mocked(client.admitTurn).mock.calls[0]![1]);
+    const scheduled: CanonicalChatDetailResponse["messages"][number] = {
+      ...fresh.messages.at(-1)!, id: "msg_scheduled_result",
+      parts: [{ type: "text", text: "Delayed schedule result" }],
+    };
+    fresh = {
+      ...fresh,
+      record: { ...fresh.record, chat: { ...fresh.record.chat, revision: fresh.record.chat.revision + 1 } },
+      messages: [...fresh.messages, scheduled, receipt.messages.at(-1)!],
+    };
+    act(() => { notify({ type: "chat.full_refresh" }); });
+    await waitFor(() => expect(hook.result.current.detail?.messages.some(message => message.id === scheduled.id)).toBe(true));
+    await act(async () => { release(); await pending; });
+    const result = hook.result.current.detail!;
+    expect(result.record.chat.revision).toBe(receipt.record.chat.revision);
+    expect(result.messages.filter(message => message.id === scheduled.id)).toHaveLength(1);
+    expect(result.messages.filter(message => message.id === "msg_receipt")).toHaveLength(1);
+    expect(result.turns.filter(turn => turn.id === "cturn_receipt")).toHaveLength(1);
+    expect(result.runs.filter(run => run.id === "run_receipt")).toHaveLength(1);
+  });
+
   it("confirms a committed turn after a transport timeout without another POST", async () => {
     const client = createCanonicalChatWorkspaceClient();
     let fresh = await client.getDetail(snapshot.chat.id);
