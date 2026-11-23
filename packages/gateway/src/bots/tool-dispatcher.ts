@@ -54,6 +54,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "bot.creation.propose": "read",
   "slack.rules":"write",
   "routine.cli": "write",
   "routine.propose":"write",

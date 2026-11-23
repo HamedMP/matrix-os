@@ -1519,3 +1519,6 @@ export * from "#routine-full-access-view";
 
 export * from "#routine-chat-origin";
 export * from "#routine-origin-proof";
+
+export * from "#bot-creation-draft";
+export * from "#bot-creation-wire";
