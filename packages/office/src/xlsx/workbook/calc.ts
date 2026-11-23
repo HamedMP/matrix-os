@@ -6,11 +6,19 @@
  * in which order, and stores the results as the cells' cached values.
  */
 
-import type { CellProvider, FormulaError, FormulaScalar, FormulaValue, NameResolution, RangeBounds } from "../../api/formula.js";
+import type {
+  CellProvider,
+  FormulaError,
+  FormulaScalar,
+  FormulaValue,
+  FunctionRegistry,
+  NameResolution,
+  RangeBounds,
+} from "../../api/formula.js";
 import type { CellAddress, CellValue, ChangedCell, RecalcOptions, RecalcResult, SheetCellRef, SheetRangeRef } from "../../api/xlsx.js";
 import { OfficeError, isOfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
-import { type CalcGraph, type CalcNode, type Dep, buildGraph, collectDeps, orderGraph } from "./calc-graph.js";
+import { type CalcGraph, type CalcNode, type Dep, buildGraph, collectDeps, functionsOf, orderGraph } from "./calc-graph.js";
 import { findCell } from "./cells.js";
 import { DIRTY_CONTENT, type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { lookupName } from "./names.js";
@@ -143,8 +151,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
     calc.all = false;
     return { changed: [], circular: [], complete: true };
   }
-  if (state.functions === null) state.functions = formula.createFunctionRegistry();
-  const functions = state.functions;
+  const functions = functionsOf(state) as FunctionRegistry;
   const maxCells = bound(options?.maxCells, DEFAULT_MAX_CELLS);
   const maxDepth = Math.max(1, bound(options?.maxDepth, DEFAULT_MAX_DEPTH));
   const graph = graphOf(state);

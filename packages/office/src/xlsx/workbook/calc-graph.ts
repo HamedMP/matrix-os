@@ -51,14 +51,14 @@ const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
 /** How many defined names may be followed inside one another. */
 const MAX_NAME_DEPTH = 8;
 
-/** True when the formula calls a volatile or a dynamic-reference function. */
-function callsAlways(ast: FormulaAst, functions: FunctionRegistry | null): boolean {
+/** True when some function call of the formula satisfies `test`. */
+function someCall(ast: FormulaAst, test: (name: string) => boolean): boolean {
   const stack: FormulaAst[] = [ast];
   while (stack.length > 0) {
     const node = stack.pop() as FormulaAst;
     switch (node.type) {
       case "call":
-        if (DYNAMIC_FUNCTIONS.has(node.name) || functions?.get(node.name)?.volatile === true) return true;
+        if (test(node.name)) return true;
         for (const arg of node.args) stack.push(arg);
         break;
       case "unary":
@@ -78,6 +78,35 @@ function callsAlways(ast: FormulaAst, functions: FunctionRegistry | null): boole
     }
   }
   return false;
+}
+
+/** True when the formula calls a volatile or a dynamic-reference function. */
+function callsAlways(ast: FormulaAst, functions: FunctionRegistry): boolean {
+  return someCall(ast, (name) => DYNAMIC_FUNCTIONS.has(name) || functions.get(name)?.volatile === true);
+}
+
+/** Whether a parsed formula calls a function the registry lacks. Entries go away with their trees. */
+const unknownCalls = new WeakMap<FormulaAst, boolean>();
+
+/** The function registry of the workbook, created on first use. Null without a formula engine. */
+export function functionsOf(state: WorkbookState): FunctionRegistry | null {
+  if (state.functions === null && state.formula !== null) state.functions = state.formula.createFunctionRegistry();
+  return state.functions;
+}
+
+/**
+ * True when the formula calls a function the engine does not have. Such a
+ * formula would calculate to `#NAME?`; the workbook keeps the value stored
+ * with it instead.
+ */
+export function callsUnknownFunction(state: WorkbookState, ast: FormulaAst): boolean {
+  let unknown = unknownCalls.get(ast);
+  if (unknown === undefined) {
+    const functions = functionsOf(state);
+    unknown = functions !== null && someCall(ast, (name) => !functions.has(name));
+    unknownCalls.set(ast, unknown);
+  }
+  return unknown;
 }
 
 /** The rectangles a formula reads, following defined names. */
@@ -109,6 +138,8 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
 
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
+  const functions = functionsOf(state);
+  if (functions === null) return { nodes, columns: new Map(), order: null };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
   for (const sheet of state.sheets) {
     const byColumn = new Map<number, CalcNode[]>();
@@ -117,6 +148,8 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         if (cell.formula === null || cell.extra !== null) continue;
         const ast = parseCached(state, cell.formula);
         if (ast === null) continue;
+        // A formula with a function the engine lacks keeps its stored value; a new one shows #NAME? once.
+        if (cell.value !== null && callsUnknownFunction(state, ast)) continue;
         const deps: Dep[] = [];
         collectDeps(state, ast, sheet, 0, deps);
         const node: CalcNode = {
@@ -126,7 +159,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           cell,
           ast,
           deps,
-          always: callsAlways(ast, state.functions),
+          always: callsAlways(ast, functions),
           index: -1,
           low: -1,
           onStack: false,

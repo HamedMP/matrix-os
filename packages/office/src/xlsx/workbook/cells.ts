@@ -3,6 +3,7 @@
 import type { Cell, CellRange, CellStylePatch, CellValue } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
+import { callsUnknownFunction } from "./calc-graph.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
   type CellRec,
@@ -162,7 +163,9 @@ export function writeCell(
 /** True when the engine keeps the stored value of the formula instead of calculating it. */
 export function isUnsupportedFormula(state: WorkbookState, cell: CellRec): boolean {
   if (cell.formula === null) return false;
-  return cell.extra !== null || parseCached(state, cell.formula) === null;
+  if (cell.extra !== null) return true;
+  const ast = parseCached(state, cell.formula);
+  return ast === null || callsUnknownFunction(state, ast);
 }
 
 export function cellView(state: WorkbookState, sheet: SheetModel, row: number, col: number): Cell {
