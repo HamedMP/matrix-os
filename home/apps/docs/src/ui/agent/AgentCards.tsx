@@ -88,12 +88,12 @@ function CommentLink({ comment, onJump }: { comment: CommentSummaryItem; onJump:
 export function AnswerBody({ segments, onJump }: { segments: readonly AnswerSegment[]; onJump: (target: JumpTarget) => void }) {
   return (
     <p className="docs-agent-answer">
-      {segments.map((segment, index) =>
+      {keyed(segments).map(({ key, segment }) =>
         segment.type === "text" ? (
-          <span key={index}>{segment.text}</span>
+          <span key={key}>{segment.text}</span>
         ) : (
           <button
-            key={index}
+            key={key}
             type="button"
             className="docs-agent-cite"
             aria-label={`Go to source ${segment.number}`}
@@ -106,4 +106,15 @@ export function AnswerBody({ segments, onJump }: { segments: readonly AnswerSegm
       )}
     </p>
   );
+}
+
+/** Stable keys for answer segments: text by content, citations by block and occurrence. */
+function keyed(segments: readonly AnswerSegment[]): Array<{ key: string; segment: AnswerSegment }> {
+  const seen = new Map<string, number>();
+  return segments.map((segment) => {
+    const base = segment.type === "text" ? `t:${segment.text.slice(0, 32)}` : `c:${segment.blockId}`;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return { key: `${base}:${count}`, segment };
+  });
 }

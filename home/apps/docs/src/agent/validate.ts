@@ -171,6 +171,7 @@ export function validateEdits(input: ValidationInput): ValidationResult {
   dropped.sort((a, b) => a.index - b.index);
   const survivors = kept.filter((_, i) => !refused.has(i));
   const survivorIndexes = indexes.filter((_, i) => !refused.has(i));
-  const keptRelocations = relocated.filter((entry) => survivorIndexes.includes(entry.index));
+  const surviving = new Set(survivorIndexes);
+  const keptRelocations = relocated.filter((entry) => surviving.has(entry.index));
   return { edits: survivors, indexes: survivorIndexes, dropped, relocated: keptRelocations };
 }
