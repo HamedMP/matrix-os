@@ -27,11 +27,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const counter = useRef(0);
+  /** Ids on screen, oldest first; mirrors `toasts` so eviction happens outside the state updater. */
+  const order = useRef<string[]>([]);
 
   const dismiss = useCallback((id: string) => {
     const timer = timers.current.get(id);
     if (timer) clearTimeout(timer);
     timers.current.delete(id);
+    order.current = order.current.filter((known) => known !== id);
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
@@ -39,16 +42,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (toast: ToastOptions) => {
       counter.current += 1;
       const id = `toast-${counter.current}`;
-      setToasts((current) => {
-        const next = [...current, { ...toast, id }];
-        const evicted = next.slice(0, Math.max(0, next.length - MAX_TOASTS));
-        for (const old of evicted) {
-          const timer = timers.current.get(old.id);
-          if (timer) clearTimeout(timer);
-          timers.current.delete(old.id);
-        }
-        return next.slice(-MAX_TOASTS);
-      });
+      const ids = [...order.current, id];
+      for (const old of ids.slice(0, Math.max(0, ids.length - MAX_TOASTS))) {
+        const timer = timers.current.get(old);
+        if (timer) clearTimeout(timer);
+        timers.current.delete(old);
+      }
+      order.current = ids.slice(-MAX_TOASTS);
+      setToasts((current) => [...current, { ...toast, id }].slice(-MAX_TOASTS));
       const duration = toast.durationMs ?? 5000;
       if (duration > 0) timers.current.set(id, setTimeout(() => dismiss(id), duration));
       return id;
