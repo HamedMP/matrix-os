@@ -2,20 +2,27 @@
  * Clipboard formats: tab-separated text and HTML tables, both ways.
  *
  * Copy writes both. The HTML carries each cell's formula in a
- * `data-sheets-formula` attribute and its position in `data-sheets-origin`, so
- * that a paste into Sheets keeps formulas and can adjust their references;
- * other programs see an ordinary table. Paste prefers the HTML table and
- * falls back to the text.
+ * `data-sheets-formula` attribute, its stored value and type in
+ * `data-sheets-value` and `data-sheets-type`, and the position of the block in
+ * `data-sheets-origin`, so that a paste into another Sheets window keeps
+ * formulas, full precision and text that looks like a number; other programs
+ * see an ordinary table. Paste prefers the HTML table and falls back to the
+ * text.
  *
  * Pasted HTML is untrusted. It is parsed into an inert document and only the
- * text and the two data attributes are read; nothing of it is put on the page.
+ * text and the data attributes are read; nothing of it is put on the page.
  */
+
+/** A stored value that can travel on the clipboard. */
+export type ClipboardValue = number | string | boolean;
 
 export interface ClipboardCell {
   /** What a reader sees: the display text. */
   text: string;
   /** Formula text without the leading `=`, or null. */
   formula?: string | null;
+  /** The stored value, when it is a number, text or logical value. */
+  value?: ClipboardValue | null;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -38,6 +45,8 @@ export interface ParsedTable {
   formulas: Array<Array<string | null>>;
   /** Where the cells were copied from, when the HTML came from Sheets. */
   origin: ClipboardOrigin | null;
+  /** For each cell copied from Sheets without a formula, its stored value; otherwise undefined. */
+  values?: Array<Array<ClipboardValue | undefined>>;
 }
 
 /** Most rows and columns read from a pasted table. */
@@ -151,11 +160,34 @@ export function serializeHtmlTable(rows: ReadonlyArray<ReadonlyArray<ClipboardCe
     for (const cell of row) {
       const style = cellStyle(cell);
       const formula = typeof cell.formula === "string" ? ` data-sheets-formula="${escapeHtml(cell.formula)}"` : "";
-      html += `<td${style === "" ? "" : ` style="${style}"`}${formula}>${escapeHtml(cell.text).replace(/\r?\n/g, "<br>")}</td>`;
+      html += `<td${style === "" ? "" : ` style="${style}"`}${formula}${valueAttributes(cell)}>${escapeHtml(cell.text).replace(/\r?\n/g, "<br>")}</td>`;
     }
     html += "</tr>";
   }
   return `${html}</tbody></table>`;
+}
+
+function valueAttributes(cell: ClipboardCell): string {
+  if (typeof cell.formula === "string") return "";
+  const value = cell.value;
+  if (typeof value === "number" && Number.isFinite(value)) return ` data-sheets-type="n" data-sheets-value="${String(value)}"`;
+  if (typeof value === "boolean") return ` data-sheets-type="b" data-sheets-value="${value ? "true" : "false"}"`;
+  if (typeof value === "string") return ` data-sheets-type="s" data-sheets-value="${escapeHtml(value)}"`;
+  return "";
+}
+
+/** The typed value a Sheets cell carried, or undefined when it carried none or it does not read back. */
+function readValue(cell: Element): ClipboardValue | undefined {
+  const type = cell.getAttribute("data-sheets-type");
+  const raw = cell.getAttribute("data-sheets-value");
+  if (raw === null) return undefined;
+  if (type === "s") return raw;
+  if (type === "b") return raw === "true" ? true : raw === "false" ? false : undefined;
+  if (type === "n") {
+    const number = raw.trim() === "" ? Number.NaN : Number(raw);
+    return Number.isFinite(number) ? number : undefined;
+  }
+  return undefined;
 }
 
 function cellText(cell: Element): string {
@@ -197,6 +229,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   if (table === null) return null;
   const rows: string[][] = [];
   const formulas: Array<Array<string | null>> = [];
+  const values: Array<Array<ClipboardValue | undefined>> = [];
+  let typed = false;
   /** Cells taken by a row span from a row above: column -> rows left. */
   const held = new Map<number, number>();
   for (const tr of Array.from(table.querySelectorAll("tr"))) {
@@ -204,6 +238,7 @@ export function parseHtmlTable(html: string): ParsedTable | null {
     if (rows.length >= MAX_PASTE_ROWS) break;
     const row: string[] = [];
     const rowFormulas: Array<string | null> = [];
+    const rowValues: Array<ClipboardValue | undefined> = [];
     let col = 0;
     const skipHeld = (): void => {
       for (let left = held.get(col); left !== undefined && left > 0; left = held.get(col)) {
@@ -221,12 +256,15 @@ export function parseHtmlTable(html: string): ParsedTable | null {
       if (col >= MAX_PASTE_COLS) break;
       const formula = cell.getAttribute("data-sheets-formula");
       const text = cellText(cell);
+      const value = formula === null || formula === "" ? readValue(cell) : undefined;
+      if (value !== undefined) typed = true;
       const colSpan = span(cell, "colspan", MAX_PASTE_COLS - col);
       const rowSpan = span(cell, "rowspan", MAX_PASTE_ROWS);
       for (let k = 0; k < colSpan; k++) {
         const first = k === 0;
         row[col] = first ? (formula !== null && formula !== "" ? `=${formula}` : text) : "";
         rowFormulas[col] = first && formula !== null && formula !== "" ? formula : null;
+        rowValues[col] = first ? value : undefined;
         if (rowSpan > 1) held.set(col, rowSpan - 1);
         col++;
       }
@@ -234,6 +272,7 @@ export function parseHtmlTable(html: string): ParsedTable | null {
     skipHeld();
     rows.push(row);
     formulas.push(rowFormulas);
+    values.push(rowValues);
   }
   if (rows.length === 0) return null;
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -246,7 +285,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
     }
   }
   const match = /^(\d{1,7}),(\d{1,5})$/.exec(table.getAttribute("data-sheets-origin") ?? "");
-  return { rows, formulas, origin: match === null ? null : { row: Number(match[1]), col: Number(match[2]) } };
+  const origin = match === null ? null : { row: Number(match[1]), col: Number(match[2]) };
+  return typed ? { rows, formulas, origin, values } : { rows, formulas, origin };
 }
 
 /** What a paste should write, from whichever clipboard formats are present. */

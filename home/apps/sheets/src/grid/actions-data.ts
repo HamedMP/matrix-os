@@ -23,6 +23,7 @@ import { type FillDirection, type FillSource, fillFromEdge, fillTarget, planFill
 import { MIN_COLUMN_PX, MIN_ROW_PX, pxToColumnWidth, pxToRowHeight } from "./geometry";
 import { activeRange, columnFullySelected, rangeCols, rangeRows, rowFullySelected, selectCell } from "./selection";
 import { type FilterSpec, type SortKey, filterHiddenRows, planSort } from "./sort-filter";
+import { hiddenRows, visibleRuns } from "./visible-rows";
 
 /** Most cells one fill, paste or sort writes. */
 export const MAX_ACTION_CELLS = 500_000;
@@ -83,9 +84,10 @@ function selectedUsed(ctx: GridContext): CellRange[] {
   return ctx.usedRanges(ctx.selection.ranges);
 }
 
-/** Delete or Backspace: empties the selected cells and keeps their formats. */
+/** Delete or Backspace: empties the selected cells and keeps their formats. Rows a filter hides are left as they are. */
 export function clearSelection(ctx: GridContext, what: "contents" | "formats" | "all" = "contents"): void {
-  const ranges = selectedUsed(ctx);
+  const hidden = hiddenRows(ctx);
+  const ranges = selectedUsed(ctx).flatMap((range) => visibleRuns(range, hidden));
   if (ranges.length > 0) report(ctx, ctx.session.clear(ctx.sheet, ranges, what));
 }
 
@@ -126,7 +128,9 @@ function applyFill(ctx: GridContext, source: CellRange, target: CellRange, direc
   }
   const sheet = ctx.sheet;
   const session = ctx.session;
-  const edits = planFill(source, target, direction, fillReader(ctx), series);
+  // A filled cell in a row the filter hides would change out of sight: those rows keep their content.
+  const hidden = hiddenRows(ctx);
+  const edits = planFill(source, target, direction, fillReader(ctx), series).filter((edit) => hidden === null || !hidden.has(edit.row));
   const sources = new Map<string, StyleId>();
   for (const edit of edits) {
     const key = `${edit.from.row},${edit.from.col}`;
