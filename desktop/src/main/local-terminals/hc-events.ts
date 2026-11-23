@@ -39,7 +39,14 @@ const EventSchema = z.object({
 });
 // Only what a fact needs; everything else the core says is ignored.
 const Count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const StatusSchema = z.object({ state: z.string().max(32), app: z.string().max(64).optional().catch(undefined) }).nullable().optional().catch(null);
+const StatusSchema = z.object({
+  state: z.string().max(32),
+  app: z.string().max(64).optional().catch(undefined),
+  msg: z.string().max(4_096).optional().catch(undefined),
+}).nullable().optional().catch(null);
+// Control characters and bidirectional overrides can disguise a message.
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const safeMessage = (value: string | undefined) => value?.replace(UNSAFE_CHARS, "").trim().slice(0, 200) || undefined;
 const LabelsSchema = z.record(z.string().max(128), z.string().max(1_024)).nullable().optional().catch(null);
 const TerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN),
@@ -53,18 +60,31 @@ const TerminalSchema = z.object({
   finished_ms: Count.nullable().optional().catch(null),
   turn: Count.optional().catch(0),
   labels: LabelsSchema,
+  cwd: z.string().max(4_096).optional().catch(undefined),
+  foreground: z.object({ name: z.string().max(256).optional().catch(undefined), cwd: z.string().max(4_096).optional().catch(undefined) })
+    .nullable().optional().catch(null),
 });
+/** The last two parts of a folder, for display. */
+function shortFolder(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const parts = path.replace(UNSAFE_CHARS, "").split("/").filter(Boolean);
+  const short = parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : `/${parts.join("/")}`;
+  return short.slice(0, 96) || undefined;
+}
 
 interface Tracked {
   title: string | null;
   name: string | null;
   labels: Record<string, string>;
   status: LocalTerminalFact["status"];
+  message: string | undefined;
   app: string | undefined;
   statusAt: number | null;
   turn: number;
   finished: boolean;
   parent: string | undefined;
+  program: string | undefined;
+  folder: string | undefined;
 }
 
 /** `vps/t4` with parent `t2` means `vps/t2`: a parent is always on its child's machine. */
@@ -85,11 +105,14 @@ function trackedFrom(raw: unknown): [string, Tracked] | null {
     name: terminal.name ?? null,
     labels: terminal.labels ?? {},
     status: finished || !status.success ? null : status.data,
+    message: finished || !status.success ? undefined : safeMessage(terminal.status?.msg),
     app: terminal.status?.app,
     statusAt: (finished ? terminal.finished_ms : terminal.status_ms) ?? terminal.created_ms ?? null,
     turn: terminal.turn ?? 0,
     finished,
     parent: parent && LOCAL_TERMINAL_ADDRESS_PATTERN.test(parent) ? parent : undefined,
+    program: finished ? undefined : terminal.foreground?.name?.replace(UNSAFE_CHARS, "").slice(0, 64) || undefined,
+    folder: shortFolder(terminal.foreground?.cwd ?? terminal.cwd),
   }];
 }
 
@@ -101,6 +124,7 @@ function factFrom(id: string, tracked: Tracked): LocalTerminalFact {
     id,
     title: safeTerminalTitle(tracked.labels[TERMINAL_TITLE_LABEL], tracked.title, tracked.name),
     status: tracked.status,
+    ...(tracked.status && tracked.message ? { statusMessage: tracked.message } : {}),
     statusAt: tracked.statusAt,
     turn: tracked.turn,
     seenTurn: Number.isSafeInteger(seen) && seen >= 0 ? seen : null,
@@ -108,6 +132,8 @@ function factFrom(id: string, tracked: Tracked): LocalTerminalFact {
     ...(tracked.finished ? { finishedSeen: tracked.labels[FINISHED_SEEN_LABEL] === "1" } : {}),
     ...(tracked.parent ? { parent: tracked.parent } : {}),
     ...(agent ? { agent } : {}),
+    ...(tracked.program ? { program: tracked.program } : {}),
+    ...(tracked.folder ? { folder: tracked.folder } : {}),
   };
 }
 
@@ -174,7 +200,10 @@ export function createLocalTerminalEvents(options: LocalTerminalEventsOptions) {
       case "status": {
         const status = StatusSchema.parse(data.status);
         const word = LocalTerminalStatusSchema.safeParse(status?.state);
-        terminals.set(id, { ...tracked, status: word.success ? word.data : null, app: status?.app ?? tracked.app, statusAt: now() });
+        terminals.set(id, {
+          ...tracked, status: word.success ? word.data : null, message: word.success ? safeMessage(status?.msg) : undefined,
+          app: status?.app ?? tracked.app, statusAt: now(),
+        });
         return;
       }
       case "turn": {
@@ -190,9 +219,18 @@ export function createLocalTerminalEvents(options: LocalTerminalEventsOptions) {
         terminals.set(id, { ...tracked, title });
         return;
       }
+      case "foreground": {
+        const foreground = z.object({ name: z.string().max(256).optional(), cwd: z.string().max(4_096).optional() }).catch({}).parse(data);
+        terminals.set(id, {
+          ...tracked,
+          program: foreground.name?.replace(UNSAFE_CHARS, "").slice(0, 64) || tracked.program,
+          folder: shortFolder(foreground.cwd) ?? tracked.folder,
+        });
+        return;
+      }
       case "finished": {
         const at = Count.nullable().catch(null).parse(data.finished_ms);
-        terminals.set(id, { ...tracked, finished: true, status: null, statusAt: at ?? now() });
+        terminals.set(id, { ...tracked, finished: true, status: null, message: undefined, program: undefined, statusAt: at ?? now() });
         return;
       }
       default:

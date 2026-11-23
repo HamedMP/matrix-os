@@ -340,3 +340,57 @@ describe("createAppMenuTemplate", () => {
     expect(openThirdPartyNotices).toHaveBeenCalledTimes(1);
   });
 });
+
+// Spec 2706: Herdr's shortcuts exist only in the Terminal window's menu, and
+// reach that window as commands; the main window keeps its own keys.
+describe("Terminal window menu", () => {
+  type Item = { label?: string; accelerator?: string; click?: () => void; submenu?: Item[]; visible?: boolean };
+  const flat = (items: Item[]): Item[] => items.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? flat(item.submenu) : [])]);
+  const build = (platform: NodeJS.Platform, terminal: boolean) => {
+    const command = vi.fn();
+    const close = vi.fn();
+    const send = vi.fn();
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS", isPackaged: true, platform, openExternal: vi.fn(), send, adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(),
+      shortcuts: resolveShortcuts(null, platform === "darwin" ? "mac" : "other"), runShortcut: vi.fn(),
+      ...(terminal ? { terminalWindow: { command, close } } : {}),
+    });
+    return { items: flat(template as Item[]), command, close, send };
+  };
+
+  it("maps Herdr's keys to Terminal window commands", () => {
+    const { items, command, close } = build("darwin", true);
+    const byKey = (accelerator: string) => items.filter((item) => item.accelerator === accelerator);
+    const expected: Array<[string, unknown]> = [
+      ["Cmd+N", { command: "new-terminal" }], ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }],
+      ["Cmd+Shift+P", { command: "picker" }], ["F2", { command: "rename" }],
+      ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
+      ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next" }], ["Ctrl+Shift+Tab", { command: "previous" }],
+      ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
+    ];
+    for (const [accelerator, sent] of expected) {
+      const matches = byKey(accelerator);
+      expect(matches, accelerator).toHaveLength(1);
+      matches[0]!.click!();
+      expect(command, accelerator).toHaveBeenLastCalledWith(sent);
+    }
+    byKey("Cmd+Alt+W")[0]!.click!();
+    expect(close).toHaveBeenCalled();
+    // Main-window shortcuts that would collide are not in this menu, the Apps menu included.
+    expect(items.some((item) => item.label === "Go to File" || item.label === "Command Palette" || item.label === "Next App")).toBe(false);
+  });
+
+  it("keeps the main window's menu free of Terminal window shortcuts", () => {
+    const { items } = build("darwin", false);
+    expect(items.some((item) => item.accelerator === "Cmd+B" || item.accelerator === "F2")).toBe(false);
+    expect(items.find((item) => item.accelerator === "Cmd+P")?.label).toBe("Go to File");
+    expect(items.find((item) => item.accelerator === "Ctrl+Tab")?.label).toBe("Next App");
+  });
+
+  it("leaves Ctrl to the shell on Linux by using the Super key", () => {
+    const { items } = build("linux", true);
+    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Super+N");
+    expect(items.some((item) => item.accelerator?.startsWith("Cmd+"))).toBe(false);
+  });
+});

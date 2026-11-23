@@ -2,19 +2,25 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Records each mount of a terminal view, for tests that care about remounting.
 let mountLog: string[] | null = null;
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: function TerminalViewStub({ sessionName }: { sessionName: string }) {
+  default: function TerminalViewStub({ sessionName, findRequest }: { sessionName: string; findRequest?: number }) {
     React.useEffect(() => { mountLog?.push(sessionName); }, [sessionName]);
-    return <div data-testid="terminal-view">{sessionName}</div>;
+    return <div data-testid="terminal-view" data-find={findRequest ?? 0}>{sessionName}</div>;
   },
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
 import { createLocalTerminalSocket, inputChunkEnd } from "@desktop/renderer/src/features/terminal-window/local-terminal-socket";
+
+beforeAll(() => {
+  // jsdom has no modal dialogs.
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
+});
 
 type Listener = (payload: unknown) => void;
 function installOperator(local: Record<string, (payload: never) => unknown>) {
@@ -23,6 +29,7 @@ function installOperator(local: Record<string, (payload: never) => unknown>) {
     if (channel === "auth:status" && !local[channel]) return { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
     if (channel === "state:get") return { value: null };
     if (channel === "app:get-zoom") return { factor: 1 };
+    if (channel === "local-terminal:seen" && !local[channel]) return { ok: true };
     const handler = local[channel];
     if (!handler) throw new Error(`unexpected channel ${channel}`);
     return handler(payload as never);
@@ -34,153 +41,185 @@ function installOperator(local: Record<string, (payload: never) => unknown>) {
       return () => listeners.set(channel, (listeners.get(channel) ?? []).filter((entry) => entry !== callback));
     },
   };
-  return { invoke, emit: (channel: string, payload: unknown) => { for (const listener of [...(listeners.get(channel) ?? [])]) listener(payload); },
-    listening: (channel: string) => (listeners.get(channel) ?? []).length };
+  const emit = (channel: string, payload: unknown) => { for (const listener of [...(listeners.get(channel) ?? [])]) listener(payload); };
+  return { invoke, emit, listening: (channel: string) => (listeners.get(channel) ?? []).length,
+    /** The trusted core pushes new facts, as herdr-core's events change. */
+    push: (terminals: unknown[]) => act(() => emit("local-terminal:facts", { terminals })),
+    command: (command: Record<string, unknown>) => act(() => emit("terminal-window:command", command)) };
+}
+
+type Fact = { id: string; title: string; status: string | null; statusAt: number | null; turn: number; seenTurn: number | null; finished: boolean; finishedSeen?: boolean; agent?: string };
+const fact = (id: string, title: string, extra: Partial<Fact> = {}): Fact => ({
+  id, title, status: null, statusAt: 1_000, turn: 0, seenTurn: null, finished: false, ...extra,
+});
+const watching = (terminals: Fact[] | (() => Fact[])) => () => ({ status: "ready", terminals: typeof terminals === "function" ? terminals() : terminals });
+const sidebar = () => screen.getByRole("navigation", { name: "Terminals" });
+const row = (name: string | RegExp) => within(sidebar()).getByRole("button", { name });
+const findRow = async (name: string | RegExp) => within(await screen.findByRole("navigation", { name: "Terminals" })).findByRole("button", { name });
+
+async function startShell(agent = "Shell") {
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: agent }));
 }
 
 describe("This Computer terminals", () => {
-  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); window.localStorage.clear(); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-  it("lists local terminals while signed out and opens one", async () => {
-    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }, { id: "t2", title: "vim notes", status: null }] }) });
+  it("lists local terminals while signed out, opens one and marks it seen", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching([fact("t1", "zsh"), fact("t2", "vim notes", { status: "done", turn: 2 })]) });
     render(<TerminalWindowApp />);
-    const list = await screen.findByRole("list", { name: "This Computer terminals" });
+    fireEvent.click(await findRow(/vim notes/));
     expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
-    fireEvent.click(within(list).getByRole("button", { name: "vim notes" }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t2");
-    expect(within(list).getByRole("button", { name: "vim notes" }).getAttribute("aria-current")).toBe("true");
+    expect(row(/vim notes/).getAttribute("aria-current")).toBe("true");
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "t2" });
+    // Status comes from pushed facts; nothing lists on a timer.
+    expect(operator.invoke.mock.calls.some(([channel]) => channel === "local-terminal:list")).toBe(false);
   });
 
   it("starts a terminal and opens it", async () => {
-    const terminals = [] as Array<{ id: string; title: string; status: null }>;
+    const terminals: Fact[] = [];
     const operator = installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
-      "local-terminal:create": () => { terminals.push({ id: "t7", title: "Terminal", status: null }); return { status: "ready", id: "t7" }; },
+      "local-terminal:watch": watching(() => terminals),
+      "local-terminal:create": () => { terminals.push(fact("t7", "Terminal")); return { status: "ready", id: "t7" }; },
     });
     render(<TerminalWindowApp />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
+    await startShell();
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t7");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 });
   });
 
   it("does not take the pane from a terminal the user opened while a new one was starting", async () => {
-    const terminals = [{ id: "t1", title: "zsh", status: null }];
     let finishCreate!: (value: unknown) => void;
     installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
+      "local-terminal:watch": watching([fact("t1", "zsh")]),
       "local-terminal:create": () => new Promise((resolve) => { finishCreate = resolve; }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
+    await startShell();
     await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
-    fireEvent.click(screen.getByRole("button", { name: "zsh" }));
+    fireEvent.click(row(/zsh/));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
-    terminals.push({ id: "t2", title: "Terminal", status: null });
     await act(async () => { finishCreate({ status: "ready", id: "t2" }); });
-    // The new terminal is listed, but the one the user chose stays open.
-    expect(await screen.findByRole("button", { name: "Terminal" })).toBeTruthy();
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
   });
 
-  it("ends a terminal, closes its view and refreshes the list", async () => {
-    let terminals = [{ id: "t1", title: "zsh", status: null }];
+  it("asks before Cmd+W ends a running terminal, then closes its view", async () => {
     const operator = installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals }),
-      "local-terminal:kill": () => { terminals = []; return { ok: true }; },
+      "local-terminal:watch": watching([fact("t1", "zsh", { status: "working" })]),
+      "local-terminal:kill": () => ({ ok: true }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
+    fireEvent.click(await findRow(/zsh/));
     await screen.findByTestId("terminal-view");
-    fireEvent.click(screen.getByRole("button", { name: "End zsh" }));
+    operator.command({ command: "close-terminal" });
+    const dialog = await screen.findByRole("dialog", { name: "End terminal" });
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
+    fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
-    expect(await screen.findByText("No terminals yet.")).toBeTruthy();
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:kill", { id: "t1" });
+    operator.push([]);
+    expect(await screen.findByText(/No terminals yet/)).toBeTruthy();
   });
 
-  it("shows what each program reported and collects the ones that need the user", async () => {
-    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals: [
-      { id: "t1", title: "claude", status: "blocked" }, { id: "t2", title: "build", status: "working" },
-      { id: "t3", title: "tests", status: "error" }, { id: "t4", title: "shell", status: "idle" }, { id: "t5", title: "plain", status: null },
-    ] }) });
+  it("removes a finished terminal with Cmd+W without asking", async () => {
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t3", "tests", { finished: true, finishedSeen: true })]),
+      "local-terminal:remove": () => ({ ok: true }),
+    });
     render(<TerminalWindowApp />);
-    const attention = await screen.findByRole("region", { name: "Needs attention" });
-    expect(within(attention).getAllByRole("button").map((button) => button.textContent)).toEqual(["claudeThis Computer", "testsThis Computer"]);
-    const list = screen.getByRole("list", { name: "This Computer terminals" });
-    expect(within(list).getAllByText("Needs you")).toHaveLength(2);
-    expect(within(list).getByText("Working")).toBeTruthy();
-    expect(within(list).queryByText("idle")).toBeNull();
-    fireEvent.click(within(attention).getByRole("button", { name: /claude/ }));
+    fireEvent.click(await findRow(/tests/));
+    operator.command({ command: "close-terminal" });
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:remove", { id: "t3" }));
+    expect(screen.queryByRole("dialog", { name: "End terminal" })).toBeNull();
+  });
+
+  it("files terminals by what they need: Needs you, Done, Working, Idle", async () => {
+    installOperator({ "local-terminal:watch": watching([
+      fact("t1", "claude", { status: "blocked" }), fact("t2", "build", { status: "working" }),
+      fact("t3", "tests", { status: "error" }), fact("t4", "shell", { status: "idle" }), fact("t5", "plain"),
+      fact("t6", "finished", { finished: true }),
+    ]) });
+    render(<TerminalWindowApp />);
+    const needsYou = await screen.findByRole("region", { name: "Needs you" });
+    expect(within(needsYou).getAllByRole("button").filter((button) => !/^(Pin terminal|Unpin terminal|Close terminal|Open in a tab)$/.test(button.getAttribute("aria-label") ?? ""))
+      .map((button) => button.textContent?.replace(/Needs you|Error|<1m|\d+[mhd]/g, "").trim()))
+      .toEqual(expect.arrayContaining(["claude", "tests"]));
+    expect(within(screen.getByRole("region", { name: "Done" })).getByRole("button", { name: /finished/ })).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
+    // Each row's pin and close actions are left out: they are not rows.
+    const rowButtons = (region: HTMLElement) => within(region).getAllByRole("button")
+      .filter((button) => !/^(Pin terminal|Unpin terminal|Close terminal|Open in a tab)$/.test(button.getAttribute("aria-label") ?? ""));
+    expect(rowButtons(screen.getByRole("region", { name: "Idle" })).map((button) => button.textContent))
+      .toEqual(["Idle2", expect.stringContaining("shell"), expect.stringContaining("plain")]);
+    fireEvent.click(within(needsYou).getByRole("button", { name: /claude/ }));
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
   });
 
   it("lists more terminals than any fixed ceiling", async () => {
-    const terminals = Array.from({ length: 60 }, (_, index) => ({ id: `t${index + 1}`, title: `shell ${index + 1}`, status: null }));
-    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals }) });
+    installOperator({ "local-terminal:watch": watching(Array.from({ length: 60 }, (_, index) => fact(`t${index + 1}`, `shell ${index + 1}`))) });
     render(<TerminalWindowApp />);
-    const list = await screen.findByRole("list", { name: "This Computer terminals" });
-    expect(within(list).getByRole("button", { name: "shell 60" })).toBeTruthy();
-    expect(within(list).getByRole("button", { name: "New terminal" })).toBeTruthy();
+    expect(await findRow(/shell 60/)).toBeTruthy();
   });
 
   it("keeps the pane of a shell that exited, marked ended, until the user closes it", async () => {
-    let terminals = [{ id: "t1", title: "build", status: null }];
-    installOperator({ "local-terminal:list": () => ({ status: "ready", terminals }) });
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      render(<TerminalWindowApp />);
-      fireEvent.click(await screen.findByRole("button", { name: "build" }));
-      await screen.findByTestId("terminal-view");
-      // The program exits: the next listing no longer has it.
-      terminals = [];
-      await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
-      const list = screen.getByRole("list", { name: "This Computer terminals" });
-      await waitFor(() => expect(within(list).getByText("ended")).toBeTruthy());
-      expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
-      expect(screen.queryByText("No terminals yet.")).toBeNull();
-      fireEvent.click(within(list).getByRole("button", { name: "Close build" }));
-      expect(screen.queryByTestId("terminal-view")).toBeNull();
-      expect(await screen.findByText("No terminals yet.")).toBeTruthy();
-    } finally { vi.useRealTimers(); }
+    const operator = installOperator({ "local-terminal:watch": watching([fact("t1", "build")]) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/build/));
+    await screen.findByTestId("terminal-view");
+    operator.push([fact("t1", "build", { finished: true })]);
+    expect(await screen.findByText("build ended")).toBeTruthy();
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+    fireEvent.click(screen.getByRole("button", { name: "Close build" }));
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+  });
+
+  // Fault detected (Greptile, #3567): a running terminal on an added machine read as ended.
+  it("keeps a running terminal on an added machine live", async () => {
+    installOperator({ "local-terminal:watch": watching([fact("vps/t4", "deploy")]) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/deploy/));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:vps/t4");
+    expect(screen.queryByText("deploy ended")).toBeNull();
   });
 
   it("reattaches the open local terminal after a sign-in change resets attachments", async () => {
     let status: unknown = { signedIn: false, platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 0 };
     const mounts: string[] = [];
     mountLog = mounts;
+    vi.stubGlobal("WebSocket", class { readyState = 0; send() { /* none */ } close() { /* none */ } });
     const operator = installOperator({
       "auth:status": () => status,
       "runtime:list-computers": () => ({
         items: [{ handle: "neo", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", gatewayPath: "/vm/neo", capabilities: [] }],
         selectedSlot: "primary", hasMore: false, limit: 20,
       }),
-      "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
+      "local-terminal:watch": watching([fact("t1", "zsh")]),
     });
-    render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
-    await screen.findByTestId("terminal-view");
-    const before = mounts.length;
-    status = { signedIn: true, handle: "neo", userId: "user_1", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 1 };
-    act(() => operator.emit("auth:changed", { signedIn: true, handle: "neo" }));
-    // The same terminal stays open, in a pane mounted afresh so it attaches again.
-    await waitFor(() => expect(mounts.length).toBeGreaterThan(before));
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
-    mountLog = null;
+    try {
+      render(<TerminalWindowApp />);
+      fireEvent.click(await findRow(/zsh/));
+      await screen.findByTestId("terminal-view");
+      const before = mounts.length;
+      status = { signedIn: true, handle: "neo", userId: "user_1", platformHost: "https://app.matrix-os.com", runtimeSlot: "primary", authGeneration: 1 };
+      act(() => operator.emit("auth:changed", { signedIn: true, handle: "neo" }));
+      await waitFor(() => expect(mounts.length).toBeGreaterThan(before));
+      expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+    } finally { mountLog = null; vi.unstubAllGlobals(); }
   });
 
   it("keeps a local terminal open when a cloud terminal finishes being created afterwards", async () => {
     const WS = `tws_${"a".repeat(32)}`;
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     let finishCreate!: (response: Response) => void;
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       const path = new URL(String(url)).pathname;
       if (init?.method === "POST" && path.endsWith("/ensure")) return json({ workspace: { id: WS } });
       if (init?.method === "POST") return new Promise<Response>((resolve) => { finishCreate = resolve; });
       return json({ workspaces: [{ id: WS, scope: "main", tabs: [] }] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    }));
+    vi.stubGlobal("WebSocket", class { readyState = 0; send() { /* none */ } close() { /* none */ } });
     const mounts: string[] = [];
     mountLog = mounts;
     try {
@@ -190,58 +229,50 @@ describe("This Computer terminals", () => {
           items: [{ handle: "neo", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", gatewayPath: "/vm/neo", capabilities: [] }],
           selectedSlot: "primary", hasMore: false, limit: 20,
         }),
-        "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
+        "local-terminal:watch": watching([fact("t1", "zsh")]),
       });
       render(<TerminalWindowApp />);
-      fireEvent.click(await screen.findByRole("button", { name: /Main Computer/ }));
-      const cloud = await screen.findByRole("list", { name: "Main Computer terminals" });
-      fireEvent.click(within(cloud).getByRole("button", { name: "New terminal" }));
+      const create = await screen.findByRole("button", { name: "New terminal on neo" });
+      fireEvent.click(create);
       await waitFor(() => expect(finishCreate).toBeTypeOf("function"));
-      // While the computer is still creating it, the user opens a local terminal.
-      fireEvent.click(screen.getByRole("button", { name: "zsh" }));
+      fireEvent.click(row(/zsh/));
       expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t1");
       const mounted = mounts.length;
       await act(async () => { finishCreate(json({ tab: { id: `tt_${"2".repeat(32)}`, name: "Terminal" } }, 201)); });
-      await waitFor(() => expect(within(cloud).getByRole("button", { name: "New terminal" }).hasAttribute("disabled")).toBe(false));
-      // Still the local terminal, and its pane was not torn down underneath it.
+      await waitFor(() => expect(create.hasAttribute("disabled")).toBe(false));
       expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
       expect(mounts.length).toBe(mounted);
     } finally { mountLog = null; vi.unstubAllGlobals(); }
   });
 
   it("keeps the terminal on screen and says so when ending it did not work", async () => {
-    installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t1", "zsh", { status: "working" })]),
       "local-terminal:kill": () => ({ ok: false }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
+    fireEvent.click(await findRow(/zsh/));
     await screen.findByTestId("terminal-view");
-    fireEvent.click(screen.getByRole("button", { name: "End zsh" }));
+    operator.command({ command: "close-terminal" });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
     expect(await screen.findByText("Couldn't end that terminal. Try again.")).toBeTruthy();
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
-    expect(screen.getByRole("button", { name: "zsh" })).toBeTruthy();
   });
 
   it("keeps the listed terminals when starting another one fails", async () => {
-    installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [{ id: "t1", title: "zsh", status: null }] }),
-      "local-terminal:create": () => ({ status: "unavailable" }),
-    });
+    installOperator({ "local-terminal:watch": watching([fact("t1", "zsh")]), "local-terminal:create": () => ({ status: "unavailable" }) });
     render(<TerminalWindowApp />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
+    await startShell();
     expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "zsh" })).toBeTruthy();
+    expect(row(/zsh/)).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 
   it("tells a build without local terminals apart from local terminals that failed to start", async () => {
     let listing: unknown = { status: "not-installed" };
-    installOperator({ "local-terminal:list": () => listing });
+    installOperator({ "local-terminal:watch": () => listing });
     const first = render(<TerminalWindowApp />);
     expect(await screen.findByText("Local terminals are not included in this build.")).toBeTruthy();
-    // Nothing to retry: this build has no runtime to start.
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     first.unmount();
 
@@ -250,12 +281,12 @@ describe("This Computer terminals", () => {
     expect(await screen.findByText("Local terminals couldn't start.")).toBeTruthy();
     listing = { status: "ready", terminals: [] };
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("No terminals yet.")).toBeTruthy();
+    expect(await screen.findByText(/No terminals yet/)).toBeTruthy();
   });
 
   it("explains a version mismatch and a too-fast start without offering what it cannot do", async () => {
     let listing: unknown = { status: "version-mismatch" };
-    installOperator({ "local-terminal:list": () => listing, "local-terminal:create": () => ({ status: "rate-limited" }) });
+    installOperator({ "local-terminal:watch": () => listing, "local-terminal:create": () => ({ status: "rate-limited" }) });
     const second = render(<TerminalWindowApp />);
     expect(await screen.findByText(/started by a different version/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New terminal" })).toBeNull();
@@ -263,62 +294,172 @@ describe("This Computer terminals", () => {
 
     listing = { status: "ready", terminals: [] };
     render(<TerminalWindowApp />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Shell" }));
+    await startShell();
     expect(await screen.findByText("Too many terminals started at once. Try again in a moment.")).toBeTruthy();
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 });
 
 describe("This Computer agents and names", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); window.localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
   // Fault detected: Electron Desktop cannot start a coding agent or name a terminal,
   // unlike Web Desktop and Herdr's own + menu.
-  it("starts a chosen agent and renames a terminal", async () => {
-    const terminals = [{ id: "t1", title: "zsh", status: null }];
+  it("starts a chosen agent and renames a terminal with F2", async () => {
     const operator = installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
-      "local-terminal:create": () => { terminals.push({ id: "t9", title: "claude", status: "working" }); return { status: "ready", id: "t9" }; },
-      "local-terminal:rename": () => { terminals[0] = { ...terminals[0]!, title: "review" }; return { ok: true }; },
+      "local-terminal:watch": watching([fact("t1", "zsh")]),
+      "local-terminal:create": () => ({ status: "ready", id: "t9" }),
+      "local-terminal:rename": () => ({ ok: true }),
     });
     render(<TerminalWindowApp />);
-    fireEvent.pointerDown(await screen.findByRole("button", { name: "New terminal" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Claude Code" }));
+    await startShell("Claude Code");
     expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t9");
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30, agent: "claude" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Rename zsh" }));
-    const input = screen.getByRole("textbox", { name: "Terminal name" });
-    fireEvent.change(input, { target: { value: "review" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByRole("button", { name: "review" })).toBeTruthy();
-    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:rename", { id: "t1", name: "review" });
-    expect(operator.invoke.mock.calls.filter(([channel]) => channel === "local-terminal:rename")).toHaveLength(1);
+    fireEvent.click(row(/zsh/));
+    operator.command({ command: "rename" });
+    const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Terminal name" }), { target: { value: "review" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:rename", { id: "t1", name: "review" }));
+    operator.push([fact("t1", "review")]);
+    expect(await findRow(/review/)).toBeTruthy();
   });
 
   // Fault detected (review of #3300): the open pane kept the old name after a rename.
   it("keeps the new name on the open terminal after it ends", async () => {
-    let terminals = [{ id: "t1", title: "zsh", status: null as null }];
-    installOperator({
-      "local-terminal:list": () => ({ status: "ready", terminals: [...terminals] }),
-      "local-terminal:rename": () => { terminals = [{ ...terminals[0]!, title: "review" }]; return { ok: true }; },
-    });
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      render(<TerminalWindowApp />);
-      fireEvent.click(await screen.findByRole("button", { name: "zsh" }));
-      fireEvent.click(screen.getByRole("button", { name: "Rename zsh" }));
-      const input = screen.getByRole("textbox", { name: "Terminal name" });
-      fireEvent.change(input, { target: { value: "review" } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      expect(await screen.findByRole("button", { name: "review" })).toBeTruthy();
-      // The program exits: the next listing no longer has it.
-      terminals = [];
-      await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
-      const list = screen.getByRole("list", { name: "This Computer terminals" });
-      await waitFor(() => expect(within(list).getByText("ended")).toBeTruthy());
-      expect(within(list).getByText("review")).toBeTruthy();
-      expect(within(list).queryByText("zsh")).toBeNull();
-    } finally { vi.useRealTimers(); }
+    const operator = installOperator({ "local-terminal:watch": watching([fact("t1", "zsh")]), "local-terminal:rename": () => ({ ok: true }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/zsh/));
+    operator.command({ command: "rename" });
+    const dialog = await screen.findByRole("dialog", { name: "Rename terminal" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Terminal name" }), { target: { value: "review" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:rename", { id: "t1", name: "review" }));
+    operator.push([]);
+    expect(await screen.findByText("review ended")).toBeTruthy();
+  });
+});
+
+describe("Terminal window shortcuts", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); window.localStorage.clear(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  const three = [fact("t1", "alpha", { statusAt: 3_000 }), fact("t2", "beta", { statusAt: 2_000 }), fact("t3", "gamma", { statusAt: 1_000 })];
+
+  it("selects by number and steps through terminals in sidebar order", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "select", index: 2 });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t2");
+    operator.command({ command: "next" });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
+    operator.command({ command: "next" });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+    operator.command({ command: "previous" });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
+    operator.command({ command: "select", index: 9 });
+    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t3");
+  });
+
+  it("opens the picker, filters by name and opens the match", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "picker" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to terminal" });
+    const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+    fireEvent.change(input, { target: { value: "gam" } });
+    expect(within(dialog).getAllByRole("button").map((button) => button.textContent)).toEqual([expect.stringContaining("gamma")]);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
+  });
+
+  // Fault detected (Greptile, #3567): pinned terminals led the list, but Cmd+] and the picker ignored them.
+  it("steps through terminals in the shown order, pinned first", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    fireEvent.click(within(screen.getByRole("group", { name: "gamma actions" })).getByRole("button", { name: "Pin terminal" }));
+    expect(screen.getByRole("region", { name: "Pinned" })).toBeTruthy();
+    operator.command({ command: "next" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t3");
+  });
+
+  // Fault detected (Greptile, #3567): when live updates shrank the matches, the highlight fell off the list.
+  it("keeps the picker's highlight on a remaining match when matches shrink", async () => {
+    let facts = three;
+    const operator = installOperator({ "local-terminal:watch": watching(() => facts) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "picker" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to terminal" });
+    const input = within(dialog).getByRole("textbox", { name: "Terminal name" });
+    for (let step = 0; step < 3; step += 1) fireEvent.keyDown(input, { key: "ArrowDown" });
+    facts = three.slice(0, 2);
+    operator.push(facts);
+    await waitFor(() => expect(within(dialog).getAllByRole("button").filter((button) => button.getAttribute("aria-current") === "true")).toHaveLength(1));
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((await screen.findByTestId("terminal-view")).textContent).toMatch(/local:t[12]/);
+  });
+
+  // Fault detected (Greptile, #3567): ArrowDown moved the highlight below the visible list.
+  it("keeps the picker's highlighted match in view", async () => {
+    const scrolled: string[] = [];
+    const scrollIntoView = vi.fn(function (this: HTMLElement) { scrolled.push(this.textContent ?? ""); });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    operator.command({ command: "picker" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to terminal" });
+    fireEvent.keyDown(within(dialog).getByRole("textbox", { name: "Terminal name" }), { key: "ArrowDown" });
+    expect(scrolled.at(-1)).toContain(within(dialog).getAllByRole("button")[1]!.textContent!.slice(0, 4));
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  });
+
+  it("toggles the numbered rail, remembers it, and asks the terminal on screen to find", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three) });
+    const first = render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/alpha/));
+    operator.command({ command: "toggle-sidebar" });
+    expect(await screen.findByRole("button", { name: "Show sidebar" })).toBeTruthy();
+    expect(within(sidebar()).getByRole("button", { name: "alpha" }).textContent).toBe("1");
+    operator.command({ command: "find" });
+    expect(screen.getByTestId("terminal-view").getAttribute("data-find")).toBe("1");
+    first.unmount();
+    render(<TerminalWindowApp />);
+    expect(await screen.findByRole("button", { name: "Show sidebar" })).toBeTruthy();
+  });
+
+  // Hamed, 2026-11-22 (Herdr layout): a machine opened as its own tab shows only its agents.
+  it("opens a machine as its own tab, groups by machine, and turns into the rail below 160 px", async () => {
+    installOperator({ "local-terminal:watch": watching(three) });
+    render(<TerminalWindowApp />);
+    await findRow(/alpha/);
+    const machines = screen.getByRole("list", { name: "Machines" });
+    // This Computer is a space of its own.
+    fireEvent.click(document.querySelector<HTMLElement>('li[data-space="local"] button[aria-pressed]')!);
+    expect(screen.getByRole("button", { name: /Show all machines \(now This Computer\)/ })).toBeTruthy();
+    expect(within(sidebar()).getByRole("button", { name: /alpha/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Show all machines/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Group by machine" }));
+    expect(screen.getByRole("region", { name: "This Computer" })).toBeTruthy();
+    const edge = screen.getByRole("separator", { name: "Resize sidebar" });
+    for (let step = 0; step < 8; step += 1) fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(await screen.findByRole("button", { name: "Show sidebar" })).toBeTruthy();
+  });
+
+  it("starts a new terminal on the selected terminal's machine", async () => {
+    const operator = installOperator({ "local-terminal:watch": watching(three), "local-terminal:create": () => ({ status: "ready", id: "t8" }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/alpha/));
+    operator.command({ command: "new-terminal" });
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:create", { cols: 100, rows: 30 }));
+    expect((await screen.findByTestId("terminal-view")).textContent).toBe("local:t8");
   });
 });
 

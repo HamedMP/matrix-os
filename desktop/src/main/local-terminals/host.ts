@@ -264,6 +264,12 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       await core.call("terminal.label", { terminal: id, labels });
     },
 
+    /** Removes a finished terminal from the list; the core refuses a live one. */
+    async remove(id: string): Promise<void> {
+      const core = await ensure();
+      await core.call("terminal.rm", { terminal: id });
+    },
+
     kill: sessions.kill,
     rename: sessions.rename,
     put: sessions.put,

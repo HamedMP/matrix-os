@@ -56,6 +56,7 @@ export const LocalTerminalFactSchema = z.strictObject({
   id: LocalTerminalAddressSchema,
   title: z.string().max(256),
   status: LocalTerminalStatusSchema.nullable(),
+  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
   statusAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
   turn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   seenTurn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
@@ -63,6 +64,9 @@ export const LocalTerminalFactSchema = z.strictObject({
   finishedSeen: z.boolean().optional(),
   parent: LocalTerminalAddressSchema.optional(),
   agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  /** What runs in it now and where (sanitized, short), for the row's second line. */
+  program: z.string().max(64).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
+  folder: z.string().max(96).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
 });
 export type LocalTerminalFact = z.infer<typeof LocalTerminalFactSchema>;
 const FactsSchema = z.array(LocalTerminalFactSchema).max(LOCAL_TERMINAL_FACTS_MAX);
@@ -100,13 +104,16 @@ export const LOCAL_TERMINAL_INVOKE = {
       z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
     ]),
   },
-  "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalIdSchema }), response: Ok },
-  "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalIdSchema, name: LocalTerminalNameSchema }), response: Ok },
+  // Terminals here (`t7`) and on machines this core added (`vps/t7`) take the same actions.
+  "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
+  // Removes a finished terminal (herdr-core `terminal.rm`); a live one is refused by the core.
+  "local-terminal:remove": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
+  "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalAddressSchema, name: LocalTerminalNameSchema }), response: Ok },
   // Writes a pasted file beside the terminal (herdr-core `terminal.put`) and
   // returns where it landed, for the window to paste that path.
   "local-terminal:put": {
     request: z.strictObject({
-      id: LocalTerminalIdSchema,
+      id: LocalTerminalAddressSchema,
       name: PutFileNameSchema,
       dataBase64: z.string().max(PUT_BASE64_MAX).regex(/^(?:[A-Za-z0-9+/]+={0,2})?$/), // "" is a zero-byte file
     }),
@@ -116,7 +123,7 @@ export const LOCAL_TERMINAL_INVOKE = {
     ]),
   },
   "local-terminal:attach": {
-    request: z.strictObject({ id: LocalTerminalIdSchema, ...Size }),
+    request: z.strictObject({ id: LocalTerminalAddressSchema, ...Size }),
     response: z.union([
       z.strictObject({ ok: z.literal(true), attachId: AttachIdSchema }),
       z.strictObject({ ok: z.literal(false) }),

@@ -48,6 +48,10 @@ export function registerLocalTerminalIpc(
       try { await host.kill(id); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:kill", error); return { ok: false }; }
     },
+    "local-terminal:remove": async ({ id }) => {
+      try { await host.remove(id); return { ok: true }; }
+      catch (error: unknown) { logFailure("local-terminal:remove", error); return { ok: false }; }
+    },
     "local-terminal:rename": async ({ id, name }) => {
       try { await host.rename(id, name); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:rename", error); return { ok: false }; }

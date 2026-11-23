@@ -7,6 +7,7 @@ import {
   classifyTerminalPointerEvent,
 } from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -42,6 +43,7 @@ import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
 import { useTerminalShortcutClaims } from "./use-terminal-shortcut-claims";
 import { NativeTerminalClipboardError, readNativeTerminalClipboardFiles } from "./terminal-native-clipboard";
+import { TerminalFindBar } from "./TerminalFindBar";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
@@ -112,6 +114,8 @@ interface TerminalViewProps {
   visualScale?: number;
   onRecreate?: () => void;
   controlsHost?: HTMLElement | null;
+  /** Changes each time the person asks to find text (Cmd+F in the Terminal window). */
+  findRequest?: number;
 }
 
 type ClipboardFeedback = {
@@ -154,6 +158,7 @@ export default function TerminalView({
   visualScale = 1,
   onRecreate,
   controlsHost,
+  findRequest = 0,
 }: TerminalViewProps) {
   const api = useConnection((state) => state.api);
   const pasteApi = sessionName.startsWith("local:") ? null : api;
@@ -165,6 +170,10 @@ export default function TerminalView({
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const [search, setSearch] = useState<SearchAddon | null>(null);
+  // A request made before this view mounted was for another terminal.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- seeds the last handled request; later requests are compared against it
+  const [findOpenFor, setFindOpenFor] = useState(findRequest);
   const nativeHistoryRef = useRef<ReturnType<typeof createTerminalNativeHistory> | null>(null);
   const nativeHistoryWriterRef = useRef(false);
   const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
@@ -279,6 +288,9 @@ export default function TerminalView({
     const serialize = new SerializeAddon();
     terminal.loadAddon(fit);
     terminal.loadAddon(serialize);
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(searchAddon);
+    setSearch(searchAddon);
     terminal.open(host);
     confirmedSelectionRef.current = "";
     confirmedDomSelectionRef.current = "";
@@ -533,6 +545,7 @@ export default function TerminalView({
       if (manager.activeSessionName === sessionName) manager.detachActive();
       terminal.dispose();
       termRef.current = null;
+      setSearch(null);
     };
   }, [copyTerminalTextWithFeedback, sessionName]);
 
@@ -812,6 +825,8 @@ export default function TerminalView({
     return null;
   })();
   const clipboardError = clipboardFeedback?.message ?? null;
+  // A find request opens the bar on the terminal that is on screen.
+  const findOpen = active && findRequest > 0 && findOpenFor !== findRequest;
 
   return (
     <div
@@ -831,6 +846,9 @@ export default function TerminalView({
         data-terminal-viewport
         data-selectable
       />
+      {findOpen && search ? (
+        <TerminalFindBar search={search} request={findRequest} onClose={() => { setFindOpenFor(findRequest); termRef.current?.focus(); }} />
+      ) : null}
       {clipboardError ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-3" aria-live="polite">
           <span className="rounded-md px-3 py-1.5 text-xs" style={{ background: "var(--danger-muted)", color: "var(--danger-text)" }}>

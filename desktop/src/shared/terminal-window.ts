@@ -21,9 +21,31 @@ export const TERMINAL_WINDOW_MAX_COMPUTERS = 20;
 const Empty = z.object({}).strict();
 const Ok = z.object({ ok: z.boolean() }).strict();
 
+/**
+ * Herdr's Terminal window shortcuts (spec 2706), delivered from menu
+ * accelerators that exist only while the Terminal window has focus.
+ */
+export const TERMINAL_WINDOW_COMMANDS = [
+  "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
+  "space",
+] as const;
+export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
+export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
+  z.strictObject({ command: z.literal("select"), index: z.number().int().min(1).max(9) }),
+  // Ctrl+1…9 switches to that space in the sidebar's order; Ctrl+0 is All.
+  z.strictObject({ command: z.literal("space"), index: z.number().int().min(0).max(9) }),
+  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space"]) }),
+]);
+export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
+
+export const TERMINAL_WINDOW_EVENTS = {
+  "terminal-window:command": TerminalWindowCommandSchema,
+} as const;
+
 export const TERMINAL_WINDOW_INVOKE = {
   "terminal-window:open": { request: Empty, response: Ok },
-  "terminal-window:focus-main": { request: Empty, response: Ok },
+  // `to: "settings"` also opens Settings there (the sidebar's Settings button).
+  "terminal-window:focus-main": { request: z.strictObject({ to: z.literal("settings").optional() }), response: Ok },
 } as const;
 
 /** Channels only the Terminal window may call. */
@@ -48,7 +70,7 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
 
 /** Events the Terminal window may subscribe to. */
 export const TERMINAL_WINDOW_EVENT_CHANNELS = [
-  "auth:changed", "window:focus-changed", "shortcuts:changed", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+  "auth:changed", "window:focus-changed", "shortcuts:changed", "terminal-window:command", ...LOCAL_TERMINAL_EVENT_CHANNELS,
 ] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";
