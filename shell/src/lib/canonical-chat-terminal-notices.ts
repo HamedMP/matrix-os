@@ -1,4 +1,4 @@
-import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse, type CanonicalChatSafeError, type CanonicalProviderDriverKind, CanonicalChatSafeErrorSchema, CanonicalProviderDriverKindSchema } from "@matrix-os/contracts";
 import { routineReceiptMessage } from "@matrix-os/ui";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
@@ -84,10 +84,40 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     messages.splice(nextIndex < 0 ? messages.length : nextIndex, 0, {
       id: notice.id, role: "system", requestId: notice.runId,
       content: notice.text, timestamp: notice.timestamp,
-      ...(notice.code ? { metadata: { canonicalFailureCode: notice.code } } : {}),
+      ...(notice.failed ? { metadata: {
+        ...(notice.code ? { canonicalFailureCode: notice.code } : {}),
+        canonicalFailure: {
+          ...(notice.error ? { error: notice.error } : {}), turnId: notice.turnId,
+          instanceId: notice.instanceId, driverKind: notice.driverKind, allowRetry: notice.latestTurn,
+        } satisfies CanonicalFailureNoticeInput,
+      } } : {}),
     });
   }
   return messages;
+}
+
+/** Inputs a renderer needs to present a failed Run with the shared failure derivation. */
+export type CanonicalFailureNoticeInput = {
+  error?: CanonicalChatSafeError;
+  turnId: string;
+  instanceId: string;
+  driverKind: CanonicalProviderDriverKind;
+  /** Retry is offered only for the latest turn, as on Electron Desktop. */
+  allowRetry: boolean;
+};
+
+/** Reads the projected failure inputs back; anything malformed renders as the generic failure. */
+export function canonicalFailureInput(message: ChatMessage): CanonicalFailureNoticeInput | null {
+  const value = message.metadata?.canonicalFailure;
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Partial<Record<keyof CanonicalFailureNoticeInput, unknown>>;
+  const driverKind = CanonicalProviderDriverKindSchema.safeParse(candidate.driverKind);
+  if (typeof candidate.turnId !== "string" || typeof candidate.instanceId !== "string" || !driverKind.success) return null;
+  const error = CanonicalChatSafeErrorSchema.safeParse(candidate.error);
+  return {
+    turnId: candidate.turnId, instanceId: candidate.instanceId, driverKind: driverKind.data,
+    allowRetry: candidate.allowRetry === true, ...(error.success ? { error: error.data } : {}),
+  };
 }
 
 type ActivityAnchor = { sequence?: number; time: number };

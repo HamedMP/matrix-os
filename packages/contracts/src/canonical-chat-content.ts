@@ -230,8 +230,9 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
     const runError = detail.activities.filter((activity) => activity.type === "run.error" && activity.runId === run.id)
       .reduce<(typeof detail.activities)[number] | undefined>((latest, activity) =>
         !latest || (activity.sequence ?? 0) >= (latest.sequence ?? 0) ? activity : latest, undefined);
-    return [{ id: `${run.id}:terminal`, runId: run.id,
-      ...(run.status === "failed" && runError?.type === "run.error" ? { code: runError.error.code } : {}),
+    return [{ id: `${run.id}:terminal`, runId: run.id, turnId: turn.id,
+      failed: run.status === "failed", instanceId: run.instanceId, driverKind: run.driverKind, latestTurn: index === inputs.length - 1,
+      ...(run.status === "failed" && runError?.type === "run.error" ? { code: runError.error.code, error: runError.error } : {}),
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
       text: run.status === "failed"
         ? canonicalChatSafeFailureReason(runError?.type === "run.error" ? runError.error.code : undefined,

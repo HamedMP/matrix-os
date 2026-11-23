@@ -101,6 +101,8 @@ export interface ChatState {
     decision: CanonicalChatApprovalDecision,
     browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
+  /** Retries a failed turn; resolves false when the retry was not admitted. */
+  retryTurn?: (turnId: string) => Promise<boolean>;
 }
 
 export interface ChatSubmitOptions {
