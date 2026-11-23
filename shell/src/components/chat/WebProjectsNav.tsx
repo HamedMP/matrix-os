@@ -13,13 +13,14 @@ import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageRespo
 // Same page size as the Electron Desktop project list.
 const PROJECT_CHAT_PAGE = 5;
 export type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
-export function withRenamedProjectTitles(chats: readonly FetchedProjectChat[], titles: Readonly<Record<string, string>>): FetchedProjectChat[] {
+export type ProjectTitleOverrides = Readonly<Record<string, { title: string; titleVersion: number }>>;
+export function withRenamedProjectTitles(chats: readonly FetchedProjectChat[], titles: ProjectTitleOverrides): FetchedProjectChat[] {
   return chats.map(chat => {
-    const title = titles[chat.id];
-    if (!title || title === chat.title) return chat;
-    return { ...chat, title, titleVersion: chat.titleVersion + 1,
+    const saved = titles[chat.id];
+    if (!saved || chat.titleVersion >= saved.titleVersion) return chat;
+    return { ...chat, title: saved.title, titleVersion: saved.titleVersion,
       ...(chat.canonicalRecord ? { canonicalRecord: { ...chat.canonicalRecord,
-        chat: { ...chat.canonicalRecord.chat, title, titleVersion: (chat.canonicalRecord.chat.titleVersion ?? 0) + 1 } } } : {}) };
+        chat: { ...chat.canonicalRecord.chat, title: saved.title, titleVersion: saved.titleVersion } } } : {}) };
   });
 }
 
@@ -32,7 +33,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
-  renamedTitles?: Readonly<Record<string, string>>;
+  renamedTitles?: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   /** Narrows the sidebar to one project, as on Electron Desktop. */
   onFocusProject(project: WebProject): void;
@@ -77,7 +78,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
-  renamedTitles: Readonly<Record<string, string>>;
+  renamedTitles: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   onFocusProject(project: WebProject): void;
   renderChat(chat: RenameableConversation, nowMs: number): ReactNode;

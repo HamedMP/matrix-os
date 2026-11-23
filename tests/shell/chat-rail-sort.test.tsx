@@ -62,7 +62,6 @@ it('admits newly paged IDs into the bounded manual preference without evicting t
  expect(hook.result.current.manualIds?.length).toBeLessThanOrEqual(1000);
  expect(hook.result.current.manualIds?.slice(0,2)).toEqual(['chat_0','chat_new']);
 });
-
 it('uses the displayed group order for the first manual move when automatic server order differs',()=>{
  const items=['a','b','c','d'].map((id,index)=>({id,preview:id,messageCount:1,updatedAt:4-index}));const client={};
  const hook=renderHook(()=>useWebChatRailOrder(items,client));
@@ -82,7 +81,6 @@ it('preserves untouched visible rows when the first server-page move differs fro
  act(()=>hook.result.current.move('chat','a','b',['a','b','c']));
  expect(hook.result.current.manualIds).toEqual(['b','a','c']);
 });
-
 it("keeps legacy conversations visible when an update timestamp is outside the Date range",()=> {
   const items=[{id:"invalid",preview:"Invalid date",messageCount:1,updatedAt:1e30},{id:"valid",preview:"Valid date",messageCount:1,updatedAt:2}];
   const client={};
@@ -128,8 +126,6 @@ it("rejects invalid Web moves before entering manual order",()=>{
   expect(hook.result.current.mode).toBe("manual");
   expect(hook.result.current.chats.map(item=>item.id)).toEqual(["a","b"]);
 });
-
-
 it("opens the full archive page from Search and keeps its own search bar", async () => {
   vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
   const client=clientFixture();
@@ -145,8 +141,6 @@ it("opens the full archive page from Search and keeps its own search bar", async
   expect(screen.getByRole("searchbox",{name:"Search archived chats"})).toBeTruthy();
   expect(screen.queryByRole("combobox",{name:"Search chats"})).toBeNull();
 });
-
-
 it("provides Pin and Move to project in a chat row menu", async () => {
  const pin=vi.fn(),move=vi.fn();
  render(<RenameableConversationRow conversation={{id:"chat_menu",title:"Menu chat",preview:"",messageCount:1,updatedAt:1}} active={false} mobile={false} editing={false} renamePending={false} onSelect={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPin={pin} moveItems={[{label:"Matrix OS",onSelect:move}]}/>);
@@ -156,8 +150,6 @@ it("provides Pin and Move to project in a chat row menu", async () => {
  fireEvent.keyDown(await screen.findByRole("menuitem",{name:/Move to project/}),{key:"ArrowRight"});
  fireEvent.click(await screen.findByRole("menuitem",{name:"Matrix OS",exact:true}));expect(move).toHaveBeenCalledOnce();
 });
-
-
 it("archives the selected idle chat with the displayed desktop shortcut", async () => {
   vi.stubGlobal("ResizeObserver",class {observe(){} unobserve(){} disconnect(){}});
   const client=clientFixture();vi.stubGlobal("fetch",vi.fn(async()=>Response.json(await client.catalog())));
@@ -166,7 +158,6 @@ it("archives the selected idle chat with the displayed desktop shortcut", async 
   fireEvent.keyDown(window,{key:"a",metaKey:true,shiftKey:true});
   await waitFor(()=>expect(archive).toHaveBeenCalledWith("chat_shortcut"));
 });
-
 it.each([false,true])("keeps the read-state action available in the Web row menu (unread=%s)", async unread=>{
  const toggle=vi.fn();
  render(<RenameableConversationRow conversation={{id:"chat_read",title:"Read chat",preview:"",messageCount:1,updatedAt:1,readState:{unread,version:1,latestIncomingSeq:1,readThroughSeq:0,markedUnread:unread}}} active={false} mobile={false} editing={false} renamePending={false} onSelect={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onToggleRead={toggle}/>);
@@ -197,12 +188,10 @@ it("continues search history past 500 results while retaining a bounded visible 
  expect(api.list).toHaveBeenCalledTimes(11);expect(screen.queryByText("Archive 0")).toBeNull();
  expect(screen.getAllByRole("option")).toHaveLength(500);
 },60000);
-
 it("keeps Search inside a smaller Web window instead of clipping its right edge",()=>{
  render(<WebChatSearchDialog centerX={490} bounds={{left:0,right:740}} recent={[]} projects={[]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);
  expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('424px');
 });
-
 it.each(["Projects", "Shared"])("finishes local %s filtering without an unissued chat search", scope => {
   const search = vi.fn();
   render(<WebChatSearchDialog search={search} onShared={vi.fn()} recent={[]} projects={[{id:"proj_local",slug:"local",name:"Local project"}]} onClose={vi.fn()} onSelect={vi.fn()} onProject={vi.fn()} onOpenArchived={vi.fn()}/>);

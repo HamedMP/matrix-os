@@ -53,7 +53,6 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
     expect(result.current.chatFileScope).toEqual({ kind: "project", projectId: "project_test", worktreeId: "wt_branch" });
   });
-
   it("submits the digest from the displayed active approval in Web Chat", async () => {
     const actionDigest = "e".repeat(64);
     const { snapshot } = createCanonicalChatFixture("approval_required");
@@ -287,7 +286,6 @@ describe("canonical shell Chat state", () => {
     expect(lifecycleRequests).toEqual([{ lifecycle: "archived", baseRevision: 0 }]);
     expect(result.current.conversations).toHaveLength(0);
   });
-
   it.each([true, false])("restored Search chat Undo clears selection only after archive succeeds (%s)", async succeeds => {
     let lifecycle = "archived";
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
@@ -317,7 +315,6 @@ describe("canonical shell Chat state", () => {
     expect(result.current.messages).toHaveLength(succeeds ? 0 : 1);
     expect(lifecycle).toBe(succeeds ? "archived" : "active");
   });
-
   it("archives a paged Chat absent from the initial rail list", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });
@@ -331,7 +328,6 @@ describe("canonical shell Chat state", () => {
     await act(async () => { await expect(result.current.archiveConversation?.("chat_paged")).resolves.toEqual({ chatId: "chat_paged", revision: 8 }); });
     expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining("/api/chats/chat_paged/lifecycle?"), expect.objectContaining({ method: "PATCH" }));
   });
-
   it("renames a paged Chat absent from the initial rail list", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });

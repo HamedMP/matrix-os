@@ -31,6 +31,7 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
   if (unreadOnly) query.set("unread", "true");
   // Without the import-source version the gateway strips provenance, and source filters would drop every row.
   const response = await fetch(chatImportSourceVersionUrl(`${gatewayUrl}/api/chats?${query}`), {
+    headers: { "X-Matrix-Chat-Metadata": "1" },
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
   if (!response.ok) throw new Error("ProjectChatsUnavailable");

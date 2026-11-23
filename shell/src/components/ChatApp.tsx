@@ -32,7 +32,7 @@ import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, u
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
-import { WebProjectsNav } from "./chat/WebProjectsNav";
+import { WebProjectsNav, type ProjectTitleOverrides } from "./chat/WebProjectsNav";
 import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { WebProjectHome } from "./chat/WebProjectHome";
 import { readWebProjectAgentContext } from "./chat/WebProjectAgentContext";
@@ -383,9 +383,9 @@ function ChatAppContent({
   });
   useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
     active: active && !agentsNavigation?.opened && (mobile || !archivesOpen), onRead: onUpdateReadState });
-  const [renamedTitles, setRenamedTitles] = useState<Record<string, string>>({});
-  const rememberRenamedTitle = (chatId: string, title: string) => setRenamedTitles(current =>
-    Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, title]].slice(-100)));
+  const [renamedTitles, setRenamedTitles] = useState<ProjectTitleOverrides>({});
+  const rememberRenamedTitle = (chatId: string, title: string, titleVersion: number) => setRenamedTitles(current =>
+    Object.fromEntries([...Object.entries(current).filter(([id]) => id !== chatId), [chatId, { title, titleVersion }]].slice(-100)));
   const deleteChat = useDeleteChatDialog(onDeleteConversation ? async (chatId: string) => {
     const deleted = await onDeleteConversation(chatId);
     if (deleted) setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), chatId]);
@@ -535,7 +535,7 @@ function ChatAppContent({
       if (!onRenameConversation || renamePending) return;
       setRenamePending(true);
       void onRenameConversation(conv.id, title).then((saved) => {
-        if (saved) { setEditingChat(null); rememberRenamedTitle(conv.id, title); setSearchRefreshVersion(version => version + 1); }
+        if (saved) { setEditingChat(null); rememberRenamedTitle(conv.id, title, (conv.canonicalRecord?.chat.titleVersion ?? 0) + 1); setSearchRefreshVersion(version => version + 1); }
       }).catch((error: unknown) => {
         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => setRenamePending(false));
@@ -765,7 +765,7 @@ function ChatAppContent({
                       if (!sessionId || !onRenameConversation || renamePending) return;
                       setRenamePending(true);
                       void onRenameConversation(sessionId, title).then((saved) => {
-                        if (saved) { setEditingChat(null); rememberRenamedTitle(sessionId, title); setSearchRefreshVersion(version => version + 1); }
+                        if (saved) { setEditingChat(null); rememberRenamedTitle(sessionId, title, (conversations.find(chat => chat.id === sessionId)?.canonicalRecord?.chat.titleVersion ?? 0) + 1); setSearchRefreshVersion(version => version + 1); }
                       }).catch((error: unknown) => {
                         console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
                       }).finally(() => setRenamePending(false));

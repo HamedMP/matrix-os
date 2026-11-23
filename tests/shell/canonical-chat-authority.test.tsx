@@ -343,7 +343,6 @@ it("keeps the newer project when an older move response arrives late", async () 
   await act(async () => { slow.resolve({ ...base, chat: { ...base.chat, revision: 1 }, projectId: "proj_old" }); await first; });
   expect(hook.result.current.chatProjectId).toBe("proj_new");
 });
-
 it("reports every successful bulk restore when one chat fails", async () => {
   state.client.updateLifecycle = vi.fn(async (chatId: string) => {
     if (chatId === "chat_fail") throw new Error("restore failed");

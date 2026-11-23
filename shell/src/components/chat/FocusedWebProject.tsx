@@ -6,7 +6,7 @@ import { useContext, useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
-import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus, withRenamedProjectTitles } from "./WebProjectsNav";
+import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus, withRenamedProjectTitles, type ProjectTitleOverrides } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
 import { orderWebChatRows } from "./useWebChatRailOrder";
 import { WebProjectArchiveAction } from "./WebProjectsNav";
@@ -23,7 +23,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   scopeKey?: string;
   activeChatId?: string;
   activeChatTitle?: string;
-  renamedTitles?: Readonly<Record<string, string>>;
+  renamedTitles?: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   renderRow(chat: RenameableConversation): ReactNode;
   /** ProjectChatRows supplies the ordering wrapper for this action row. */

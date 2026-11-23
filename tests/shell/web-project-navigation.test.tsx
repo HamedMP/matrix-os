@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { CanonicalChatNavigationItemSchema } from "@matrix-os/contracts";
+import { projectChatMetadata } from "../../packages/gateway/src/chat/metadata-wire";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
@@ -11,7 +12,7 @@ import { usePagedProjectChats } from "../../shell/src/components/chat/usePagedPr
 import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
-function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn(), renamedTitles = {}, loadNavigationPage }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void; renamedTitles?: Record<string, string>; loadNavigationPage?: Parameters<typeof WebProjectsNav>[0]["loadNavigationPage"] }) {
+function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn(), renamedTitles = {}, loadNavigationPage }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void; renamedTitles?: Parameters<typeof WebProjectsNav>[0]["renamedTitles"]; loadNavigationPage?: Parameters<typeof WebProjectsNav>[0]["loadNavigationPage"] }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
   return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} activeChatId={activeChatId} onSelectChat={onSelectChat}
     renamedTitles={renamedTitles} loadNavigationPage={loadNavigationPage}
@@ -126,19 +127,28 @@ it("keeps only failed project chats in bulk Undo after a partial restore", async
   expect(restore).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).toBeNull());
 });
-it("updates a visible paged project title after rename without collapsing its project", async () => {
+it.each([false, true])("shows newer saved project titles after a local rename (focused: %s)", async focused => {
+  let version = 1;
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [{ id: "proj_local", slug: "proj_local", name: "Local project" }] })));
   const loadNavigationPage = vi.fn(async () => ({ items: [{ chat: {
-    id: "chat_old", title: "Old title", titleVersion: 1, revision: 1, lifecycle: "active", attention: "none", messageCount: 0,
+    id: "chat_old", title: version === 1 ? "Old title" : version === 2 ? "New title" : "Newer window title", titleVersion: version, revision: 1, lifecycle: "active", attention: "none", messageCount: 0,
     createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z",
   }, readState: { readThroughSeq: 0, markedUnread: false } }], totalCount: 1 }));
   const props = { gatewayUrl: "https://example.test", scopeKey: "owner/runtime", loadNavigationPage: loadNavigationPage as never };
-  const view = render(<Nav {...props}/>);
-  fireEvent.click(await screen.findByRole("button", { name: "Expand Local project chats" }));
+  const target = (renamedTitles: Parameters<typeof Nav>[0]["renamedTitles"] = {}, load = props.loadNavigationPage) => focused
+    ? <FocusedWebProject project={{ id: "proj_local", slug: "proj_local", name: "Local project" }} gatewayUrl={props.gatewayUrl} chats={[]} listedChatIds={new Set()} onSelectChat={vi.fn()} onBack={vi.fn()} mobile={false} unreadOnly={false} sourceFilter="all" searchQuery="" renamedTitles={renamedTitles} loadNavigationPage={load} renderRow={chat => <button>{chat.title}</button>}/>
+    : <Nav {...props} renamedTitles={renamedTitles} loadNavigationPage={load}/>;
+  const view = render(target());
+  if (!focused) fireEvent.click(await screen.findByRole("button", { name: "Expand Local project chats" }));
   expect(await screen.findByRole("button", { name: "Old title" })).toBeTruthy();
-  view.rerender(<Nav {...props} renamedTitles={{ chat_old: "New title" }}/>);
+  const renamed = { chat_old: { title: "New title", titleVersion: 2 } };
+  view.rerender(target(renamed));
   expect(screen.getByRole("button", { name: "New title" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
+  if (!focused) expect(screen.getByRole("button", { name: "Collapse Local project chats" })).toBeTruthy();
+  for (version of [2, 3]) {
+    view.rerender(target(renamed, (() => loadNavigationPage()) as never));
+    expect(await screen.findByRole("button", { name: version === 2 ? "New title" : "Newer window title" })).toBeTruthy();
+  }
 });
 it("renders self-hosted Chat after a conversation exists without a ClerkProvider", async () => {
   document.documentElement.dataset.matrixSelfHosted = "1";
@@ -559,14 +569,14 @@ it("ignores a late project-chat page after the account changes", async () => {
   await waitFor(() => expect(screen.queryByRole("button", { name: "Old account chat" })).toBeNull());
 });
 
-it("asks for import sources so older imported project chats survive source filters", async () => {
+it("negotiates title versions and import sources for older project chats", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   // Like the gateway, drop provenance unless the client opts in with importSourceVersion=1.
-  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+  const request = vi.fn(async (url: string, init?: RequestInit) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
     : url.includes("/api/chats?projectId=proj_france")
-      ? Response.json({ items: [{ chat: { id: "chat_imported", title: "Imported chat" },
-        ...(url.includes("importSourceVersion=1") ? { importSource: { harness: "codex" } } : {}) }], nextCursor: null })
+      ? Response.json(projectChatMetadata({ items: [{ chat: { id: "chat_imported", title: "Imported chat", titleVersion: 4 },
+        ...(url.includes("importSourceVersion=1") ? { importSource: { harness: "codex" } } : {}) }], nextCursor: null }, new Headers(init?.headers).get("x-matrix-chat-metadata") === "1" ? "1" : "0"))
       : Response.json({ items: [], nextCursor: null }));
   vi.stubGlobal("fetch", request);
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
@@ -576,6 +586,8 @@ it("asks for import sources so older imported project chats survive source filte
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "Expand France chats" }));
   expect(await within(nav).findByRole("button", { name: "Imported chat" })).toBeTruthy();
+  const hook = renderHook(() => usePagedProjectChats({ id: "proj_france", slug: "proj_france", name: "France" }, "https://example.test", false, true));
+  await waitFor(() => expect(hook.result.current.fetched[0]?.titleVersion).toBe(4));
 });
 
 it("does not bring back a project Chat deleted while its project is open", async () => {
