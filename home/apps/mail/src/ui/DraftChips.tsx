@@ -22,7 +22,7 @@ function chipStatus(draft: DraftState): string | null {
 }
 
 /** The drafts a chip is shown for, oldest first. */
-export function backgroundDrafts(state: MailState): DraftState[] {
+function backgroundDrafts(state: MailState): DraftState[] {
   return Object.values(state.drafts).filter((draft) => !(draft.open && draft.localId === state.activeDraftId));
 }
 
