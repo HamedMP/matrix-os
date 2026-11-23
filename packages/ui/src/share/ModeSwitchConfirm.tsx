@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useId, useRef } from "react";
-import { modeSwitchCopy, type PageModeTarget } from "./share-model";
+import { modeSwitchCopy, type ActivePageMode, type PageModeTarget } from "./share-model";
 import { InlineError, ShareButton, Spinner } from "./share-controls";
 
 /**
@@ -9,7 +9,7 @@ import { InlineError, ShareButton, Spinner } from "./share-controls";
  * revision-checked transition.
  */
 export function ModeSwitchConfirm({ current, target, invitedCount, pending, error, onConfirm, onCancel }: {
-  current: PageModeTarget; target: PageModeTarget; invitedCount: number; pending: boolean; error: string | null;
+  current: ActivePageMode; target: PageModeTarget; invitedCount: number | null; pending: boolean; error: string | null;
   onConfirm: () => void; onCancel: () => void;
 }) {
   const titleId = useId();

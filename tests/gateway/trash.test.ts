@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { lstat } from "node:fs/promises";
 import {
   mkdirSync,
   writeFileSync,
   rmSync,
   existsSync,
   readFileSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,6 +16,11 @@ import {
   trashRestore,
   trashEmpty,
 } from "../../packages/gateway/src/trash.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, lstat: vi.fn(fs.lstat) };
+});
 
 describe("fileDelete", () => {
   let testDir: string;
@@ -33,7 +40,7 @@ describe("fileDelete", () => {
     expect(result.ok).toBe(true);
     expect(result.trashPath).toBeDefined();
     expect(existsSync(join(testDir, "doomed.md"))).toBe(false);
-    expect(existsSync(join(testDir, ".trash", "doomed.md"))).toBe(true);
+    expect(readFileSync(join(testDir, result.trashPath!), "utf8")).toBe("goodbye");
   });
 
   it("moves a directory to .trash", async () => {
@@ -42,7 +49,7 @@ describe("fileDelete", () => {
     const result = await fileDelete(testDir, "folder");
     expect(result.ok).toBe(true);
     expect(existsSync(join(testDir, "folder"))).toBe(false);
-    expect(existsSync(join(testDir, ".trash", "folder", "a.txt"))).toBe(true);
+    expect(readFileSync(join(testDir, result.trashPath!, "a.txt"), "utf8")).toBe("a");
   });
 
   it("records entry in manifest", async () => {
@@ -57,7 +64,7 @@ describe("fileDelete", () => {
     expect(manifest[0].deletedAt).toBeDefined();
   });
 
-  it("handles name collision by appending timestamp", async () => {
+  it("keeps both recovery records when source names collide", async () => {
     writeFileSync(join(testDir, "dup.md"), "first");
     await fileDelete(testDir, "dup.md");
     writeFileSync(join(testDir, "dup.md"), "second");
@@ -68,6 +75,35 @@ describe("fileDelete", () => {
       readFileSync(join(testDir, ".trash", ".manifest.json"), "utf-8"),
     );
     expect(manifest).toHaveLength(2);
+  });
+
+  it("leaves the source and prior recovery records intact when the index write fails", async () => {
+    writeFileSync(join(testDir, "older.txt"), "older");
+    await fileDelete(testDir, "older.txt");
+    writeFileSync(join(testDir, "new.txt"), "new");
+    mkdirSync(join(testDir, ".trash", ".manifest.json.tmp"));
+
+    await expect(fileDelete(testDir, "new.txt")).resolves.toMatchObject({ ok: false, status: 503 });
+    expect(readFileSync(join(testDir, "new.txt"), "utf8")).toBe("new");
+    expect((await trashList(testDir)).entries.map((entry) => entry.name)).toEqual(["older.txt"]);
+  });
+
+  it("does not replace unreadable recovery metadata with an empty index", async () => {
+    mkdirSync(join(testDir, ".trash"));
+    writeFileSync(join(testDir, ".trash", ".manifest.json"), "corrupt");
+    writeFileSync(join(testDir, "new.txt"), "new");
+
+    await expect(fileDelete(testDir, "new.txt")).resolves.toMatchObject({ ok: false, status: 503 });
+    expect(readFileSync(join(testDir, "new.txt"), "utf8")).toBe("new");
+    expect(readFileSync(join(testDir, ".trash", ".manifest.json"), "utf8")).toBe("corrupt");
+  });
+
+  it("does not move a folder containing protected system files", async () => {
+    mkdirSync(join(testDir, "system"));
+    writeFileSync(join(testDir, "system", "config.json"), "config");
+
+    await expect(fileDelete(testDir, "system")).resolves.toMatchObject({ ok: false, status: 403 });
+    expect(readFileSync(join(testDir, "system", "config.json"), "utf8")).toBe("config");
   });
 
   it("returns error for non-existent file", async () => {
@@ -149,6 +185,71 @@ describe("trashRestore", () => {
     expect(existsSync(join(testDir, deleteResult.trashPath!))).toBe(false);
   });
 
+  it("preserves legacy recovery records through a new move and restores them", async () => {
+    mkdirSync(join(testDir, ".trash"));
+    writeFileSync(join(testDir, ".trash", "legacy.txt"), "legacy bytes");
+    writeFileSync(join(testDir, ".trash", ".manifest.json"), JSON.stringify([{
+      name: "legacy.txt",
+      originalPath: "notes/legacy.txt",
+      deletedAt: "2026-01-01T00:00:00.000Z",
+      trashPath: ".trash/legacy.txt",
+    }]));
+    writeFileSync(join(testDir, "new.txt"), "new bytes");
+
+    expect((await fileDelete(testDir, "new.txt")).ok).toBe(true);
+    expect((await trashList(testDir)).entries.map(entry => entry.name)).toEqual(["legacy.txt", "new.txt"]);
+    await expect(trashRestore(testDir, ".trash/legacy.txt")).resolves.toEqual({ ok: true, restoredTo: "notes/legacy.txt" });
+    expect(readFileSync(join(testDir, "notes", "legacy.txt"), "utf8")).toBe("legacy bytes");
+  });
+
+  it("can list and restore a legacy POSIX name containing a backslash and newline", async () => {
+    const name = "legacy\\with-newline\n.txt";
+    const trashPath = `.trash/${name}`;
+    mkdirSync(join(testDir, ".trash"));
+    writeFileSync(join(testDir, trashPath), "legacy bytes");
+    writeFileSync(join(testDir, ".trash", ".manifest.json"), JSON.stringify([{
+      name, originalPath: name, deletedAt: "2026-01-01T00:00:00.000Z", trashPath,
+    }]));
+
+    expect((await trashList(testDir)).entries).toEqual([expect.objectContaining({ name, trashPath })]);
+    await expect(trashRestore(testDir, trashPath)).resolves.toEqual({ ok: true, restoredTo: name });
+    expect(readFileSync(join(testDir, name), "utf8")).toBe("legacy bytes");
+  });
+
+  it.each(["file", "folder"] as const)("keeps a concurrently recreated %s and its Trash backup", async (kind) => {
+    const destination = join(testDir, "recreated");
+    if (kind === "file") writeFileSync(destination, "original bytes");
+    else {
+      mkdirSync(destination);
+      writeFileSync(join(destination, "notes.txt"), "original bytes");
+    }
+    const moved = await fileDelete(testDir, "recreated");
+    const originalLstat = vi.mocked(lstat).getMockImplementation()!;
+    let recreated = false;
+    vi.mocked(lstat).mockImplementation(async (...args) => {
+      try { return await originalLstat(...args); }
+      catch (error) {
+        if (!recreated && args[0] === destination) {
+          recreated = true;
+          if (kind === "file") writeFileSync(destination, "new user bytes");
+          else mkdirSync(destination);
+        }
+        throw error;
+      }
+    });
+    try {
+      await expect(trashRestore(testDir, moved.trashPath!)).resolves.toMatchObject({ ok: false, status: 409 });
+      expect(recreated).toBe(true);
+      if (kind === "file") expect(readFileSync(destination, "utf8")).toBe("new user bytes");
+      else expect(existsSync(join(destination, "notes.txt"))).toBe(false);
+      const trashedContent = kind === "file" ? join(testDir, moved.trashPath!) : join(testDir, moved.trashPath!, "notes.txt");
+      expect(readFileSync(trashedContent, "utf8")).toBe("original bytes");
+      expect((await trashList(testDir)).entries).toMatchObject([{ trashPath: moved.trashPath }]);
+    } finally {
+      vi.mocked(lstat).mockImplementation(originalLstat);
+    }
+  });
+
   it("removes entry from manifest after restore", async () => {
     writeFileSync(join(testDir, "a.md"), "a");
     writeFileSync(join(testDir, "b.md"), "b");
@@ -172,6 +273,38 @@ describe("trashRestore", () => {
       error: "Destination already exists",
       status: 409,
     });
+  });
+
+  it("restores a directory even if stale index cleanup fails", async () => {
+    mkdirSync(join(testDir, "folder"));
+    writeFileSync(join(testDir, "folder", "notes.txt"), "notes");
+    const moved = await fileDelete(testDir, "folder");
+    mkdirSync(join(testDir, ".trash", ".manifest.json.tmp"));
+
+    await expect(trashRestore(testDir, moved.trashPath!)).resolves.toMatchObject({ ok: true, restoredTo: "folder" });
+    expect(readFileSync(join(testDir, "folder", "notes.txt"), "utf8")).toBe("notes");
+    expect((await trashList(testDir)).entries).toEqual([]);
+  });
+
+  it("does not restore a new item when an old Trash token is reused", async () => {
+    writeFileSync(join(testDir, "note.txt"), "first");
+    const first = await fileDelete(testDir, "note.txt");
+    await trashRestore(testDir, first.trashPath!);
+    writeFileSync(join(testDir, "note.txt"), "second");
+    const second = await fileDelete(testDir, "note.txt");
+
+    expect(second.trashPath).not.toBe(first.trashPath);
+    await expect(trashRestore(testDir, first.trashPath!)).resolves.toMatchObject({ ok: false, status: 404 });
+    expect((await trashList(testDir)).entries).toMatchObject([{ trashPath: second.trashPath }]);
+  });
+
+  it("keeps a trashed item recoverable when the restore path is occupied by a dangling link", async () => {
+    writeFileSync(join(testDir, "conflict.md"), "original");
+    const moved = await fileDelete(testDir, "conflict.md");
+    symlinkSync(join(testDir, "missing"), join(testDir, "conflict.md"));
+
+    await expect(trashRestore(testDir, moved.trashPath!)).resolves.toMatchObject({ ok: false, status: 409 });
+    expect((await trashList(testDir)).entries).toHaveLength(1);
   });
 
   it("returns 404 for non-existent trash path", async () => {

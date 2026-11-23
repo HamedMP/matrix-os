@@ -1,6 +1,6 @@
 "use client";
 import { useState, type RefObject } from "react";
-import { SharePanel, ShareTriggerLabel, emailInvitesPreviewEnabled, previewEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
 import { AppSiteSharePopover } from "./AppSiteSharePopover";
@@ -10,8 +10,7 @@ import { appDisplayName, ownerInitial } from "./share-identity";
 import { useWebShareOrganization } from "./use-web-share-organization";
 import { SiteSubmissionsSection } from "./SiteSubmissionsSection";
 
-// TODO(2691): replace the preview adapter with the real site-client adapter once #3233–#3340 merge.
-const emailInvites = previewEmailInvitationAdapter(emailInvitesPreviewEnabled(process.env.NEXT_PUBLIC_MATRIX_SHARE_EMAIL_INVITES_PREVIEW));
+const emailInvites = createSiteEmailInvitationAdapter(webSiteClient);
 
 export function AppSiteButton({
   appSlug,
@@ -64,8 +63,9 @@ export function AppSiteButton({
           ownerInitial={ownerInitial(ownerIdentity)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
+          // Shown for apps with forms, or while responses saved by an earlier version remain.
           submissions={share.site
-            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} /> : null}
+            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} formsDeclared={share.site.config.forms.length > 0} /> : null}
         />
       ) : null}
     </AppSiteSharePopover>

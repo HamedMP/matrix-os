@@ -20,6 +20,7 @@ import {
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
   canonicalChatApprovals,
+  canonicalChatDisplayedIncomingSeq,
   canonicalChatExecutionControls,
 } from "@matrix-os/contracts";
 import {
@@ -29,6 +30,7 @@ import {
   useCanonicalChatStopRecovery,
   applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
+  type CanonicalChatInvalidation,
 } from "@matrix-os/ui";
 import { useShellChatNavigation } from "./useChatNavigation";
 import { useUnreadChatNavigation } from "./useUnreadChatNavigation";
@@ -44,14 +46,52 @@ import {
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
-import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
-import { admitShellChatTurn } from "./canonical-chat-turn-admission";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, withPendingCanonicalTurn, type PendingCanonicalTurn } from "@matrix-os/ui";
+import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
 
 function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+// Events that can add, move, remove or reclassify a Chat. Run, queue and
+// interaction events only change a Chat's state, which the shared list carries.
+const CHAT_MEMBERSHIP_EVENTS: ReadonlySet<string> = new Set([
+  "chat.created", "chat.updated", "chat.deleted", "chat.user_state_updated",
+  "migration.completed", "bot.created", "bot.authority.changed",
+]);
+
+export function isChatMembershipEvent(event: CanonicalChatInvalidation): boolean {
+  return event.type === "chat.full_refresh" || CHAT_MEMBERSHIP_EVENTS.has(event.eventType);
+}
+
+// Events that start or end a run or change what it waits on. Streamed run text
+// (run.activity, run.message) leaves the status unchanged.
+const CHAT_RUN_STATUS_EVENTS: ReadonlySet<string> = new Set([
+  "turn.accepted", "queue.claimed", "run.completed", "run.failed", "run.aborted",
+  "interaction.requested", "interaction.resolved",
+]);
+
+export function isChatRunStatusEvent(event: CanonicalChatInvalidation): event is Extract<CanonicalChatInvalidation, { type: "chat.changed" }> {
+  return event.type === "chat.changed" && CHAT_RUN_STATUS_EVENTS.has(event.eventType);
+}
+
+// The newest run status changes, each tagged with its own revision so a consumer
+// can act only on changes after the last revision it handled.
+const MAX_RUN_STATUS_CHANGES = 32;
+
+export type ChatRunStatusChanges = {
+  revision: number;
+  changes: readonly { revision: number; chatId: string }[];
+};
+
+export function appendChatRunStatusChange(previous: ChatRunStatusChanges | undefined, chatId: string | null): ChatRunStatusChanges {
+  const base = previous ?? { revision: 0, changes: [] };
+  if (chatId === null) return base;
+  const revision = base.revision + 1;
+  return { revision, changes: [...base.changes, { revision, chatId }].slice(-MAX_RUN_STATUS_CHANGES) };
 }
 
 function conversationMeta(record: ChatNavigationRecord) {
@@ -128,6 +168,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
+  // The message being sent, shown before admission confirms its turn.
+  const [pendingTurn, setPendingTurn] = useState<PendingCanonicalTurn | null>(null);
   const [gatewayUrl] = useState(getGatewayUrl);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
@@ -188,6 +230,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     eventSource.connectionState(),
   );
   const [botEventRevision, setBotEventRevision] = useState(0);
+  // Bumps only when a Chat may have been added, moved, removed or reclassified, so scoped reads can refresh.
+  const [chatChangeRevision, setChatChangeRevision] = useState(0);
+  const [chatRunStatusChange, setChatRunStatusChange] = useState<ChatRunStatusChanges>(() => appendChatRunStatusChange(undefined, null));
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
@@ -211,12 +256,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   useEffect(() => {
     if (previousNavigationIdentity.current === navigationIdentity) return;
+    const initialAuthorityResolved = previousComposerIdentity.current.scope === undefined && navigationScope !== undefined;
     previousNavigationIdentity.current = navigationIdentity;
     detailRequestGeneration.current += 1;
     activeChatIdRef.current = activeChatId;
     detailRef.current = null;
     setDetail(null);
-    setSelectedCollaborationView(null);
+    // Startup sign-in must not erase a deep link. Re-read the validated URL so
+    // an intervening New Chat wins; switching verified viewers still clears it.
+    setSelectedCollaborationView(initialAuthorityResolved && typeof window !== "undefined"
+      ? collaborationViewFromLocation(window.location.pathname, window.location.search) : null);
     setSafeError(null);
     inputAttempt.current = null;
     draftSendAttempt.current = null;
@@ -226,7 +275,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       previousComposerIdentity.current = composerIdentity;
       setComposerDraftRequest(null);
     }
-  }, [navigationIdentity, activeChatId, composerIdentity]);
+  }, [navigationIdentity, activeChatId, composerIdentity, navigationScope]);
 
   useEffect(() => {
     const synchronizeFromHistory = () => {
@@ -326,6 +375,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ));
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
+      if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
+      if (isChatRunStatusEvent(event)) {
+        const { chatId } = event;
+        setChatRunStatusChange((previous) => appendChatRunStatusChange(previous, chatId));
+      }
       admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
@@ -454,6 +508,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     latestAdmissionId.current = undefined;
     setSubmitting(true);
     setSafeError(null);
+    let pendingRequestId: string | undefined;
     const send = async () => {
       const uploadedReferences: string[] = [];
       const removeUploads = () => Promise.allSettled(uploadedReferences.map(reference => client.deleteAttachment(reference)));
@@ -507,6 +562,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         if (failedUpload?.status === "rejected") throw failedUpload.reason;
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
+        record = advanceChatRecordForRoutineReceipts(record, detailRef.current);
         admissionAttempted = true;
         const parts: CanonicalChatMessagePart[] = [
           ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),
@@ -542,6 +598,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
+        pendingRequestId = input.clientRequestId;
+        setPendingTurn({ requestId: input.clientRequestId, chatId: record.chat.id, parts, createdAt: new Date().toISOString() });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
@@ -592,6 +650,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
     };
     return send().finally(() => {
+      // Clear only this send's message; a newer send may already show its own.
+      if (pendingRequestId) setPendingTurn(pending => pending?.requestId === pendingRequestId ? null : pending);
       if (!isCurrent()) return;
       submittingRef.current = false;
       setSubmitting(false);
@@ -653,6 +713,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const switchConversation = useCallback((chatId: string) => {
     if (!isCurrent()) return;
+    if (activeChatIdRef.current === chatId) {
+      void loadDetail(chatId);
+      return;
+    }
     setDraftProjectId(undefined);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
@@ -662,7 +726,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, [setActiveChatId, setDraftProjectId, isCurrent]);
+  }, [setActiveChatId, setDraftProjectId, isCurrent, loadDetail]);
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;
@@ -900,7 +964,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [client, setRecords, isCurrent]);
 
   const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
-  const messages = selectedDetail ? projectCanonicalTranscript(selectedDetail) : [];
+  const messages = selectedDetail ? projectCanonicalTranscript(withPendingCanonicalTurn(selectedDetail, pendingTurn)) : [];
   const selectedDetailError = detailError?.scope === navigationIdentity && detailError.chatId === activeChatId
     ? "Chat could not be loaded. Try again." : null;
   const visibleError = (sameAuthority ? safeError : null) ?? selectedDetailError ?? unreadNavigation.error ?? navigation.error;
@@ -914,7 +978,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const projectedSharedChat = sharedChatMembershipFromProjection(selectedDetail?.record.chat.collaboration);
   const collaborationView = (sameAuthority ? selectedCollaborationView : null)
     ?? (projectedSharedChat && activeRecord
-      ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
+      ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id,
+        ...(activeRecord.projectId ? { projectId: activeRecord.projectId } : {}) }
       : undefined);
   return {
     collaborationView,
@@ -923,7 +988,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: selectedDetail?.record.readState,
-    displayedThroughSeq: Math.max(0, ...(selectedDetail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    displayedThroughSeq: canonicalChatDisplayedIncomingSeq(selectedDetail?.messages ?? []),
     updateReadState,
     messages,
     sessionId: activeChatId,
@@ -940,6 +1005,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     composerIdentity,
     isCurrentAuthority: isCurrent,
     botEventRevision,
+    routineOriginChat: selectedDetail?.record.chat,
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
     steerQueuedTurn,
@@ -954,6 +1020,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     boundProviderInstanceId: selectedDetail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
+    navigationTruncated:navigation.truncated,
+    chatChangeRevision,
+    chatRunStatusChange,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,

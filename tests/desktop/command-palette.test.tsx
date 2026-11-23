@@ -22,6 +22,8 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+import { useShortcuts } from "../../desktop/src/renderer/src/stores/shortcuts";
+import { resolveShortcuts } from "../../packages/contracts/src/keyboard-shortcuts";
 import { currentAppsQueryKey } from "./apps-query-test-utils";
 
 function threadSummary(id: string, overrides: Partial<AgentThreadSummary> = {}): AgentThreadSummary {
@@ -170,6 +172,25 @@ describe("CommandPalette", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    useShortcuts.setState({ snapshot: null });
+  });
+
+  function loadBindings(overrides: Record<string, string[]> = {}) {
+    const document = { version: 1 as const, overrides };
+    useShortcuts.setState({ snapshot: { platform: "mac", overrides: document, effective: resolveShortcuts(document, "mac") } });
+  }
+
+  it("shows the current bindings and hides hints before they load", () => {
+    const view = render(<CommandPalette />);
+    expect(screen.queryByText("⌘K")).toBeNull();
+    view.unmount();
+
+    loadBindings({ "nav.palette": ["Cmd+Shift+K"] });
+    render(<CommandPalette />);
+
+    expect(screen.getByText("⌘⇧K")).not.toBeNull();
+    expect(screen.getByText("⌘J")).not.toBeNull();
+    expect(screen.getByText("⌘,")).not.toBeNull();
   });
 
   it("focuses the search input after the native dialog opens", async () => {
@@ -187,6 +208,7 @@ describe("CommandPalette", () => {
       cardsByProject: {},
     });
 
+    loadBindings();
     render(<CommandPalette />);
 
     expect(screen.getByText("⌘K")).not.toBeNull();
@@ -417,11 +439,12 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByText("Open thread Fix settings route"));
 
-    expect(openTab).toHaveBeenCalledWith({
+    // The canonical owner lookup finds none here, so the agent-thread route follows.
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith({
       kind: "project",
       projectSlug: "matrix-os",
       title: "matrix-os",
-    });
+    }));
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha"));
   });
 
@@ -574,11 +597,12 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByText("Open thread Shared urgent thread"));
 
-    expect(openTab).toHaveBeenCalledWith({
+    // The canonical owner lookup finds none here, so the agent-thread route follows.
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith({
       kind: "project",
       projectSlug: "matrix-os",
       title: "matrix-os",
-    });
+    }));
     await waitFor(() => expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate"));
   });
 

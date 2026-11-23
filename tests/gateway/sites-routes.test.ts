@@ -13,6 +13,24 @@ const siteId=randomUUID(), versionId=randomUUID();
 const config={data:{event:'Launch'},forms:[{id:'rsvp',title:'RSVP',fields:{email:{type:'email',required:true}}}]};
 function ownerApp(user='owner',platform:any={request:vi.fn().mockResolvedValue(null)}) { const app=new Hono(); app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,user);await next();}); app.route('/',createSiteRoutes({homePath:'/unused',ownerIds:['owner'],platform,submissions:null})); return app; }
 describe('owner publishing authentication',()=>{
+ it('never treats a signed-in email viewer as the publication owner across owner routes',async()=>{
+  const platform={request:vi.fn(),listEmailInvitations:vi.fn(),emailInvitationAudit:vi.fn()};
+  const app=ownerApp('invited-viewer',platform);
+  const operations:[string,string,RequestInit?][]=[
+   ['GET','/api/apps/event/site'],['POST','/api/apps/event/site',{body:'{}'}],
+   ['PATCH','/api/apps/event/site',{body:'{}'}],['DELETE','/api/apps/event/site',{body:'{}'}],
+   ['POST','/api/apps/event/site/rollback',{body:'{}'}],
+   ['GET','/api/apps/event/site/access-links'],['POST','/api/apps/event/site/access-links',{body:'{}'}],
+   ['GET','/api/apps/event/site/invitations'],['POST','/api/apps/event/site/invitations',{body:'{}'}],
+   ['GET','/api/apps/event/site/invitations/audit'],
+   ['GET','/api/apps/event/site/submissions'],['GET','/api/apps/event/site/submissions/export'],
+  ];
+  for(const [method,path,init] of operations)
+   expect((await app.request(path,{method,...init})).status,`${method} ${path}`).toBe(403);
+  expect(platform.request).not.toHaveBeenCalled();
+  expect(platform.listEmailInvitations).not.toHaveBeenCalled();
+  expect(platform.emailInvitationAudit).not.toHaveBeenCalled();
+ });
  it('rejects a collaborator before machine delegation',async()=>{const platform={request:vi.fn()};const response=await ownerApp('collaborator',platform).request('/api/apps/event/site');expect(response.status).toBe(403);expect(platform.request).not.toHaveBeenCalled();});
  it('returns no publication and validates app paths',async()=>{expect((await ownerApp().request('/api/apps/event/site')).status).toBe(404);expect((await ownerApp().request('/api/apps/%24evil/site')).status).toBe(400);});
  it('fails safely when publication services are missing',async()=>{const response=await ownerApp('owner',null).request('/api/apps/event/site');expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Site unavailable'});});
@@ -39,6 +57,30 @@ describe('owner publishing authentication',()=>{
   expect(platform.revokeAccessLink).toHaveBeenCalledWith('event',linkId);
   expect((await app.request('/api/apps/event/site/access-links',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({baseRevision:4,token:'forbidden'})})).status).toBe(400);
   expect((await app.request('/api/apps/event/site/access-links/not-a-uuid',{method:'DELETE'})).status).toBe(400);
+ });
+ it('validates and forwards only bounded owner email invitation operations',async()=>{
+  const invitationId=randomUUID();
+  const platform={request:vi.fn(),listEmailInvitations:vi.fn().mockResolvedValue({invitations:[],nextCursor:null,siteRevision:1}),
+   createEmailInvitations:vi.fn().mockResolvedValue({results:[],siteRevision:2}),
+   resendEmailInvitation:vi.fn().mockResolvedValue({invitation:{id:invitationId},siteRevision:3}),
+   revokeEmailInvitation:vi.fn().mockResolvedValue({invitation:{id:invitationId},siteRevision:4}),
+   emailInvitationAudit:vi.fn().mockResolvedValue({events:[],nextCursor:null})};
+  const app=ownerApp('owner',platform);
+  const base='/api/apps/event/site/invitations';
+  expect((await app.request(base+'?limit=20')).status).toBe(200);
+  expect((await app.request(base+'?limit=101')).status).toBe(400);
+  expect((await app.request(base,{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:1,emailAddresses:['ada@example.com']})})).status).toBe(200);
+  expect(platform.createEmailInvitations).toHaveBeenCalledWith('event',{baseRevision:1,emailAddresses:['ada@example.com']});
+  expect((await app.request(base,{method:'POST',body:'x'.repeat(33*1024)})).status).toBe(413);
+  expect((await app.request(base+'/audit')).status).toBe(200);
+  expect((await app.request(base+'/'+invitationId+'/resend',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:2,invitationRevision:0})})).status).toBe(200);
+  expect((await app.request(base+'/'+invitationId,{method:'DELETE',headers:{'content-type':'application/json'},
+   body:JSON.stringify({baseRevision:3,invitationRevision:1})})).status).toBe(200);
+  expect(platform.revokeEmailInvitation).toHaveBeenCalledWith('event',invitationId,{baseRevision:3,invitationRevision:1});
+  expect((await ownerApp('collaborator',platform).request(base)).status).toBe(403);
+  expect((await app.request(base+'/invalid-id',{method:'DELETE',body:'{}'})).status).toBe(400);
  });
 });
 describe('scoped platform submission route',()=>{
@@ -103,4 +145,19 @@ describe('owner friendly-path availability', () => {
   expect(failed.status).toBe(503);
   expect(await failed.json()).toEqual({ error: 'Site unavailable' });
  });
+});
+
+it('reads uncached invitation readiness only for the owner before any publication',async()=>{
+ const capability=vi.fn(async()=>({privateEmailInvitations:false}));
+ const platform={request:vi.fn(),emailInvitationCapabilities:capability};
+ const path='/api/apps/event/site/email-invitation-capabilities';
+ expect((await ownerApp('collaborator',platform).request(path)).status).toBe(403);
+ expect(capability).not.toHaveBeenCalled();
+ const response=await ownerApp('owner',platform).request(path);
+ expect(response.status).toBe(200);
+ expect(response.headers.get('cache-control')).toBe('no-store');
+ expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(platform.request).not.toHaveBeenCalled();
+ expect((await ownerApp('owner',platform).request(path+'?enabled=true')).status).toBe(400);
+ expect(await (await ownerApp().request(path)).json()).toEqual({privateEmailInvitations:false});
 });

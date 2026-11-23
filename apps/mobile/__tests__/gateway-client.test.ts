@@ -619,6 +619,12 @@ describe("GatewayClient", () => {
           hasMore: false,
           limit: 50,
         },
+        // Native Mobile does not request recent threads; the shared schema defaults them to empty.
+        recentThreads: {
+          items: [],
+          hasMore: false,
+          limit: 10,
+        },
       },
     });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/summary", expect.objectContaining({

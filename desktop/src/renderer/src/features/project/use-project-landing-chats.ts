@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBotConversationSummaries, mergeCanonicalChatRecord, mergeChatNavigationRecord, compareCanonicalChatActivity, type ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
@@ -22,6 +22,7 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     client: scope && client?.agents ? { ...client.agents } : undefined,
   }), [client, scope, authorityEpoch]);
   const projectKey = JSON.stringify([project.id, project.slug]);
+  const [retryCount, setRetryCount] = useState(0);
   const [snapshot, setSnapshot] = useState<{
     client: CanonicalChatClient;
     scope: typeof scope;
@@ -86,7 +87,7 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
       void refresh();
     });
     return () => { current = false; subscription?.dispose(); };
-  }, [client, active, scoped, scope, authorityEpoch, eventSource, project.id, project.slug, projectKey, refreshRequest]);
+  }, [client, active, scoped, scope, authorityEpoch, eventSource, project.id, project.slug, projectKey, refreshRequest, retryCount]);
   const records = useMemo(() => scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey ? snapshot.records : [], [scoped, snapshot, client, scope, authorityEpoch, projectKey]);
   const ids = useMemo(() => records.map(record => record.chat.id), [records]);
   const authoritative = useMemo(() => navigation.items.map(item => ({ chatId: item.chat.id, classification: item.classification })), [navigation.items]);
@@ -123,5 +124,15 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     return [...cohort.values()].sort(compareCanonicalChatActivity).slice(0, 1000);
   }, [client, scoped, active, navigation.items, records, project.id, project.slug, bots.unresolvedChatIds, bots.conversations]);
   const scopedError = scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey && snapshot.error;
-  return { chats, error: Boolean(navigation.error || scopedError) };
+  // Loading only while nothing confirmed is on screen; a refresh keeps the rows.
+  const loading = Boolean(client) && chats.length === 0
+    && (navigation.status === "idle" || navigation.status === "loading" || (scoped && !snapshot));
+  const storeRef = navigation.store;
+  const retry = useCallback(() => {
+    setRetryCount(count => count + 1);
+    void storeRef?.refresh().catch((error: unknown) => {
+      console.warn("[project] Chat list retry failed:", error instanceof Error ? error.name : "UnknownError");
+    });
+  }, [storeRef]);
+  return { chats, error: Boolean(navigation.error || scopedError), loading, truncated: chats.length >= 1000, retry };
 }

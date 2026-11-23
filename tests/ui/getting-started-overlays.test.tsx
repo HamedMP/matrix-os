@@ -65,7 +65,9 @@ for (const electron of [false, true]) describe(electron ? "Electron checklist" :
     await screen.findByRole("dialog", { name: "Getting started" });
     expect(localStorage.getItem(key)).toBe("1");
   });
-  it("preserves manual dismissal before the first status response arrives", async () => {
+  it("offers no Setup pill until the first status response arrives", async () => {
+    // A completed owner must never see a "Setup 0/5" flash while status loads.
+    localStorage.setItem(key, "1");
     let resolveStatus!: () => void;
     const pending = new Promise<void>((resolve) => { resolveStatus = resolve; });
     if (electron) {
@@ -76,14 +78,10 @@ for (const electron of [false, true]) describe(electron ? "Electron checklist" :
     } else {
       vi.mocked(fetch).mockImplementation(async (input) => { await pending; return new Response(JSON.stringify(data(String(input)))); });
     }
-    const view = render(<Scene electron={electron} />);
-    fireEvent.click(screen.getByRole("button", { name: /Getting started/ }));
-    await screen.findByRole("dialog", { name: "Getting started" });
-    fireEvent.click(screen.getByRole("button", { name: /Getting started/ }));
+    render(<Scene electron={electron} />);
+    expect(screen.queryByRole("button", { name: /Getting started/ })).toBeNull();
     await act(async () => { resolveStatus(); await pending; });
-    view.rerender(<Scene electron={electron} presentation="canvas" active />);
-    view.rerender(<Scene electron={electron} presentation="canvas" />);
-    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(await screen.findByRole("button", { name: /Getting started/ })).not.toBeNull();
     expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
   });
 });

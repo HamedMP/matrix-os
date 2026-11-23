@@ -3,6 +3,7 @@ import {
   Kysely,
   PostgresDialect,
   sql,
+  type ColumnType,
   type Generated,
   type Insertable,
   type InsertObject,
@@ -17,6 +18,7 @@ import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
 import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
+import type { SubstrateKind } from '@matrix-os/contracts';
 import type {
   BillingEntitlementSource,
   BillingEntitlementStatus,
@@ -100,6 +102,12 @@ export interface UserMachinesTable {
   activation_state: Generated<string>;
   prebilling_intent_id: Generated<string | null>;
   activation_authorized_at: Generated<string | null>;
+  substrate: Generated<string>;
+  generation: Generated<number>;
+  substrate_ref: Generated<string | null>;
+  private_address: Generated<string | null>;
+  last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -840,6 +848,13 @@ export interface PlatformDatabase {
   public_site_versions: import('./sites/types.js').SiteVersionsTable;
   public_site_aliases: import('./sites/types.js').SiteAliasesTable;
   public_site_access_links: import('./sites/types.js').SiteAccessLinksTable;
+  public_site_email_invitations: import('./sites/types.js').SiteEmailInvitationsTable;
+  public_site_viewer_grants: import('./sites/types.js').SiteViewerGrantsTable;
+  public_site_viewer_sessions: import('./sites/types.js').SiteViewerSessionsTable;
+  public_site_invitation_deliveries: import('./sites/types.js').SiteInvitationDeliveriesTable;
+  public_site_access_audit_events: import('./sites/types.js').SiteAccessAuditEventsTable;
+  public_site_recipient_lifecycle: import('./sites/types.js').SiteRecipientLifecycleTable;
+  public_site_clerk_session_terminations: import('./sites/types.js').SiteClerkSessionTerminationsTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;
@@ -1019,6 +1034,13 @@ export interface UserMachineRecord {
   activationState: 'awaiting_billing' | 'authorized';
   prebillingIntentId: string | null;
   activationAuthorizedAt: string | null;
+  substrate: SubstrateKind;
+  /** Bumped whenever the runtime's compute is replaced. */
+  generation: number;
+  substrateRef: string | null;
+  privateAddress: string | null;
+  lastActivityAt: string | null;
+  startedAt: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1318,6 +1340,12 @@ export interface NewUserMachine {
   activationState?: 'awaiting_billing' | 'authorized';
   prebillingIntentId?: string | null;
   activationAuthorizedAt?: string | null;
+  substrate?: SubstrateKind;
+  generation?: number;
+  substrateRef?: string | null;
+  privateAddress?: string | null;
+  lastActivityAt?: string | null;
+  startedAt?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {

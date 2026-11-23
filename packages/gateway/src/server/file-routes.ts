@@ -48,6 +48,9 @@ const ProjectConfigTouchSchema = z.strictObject({
   ? Buffer.byteLength(content, "utf8") <= PROJECT_SKILL_FILE_MAX_BYTES
   : content.length <= 8192, { path: ["content"] });
 
+const TrashMoveSchema = z.object({ path: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
+const TrashRestoreSchema = z.object({ trashPath: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
+
 export interface FileRouteDeps {
   homePath: string;
   getOwnerId?: (c: Context) => string;
@@ -247,37 +250,46 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     });
   });
 
+  const readTrash = async (c: Context, fn: (result: Awaited<ReturnType<typeof trashList>>) => Promise<Response> | Response) => {
+    try {
+      return await fn(await trashList(homePath));
+    } catch (error) {
+      console.warn("[file-routes] Trash is unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return c.json({ error: "Trash is unavailable" }, 503);
+    }
+  };
+
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    return withProjectFileAdmission(c, [body.path], async () => {
-      const result = await fileDelete(homePath, body.path);
+    const body = TrashMoveSchema.safeParse(await parseJson(c));
+    if (!body.success) return c.json({ error: "Invalid path" }, 400);
+    const { path } = body.data;
+    return withProjectFileAdmission(c, [path], async () => {
+      const result = await fileDelete(homePath, path);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     });
   });
 
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
+  app.get("/api/files/trash", (c) => readTrash(c, (result) => c.json(result)));
 
   app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const entry = (await trashList(homePath)).entries.find((candidate) => candidate.trashPath === body.trashPath);
-    return withProjectFileAdmission(c, entry ? [entry.originalPath] : [], async () => {
-      const result = await trashRestore(homePath, body.trashPath);
-      return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
+    const body = TrashRestoreSchema.safeParse(await parseJson(c));
+    if (!body.success) return c.json({ error: "Invalid trash path" }, 400);
+    const trashPath = body.data.trashPath.replace(/^\/+/, "");
+    return readTrash(c, (result) => {
+      const entry = result.entries.find((candidate) => candidate.trashPath === trashPath);
+      if (!entry) return c.json({ error: "Not found in trash" }, 404);
+      return withProjectFileAdmission(c, [entry.originalPath], async () => {
+        const restored = await trashRestore(homePath, trashPath);
+        return c.json(restored, { status: toStatusCode(restored.ok ? 200 : (restored.status ?? 400)) });
+      }, true);
     });
   });
 
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const entries = await trashList(homePath);
-    return withProjectFileAdmission(c, entries.entries.map((entry) => entry.originalPath), async () => {
-      const result = await trashEmpty(homePath);
-      return c.json(result);
-    }, true);
-  });
+  app.post("/api/files/trash/empty", fileBodyLimit, (c) => readTrash(c, (result) =>
+    withProjectFileAdmission(c, result.entries.map((entry) => entry.originalPath), async () => {
+      const emptied = await trashEmpty(homePath);
+      return c.json(emptied, { status: emptied.ok ? 200 : 503 });
+    }, true)));
 
   app.get("/api/projects", async (c) => {
     const rootParam = (c.req.query("root") ?? "projects").trim();

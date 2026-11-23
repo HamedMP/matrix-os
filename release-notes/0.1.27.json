@@ -1,0 +1,82 @@
+{
+  "version": "0.1.27",
+  "channel": "stable",
+  "date": "2026-11-13T17:55:51Z",
+  "locale": "en",
+  "title": "Projects for the whole team",
+  "shortTitle": "Organization projects",
+  "summary": "Share a project with your whole organization, and let coding agents propose routines.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Projects for your organization",
+      "body": "Share a project with everyone in your organization. Teammates use the AI you chose for it, and you can revoke access at any time.",
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        3145,
+        3146,
+        3147,
+        3148
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Routines from your coding agents",
+      "body": "Claude, Codex, Hermes and Pi can propose routines from the terminal. You approve the exact action in Chat on any device.",
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        3052,
+        3053,
+        3055,
+        3056,
+        3057,
+        3060,
+        3061,
+        3062,
+        3064,
+        3065,
+        3066,
+        3068,
+        3214
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "DeepSeek V4.1 Flash is available in Matrix AI."
+    },
+    {
+      "kind": "new",
+      "text": "WhatsApp settings, with replies routed through Matrix AI."
+    },
+    {
+      "kind": "new",
+      "text": "Share your apps from the publish menu in the desktop app."
+    },
+    {
+      "kind": "improved",
+      "text": "Shared apps recover on their own and appear in the launcher."
+    },
+    {
+      "kind": "fixed",
+      "text": "Mobile keeps your reasoning effort when you switch models."
+    },
+    {
+      "kind": "fixed",
+      "text": "The browser viewer stays open through brief status hiccups."
+    }
+  ],
+  "hidden": [
+    3286,
+    3324,
+    3124,
+    3329,
+    3069,
+    3215,
+    3070,
+    3328
+  ]
+}

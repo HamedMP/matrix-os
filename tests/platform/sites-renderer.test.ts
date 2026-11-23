@@ -1,8 +1,81 @@
 import { expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
+import { siteEmailViewerPage } from '../../packages/platform/src/sites/email-auth-page.js';
+import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
+it('keeps the email Clerk component and exchange on the exact canonical app URL with a separate gate CSP', () => {
+ const gate=siteEmailGate(site.id,'pk_test_existing_matrix_instance');
+ expect(gate.html).toContain(`https://matrix.page/${site.id}`);
+ expect(gate.html).toContain("canonical+'/access/email'");
+ expect(gate.html).toContain('clerk.matrix-os.com');
+ expect(gate.html).toContain('mountSignIn');
+ expect(gate.html).toContain('mountSignUp');
+ expect(gate.html).toContain('session.getToken');
+ expect(gate.html).not.toMatch(/app\.matrix-os\.com|api\/auth\/app-session|billing|onboarding|provision-runtime/);
+ expect(gate.csp).toContain('clerk.matrix-os.com');
+ expect(gate.csp).toMatch(/script-src [^;]*https:\/\/challenges\.cloudflare\.com/);
+ expect(gate.csp).toMatch(/connect-src [^;]*https:\/\/challenges\.cloudflare\.com/);
+ expect(gate.csp).toContain('frame-src https://challenges.cloudflare.com');
+ expect(gate.csp).toContain("worker-src 'self' blob:");
+ expect(APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(APP_CSP).not.toContain('challenges.cloudflare.com');
+ expect(PRIVATE_APP_CSP).not.toContain('challenges.cloudflare.com');
+ expect(gate.html).not.toContain(site.title);
+});
+it('reuses an existing Matrix Clerk session and exchanges only at that app URL', async () => {
+ const exchange=vi.fn(async(_url:unknown,_init?:RequestInit)=>new Response('{}',{status:404}));
+ const mount=vi.fn();
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:mount,mountSignUp:vi.fn()};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});
+  Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:exchange});
+ }});
+ try{
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledOnce());
+  expect(exchange.mock.calls[0]?.[0]).toBe(`${site.url}/access/email`);
+  expect(exchange.mock.calls[0]?.[1]).toMatchObject({method:'POST',body:'{}',credentials:'same-origin',redirect:'error'});
+  expect(exchange.mock.calls[0]?.[1]?.headers).toMatchObject({Authorization:'Bearer signed.clerk.token'});
+  expect(mount).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('.error')?.textContent).toContain('does not have access');
+ }finally{dom.window.close()}
+});
+it('lets the same Clerk session retry a temporary exchange failure without reloading', async () => {
+ const exchange=vi.fn().mockResolvedValueOnce(new Response('{}',{status:503})).mockResolvedValueOnce(new Response('{}',{status:404}));
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:vi.fn(),mountSignUp:vi.fn()};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});Object.defineProperty(window,'fetch',{value:exchange});
+ }});
+ try{
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledOnce());
+  const retry=dom.window.document.getElementById('retry-access') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(retry.hidden).toBe(false));
+  retry.click();
+  await vi.waitFor(()=>expect(exchange).toHaveBeenCalledTimes(2));
+  expect(clerk.session.getToken).toHaveBeenCalledTimes(2);
+ }finally{dom.window.close()}
+});
+it('bounds a stalled Clerk account switch and keeps a visible retry path', async () => {
+ const clerk={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')},mountSignIn:vi.fn(),mountSignUp:vi.fn(),signOut:vi.fn(()=>new Promise<void>(()=>{}))};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async(url:unknown)=>{
+   if(String(url).includes('/sign-out')){
+    window.setTimeout=((handler: TimerHandler)=>{queueMicrotask(()=>{if(typeof handler==='function')handler()});return 1}) as typeof window.setTimeout;
+    return new Response('{}',{status:200});
+   }
+   return new Response('{}',{status:404});
+  })});
+ }});
+ try{
+  await vi.waitFor(()=>expect((dom.window.document.getElementById('switch-account') as HTMLButtonElement).hidden).toBe(false));
+  (dom.window.document.getElementById('switch-account') as HTMLButtonElement).click();
+  await vi.waitFor(()=>expect(clerk.signOut).toHaveBeenCalledOnce());
+  await vi.waitFor(()=>expect(dom.window.document.querySelector('.error')?.textContent).toContain('Unable to switch accounts'));
+ }finally{dom.window.close()}
+});
 it('claims the current fragment when a fresh one-time link replaces a failed link in the same tab', async () => {
  const firstId='11111111-1111-4111-8111-111111111111', secondId='22222222-2222-4222-8222-222222222222';
  const firstToken='a'.repeat(43), secondToken='b'.repeat(43), bodies:string[]=[];
@@ -92,4 +165,63 @@ it('opens guide links with no opener and preserves in-page anchors without grant
   expect(APP_CSP).toContain('sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox;');
   expect(APP_CSP).not.toContain('allow-same-origin'); expect(APP_CSP).not.toContain('allow-top-navigation');
  } finally { dom.window.close(); }
+});
+
+
+it('allows the app frame only in the authenticated parent and nonces every trusted script', () => {
+ const gate=siteEmailGate(site.id,'pk_test_existing_matrix_instance');
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ expect(gate.csp).not.toContain("frame-src 'self'");
+ expect(viewer.csp).toContain("frame-src 'self' https://challenges.cloudflare.com");
+ const nonce=viewer.csp.match(/script-src 'nonce-([^']+)'/)?.[1];
+ expect(nonce).toBeTruthy();
+ const dom=new JSDOM(viewer.html);
+ try {
+  const scripts=Array.from(dom.window.document.querySelectorAll('script'));
+  expect(scripts.length).toBeGreaterThan(1);
+  expect(scripts.every(script=>script.nonce===nonce)).toBe(true);
+  expect(dom.window.document.querySelector('iframe')?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+  expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ }finally{dom.window.close()}
+});
+
+it('revokes viewer authority before Clerk sign-out, removes the app frame, and pins the return to this app', async () => {
+ let finishRevocation!:(response:Response)=>void;
+ const revocation=new Promise<Response>(resolve=>{finishRevocation=resolve});
+ const fetch=vi.fn(()=>revocation);
+ const clerk={load:vi.fn(async()=>{}),session:{getToken:vi.fn(async()=> 'signed.clerk.token')},
+  signOut:vi.fn(()=>new Promise<void>(()=>{}))};
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ const dom=new JSDOM(viewer.html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:fetch});
+ }});
+ try{
+  const button=dom.window.document.getElementById('email-sign-out') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(button.disabled).toBe(false));button.click();
+  await vi.waitFor(()=>expect(fetch).toHaveBeenCalledOnce());
+  expect(fetch.mock.calls[0]).toEqual([`${site.url}/access/email/sign-out`,expect.objectContaining({method:'POST',body:'{}',redirect:'error',credentials:'same-origin'})]);
+  expect(clerk.signOut).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('iframe')).not.toBeNull();
+  finishRevocation(new Response('{}',{status:200}));
+  await vi.waitFor(()=>expect(clerk.signOut).toHaveBeenCalledWith({redirectUrl:site.url}));
+  expect(dom.window.document.querySelector('iframe')).toBeNull();
+ }finally{dom.window.close()}
+});
+
+it('keeps Clerk signed in and offers retry when synchronous viewer revocation fails', async () => {
+ const clerk={load:vi.fn(async()=>{}),session:{getToken:vi.fn(async()=> 'signed.clerk.token')},signOut:vi.fn()};
+ const viewer=siteEmailViewerPage(sitePage(site),site.id,'pk_test_existing_matrix_instance');
+ const dom=new JSDOM(viewer.html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:clerk});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async()=>new Response('private service error',{status:503}))});
+ }});
+ try{
+  const button=dom.window.document.getElementById('email-sign-out') as HTMLButtonElement;
+  await vi.waitFor(()=>expect(button.disabled).toBe(false));button.click();
+  await vi.waitFor(()=>expect(dom.window.document.querySelector('[role=alert]')?.textContent).toBe('Unable to sign out right now. Try again.'));
+  expect(clerk.signOut).not.toHaveBeenCalled();
+  expect(dom.window.document.querySelector('iframe')).not.toBeNull();
+  expect(button.disabled).toBe(false);
+ }finally{dom.window.close()}
 });

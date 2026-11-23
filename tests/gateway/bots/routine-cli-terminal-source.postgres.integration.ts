@@ -11,12 +11,21 @@ afterEach(async () => {
     }
   } finally { await f?.close(); f = undefined; }
 });
+async function waitForTarget(fixture: Awaited<ReturnType<typeof terminalFixture>>, requestId: string, status: "completed" | "failed" = "completed") {
+  // A committed CLI receipt precedes canonical admission. Watch the exact request's
+  // durable target run; an idle orchestrator or an empty approvals table proves nothing yet.
+  await expect.poll(() => fixture.data.db.selectFrom("routine_cli_proposals as proposal")
+    .innerJoin("chat_runs as run", "run.client_request_id", "proposal.canonical_request_id")
+    .select("run.status").where("proposal.owner_id", "=", scope.ownerId)
+    .where("proposal.client_request_id", "=", requestId).where("run.chat_id", "=", TARGET_A.chatId)
+    .where("run.attempt", "=", 1).executeTakeFirst(), { timeout: 5000 }).toEqual({ status });
+}
 it.each(["claude", "codex", "hermes", "opencode", "pi"] as const)("canonical %s Terminal reaches target schedule approval through the published CLI/IPC/Hono/PG without an operation prompt", async harness => {
   f = await terminalFixture(); const tab = await f.launch(harness), requestId = crypto.randomUUID();
   expect(await f.data.db.selectFrom("routine_cli_sources").selectAll().execute()).toEqual([]);
   const result = await f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
   expect(result).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
-  await f.f.canonical.drain();
+  await waitForTarget(f, requestId);
   expect(f.httpCalls()).toBe(1);
   const sources = await f.data.db.selectFrom("routine_cli_sources").select("source_context").execute();
   expect(sources).toHaveLength(1);
@@ -31,7 +40,7 @@ it("prepared workspace Terminal has the same prompt-free proposal path and indep
   f = await terminalFixture(); const tab = await f.launchPrepared(), requestId = crypto.randomUUID();
   const result = await f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
   expect(result).toMatchObject({ v: 1, ok: true, data: { receipt: { requestId, disposition: "queued" } } });
-  await f.f.canonical.drain();
+  await waitForTarget(f, requestId);
   expect(f.httpCalls()).toBe(1);
   const source = await f.data.db.selectFrom("routine_cli_sources").select("source_context").executeTakeFirstOrThrow();
   expect(source.source_context).toMatchObject({ ownerId: scope.ownerId, computerId: scope.computerId, harness: "pi",
@@ -155,7 +164,8 @@ it.each(["before claim", "after claim"])("actual root end %s respects canonical 
     f.routines.proposals.consume = async (binding, signal) => { f!.endRoot(); return consume(binding, signal); };
   }
   const pending = f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
-  await pending; await f.f.canonical.drain();
+  expect(await pending).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  await waitForTarget(f, requestId, phase === "after claim" ? "completed" : "failed");
   expect(await f.data.db.selectFrom("bot_approvals").select("status").execute()).toEqual(phase === "after claim" ? [{ status: "pending" }] : []);
   expect(await f.data.db.selectFrom("bot_routines").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("routine_cli_requests").select("client_request_id").execute()).toEqual([{ client_request_id: requestId }]);
@@ -175,7 +185,7 @@ it.each(["live root", "ended root", "observed manager change"])("completed outer
     f.endWriter(); if (state === "ended root") f.endRoot();
     if (state === "observed manager change") { f.changeManager(); expect(await f.observeManager()).toBe(false); }
   } finally { release(); }
-  await f.f.canonical.drain();
+  await waitForTarget(f, requestId, state === "live root" ? "completed" : "failed");
   expect(await f.data.db.selectFrom("bot_approvals").select("status").execute()).toEqual(state === "live root" ? [{ status: "pending" }] : []);
   expect(await f.data.db.selectFrom("bot_routines").selectAll().execute()).toEqual([]);
 }, 20_000);
@@ -184,7 +194,8 @@ it("same UUID reconciles once, changed payload conflicts, and control revisions/
   f = await terminalFixture(); await f.launch(); const requestId = crypto.randomUUID();
   const call = (operation: RoutineCliOperation) => f!.port().invoke(operation, f!.writer, new AbortController().signal);
   const propose = { operation: "propose" as const, requestId, proposal };
-  expect(await call(propose)).toMatchObject({ ok: true, data: { receipt: { requestId } } }); await f.f.canonical.drain();
+  expect(await call(propose)).toMatchObject({ ok: true, data: { receipt: { requestId } } });
+  await waitForTarget(f, requestId);
   expect(await call(propose)).toMatchObject({ ok: true, data: { receipt: { requestId } } });
   expect(await f.port().invoke({ ...propose, proposal: { ...proposal, name: "Changed" } }, f.writer, new AbortController().signal)).toMatchObject({ error: { code: "request_conflict" } });
   expect(await f.data.db.selectFrom("bot_tasks").selectAll().execute()).toHaveLength(1);
@@ -211,8 +222,10 @@ it("manager preflight stays outside source-generation transactions while local c
   const verify = f.startup.verifyCurrent;
   f.startup.verifyCurrent = async () => { managerChecks++; if (inValidation) managerDuringValidation = true; return verify(); };
   await f.launch();
-  const pending = f.port().invoke({ operation: "propose", requestId: crypto.randomUUID(), proposal }, f.writer, new AbortController().signal);
-  expect(await pending).toMatchObject({ ok: true, data: { receipt: { disposition: "queued" } } }); await f.f.canonical.drain();
+  const requestId = crypto.randomUUID();
+  const pending = f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
+  expect(await pending).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  await waitForTarget(f, requestId);
   expect(managerChecks).toBeGreaterThanOrEqual(3);
   expect(managerDuringValidation).toBe(false);
   expect(await f.data.db.selectFrom("bot_approvals").select("status").execute()).toEqual([{ status: "pending" }]);

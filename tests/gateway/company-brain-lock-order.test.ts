@@ -126,7 +126,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("Company Brain Project/Ch
     if (queueOperation === "claim") await repository.enqueueSharedQueuedTurn(owner, queueRequest());
     armed = true;
     const queue = queueOperation === "enqueue" ? repository.enqueueSharedQueuedTurn(owner, queueRequest())
-      : repository.claimNextQueuedTurn(owner, { chatId: "chat_company_capture", turnId: "cturn_brain_overlap",
+      : repository.claimNextQueuedTurn(owner, { collaborationScopeId: childScope, chatId: "chat_company_capture", turnId: "cturn_brain_overlap",
         runId: "run_brain_overlap", messageId: "msg_brain_overlap", claimedAt: at.toISOString() });
     let brain: Promise<unknown> | undefined;
     try {

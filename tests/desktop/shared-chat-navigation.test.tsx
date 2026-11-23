@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopChatCollaboration, { DesktopSharedWithMeDialog } from "../../desktop/src/renderer/src/features/chat/DesktopChatCollaboration";
 import { CanonicalChatRoute } from "../../desktop/src/renderer/src/features/chat/CanonicalChatRoute";
 import { CanonicalChatWorkspace } from "../../desktop/src/renderer/src/features/chat/CanonicalChatWorkspace";
+import { CanonicalChatClientProvider } from "../../desktop/src/renderer/src/features/chat/CanonicalChatClientContext";
+import ProjectChatsView from "../../desktop/src/renderer/src/features/project/ProjectChatsView";
 import { SharedWithMeRailRow } from "../../desktop/src/renderer/src/features/work/WorkRail";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -112,7 +114,7 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
         },
       }] : [] };
       if (path.includes("/chat/messages")) return { messages: [] };
-      if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+      if (path.split("?")[0]!.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
       if (path.endsWith("/chat")) return sharedChat;
       if (path.endsWith(`/scopes/${scopeId}`)) return sharedScope;
       return {
@@ -373,5 +375,30 @@ describe("Electron Shared with me navigation", () => {
 
     expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
     expect(document.querySelector('[data-slot="native-shared-chat"]')).toBeTruthy();
+  });
+  it("puts the owner's project Chat controls in the same host toolbar as peer controls", async () => {
+    const routeClient = createCanonicalChatWorkspaceClient();
+    const record = { ...canonicalChatRecord, projectId: "project_shared", chat: {
+      ...canonicalChatRecord.chat, id: sharedChat.id,
+      collaboration: { mode: "shared", membership: { role: "owner", memberCount: 2 } },
+    } };
+    vi.mocked(routeClient.list).mockResolvedValue({ items: [record] } as never);
+    vi.mocked(routeClient.getDetail).mockResolvedValue({ record, messages: [], turns: [], runs: [], activities: [] } as never);
+    const api = { baseUrl: "https://runtime.test", get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() };
+    useConnection.setState({ api: api as never, runtimeSlot: "primary", authGeneration: 1 });
+    const toolbar = document.createElement("header");
+    document.body.append(toolbar);
+    const onMetadata = vi.fn();
+    const view = render(<CanonicalChatClientProvider api={api as never} client={routeClient} runtimeSlot="primary" authGeneration={1}>
+      <ProjectChatsView projectId="project_shared" initialChatId={sharedChat.id} initialView="conversation"
+        active externalNavigation allowLegacyFallback={false}
+        sharedHeaderContainer={toolbar} onSharedChatMetadata={onMetadata} />
+    </CanonicalChatClientProvider>);
+    try {
+      const discussion = await screen.findByRole("button", { name: "Open discussion" });
+      expect(toolbar).toContainElement(discussion);
+      expect(document.querySelector('[data-slot="collaboration-session-subheader"]')).toBeNull();
+      expect(onMetadata).toHaveBeenCalledWith({ title: sharedChat.title, role: sharedScope.role });
+    } finally { view.unmount(); toolbar.remove(); }
   });
 });

@@ -28,7 +28,13 @@ describe("operator preload bridge", () => {
     await bridge.invoke("auth:status", {});
     await bridge.invoke("terminal-window:focus-main", {});
     await bridge.invoke("local-terminal:kill", { id: "t1" });
-    expect(ipc.invoke.mock.calls).toEqual([["auth:status", {}], ["terminal-window:focus-main", {}], ["local-terminal:kill", { id: "t1" }]]);
+    await bridge.invoke("shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+Left"] });
+    await expect(bridge.invoke("shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+ArrowLeft"] }))
+      .rejects.toThrow("invalid request");
+    expect(ipc.invoke.mock.calls).toEqual([
+      ["auth:status", {}], ["terminal-window:focus-main", {}], ["local-terminal:kill", { id: "t1" }],
+      ["shortcuts:set-terminal-claims", { bindings: ["Ctrl+Shift+Left"] }],
+    ]);
   });
 
   it("subscribes the Terminal window only to its event allowlist", () => {

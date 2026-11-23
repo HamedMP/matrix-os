@@ -18,6 +18,19 @@ const VisibilityContext = createContext<Visibility | null>(null);
 const BlockerContext = createContext<AcquireBlocker | null>(null);
 const AutoOpenSuppressionContext = createContext<AcquireBlocker | null>(null);
 
+/** What the checklist owner reports so other menus (the account menu) can show and open it. */
+export interface GettingStartedProgress {
+  completed: number;
+  total: number;
+  next: string | null;
+  open: () => void;
+}
+interface ProgressSlot {
+  progress: GettingStartedProgress | null;
+  publish: (progress: GettingStartedProgress | null) => void;
+}
+const ProgressContext = createContext<ProgressSlot | null>(null);
+
 function useCountedHolds() {
   const [count, setCount] = useState(0);
   const live = useRef(0);
@@ -41,6 +54,8 @@ export function GettingStartedVisibilityProvider({ scope, children }: { scope: s
   const [intent, setIntent] = useState({ scope, open: false });
   const blockers = useCountedHolds();
   const suppressions = useCountedHolds();
+  const [progress, publish] = useState<GettingStartedProgress | null>(null);
+  const progressSlot = useMemo(() => ({ progress, publish }), [progress]);
   if (intent.scope !== scope) setIntent({ scope, open: false });
   const requestedOpen = intent.scope === scope && intent.open;
   const setRequestedOpen = useCallback((open: boolean) => setIntent({ scope, open }), [scope]);
@@ -58,7 +73,9 @@ export function GettingStartedVisibilityProvider({ scope, children }: { scope: s
   return (
     <BlockerContext value={blockers.acquire}>
       <AutoOpenSuppressionContext value={suppressions.acquire}>
-        <VisibilityContext value={value}>{children}</VisibilityContext>
+        <VisibilityContext value={value}>
+          <ProgressContext value={progressSlot}>{children}</ProgressContext>
+        </VisibilityContext>
       </AutoOpenSuppressionContext>
     </BlockerContext>
   );
@@ -68,6 +85,21 @@ export function useGettingStartedVisibility(): Visibility {
   const value = useContext(VisibilityContext);
   if (!value) throw new Error("Getting started requires a visibility provider");
   return value;
+}
+
+/** Latest checklist progress for this computer session; null until loaded, or without a provider. */
+export function useGettingStartedProgress(): GettingStartedProgress | null {
+  return useContext(ProgressContext)?.progress ?? null;
+}
+
+/** The checklist owner reports its progress (memoize it); unmounting withdraws it. */
+export function usePublishGettingStartedProgress(progress: GettingStartedProgress | null): void {
+  const publish = useContext(ProgressContext)?.publish;
+  useLayoutEffect(() => {
+    if (!publish) return;
+    publish(progress);
+    return () => publish(null);
+  }, [progress, publish]);
 }
 
 /** Registration belongs to overlay presence, including its exit animation. */
@@ -99,14 +131,13 @@ export function useGettingStartedPopoverFocus() {
   useLayoutEffect(() => {
     if (blocked) manualOpen.current = false;
   }, [blocked]);
-  return {
-    markManualOpen: () => { manualOpen.current = true; },
-    onOpenAutoFocus: (event: Event) => {
-      if (!manualOpen.current) event.preventDefault();
-      manualOpen.current = false;
-    },
-    onCloseAutoFocus: (event: Event) => {
-      if (requestedOpen) event.preventDefault();
-    },
-  };
+  const markManualOpen = useCallback(() => { manualOpen.current = true; }, []);
+  const onOpenAutoFocus = useCallback((event: Event) => {
+    if (!manualOpen.current) event.preventDefault();
+    manualOpen.current = false;
+  }, []);
+  const onCloseAutoFocus = useCallback((event: Event) => {
+    if (requestedOpen) event.preventDefault();
+  }, [requestedOpen]);
+  return { markManualOpen, onOpenAutoFocus, onCloseAutoFocus };
 }

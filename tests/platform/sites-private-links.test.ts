@@ -47,6 +47,27 @@ function memoryStorage() {
 }
 
 describe('private Matrix.page access links', () => {
+  it('does not restore a claimed one-time link after switching through email mode', async () => {
+    const { siteId } = await publishedPrivateSite();
+    const service = createSitesService({ db: db.db, emailCapability: async () => true,
+      emailSessionSecret: 'mode-independence-secret-long-enough' });
+    const legacy = await seedLegacyAccessLink(db.db, siteId);
+    await service.claimAccessLink(siteId, { linkId: legacy.linkId, token: legacy.secret });
+    await service.patch(owner, { accessMode: 'private_email', baseRevision: 1 });
+    expect(await db.db.executor.selectFrom('public_site_access_links').select('id')
+      .where('site_id', '=', siteId).execute()).toHaveLength(0);
+    await expect(service.patch(owner, { accessMode: 'private_link', baseRevision: 2 }))
+      .rejects.toMatchObject({ code: 'gone' });
+    expect(await service.get(owner)).toMatchObject({ accessMode: 'private_email', revision: 2 });
+    await expect(service.claimAccessLink(siteId, { linkId: legacy.linkId, token: legacy.secret }))
+      .rejects.toMatchObject({ code: 'not_found' });
+  });
+  it('refuses to publish email mode while the backend capability is disabled', async () => {
+    const { siteId } = await publishedPrivateSite();
+    const service = createSitesService({ db: db.db, env: { NODE_ENV: 'test' } });
+    await expect(service.patch(owner, { accessMode: 'private_email', baseRevision: 1 })).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await service.resolve(siteId))?.accessMode).toBe('private_link');
+  });
   it('republishes a legacy one-time-link site and serves its sealed frame from the production cache', async () => {
     await publishedPrivateSite();
     const { storage, getObject } = memoryStorage();

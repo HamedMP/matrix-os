@@ -17,6 +17,11 @@ import { DefaultOrganization } from "@/components/DefaultOrganization";
 import { OrganizationStateProvider } from "@/lib/collaboration-organization-state";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
+import { clerkAllowedRedirectOrigins } from "@/lib/clerk-satellite-return";
+
+// Lets sign-ins on this primary domain return to the Clerk satellite
+// (ai-insights.app) while keeping Clerk's default redirect origins.
+const clerkRedirectOrigins = clerkAllowedRedirectOrigins(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
 export async function generateMetadata(): Promise<Metadata> {
   const metadata = await buildShellMetadata(process.env.GATEWAY_URL);
@@ -88,8 +93,9 @@ export default function RootLayout({
               ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
               sign-in/up cross-links on the in-app routes. Those vars are baked at
               build time (default /sign-in and /sign-up); without them Clerk falls
-              back to the hosted Account Portal (accounts.matrix-os.com). */}
-          {withClerk ? <ClerkProvider>{bodyContent}</ClerkProvider> : bodyContent}
+              back to the hosted Account Portal (accounts.matrix-os.com).
+              allowedRedirectOrigins adds the exact Clerk satellite origins. */}
+          {withClerk ? <ClerkProvider allowedRedirectOrigins={clerkRedirectOrigins}>{bodyContent}</ClerkProvider> : bodyContent}
         </body>
       </html>
     );

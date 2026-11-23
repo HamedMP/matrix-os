@@ -605,6 +605,7 @@ describe("gateway collaboration wiring", () => {
     const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
     await chatRepository.enqueueSharedQueuedTurn(owner, sharedAiRequest(1));
     const claimed = await chatRepository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
       chatId: collaborationIds.chat, turnId: "cturn_lost", runId: "run_lost", messageId: "msg_lost", claimedAt: NOW,
     });
     expect(claimed).not.toBeNull();
@@ -739,6 +740,7 @@ describe("gateway collaboration wiring", () => {
       }) as never);
       await chatRepository.enqueueSharedQueuedTurn(owner, sharedAiRequest(2));
       const claimed = await chatRepository.claimNextQueuedTurn(owner, {
+      collaborationScopeId: collaborationIds.scope,
         chatId: collaborationIds.chat, turnId: "cturn_partition", runId: "run_partition", messageId: "msg_partition", claimedAt: NOW,
       });
       expect(claimed).not.toBeNull();

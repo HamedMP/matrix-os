@@ -37,6 +37,7 @@
       "default": "./src/protocol/shell.js"
     },
     "./port-forward": "./src/cli/port-forward.ts",
+    "./core-repo-archive": "./src/core-repo/archive.ts",
     "./local-chat-import": "./src/import/local-chat-source.ts"
   },
   "files": [
@@ -72,6 +73,7 @@
     "picomatch": "^4.0.4",
     "pino": "^9.6.0",
     "pino-roll": "^2.1.0",
+    "tar": "7.5.21",
     "tsx": "^4.21.0",
     "ws": "^8.19.0",
     "zod": "^4.6.6"

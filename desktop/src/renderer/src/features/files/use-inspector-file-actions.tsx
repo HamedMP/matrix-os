@@ -4,12 +4,16 @@ import { useConnection } from "../../stores/connection";
 import { useFilesNavigation } from "../../stores/files-navigation";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import { canMoveFileToTrash } from "./FileTrashControls";
 import { useDesktopFileDownload } from "./use-file-download";
 import type { WorkFilesScope } from "../work/work-files-scope";
 import type { InspectorTreeEntry } from "../panels/ExpandableFileTree";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
-export function useInspectorFileActions(scope: Exclude<WorkFilesScope, { kind: "unavailable" }>) {
+export function useInspectorFileActions(
+  scope: Exclude<WorkFilesScope, { kind: "unavailable" }>,
+  requestMoveToTrash?: (path: string, type: InspectorTreeEntry["kind"]) => void,
+) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -35,6 +39,8 @@ export function useInspectorFileActions(scope: Exclude<WorkFilesScope, { kind: "
     return new Uint8Array(await blob.arrayBuffer());
   };
   const renderEntry = (entry: InspectorTreeEntry, button: ReactElement) => <FilePreviewActions name={entry.path.split("/").at(-1)!} pending={download.pending} zIndex={DESKTOP_Z_INDEX.popover}
+    onMoveToTrash={scope.kind === "home" && requestMoveToTrash && canMoveFileToTrash(entry.path)
+      ? () => requestMoveToTrash(entry.path, entry.kind) : undefined}
     onCopyPath={async () => { assertCurrent(); await navigator.clipboard.writeText(entry.path); }}
     onOpenInFiles={() => {
       assertCurrent();

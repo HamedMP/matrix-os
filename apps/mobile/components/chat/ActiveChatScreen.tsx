@@ -16,6 +16,7 @@ import { chatLoadState, chatScreenTitle, composerPlaceholder } from "./chat-scre
 import { CHAT_SUGGESTIONS } from "./chat-suggestions";
 import { composerAddProps } from "./composer-add";
 import { ModelTrigger } from "./ModelTrigger";
+import { NativeSourceChatRoutines } from "./NativeSourceChatRoutines";
 import { useChatThread } from "./use-chat-thread";
 
 export interface ActiveChatScreenProps {
@@ -37,11 +38,13 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   const openSidePanel = useOpenSidePanel();
   const { startDraftChat, draftChatRequests } = useCanonicalChatSession();
   const {
+    routineOriginEligible,
     connected: isConnected, activeChatId, detail, refresh, chatReadFailed, reloadChat, chatUnread, chats, gatewayUrl,
-    catalog, directBot, providerCatalogChecking, selection, setSelectionOverride, attachmentKinds, composer,
+    catalog, directBot, providerCatalogChecking, selection, chooseSelection, permissionMode, choosePermissionMode,
+    attachmentKinds, composer,
   } = useActiveChat();
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments, attachmentNotice, matrixAttachmentScope,
     sentAttachments, canSend: composerCanSend, send, isSending, optimisticMessages, retrySend, editUnsent,
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
@@ -120,6 +123,16 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
       renderRequest={renderRequest}
       renderResults={renderResults}
       renderComputerPhoto={renderComputerPhoto}
+      renderThread={gatewayUrl && activeChatId ? (renderMessageList) => (
+        <NativeSourceChatRoutines
+          gatewayUrl={gatewayUrl}
+          chatId={activeChatId}
+          eligible={Boolean(routineOriginEligible)}
+          messages={messages}
+        >
+          {renderMessageList}
+        </NativeSourceChatRoutines>
+      ) : undefined}
       chatState={chatState}
       onReloadChat={reloadChat}
       unsentActions={unsentActions}
@@ -148,13 +161,18 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
           draft,
           onChangeDraft: handleDraftChange,
           enabled: isConnected,
+          matrix: gatewayUrl && !isSending && (activeChatId === null
+            || (detail?.record.chat.ownerScope.type === "personal" && !detail.record.chat.collaboration && !chatReadFailed))
+            ? { gatewayUrl, scope: matrixAttachmentScope } : undefined,
         }),
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker
             catalog={catalog}
             catalogLoading={providerCatalogChecking}
             selection={selection}
-            onSelectionChange={setSelectionOverride}
+            onSelectionChange={chooseSelection}
+            permissionMode={permissionMode}
+            onPermissionModeChange={choosePermissionMode}
           />
         ),
       }}

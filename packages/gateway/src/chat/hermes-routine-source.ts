@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_INVOCATION_TIMEOUT_MS, ROUTINE_CLI_NATIVE_TIMEOUT_MS } from "@matrix-os/contracts/routine-cli";
 import type { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
@@ -81,13 +82,13 @@ export function createHermesRoutineSource(options: NativeRoutineCliPort & { inpu
     }
     seen.add(frame.id); seen.add(key);
     const action = new AbortController(), actionSignal = AbortSignal.any([signal, action.signal]); calls.set(frame.id, action);
-    const deadline = setTimeout(() => action.abort(), 120_000); deadline.unref();
+    const deadline = setTimeout(() => action.abort(), ROUTINE_CLI_NATIVE_TIMEOUT_MS); deadline.unref();
     try {
       registration ??= options.runtime.registerChat({ input: options.input, provider: "hermes", signal, current: live, publish: options.publish });
       const source = await boundedOperation(() => registration!, 10_000, actionSignal);
       if (!live() || actionSignal.aborted) return;
       invoker ??= createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.input.executionRoot ?? options.homePath,
-        homePath: options.homePath, authorize: source.authorize, issue: source.issue, cancel: source.cancel, timeoutMs: 120_000 });
+        homePath: options.homePath, authorize: source.authorize, issue: source.issue, cancel: source.cancel, timeoutMs: ROUTINE_CLI_INVOCATION_TIMEOUT_MS });
       const result = RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...frame.intent, signal: actionSignal }));
       if (live() && !actionSignal.aborted) send({ type: "result", id: frame.id, context: frame.context, result: JSON.stringify(result) });
       else if (live()) send({ type: "result", id: frame.id, context: frame.context, result: routineUnknownResult(frame.intent) });

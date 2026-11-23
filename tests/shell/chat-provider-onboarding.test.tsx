@@ -3,6 +3,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionProviderSettingsSnapshotCache } from "@matrix-os/ui";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { OPEN_PROVIDER_SETTINGS_EVENT, OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup";
@@ -22,7 +23,7 @@ function renderChat() {
   return render(<ChatApp messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
 }
-beforeEach(() => { window.localStorage.clear(); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); });
+beforeEach(() => { sessionProviderSettingsSnapshotCache.clear(); window.localStorage.clear(); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); });
 describe("hosted empty Chat connections", () => {
   it("opens supported Codex Settings recovery without invoking legacy start_login", async () => {
     const actions = vi.fn();

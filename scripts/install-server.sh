@@ -628,6 +628,14 @@ server {
   proxy_set_header X-Forwarded-Proto \$scheme;
   proxy_set_header X-Real-IP \$remote_addr;
 
+  # matrix-speech-upload-limit-v1
+  location = /api/speech/transcriptions {
+    client_max_body_size 21m;
+    proxy_read_timeout 90s;
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
   # matrix-sites-publish-timeout-v1
   location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site\$" {
     proxy_read_timeout 300s;

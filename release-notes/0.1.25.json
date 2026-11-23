@@ -1,0 +1,43 @@
+{
+  "version": "0.1.25",
+  "channel": "stable",
+  "date": "2026-11-12T11:02:41Z",
+  "locale": "en",
+  "title": "Servers in Helsinki",
+  "shortTitle": "Helsinki",
+  "summary": "Choose Helsinki for your Matrix computer, and invite people to apps more easily.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Helsinki server location",
+      "body": "When you set up Matrix, you can now place your computer in Helsinki.",
+      "art": "sync",
+      "tone": "sand",
+      "prs": [
+        2984
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "Sharing an app is compact and starts with an invite."
+    },
+    {
+      "kind": "new",
+      "text": "Matrix OS Canary can be installed next to the stable desktop app."
+    },
+    {
+      "kind": "fixed",
+      "text": "Browsing public sites in Full Access mode is steadier."
+    },
+    {
+      "kind": "improved",
+      "text": "Security updates for bundled dependencies."
+    }
+  ],
+  "hidden": [
+    3287,
+    3290
+  ]
+}

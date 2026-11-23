@@ -1,16 +1,13 @@
 import { useCallback, useMemo } from "react";
-import {
-  topmostVisibleDesktopSurfaceId,
-  useDesktopSurfaces,
-} from "../../stores/desktop-surfaces";
-import { useTabs, type Tab } from "../../stores/tabs";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useDesktopAppDrawer } from "../../stores/desktop-app-drawer";
 import { useConnection } from "../../stores/connection";
 import { useAppsQuery } from "../apps/apps.api";
 import { desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopTabStrip from "./DesktopTabStrip";
-import { nativeBrowserProduct } from "../../../../shared/browser-products";
+import { closeApp, focusApp, restoreAppAsWindow, toggleShowDesktop } from "./app-switching";
 
 export default function DesktopHeaderTabs() {
   const tabs = useTabs((state) => state.tabs);
@@ -22,71 +19,30 @@ export default function DesktopHeaderTabs() {
     [tabs, installedApps, platformHost, runtimeSlot],
   );
   const activeTabId = useTabs((state) => state.activeTabId);
-  const focusTab = useTabs((state) => state.focusTab);
-  const closeTab = useTabs((state) => state.closeTab);
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
-  const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
-  const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
-  const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
-  const showDesktop = useDesktopSurfaces((state) => state.showDesktop);
   const setWorkspaceView = useDesktopSurfaces((state) => state.setWorkspaceView);
   const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
   const drawerOpen = useDesktopAppDrawer((state) => state.open);
   const toggleDrawer = useDesktopAppDrawer((state) => state.toggle);
 
-  const showDesktopWithRefresh = useCallback(() => {
-    showDesktop();
-    requestBackgroundRefresh();
-  }, [requestBackgroundRefresh, showDesktop]);
-
   const focusDesktopOrShowDesktop = useCallback(() => {
     if (workspaceView === "desktop") {
-      showDesktopWithRefresh();
+      toggleShowDesktop();
       return;
     }
     setWorkspaceView("desktop");
     requestBackgroundRefresh();
-  }, [requestBackgroundRefresh, setWorkspaceView, showDesktopWithRefresh, workspaceView]);
-
-  const activate = useCallback((tabId: string) => {
-    focusTab(tabId);
-    activateSurface(tabId);
-  }, [activateSurface, focusTab]);
-
-  const focusFallback = useCallback((excludedTabId: string) => {
-    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
-    const fallbackId = topmostVisibleDesktopSurfaceId(
-      tabIds,
-      useDesktopSurfaces.getState(),
-      excludedTabId,
-    );
-    if (fallbackId) activate(fallbackId);
-  }, [activate]);
-
-  const close = useCallback((tab: Tab) => {
-    const wasActive = useTabs.getState().activeTabId === tab.id;
-    if (tab.closable) closeTab(tab.id);
-    else closeSurface(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
-    if (wasActive) focusFallback(tab.id);
-  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
-
-  const restore = useCallback((tabId: string) => {
-    const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
-    restoreAsWindow(tabId);
-    focusTab(tabId);
-    if (tab?.kind === "home" || tab?.kind === "browser" || nativeBrowserProduct(tab?.appIdentity ?? "", tab?.slug ?? "")) requestBackgroundRefresh();
-  }, [focusTab, requestBackgroundRefresh, restoreAsWindow]);
+  }, [requestBackgroundRefresh, setWorkspaceView, workspaceView]);
 
   return (
     <DesktopTabStrip
       tabs={displayTabs}
       surfaces={surfaces}
       activeTabId={activeTabId}
-      onActivate={activate}
-      onRestore={restore}
-      onClose={close}
+      onActivate={focusApp}
+      onRestore={restoreAppAsWindow}
+      onClose={closeApp}
       workspaceView={workspaceView}
       onShowDesktop={focusDesktopOrShowDesktop}
       onToggleSidebar={toggleDrawer}

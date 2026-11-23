@@ -26,6 +26,6 @@ export async function claimSlackCompanyPrompt(fixture: CollaborationTestDatabase
     capabilitySnapshot: { revision: "shared-catalog-1", rootChat: true, attachments: [], resources: [], tools: [], approvals: true,
       userInput: false, resume: true, cancellation: true, steering: "none", worktrees: "none", interactionModes: ["default"], permissionModes: ["supervised"] } });
   const claimed = await repository.claimNextQueuedTurn({ type: "personal", ownerId: actors.owner }, {
-    chatId, turnId: "cturn_slack_prompt_claim", runId: "run_slack_prompt_claim", messageId: "msg_slack_prompt_claim", claimedAt: now });
+    chatId, collaborationScopeId: scopeId, turnId: "cturn_slack_prompt_claim", runId: "run_slack_prompt_claim", messageId: "msg_slack_prompt_claim", claimedAt: now });
   return { queued, claimed };
 }

@@ -35,6 +35,14 @@ describe("buildGatewayUrl", () => {
     ).toBe("https://app.matrix-os.com/api/projects/x/tasks?limit=50&runtime=vm-2");
   });
 
+  // Fault: a Preview computer's VPS has no owner approval routes, so external writes could never be decided.
+  it("keeps owner approval decisions on the platform session route for Preview computers", () => {
+    for (const path of ["/api/mcp-servers/core/external-approvals", "/api/mcp-servers/core/external-approvals/11111111-1111-4111-8111-111111111111"]) {
+      expect(buildGatewayUrl("https://app.matrix-os.com", path, "pr-1871")).toBe(`https://app.matrix-os.com${path}`);
+      expect(buildGatewayUrl("https://app.matrix-os.com", path, "primary")).toBe(`https://app.matrix-os.com${path}`);
+    }
+  });
+
   it("routes Preview Custom MCP requests through the selected VPS", () => {
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers", "pr-1871")).toBe(
       "https://app.matrix-os.com/vm/pr-1871/api/mcp-servers",

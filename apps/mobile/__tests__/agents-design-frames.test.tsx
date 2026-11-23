@@ -10,6 +10,8 @@ import { deriveAgentMascot } from "../lib/agent-mascot";
 const mockSetParams = jest.fn();
 let mockSheet: { isPresented: boolean } = { isPresented: false };
 
+// Preview frames use local data and never authenticate or read Matrix files.
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isLoaded: true, isSignedIn: false }) }));
 jest.mock("expo-router", () => ({ useRouter: () => ({ setParams: mockSetParams }) }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));

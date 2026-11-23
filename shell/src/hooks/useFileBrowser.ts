@@ -3,10 +3,26 @@
 import { create } from "zustand";
 import { FileLeafNameSchema } from "@matrix-os/contracts";
 import { getGatewayUrl } from "@/lib/gateway";
+import { usePreviewWindow } from "./usePreviewWindow";
 
 const GATEWAY_URL = getGatewayUrl();
 
 let navSeq = 0;
+let searchSeq = 0;
+let movingToTrash = false;
+
+export function watchFileBrowserAuthority(gatewayUrl: string) {
+  const { draftAuthority } = usePreviewWindow.getState();
+  const controller = new AbortController();
+  const unsubscribe = usePreviewWindow.subscribe(state => {
+    if (state.draftAuthority !== draftAuthority) controller.abort();
+  });
+  return {
+    signal: controller.signal,
+    isCurrent: () => !controller.signal.aborted && getGatewayUrl() === gatewayUrl,
+    unsubscribe,
+  };
+}
 
 export interface FileEntry {
   name: string;
@@ -78,7 +94,7 @@ interface FileBrowserActions {
   navigate(path: string): void;
   goBack(): void;
   goForward(): void;
-  refresh(): void;
+  refresh(options?: { includeSearch?: boolean }): void;
   setViewMode(mode: "icon" | "list" | "column"): void;
   setSortBy(sort: "name" | "size" | "modified" | "type"): void;
   setSortDirection(dir: "asc" | "desc"): void;
@@ -103,18 +119,22 @@ interface FileBrowserActions {
   consumeViewRequest(expectedView?: "files" | "trash", expectedFolder?: FileBrowserFolderRequest | null): boolean;
 }
 
-async function fetchEntries(path: string): Promise<FileEntry[]> {
+async function fetchEntries(
+  path: string,
+  gatewayUrl = getGatewayUrl(),
+  signal = AbortSignal.timeout(10_000),
+): Promise<FileEntry[] | undefined> {
   try {
-    const res = await fetch(`${getGatewayUrl()}/api/files/list?path=${encodeURIComponent(path)}`, {
-      signal: AbortSignal.timeout(10_000),
+    const res = await fetch(`${gatewayUrl}/api/files/list?path=${encodeURIComponent(path)}`, {
+      signal: signal, cache: "no-store",
     });
-    if (!res.ok) return [];
+    if (!res.ok) return undefined;
     const data = await res.json();
     const entries = data.entries ?? data;
-    return Array.isArray(entries) ? entries : [];
+    return Array.isArray(entries) ? entries : undefined;
   } catch (err: unknown) {
-    console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.message : String(err));
-    return [];
+    if (!signal.aborted) console.warn("[file-browser] Failed to fetch entries:", err instanceof Error ? err.name : "UnknownError");
+    return undefined;
   }
 }
 
@@ -233,6 +253,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
         lastSelectedPath: null,
         searchQuery: "",
         searchResults: null,
+        searching: false,
         loading: true,
         error: null,
       });
@@ -240,7 +261,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
@@ -260,7 +281,7 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
@@ -280,19 +301,28 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
       fetchEntries(path).then((entries) => {
         if (seq !== navSeq) return;
         const { sortBy, sortDirection } = get();
-        set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
+        set({ entries: sortEntries(entries ?? [], sortBy, sortDirection), loading: false });
       });
     },
 
-    refresh() {
+    refresh({ includeSearch = false } = {}) {
       const { currentPath } = get();
+      const gatewayUrl = getGatewayUrl();
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      const signal = AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]);
       set({ loading: true });
       const seq = ++navSeq;
-      fetchEntries(currentPath).then((entries) => {
-        if (seq !== navSeq) return;
-        const { sortBy, sortDirection } = get();
+      void fetchEntries(currentPath, gatewayUrl, signal).then((entries) => {
+        if (seq !== navSeq || !authority.isCurrent()) return;
+        const { sortBy, sortDirection, error } = get();
+        if (!entries) {
+          set({ error: error ?? "Could not refresh Files. Try again.", loading: false });
+          return;
+        }
         set({ entries: sortEntries(entries, sortBy, sortDirection), loading: false });
-      });
+      }).finally(authority.unsubscribe);
+      const { searchQuery } = get();
+      if (includeSearch && searchQuery.trim()) get().search(searchQuery);
     },
 
     setViewMode(mode) {
@@ -348,25 +378,34 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
 
     search(query) {
       if (!query.trim()) {
-        set({ searchQuery: "", searchResults: null, searching: false });
+        get().clearSearch();
         return;
       }
+      const gatewayUrl = getGatewayUrl();
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      const signal = AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]);
+      const seq = ++searchSeq;
+      const isCurrent = () => seq === searchSeq && get().searchQuery === query && authority.isCurrent();
       set({ searchQuery: query, searching: true });
-      fetch(
-        `${GATEWAY_URL}/api/files/search?q=${encodeURIComponent(query)}&content=true`,
-        { signal: AbortSignal.timeout(10_000) },
-      )
-        .then((res) => res.json())
-        .then((data: { results: SearchResult[] }) =>
-          set({ searchResults: data.results, searching: false }),
-        )
-        .catch((err: unknown) => {
-          console.warn("[file-browser] Failed to search files:", err instanceof Error ? err.message : String(err));
+      void fetch(`${gatewayUrl}/api/files/search?q=${encodeURIComponent(query)}&content=true`, {
+        signal: signal, cache: "no-store",
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Files search unavailable");
+          const data = await res.json() as { results?: SearchResult[] } | null;
+          if (!Array.isArray(data?.results)) throw new Error("Invalid Files search response");
+          if (isCurrent()) set({ searchResults: data.results, searching: false });
+        })
+        .catch((error: unknown) => {
+          if (!isCurrent()) return;
+          console.warn("[file-browser] Failed to search files:", error instanceof Error ? error.name : "UnknownError");
           set({ searchResults: [], searching: false });
-        });
+        })
+        .finally(authority.unsubscribe);
     },
 
     clearSearch() {
+      searchSeq++;
       set({ searchQuery: "", searchResults: null, searching: false });
     },
 
@@ -425,24 +464,48 @@ export const useFileBrowser = create<FileBrowserState & FileBrowserActions>()(
     },
 
     async deleteFiles(paths) {
-      const errors = await Promise.all(
-        paths.map(async (path) => {
-          const res = await fetch(`${GATEWAY_URL}/api/files/delete`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path }),
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!res.ok) {
-            return `Failed to delete ${path.split("/").pop()}`;
+      if (paths.length === 0 || movingToTrash) return;
+      const label = paths.length === 1 ? `“${paths[0].split("/").at(-1)}”` : `${paths.length} items`;
+      const gatewayUrl = getGatewayUrl();
+      const currentPath = get().currentPath;
+      const moved: string[] = [];
+      const authority = watchFileBrowserAuthority(gatewayUrl);
+      movingToTrash = true;
+      try {
+        if (!window.confirm(`Move ${label} to Trash? You can restore them from Trash.`) || !authority.isCurrent()) return;
+        set({ error: null });
+        for (const path of paths) {
+          if (!authority.isCurrent()) return;
+          try {
+            const res = await fetch(`${gatewayUrl}/api/files/delete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path }),
+              signal: AbortSignal.any([authority.signal, AbortSignal.timeout(10_000)]),
+            });
+            if (res.ok) moved.push(path);
+          } catch (error) {
+            if (!authority.isCurrent()) return;
+            console.warn("[file-browser] Move to Trash unavailable:", error instanceof Error ? error.name : "UnknownError");
           }
-          return null;
-        }),
-      );
-      const firstError = errors.find((error): error is string => error !== null);
-      if (firstError) set({ error: firstError });
-      set({ selectedPaths: new Set() });
-      get().refresh();
+        }
+        if (!authority.isCurrent()) return;
+        if (get().currentPath === currentPath) {
+          const remaining = new Set(get().selectedPaths);
+          for (const path of moved) {
+            const name = path.split("/").at(-1);
+            if (name && path === (currentPath ? `${currentPath}/${name}` : name)) remaining.delete(name);
+          }
+          set({
+            selectedPaths: remaining,
+            error: moved.length === paths.length ? null : "Move to Trash could not be confirmed for every item. Check Files or Trash.",
+          });
+        }
+        get().refresh({ includeSearch: moved.length > 0 });
+      } finally {
+        authority.unsubscribe();
+        movingToTrash = false;
+      }
     },
 
     async duplicate(paths) {

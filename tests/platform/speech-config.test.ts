@@ -52,7 +52,8 @@ describe("platform speech configuration", () => {
     ["missing monthly budget", { PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: undefined }],
     ["missing monthly promotional credit", { PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: undefined }],
     ["zero real price", { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "0" }],
-    ["route-incompatible upload size", { PLATFORM_SPEECH_MAX_BYTES: String(10 * 1024 * 1024 + 1) }],
+    ["route-incompatible upload size", { PLATFORM_SPEECH_MAX_BYTES: String(20 * 1024 * 1024 + 1) }],
+    ["dictation longer than ten minutes", { PLATFORM_SPEECH_MAX_DURATION_MS: String(10 * 60_000 + 1) }],
   ])("rejects enabled OpenAI mode with %s", (_label, changed) => {
     expect(() => loadPlatformSpeechConfig({
       PLATFORM_SPEECH_ENABLED: "true",
@@ -158,5 +159,27 @@ describe("platform speech configuration", () => {
       PLATFORM_SPEECH_PREVIEW_NOT_AFTER: "2026-09-14T00:00:00.000Z",
       ...changed,
     })).toThrow("Platform speech configuration is invalid");
+  });
+
+  it("lets one dictation run for ten minutes unless an operator narrows it", () => {
+    const env = {
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "platform-openai-key-123456",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-transcribe",
+      PLATFORM_SPEECH_POLICY_REVISION: "speech-2026-09-10",
+      PLATFORM_SPEECH_SECRET: secret,
+      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: "6000",
+      PLATFORM_SPEECH_FUNDING_SOURCES: "promotional",
+      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: "1000000",
+      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: "1000000",
+    };
+    const defaults = loadPlatformSpeechConfig(env);
+    expect(defaults.enabled && defaults.limits).toMatchObject({
+      maxBytes: 20 * 1024 * 1024,
+      maxDurationMs: 600_000,
+    });
+    const narrowed = loadPlatformSpeechConfig({ ...env, PLATFORM_SPEECH_MAX_DURATION_MS: "120000" });
+    expect(narrowed.enabled && narrowed.limits.maxDurationMs).toBe(120_000);
   });
 });

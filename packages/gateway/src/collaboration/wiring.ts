@@ -35,6 +35,7 @@ import { CollaborationControlClient, isMembershipEvidenceEvictor } from "./contr
 import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
 import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
+import { subscribeSessionRevocations } from "./session-revocation.js";
 import { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
 import { confirmationKeyFromRuntimeIdentity, ensureRuntimeIdentity } from "./runtime-identity.js";
@@ -271,7 +272,7 @@ export async function createGatewayCollaboration(options: {
       })
     : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
-  directSessions.subscribeEnded((session, reason) => revocationEnforcer?.onSessionEnded(session, reason));
+  subscribeSessionRevocations(directSessions, () => revocationEnforcer);
   if (options.config.ownerId && options.config.relayHandle) {
     controlClient = new CollaborationControlClient({
       platformBaseUrl: options.config.platformBaseUrl,

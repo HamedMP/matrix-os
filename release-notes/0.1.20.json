@@ -1,0 +1,119 @@
+{
+  "version": "0.1.20",
+  "channel": "stable",
+  "date": "2026-10-30T15:43:27Z",
+  "locale": "en",
+  "title": "Get started in minutes",
+  "shortTitle": "Get Started",
+  "summary": "A guided Get Started wizard for new users, and long chats that don't lose their place.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Get Started wizard",
+      "body": "New users get a short guided setup: make the AI yours, connect your tools, sign in to coding agents and build a first app with ready-made suggestions.",
+      "art": "sparkle",
+      "tone": "lime",
+      "prs": [
+        2846,
+        2847,
+        2848,
+        2850,
+        2874,
+        2875,
+        2885,
+        2944
+      ]
+    },
+    {
+      "tag": "Improved",
+      "title": "Long chats hold together",
+      "body": "Long-running chats keep streaming, recover after interruptions and keep complete replies, attachments and drafts.",
+      "art": "sync",
+      "tone": "ink",
+      "prs": [
+        2901,
+        2902,
+        2903,
+        2904,
+        2905,
+        2906,
+        2907,
+        2908,
+        2909,
+        2910,
+        2911,
+        2912,
+        2947,
+        2948,
+        2949,
+        2950,
+        2116,
+        2942
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Chats render diagrams, and previews look better in the desktop app."
+    },
+    {
+      "kind": "improved",
+      "text": "Chat in the browser matches the desktop app, composer included."
+    },
+    {
+      "kind": "fixed",
+      "text": "The chat rail keeps its order while a run is going."
+    },
+    {
+      "kind": "fixed",
+      "text": "The bot header stays put when a chat loses focus."
+    },
+    {
+      "kind": "fixed",
+      "text": "Hermes keeps its state when providers refresh."
+    },
+    {
+      "kind": "improved",
+      "text": "Trusted apps use your connected integrations by default."
+    },
+    {
+      "kind": "improved",
+      "text": "Matrix AI holds less credit for small Sonnet requests."
+    },
+    {
+      "kind": "fixed",
+      "text": "Private project sharing finishes setting up and explains organization limits."
+    },
+    {
+      "kind": "fixed",
+      "text": "Claude status and chat credit are current right after sign-up."
+    },
+    {
+      "kind": "fixed",
+      "text": "Providers refresh after you sign in."
+    },
+    {
+      "kind": "fixed",
+      "text": "ChatGPT subscriptions connected earlier keep working."
+    },
+    {
+      "kind": "fixed",
+      "text": "Status for custom agents that aren't tracked is hidden."
+    }
+  ],
+  "hidden": [
+    2939,
+    2933,
+    2957,
+    2961,
+    2960,
+    2969,
+    2953,
+    2968,
+    2978,
+    2981,
+    2983,
+    3008
+  ]
+}

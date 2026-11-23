@@ -1,9 +1,10 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { ChatCollaboration } from "@matrix-os/ui";
 import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { createShellCollaborationApi } from "@/lib/collaboration";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
@@ -11,8 +12,9 @@ const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
 
 export function ShellSharedTerminal({ scopeId }: { scopeId: string }) {
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, userId } = useShellAuthIdentity();
   const browserOrigin = useBrowserOrigin();
+  const { status: organizationStatus } = useCollaborationOrganization();
   const api = useMemo(
     () => browserOrigin ? createShellCollaborationApi(browserOrigin) : null,
     [browserOrigin],
@@ -21,6 +23,13 @@ export function ShellSharedTerminal({ scopeId }: { scopeId: string }) {
 
   if ((!isLoaded && !e2eBypass) || !browserOrigin) {
     return <p role="status" className="p-8">Loading shared terminal…</p>;
+  }
+  // Same rule as shared Chats: without an organization (always the case on
+  // self-hosted computers) there is nothing to share the terminal through.
+  if (organizationStatus === "none") {
+    return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
+      Organization sharing is no longer available for this account.
+    </div>;
   }
   if (!actorId || !api) {
     return <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">

@@ -2,12 +2,14 @@ import { beforeEach, afterEach, vi } from 'vitest';
 import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 export const createTestConfig = (overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) => ({ ...loadCustomerVpsConfig({
     PLATFORM_PORT: '9000', PLATFORM_SECRET: 'platform-secret', HETZNER_API_TOKEN: 'token',
+    MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
     S3_ACCESS_KEY_ID: 'r2-access-key', S3_SECRET_ACCESS_KEY: 'r2-secret-key',
     S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'matrixos-sync',
     POSTHOG_TOKEN: 'phc_public', POSTHOG_PROJECT_TOKEN: 'phc_project', NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',

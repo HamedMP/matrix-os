@@ -89,7 +89,7 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     expect(await page.getByRole("button", { name: "Share", exact: true }).count()).toBe(1);
     // Readiness is rechecked on Share; a ready result shares at once.
     await dialog.getByRole("button", { name: "Share with Matrix Team" }).click();
-    await dialog.getByText("Matrix Team link").waitFor();
+    await dialog.getByRole("button", { name: "Copy Matrix Team link" }).waitFor();
     if (evidencePath) await page.screenshot({ path: join(evidencePath, "electron-owner-org-active.png") });
     await dialog.getByRole("button", { name: "Stop sharing with Matrix Team" }).click();
     await dialog.getByRole("button", { name: "Share with Matrix Team" }).waitFor();

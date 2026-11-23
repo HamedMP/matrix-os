@@ -64,7 +64,7 @@ export const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     color: "#1E2F5C",
     logoSrc: "/agent-logos/pi-coding-agent.png",
     launchCommand: "pi",
-    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installPackage: "@earendil-works/pi-coding-agent@1.6.0",
     installFlags: ["--ignore-scripts"],
   },
 ];

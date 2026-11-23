@@ -10,9 +10,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DiscordIcon, GettingStartedMenuSummary, useGettingStartedProgress } from "@matrix-os/ui";
+import { getGatewayUrl } from "@/lib/gateway";
 import {
   CircleHelpIcon,
+  ClipboardCheck,
   CreditCardIcon,
+  ExternalLinkIcon,
   Loader2Icon,
   LogOutIcon,
   PlusCircleIcon,
@@ -24,7 +28,7 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
@@ -153,11 +157,14 @@ function MountedUserButton({
   onOpenSettings?: (section: AccountSettingsSection) => void;
   showSharedWithMe: boolean;
 }) {
-  const { isLoaded, isSignedIn, signOut } = useAuth();
+  const { isLoaded, isSignedIn, signOut, getToken } = useAuth();
   const { user } = useUser();
   const clerk = useClerk();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const { status: organizationStatus } = useCollaborationOrganization();
+  // Opening the checklist moves focus into it; the closing menu must not pull focus back.
+  const keepFocusOnClose = useRef(false);
 
   if (!isLoaded || !isSignedIn) {
     return <Placeholder variant={variant} />;
@@ -176,8 +183,16 @@ function MountedUserButton({
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutError(null);
     const redirectUrl = getSignInRedirectUrl();
-    await clearMatrixAppSession();
+    try {
+      await clearMatrixAppSession(getToken);
+    } catch (error: unknown) {
+      console.warn("[auth] Matrix app session sign-out failed", error instanceof Error ? error.name : typeof error);
+      setSigningOut(false);
+      setSignOutError("Sign-out is temporarily unavailable. Try again.");
+      return;
+    }
     try {
       await clerkSignOutWithTimeout(signOut, redirectUrl);
       window.location.replace(redirectUrl);
@@ -220,6 +235,11 @@ function MountedUserButton({
           align={isMenubar ? "end" : "start"}
           side={isMenubar ? "bottom" : "top"}
           sideOffset={10}
+          onCloseAutoFocus={(event) => {
+            if (!keepFocusOnClose.current) return;
+            keepFocusOnClose.current = false;
+            event.preventDefault();
+          }}
           style={{
             zIndex: SHELL_Z_INDEX.popover,
             ...(isMenubar ? {
@@ -232,9 +252,10 @@ function MountedUserButton({
         >
           {isMenubar ? <TopBarAccountContent
             label={user?.username ? `@${user.username}` : displayName}
-            signingOut={signingOut} onSignOut={handleSignOut} onOpenSettings={onOpenSettings}
+            signingOut={signingOut} signOutError={signOutError} onSignOut={handleSignOut} onOpenSettings={onOpenSettings}
+            onOpenChecklist={() => { keepFocusOnClose.current = true; }}
           /> : <LegacyAccountContent avatarUrl={avatarUrl} displayName={displayName}
-            secondary={secondary} signingOut={signingOut} onSignOut={handleSignOut}
+            secondary={secondary} signingOut={signingOut} signOutError={signOutError} onSignOut={handleSignOut}
             onOpenSettings={onOpenSettings} onManageAccount={() => clerk.openUserProfile()}
             showSharedWithMe={showSharedWithMe && organizationStatus !== "none"} />}
         </DropdownMenuPrimitive.Content>
@@ -243,8 +264,8 @@ function MountedUserButton({
   );
 }
 
-function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, onSignOut, onOpenSettings, onManageAccount, showSharedWithMe }: {
-  avatarUrl: string | null; displayName: string; secondary: string | null; signingOut: boolean;
+function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, signOutError, onSignOut, onOpenSettings, onManageAccount, showSharedWithMe }: {
+  avatarUrl: string | null; displayName: string; secondary: string | null; signingOut: boolean; signOutError: string | null;
   onSignOut(): Promise<void>; onManageAccount(): void; onOpenSettings?: (section: AccountSettingsSection) => void;
   showSharedWithMe: boolean;
 }) {
@@ -352,6 +373,7 @@ function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, o
             )}
             {signingOut ? "Signing out…" : "Sign out"}
           </DropdownMenuPrimitive.Item>
+          {signOutError ? <p role="alert" className="px-2.5 pt-1 text-xs text-destructive">{signOutError}</p> : null}
 
           <p className="px-2.5 pb-0.5 pt-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
             Secured by Clerk
@@ -359,22 +381,41 @@ function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, o
   </>;
 }
 
-function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: {
-  label: string; signingOut: boolean; onSignOut(): Promise<void>;
+const DISCORD_INVITE_URL = "https://discord.gg/WHbvTG33w";
+
+function TopBarAccountContent({ label, signingOut, signOutError, onSignOut, onOpenSettings, onOpenChecklist }: {
+  label: string; signingOut: boolean; signOutError: string | null; onSignOut(): Promise<void>;
   onOpenSettings?: (section: AccountSettingsSection) => void;
+  onOpenChecklist(): void;
 }) {
   const row = "flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] outline-none data-[highlighted]:bg-foreground/5";
+  const gettingStarted = useGettingStartedProgress();
+  const setupIncomplete = gettingStarted !== null && gettingStarted.completed < gettingStarted.total;
   return <>
     <div className="px-2 pb-2 pt-1 text-[11px] text-muted-foreground"><p className="mb-1 tracking-wider">PERSONAL ACCOUNT</p><p className="truncate">{label}</p></div>
+    {setupIncomplete ? <>
+      <DropdownMenuPrimitive.Item className={`${row} items-start`} onSelect={() => { onOpenChecklist(); gettingStarted.open(); }}>
+        <ClipboardCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <GettingStartedMenuSummary completed={gettingStarted.completed} total={gettingStarted.total} next={gettingStarted.next} />
+      </DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Separator className="my-0.5 h-px bg-border" />
+    </> : null}
     <OrganizationMenuItems itemClass={row} />
     {onOpenSettings ? <>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("agents-providers")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("billing")}><CreditCardIcon className="size-3.5" aria-hidden="true" />View plans</DropdownMenuPrimitive.Item>
     </> : null}
+    <DropdownMenuPrimitive.Item asChild>
+      <a className={row} href={DISCORD_INVITE_URL} target="_blank" rel="noopener noreferrer">
+        <DiscordIcon size={14} className="shrink-0" />
+        <span className="flex-1">Join Discord</span><ExternalLinkIcon className="size-3" aria-hidden="true" />
+      </a>
+    </DropdownMenuPrimitive.Item>
     <DropdownMenuPrimitive.Separator className="my-0.5 h-px bg-border" />
     <DropdownMenuPrimitive.Item className={`${row} data-[disabled]:opacity-60`} disabled={signingOut} aria-busy={signingOut} onSelect={event => { event.preventDefault(); void onSignOut(); }}>
       {signingOut ? <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" /> : <LogOutIcon className="size-3.5" aria-hidden="true" />}{signingOut ? "Signing out…" : "Log out"}
     </DropdownMenuPrimitive.Item>
+    {signOutError ? <p role="alert" className="px-2 py-1 text-xs text-destructive">{signOutError}</p> : null}
   </>;
 }
 

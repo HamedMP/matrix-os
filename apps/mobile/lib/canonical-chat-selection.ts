@@ -91,3 +91,21 @@ export function defaultTurnModes(
     || !selectionBindingCurrent(instance, selection)) return null;
   return canonicalChatTurnModes(catalog, selection, controls);
 }
+
+/**
+ * The modes a turn is sent with: those of `defaultTurnModes`, with the
+ * permission mode asked for in their place when the selected engine runs it.
+ * An engine that does not run it takes the default, as on Desktop, and the
+ * mode asked for stays the one to use with an engine that does.
+ */
+export function chosenTurnModes(
+  catalog: CanonicalProviderCatalog | null,
+  selection: CanonicalChatModelSelection | null,
+  controls: CanonicalChatExecutionControls | undefined,
+  permissionMode: string | null | undefined,
+): { interactionMode: string; permissionMode: string } | null {
+  const modes = defaultTurnModes(catalog, selection, controls);
+  if (!modes || !permissionMode) return modes;
+  const instance = catalog?.instances.find((candidate) => candidate.id === selection?.instanceId);
+  return instance?.supports.permissionModes.includes(permissionMode) ? { ...modes, permissionMode } : modes;
+}

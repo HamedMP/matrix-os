@@ -4,6 +4,7 @@ import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OrganizationMcpVisibilityNotice } from "@matrix-os/ui";
 import type {
   OrganizationManagementInvitation,
   OrganizationManagementMember,
@@ -301,5 +302,95 @@ describe("OrganizationSectionView", () => {
     expect(screen.getByRole("alertdialog", { name: "Remove Ava Chen?" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Remove member" }));
     await waitFor(() => expect(apiState.delete).toHaveBeenCalledWith("/api/organizations/org_northwind/members/user_ava"));
+  });
+});
+
+describe("Organization → Connections wiring (Electron Desktop)", () => {
+  // Fault: the admin panel is not mounted, reads the wrong route, or members miss the visibility notice.
+  it("loads the admin panel from the org MCP routes and shows members only the notice", async () => {
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/usage?")
+      ? { rows: [], truncated: false, updatedAt: "2026-11-12T09:30:00.000Z" }
+      : { servers: [], members: [{ actorId: "user_ava", displayName: "Ava Chen", blockedServerDefIds: [], connections: [{
+        connectionId: "11111111-1111-4111-8111-111111111111", name: "Linear", host: "mcp.linear.app", serverDefIds: ["mcp.linear.app", "linear"],
+        status: "ready", enabled: true, connectedAt: "2026-11-01T00:00:00.000Z", lastUsedAt: null }] }] }),
+    { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      apiState.get.mockImplementation(async (path: string) => {
+        if (path === "/api/organizations") return { complete: true, organizations: [northwind] };
+        if (path === "/api/organizations/org_northwind/members") return { members };
+        if (path === "/api/organizations/org_northwind/invitations") return { invitations: [] };
+        throw new Error(`Unexpected path: ${path}`);
+      });
+      render(<OrganizationSection />);
+      expect(await screen.findByRole("list", { name: "Connections for Ava Chen" })).toBeTruthy();
+      expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toContain("/api/orgs/org_northwind/mcp/connections");
+      expect(screen.getByRole("note").textContent).toContain("never see your credentials");
+      cleanup();
+
+      fetchMock.mockClear();
+      render(<OrganizationSectionView organization={{ ...northwind, role: "org:member" }} currentActorId="user_ava" members={members} invitations={[]}
+        onOpenInvite={() => undefined} connections={<OrganizationMcpVisibilityNotice />} />);
+      expect(screen.getByRole("note")).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "Connections" })).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("Organization page switcher (Electron Desktop)", () => {
+  function organizationsRoute() {
+    apiState.get.mockImplementation(async (path: string) => {
+      if (path === "/api/organizations") return { complete: true, organizations: [northwind, acme] };
+      if (path.startsWith("/api/organizations/org_northwind/members")) return { members };
+      if (path === "/api/organizations/org_northwind/invitations") return { invitations: [] };
+      if (path.startsWith("/api/organizations/org_acme/members")) return { members };
+      throw new Error(`Unexpected path: ${path}`);
+    });
+  }
+
+  // Fault: the page offers no way to change the active organization, or the menu links back to the page itself.
+  it("switches the active organization from the page header without a self-link to settings", async () => {
+    organizationsRoute();
+    render(<OrganizationSection />);
+    await screen.findByText(/Nima Boscarino/);
+
+    const trigger = screen.getByRole("button", { name: "Switch organization, current organization Northwind" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Invite members" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Organization settings" })).toBeNull();
+    expect(screen.getByText("nima@example.com")).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Acme Studio/ }));
+
+    expect(useConnection.getState().organizationId).toBe("org_acme");
+    expect(await screen.findByText("You’re a member of Acme Studio.")).toBeTruthy();
+  });
+
+  // Fault: a user on Personal is told to use a title-bar switcher that no longer exists.
+  it("offers the switcher in the no-organization state", async () => {
+    organizationsRoute();
+    render(<OrganizationSection />);
+    await screen.findByText(/Nima Boscarino/);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Switch organization/ }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /Personal/ }));
+    expect(await screen.findByText("Choose an organization with the switcher above to manage it here.")).toBeTruthy();
+    expect(screen.queryByText(/title bar/)).toBeNull();
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Switch organization, current organization Personal" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /Northwind/ }));
+    expect(useConnection.getState().organizationId).toBe("org_northwind");
+  });
+
+  it("keeps the member count as plain text for members when the settings action is hidden", () => {
+    render(
+      <DropdownMenu.Root defaultOpen>
+        <OrganizationSwitcherView organizations={[acme]} organizationId={acme.organizationId} onSelect={() => undefined} onOpenInvite={() => undefined} showSettingsAction={false} />
+      </DropdownMenu.Root>,
+    );
+    expect(screen.queryByRole("button", { name: "View 8 members" })).toBeNull();
+    expect(screen.getByText("8 members")).toBeTruthy();
   });
 });

@@ -8,6 +8,7 @@ import {
   requestChatDraft,
   useChatDraftRequest,
 } from "../components/agents/chat-draft-request";
+import { composerChoices } from "../lib/remembered-composer-choice";
 
 // The Chats stack's layout holds the open chat's state above its screens.
 const ChatScreen = () => <ActiveChatProvider><ChatScreenRoute /></ActiveChatProvider>;
@@ -79,7 +80,7 @@ const prompt = "Help me create a Matrix agent inspired by “Account research”
 function openChat() {
   mockActiveChatId = "chat_habits";
   mockDetail = {
-    record: { projectId: null, chat: { id: "chat_habits", title: "Habit tracker app", revision: 4 } },
+    record: { projectId: null, chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_habits", title: "Habit tracker app", revision: 4 } },
     runs: [], turns: [], activities: [], messages: [],
   };
 }
@@ -103,6 +104,8 @@ type ChatView = ReturnType<typeof render>;
 const composerOf = (view: ChatView) => view.getByLabelText("Message Matrix");
 
 describe("chat screen: a draft asked for by another screen", () => {
+  // A new chat's model waits for the choice remembered on the phone; read it once up front.
+  beforeAll(() => composerChoices.load());
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     act(() => jest.runOnlyPendingTimers());

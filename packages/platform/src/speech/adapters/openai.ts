@@ -1,8 +1,12 @@
 import { z } from "zod/v4";
-import { SPEECH_MAX_TRANSCRIPT_CHARS, type SpeechMediaType } from "@matrix-os/contracts";
+import {
+  SPEECH_MAX_TRANSCRIPT_CHARS,
+  SPEECH_TRANSCRIPTION_PROVIDER_TIMEOUT_MS,
+  type SpeechMediaType,
+} from "@matrix-os/contracts";
 
 const TRANSCRIPTIONS_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions";
-const DEFAULT_TIMEOUT_MS = 55_000;
+const DEFAULT_TIMEOUT_MS = SPEECH_TRANSCRIPTION_PROVIDER_TIMEOUT_MS;
 const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024;
 const ModelSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const ResponseSchema = z.object({ text: z.string().max(SPEECH_MAX_TRANSCRIPT_CHARS) }).passthrough();
@@ -89,7 +93,7 @@ export function createOpenAiFileTranscriptionAdapter(options: {
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 65_000
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > SPEECH_TRANSCRIPTION_PROVIDER_TIMEOUT_MS
     || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 32
     || maxResponseBytes > 512 * 1024) {
     throw new SpeechAdapterError("misconfigured", "Speech adapter limits are invalid");

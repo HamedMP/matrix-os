@@ -91,6 +91,35 @@ the provisioned per-handle platform HMAC, a bounded response reader, an explicit
 timeout, and `redirect: "error"`; failure projects usage as unavailable instead
 of falling back to local estimates.
 
+## Funded generation identity and dispatch
+
+For `POST /v1/chat/completions` and usage-mode `POST /v1/messages`, the
+Relay may reuse the identity from a successful Platform check for the local
+runtime limiter and provider metadata. The process-local cache holds up to
+512 identities. Its key includes the exact credential and model under a keyed
+digest. Entries expire after 30 seconds or at credential expiry, whichever is
+earlier. Token-count calls and requests that count upstream before admission
+perform a fresh check.
+
+Every generation still requires live Platform authorization, exact identity
+and reservation matching, and a successful execution start before dispatch.
+On a cache hit, credential revocation and global or runtime disable still
+reject the request before it reaches the provider. A validated Platform
+identity or policy denial evicts the cached identity and refunds that local
+runtime attempt. A funding or capacity denial follows its existing quota
+rules. The Relay releases an untouched reservation if authorization returns
+a mismatched identity.
+
+Platform keeps the owner and reservation locks through the start transition.
+The row moves from `reserved` to `in_flight` with its execution ID, expiry,
+and stored response in one guarded update. A retry with the same execution ID
+reuses the response. A different execution ID conflicts.
+
+The funded Relay postpaid suite checks the warm path, failure on cached
+identities, and fresh token counting. The Platform authorization latency
+suite checks the query budget against PostgreSQL. Hosted first-token latency
+is measured separately on the exact deployment candidate.
+
 ## Funded AI add-on Checkout
 
 The checkout request is a strict object containing only `packageId`

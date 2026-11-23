@@ -247,7 +247,7 @@ describe("collaborative app owner sharing controls", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Manage app sharing" }));
 
-    expect(await screen.findByText("Shared with org_matrix_team")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("Shared with org_matrix_team")).toBeVisible());
     expect(screen.queryByText("Shared with Other team")).toBeNull();
   });
 
