@@ -74,7 +74,8 @@ export interface ProjectTaskClient {
   createComment(projectSlug: string, taskId: string, body: { body: string }): Promise<TaskComment>;
   listActivity(projectSlug: string, taskId: string, page?: ProjectTaskPage): Promise<{ activity: TaskActivity[]; nextCursor: string | null }>;
   /** `firstMessage` is set when the server opened the session without sending it (no model selection, or a terminal). */
-  startTask(projectSlug: string, taskId: string, body: StartTaskBody): Promise<{ task: ProjectTask; session: TaskSession; firstMessage?: string }>;
+  /** `session` is the attached terminal, or null for a chat start (the task's chat is `task.chatId`). */
+  startTask(projectSlug: string, taskId: string, body: StartTaskBody): Promise<{ task: ProjectTask; session: TaskSession | null; firstMessage?: string }>;
 }
 
 export interface ProjectSummary { id: string; slug: string; name: string }

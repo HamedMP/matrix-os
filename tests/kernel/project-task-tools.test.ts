@@ -21,7 +21,7 @@ function fakeClient(overrides: Partial<ProjectTaskClient> = {}): ProjectTaskClie
     listComments: vi.fn(async () => ({ comments: [], nextCursor: null })),
     createComment: vi.fn(async () => ({ id: "tcm_1", taskId: "task_42", author: "agent:chat_1" as const, body: "PR is up", createdAt: "2026-11-20T10:00:00.000Z", editedAt: null })),
     listActivity: vi.fn(async () => ({ activity: [], nextCursor: null })),
-    startTask: vi.fn(async () => ({ task: taskFixture(), session: null })),
+    startTask: vi.fn(async () => ({ task: taskFixture(), session: { ref: "term.ws_1.tab_9", kind: "terminal" as const, title: "MOS-42", role: "main" as const, agentStatus: "working" as const } })),
     ...overrides,
   };
 }
@@ -148,7 +148,7 @@ describe("project task agent tools", () => {
     expect(client.createComment).toHaveBeenCalledWith("matrix-os", "task_42", { body: "PR is up" });
     const started = await call("project_task_start", { kind: "terminal", worktree: "existing", harness: "codex", clientRequestId: "req_start_1" });
     expect(client.startTask).toHaveBeenCalledWith("matrix-os", "task_42", { kind: "terminal", worktree: "existing", harness: "codex", clientRequestId: "req_start_1" });
-    expect(started.text).toContain("chat_9");
+    expect(started.text).toContain("term.ws_1.tab_9");
     expect(started.text).toContain('"agentStarted": true');
   });
 
