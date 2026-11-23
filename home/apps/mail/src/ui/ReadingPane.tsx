@@ -20,6 +20,7 @@ function Conversation({ thread, threadKey, flagged }: { thread: MailThread; thre
   const respond = (kind: Exclude<DraftKind, "new">) => void store.respond(kind, { key: threadKey, messageId: latest?.id });
   const toggle = (id: string) => setExpanded((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
   const subject = thread.subject.trim() || "(no subject)";
+  const expandedSet = new Set(expanded);
 
   return (
     <div className="mail-reading">
@@ -53,7 +54,7 @@ function Conversation({ thread, threadKey, flagged }: { thread: MailThread; thre
               key={message.id}
               message={message}
               provider={provider}
-              expanded={expanded.includes(message.id)}
+              expanded={expandedSet.has(message.id)}
               onToggle={() => toggle(message.id)}
             />
           ))}

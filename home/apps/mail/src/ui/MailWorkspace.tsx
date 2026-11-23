@@ -71,11 +71,9 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
   }, [layoutStore]);
 
   const resize = (patch: Partial<MailLayout>) => {
-    setLayout((current) => {
-      const next = { ...current, ...patch };
-      layoutStore.save(next);
-      return next;
-    });
+    const next = { ...layout, ...patch };
+    setLayout(next);
+    layoutStore.save(next);
   };
 
   const ui = useMemo<MailUi>(() => ({

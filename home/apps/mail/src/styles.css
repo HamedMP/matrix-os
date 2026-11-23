@@ -77,7 +77,8 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .mail-row.is-open { background: var(--oui-active); border-left-color: var(--oui-accent); }
 .mail-row.is-focused { box-shadow: inset 0 0 0 1px var(--oui-accent); }
 .mail-row.is-pending { opacity: .6; }
-.mail-row__check { flex: none; margin-top: 2px; }
+.mail-row__check-cell { flex: none; }
+.mail-row__check { margin: 2px 0 0; }
 .mail-row__body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .mail-row__line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .mail-row__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--oui-accent); }

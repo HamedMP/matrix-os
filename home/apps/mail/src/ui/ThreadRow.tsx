@@ -41,11 +41,11 @@ function ThreadRowView(props: ThreadRowProps) {
   ].filter(Boolean).join(" ");
   return (
     <div
-      role="option"
+      role="row"
       id={`mail-row-${index}`}
       aria-selected={selected}
       aria-current={open ? "true" : undefined}
-      aria-posinset={index + 1}
+      aria-rowindex={index + 1}
       className={classes}
       style={{ top: index * THREAD_ROW_HEIGHT, height: THREAD_ROW_HEIGHT }}
       draggable
@@ -54,18 +54,20 @@ function ThreadRowView(props: ThreadRowProps) {
       onDragStart={(event) => props.onDragStart(key, event)}
       onDragEnd={props.onDragEnd}
     >
-      <input
-        type="checkbox"
-        className="oui-checkbox__input mail-row__check"
-        checked={selected}
-        aria-label={`Select ${subject}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onCheck(key, event.shiftKey);
-        }}
-        onChange={() => undefined}
-      />
-      <div className="mail-row__body">
+      <div role="gridcell" className="mail-row__check-cell">
+        <input
+          type="checkbox"
+          className="oui-checkbox__input mail-row__check"
+          checked={selected}
+          aria-label={`Select ${subject}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onCheck(key, event.shiftKey);
+          }}
+          onChange={() => undefined}
+        />
+      </div>
+      <div role="gridcell" className="mail-row__body">
         <div className="mail-row__line">
           {summary.unread && <span className="mail-row__dot" aria-label="Unread" />}
           <span className="mail-row__sender">{senderLabel(summary.participants, ownAddresses)}</span>

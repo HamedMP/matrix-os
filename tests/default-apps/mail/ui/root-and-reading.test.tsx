@@ -88,7 +88,7 @@ describe("reading pane", () => {
         ({ name: attachmentId, mimeType: "application/octet-stream", size: 3, contentBase64: "AQID" });
     });
     await act(async () => {
-      fireEvent.click(screen.getAllByRole("option")[0]);
+      fireEvent.click(screen.getAllByRole("row")[0]);
     });
     await screen.findByRole("heading", { name: "Plans" });
     return harness;

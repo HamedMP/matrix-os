@@ -10,7 +10,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const rows = () => screen.getAllByRole("option");
+const rows = () => screen.getAllByRole("row");
 const row = (subject: string) => rows().find((el) => within(el).queryByText(subject))!;
 
 describe("thread list", () => {
@@ -42,7 +42,7 @@ describe("thread list", () => {
     const { provider } = await renderWorkspace(page("t", 200));
     expect(screen.getByText("50 conversations")).toBeTruthy();
     expect(rows().length).toBeLessThan(40);
-    const list = screen.getByRole("listbox", { name: "Conversations" });
+    const list = screen.getByRole("grid", { name: "Conversations" });
     await act(async () => {
       list.scrollTop = 50 * 72 - 600;
       fireEvent.scroll(list);

@@ -36,7 +36,8 @@ export function BulkBar({ state, visible }: BulkBarProps) {
   const { store } = useMailUi();
   const keys = state.selection.keys;
   const count = keys.length;
-  const allSelected = visible.length > 0 && visible.every((key) => keys.includes(key));
+  const selectedSet = new Set(keys);
+  const allSelected = visible.length > 0 && visible.every((key) => selectedSet.has(key));
   const toggleAll = () => (allSelected || count > 0 ? store.clearSelection() : store.selectAllVisible());
 
   if (count === 0) {
