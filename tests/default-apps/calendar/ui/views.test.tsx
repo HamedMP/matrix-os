@@ -86,4 +86,13 @@ describe("calendar views", () => {
     expect(screen.getByRole("heading", { name: "Connect a calendar" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
   });
+
+  it("opens the agent panel in the side slot and closes it again", async () => {
+    await setup();
+    fireEvent.click(toolbarButton("Agent"));
+    const panel = screen.getByRole("complementary", { name: "Agent" });
+    expect(await within(panel).findByRole("textbox", {}, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(toolbarButton("Agent"));
+    expect(screen.queryByRole("complementary", { name: "Agent" })).toBeNull();
+  });
 });

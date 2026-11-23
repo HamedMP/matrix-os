@@ -1,18 +1,24 @@
 /**
- * Slot for the calendar agent panel (`./agent/CalendarAgentPanel.tsx`, built
- * separately). It is loaded lazily; when the module is absent or fails to
- * load, a short notice takes its place.
+ * Slot for the calendar agent panel (`CalendarAgentPanel` from `./agent`,
+ * built separately). It is loaded lazily; when the module is absent or fails
+ * to load, a short notice takes its place.
  */
 import { Component, Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import { Bot, X } from "lucide-react";
 import { EmptyState, Spinner } from "../../../_shared/office-ui";
-import type { CalendarAgentPanelProps } from "./agentSlotTypes";
+import type { AgentSlotPanelProps } from "./agentSlotTypes";
 
-type PanelModule = { default: ComponentType<CalendarAgentPanelProps> };
+type PanelModule = { CalendarAgentPanel?: ComponentType<AgentSlotPanelProps> };
 
-const modules = import.meta.glob<PanelModule>("./agent/CalendarAgentPanel.tsx");
-const loader = modules["./agent/CalendarAgentPanel.tsx"];
-const LazyPanel = loader ? lazy(loader) : null;
+const modules = import.meta.glob<PanelModule>("./agent/index.ts");
+const loader = modules["./agent/index.ts"];
+const LazyPanel = loader
+  ? lazy(async () => {
+    const module = await loader();
+    if (!module.CalendarAgentPanel) throw new Error("CalendarAgentPanel export missing");
+    return { default: module.CalendarAgentPanel };
+  })
+  : null;
 
 class PanelBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -45,7 +51,11 @@ function Unavailable({ onClose }: { onClose(): void }) {
 /** True when this build includes the agent panel module. */
 export const AGENT_PANEL_AVAILABLE = LazyPanel !== null;
 
-export function AgentSlot(props: CalendarAgentPanelProps) {
+export interface AgentSlotProps extends AgentSlotPanelProps {
+  onClose(): void;
+}
+
+export function AgentSlot(props: AgentSlotProps) {
   if (!LazyPanel) return <Unavailable onClose={props.onClose} />;
   return (
     <PanelBoundary fallback={<Unavailable onClose={props.onClose} />}>

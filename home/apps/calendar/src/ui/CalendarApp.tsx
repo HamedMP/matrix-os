@@ -7,9 +7,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
 import { AppFrame, EmptyState, Skeleton } from "../../../_shared/office-ui";
 import { instantToMs, type EventChanges, type EventResponse } from "../../../_shared/office-accounts/types/calendar";
-import { defaultCalendar, type CalendarStore } from "../model";
+import { dayKeyAt, defaultCalendar, type CalendarStore } from "../model";
 import { AgendaView } from "./AgendaView";
 import { AgentSlot } from "./AgentSlot";
+import type { AgentHighlight } from "./agentSlotTypes";
 import { CalendarRail } from "./CalendarRail";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { calendarIndex } from "./colors";
@@ -40,6 +41,7 @@ export function CalendarApp({ store, now = Date.now }: CalendarAppProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [guestChange, setGuestChange] = useState<PendingGuestChange | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const selected = selectedId ? state.events.find((event) => event.id === selectedId) ?? null : null;
   const canCreate = defaultCalendar(state.calendars) !== null;
 
@@ -68,6 +70,21 @@ export function CalendarApp({ store, now = Date.now }: CalendarAppProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [store, openNew]);
+
+  // A time chip in the agent panel: go to its day, then focus the event or proposal once it is drawn.
+  function highlight(target: AgentHighlight) {
+    store.goToDate(dayKeyAt(instantToMs(target.start), state.timeZone));
+    setHighlightId(target.id);
+  }
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const element = [...document.querySelectorAll<HTMLElement>("[data-event-id], [data-proposal-id]")]
+      .find((item) => item.dataset.eventId === highlightId || item.dataset.proposalId === highlightId);
+    if (!element) return;
+    element.focus();
+    setHighlightId(null);
+  }, [highlightId, state.events, state.proposals]);
 
   function openEvent(eventId: string, anchor: HTMLElement) {
     popoverAnchor.current = anchor;
@@ -189,7 +206,7 @@ export function CalendarApp({ store, now = Date.now }: CalendarAppProps) {
   const rightPanel = state.draft
     ? <EventComposer store={store} state={state} draftState={state.draft} onApplyProposal={onProposal} />
     : agentOpen
-      ? <AgentSlot store={store} state={state} onClose={() => setAgentOpen(false)} />
+      ? <AgentSlot store={store} now={now} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
       : undefined;
 
   return (
