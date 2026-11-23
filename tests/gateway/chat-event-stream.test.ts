@@ -317,7 +317,7 @@ describe("canonical Chat event stream", () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe("no-store, no-transform");
     expect(response.headers.get("x-accel-buffering")).toBe("no");
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ principal: principalA, cursor: 12 }));
 

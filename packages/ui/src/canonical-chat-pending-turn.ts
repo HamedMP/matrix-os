@@ -1,4 +1,4 @@
-import type { CanonicalChatDetailResponse, CanonicalChatMessagePart } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatMessage, CanonicalChatMessagePart } from "@matrix-os/contracts";
 
 /** A message the person sent whose turn the server has not confirmed yet. */
 export interface PendingCanonicalTurn {
@@ -23,18 +23,25 @@ export function withPendingCanonicalTurn(
   if (!pending || detail.record.chat.id !== pending.chatId) return detail;
   if (detail.turns.some(turn => turn.clientRequestId === pending.requestId)) return detail;
   const baseMessageSeq = detail.messages.reduce((max, message) => Math.max(max, message.seq), 0);
-  const suffix = pending.requestId.replace(/^req_/, "");
-  const messageId = `msg_pending_${suffix}`;
-  const turnId = `cturn_pending_${suffix}`;
+  const message = pendingCanonicalTurnMessage(pending, baseMessageSeq + 1);
   return {
     ...detail,
-    messages: [...detail.messages, {
-      id: messageId, chatId: pending.chatId, seq: baseMessageSeq + 1, role: "user", state: "committed",
-      purpose: "ai_request", turnId, parts: pending.parts, createdAt: pending.createdAt,
-    }],
+    messages: [...detail.messages, message],
     turns: [...detail.turns, {
-      id: turnId, chatId: pending.chatId, clientRequestId: pending.requestId, baseMessageSeq,
-      inputMessageId: messageId, status: "accepted", createdAt: pending.createdAt, updatedAt: pending.createdAt,
+      id: message.turnId!, chatId: pending.chatId, clientRequestId: pending.requestId, baseMessageSeq,
+      inputMessageId: message.id, status: "accepted", createdAt: pending.createdAt, updatedAt: pending.createdAt,
     }],
+  };
+}
+
+/**
+ * The pending message on its own, for a new Chat whose detail does not exist
+ * yet (the Chat may not even be created). Display only, like the above.
+ */
+export function pendingCanonicalTurnMessage(pending: PendingCanonicalTurn, seq = 1): CanonicalChatMessage {
+  const suffix = pending.requestId.replace(/^req_/, "");
+  return {
+    id: `msg_pending_${suffix}`, chatId: pending.chatId, seq, role: "user", state: "committed",
+    purpose: "ai_request", turnId: `cturn_pending_${suffix}`, parts: pending.parts, createdAt: pending.createdAt,
   };
 }
