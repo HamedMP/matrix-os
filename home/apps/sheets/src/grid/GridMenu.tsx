@@ -1,0 +1,165 @@
+import { useCallback } from "react";
+import { type ClipboardPayload, copySelection, pasteClipboard } from "./actions-clipboard";
+import {
+  applyFilter,
+  clearSelection,
+  deleteColumns,
+  deleteRows,
+  filterByActiveValue,
+  insertColumns,
+  insertRows,
+  sortSelection,
+} from "./actions-data";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
+import type { GridContext } from "./context";
+import type { MenuState } from "./store";
+
+const CLIPBOARD_BLOCKED = "The browser did not let the menu use the clipboard. Use Ctrl+C, Ctrl+X and Ctrl+V.";
+
+/** Puts a copy on the system clipboard from a click (the keyboard shortcuts go through clipboard events instead). */
+export async function writeSystemClipboard(payload: ClipboardPayload): Promise<boolean> {
+  try {
+    const clipboard = globalThis.navigator?.clipboard;
+    if (clipboard === undefined) return false;
+    if (typeof clipboard.write === "function" && typeof ClipboardItem !== "undefined") {
+      await clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([payload.text], { type: "text/plain" }),
+          "text/html": new Blob([payload.html], { type: "text/html" }),
+        }),
+      ]);
+    } else {
+      await clipboard.writeText(payload.text);
+    }
+    return true;
+  } catch (error: unknown) {
+    console.warn("clipboard write was refused", error instanceof Error ? error.name : "error");
+    return false;
+  }
+}
+
+async function readSystemClipboard(): Promise<{ text: string; html: string | null } | null> {
+  try {
+    const clipboard = globalThis.navigator?.clipboard;
+    if (clipboard === undefined) return null;
+    let html: string | null = null;
+    let text = "";
+    if (typeof clipboard.read === "function") {
+      for (const item of await clipboard.read()) {
+        if (item.types.includes("text/html")) html = await (await item.getType("text/html")).text();
+        if (item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text();
+      }
+    } else {
+      text = await clipboard.readText();
+    }
+    return { text, html };
+  } catch (error: unknown) {
+    console.warn("clipboard read was refused", error instanceof Error ? error.name : "error");
+    return null;
+  }
+}
+
+function itemsFor(menu: MenuState, readOnly: boolean, filtered: boolean): MenuItem[] {
+  const items: MenuItem[] = [
+    { id: "cut", label: "Cut", disabled: readOnly },
+    { id: "copy", label: "Copy" },
+    { id: "paste", label: "Paste", disabled: readOnly },
+    { id: "clear", label: "Clear contents", disabled: readOnly },
+  ];
+  if (menu.area !== "cols") {
+    items.push(
+      { id: "row-above", label: "Insert rows above", separated: true, disabled: readOnly },
+      { id: "row-below", label: "Insert rows below", disabled: readOnly },
+      { id: "row-delete", label: "Delete rows", disabled: readOnly },
+    );
+  }
+  if (menu.area !== "rows") {
+    items.push(
+      { id: "col-left", label: "Insert columns left", separated: true, disabled: readOnly },
+      { id: "col-right", label: "Insert columns right", disabled: readOnly },
+      { id: "col-delete", label: "Delete columns", disabled: readOnly },
+    );
+  }
+  items.push(
+    { id: "sort-asc", label: "Sort A to Z", separated: true, disabled: readOnly },
+    { id: "sort-desc", label: "Sort Z to A", disabled: readOnly },
+    { id: "filter-value", label: "Filter by this value" },
+    { id: "filter-clear", label: "Clear filter", disabled: !filtered },
+  );
+  return items;
+}
+
+export interface GridMenuProps {
+  ctx: GridContext;
+  menu: MenuState;
+  readOnly: boolean;
+  /** Returns the keyboard focus to the grid after the menu closes. */
+  onDone(): void;
+}
+
+/** The context menu of the cells and headers. */
+export function GridMenu({ ctx, menu, readOnly, onDone }: GridMenuProps) {
+  const close = useCallback(() => {
+    ctx.store.set({ menu: null });
+    onDone();
+  }, [ctx, onDone]);
+
+  const pick = (id: string): void => {
+    close();
+    switch (id) {
+      case "cut":
+      case "copy": {
+        const payload = copySelection(ctx, id === "cut");
+        if (payload !== null) {
+          void writeSystemClipboard(payload).then((ok) => {
+            if (!ok) ctx.notice(CLIPBOARD_BLOCKED);
+          });
+        }
+        return;
+      }
+      case "paste":
+        void readSystemClipboard().then((data) => {
+          if (data === null) ctx.notice(CLIPBOARD_BLOCKED);
+          else pasteClipboard(ctx, data);
+        });
+        return;
+      case "clear":
+        clearSelection(ctx);
+        return;
+      case "row-above":
+        insertRows(ctx, "before");
+        return;
+      case "row-below":
+        insertRows(ctx, "after");
+        return;
+      case "row-delete":
+        deleteRows(ctx);
+        return;
+      case "col-left":
+        insertColumns(ctx, "before");
+        return;
+      case "col-right":
+        insertColumns(ctx, "after");
+        return;
+      case "col-delete":
+        deleteColumns(ctx);
+        return;
+      case "sort-asc":
+        sortSelection(ctx, false);
+        return;
+      case "sort-desc":
+        sortSelection(ctx, true);
+        return;
+      case "filter-value":
+        filterByActiveValue(ctx);
+        return;
+      case "filter-clear":
+        applyFilter(ctx, null);
+        return;
+      default:
+        return;
+    }
+  };
+
+  return <ContextMenu items={itemsFor(menu, readOnly, ctx.view.filter !== null)} x={menu.x} y={menu.y} label="Cell actions" onPick={pick} onClose={close} />;
+}

@@ -173,17 +173,28 @@ export interface SheetAxes {
 
 /**
  * The axes of a sheet. `hiddenRows` are rows a filter hides in this view;
- * rows and columns the file marks hidden have no size either.
+ * rows and columns the file marks hidden have no size either. `override`
+ * is the size of a row or column while its header edge is being dragged.
  */
-export function sheetAxes(info: SheetInfo, extent: GridExtent, hiddenRows: ReadonlySet<number> | null = null): SheetAxes {
-  const rowSizes: Array<readonly [number, number]> = [];
-  for (const row of info.rows) rowSizes.push([row.index, row.hidden ? 0 : Math.max(MIN_ROW_PX, rowHeightToPx(row.heightPt))]);
-  if (hiddenRows !== null) for (const row of hiddenRows) rowSizes.push([row, 0]);
-  const colSizes: Array<readonly [number, number]> = [];
-  for (const col of info.columns) colSizes.push([col.index, col.hidden ? 0 : Math.max(MIN_COLUMN_PX, columnWidthToPx(col.width))]);
+export function sheetAxes(
+  info: SheetInfo,
+  extent: GridExtent,
+  hiddenRows: ReadonlySet<number> | null = null,
+  override: { axis: "row" | "col"; index: number; size: number } | null = null,
+): SheetAxes {
+  const rowDefault = Math.max(MIN_ROW_PX, rowHeightToPx(info.defaultRowHeightPt));
+  const colDefault = Math.max(MIN_COLUMN_PX, columnWidthToPx(info.defaultColumnWidth));
+  // A later entry for an index replaces an earlier one, so the order below is the order of precedence.
+  const rowSizes = new Map<number, number>();
+  for (const row of info.rows) rowSizes.set(row.index, row.hidden ? 0 : Math.max(MIN_ROW_PX, rowHeightToPx(row.heightPt)));
+  if (override !== null && override.axis === "row") rowSizes.set(override.index, override.size);
+  if (hiddenRows !== null) for (const row of hiddenRows) rowSizes.set(row, 0);
+  const colSizes = new Map<number, number>();
+  for (const col of info.columns) colSizes.set(col.index, col.hidden ? 0 : Math.max(MIN_COLUMN_PX, columnWidthToPx(col.width)));
+  if (override !== null && override.axis === "col") colSizes.set(override.index, override.size);
   return {
-    rows: createAxis(extent.rows, Math.max(MIN_ROW_PX, rowHeightToPx(info.defaultRowHeightPt)), rowSizes),
-    cols: createAxis(extent.cols, Math.max(MIN_COLUMN_PX, columnWidthToPx(info.defaultColumnWidth)), colSizes),
+    rows: createAxis(extent.rows, rowDefault, rowSizes),
+    cols: createAxis(extent.cols, colDefault, colSizes),
   };
 }
 

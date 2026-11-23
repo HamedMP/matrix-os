@@ -30,6 +30,7 @@ export {
   parseCsv,
   parseSheetRange,
   toCsv,
+  xlsx,
 } from "../../../_shared/office-engine/index";
 
 export type {

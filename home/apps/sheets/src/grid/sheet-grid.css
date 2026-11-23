@@ -1,0 +1,644 @@
+/*
+ * Sheets grid. Colours come from the shared --app-* tokens, so the grid
+ * follows the Matrix theme. Cell colours set in a file are inline styles.
+ */
+
+.sheet-grid {
+  --sg-bg: var(--app-card, #ffffff);
+  --sg-fg: var(--app-fg, #1a1a1a);
+  --sg-line: color-mix(in srgb, var(--app-border, #d0d0d0) 70%, transparent);
+  --sg-head-bg: var(--app-muted, #f3f3f1);
+  --sg-head-fg: var(--app-muted-fg, #5a5a5a);
+  --sg-accent: var(--identity-accent, var(--app-primary, #1f7a4d));
+  --sg-ref-0: #2f6fde;
+  --sg-ref-1: #d14b3a;
+  --sg-ref-2: #7b3fc4;
+  --sg-ref-3: #1e8a5a;
+  --sg-ref-4: #c2680b;
+  --sg-ref-5: #c2338b;
+  --sg-ref-6: #0e8a9a;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+  font-family: var(--app-font, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+/* ---------------------------------------------------------------- formula bar */
+
+.sg-bar {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 30px;
+  border-bottom: 1px solid var(--app-border, #d0d0d0);
+  background: var(--sg-bg);
+}
+
+.sg-bar__name {
+  width: 96px;
+  flex: none;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--app-border, #d0d0d0);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-bar__name:focus-visible {
+  outline: 2px solid var(--sg-accent);
+  outline-offset: -2px;
+}
+
+.sg-bar__fx {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: 0 8px;
+  color: var(--sg-head-fg);
+  font-style: italic;
+  user-select: none;
+}
+
+.sg-bar__input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- text inputs */
+
+.sg-input {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+}
+
+.sg-input--bar {
+  width: 100%;
+  height: 100%;
+}
+
+.sg-input--cell {
+  position: absolute;
+  z-index: 6;
+  border: 2px solid var(--sg-accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+}
+
+.sg-input--cell.is-invalid {
+  border-color: var(--app-danger, #c0392b);
+}
+
+.sg-input__mirror,
+.sg-input__field {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 3px 4px;
+  border: 0;
+  overflow: hidden;
+  font: inherit;
+  line-height: 19px;
+  letter-spacing: normal;
+  white-space: pre;
+  text-align: left;
+}
+
+.sg-input--bar .sg-input__mirror,
+.sg-input--bar .sg-input__field {
+  padding: 5px 6px;
+}
+
+.sg-input__mirror {
+  pointer-events: none;
+  color: var(--sg-fg);
+  visibility: hidden;
+}
+
+.sg-input.has-references .sg-input__mirror {
+  visibility: visible;
+}
+
+.sg-input__field {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  caret-color: var(--sg-fg);
+}
+
+/* With references the coloured layer shows the text; the field keeps caret and selection. */
+.sg-input.has-references .sg-input__field {
+  color: transparent;
+}
+
+.sg-input--bar .sg-input__field:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--sg-accent);
+}
+
+.sg-ref-text--0 { color: var(--sg-ref-0); }
+.sg-ref-text--1 { color: var(--sg-ref-1); }
+.sg-ref-text--2 { color: var(--sg-ref-2); }
+.sg-ref-text--3 { color: var(--sg-ref-3); }
+.sg-ref-text--4 { color: var(--sg-ref-4); }
+.sg-ref-text--5 { color: var(--sg-ref-5); }
+.sg-ref-text--6 { color: var(--sg-ref-6); }
+
+/* ---------------------------------------------------------------- scrolling surface */
+
+.sg-scroller {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.sg-sizer {
+  position: relative;
+}
+
+.sg-surface {
+  position: sticky;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  outline: none;
+  user-select: none;
+  cursor: cell;
+}
+
+.sg-surface:focus-visible .sg-active {
+  box-shadow: 0 0 0 1px var(--sg-bg), 0 0 0 3px color-mix(in srgb, var(--sg-accent) 45%, transparent);
+}
+
+.sg-cells {
+  position: absolute;
+  overflow: hidden;
+}
+
+.sg-pane {
+  position: absolute;
+  overflow: hidden;
+  background: var(--sg-bg);
+}
+
+.sg-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sg-line {
+  position: absolute;
+  background: var(--sg-line);
+}
+
+.sg-line--h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.sg-line--v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.sg-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.sg-cell {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  padding: 1px 4px;
+  overflow: hidden;
+  white-space: pre;
+}
+
+.sg-cell__text {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Text that runs over empty neighbours, and merged cells, cover the grid lines beneath. */
+.sg-cell.is-overflow,
+.sg-cell.is-merged {
+  background-color: var(--sg-bg);
+}
+
+.sg-cell.is-merged {
+  box-shadow: inset -1px -1px 0 var(--sg-line);
+}
+
+.sg-cell.is-error {
+  color: var(--app-danger, #c0392b);
+}
+
+.sg-cell.is-pending,
+.sg-cell.is-proposed {
+  background-image: linear-gradient(color-mix(in srgb, var(--app-warning, #d99a1b) 22%, transparent), color-mix(in srgb, var(--app-warning, #d99a1b) 22%, transparent));
+  box-shadow: inset 0 0 0 1px var(--app-warning, #d99a1b);
+}
+
+.sg-cell.is-proposed::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-style: solid;
+  border-width: 0 7px 7px 0;
+  border-color: transparent var(--app-warning, #d99a1b) transparent transparent;
+}
+
+.sg-cell.is-precedent {
+  box-shadow: inset 0 0 0 2px var(--sg-ref-0);
+}
+
+.sg-cell.is-dependent {
+  box-shadow: inset 0 0 0 2px var(--sg-ref-1);
+}
+
+.sg-cell.is-search {
+  background-image: linear-gradient(color-mix(in srgb, #f2c744 45%, transparent), color-mix(in srgb, #f2c744 45%, transparent));
+}
+
+.sg-cell.is-search-active {
+  background-image: linear-gradient(color-mix(in srgb, #f08a24 60%, transparent), color-mix(in srgb, #f08a24 60%, transparent));
+  box-shadow: inset 0 0 0 2px #f08a24;
+}
+
+/* ---------------------------------------------------------------- overlays */
+
+.sg-overlays {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.sg-selection {
+  position: absolute;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--sg-accent) 14%, transparent);
+  border: 1px solid var(--sg-accent);
+}
+
+.sg-selection.is-single {
+  background: transparent;
+  border-color: transparent;
+}
+
+.sg-active {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--sg-accent);
+}
+
+.sg-fill-handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1px solid var(--sg-bg);
+  background: var(--sg-accent);
+  cursor: crosshair;
+  pointer-events: auto;
+}
+
+.sg-fill-target,
+.sg-copy {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed var(--sg-accent);
+}
+
+.sg-copy.is-cut {
+  border-style: dotted;
+}
+
+.sg-reference {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.sg-reference--0 { color: var(--sg-ref-0); }
+.sg-reference--1 { color: var(--sg-ref-1); }
+.sg-reference--2 { color: var(--sg-ref-2); }
+.sg-reference--3 { color: var(--sg-ref-3); }
+.sg-reference--4 { color: var(--sg-ref-4); }
+.sg-reference--5 { color: var(--sg-ref-5); }
+.sg-reference--6 { color: var(--sg-ref-6); }
+
+.sg-freeze {
+  position: absolute;
+  z-index: 4;
+  background: color-mix(in srgb, var(--sg-fg) 35%, transparent);
+  pointer-events: none;
+}
+
+.sg-freeze--h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.sg-freeze--v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+/* ---------------------------------------------------------------- headers */
+
+.sg-colheads,
+.sg-rowheads {
+  position: absolute;
+  overflow: hidden;
+  background: var(--sg-head-bg);
+  z-index: 5;
+}
+
+.sg-colheads {
+  top: 0;
+  right: 0;
+  border-bottom: 1px solid var(--app-border, #d0d0d0);
+  box-sizing: border-box;
+}
+
+.sg-rowheads {
+  left: 0;
+  bottom: 0;
+  border-right: 1px solid var(--app-border, #d0d0d0);
+  box-sizing: border-box;
+}
+
+.sg-head {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sg-head-fg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.sg-head--col {
+  top: 0;
+  border-right: 1px solid var(--sg-line);
+}
+
+.sg-head--row {
+  left: 0;
+  border-bottom: 1px solid var(--sg-line);
+}
+
+.sg-head.is-frozen {
+  z-index: 1;
+  background: var(--sg-head-bg);
+}
+
+.sg-head.is-touched {
+  background: color-mix(in srgb, var(--sg-accent) 16%, var(--sg-head-bg));
+  color: var(--sg-fg);
+}
+
+.sg-head.is-selected {
+  background: var(--sg-accent);
+  color: var(--identity-on-accent, #ffffff);
+}
+
+.sg-grip {
+  position: absolute;
+  z-index: 2;
+}
+
+.sg-grip--col {
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.sg-grip--row {
+  left: 0;
+  bottom: -3px;
+  width: 100%;
+  height: 7px;
+  cursor: row-resize;
+}
+
+.sg-corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 6;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--app-border, #d0d0d0);
+  border-bottom: 1px solid var(--app-border, #d0d0d0);
+  background: var(--sg-head-bg);
+  cursor: pointer;
+}
+
+.sg-corner::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  border-style: solid;
+  border-width: 0 0 9px 9px;
+  border-color: transparent transparent color-mix(in srgb, var(--sg-head-fg) 55%, transparent) transparent;
+}
+
+.sg-corner.is-filtered::after {
+  border-bottom-color: var(--sg-accent);
+}
+
+/* ---------------------------------------------------------------- popups */
+
+.sg-popup {
+  position: absolute;
+  z-index: 8;
+  min-width: 220px;
+  max-width: 420px;
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 6px;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  font-size: 12px;
+  cursor: default;
+}
+
+.sg-popup__list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+
+.sg-popup__option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.sg-popup__option.is-active {
+  background: color-mix(in srgb, var(--sg-accent) 18%, transparent);
+}
+
+.sg-popup__name {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-popup__summary {
+  color: var(--sg-head-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sg-popup__hint {
+  padding: 6px 8px;
+  white-space: normal;
+}
+
+.sg-popup__arg.is-active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.sg-menu {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 8px;
+  background: var(--sg-bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+  cursor: default;
+}
+
+.sg-menu__item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sg-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sg-menu__item.is-separated {
+  margin-top: 4px;
+  border-top: 1px solid var(--sg-line);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 8px;
+}
+
+.sg-menu__item:hover:not(:disabled),
+.sg-menu__item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--sg-accent) 16%, transparent);
+}
+
+.sg-menu__item:disabled {
+  color: var(--sg-head-fg);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sg-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(520px, 90%);
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 8px;
+  background: var(--sg-bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+
+.sg-notice__close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sg-head-fg);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sg-notice__close:focus-visible {
+  outline: 2px solid var(--sg-accent);
+}
+
+/* Read by screen readers only. */
+.sg-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sg-copy {
+    animation: sg-march 0.9s steps(2) infinite;
+  }
+}
+
+@keyframes sg-march {
+  50% {
+    border-color: color-mix(in srgb, var(--sg-accent) 45%, transparent);
+  }
+}
