@@ -15,8 +15,8 @@ import { createOfficeDocumentRoutes } from "../../packages/gateway/src/office/ro
 const FIXTURES = fileURLToPath(new URL("../office/fixtures/", import.meta.url));
 type ToolResult = { isError?: boolean; content: Array<{ type: "text"; text: string }> };
 
-function byName(tools: DocumentKernelTools, options?: { deadlineMs?: number }) {
-  const definitions = documentToolDefinitions(tools, options);
+async function byName(tools: DocumentKernelTools, options?: { deadlineMs?: number }) {
+  const definitions = await documentToolDefinitions(tools, options);
   return (name: string, input: unknown) => {
     const definition = definitions.find((candidate) => candidate.name === name);
     if (!definition) throw new Error(`missing ${name}`);
@@ -45,8 +45,8 @@ const ALL_NAMES = [
 
 describe("document tool definitions", () => {
   // Fault detected: a tool is missing, misnamed, or an owner-only resolution is advertised as harmless.
-  it("defines every document and sheet tool with honest annotations", () => {
-    const definitions = documentToolDefinitions({ request: vi.fn() });
+  it("defines every document and sheet tool with honest annotations", async () => {
+    const definitions = await documentToolDefinitions({ request: vi.fn() });
     expect(definitions.map((definition) => definition.name)).toEqual(ALL_NAMES);
     expect(DOCUMENT_TOOL_NAMES).toEqual(ALL_NAMES);
     expect(DOCUMENT_IPC_TOOL_NAMES).toEqual(ALL_NAMES.map((name) => `mcp__matrix-os-ipc__${name}`));
@@ -69,7 +69,7 @@ describe("document tool definitions", () => {
   // Fault detected: malformed, oversized or out-of-home input reaches the document service.
   it("rejects unknown keys, traversal, wrong file types and oversized edit lists before the service", async () => {
     const request = vi.fn();
-    const call = byName({ request });
+    const call = await byName({ request });
     const bad: Array<[string, unknown]> = [
       ["document_describe", { path: "docs/a.docx", extra: true }],
       ["document_describe", { path: "../outside.docx" }],
@@ -93,7 +93,7 @@ describe("document tool definitions", () => {
     const request = vi.fn(async () => jsonReply(200, {
       path: "docs/a.docx", version: "v1", saved: true, revisionIds: ["r1"], commentIds: [], appliedEdits: [0], rejected: [],
     }));
-    const call = byName({ request });
+    const call = await byName({ request });
     const result = await call("document_propose_edits", {
       path: "docs/a.docx", edits: [{ op: "replaceText", blockId: "p1", find: "100", replace: "200" }],
     });
@@ -121,7 +121,7 @@ describe("document tool definitions", () => {
       [() => new Response("x".repeat(64), { status: 200, headers: { "content-length": String(64 * 1024 * 1024) } }), "too_large"],
     ];
     for (const [reply, code] of cases) {
-      const result = await byName({ request: vi.fn(async () => reply() as Response) })("document_list_revisions", { path: "docs/a.docx" });
+      const result = await (await byName({ request: vi.fn(async () => reply() as Response) }))("document_list_revisions", { path: "docs/a.docx" });
       expect(result.isError).toBe(true);
       expect(result.content[0]!.text).toContain(`(${code})`);
       expect(result.content[0]!.text).not.toMatch(/passwd|secret|ECONNREFUSED|127\.0\.0\.1/);
@@ -130,7 +130,7 @@ describe("document tool definitions", () => {
 
   // Fault detected: a hung document service blocks the agent turn forever.
   it("gives up on a service that never answers", async () => {
-    const call = byName({ request: () => new Promise<Response>(() => undefined) }, { deadlineMs: 20 });
+    const call = await byName({ request: () => new Promise<Response>(() => undefined) }, { deadlineMs: 20 });
     const result = await call("document_describe", { path: "docs/a.docx" });
     expect(result).toMatchObject({ isError: true });
     expect(result.content[0]!.text).toContain("(busy)");
@@ -139,12 +139,12 @@ describe("document tool definitions", () => {
 
 describe("document tools against the real document service", () => {
   let home: string;
-  let call: ReturnType<typeof byName>;
+  let call: Awaited<ReturnType<typeof byName>>;
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "document-tools-"));
     await Promise.all([mkdir(join(home, "system")), mkdir(join(home, "docs"))]);
-    call = byName(createOfficeDocumentRoutes({ homePath: home, clock: () => new Date("2026-11-23T10:00:00.000Z") }));
+    call = await byName(createOfficeDocumentRoutes({ homePath: home, clock: () => new Date("2026-11-23T10:00:00.000Z") }));
   });
   afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 

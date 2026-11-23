@@ -101,7 +101,7 @@ export async function createIpcServer(
       ...(terminalTools ? terminalAgentToolDefinitions(terminalTools).map(definition => tool(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )) : []),
-      ...(documentTools ? documentToolDefinitions(documentTools).map(definition => tool(
+      ...(documentTools ? (await documentToolDefinitions(documentTools)).map(definition => tool(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )) : []),
       tool(
