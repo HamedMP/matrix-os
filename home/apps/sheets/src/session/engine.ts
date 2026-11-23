@@ -33,6 +33,7 @@ export {
 } from "../../../_shared/office-engine/index";
 
 export type {
+  BorderEdge,
   Cell,
   CellAddress,
   CellChange,
