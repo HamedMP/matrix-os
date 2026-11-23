@@ -93,6 +93,12 @@ describe("Docs defined terms and cross-references", () => {
     fireEvent.mouseOver(use);
     const card = await screen.findByRole("dialog", { name: /Agreement/ });
     expect(card.textContent).toContain("means this agreement between the parties.");
+    // Escape dismisses the card, as for every transient surface.
+    fireEvent.keyDown(surface, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Agreement/ })).toBeNull());
+    fireEvent.mouseOut(use, { relatedTarget: document.body });
+    fireEvent.mouseOver(use);
+    expect(await screen.findByRole("dialog", { name: /Agreement/ })).toBeTruthy();
 
     fireEvent.click(use);
     const back = await screen.findByRole("button", { name: /Back/ });

@@ -84,7 +84,9 @@ describe("Docs app journey", () => {
 
     // Start screen: actions and the recent-documents empty state.
     expect(await screen.findByRole("heading", { name: "Recent documents" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "No recent documents" })).toBeTruthy();
     expect(screen.getByText("Documents you open appear here.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Browse files…" })).toBeTruthy();
 
     // Open the contract from the Open dialog.
     fireEvent.click(screen.getByRole("button", { name: /Open…/ }));

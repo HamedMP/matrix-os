@@ -153,6 +153,19 @@ export function ReferenceLayer({ session, editor, docVersion, container }: Refer
     };
   }, [container]);
 
+  const shown = card !== null;
+  useEffect(() => {
+    if (!shown) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (hideTimer.current !== null) clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+      setCard(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [shown]);
+
   const goBack = () => {
     const previous = back[back.length - 1];
     if (previous === undefined || editor === null) return;

@@ -1,7 +1,7 @@
 /** The start screen: new blank, open, new from Markdown, and recent documents. */
 
 import { FilePlus2, FileText, FileType2, FolderOpen } from "lucide-react";
-import { AppFrame, Spinner } from "../../../_shared/office-ui";
+import { AppFrame, EmptyState, Spinner } from "../../../_shared/office-ui";
 import { type RecentFile, type SessionError, directoryOf } from "../session/index";
 
 export interface StartScreenProps {
@@ -60,7 +60,12 @@ export function StartScreen({ recents, loading, error, onNewBlank, onOpen, onNew
             Recent documents
           </h2>
           {recents.length === 0 ? (
-            <p className="docs-muted">Documents you open appear here.</p>
+            <EmptyState
+              icon={<FileText />}
+              headline="No recent documents"
+              description="Documents you open appear here."
+              action={loading ? undefined : { label: "Browse files…", onClick: onOpen }}
+            />
           ) : (
             <ul className="docs-start__recents">
               {recents.map((recent) => (
