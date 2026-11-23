@@ -16,6 +16,13 @@ import { isNamed, kid, kids } from "./xml-util.js";
 /** Cheap test on the text of a sheet that was not parsed again yet: without these words there is nothing to rewrite. */
 const FEATURE_WORDS = /conditionalFormatting|dataValidation|hyperlink|extLst/;
 
+/**
+ * Sheets whose text was searched and holds none of the features. Nothing
+ * adds such a feature to a sheet, so the answer stands and the text of a
+ * large sheet is searched once, not at every rename or inserted row.
+ */
+const plain = new WeakSet<SheetModel>();
+
 type Rewrite = (text: string) => string;
 
 function rewriteText(element: XmlElement, rewrite: Rewrite): boolean {
@@ -87,6 +94,10 @@ export function rewriteFeatureFormulasIn(root: XmlElement, rewrite: Rewrite): bo
  * not written.
  */
 export function rewriteFeatureFormulas(sheet: SheetModel, rewrite: Rewrite): void {
-  if (sheet.doc === null && sheet.sourceText !== null && !FEATURE_WORDS.test(sheet.sourceText)) return;
+  if (plain.has(sheet)) return;
+  if (sheet.doc === null && sheet.sourceText !== null && !FEATURE_WORDS.test(sheet.sourceText)) {
+    plain.add(sheet);
+    return;
+  }
   if (rewriteFeatureFormulasIn(attachSheet(sheet).doc.root, rewrite)) sheet.dirty = true;
 }
