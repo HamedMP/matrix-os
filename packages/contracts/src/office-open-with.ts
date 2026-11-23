@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { AppFilePathSchema } from "./app-files.js";
+import { APP_FILE_MAX_BYTES, AppFilePathSchema, isAppReachableFilePath } from "./app-files.js";
 
 /**
  * Open-with contract: which default app owns a file type, and how Files hands
@@ -33,6 +33,16 @@ function officeFileType(name: string) {
  * `.csv` and `.tsv` open in sheets; anything else has no default app. */
 export function defaultAppForFile(name: string): OfficeAppSlug | null {
   return officeFileType(name)?.app ?? null;
+}
+/**
+ * True when Files should hand `path` to its default app: it has one, the app
+ * file route can reach it (not a dot directory, `system/`, `agents/` or a
+ * denied subtree) and, when the listing knows its size, it fits the app read
+ * cap. Anything else opens in Preview, which can still show it.
+ */
+export function canOpenWithDefaultApp(path: string, sizeBytes?: number | null): boolean {
+  if (!defaultAppForFile(path) || !isAppReachableFilePath(path)) return false;
+  return sizeBytes === undefined || sizeBytes === null || !Number.isFinite(sizeBytes) || sizeBytes <= APP_FILE_MAX_BYTES;
 }
 /** The media type of a file that has a default app, or null. */
 export function officeMimeTypeForFile(name: string): string | null {
@@ -70,10 +80,11 @@ export function createOpenRequest(path: string, stamp: OpenRequestStamp): OpenRe
 
 export interface OpenWithHandoff { app: OfficeAppSlug; key: typeof OPEN_REQUEST_KV_KEY; request: OpenRequest }
 /** What Files must write, and for which app, to open `path`. Null when the
- * file has no default app or the path is not a valid home-relative path. */
+ * file has no default app, the path is not a valid home-relative path, or it
+ * lies in a subtree the app file route refuses. */
 export function openWithHandoff(path: string, stamp: OpenRequestStamp): OpenWithHandoff | null {
   const app = defaultAppForFile(path);
-  if (!app || !AppFilePathSchema.safeParse(path).success) return null;
+  if (!app || !AppFilePathSchema.safeParse(path).success || !isAppReachableFilePath(path)) return null;
   return { app, key: OPEN_REQUEST_KV_KEY, request: createOpenRequest(path, stamp) };
 }
 

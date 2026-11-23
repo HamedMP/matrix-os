@@ -1,5 +1,5 @@
 import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
-import { defaultAppForFile, openWithHandoff, type OfficeAppSlug } from "@matrix-os/contracts/office-open-with";
+import { canOpenWithDefaultApp, defaultAppForFile, openWithHandoff, type OfficeAppSlug } from "@matrix-os/contracts/office-open-with";
 import { encodeNativeAppStoredValue } from "../../../../shared/native-app-files";
 import type { ApiClient } from "../../lib/api";
 import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
@@ -10,23 +10,29 @@ const OPEN_REQUEST_WRITE_TIMEOUT_MS = 10_000;
 
 export const OFFICE_APP_TITLES: Readonly<Record<OfficeAppSlug, string>> = Object.freeze({ docs: "Docs", sheets: "Sheets" });
 
-/** Menu label for a file that has a default app, such as "Open in Docs". */
-export function openWithLabel(path: string): string | null {
+/**
+ * Menu label for a file its default app can open, such as "Open in Docs".
+ * Null for other files, for managed or denied paths the app file route
+ * refuses, and for files whose known size is over the app read cap.
+ */
+export function openWithLabel(path: string, sizeBytes?: number): string | null {
   const app = defaultAppForFile(path);
-  return app ? `Open in ${OFFICE_APP_TITLES[app]}` : null;
+  return app && canOpenWithDefaultApp(path, sizeBytes) ? `Open in ${OFFICE_APP_TITLES[app]}` : null;
 }
 
 /**
  * The file a double-click in the browser should open with its default app:
- * the row under the pointer, only when it is the selected file and has a
- * default app. Rows carry `data-files-entry-path`; directories never become
- * the file selection.
+ * the row under the pointer, only when it is the selected file and its
+ * default app can read it (not a managed or denied path, and not over the
+ * app read cap when the size is known). Otherwise the preview keeps it.
+ * Rows carry `data-files-entry-path`; directories never become the file
+ * selection.
  */
-export function openWithTargetPath(target: EventTarget | null, selectedFilePath: string | null): string | null {
+export function openWithTargetPath(target: EventTarget | null, selectedFilePath: string | null, selectedSizeBytes?: number): string | null {
   if (!selectedFilePath || !target || typeof (target as Element).closest !== "function") return null;
   const row = (target as Element).closest("[data-files-entry-path]");
   const path = row?.getAttribute("data-files-entry-path") ?? null;
-  return path === selectedFilePath && defaultAppForFile(path) ? path : null;
+  return path === selectedFilePath && canOpenWithDefaultApp(path, selectedSizeBytes) ? path : null;
 }
 
 /** Opens or focuses the default app's tab, the same way an app launch does. */

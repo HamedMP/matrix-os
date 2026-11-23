@@ -268,7 +268,7 @@ export default function FilesWorkspace() {
       <div data-testid="files-workspace-panes" data-layout={previewSelection ? "preview" : "browser"} className={`grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${previewSelection ? "grid-rows-[minmax(220px,40%)_minmax(0,1fr)] md:grid-cols-[minmax(320px,3fr)_minmax(300px,2fr)] md:grid-rows-1" : "grid-rows-1"}`} style={{ background: "var(--bg-surface)" }}>
         <div data-testid="files-home-content" role="presentation" className="flex min-h-0 min-w-0 flex-col" onDoubleClick={(event) => {
           // Rows double-click to open; a file with a default app opens in that app.
-          const target = openWithTargetPath(event.target, previewSelection?.path ?? null);
+          const target = openWithTargetPath(event.target, previewSelection?.path ?? null, previewSelection?.entry.sizeBytes);
           if (target) openWithDefaultApp(target);
         }}>
           {tabs.map((tab) => {

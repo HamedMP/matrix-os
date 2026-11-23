@@ -61,6 +61,25 @@ export function isAppFilePath(value: string): boolean {
   return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 export const AppFilePathSchema = z.string().min(1).max(APP_FILE_PATH_MAX_CHARS).refine(isAppFilePath);
+
+/** Top-level owner and tool state the app file route always refuses, besides every dot directory. */
+export const APP_FILE_PROTECTED_TOP_LEVEL = Object.freeze(["system", "agents"] as const);
+/** Subtrees the gateway File API hides from every client. */
+export const APP_FILE_DENIED_PREFIXES = Object.freeze(["data/browser-profiles", "data/app-gallery-staging"] as const);
+
+/**
+ * True when `path` is a valid app path outside the subtrees the app file
+ * route refuses: dot directories, `system/`, `agents/` and the denied
+ * prefixes. This is a client hint for routing (for example Files choosing
+ * between an app and Preview); the gateway stays the authority and also
+ * refuses symlinks.
+ */
+export function isAppReachableFilePath(path: string): boolean {
+  if (!isAppFilePath(path)) return false;
+  const first = path.slice(0, path.includes("/") ? path.indexOf("/") : path.length);
+  if (first.startsWith(".") || (APP_FILE_PROTECTED_TOP_LEVEL as readonly string[]).includes(first)) return false;
+  return !APP_FILE_DENIED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+}
 /** The home root, valid only as the `dir` of a listing. */
 export const APP_FILE_HOME_DIR = "";
 export const AppFileDirSchema = z.union([z.literal(APP_FILE_HOME_DIR), AppFilePathSchema]);

@@ -37,9 +37,11 @@ import {
   decodeAppFileBase64,
   encodeAppFileBase64,
   isAppFilePath,
+  isAppReachableFilePath,
   isBridgeFileError,
   type AppFileInput,
 } from "../../packages/contracts/src/app-files";
+import { isDeniedFileApiPath, isProtectedHomeSubpath } from "../../packages/gateway/src/path-security";
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).length;
 const VERSION = appFileVersion(12, 1_700_000_000_123_456_789n);
@@ -86,6 +88,25 @@ describe("app file paths", () => {
     expect(AppFileDirSchema.safeParse("Documents").success).toBe(true);
     expect(AppFileDirSchema.safeParse("../other").success).toBe(false);
     expect(AppFileInputSchema.safeParse({ kind: "files.read", path: "" }).success).toBe(false);
+  });
+});
+
+describe("app reachable paths", () => {
+  const HOME = "/home/owner";
+  const SAMPLES = [
+    "Documents/report.docx", "report.docx", "systems/a.csv", "Documents/system/a.csv", "Documents/.cache/a.csv",
+    "system/logs/usage.csv", "system", "agents/x.docx", ".hermes/export.csv", ".trash/a.xlsx", "data/x.csv",
+    "data/browser-profiles", "data/browser-profiles/p/a.csv", "data/browser-profiles-old/a.csv",
+    "data/app-gallery-staging/x/s.xlsx", "projects/main/sheet.xlsx",
+  ];
+
+  it.each(SAMPLES)("agrees with the gateway path rules for %s", (path) => {
+    const gatewayRefuses = isProtectedHomeSubpath(HOME, `${HOME}/${path}`) || isDeniedFileApiPath(HOME, path);
+    expect(isAppReachableFilePath(path)).toBe(!gatewayRefuses);
+  });
+
+  it("refuses paths that are not valid app paths", () => {
+    for (const path of ["", "../a.csv", "/abs.csv", "a//b.csv", "a\\b.csv"]) expect(isAppReachableFilePath(path)).toBe(false);
   });
 });
 

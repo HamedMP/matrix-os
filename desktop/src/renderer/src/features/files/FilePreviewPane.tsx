@@ -404,7 +404,7 @@ export function PreviewPane({
   const [history, setHistory] = useState<PreviewSelection[]>([selection]);
   const activeSelection = history.at(-1) ?? selection;
   const { entry, path } = activeSelection;
-  const openWith = onOpenWith && entry.type === "file" && !isManagedBrowserPath(path) ? openWithLabel(path) : null;
+  const openWith = onOpenWith && entry.type === "file" && !isManagedBrowserPath(path) ? openWithLabel(path, entry.sizeBytes) : null;
 
   const metadata = isManagedBrowserPath(path)
     ? "Managed · Read only"

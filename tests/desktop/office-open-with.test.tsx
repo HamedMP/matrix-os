@@ -70,13 +70,30 @@ describe("open-with routing", () => {
     expect(openWithTargetPath(label, null)).toBeNull();
     document.body.innerHTML = "";
   });
+
+  it("leaves managed paths and files over the app read cap to the preview", () => {
+    document.body.innerHTML = `<div>${["system/logs/usage.csv", ".hermes/export.csv", "agents/plan.docx", "data/browser-profiles/p/a.csv", "Documents/big.csv"]
+      .map((path, index) => `<button data-files-entry-path="${path}" id="row-${index}"></button>`).join("")}</div>`;
+    const row = (index: number) => document.getElementById(`row-${index}`);
+    expect(openWithTargetPath(row(0), "system/logs/usage.csv")).toBeNull();
+    expect(openWithTargetPath(row(1), ".hermes/export.csv")).toBeNull();
+    expect(openWithTargetPath(row(2), "agents/plan.docx")).toBeNull();
+    expect(openWithTargetPath(row(3), "data/browser-profiles/p/a.csv")).toBeNull();
+    expect(openWithTargetPath(row(4), "Documents/big.csv", 25 * 1024 * 1024)).toBeNull();
+    expect(openWithTargetPath(row(4), "Documents/big.csv", 1024)).toBe("Documents/big.csv");
+    expect(openWithTargetPath(row(4), "Documents/big.csv")).toBe("Documents/big.csv");
+    expect(openWithLabel("system/logs/usage.csv")).toBeNull();
+    expect(openWithLabel("Documents/big.csv", 25 * 1024 * 1024)).toBeNull();
+    document.body.innerHTML = "";
+  });
 });
 
 describe("Files workspace open-with", () => {
   function makeApi() {
     const get = vi.fn(async (path: string) => {
       if (path === "/api/files/list?path=") {
-        return { entries: [{ name: "Reports", type: "directory" }, { name: "plan.docx", type: "file" }, { name: "rows.csv", type: "file" }, { name: "README.md", type: "file" }] };
+        return { entries: [{ name: "Reports", type: "directory" }, { name: "plan.docx", type: "file" }, { name: "rows.csv", type: "file" }, { name: "README.md", type: "file" },
+          { name: "big.csv", type: "file", size: 25 * 1024 * 1024 }] };
       }
       if (path.startsWith("/api/files/stat?path=")) return { size: 128 };
       return { entries: [] };
@@ -120,6 +137,19 @@ describe("Files workspace open-with", () => {
     fireEvent.click(row);
     fireEvent.doubleClick(row);
     expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+    expect(bridgeWrites()).toHaveLength(0);
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "app")).toBe(false);
+  });
+
+  it("keeps a double-clicked table over the app read cap in the preview", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    const row = await screen.findByRole("button", { name: "Open big.csv" });
+    fireEvent.click(row);
+    fireEvent.doubleClick(row);
+    expect(await screen.findByRole("region", { name: "File preview" })).toBeTruthy();
+    fireEvent.keyDown(await screen.findByRole("button", { name: "File actions" }), { key: "ArrowDown" });
+    expect(await screen.findByRole("menuitem", { name: "Open in Editor" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Open in Sheets" })).toBeNull();
     expect(bridgeWrites()).toHaveLength(0);
     expect(useTabs.getState().tabs.some((tab) => tab.kind === "app")).toBe(false);
   });

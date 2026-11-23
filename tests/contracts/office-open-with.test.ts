@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { APP_FILE_MAX_BYTES } from "../../packages/contracts/src/app-files";
 import {
   OFFICE_FILE_TYPES,
   OPEN_REQUEST_KV_KEY,
   OPEN_REQUEST_MAX_LISTENERS,
   OPEN_REQUEST_TTL_MS,
   OpenRequestSchema,
+  canOpenWithDefaultApp,
   createOpenRequest,
   createOpenRequestInbox,
   defaultAppForFile,
@@ -122,6 +124,28 @@ describe("open request", () => {
     expect(openWithHandoff("budget.xlsx", { now: NOW, nonce: NONCE })).toMatchObject({ app: "sheets", request: { path: "budget.xlsx" } });
     expect(openWithHandoff("notes.md", { now: NOW, nonce: NONCE })).toBeNull();
     expect(openWithHandoff("../secret.docx", { now: NOW, nonce: NONCE })).toBeNull();
+  });
+
+  it.each([
+    "system/logs/usage.csv", "agents/notes/plan.docx", ".hermes/export.csv", ".cache/a.xlsx",
+    "data/browser-profiles/p/export.csv", "data/app-gallery-staging/x/sheet.xlsx",
+  ])("never hands %s to an app that the app file route refuses", (path) => {
+    expect(openWithHandoff(path, { now: NOW, nonce: NONCE })).toBeNull();
+    expect(canOpenWithDefaultApp(path)).toBe(false);
+    expect(canOpenWithDefaultApp(path, 3)).toBe(false);
+  });
+
+  it("routes a file to its default app only when the app can read it", () => {
+    expect(canOpenWithDefaultApp("Documents/report.docx")).toBe(true);
+    expect(canOpenWithDefaultApp("Documents/big.csv", null)).toBe(true);
+    expect(canOpenWithDefaultApp("Documents/big.csv", APP_FILE_MAX_BYTES)).toBe(true);
+    expect(canOpenWithDefaultApp("Documents/big.csv", APP_FILE_MAX_BYTES + 1)).toBe(false);
+    expect(canOpenWithDefaultApp("Documents/notes.txt", 3)).toBe(false);
+    expect(canOpenWithDefaultApp("../escape.docx")).toBe(false);
+    // A folder or file that only resembles a protected one stays openable.
+    expect(canOpenWithDefaultApp("systems/report.docx")).toBe(true);
+    expect(canOpenWithDefaultApp("Documents/system/report.docx")).toBe(true);
+    expect(canOpenWithDefaultApp("data/browser-profiles-old/export.csv")).toBe(true);
   });
 
   it("reads back only a fresh, well-formed request", () => {

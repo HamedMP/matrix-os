@@ -63,7 +63,8 @@ vi.mock("@/hooks/useFileWatcher", () => ({ useFileWatcher: vi.fn() }));
 vi.mock("../../shell/src/components/file-browser/FileBrowserContent.js", () => ({
   FileBrowserContent: ({ onOpenFile }: { onOpenFile(path: string): void }) => (
     <div>
-      {["Documents/Report.docx", "Documents/Budget.XLSX", "Documents/data.csv", "Documents/notes.txt"].map((path) => (
+      {["Documents/Report.docx", "Documents/Budget.XLSX", "Documents/data.csv", "Documents/notes.txt",
+        "Documents/big.csv", "system/logs/usage.csv", ".hermes/export.csv", "agents/plan.docx"].map((path) => (
         <button key={path} type="button" onClick={() => onOpenFile(path)}>{`open ${path}`}</button>
       ))}
     </div>
@@ -143,6 +144,36 @@ describe("Files open-with routing", () => {
     expect(sent).toHaveLength(0);
     expect(preview.openFile).toHaveBeenCalledExactlyOnceWith("Documents/notes.txt", { authority: expect.any(String) });
     expect(windowManager.openWindow).toHaveBeenCalledExactlyOnceWith("Preview", "__preview-window__", 0);
+  });
+
+  it.each([
+    ["system/logs/usage.csv"], [".hermes/export.csv"], ["agents/plan.docx"],
+  ])("opens %s in Preview because the app file route refuses that subtree", async (path) => {
+    const sent = stubGateway(() => Response.json({ ok: true }));
+    await openFromBrowser(path);
+    expect(sent).toHaveLength(0);
+    expect(preview.openFile).toHaveBeenCalledExactlyOnceWith(path, { authority: expect.any(String) });
+    expect(windowManager.openWindow).toHaveBeenCalledExactlyOnceWith("Preview", "__preview-window__", 0);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("opens a listed file larger than the app read cap in Preview", async () => {
+    store.entries = [{ name: "big.csv", type: "file", size: 25 * 1024 * 1024 }, { name: "data.csv", type: "file", size: 120 }];
+    try {
+      const sent = stubGateway(() => Response.json({ ok: true }));
+      await openFromBrowser("Documents/big.csv");
+      expect(sent).toHaveLength(0);
+      expect(preview.openFile).toHaveBeenCalledExactlyOnceWith("Documents/big.csv", { authority: expect.any(String) });
+      cleanup();
+      vi.clearAllMocks();
+      // A small listed table still goes to Sheets.
+      const again = stubGateway(() => Response.json({ ok: true }));
+      await openFromBrowser("Documents/data.csv");
+      expect(again).toHaveLength(1);
+      expect(windowManager.openWindow).toHaveBeenCalledExactlyOnceWith("Sheets", "apps/sheets/index.html", 0);
+    } finally {
+      store.entries = [];
+    }
   });
 
   it("falls back to Preview for a text table and shows the shared notification when the write fails", async () => {
