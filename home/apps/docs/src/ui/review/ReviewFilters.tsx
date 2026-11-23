@@ -11,7 +11,8 @@ const CATEGORIES: ReadonlyArray<{ value: CategoryFilter; label: string }> = [
 
 function kindChoice(kinds: readonly string[]): string {
   if (kinds.length === 0) return ALL;
-  const match = KIND_FILTERS.find((choice) => choice.kinds.length === kinds.length && choice.kinds.every((kind) => kinds.includes(kind)));
+  const chosen = new Set(kinds);
+  const match = KIND_FILTERS.find((choice) => choice.kinds.length === chosen.size && choice.kinds.every((kind) => chosen.has(kind)));
   return match?.id ?? ALL;
 }
 

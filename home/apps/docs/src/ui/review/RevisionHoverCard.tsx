@@ -71,8 +71,7 @@ interface Shown {
 export function RevisionHoverCard({ controller, container, disabled = false }: RevisionHoverCardProps) {
   const snapshot = useReviewSnapshot(controller);
   const [shown, setShown] = useState<Shown | null>(null);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
-  const card = useRef<HTMLDivElement>(null);
+  const card = useRef<HTMLElement>(null);
   const [timers] = useState(() => new HoverTimers());
 
   useEffect(() => {
@@ -92,27 +91,30 @@ export function RevisionHoverCard({ controller, container, disabled = false }: R
     };
   }, [container, disabled, timers]);
 
-  useEffect(() => {
-    if (!disabled) return;
-    timers.cancel();
-    setShown(null);
-  }, [disabled, timers]);
-
-  const items: ReviewItem[] = shown === null ? [] : shown.ids.map((id) => snapshot.items.find((item) => item.id === id)).filter((item): item is ReviewItem => item !== undefined);
-
-  useLayoutEffect(() => {
-    if (shown === null || items.length === 0) {
-      setPosition(null);
-      return;
+  const visible = disabled ? null : shown;
+  const items: ReviewItem[] = [];
+  if (visible !== null) {
+    const byId = new Map(snapshot.items.map((item) => [item.id, item]));
+    for (const id of visible.ids) {
+      const item = byId.get(id);
+      if (item !== undefined) items.push(item);
     }
-    const rect = shown.anchor.getBoundingClientRect();
-    const size = card.current?.getBoundingClientRect();
-    const measured = size !== undefined && size.width > 0 ? { width: size.width, height: size.height } : FALLBACK_SIZE;
-    setPosition(placeCard(rect, measured, { width: window.innerWidth, height: window.innerHeight }));
-    // Measured again when another change is shown or the list of items changes.
-  }, [shown, items.length]);
+  }
+  const showing = visible !== null && items.length > 0;
 
-  if (shown === null || items.length === 0) return null;
+  // Placed after it is laid out, so its own size is known; it stays hidden until then (review.css).
+  useLayoutEffect(() => {
+    const element = card.current;
+    if (!showing || visible === null || element === null) return;
+    const size = element.getBoundingClientRect();
+    const measured = size.width > 0 ? { width: size.width, height: size.height } : FALLBACK_SIZE;
+    const place = placeCard(visible.anchor.getBoundingClientRect(), measured, { width: window.innerWidth, height: window.innerHeight });
+    element.style.left = `${place.left}px`;
+    element.style.top = `${place.top}px`;
+    element.setAttribute("data-placed", "true");
+  }, [showing, visible, items.length]);
+
+  if (!showing) return null;
 
   const act = (action: "accept" | "reject", id: string) => {
     if (action === "accept") controller.accept(id);
@@ -121,12 +123,11 @@ export function RevisionHoverCard({ controller, container, disabled = false }: R
   };
 
   return (
-    <div
+    <section
       ref={card}
+      key={visible.ids.join(" ")}
       className="docs-hovercard"
-      role="dialog"
       aria-label="Tracked change"
-      style={position === null ? { visibility: "hidden", left: 0, top: 0 } : { left: position.left, top: position.top }}
       onPointerEnter={() => timers.keep()}
       onPointerLeave={() => timers.hideSoon(() => setShown(null))}
       onKeyDown={(event) => {
@@ -155,6 +156,6 @@ export function RevisionHoverCard({ controller, container, disabled = false }: R
           </div>
         </div>
       ))}
-    </div>
+    </section>
   );
 }

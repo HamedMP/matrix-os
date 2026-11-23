@@ -176,13 +176,13 @@ describe("<RevisionHoverCard>", () => {
     act(() => {
       vi.advanceTimersByTime(HOVER_SHOW_DELAY_MS + 10);
     });
-    const card = screen.getByRole("dialog", { name: "Tracked change" });
+    const card = screen.getByRole("region", { name: "Tracked change" });
     expect(within(card).getByText(PRIYA)).toBeTruthy();
     expect(within(card).getByText("Inserted")).toBeTruthy();
     expect(within(card).getByText("fifteen")).toBeTruthy();
     fireEvent.click(within(card).getByRole("button", { name: "Accept" }));
     expect(revisionIds(session)).not.toContain(target.id);
-    expect(screen.queryByRole("dialog", { name: "Tracked change" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Tracked change" })).toBeNull();
   });
 });
 

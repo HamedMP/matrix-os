@@ -348,6 +348,13 @@
   font-size: 13px;
 }
 
+/* Hidden until it has been measured and placed. */
+.docs-hovercard:not([data-placed]) {
+  visibility: hidden;
+  left: 0;
+  top: 0;
+}
+
 .docs-hovercard__item + .docs-hovercard__item {
   padding-top: 10px;
   border-top: 1px solid var(--app-border);
