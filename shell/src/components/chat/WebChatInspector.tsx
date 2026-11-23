@@ -224,12 +224,13 @@ function InspectorContent({
             ]}
           />
         ) : null}
-        {selected.kind === "files" ? (
+        {layout.tabs.some(tab => tab.kind === "files") ? (
           <div
             role="tabpanel"
             aria-label="Files"
             id="work-inspector-panel-files"
-            className="flex min-h-0 flex-1 flex-col"
+            hidden={selected.kind !== "files"}
+            className={selected.kind === "files" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
           >
             {!fileExpanded || !filePath ? (
               <div

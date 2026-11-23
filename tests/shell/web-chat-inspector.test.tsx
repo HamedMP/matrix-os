@@ -258,6 +258,39 @@ function terminalApi(){
   return Response.json({entries:[]});
  });return{request,tabs,workspaceId};
 }
+it.each(['Side chat', 'Terminal'])('keeps file browsing state while visiting %s', async destination => {
+ const api = terminalApi();
+ vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+  const parsed = new URL(url);
+  if (parsed.pathname.endsWith('/files/search')) return Response.json({results:[{name:'deep.txt',path:`${parsed.searchParams.get('path')}/deep.txt`,type:'file'}],truncated:false});
+  if (!parsed.pathname.endsWith('/files/list')) return api.request(url, init);
+  const path = parsed.searchParams.get('path') ?? '';
+  const depth = path ? path.split('/').length : 0;
+  return Response.json({entries:depth < 14 ? [{name:`d${depth + 1}`,type:'directory'}] : [{name:'deep.txt',type:'file'}]});
+ }));
+ render(<WebChatInspector {...inspectorProps()}/>);
+ for (let depth = 1; depth <= 13; depth++) fireEvent.click(await screen.findByRole('treeitem',{name:`d${depth}`,exact:true}));
+ fireEvent.click(await screen.findByRole('button',{name:'Open folder d13',exact:true}));
+ fireEvent.click(await screen.findByRole('treeitem',{name:'d14',exact:true}));
+ await screen.findByRole('treeitem',{name:'deep.txt',exact:true});
+ const scroll = screen.getByRole('tree',{name:'Chat files'}).parentElement!;
+ fireEvent.click(screen.getByRole('button',{name:'Filter files'}));
+ const filter = screen.getByRole('searchbox',{name:'Filter files'});
+ fireEvent.change(filter,{target:{value:'deep'}});
+ await screen.findByRole('button',{name:'Open search result deep.txt'});
+ scroll.scrollTop = 37;
+ fireEvent.keyDown(window, destination === 'Side chat' ? {key:'s',code:'KeyS',metaKey:true,altKey:true} : {key:'`',ctrlKey:true});
+ await waitFor(() => expect(screen.getByRole('tab',{name:destination === 'Terminal' ? 'Terminal 1' : destination}).getAttribute('aria-selected')).toBe('true'));
+ fireEvent.click(screen.getByRole('tab',{name:'Files'}));
+ expect(screen.getByRole('searchbox',{name:'Filter files'})).toBe(filter);
+ expect(filter).toHaveProperty('value','deep');
+ expect(scroll.isConnected).toBe(true);
+ expect(scroll.scrollTop).toBe(37);
+ fireEvent.change(filter,{target:{value:''}});
+ expect(await screen.findByRole('treeitem',{name:'deep.txt',exact:true})).toBeTruthy();
+ expect(screen.getByRole('treeitem',{name:'d14',exact:true}).getAttribute('aria-expanded')).toBe('true');
+ expect(screen.getByRole('button',{name:'Back to Matrix Home',exact:true})).toBeTruthy();
+});
 it.each([{active:false,visible:true},{active:true,visible:false}])('does not create terminals from shortcuts while Chat is inactive (%o)',async state=>{
  const api=terminalApi();vi.stubGlobal('fetch',api.request);
  render(<ChatApp {...state} messages={[]} sessionId="chat_regression" busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} sideChatClient={inspectorProps().sideChatClient}/>);
