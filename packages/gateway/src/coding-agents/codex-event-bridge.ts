@@ -1,7 +1,8 @@
-import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { withCodexDeliveryTiming, measureCodexDeliveryStage, recordCodexDeliveryStage } from "./codex-delivery-timing.js";
+import { execFile } from "node:child_process";
 import { captureChatSendStage } from "../chat/send-timing.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -12,8 +13,7 @@ import {
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
-import type { AiTokenUsage } from "../ai-analytics.js";
-import { parseCodexExecJsonLine } from "./codex-events.js";
+import { codexEventId as eventId, ingestCodexTranscript } from "./codex-event-batches.js";
 import { completionEvents } from "./codex-terminal-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
@@ -93,14 +93,6 @@ const defaultVersionCommand: VersionCommand = async (command, args, options) => 
 export function codexProviderEventPath(homePath: string, sessionId: string): string {
   const parsed = SessionIdSchema.parse(sessionId);
   return join(resolve(homePath), "system", "coding-agents", "provider-events", `${parsed}.jsonl`);
-}
-
-function eventId(sessionId: string, byteOffset: number, index: number, generation?: string): string {
-  const digest = createHash("sha256")
-    .update(`${sessionId}:${byteOffset}:${index}${generation ? `:${generation}` : ""}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `evt_codex_${digest}`;
 }
 
 
@@ -193,72 +185,20 @@ export function createCodexEventBridge(options: {
 
   async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<{ terminal: boolean; ready: boolean }> {
     if (!store) throw new Error("Codex event store is unavailable");
-    const events: AgentThreadEvent[] = [];
-    let providerThreadId: string | undefined;
-    let tokenUsage: AiTokenUsage | undefined;
-    let terminal = false;
-    let ready = false;
-    let lineStart = 0;
-    let absoluteOffset = entry.offset;
     const occurredAt = entry.pendingOccurredAt ?? now().toISOString();
     entry.pendingOccurredAt = occurredAt;
-    while (lineStart < consumedBytes) {
-      const newline = bytes.indexOf(0x0a, lineStart);
-      if (newline < 0 || newline >= consumedBytes) break;
-      const line = bytes.subarray(lineStart, newline).toString("utf-8").replace(/\r$/, "");
-      let index = 0;
-      const parsed = parseCodexExecJsonLine(line, {
-        threadId: entry.threadId,
-        now: () => new Date(occurredAt),
-        nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
-      });
-      events.push(...parsed.events);
-      ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome;
-      if (parsed.providerThreadId) {
-        if (providerThreadId && providerThreadId !== parsed.providerThreadId) {
-          throw new Error("Codex provider conversation changed");
-        }
-        providerThreadId = parsed.providerThreadId;
-      }
-      if (parsed.tokenUsage) tokenUsage = parsed.tokenUsage;
-      if (parsed.outcome) {
-        terminal = true;
-        events.push(...completionEvents({
-          threadId: entry.threadId,
-          outcome: parsed.outcome,
-          failureReason: parsed.failureReason,
-          occurredAt,
-          nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
-        }));
-      }
-      absoluteOffset += newline - lineStart + 1;
-      lineStart = newline + 1;
-      if (entry.checkpoint) {
-        await store.ingestProviderEvents(entry.principal, entry.threadId, {
-          events: [...events], ...(providerThreadId ? { providerThreadId } : {}),
-          ...(parsed.outcome && tokenUsage ? { tokenUsage } : {}),
-        }, { sessionId: entry.sessionId, offset: absoluteOffset, ...(entry.generation ? { generation: entry.generation } : {}) });
-        events.length = 0;
-        providerThreadId = undefined;
-        tokenUsage = undefined;
-      }
-    }
-
-    const chunks: AgentThreadEvent[][] = [];
-    for (let index = 0; index < events.length; index += 100) chunks.push(events.slice(index, index + 100));
-    if (chunks.length === 0 && providerThreadId) chunks.push([]);
-    for (const [index, chunk] of chunks.entries()) {
-      await store.ingestProviderEvents(entry.principal, entry.threadId, {
-        events: chunk,
-        ...(index === 0 && providerThreadId ? { providerThreadId } : {}),
-        ...(index === chunks.length - 1 && terminal && tokenUsage ? { tokenUsage } : {}),
-      }, { sessionId: entry.sessionId, offset: entry.offset, generation: entry.generation, checkpoint: false });
-    }
-    return { terminal, ready };
+    return ingestCodexTranscript({ store, principal: entry.principal, threadId: entry.threadId,
+      sessionId: entry.sessionId, offset: entry.offset, generation: entry.generation,
+      checkpoint: entry.checkpoint, occurredAt, bytes, consumedBytes });
   }
 
   // True means all complete records were consumed; an incomplete final line is not a durable event.
-  async function drainEntry(entry: WatchEntry): Promise<boolean> {
+  function drainEntry(entry: WatchEntry): Promise<boolean> {
+    return withCodexDeliveryTiming(entry.sessionId, () => drainTimedEntry(entry));
+  }
+
+  async function drainTimedEntry(entry: WatchEntry): Promise<boolean> {
+    const readStartedAt = performance.now();
     const stoppedDrainExpired = () =>
       entry.stopRequestedAt !== undefined && nowMs() - entry.stopRequestedAt >= STOP_DRAIN_GRACE_MS;
     let handle;
@@ -301,6 +241,7 @@ export function createCodexEventBridge(options: {
         return true;
       }
       const consumedBytes = lastNewline + 1;
+      recordCodexDeliveryStage("bridge_read", readStartedAt);
       if (closed || watchers.get(entry.sessionId) !== entry) return false;
       // Mark when the first complete line is read; saving it can wait behind
       // the shared store queue and must not look like slow runner output.
@@ -308,7 +249,7 @@ export function createCodexEventBridge(options: {
         entry.firstLineTiming.record("provider_event_file_first_line", entry.firstLineTiming.watchedAt);
         entry.firstLineTiming = undefined;
       }
-      const { terminal, ready } = await ingest(entry, data, consumedBytes);
+      const { terminal, ready } = await measureCodexDeliveryStage("bridge_ingest", () => ingest(entry, data, consumedBytes));
       entry.offset += consumedBytes;
       entry.supervision.ready ||= ready;
       entry.supervision.terminal ||= terminal;
