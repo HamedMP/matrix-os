@@ -288,6 +288,36 @@ describe("canonical shell Chat state", () => {
     expect(result.current.conversations).toHaveLength(0);
   });
 
+  it.each([true, false])("restored Search chat Undo clears selection only after archive succeeds (%s)", async succeeds => {
+    let lifecycle = "archived";
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });
+      if (url.includes("/api/chats/chat_a?") && !init?.method) return Response.json(detail("chat_a", "Restored answer", 1));
+      if (url.includes("/api/chats/chat_a/lifecycle?") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        if (body.lifecycle === "archived" && !succeeds) return Response.json({ error: { code: "chat_busy" } }, { status: 409 });
+        lifecycle = body.lifecycle;
+        return Response.json({ ...record("chat_a", "Restored answer", body.baseRevision + 1), chat: {
+          ...record("chat_a", "Restored answer", body.baseRevision + 1).chat, lifecycle,
+        } });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    stubLegacyChatFetch(fetchFn);
+    const { result } = renderHook(() => useCanonicalChatState());
+    await act(async () => { await result.current.archiveClient.updateLifecycle("chat_a", { lifecycle: "active", baseRevision: 0 }); });
+    act(() => result.current.switchConversation("chat_a"));
+    await waitFor(() => expect(result.current.messages[0]?.content).toBe("Restored answer"));
+    await act(async () => {
+      const operation = result.current.archiveClient.updateLifecycle("chat_a", { lifecycle: "archived", baseRevision: 1 });
+      if (succeeds) await operation;
+      else await expect(operation).rejects.toThrow();
+    });
+    expect(result.current.sessionId).toBe(succeeds ? undefined : "chat_a");
+    expect(result.current.messages).toHaveLength(succeeds ? 0 : 1);
+    expect(lifecycle).toBe(succeeds ? "archived" : "active");
+  });
+
   it("archives a paged Chat absent from the initial rail list", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [] });

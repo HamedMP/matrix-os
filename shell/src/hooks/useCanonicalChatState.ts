@@ -1001,6 +1001,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       if (!isCurrent()) throw new Error("ChatAuthorityChanged");
       setRecords(current => input.lifecycle === "archived" ? current.filter(row => row.chat.id !== id)
         : [updated, ...current.filter(row => row.chat.id !== id)].slice(0, 1000));
+      if (input.lifecycle === "archived" && activeChatIdRef.current === id) await newChat();
       return updated;
     },
     delete: async (id: string, requestId: string) => {
@@ -1010,7 +1011,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setRecords(current => current.filter(row => row.chat.id !== id));
       return result;
     },
-  }), [client, isCurrent, setRecords]);
+  }), [client, isCurrent, newChat, setRecords]);
   const listArchivedConversations = useCallback((cursor?: string) => client.list({ lifecycle: "archived", limit: 50, ...(cursor ? { cursor } : {}) }), [client]);
   const archiveProjectChats = useCallback(async (projectId: string) => {
     if (!isCurrent()) return null;
