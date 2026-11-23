@@ -5,6 +5,7 @@ import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { relativeTargetFor } from "../../opc/index.js";
 import { appendChild, createElement, getAttr, insertBefore, lookupPrefix, parseXml, remove, setAttr } from "../../xml/index.js";
+import { MAX_COLS } from "./a1.js";
 import { writeCell } from "./cells.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { rewriteForRemoval, rewriteForRename } from "./refs-rewrite.js";
@@ -15,9 +16,10 @@ import { NS_MAIN, NS_RELATIONSHIPS, kid, kids, qualify } from "./xml-util.js";
 
 export function sheetInfo(state: WorkbookState, sheet: SheetModel): SheetInfo {
   const columns: ColumnInfo[] = [];
+  // One entry per column at most, however many runs a file declares.
   for (const run of sheet.columns) {
     if (run.width === null && !run.hidden) continue;
-    for (let index = run.min; index <= run.max; index++) {
+    for (let index = run.min; index <= run.max && columns.length < MAX_COLS; index++) {
       columns.push({ index, width: run.width ?? sheet.defaultColumnWidth, hidden: run.hidden });
     }
   }

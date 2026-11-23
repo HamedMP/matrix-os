@@ -126,6 +126,28 @@ describe("text in all its forms", () => {
   });
 });
 
+describe("a workbook without a style sheet", () => {
+  it("has the default style and gets a styles part with the first format", async () => {
+    const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "S", rows: `<row r="1">${num("A1", 0.5)}</row>` }] }));
+    expect(workbook.package.hasPart("/xl/styles.xml")).toBe(false);
+    expect(workbook.getStyle(0)).toMatchObject({ font: { name: "Calibri", sizePt: 11 }, numberFormat: "General" });
+    await workbook.save();
+    expect(workbook.package.hasPart("/xl/styles.xml")).toBe(false);
+    workbook.setStyle(sheetId(workbook, "S"), { start: parseA1("A1"), end: parseA1("A1") }, { numberFormat: "0%", font: { bold: true } });
+    const reopened = await openXlsx(await workbook.save());
+    expect(at(reopened, "S", "A1")).toMatchObject({ value: 0.5, display: "50%" });
+    expect(reopened.getStyle(at(reopened, "S", "A1").styleId).font.bold).toBe(true);
+    expect(reopened.package.getContentType("/xl/styles.xml")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml");
+    expect(reopened.package.getRelationships("/xl/workbook.xml").filter((entry) => entry.type.endsWith("/styles")).length).toBe(1);
+  });
+
+  it("lists at most one entry per column however the file declares them", async () => {
+    const cols = `<cols>${'<col min="1" max="16384" width="9" customWidth="1"/>'.repeat(50)}</cols>`;
+    const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "S", before: cols }] }));
+    expect(workbook.listSheets()[0]!.columns.length).toBe(16384);
+  });
+});
+
 describe("workbook options and odd files", () => {
   it("reads and writes dates of the 1904 system", async () => {
     const styles =

@@ -37,8 +37,12 @@ export interface RawCell {
  * - `edit`: made through a `Workbook` method (`setCell`, `setRange`,
  *   `setFormula`, `setCellInput`, `clearRange`, `setStyle`, `mergeCells`).
  * - `rewrite`: the formula text was rewritten because a sheet was renamed or
- *   removed, or rows or columns moved on another sheet. The meaning of the
- *   cell did not change.
+ *   removed, or rows or columns were inserted or deleted somewhere. The
+ *   meaning of the cell did not change. After a structural edit on the cell's
+ *   own sheet, `row` and `col` are the position the cell has now.
+ *
+ * Results of a calculation are not mutations: `recalc` changes the value of
+ * formula cells without telling listeners, and returns what changed.
  */
 export interface CellMutation extends SheetCellRef {
   reason: "edit" | "rewrite";
