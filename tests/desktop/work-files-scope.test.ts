@@ -66,10 +66,10 @@ describe("resolveWorkFilesScope", () => {
     }), [project]);
     expect(resolveChatInspectorTargetForRun("image.png", latest, {
       kind: "worktree", projectId: "project_stable", worktreeId: "wt_old",
-    }, "project_stable")).toMatchObject({ kind: "project", path: "image.png", worktreeId: "wt_old" });
+    }, [project])).toMatchObject({ kind: "project", path: "image.png", worktreeId: "wt_old" });
     expect(resolveChatInspectorTargetForRun("image.png", latest, {
       kind: "project", projectId: "project_stable",
-    }, "project_stable")).toMatchObject({ kind: "project", path: "image.png", worktreeId: undefined });
+    }, [project])).toMatchObject({ kind: "project", path: "image.png", worktreeId: undefined });
   });
   it("uses Matrix Home for a Global Chat regardless of run roots", () => {
     expect(resolveWorkFilesScope(detail({
@@ -173,4 +173,26 @@ it("keeps absolute owner paths distinct from relative Project paths", async () =
   expect(resolveChatInspectorTarget("src/index.ts", scope)).toMatchObject({ kind: "project", path: "src/index.ts", worktreeId: "branch" });
   expect(resolveChatInspectorTarget("/home/matrix/home/projects/matrix-os/src/index.ts", scope)).toMatchObject({ kind: "home", path: "projects/matrix-os/src/index.ts" });
   expect(resolveChatInspectorTarget("../secret", scope)).toBeNull();
+});
+
+// Moving a Chat changes its grouping, not the workspace that produced old files.
+describe("files from a moved Chat", () => {
+  const scope = { kind: "unavailable" as const, chatId: "chat_moved" };
+  const root = { kind: "worktree" as const, projectId: project.id, worktreeId: "original_branch" };
+
+  it("opens historical files independently of the current Chat scope", () => {
+    expect(resolveChatInspectorTargetForRun("reports/chart.png", scope, root, [project]))
+      .toEqual({ kind: "project", projectId: "matrix-os", worktreeId: "original_branch", path: "reports/chart.png", label: "chart.png" });
+  });
+
+  it("opens absolute owner paths even when the current project is unavailable", () => {
+    expect(resolveChatInspectorTargetForRun("~/reports/chart.png", scope, root, []))
+      .toEqual({ kind: "home", path: "reports/chart.png", label: "chart.png" });
+  });
+
+  it("does not guess a project for unrooted historical links or an unknown original project", () => {
+    expect(resolveChatInspectorTargetForRun("reports/chart.png", scope, undefined, [project])).toBeNull();
+    expect(resolveChatInspectorTargetForRun("reports/chart.png", scope, root, [])).toBeNull();
+    expect(resolveChatInspectorTargetForRun("../secret", scope, root, [project])).toBeNull();
+  });
 });

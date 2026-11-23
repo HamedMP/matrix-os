@@ -41,11 +41,13 @@ export function resolveWorkFilesScope(
 
 export function resolveChatInspectorTarget(rawPath: string, scope: WorkFilesScope): InspectorFileTarget | null {
   const link = resolveChatMessageLink(rawPath);
-  if (link?.kind !== "file" || scope.kind === "unavailable") return null;
+  if (link?.kind !== "file") return null;
   const decoded = decodeURIComponent(rawPath.trim()).replace(/^file:\/\//i, "");
   const ownerPath = decoded.startsWith("/home/matrix/home/") || decoded.startsWith("~/") || decoded.startsWith("/files/");
   const label = link.path.split("/").at(-1) ?? link.path;
-  return scope.kind === "home" || ownerPath
+  if (ownerPath) return { kind: "home", path: link.path, label };
+  if (scope.kind === "unavailable") return null;
+  return scope.kind === "home"
     ? { kind: "home", path: link.path, label }
     : { kind: "project", projectId: scope.projectId, worktreeId: scope.worktreeId, path: link.path, label };
 }
@@ -54,14 +56,19 @@ export function resolveChatInspectorTargetForRun(
   rawPath: string,
   scope: WorkFilesScope,
   runRoot: CanonicalChatExecutionRootRef | undefined,
-  chatProjectId: string | undefined,
+  projects: readonly Project[],
 ): InspectorFileTarget | null {
-  if (runRoot && canonicalExecutionRootProjectId(runRoot) !== chatProjectId) return null;
-  const selectedScope = runRoot && scope.kind === "project"
-    ? {
-        ...scope,
-        worktreeId: runRoot.kind === "worktree" ? runRoot.worktreeId : undefined,
-      }
-    : scope;
-  return resolveChatInspectorTarget(rawPath, selectedScope);
+  // A Chat move changes grouping; historical runs retain their original root.
+  // Explicit owner paths do not depend on either Project being available.
+  const ownerTarget = resolveChatInspectorTarget(rawPath, { kind: "unavailable", chatId: scope.chatId });
+  if (ownerTarget) return ownerTarget;
+  if (runRoot && runRoot.kind !== "bot_workspace") {
+    const original = projects.find((project) => project.id === runRoot.projectId);
+    if (!original) return null;
+    return resolveChatInspectorTarget(rawPath, {
+      kind: "project", chatId: scope.chatId, projectId: original.slug, label: original.name,
+      ...(runRoot.kind === "worktree" ? { worktreeId: runRoot.worktreeId } : {}),
+    });
+  }
+  return resolveChatInspectorTarget(rawPath, scope);
 }
