@@ -29,7 +29,20 @@ export interface R2ClientConfig {
   forcePathStyle?: boolean;
 }
 
+/** The storage path rejected an object write as too large (HTTP 413). */
+export class SyncObjectTooLargeError extends Error {
+  constructor() {
+    super("Sync object exceeds the storage upload limit");
+    this.name = "SyncObjectTooLargeError";
+  }
+}
+
 export interface R2Client {
+  /**
+   * Largest body putObject can carry on this storage path, when it is lower
+   * than storage itself allows (e.g. a proxy that buffers request bodies).
+   */
+  readonly maxPutObjectBytes?: number;
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   listMultipartUploads(key: string): Promise<{ key: string; uploadId: string }[]>;

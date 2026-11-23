@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createPlatformR2Client } from "../../../packages/gateway/src/sync/platform-r2-client.js";
+import { SyncObjectTooLargeError } from "../../../packages/gateway/src/sync/r2-client.js";
+import { EDGE_WORKER_BODY_LIMIT } from "../../../packages/edge-router/src/index.js";
 
 describe("platform R2 client", () => {
   beforeEach(() => {
@@ -107,6 +109,30 @@ describe("platform R2 client", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
   });
+  it("maps a 413 object write to SyncObjectTooLargeError", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("payload too large", { status: 413 }));
+    const client = createPlatformR2Client({
+      baseUrl: "http://distro-platform-1:9000",
+      handle: "alice",
+      token: "upgrade-token",
+    });
+
+    await expect(
+      client.putObject("matrixos-sync/user_alice/staging/x", new Uint8Array([1, 2, 3])),
+    ).rejects.toBeInstanceOf(SyncObjectTooLargeError);
+  });
+
+  it("advertises an upload limit that fits through the edge router body limit", () => {
+    const client = createPlatformR2Client({
+      baseUrl: "http://distro-platform-1:9000",
+      handle: "alice",
+      token: "upgrade-token",
+    });
+
+    expect(client.maxPutObjectBytes).toBeGreaterThan(0);
+    expect(client.maxPutObjectBytes).toBeLessThanOrEqual(EDGE_WORKER_BODY_LIMIT);
+  });
+
   it("declares the known length of a streamed upload so the broker can stream it", async () => {
     const { Readable } = await import("node:stream");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
