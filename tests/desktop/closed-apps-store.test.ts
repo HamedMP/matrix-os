@@ -56,6 +56,16 @@ describe("closed apps store", () => {
     expect(terminal).toEqual({ kind: "terminals", title: "Terminal", closable: true });
   });
 
+  it("keeps the project of a closed project terminal so it reopens in that project", () => {
+    useClosedApps.getState().push(tab({
+      id: "t1", kind: "terminal", title: "build", sessionName: "build-1", projectSlug: "alpha",
+    }));
+
+    const spec = useClosedApps.getState().pop();
+    expect(spec).toEqual({ kind: "terminals", title: "Terminal", closable: true, projectSlug: "alpha" });
+    expect(spec).not.toHaveProperty("sessionName");
+  });
+
   it("records an app whose tab was removed or whose surface was closed, but not one still open", async () => {
     const { useDesktopSurfaces } = await import("@desktop/renderer/src/stores/desktop-surfaces");
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);

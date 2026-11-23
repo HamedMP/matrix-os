@@ -202,15 +202,16 @@ exactly as they did before this change, so a focused page can still claim the
 key. Every second or later binding of those actions gets a hidden menu item.
 
 **Terminal control keys are left to the page.** A binding that is Ctrl plus a
-single letter (or `[`, `\`, `]`) with no other modifier is a terminal control
-character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history. On Windows and
+single letter (or Space, `[`, `\`, `]`) with no other modifier is a terminal control
+character: Ctrl+W deletes a word, Ctrl+P and Ctrl+N walk history, Ctrl+Space sets
+the mark (and toggles the IME on Windows). On Windows and
 Linux several defaults have that form (Ctrl+W, Ctrl+K, Ctrl+P, Ctrl+N, Ctrl+T,
 Ctrl+J, Ctrl+Q). The matcher does not handle these bindings; they run only
 through the menu accelerator, which a page can claim by cancelling the key. So
 in the terminal they go to the shell, as they do today, and everywhere else they
 run the Matrix action. A second or later binding of this form gets a hidden menu
-item, since the matcher will not carry it. Every other binding, including
-Ctrl+Tab and all Cmd bindings, works with focus anywhere.
+item, since the matcher will not carry it. Every other binding of an Apps-group action,
+including Ctrl+Tab and Cmd bindings, works with focus anywhere.
 
 Other matcher rules: it skips DevTools web contents; it ignores auto-repeat for
 every action except Next app and Previous app; and it never matches an action
@@ -295,6 +296,9 @@ All checks run in the shared validator and again in the main process on
   Replace; the main process rejects a payload that still contains a duplicate.
 - Errors returned to the renderer are generic. No Zod issues or file paths.
 - The stored value stays inside the state store's existing 64 KB bound.
+- Known and accepted: an embedded app can tell that a key is bound, because
+  the key press never reaches it. It cannot learn which action the key runs or
+  read the binding list.
 
 Auth: these IPC channels are available to the app's own windows only, the same
 as `state:get` and `state:set`. Embedded apps have no access to them.

@@ -4,7 +4,6 @@ import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { invoke, onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
-import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs, type Tab } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -14,23 +13,20 @@ import {
   topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
 } from "../../stores/desktop-surfaces";
-import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
+import { isGetStartedBlocking } from "../get-started/get-started-blocking";
 import {
   closeApp,
   cycleApp,
+  focusApp,
   minimizeActiveApp,
+  openAndFocusApp,
   openFilesApp,
   reopenClosedApp,
   switchToApp,
   toggleActiveAppFullSize,
+  toggleAppLauncher,
   toggleShowDesktop,
 } from "../desktop-shell/app-switching";
-
-interface TerminalFocusShortcutState {
-  tabs: Array<{ id: string; kind: string }>;
-  focusTab(id: string): void;
-  openTab(spec: { kind: "terminals"; title: string }): void;
-}
 
 interface NewAgentRunShortcutUiState {
   composerOpen: boolean;
@@ -42,33 +38,11 @@ interface NewAgentRunShortcutWorkspaceState {
   requestComposerFocus(): void;
 }
 
-export function handleMenuNavigate(kind: string): void {
-  if (kind === "settings") {
-    useTabs.getState().openTab({ kind: "settings", title: "Settings" });
-    return;
-  }
-  if (kind === "terminals") {
-    handleTerminalFocusShortcut({ preventDefault: () => undefined }, useTabs.getState());
-    return;
-  }
-  if (kind === "board" || kind === "project") {
-    const { activeProjectSlug, projects } = useBoard.getState();
-    const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
-    if (project) {
-      useTabs.getState().openTab({
-        kind: "project",
-        projectSlug: project.slug,
-        title: project.name || project.slug,
-      });
-      return;
-    }
-    useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
-    return;
-  }
-  if (kind !== "home") {
-    console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
-  }
-  useTabs.getState().openTab(HOSTED_SHELL_TAB_SPEC);
+type OpenTabSpec = Parameters<ReturnType<typeof useTabs.getState>["openTab"]>[0];
+
+/** Opens or reuses the app's tab and shows it, even if its window was closed or minimized. */
+function showApp(spec: OpenTabSpec): void {
+  openAndFocusApp(() => useTabs.getState().openTab(spec));
 }
 
 export function handleCloseSelectedAppShortcut(
@@ -162,17 +136,14 @@ export function handleNewContextShortcut(
   }, "source");
 }
 
-export function handleTerminalFocusShortcut(
-  event: Pick<KeyboardEvent, "preventDefault">,
-  tabs: TerminalFocusShortcutState,
-): void {
+export function handleTerminalFocusShortcut(event: Pick<KeyboardEvent, "preventDefault">): void {
   event.preventDefault();
-  const existing = tabs.tabs.find((tab) => tab.kind === "terminal" || tab.kind === "terminals");
+  const existing = useTabs.getState().tabs.find((tab) => tab.kind === "terminal" || tab.kind === "terminals");
   if (existing) {
-    tabs.focusTab(existing.id);
+    focusApp(existing.id);
     return;
   }
-  tabs.openTab({ kind: "terminals", title: "Terminal" });
+  showApp({ kind: "terminals", title: "Terminal" });
 }
 
 function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState["summary"]): boolean {
@@ -200,7 +171,11 @@ export function handleNewAgentRunShortcut(
   // project's Chats view still opens either way.
   const canCompose = canRequestAgentComposerFocus(workspace.summary);
   if (canCompose) workspace.requestComposerFocus();
-  void openProjectChat(projectId, { compose: canCompose });
+  openAndFocusApp(() => {
+    // openProjectChat selects the project's tab before its first await.
+    void openProjectChat(projectId, { compose: canCompose });
+    return useTabs.getState().activeTabId ?? "";
+  });
 }
 
 function openChatSearchOrPalette(): void {
@@ -219,10 +194,7 @@ function switchTo(position: number): () => void {
 const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
   "app.next": () => cycleApp(1),
   "app.previous": () => cycleApp(-1),
-  "app.launcher": () => {
-    const ui = useUi.getState();
-    ui.setAppLauncherOpen(!ui.appLauncherOpen);
-  },
+  "app.launcher": toggleAppLauncher,
   "app.close": () => handleCloseSelectedAppShortcut(noEvent),
   "app.minimize": minimizeActiveApp,
   "app.reopen": reopenClosedApp,
@@ -243,13 +215,13 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
     const ui = useUi.getState();
     ui.setQuickOpenOpen(!ui.quickOpenOpen);
   },
-  "nav.settings": () => handleMenuNavigate("settings"),
+  "nav.settings": () => showApp({ kind: "settings", title: "Settings" }),
   "tabs.new-context": () => handleNewContextShortcut(noEvent),
   "tabs.new": () => { handleNewTopLevelTabShortcut(noEvent); },
   "tabs.close": () => handleCloseTopLevelTabShortcut(noEvent),
   "chat.new-thread": () => handleNewAgentRunShortcut(noEvent, useUi.getState(), useCodingAgentWorkspace.getState()),
-  "chat.open": () => { useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }); },
-  "terminal.focus": () => handleTerminalFocusShortcut(noEvent, useTabs.getState()),
+  "chat.open": () => showApp({ kind: "chat", title: "Chat", closable: false }),
+  "terminal.focus": () => handleTerminalFocusShortcut(noEvent),
   "terminal.window": () => {
     void invoke("terminal-window:open", {}).catch((error: unknown) => {
       console.warn("[shortcuts] could not open the Terminal window:", error);
@@ -258,21 +230,13 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
 };
 
 export function runShortcutAction(id: ShortcutActionId): void {
+  // The Getting Started wizard covers the desktop; nothing behind it may act.
+  if (isGetStartedBlocking()) return;
   SHORTCUT_HANDLERS[id]();
 }
 
 export function useGlobalShortcuts(): void {
   useEffect(() => {
-    const offShortcut = onEvent("shortcut:action", ({ id }) => runShortcutAction(id));
-    const offMenu = onEvent("menu:action", ({ action }) => {
-      if (action !== "refresh-home") return;
-      const tabs = useTabs.getState();
-      const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId);
-      if (activeTab?.kind === "home") useUi.getState().requestHomeRefresh();
-    });
-    return () => {
-      offShortcut();
-      offMenu();
-    };
+    return onEvent("shortcut:action", ({ id }) => runShortcutAction(id));
   }, []);
 }

@@ -90,6 +90,19 @@ function resetToDefaults(overrides: ShortcutOverrides, id: ShortcutActionId, pla
   return next;
 }
 
+/**
+ * Drops any override that lists exactly the action's platform defaults, in
+ * order, so the row reads as unchanged and keeps following future defaults.
+ */
+function withoutDefaultOverrides(next: ShortcutOverrides, platform: ShortcutPlatform): ShortcutOverrides {
+  const kept = Object.entries(next.overrides).filter(([id, bindings]) => {
+    const defaults = SHORTCUT_ACTIONS.find((action) => action.id === id)?.defaults[platform];
+    return !(defaults && bindings.length === defaults.length && bindings.every((binding, i) => binding === defaults[i]));
+  });
+  if (kept.length === Object.keys(next.overrides).length) return next;
+  return { ...next, overrides: Object.fromEntries(kept) };
+}
+
 function matchesQuery(action: ShortcutActionDefinition, bindings: readonly string[], query: string, platform: ShortcutPlatform) {
   if (query === "") return true;
   const compact = query.replace(/\s+/g, "");
@@ -137,7 +150,7 @@ export function ShortcutSettings({
     setPending(true);
     let saved = false;
     try {
-      saved = await onChange(next);
+      saved = await onChange(withoutDefaultOverrides(next, platform));
     } catch (cause: unknown) {
       console.error("[shortcuts] saving shortcut overrides failed", cause);
     } finally {

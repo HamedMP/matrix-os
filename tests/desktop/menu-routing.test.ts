@@ -24,6 +24,7 @@ function fakeWindow() {
     isDestroyed: () => false,
     isFocused: vi.fn(() => false),
     close: vi.fn(),
+    minimize: vi.fn(),
     webContents: {
       send: vi.fn(), reload: vi.fn(),
       getZoomFactor: () => zoom, setZoomFactor: vi.fn((factor: number) => { zoom = factor; }),
@@ -93,6 +94,23 @@ describe("application menu routing", () => {
     router.send("shortcut:action", { id: "tabs.close" });
     expect(terminal.close).toHaveBeenCalledTimes(1);
     expect(main.webContents.send).not.toHaveBeenCalled();
+  });
+
+  it("minimizes the focused Terminal window on the minimize shortcut", () => {
+    const { main, terminal, focusMain, router } = setup(true);
+    router.send("shortcut:action", { id: "app.minimize" });
+    expect(terminal.minimize).toHaveBeenCalledTimes(1);
+    expect(focusMain).not.toHaveBeenCalled();
+    expect(main.webContents.send).not.toHaveBeenCalled();
+    expect(main.minimize).not.toHaveBeenCalled();
+  });
+
+  it("sends the minimize shortcut to the main window when it has focus", () => {
+    const { main, terminal, focusMain, router } = setup(false);
+    router.send("shortcut:action", { id: "app.minimize" });
+    expect(main.webContents.send).toHaveBeenCalledWith("shortcut:action", { id: "app.minimize" });
+    expect(terminal.minimize).not.toHaveBeenCalled();
+    expect(focusMain).not.toHaveBeenCalled();
   });
 
   it("brings the main window forward for other shortcuts chosen from the Terminal window", () => {

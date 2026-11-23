@@ -200,9 +200,24 @@ export function heldModifiers(e: KeyEventLike, platform: ShortcutPlatform): stri
   return held;
 }
 
-export function bindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform): string | null {
+/**
+ * The binding for the character the key types, without the digit-row rule in
+ * bindingFromKeyEvent. The main-process matcher uses it to leave a native menu
+ * key alone: on AZERTY the 6 key types "-", and Cmd+- must still zoom out.
+ */
+export function characterBindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform): string | null {
   if (e.key === "Escape") return null;
   const key = keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
+  if (key === null) return null;
+  return [...heldModifiers(e, platform), key].join("+");
+}
+
+export function bindingFromKeyEvent(e: KeyEventLike, platform: ShortcutPlatform): string | null {
+  if (e.key === "Escape") return null;
+  // The digit row types punctuation on some layouts (AZERTY: Digit4 is "'"),
+  // so a digit key binds as its digit. Letters keep "character wins".
+  const digit = /^Digit([0-9])$/.exec(e.code)?.[1];
+  const key = digit ?? keyFromEventKey(e.key) ?? keyFromEventCode(e.code);
   if (key === null) return null;
   return [...heldModifiers(e, platform), key].join("+");
 }

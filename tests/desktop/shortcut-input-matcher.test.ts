@@ -52,6 +52,18 @@ describe("shortcut input matcher", () => {
     expect(run).toHaveBeenCalledWith("app.next");
   });
 
+  it("switches apps from the digit row on a layout that types punctuation there (AZERTY)", () => {
+    const { run, press } = setup();
+    expect(press({ key: "'", code: "Digit4", meta: true })).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.switch-4");
+  });
+
+  it("leaves a digit-row key to the menu when its character is a native menu key (AZERTY Cmd+- zooms out)", () => {
+    const { run, press } = setup();
+    expect(press({ key: "-", code: "Digit6", meta: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("ignores key-up events", () => {
     const { run, press } = setup();
     expect(press({ ...CTRL_TAB, type: "keyUp" })).not.toHaveBeenCalled();
@@ -69,6 +81,18 @@ describe("shortcut input matcher", () => {
     const { run, press } = setup({ effective: { ...MAC_DEFAULTS, "app.close": ["Cmd+Shift+W", "F6"] } });
     expect(press({ key: "F6", code: "F6" })).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith("app.close");
+  });
+
+  it("leaves Ctrl+Space to the page on Windows and Linux, where it is a terminal and IME key", () => {
+    const { run, press } = setup({ platform: "other" });
+    expect(press({ key: " ", code: "Space", control: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("still runs the App Launcher from Alt+Space on macOS", () => {
+    const { run, press } = setup({ platform: "mac" });
+    expect(press({ key: " ", code: "Space", alt: true })).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith("app.launcher");
   });
 
   it("does nothing while a shortcut is being recorded", () => {
@@ -168,11 +192,11 @@ describe("isMainProcessShortcut", () => {
 });
 
 describe("isTerminalControlChord", () => {
-  it("is Ctrl alone plus a letter or one of [ \\ ]", () => {
-    for (const binding of ["Ctrl+W", "Ctrl+A", "Ctrl+Z", "Ctrl+[", "Ctrl+\\", "Ctrl+]"]) {
+  it("is Ctrl alone plus a letter, Space or one of [ \\ ]", () => {
+    for (const binding of ["Ctrl+W", "Ctrl+A", "Ctrl+Z", "Ctrl+[", "Ctrl+\\", "Ctrl+]", "Ctrl+Space"]) {
       expect(isTerminalControlChord(binding), binding).toBe(true);
     }
-    for (const binding of ["Ctrl+Tab", "Ctrl+1", "Ctrl+Shift+T", "Ctrl+Alt+T", "Cmd+W", "Cmd+Ctrl+W", "W", "Ctrl+,", "Ctrl+F1", "Ctrl+Space"]) {
+    for (const binding of ["Ctrl+Tab", "Ctrl+1", "Ctrl+Shift+T", "Ctrl+Alt+T", "Cmd+W", "Cmd+Ctrl+W", "W", "Ctrl+,", "Ctrl+F1", "Alt+Space", "Ctrl+Shift+Space"]) {
       expect(isTerminalControlChord(binding), binding).toBe(false);
     }
   });

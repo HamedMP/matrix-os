@@ -586,8 +586,6 @@ export const EVENT_CHANNELS = {
   "update:state-changed": DesktopUpdateSnapshotSchema,
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
   "app:zoom-changed": ZoomFactorResultSchema,
-  // Registry actions arrive as shortcut:action (shortcuts-ipc.ts).
-  "menu:action": z.object({ action: z.enum(["refresh-home"]) }).strict(),
 } as const;
 
 export type InvokeChannel = keyof typeof INVOKE_CHANNELS;

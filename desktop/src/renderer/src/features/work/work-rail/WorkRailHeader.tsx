@@ -1,6 +1,5 @@
-import { chatSearchShortcutLabel } from "@matrix-os/ui";
 import { PanelLeftOpen as PanelLeftOpenIcon, Plus, Search } from "lucide-react";
-import { useShortcutLabel } from "../../../stores/shortcuts";
+import { useShortcutAriaKeys, useShortcutLabel } from "../../../stores/shortcuts";
 
 export function WorkRailHeader({
   onNewChat,
@@ -48,8 +47,10 @@ export function WorkRailHeader({
 }
 
 export function WorkRailSearchControls({ onSearch, active = false }: { onSearch: () => void; active?: boolean }) {
-  return <button type="button" aria-label="Search chats" aria-current={active ? "page" : undefined} data-current={active || undefined} aria-keyshortcuts="Meta+K Control+K" title="Search chats" className="work-rail-top-action flex h-8 shrink-0 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} onClick={onSearch}>
+  const searchLabel = useShortcutLabel("nav.palette");
+  const searchKeys = useShortcutAriaKeys("nav.palette");
+  return <button type="button" aria-label="Search chats" aria-current={active ? "page" : undefined} data-current={active || undefined} aria-keyshortcuts={searchKeys ?? undefined} title="Search chats" className="work-rail-top-action flex h-8 shrink-0 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[14px] leading-[18px] font-normal outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} onClick={onSearch}>
     <Search size={15} aria-hidden /><span className="flex-1">Search</span>
-    <kbd aria-hidden="true" className="text-[12px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))", fontFamily: "inherit" }}>{chatSearchShortcutLabel()}</kbd>
+    {searchLabel ? <kbd aria-hidden="true" className="text-[12px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))", fontFamily: "inherit" }}>{searchLabel}</kbd> : null}
   </button>;
 }

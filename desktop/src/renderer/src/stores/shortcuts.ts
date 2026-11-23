@@ -69,6 +69,25 @@ export function shortcutLabel(
   return formatBinding(binding, snapshot.platform).join(snapshot.platform === "mac" ? "" : "+");
 }
 
+const ARIA_KEY_NAMES: Readonly<Record<string, string>> = {
+  Cmd: "Meta", Ctrl: "Control", Up: "ArrowUp", Down: "ArrowDown", Left: "ArrowLeft", Right: "ArrowRight",
+};
+
+/** The action's first binding in `aria-keyshortcuts` form ("Meta+K"); null when unbound or not loaded yet. */
+export function shortcutAriaKeys(
+  id: ShortcutActionId,
+  snapshot: ShortcutSnapshot | null = useShortcuts.getState().snapshot,
+): string | null {
+  const binding = snapshot?.effective[id]?.[0];
+  if (!binding) return null;
+  return binding.split("+").map((part) => ARIA_KEY_NAMES[part] ?? part).join("+");
+}
+
+/** shortcutAriaKeys that re-renders when the bindings change. */
+export function useShortcutAriaKeys(id: ShortcutActionId): string | null {
+  return useShortcuts((state) => shortcutAriaKeys(id, state.snapshot));
+}
+
 /** shortcutLabel that re-renders when the bindings change. */
 export function useShortcutLabel(id: ShortcutActionId): string | null {
   return useShortcuts((state) => shortcutLabel(id, state.snapshot));

@@ -146,8 +146,10 @@ export default function TaskWorkspace({
     const onKey = (e: KeyboardEvent) => {
       // Cmd/Ctrl+digit belongs to app switching; panels use Cmd/Ctrl+Alt+digit.
       // With Alt held, mac reports a symbol in `key` ("¡"), so read the physical key.
+      // Chromium on Windows reports AltGr as Ctrl+Alt; AltGr+digit types a character.
+      if (e.getModifierState?.("AltGraph")) return;
       if (!(e.metaKey || e.ctrlKey) || !e.altKey || e.shiftKey) return;
-      const digit = /^Digit([1-9])$/.exec(e.code);
+      const digit = /^Digit([1-7])$/.exec(e.code);
       const index = digit ? Number(digit[1]) : 0;
       if (index >= 1 && index <= PANEL_SHORTCUT_ORDER.length) {
         e.preventDefault();

@@ -19,8 +19,10 @@ function closedAppSpec(tab: Tab): ClosedAppSpec {
   const { id: _id, sessionName, ...spec } = tab;
   if (spec.kind === "terminal" && !spec.sharedScopeId) {
     // A session-bound terminal tab without its session is pruned on reconcile,
-    // so a closed terminal reopens as the terminal workspace with a new session.
-    return { kind: "terminals", title: "Terminal", closable: true };
+    // so a closed terminal reopens as its project's terminal workspace with a
+    // new session.
+    const reopened: ClosedAppSpec = { kind: "terminals", title: "Terminal", closable: true };
+    return spec.projectSlug === undefined ? reopened : { ...reopened, projectSlug: spec.projectSlug };
   }
   if (spec.kind === "terminal" || spec.kind === "terminals") return spec;
   return sessionName === undefined ? spec : { ...spec, sessionName };

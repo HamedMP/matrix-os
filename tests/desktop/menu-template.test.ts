@@ -147,7 +147,9 @@ describe("createAppMenuTemplate", () => {
     const template = createAppMenuTemplate(options({ shortcuts }));
     expect(find(submenu(template, "Matrix OS"), "Close Selected App")?.accelerator).toBe("Cmd+Shift+W");
     const all = accelerators(template, "darwin");
-    expect(all).not.toContain("Cmd+Q");
+    // The old default moves to Quit; no Close Selected App item keeps it.
+    expect(all.filter((accelerator) => accelerator === "Cmd+Q")).toHaveLength(1);
+    expect(find(submenu(template, "Matrix OS"), "Quit Matrix OS")?.accelerator).toBe("Cmd+Q");
     expect(all).not.toContain("F6");
   });
 
@@ -179,6 +181,15 @@ describe("createAppMenuTemplate", () => {
     click(closeItems[1]);
     expect(opts.runShortcut).toHaveBeenCalledWith("app.close");
     expect(accelerators(template, "linux")).not.toContain("F6");
+  });
+
+  it("keeps Ctrl+Space a menu accelerator: the matcher leaves it to the page", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "other"), "app.launcher": ["F6", "Ctrl+Space"] };
+    const opts = options({ platform: "linux", shortcuts });
+    const items = submenu(createAppMenuTemplate(opts), "Apps").filter((item) => item.label === "Open App Launcher");
+    expect(items.map((item) => [item.accelerator, item.visible])).toEqual([["F6", undefined], ["Ctrl+Space", false]]);
+    click(items[1]);
+    expect(opts.runShortcut).toHaveBeenCalledWith("app.launcher");
   });
 
   it("omits the accelerator of an unbound action", () => {
@@ -217,7 +228,7 @@ describe("createAppMenuTemplate", () => {
     expect(opts.send).not.toHaveBeenCalled();
   });
 
-  it("keeps Quit a plain item without an accelerator", () => {
+  it("leaves Quit without an accelerator while Close Selected App holds Cmd+Q", () => {
     const opts = options();
     const appItems = submenu(createAppMenuTemplate(opts), "Matrix OS");
     expect(appItems.some((item) => item.role === "quit")).toBe(false);
@@ -225,6 +236,24 @@ describe("createAppMenuTemplate", () => {
     expect(quit && "accelerator" in quit).toBe(false);
     click(quit);
     expect(opts.quitApp).toHaveBeenCalledOnce();
+  });
+
+  it("gives Quit Cmd+Q on macOS once no action is bound to it", () => {
+    const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "mac"), "app.close": ["Cmd+Shift+W"] };
+    const template = createAppMenuTemplate(options({ shortcuts }));
+    expect(find(submenu(template, "Matrix OS"), "Quit Matrix OS")?.accelerator).toBe("Cmd+Q");
+    const all = accelerators(template, "darwin");
+    expect(all.filter((accelerator, index) => all.indexOf(accelerator) !== index)).toEqual([]);
+  });
+
+  it("gives Exit Ctrl+Q on Windows and Linux once no action is bound to it", () => {
+    for (const platform of ["win32", "linux"] as const) {
+      const shortcuts: EffectiveShortcuts = { ...resolveShortcuts(null, "other"), "app.close": [] };
+      const template = createAppMenuTemplate(options({ platform, shortcuts, openTerminalWindow: vi.fn() }));
+      expect(find(submenu(template, "File"), "Exit")?.accelerator, platform).toBe("Ctrl+Q");
+      const all = accelerators(template, platform);
+      expect(all.filter((accelerator, index) => all.indexOf(accelerator) !== index), platform).toEqual([]);
+    }
   });
 
   it("builds the Window menu without the default Cmd+M minimize", () => {

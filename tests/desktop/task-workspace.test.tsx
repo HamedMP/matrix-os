@@ -162,6 +162,33 @@ describe("TaskWorkspace", () => {
     expect(terminalVisible()).toBe(before);
   });
 
+  it("leaves AltGr characters to the page", () => {
+    renderWorkspace();
+    const before = terminalVisible();
+
+    // Chromium on Windows reports AltGr as Ctrl+Alt; AltGr+2 types "²" on a German layout.
+    const event = new KeyboardEvent("keydown", {
+      ctrlKey: true, altKey: true, code: "Digit2", key: "²", modifierAltGraph: true, cancelable: true,
+    } as KeyboardEventInit);
+    window.dispatchEvent(event);
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      ctrlKey: true, altKey: true, code: "Digit1", key: "1", modifierAltGraph: true, cancelable: true,
+    } as KeyboardEventInit));
+
+    expect(event.getModifierState("AltGraph")).toBe(true);
+    expect(event.defaultPrevented).toBe(false);
+    expect(terminalVisible()).toBe(before);
+  });
+
+  it("ignores digits past the seventh panel", () => {
+    renderWorkspace();
+    const before = useWorkspace.getState().layoutFor("task_a").visible;
+
+    fireEvent.keyDown(window, { metaKey: true, altKey: true, code: "Digit8", key: "8" });
+
+    expect(useWorkspace.getState().layoutFor("task_a").visible).toEqual(before);
+  });
+
   it.each([
     ["MacIntel", "Terminal (⌘⌥1)"],
     ["Win32", "Terminal (Ctrl+Alt+1)"],

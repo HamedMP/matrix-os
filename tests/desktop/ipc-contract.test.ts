@@ -1110,11 +1110,9 @@ describe("IPC contract", () => {
       EVENT_CHANNELS["embed:state"].safeParse({ embedId: "e", state: "auth-required" }).success,
     ).toBe(true);
     expect(EVENT_CHANNELS["embed:state"].safeParse({ embedId: "e", state: "??" }).success).toBe(false);
+    // Registry actions arrive as shortcut:action; the legacy menu channels are gone.
     expect("menu:navigate" in EVENT_CHANNELS).toBe(false);
-    expect(EVENT_CHANNELS["menu:action"].safeParse({ action: "refresh-home" }).success).toBe(true);
-    for (const action of ["new-context", "new-tab", "close-tab", "close-app", "palette", "quit-app"]) {
-      expect(EVENT_CHANNELS["menu:action"].safeParse({ action }).success, action).toBe(false);
-    }
+    expect("menu:action" in EVENT_CHANNELS).toBe(false);
     expect(EVENT_CHANNELS["update:manual-check-requested"].safeParse({}).success).toBe(true);
     expect(
       EVENT_CHANNELS["update:manual-check-requested"].safeParse({ source: "untrusted" }).success,

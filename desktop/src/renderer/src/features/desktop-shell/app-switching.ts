@@ -190,12 +190,23 @@ export function toggleShowDesktop(): void {
   schedulePersist();
 }
 
-function openAndFocus(open: () => string): void {
+/**
+ * Opens (or reuses) an app with `open`, which returns its tab id, then shows
+ * and focuses it, restoring a closed or minimized window.
+ */
+export function openAndFocusApp(open: () => string): void {
   if (shellEffects) {
     shellEffects.openRoot(() => { open(); });
     return;
   }
   focusApp(open());
+}
+
+/** Taskbar Apps button and the App Launcher shortcut. */
+export function toggleAppLauncher(): void {
+  const open = !useUi.getState().appLauncherOpen;
+  useUi.getState().setAppLauncherOpen(open);
+  trackDesktopEvent({ name: "desktop_launcher_toggled", open });
 }
 
 export function openFilesApp(): void {
@@ -205,7 +216,7 @@ export function openFilesApp(): void {
     focusApp(filesTab.id);
     return;
   }
-  openAndFocus(() => useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC));
+  openAndFocusApp(() => useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC));
 }
 
 export function reopenClosedApp(): void {
@@ -214,7 +225,7 @@ export function reopenClosedApp(): void {
   // An app that cannot be closed keeps its tab, so it is reused. Any other
   // closed tab comes back as its own tab: openTab would fold it into a tab
   // that is still open (a second Chat or Files tab) and replace its content.
-  openAndFocus(() => spec.closable === false
+  openAndFocusApp(() => spec.closable === false
     ? useTabs.getState().openTab(spec)
     : useTabs.getState().openTabInstance(spec));
 }
