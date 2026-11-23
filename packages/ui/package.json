@@ -34,6 +34,7 @@
     "./ai-usage": "./src/ai-usage/AiUsagePanel.tsx",
     "./ai-usage.css": "./src/ai-usage/ai-usage.css",
     "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx",
+    "./button": "./src/Button.tsx",
     "./select": "./src/Select.tsx",
     "./layering": "./src/layering.ts",
     "./ai-usage-select": "./src/ai-usage/UsageSelect.tsx",

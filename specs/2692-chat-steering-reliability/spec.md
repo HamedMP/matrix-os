@@ -180,3 +180,52 @@ The three selector failures reproduced before the update; both consumer suites
 pass all eight cases afterwards. The expanded steering lane passes 464 tests in
 29 files, and a separate sweep of all 49 native canonical Chat consumer suites
 passes 456 tests without skips. These overlapping runs are reported separately.
+
+## Follow-up qualification: 23 November
+
+The complete Linux CI run at `07dd3d9` passed all four unit shards and required
+checks. Cross-checking its four JSON result artifacts against the original macOS
+failure inventory confirms that all 92 named failing assertions executed and
+passed. No tests were removed or skipped to obtain that result.
+
+Replaying the 33 affected files locally with GNU coreutils, Python dependencies,
+and a canonical temporary directory gives 409 passed, 34 failed and one existing
+skipped case; 58 of the original failures now pass. Remaining failures are 20
+missing-flock cases, eight macOS-killed copies of system Bash, two Linux-only
+Playwright dependency checks, two unsupported macOS `/dev/fd` directory traversal
+cases, and two Bash 3.2 empty-array failures. The detailed case ledger and probe
+outputs stay outside Git. Do not weaken pinned-directory security or required
+Linux assertions to hide macOS host limitations.
+
+The exact client preview bundle is installed and live SHA/ref/build-time verified.
+Native authentication was refreshed through the real device flow with a temporary
+QA-only authorization-link router to the in-app browser; subsequent testing uses
+the original packaged client, with no auth routing modification. Native reload
+diagnosis and current-head active steering qualification remain in progress.
+
+
+### Electron startup and process recovery
+
+Faulting the actual main and Terminal entrypoint imports leaves the old renderer
+root empty. Faulting a render or mount effect also has no root recovery boundary.
+Separately, SIGKILL of only the exact `07dd3d9` packaged QA renderer leaves a frozen
+compositor frame with no accessible Chat or recovery action. This confirms missing
+recovery paths; it does not establish the cause of the earlier intermittent blank
+reload capture.
+
+Show the shared boot screen while the selected module loads. On import, render,
+or mount-effect failure, show a generic branded recovery card with Reload window.
+For an abnormal renderer exit or failed main-frame navigation, the native main
+process must offer Reload window or Close window even when renderer UI is gone.
+Ignore normal aborted navigation and clean exits; coalesce concurrent failures,
+remove listeners on close, and ignore late dialog responses. No automatic reload,
+Chat request replay, credential reset, or owner-data mutation is permitted.
+The recovery helper stays outside the large main-process composition module;
+that module only registers it with the real window and native dialog dependency.
+
+Acceptance: actual entrypoint import-failure red/green, render/effect boundary
+fault red/green, native event lifecycle tests, and produced-artifact renderer
+termination followed by the real recovery dialog and explicit successful reload.
+Native main-frame recovery adds no API, file write, credential, or transaction.
+Keep startup imports narrow so the recovery screen does not require the Chat
+component barrel. Existing current-head surface qualification remains required.
