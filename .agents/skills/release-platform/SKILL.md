@@ -102,20 +102,31 @@ route or page directly.
 
 ## 6. Rollback
 
-A promoted deploy replaces two services: the serving service
-(`$CLOUD_RUN_SERVICE`) and the background worker (`$CLOUD_RUN_SERVICE-worker`,
-a private singleton). Before a production deploy, record the revision each one
-serves so you have rollback targets:
+A promoted production deploy replaces three things that must agree with each
+other:
+
+- the serving service (`$CLOUD_RUN_SERVICE`);
+- the background worker (`$CLOUD_RUN_SERVICE-worker`, a private singleton);
+- the Matrix.page Cloudflare Worker (`matrix-public-sites`), deployed with the
+  active Sites edge secret when `MATRIX_PUBLIC_SITES_ENABLED` is `true`.
+
+Before a production deploy, record what each one serves so you have rollback
+targets:
 
 ```bash
 for svc in "$CLOUD_RUN_SERVICE" "$CLOUD_RUN_SERVICE-worker"; do
   gcloud run services describe "$svc" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
     --format=json | jq -r --arg svc "$svc" '.status.traffic[] | select((.percent // 0) > 0) | "\($svc) \(.revisionName)"'
 done
+# Matrix.page Worker version serving 100% (needs Cloudflare access: `wrangler login`)
+pnpm --filter @matrix-os/edge-router exec wrangler deployments status \
+  --config wrangler.sites.toml --json \
+  | jq -r '.versions[] | select((.percentage | tonumber) == 100) | "matrix-public-sites \(.version_id)"'
 ```
 
-Previous revisions stay available. Roll back both services together (ask
-first), so serving code and background jobs run the same build:
+Previous revisions and Worker versions stay available. Roll back all three
+together (ask first), so serving code, background jobs, and the edge run
+compatible builds:
 
 ```bash
 gcloud run revisions list --service "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" \
@@ -124,14 +135,36 @@ gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_
   --region "$GCP_REGION" --to-revisions "<previous-serving-revision>=100"
 gcloud run services update-traffic "$CLOUD_RUN_SERVICE-worker" --project "$GCP_PROJECT_ID" \
   --region "$GCP_REGION" --to-revisions "<previous-worker-revision>=100"
+pnpm --filter @matrix-os/edge-router exec wrangler rollback "<previous-worker-version-id>" \
+  --config wrangler.sites.toml --message "Roll back with platform <previous-serving-revision>"
 ```
 
-The first command is the one the workflow's `Promote revision` step uses. Only
-the `-worker` revision may run with `PLATFORM_BACKGROUND_WORKERS_ENABLED=true`;
-never point serving traffic at a worker revision or the reverse. Re-run the
-step 4 and step 5 checks on both services afterwards. The next `main` push that
-matches the paths filter promotes a new revision again, so land the fix or
-revert through a PR.
+Why the Worker belongs in the rollback: it sends the Sites edge secret it was
+deployed with, and each platform revision accepts only the secret versions it
+was deployed with (`SITES_EDGE_SECRET_VERSION` and
+`SITES_EDGE_SECRET_PREVIOUS_VERSION`). After a secret rotation, restoring only
+the two Cloud Run services leaves the newer Worker sending a secret the
+restored platform rejects. Every hosted site then returns 404 while `/health`
+and `/sign-in` still pass. A Worker version carries its own secret, so rolling
+it back restores the matching one. See
+`specs/551-public-app-sites/operations.md` for the rotation procedure.
+
+The first `gcloud` command is the one the workflow's `Promote revision` step
+uses. Only the `-worker` revision may run with
+`PLATFORM_BACKGROUND_WORKERS_ENABLED=true`; never point serving traffic at a
+worker revision or the reverse.
+
+After the rollback, re-run the step 4 and step 5 checks on both services, and
+confirm the edge reaches the restored platform:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' --max-time 30 https://matrix.page/_edge-health   # must be 200
+```
+
+Anything other than `200` means the Worker and platform disagree: check that
+the Worker version and the serving revision come from the same deploy. The
+next `main` push that matches the paths filter promotes a new revision again,
+so land the fix or revert through a PR.
 
 ## Database migrations
 
@@ -155,4 +188,5 @@ it, tell the user to run the production dispatch.
 - [ ] Commit SHA deployed, and serving revision + `matrix-source-sha` if checked
 - [ ] Health and `/sign-in` checks result
 - [ ] Migrations included (yes/no) and backward-compatibility note
-- [ ] Rollback targets: serving and worker revisions from before this deploy
+- [ ] Rollback targets from before this deploy: serving revision, worker revision, and Matrix.page Worker version
+- [ ] After a rollback: `https://matrix.page/_edge-health` returned 200

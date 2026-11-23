@@ -94,6 +94,25 @@ describe('release skills', () => {
     });
   });
 
+  // The Matrix.page Worker sends the edge secret it was deployed with. Rolling
+  // back only Cloud Run after a rotation takes every hosted site down while
+  // the platform health checks still pass.
+  it('rolls the Matrix.page Worker back together with the platform', () => {
+    const skill = read('.agents/skills/release-platform/SKILL.md');
+    const workflow = read('.github/workflows/platform-cloud-run.yml');
+    const rollback = skill.slice(skill.indexOf('## 6. Rollback'), skill.indexOf('## Database migrations'));
+
+    // The runbook uses the same Worker commands the deploy workflow relies on.
+    for (const command of ['wrangler deployments status', 'wrangler rollback', '--config wrangler.sites.toml']) {
+      expect(workflow).toContain(command);
+      expect(rollback).toContain(command);
+    }
+    expect(workflow).toContain("'https://matrix.page/_edge-health'");
+    expect(rollback).toContain('https://matrix.page/_edge-health');
+    expect(rollback).toContain('must be 200');
+    expect(skill).toContain('Matrix.page Worker version');
+  });
+
   it('retires the old release command instead of pushing to main', () => {
     const command = read('.claude/commands/release.md');
     expect(command).toContain('release-platform');
