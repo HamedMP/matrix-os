@@ -37,6 +37,28 @@ const editDocument = async <R>(bytes: Uint8Array, run: (document: DocxDocument) 
 const editWorkbook = async <R>(path: string, bytes: Uint8Array, run: (workbook: Workbook) => { changed: boolean; result: R }) =>
   edit(await loadWorkbook(path, bytes), run);
 
+/**
+ * The ids the saved file gives the revisions an edit just made. The engine
+ * numbers revisions when it opens a document, so the ids of the edited
+ * document in memory are not the ids a later request sees. Both lists are in
+ * document order; when they do not line up one to one, no id is returned and
+ * the caller lists the revisions instead of acting on a wrong one.
+ */
+async function savedRevisionIds(edited: DocxDocument, saved: Uint8Array, ids: readonly string[]): Promise<string[]> {
+  const before = edited.listRevisions();
+  const after = (await openDocx(saved)).listRevisions();
+  const aligned = before.length === after.length && before.every((revision, index) => {
+    const twin = after[index];
+    return twin !== undefined && twin.kind === revision.kind && twin.author === revision.author && twin.date === revision.date;
+  });
+  if (!aligned) {
+    console.warn("[office-engine] saved revisions do not line up with the edit", { edited: before.length, saved: after.length });
+    return [];
+  }
+  const savedIdOf = new Map(before.map((revision, index) => [revision.id, after[index]?.id]));
+  return [...new Set(ids.flatMap((id) => savedIdOf.get(id) ?? []))];
+}
+
 export const ENGINE_OPERATIONS = {
   // ---- Documents ----
   async documentDescribe(input: { bytes: Uint8Array; options: { maxChars: number; startBlockId?: string; storyId?: string } }) {
@@ -48,11 +70,12 @@ export const ENGINE_OPERATIONS = {
   }) {
     return readDocumentText(await openDocx(input.bytes), input.request);
   },
-  documentProposeEdits(input: { bytes: Uint8Array; edits: readonly OfficeDocxEdit[]; author: string; date: string }) {
-    return editDocument(input.bytes, (document) => {
-      const { changed, ...result } = applyDocumentEdits(document, input.edits, input.author, input.date);
-      return { changed, result };
-    });
+  async documentProposeEdits(input: { bytes: Uint8Array; edits: readonly OfficeDocxEdit[]; author: string; date: string }) {
+    const document = await openDocx(input.bytes);
+    const { changed, ...result } = applyDocumentEdits(document, input.edits, input.author, input.date);
+    if (!changed) return { changed, result, bytes: null };
+    const bytes = await document.save();
+    return { changed, result: { ...result, revisionIds: await savedRevisionIds(document, bytes, result.revisionIds) }, bytes };
   },
   async documentListRevisions(input: { bytes: Uint8Array }) {
     return listDocumentRevisions(await openDocx(input.bytes));

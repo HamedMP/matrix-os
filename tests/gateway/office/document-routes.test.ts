@@ -97,6 +97,31 @@ describe("POST /api/office/documents/propose-edits", () => {
     expect(saved.getPlainText({ view: "original" })).not.toContain("A new closing note");
   });
 
+  // Fault detected: the reply named the engine's in-memory revision ids, which the saved file numbers
+  // differently, so accepting or rejecting exactly what was just proposed answered stale_reference.
+  it("returns the revision ids the saved file lists, so a later proposal can be resolved on its own", async () => {
+    const path = await h.copyFixture("basic.docx");
+    const propose = async (blockId: string, find: string, replace: string) => DocumentProposeEditsReplySchema.parse(await json(
+      await h.post("/documents/propose-edits", { path, author: AGENT, edits: [{ op: "replaceText", blockId, find, replace }] }),
+    ));
+    const first = await propose("b3", "three priorities", "four priorities");
+    const listIds = async () => (await h.docx(path)).listRevisions().map((revision) => revision.id);
+    expect([...first.revisionIds].sort()).toEqual((await listIds()).sort());
+
+    const second = await propose("b1", "Quarterly", "Annual");
+    const all = await listIds();
+    expect(second.revisionIds.length).toBeGreaterThan(0);
+    expect(second.revisionIds.every((id) => all.includes(id))).toBe(true);
+    expect(all.length).toBe(first.revisionIds.length + second.revisionIds.length);
+
+    const rejected = await h.post("/documents/revisions/reject", { path, ids: second.revisionIds });
+    expect(rejected.status).toBe(200);
+    const after = await h.docx(path);
+    expect(after.listRevisions()).toHaveLength(first.revisionIds.length);
+    expect(after.getPlainText({ view: "final" })).toContain("four priorities");
+    expect(after.getPlainText({ view: "final" })).not.toContain("Annual");
+  });
+
   it("does not write the file when no edit resolves", async () => {
     const path = await h.copyFixture("basic.docx");
     const { mtimeMs } = await stat(join(h.home, path));
