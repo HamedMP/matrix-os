@@ -16,6 +16,9 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
+import {
+  LAUNCH_FACT_KEYS, launchFactsKey, readLaunchFacts, serializeLaunchFacts, type LaunchFacts,
+} from "./launch-facts.js";
 import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalEndedTabArchiveInputSchema, type TerminalEndedTabArchiveInput } from "./terminal-ended-tab-archive.js";
 import {
@@ -36,6 +39,12 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   // Present, including an empty array for a plain shell, until activation.
   // Optional only so state written before startup-intent persistence remains readable.
   startupCommand: StartupCommandSchema.optional(),
+  // Whether the current pane runs a command, which Zellij keeps open after it
+  // exits (a shell's exit closes its pane). Set at activation; absent in older
+  // state, where the tab is treated as possibly held. Saved in the launch
+  // facts file, never in this one (see launch-facts.ts); read here only from
+  // state an earlier build of spec 2706 wrote.
+  heldOnExit: z.boolean().optional(),
 }).strict();
 const InternalWorkspaceBaseSchema = z.object({
   id: TerminalWorkspaceIdSchema,
@@ -91,12 +100,16 @@ export interface TerminalWorkspaceStoreOptions {
 export class TerminalWorkspaceStore {
   private readonly statePath: string;
   private readonly snapshotDirectory: string;
+  private readonly launchFactsPath: string;
   private readonly now: () => Date;
   private writes: Promise<void> = Promise.resolve();
+  /** The launch facts file as last written, so unchanged facts are not rewritten. */
+  private writtenLaunchFacts: string | null = null;
 
   constructor(options: TerminalWorkspaceStoreOptions) {
     this.statePath = options.statePath ?? join(options.homePath, "system", "terminal-workspaces.json");
     this.snapshotDirectory = join(dirname(this.statePath), "terminal-workspaces", "scrollback");
+    this.launchFactsPath = join(dirname(this.statePath), "terminal-workspaces", "launch-facts.json");
     this.now = options.now ?? (() => new Date());
   }
 
@@ -289,6 +302,7 @@ export class TerminalWorkspaceStore {
       // A tab from older state keeps no time until its pane changes.
       if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
+      if (tab.startupCommand !== undefined) tab.heldOnExit = tab.startupCommand.length > 0;
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
       if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
@@ -643,7 +657,9 @@ export class TerminalWorkspaceStore {
       if (!entry.isFile() || entry.isSymbolicLink() || entry.size > MAX_STATE_BYTES) {
         throw new TerminalStateCorruptError();
       }
-      return StateSchema.parse(JSON.parse(await readFile(this.statePath, "utf8")));
+      const state = StateSchema.parse(JSON.parse(await readFile(this.statePath, "utf8")));
+      await this.applyLaunchFacts(state);
+      return state;
     } catch (error) {
       if (isMissing(error)) return { schemaVersion: 2, revision: 0, workspaces: {} };
       if (error instanceof TerminalStateCorruptError) throw error;
@@ -651,8 +667,44 @@ export class TerminalWorkspaceStore {
     }
   }
 
+  /** Fills in each tab's launch facts from their own file; facts already in the state (an earlier build) win. */
+  private async applyLaunchFacts(state: State): Promise<void> {
+    const facts = await readLaunchFacts(this.launchFactsPath);
+    if (facts.size === 0) return;
+    for (const workspace of Object.values(state.workspaces)) {
+      for (const [tabId, tab] of Object.entries(workspace.tabs)) {
+        const saved = facts.get(launchFactsKey(workspace.id, tabId, tab.zellijTabName));
+        if (!saved) continue;
+        for (const key of LAUNCH_FACT_KEYS) {
+          if (tab[key] === undefined && saved[key] !== undefined) tab[key] = saved[key];
+        }
+      }
+    }
+  }
+
+  /**
+   * Writes the state the previous runtime can read (no launch facts), after
+   * the launch facts file. A crash between the two leaves facts for tabs the
+   * state does not list yet, which are ignored and dropped on the next write.
+   */
   private async persist(state: State): Promise<void> {
     const parsed = StateSchema.parse(state);
+    const facts = new Map<string, LaunchFacts>();
+    for (const workspace of Object.values(parsed.workspaces)) {
+      for (const [tabId, tab] of Object.entries(workspace.tabs)) {
+        const entry: LaunchFacts = {};
+        for (const key of LAUNCH_FACT_KEYS) {
+          if (tab[key] !== undefined) entry[key] = tab[key];
+          delete tab[key];
+        }
+        if (Object.keys(entry).length > 0) facts.set(launchFactsKey(workspace.id, tabId, tab.zellijTabName), entry);
+      }
+    }
+    const serialized = serializeLaunchFacts(facts);
+    if (serialized !== this.writtenLaunchFacts) {
+      await writeTextAtomic(this.launchFactsPath, serialized);
+      this.writtenLaunchFacts = serialized;
+    }
     await writeTextAtomic(this.statePath, `${JSON.stringify(parsed, null, 2)}\n`);
   }
 
@@ -695,6 +747,7 @@ export class TerminalWorkspaceStore {
       zellijPaneAssignedAt: _paneAssignedAt,
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
+      heldOnExit: _heldOnExit,
       ...publicTab
     } = tab;
     return TerminalTabSchema.parse({ ...publicTab, incarnation: terminalTabIncarnation(tab) });
