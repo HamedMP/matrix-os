@@ -174,11 +174,20 @@ export class DocumentView {
 
   /** Makes `wanted` the children of `container`, in order, moving as little as possible. */
   private place(container: HTMLElement, wanted: readonly HTMLElement[]): void {
-    wanted.forEach((element, at) => {
-      const current = container.childNodes[at] ?? null;
-      if (current !== element) container.insertBefore(element, current);
-    });
-    while (container.childNodes.length > wanted.length) container.lastChild?.remove();
+    const keep = new Set<Node>(wanted);
+    let cursor = container.firstChild;
+    const drop = (node: ChildNode): ChildNode | null => {
+      const next = node.nextSibling;
+      node.remove();
+      return next;
+    };
+    for (const element of wanted) {
+      // A child that is no longer wanted goes first, so the ones after it need not move.
+      while (cursor !== null && cursor !== element && !keep.has(cursor)) cursor = drop(cursor);
+      if (cursor === element) cursor = cursor.nextSibling;
+      else container.insertBefore(element, cursor);
+    }
+    while (cursor !== null) cursor = drop(cursor);
   }
 
   private fill(container: HTMLElement, blocks: readonly DocxBlock[], placed: Set<BlockId>): void {

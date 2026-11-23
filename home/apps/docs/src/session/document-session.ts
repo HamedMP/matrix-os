@@ -257,6 +257,11 @@ export class DocumentSession {
     return this.editor.travel("redo");
   }
 
+  /** Ends the current undo step: the next edit starts a new one even when it has the same merge key. */
+  sealUndoStep(): void {
+    this.history.sealMerge();
+  }
+
   /** Turns Track changes on or off. The setting is stored in the file with the next save. */
   setTracking(enabled: boolean): void {
     if (this.store.state.tracking === enabled) return;

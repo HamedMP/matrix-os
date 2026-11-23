@@ -110,6 +110,32 @@ describe("caret restoration", () => {
   });
 });
 
+describe("keeping the caret in view", () => {
+  it("scrolls the editor just far enough to show the caret after an edit", async () => {
+    const [a] = await open();
+    const rect = (top: number, bottom: number): DOMRect => ({ top, bottom, left: 0, right: 100, width: 100, height: bottom - top, x: 0, y: top, toJSON: () => ({}) });
+    m.host.getBoundingClientRect = () => rect(0, 400);
+    let caretRect = rect(500, 520);
+    const original = Range.prototype.getBoundingClientRect;
+    Range.prototype.getBoundingClientRect = () => caretRect;
+    try {
+      caret(m, a!, 5);
+      // Placing the caret from the outside does not scroll; typing does.
+      expect(m.host.scrollTop).toBe(0);
+      type(m, "x");
+      expect(m.host.scrollTop).toBe(144);
+      caretRect = rect(100, 120);
+      type(m, "y");
+      expect(m.host.scrollTop).toBe(144);
+      caretRect = rect(-30, -10);
+      type(m, "z");
+      expect(m.host.scrollTop).toBe(90);
+    } finally {
+      Range.prototype.getBoundingClientRect = original;
+    }
+  });
+});
+
 describe("undo and redo", () => {
   it("undoes a typed word in one step and returns the caret to where it was", async () => {
     const [a] = await open();
@@ -126,6 +152,22 @@ describe("undo and redo", () => {
     expect(paragraph(m.doc, a!).text).toBe("Hello world");
     expectLiveCaret(at(a!, 5));
     expect(m.session.getState()).toMatchObject({ canUndo: false, dirty: false });
+  });
+
+  it("starts a new undo step when the owner moves the caret between two bursts of typing", async () => {
+    const [a] = await open();
+    caret(m, a!, 0);
+    type(m, "ab");
+    // A click elsewhere in the same paragraph.
+    const leaf = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    document.getSelection()!.setBaseAndExtent(leaf, 13, leaf, 13);
+    document.dispatchEvent(new Event("selectionchange"));
+    type(m, "cd");
+    expect(paragraph(m.doc, a!).text).toBe("abHello worldcd");
+    m.editor.undo();
+    expect(paragraph(m.doc, a!).text).toBe("abHello world");
+    m.editor.undo();
+    expect(paragraph(m.doc, a!).text).toBe("Hello world");
   });
 
   it("redo restores the text and the caret after the edit", async () => {

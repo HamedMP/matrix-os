@@ -14,7 +14,7 @@ import { InputController, type InputTarget } from "./input-controller";
 import { ModelIndex } from "./model-index";
 import type { PasteContent } from "./paste";
 import { positionFromDom } from "./position-map";
-import { domPointOf, domRangeOf, endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
+import { endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
 import type {
   DocumentEditorController,
   DocumentEditorOptions,
@@ -27,6 +27,7 @@ import type {
   ToggleFormat,
   ViewMode,
 } from "./types";
+import { rangeRects, revealCaret, scrollIntoView } from "./viewport";
 import type { StepUnit } from "./visibility";
 
 type Command = (selection: EditorSelection) => commands.CommandOutcome | null;
@@ -36,6 +37,10 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   private readonly options: DocumentEditorOptions;
   private readonly log: (message: string, error: unknown) => void;
   private view: DocumentView | null = null;
+  /** The element the editor is mounted in; it is the scrolling area. */
+  private host: HTMLElement | null = null;
+  /** Formatting before each formatting revision, built when the `original` view first needs it. */
+  private formatsBefore: Map<string, Partial<RunFormat>> | null = null;
   private input: InputController | null = null;
   private index = ModelIndex.empty();
   private readonly store: EditorStore;
@@ -69,6 +74,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   mount(host: HTMLElement): void {
     if (this.view !== null) this.unmount();
     host.classList.add("doc-editor");
+    this.host = host;
     const view = new DocumentView(host, {
       ariaLabel: this.options.ariaLabel ?? "Document",
       formatBefore: (revisionId) => this.formatBefore(revisionId),
@@ -96,6 +102,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   unmount(): void {
     for (const cleanup of this.cleanups.splice(0).reverse()) cleanup();
     this.view = null;
+    this.host = null;
     this.composition = null;
     this.index = ModelIndex.empty();
   }
@@ -290,6 +297,8 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     if (selection === null || sameSelection(selection, this.lastSelection)) return;
     this.lastSelection = selection;
     this.pendingFormat = null;
+    // Typing somewhere else starts a new undo step.
+    this.session.sealUndoStep();
     this.publish();
     this.announceSelection();
   }
@@ -307,16 +316,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   // ---------------------------------------------------------------- view
 
   scrollTo(target: BlockId | SelectionTarget, options: ScrollOptions = {}): boolean {
-    if (this.view === null) return false;
-    let element: Element | null;
-    if (typeof target === "string") element = this.view.element(target);
-    else {
-      const point = domPointOf(this.view, this.index, endsOf(target).focus);
-      element = point === null ? null : point.node.nodeType === 1 ? (point.node as Element) : point.node.parentElement;
-    }
-    if (element === null) return false;
-    if (typeof element.scrollIntoView === "function") element.scrollIntoView({ behavior: options.behavior ?? "auto", block: options.block ?? "center" });
-    return true;
+    return this.view !== null && scrollIntoView(this.view, this.index, target, options);
   }
 
   setHighlights(layer: string, highlights: readonly EditorHighlight[]): void {
@@ -334,9 +334,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   }
 
   getRangeRects(range: TextRange): DOMRect[] {
-    const domRange = this.view === null ? null : domRangeOf(this.view, this.index, range);
-    if (domRange === null || typeof domRange.getClientRects !== "function") return [];
-    return Array.from(domRange.getClientRects());
+    return this.view === null ? [] : rangeRects(this.view, this.index, range);
   }
 
   // ---------------------------------------------------------------- internals
@@ -351,8 +349,13 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   }
 
   private formatBefore(revisionId: string): Partial<RunFormat> | null {
-    const revision = this.session.document?.listRevisions().find((candidate) => candidate.id === revisionId);
-    return revision?.formatChange?.before ?? null;
+    if (this.formatsBefore === null) {
+      this.formatsBefore = new Map();
+      for (const revision of this.session.document?.listRevisions() ?? []) {
+        if (revision.formatChange !== null) this.formatsBefore.set(revision.id, revision.formatChange.before);
+      }
+    }
+    return this.formatsBefore.get(revisionId) ?? null;
   }
 
   /** Runs one of the editor's own commands and puts the selection where it says. */
@@ -377,11 +380,13 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     if (outcome === null) return false;
     this.place(outcome.anchor, outcome.focus);
     this.session.noteSelection({ anchor: outcome.anchor, focus: outcome.focus });
+    if (this.host !== null) revealCaret(this.host);
     return true;
   }
 
   private onSessionChange(change: DocumentChange): void {
     if (this.view === null) return;
+    this.formatsBefore = null;
     if (change.kind === "load" || change.kind === "close") {
       this.highlights.clear();
       this.lastSelection = null;
