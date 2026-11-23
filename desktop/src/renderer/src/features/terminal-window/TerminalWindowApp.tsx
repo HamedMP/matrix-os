@@ -26,6 +26,7 @@ import type { LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
+import { computerSpaceGroup } from "./spaces-filter";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
@@ -148,7 +149,7 @@ function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => v
     // Led by its own name; the kind (Main, Preview, Additional) is the detail.
     name: computer.handle,
     kind: "computer",
-    group: computer.kind === "preview" ? "preview" : computer.label === "Main Computer" ? "main" : "additional",
+    group: computerSpaceGroup(computer),
     // An available computer whose stream has not connected says so, instead of looking empty.
     detail: `${computer.label} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
       ? "Connecting…" : AVAILABILITY_LABEL[computer.availability]}`,
@@ -384,6 +385,7 @@ export default function TerminalWindowApp() {
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
           hiddenSpaceGroups={prefs.hiddenSpaceGroups} onToggleSpaceGroup={view.sidebar.toggleSpaceGroup}
           previewsOpen={prefs.previewsOpen} onTogglePreviews={view.sidebar.togglePreviews}
+          spacesQuery={view.spacesQuery} onSpacesQuery={view.setSpacesQuery}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}

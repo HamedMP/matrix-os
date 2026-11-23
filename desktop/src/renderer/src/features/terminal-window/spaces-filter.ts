@@ -31,22 +31,23 @@ const normalize = (text: string) => text.trim().toLowerCase().slice(0, SPACES_QU
 
 /**
  * The machines to list for a typed filter and the kinds switched off. A
- * machine matches by its name, or by any of its projects' names; then only the
- * matching projects are listed under it.
+ * machine matches by the name it shows (a rename included), or by any of its
+ * projects' shown names; then only the matching projects are listed under it.
  */
 export function filterSpaces<T extends FilterableMachine>(
   machines: readonly T[],
   query: string,
   hidden: readonly SpaceGroup[],
   projects: (machineId: string) => readonly string[],
+  shownName: (machineId: string, space?: string) => string | undefined = () => undefined,
 ): SpacesFilterResult<T> {
   const text = normalize(query);
   const off = new Set(hidden);
   const narrowed = new Map<string, (space: string) => boolean>();
   const kept = machines.filter((machine) => {
     if (off.has(machine.group)) return false;
-    if (!text || machine.name.toLowerCase().includes(text)) return true;
-    const match = (space: string) => space.toLowerCase().includes(text);
+    if (!text || (shownName(machine.id) ?? machine.name).toLowerCase().includes(text)) return true;
+    const match = (space: string) => (shownName(machine.id, space) ?? space).toLowerCase().includes(text);
     if (!projects(machine.id).some(match)) return false;
     narrowed.set(machine.id, match);
     return true;
@@ -56,4 +57,19 @@ export function filterSpaces<T extends FilterableMachine>(
     previews: kept.filter((machine) => machine.group === "preview"),
     projectsOf: (machineId) => narrowed.get(machineId) ?? null,
   };
+}
+
+/** The machines in the order Spaces shows them, for Ctrl+1…9: listed ones, then previews when their fold is open. */
+export function shownMachineOrder<T extends FilterableMachine>(result: SpacesFilterResult<T>, previewsOpen: boolean): string[] {
+  return [...result.shown, ...(previewsOpen ? result.previews : [])].map((machine) => machine.id);
+}
+
+/** Whether the filter narrows anything now, so its controls stay on screen to undo it. */
+export function filterActive(query: string, hidden: readonly SpaceGroup[]): boolean {
+  return normalize(query) !== "" || hidden.length > 0;
+}
+
+/** A Matrix computer's kind for the filter: a Preview Computer, the Main Computer, or an additional one. */
+export function computerSpaceGroup(computer: { kind: string; label: string }): SpaceGroup {
+  return computer.kind === "preview" ? "preview" : computer.label === "Main Computer" ? "main" : "additional";
 }

@@ -113,6 +113,17 @@ describe("Terminal window", () => {
     expect(previews()).toHaveLength(4);
   });
 
+  // Fault detected (Greptile, #3641): with three machines or fewer the filter bar went away while a kind
+  // stayed hidden, so the hidden machines could not be brought back.
+  it("keeps the Spaces filter on screen while it hides anything", async () => {
+    window.localStorage.setItem("matrix.terminal-window.sidebar.v1", JSON.stringify({ hiddenSpaceGroups: ["main"] }));
+    installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => ({ ...computers, items: [computers.items[0]] }) });
+    render(<TerminalWindowApp />);
+    const kinds = await screen.findByRole("group", { name: "Kinds of spaces" });
+    fireEvent.click(within(kinds).getByRole("button", { name: "Main" }));
+    expect(await screen.findByText("operator")).toBeTruthy();
+  });
+
   it("lists this device first, then every Matrix computer with its availability, streaming status only from available ones", async () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
     render(<TerminalWindowApp />);

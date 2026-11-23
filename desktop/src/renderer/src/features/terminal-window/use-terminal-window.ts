@@ -22,8 +22,9 @@ import { useSshMachines } from "./use-ssh-machines";
 import { useComputerTerminals } from "./use-computer-terminals";
 import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
-import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
-import { inOrder } from "./SidebarSpaces";
+import { filterRows, machineSpaces, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
+import { computerSpaceGroup, filterSpaces, shownMachineOrder, type FilterableMachine } from "./spaces-filter";
+import { inOrder, spaceId } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
   computerMachineId, localMachine, localRowKey, sshMachineId, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
@@ -188,12 +189,23 @@ export function useTerminalWindow() {
 
   // The machines whose spaces the sidebar lists, in the person's order: this device, its ssh machines, then every usable computer.
   const sshMachines = ssh.state.status === "ready" ? ssh.state.machines : null;
-  const spaceMachines = useMemo(() => inOrder([
-    here.id,
-    ...(sshMachines ?? []).map((machine) => sshMachineId(machine.name)),
-    ...computers.filter((computer) => computer.availability === "available").map((computer) => computerMachineId(computer.runtimeSlot)),
-  ], (id) => id, sidebar.prefs.machineOrder), [computers, here.id, sidebar.prefs.machineOrder, sshMachines]);
-  const spaces = useMemo(() => spacesInOrder(spaceMachines, status.rows, sidebar.prefs.spaceOrder), [sidebar.prefs.spaceOrder, spaceMachines, status.rows]);
+  const spaceMachines = useMemo((): FilterableMachine[] => inOrder([
+    { id: here.id, name: here.name, group: "this" as const },
+    ...(sshMachines ?? []).map((machine) => ({ id: sshMachineId(machine.name), name: machine.name, group: "additional" as const })),
+    ...computers.filter((computer) => computer.availability === "available").map((computer) => ({
+      id: computerMachineId(computer.runtimeSlot), name: computer.handle, group: computerSpaceGroup(computer),
+    })),
+  ], (machine) => machine.id, sidebar.prefs.machineOrder), [computers, here.id, here.name, sidebar.prefs.machineOrder, sshMachines]);
+  // The Spaces filter (typed text lasts while the window is open; kinds and the previews fold are kept).
+  const [spacesQuery, setSpacesQuery] = useState("");
+  const spacesFilter = useMemo(() => filterSpaces(spaceMachines, spacesQuery, sidebar.prefs.hiddenSpaceGroups,
+    (machineId) => machineSpaces(status.rows, machineId).map((item) => item.space),
+    (machineId, space) => sidebar.prefs.spaceStyles[space === undefined ? machineId : spaceId(machineId, space)]?.name,
+  ), [sidebar.prefs.hiddenSpaceGroups, sidebar.prefs.spaceStyles, spaceMachines, spacesQuery, status.rows]);
+  // Ctrl+1…9 follow the spaces as Spaces shows them: filtered, with previews after the rest.
+  const spaces = useMemo(() => spacesInOrder(shownMachineOrder(spacesFilter, sidebar.prefs.previewsOpen), status.rows, sidebar.prefs.spaceOrder)
+    .filter((space) => !space.space || (spacesFilter.projectsOf(space.machineId)?.(space.space) ?? true)),
+  [sidebar.prefs.previewsOpen, sidebar.prefs.spaceOrder, spacesFilter, status.rows]);
 
   /** A terminal's ↗: show it, as a tab of its own space (its project, or its machine), and make that space active. */
   const openInTab = useCallback((key: string) => {
@@ -421,6 +433,7 @@ export function useTerminalWindow() {
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
   return {
+    spacesQuery, setSpacesQuery,
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */

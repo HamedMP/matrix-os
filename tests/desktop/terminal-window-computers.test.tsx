@@ -147,6 +147,17 @@ describe("Terminal window computers", () => {
   });
 
   // Hamed, 2026-11-22 (navigation model): Ctrl+1…9 switch space in the sidebar's order, Ctrl+0 is All.
+  // Fault detected (Greptile, #3641): Ctrl+1…9 kept the unfiltered order after a kind was hidden.
+  it("numbers the spaces for Ctrl+digits as the filtered Spaces show them", async () => {
+    window.localStorage.setItem("matrix.terminal-window.sidebar.v1", JSON.stringify({ hiddenSpaceGroups: ["this"] }));
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build")]);
+    await stream("extra", [tabFacts(TAB_2, "deploy")]);
+    const chip = () => screen.queryByRole("button", { name: /Show all machines/ })?.getAttribute("aria-label");
+    act(() => emit("terminal-window:command", { command: "space", index: 1 }));
+    await waitFor(() => expect(chip()).toBe("Show all machines (now neo)"));
+  });
+
   it("switches the active space with Ctrl+digits and back to All with Ctrl+0", async () => {
     render(<TerminalWindowApp />);
     await stream("primary", [tabFacts(TAB_1, "build"), { ...tabFacts(`tt_${"3".repeat(32)}`, "site"), projectId: "web" }]);

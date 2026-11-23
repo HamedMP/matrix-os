@@ -12,7 +12,7 @@ import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
 import { AllSpacesRow, SpaceList, inOrder, orderedSpaces, spaceId, type SpaceEntry } from "./SidebarSpaces";
-import { filterSpaces, type SpaceGroup } from "./spaces-filter";
+import { filterActive, filterSpaces, type SpaceGroup } from "./spaces-filter";
 import { SpacesFilterBar } from "./SpacesFilterBar";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
@@ -93,6 +93,9 @@ export interface TerminalWindowSidebarProps {
   onToggleSpaceGroup(group: SpaceGroup): void;
   previewsOpen: boolean;
   onTogglePreviews(): void;
+  /** The typed Spaces filter; it lasts while the window is open. */
+  spacesQuery: string;
+  onSpacesQuery(query: string): void;
 }
 
 /** A machine's projects (spaces under it) with how many terminals each has, the most used first. */
@@ -232,11 +235,12 @@ function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[]
 }
 
 function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
-  // The typed filter lasts while the window is open; the kinds and the previews fold are kept.
-  const [query, setQuery] = useState("");
+  const query = props.spacesQuery;
   const usableMachines = props.machines.filter((machine) => !machine.dormant);
+  // The same derivation as Ctrl+1…9 (use-terminal-window): shown names, kinds switched off.
   const filtered = filterSpaces(usableMachines, query, props.hiddenSpaceGroups,
-    (machineId) => machineSpaces(props.rows, machineId).map((item) => item.space));
+    (machineId) => machineSpaces(props.rows, machineId).map((item) => item.space),
+    (machineId, space) => props.spaceStyles[space === undefined ? machineId : spaceId(machineId, space)]?.name);
   const entryFor = (machine: SidebarMachine) => machineEntry(machine, props,
     machine.kind === "local" && machine.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : undefined,
     filtered.projectsOf(machine.id));
@@ -249,8 +253,9 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
   return (
     // Its own scroll past 40% of the window, so the terminals below stay in view.
     <div className="flex max-h-[40vh] shrink-0 flex-col overflow-y-auto">
-      {usableMachines.length > 3 ? (
-        <SpacesFilterBar query={query} onQuery={setQuery} hidden={props.hiddenSpaceGroups} onToggle={props.onToggleSpaceGroup} groups={groups}
+      {/* Shown with many machines, and whenever it narrows anything, so it can always be undone. */}
+      {usableMachines.length > 3 || filterActive(query, props.hiddenSpaceGroups) ? (
+        <SpacesFilterBar query={query} onQuery={props.onSpacesQuery} hidden={props.hiddenSpaceGroups} onToggle={props.onToggleSpaceGroup} groups={groups}
           thisName={usableMachines.find((machine) => machine.group === "this")?.name} />
       ) : null}
       <AllSpacesRow chosen={props.filter === null} count={props.rows.length} onChoose={() => props.onFilter(null)} />
