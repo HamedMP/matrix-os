@@ -663,9 +663,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           }
         }
         // A live event stream carries the list and detail changes this send
-        // causes; re-read only when it cannot.
+        // causes; re-read only when it cannot. A new Chat still reads once
+        // unless admission returned its full detail: a fast run's events may
+        // have passed while it was unselected.
         if (eventSource.connectionState() !== "open") {
           await loadList();
+          await loadDetail(record.chat.id);
+        } else if (sourceChatId === undefined && !admitted.recoveredDetail && activeChatIdRef.current === record.chat.id) {
           await loadDetail(record.chat.id);
         }
         return isCurrent();
