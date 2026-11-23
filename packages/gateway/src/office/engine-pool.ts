@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { OfficeDocumentError } from "./document-error.js";
 import type { EngineInput, EngineOperation, EngineOutput } from "./engine-operations.js";
-import type { EngineWorkerReply, EngineWorkerRequest } from "./engine-worker.js";
+import type { EngineWorkerReply, EngineWorkerRequest } from "./engine-protocol.js";
 
 /**
  * Runs the document engine off the gateway's main thread. Opening a file,
