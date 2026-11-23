@@ -32,6 +32,11 @@ export interface InputTarget {
   getSelectedText(): string;
   moveInTable(backward: boolean): boolean;
   beginComposition(): void;
+  /**
+   * The text the composition replaces, as the browser reported it before it
+   * first touched the DOM. An IME can take over a word that is already there.
+   */
+  noteCompositionRange(selection: EditorSelection): void;
   endComposition(text: string): void;
   /** The DOM changed without the editor's doing: render the affected text from the model again. */
   repair(): void;
@@ -116,7 +121,11 @@ export class InputController {
   private onBeforeInput(event: InputEvent): void {
     const type = event.inputType;
     // Composition input cannot be cancelled; it is reconciled when the composition ends.
-    if (this.target.isComposing() || COMPOSITION_INPUTS.has(type)) return;
+    if (this.target.isComposing() || COMPOSITION_INPUTS.has(type)) {
+      const replaced = type === "insertCompositionText" ? targetSelection(event, this.target) : null;
+      if (replaced !== null) this.target.noteCompositionRange(replaced);
+      return;
+    }
     event.preventDefault();
     if (type === "historyUndo") {
       this.target.undo();

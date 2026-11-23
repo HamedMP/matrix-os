@@ -26,7 +26,8 @@ function union<T>(first: readonly T[], second: readonly T[]): T[] {
  * listed as changed.
  */
 export function mergeChange(first: DocumentChange, second: DocumentChange): DocumentChange {
-  const createdThenRemoved = new Set(first.createdBlockIds.filter((id) => second.removedBlockIds.includes(id)));
+  const removedSecond = new Set(second.removedBlockIds);
+  const createdThenRemoved = new Set(first.createdBlockIds.filter((id) => removedSecond.has(id)));
   const created = union(first.createdBlockIds, second.createdBlockIds).filter((id) => !createdThenRemoved.has(id));
   const removed = union(first.removedBlockIds, second.removedBlockIds).filter((id) => !createdThenRemoved.has(id));
   const gone = new Set([...created, ...removed, ...createdThenRemoved]);

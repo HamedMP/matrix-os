@@ -4,7 +4,7 @@
  */
 
 import type { BridgeFileError } from "../../../_shared/matrix-os";
-import { isOfficeError } from "../../../_shared/office-engine/index";
+import { isOfficeError } from "../../../_shared/office-engine/errors";
 import type { SessionError, SessionErrorCode } from "./types";
 
 const MESSAGES: Record<SessionErrorCode, string> = {

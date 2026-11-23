@@ -6,7 +6,8 @@
  */
 
 import type { ApplyResult, DocxDocument, DocxOp, ResolveRevisionsResult, RevisionId } from "../../../_shared/office-engine/index";
-import { createDocx, openDocx } from "../../../_shared/office-engine/index";
+// The Word module alone: the root index would pull the workbook and formula engine into Docs.
+import { createDocx, openDocx } from "../../../_shared/office-engine/docx/index";
 import { emptyChange } from "./changes";
 import { EditController } from "./edit-controller";
 import { sessionError, toSessionError } from "./errors";

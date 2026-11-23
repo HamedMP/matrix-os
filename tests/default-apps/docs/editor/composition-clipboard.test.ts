@@ -77,6 +77,23 @@ describe("IME composition", () => {
     expect(caretOf(m)).toEqual(at(a!, 8));
   });
 
+  it("replaces the word an IME took over, as reported before the browser touched the DOM", async () => {
+    const [a] = await open();
+    caret(m, a!, 9);
+    composition("compositionstart", "");
+    // The keyboard recomposes the existing word "world" and reports its range first.
+    const text = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    const first = beforeInput(m, "insertCompositionText", { data: "worlds", targetRange: { startContainer: text, startOffset: 6, endContainer: text, endOffset: 11 } });
+    expect(first.defaultPrevented).toBe(false);
+    text.nodeValue = "Hello worlds";
+    // A later report is measured against the changed DOM and must not win.
+    beforeInput(m, "insertCompositionText", { data: "worldsx", targetRange: { startContainer: text, startOffset: 0, endContainer: text, endOffset: 12 } });
+    composition("compositionend", "worlds");
+    expect(paragraph(m.doc, a!).text).toBe("Hello worlds");
+    expect(m.editor.getBlockElement(a!)!.textContent).toBe("Hello worlds");
+    expect(caretOf(m)).toEqual(at(a!, 12));
+  });
+
   it("restores the paragraph when a composition is cancelled", async () => {
     const [a] = await open();
     caret(m, a!, 5);

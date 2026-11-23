@@ -239,7 +239,8 @@ export class DocumentView {
   private syncMerged(host: HTMLElement, merged: readonly HTMLElement[]): void {
     const current = Array.from(host.children).filter((child) => child.getAttribute(BLOCK_TYPE) === "paragraph");
     if (current.length === merged.length && current.every((child, at) => child === merged[at])) return;
-    for (const child of current) if (!merged.includes(child as HTMLElement)) child.remove();
+    const wanted = new Set<Element>(merged);
+    for (const child of current) if (!wanted.has(child)) child.remove();
     const tail = Array.from(host.children).find((child) => child.hasAttribute(TAIL)) ?? null;
     for (const element of merged) host.insertBefore(element, tail);
   }

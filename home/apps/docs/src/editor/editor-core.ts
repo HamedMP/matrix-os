@@ -14,7 +14,7 @@ import { InputController, type InputTarget } from "./input-controller";
 import { ModelIndex } from "./model-index";
 import type { PasteContent } from "./paste";
 import { positionFromDom } from "./position-map";
-import { endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
+import { clampSelection, endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
 import type {
   DocumentEditorController,
   DocumentEditorOptions,
@@ -51,7 +51,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   private lastSelection: EditorSelection | null = null;
   /** Formatting armed with a collapsed selection, for the text typed next. */
   private pendingFormat: Partial<RunFormat> | null = null;
-  private composition: { selection: EditorSelection | null } | null = null;
+  private composition: { selection: EditorSelection | null; rangeNoted: boolean } | null = null;
   /** The document changed during a composition; render when it ends. */
   private deferredRender = false;
   /** True while one of the editor's own commands runs: it places the selection itself. */
@@ -270,7 +270,15 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   // ---------------------------------------------------------------- composition and repair
 
   beginComposition(): void {
-    this.composition = { selection: this.isEditable() ? this.getSelection() : null };
+    this.composition = { selection: this.isEditable() ? this.getSelection() : null, rangeNoted: false };
+  }
+
+  noteCompositionRange(selection: EditorSelection): void {
+    const composition = this.composition;
+    // Only the first report counts: later ones describe a DOM the browser has already changed.
+    if (composition === null || composition.rangeNoted || composition.selection === null) return;
+    composition.rangeNoted = true;
+    composition.selection = selection;
   }
 
   endComposition(text: string): void {
@@ -458,14 +466,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
 
   /** A remembered selection, when both of its ends still exist. Offsets are clamped. */
   private validSelection(selection: EditorSelection | null): EditorSelection | null {
-    if (selection === null) return null;
-    const clamp = (position: TextPosition): TextPosition | null => {
-      const block = this.paragraph(position.blockId);
-      return block === null ? null : { blockId: block.id, offset: Math.min(position.offset, block.text.length) };
-    };
-    const anchor = clamp(selection.anchor);
-    const focus = clamp(selection.focus);
-    return anchor === null || focus === null ? null : toSelection(this.index, anchor, focus);
+    return selection === null ? null : clampSelection(this.index, selection, (id) => this.paragraph(id)?.text.length ?? null);
   }
 
   /** Moves the DOM selection and records it. */

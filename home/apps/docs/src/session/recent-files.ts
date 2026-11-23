@@ -85,15 +85,14 @@ export class RecentFilesStore {
       else await this.db.update(RECENT_FILES_TABLE, existing.id, { name, opened_at: openedAt });
       const others = rows.filter((row) => row.path !== file.path);
       const stale = [...duplicates, ...others.slice(Math.max(0, this.limit - 1))];
-      for (const row of stale) await this.db.delete(RECENT_FILES_TABLE, row.id);
+      await Promise.all(stale.map((row) => this.db.delete(RECENT_FILES_TABLE, row.id)));
     }, "docs: could not update recent documents");
   }
 
   remove(path: string): Promise<void> {
     return this.enqueue(async () => {
-      for (const row of await this.readAll()) {
-        if (row.path === path) await this.db.delete(RECENT_FILES_TABLE, row.id);
-      }
+      const rows = (await this.readAll()).filter((row) => row.path === path);
+      await Promise.all(rows.map((row) => this.db.delete(RECENT_FILES_TABLE, row.id)));
     }, "docs: could not update recent documents");
   }
 

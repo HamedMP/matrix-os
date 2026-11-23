@@ -96,3 +96,18 @@ export function domRangeOf(view: DocumentView, index: ModelIndex, range: TextRan
   domRange.setEnd(to.node, to.offset);
   return domRange;
 }
+
+/**
+ * A selection with its offsets clamped to the paragraphs as they are now, or
+ * null when a paragraph of it is gone. `lengthOf` gives the markup text
+ * length of a paragraph, or null when the id is not a paragraph any more.
+ */
+export function clampSelection(index: ModelIndex, selection: EditorSelection, lengthOf: (blockId: string) => number | null): EditorSelection | null {
+  const clamp = (position: TextPosition): TextPosition | null => {
+    const length = lengthOf(position.blockId);
+    return length === null ? null : { blockId: position.blockId, offset: Math.min(position.offset, length) };
+  };
+  const anchor = clamp(selection.anchor);
+  const focus = clamp(selection.focus);
+  return anchor === null || focus === null ? null : toSelection(index, anchor, focus);
+}
