@@ -65,6 +65,19 @@
  * browser performs itself: when it ends, the paragraph is rendered from the
  * model again and the composed text is inserted through the engine.
  *
+ * ## Behaviour worth knowing
+ *
+ * - `getSelection()` keeps returning the last selection in the document while
+ *   focus is in a toolbar or a side panel, so their commands still apply to it.
+ * - In the `final` view pending deletions are hidden and edits leave them
+ *   alone; paragraphs joined by a pending change are shown as one line.
+ * - Highlight ranges are engine coordinates and do not move when the text
+ *   before them changes: set them again after `session.onChange`.
+ * - A selection that crosses a table boundary deletes text on both sides but
+ *   never removes cells or the table; Backspace after a table does nothing.
+ * - Without React: `new EditorCore(session, options)`, `mount(element)`,
+ *   `unmount()`. It is the same object the component hands out.
+ *
  * ## Limits
  *
  * - The `original` view is read-only.
@@ -73,6 +86,8 @@
  *   read-only (first section, default type).
  * - Drag and drop of text is disabled. Paste keeps text, paragraphs, bold,
  *   italic and underline only.
+ * - Lists, indent and colour input types are cancelled; use
+ *   `setParagraphStyle` and `format` for what the engine supports.
  */
 
 export { DocumentEditor, useEditorSnapshot, useSessionState } from "./DocumentEditor";

@@ -197,7 +197,9 @@ function appendRun(doc: Document, parent: HTMLElement, run: InlineRun, context: 
     decorateLeaf(leaf, run, context, highlights, start, end - start);
     if (text === "\t") leaf.classList.add("doc-tab");
     if (text === OBJECT) leaf.classList.add("doc-object");
-    if (text !== "\n") applyRunFormat(leaf, format);
+    // A note mark is raised by its own <sup>; the reference style must not raise and shrink it again.
+    if (text === OBJECT && run.footnoteRef !== null) applyRunFormat(leaf, { ...format, verticalAlign: "baseline", fontSizePt: null });
+    else if (text !== "\n") applyRunFormat(leaf, format);
     parent.append(leaf);
     last = leaf;
   }

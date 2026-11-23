@@ -96,6 +96,10 @@ describe("rendering the view model", () => {
     const view = m.doc.getView();
     const marks = Array.from(m.host.querySelectorAll(".doc-story-body .doc-note-ref")).map((mark) => mark.textContent);
     expect(marks).toEqual(["1", "2", "3"]);
+    // Raised once, by the mark itself, not a second time by the reference style of its run.
+    const markLeaf = m.host.querySelector<HTMLElement>(".doc-story-body [data-object='note']")!;
+    expect(markLeaf.classList.contains("doc-sup")).toBe(false);
+    expect(markLeaf.style.fontSize).toBe("");
     const notes = Array.from(m.host.querySelectorAll(".doc-notes .doc-note"));
     expect(notes).toHaveLength(view.footnotes.length);
     expect(notes[0]!.textContent).toContain("Internal productivity study");
