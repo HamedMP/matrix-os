@@ -13,6 +13,12 @@ type Entry = {
   };
   source?: Source;
 };
+/**
+ * One send emits a burst of Chat events (accepted, claimed, updated, completed).
+ * Each burst costs one trailing navigation read at most this long after its
+ * first event, so a steady stream still refreshes on a bounded cadence.
+ */
+export const CHAT_NAVIGATION_EVENT_COALESCE_MS = 200;
 function connect(entry: Entry) {
   const source = entry.sources.keys().next().value as Source | undefined;
   if (source === entry.source) {
@@ -20,7 +26,14 @@ function connect(entry: Entry) {
   }
   entry.subscription?.dispose();
   entry.source = source;
-  entry.subscription = source?.subscribe(event => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+  const subscription = source?.subscribe(event => {
     if (event.type === "chat.changed" && event.eventType === "run.message") {
       return;
     }
@@ -28,9 +41,27 @@ function connect(entry: Entry) {
     // commit, so lower live cursors and unchanged reconnect cursors are valid.
     // A full refresh represents replayed changes or a gap, not an empty
     // attachment. An in-flight snapshot may predate recovery: keep its dirty
-    // follow-up rather than dropping the only durable correction signal.
-    void entry.store.refresh();
+    // follow-up rather than dropping the only durable correction signal, so a
+    // full refresh reads at once instead of waiting for the burst to close.
+    if (event.type === "chat.full_refresh") {
+      cancel();
+      void entry.store.refresh();
+      return;
+    }
+    if (timer !== undefined) {
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = undefined;
+      void entry.store.refresh();
+    }, CHAT_NAVIGATION_EVENT_COALESCE_MS);
   });
+  entry.subscription = subscription ? {
+    dispose() {
+      cancel();
+      subscription.dispose();
+    },
+  } : undefined;
 }
 const stores = new Map<string, Entry>(); // max three scopes; unmounted least-recent entry evicted
 // Render-time candidates share identity without replacing/disconnecting the
