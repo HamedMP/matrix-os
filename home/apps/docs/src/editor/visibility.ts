@@ -128,7 +128,8 @@ function wordEndAfter(text: string, at: number): number {
   return index;
 }
 
-export type StepUnit = "character" | "word";
+/** `line` reaches to the edge of the paragraph: the model does not know where lines wrap. */
+export type StepUnit = "character" | "word" | "line";
 
 /**
  * The visible text one step before (`backward`) or after a caret, as markup
@@ -145,7 +146,8 @@ export function stepSpans(block: ParagraphBlock, mode: ViewMode, offset: number,
   if (direction === "backward") {
     if (caret === 0) return [];
     to = caret;
-    if (unit === "word") from = wordStartBefore(text, caret);
+    if (unit === "line") from = 0;
+    else if (unit === "word") from = wordStartBefore(text, caret);
     else {
       const boundaries = characterBoundaries(text);
       from = boundaries.filter((boundary) => boundary < caret).pop() ?? 0;
@@ -153,7 +155,8 @@ export function stepSpans(block: ParagraphBlock, mode: ViewMode, offset: number,
   } else {
     if (caret >= offsets.length) return [];
     from = caret;
-    if (unit === "word") to = wordEndAfter(text, caret);
+    if (unit === "line") to = text.length;
+    else if (unit === "word") to = wordEndAfter(text, caret);
     else to = characterBoundaries(text).find((boundary) => boundary > caret) ?? text.length;
   }
   const spans: Span[] = [];

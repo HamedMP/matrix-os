@@ -198,6 +198,18 @@ describe("undo and redo", () => {
     expect(m.editor.getSelection()).toMatchObject({ start: at(a!, 6), end: at(a!, 11), collapsed: false });
   });
 
+  it("undoes a word typed over a selection in one step", async () => {
+    const [a] = await open();
+    select(m, at(a!, 0), at(a!, 5));
+    type(m, "Howdy");
+    expect(paragraph(m.doc, a!).text).toBe("Howdy world");
+    m.editor.undo();
+    expect(paragraph(m.doc, a!).text).toBe("Hello world");
+    expect(m.session.getState().canUndo).toBe(false);
+    m.editor.redo();
+    expect(paragraph(m.doc, a!).text).toBe("Howdy world");
+  });
+
   it("undoes tracked edits together with their revisions, and a paste as one step", async () => {
     const [a] = await open(["Hello world"], true);
     caret(m, a!, 5);

@@ -149,6 +149,20 @@ describe("position map: engine position <-> DOM", () => {
     expectRoundTrip(mounted);
   });
 
+  it("puts the caret at the start of the text when the numbering label is clicked", async () => {
+    mounted = await mount({ fixture: "numbering.docx" });
+    const numbered = bodyParagraphs(mounted.doc).filter((block) => block.numbering !== null);
+    mounted.editor.setSelection(at(numbered[3]!.id, 4));
+    const label = mounted.editor.getBlockElement(numbered[0]!.id)!.querySelector(".doc-num")!;
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+    label.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(mounted.editor.getSelection()).toMatchObject({ focus: at(numbered[0]!.id, 0), collapsed: true });
+    mounted.content.dispatchEvent(new InputEvent("beforeinput", { inputType: "insertText", data: "*", bubbles: true, cancelable: true }));
+    expect(paragraph(mounted.doc, numbered[0]!.id).text.startsWith("*")).toBe(true);
+    expect(paragraph(mounted.doc, numbered[3]!.id).text.includes("*")).toBe(false);
+  });
+
   it("maps positions in a paragraph that runs on into the previous one in the final view", async () => {
     mounted = await mount({ paragraphs: ["Alpha", "Beta", "Gamma"] }, { viewMode: "final" });
     const [alpha, beta] = bodyParagraphs(mounted.doc);

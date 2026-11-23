@@ -79,6 +79,16 @@ describe("input with tracking on: edits become native revisions", () => {
     expect(finalText(m)).toBe("llo world\nSecond paragraph\nThird\n");
   });
 
+  it("a reported line delete forward leaves the caret after the text that stays as a deletion", async () => {
+    const [a] = await open();
+    caret(m, a!, 6);
+    const text = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    beforeInput(m, "deleteSoftLineForward", { targetRange: { startContainer: text, startOffset: 6, endContainer: text, endOffset: 11 } });
+    expect(revisions()).toEqual([{ kind: "delete", text: "world", author: OWNER }]);
+    expect(caretOf(m)).toEqual(at(a!, 11));
+    expect(finalText(m)).toBe("Hello \nSecond paragraph\nThird\n");
+  });
+
   it("backspace removes the owner's own pending insertion outright", async () => {
     const [a] = await open();
     caret(m, a!, 5);

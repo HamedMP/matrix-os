@@ -27,6 +27,8 @@ describe("<DocumentEditor>", () => {
   it("renders the session's document and hands out the controller", async () => {
     const session = await sessionWith(["Hello world", "Second"]);
     let controller: DocumentEditorController | null = null;
+    let mountedAtRef = false;
+    const firstId = bodyParagraphs(session.requireDocument())[0]!.id;
     const ready: DocumentEditorController[] = [];
     render(
       <DocumentEditor
@@ -35,6 +37,7 @@ describe("<DocumentEditor>", () => {
         className="pane"
         ref={(value) => {
           controller = value;
+          if (value !== null) mountedAtRef = value.getBlockElement(firstId) !== null;
         }}
         onReady={(value) => ready.push(value)}
       />,
@@ -45,6 +48,8 @@ describe("<DocumentEditor>", () => {
     expect(surface.closest(".doc-editor-host")?.classList.contains("pane")).toBe(true);
     expect(controller).not.toBeNull();
     expect(ready).toEqual([controller]);
+    // The controller was already showing the document when the ref received it.
+    expect(mountedAtRef).toBe(true);
 
     const id = bodyParagraphs(session.requireDocument())[0]!.id;
     act(() => {

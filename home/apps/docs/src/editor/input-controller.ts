@@ -12,6 +12,7 @@
  */
 
 import { type PasteContent, readClipboard } from "./paste";
+import { SKIP } from "./render-paragraph";
 import type { EditorSelection, ToggleFormat } from "./types";
 import type { StepUnit } from "./visibility";
 
@@ -23,7 +24,8 @@ export interface InputTarget {
   selectionOfRange(range: { startContainer: Node; startOffset: number; endContainer: Node; endOffset: number }): EditorSelection | null;
   insertText(text: string, selection?: EditorSelection | null): boolean;
   insertParagraph(): boolean;
-  deleteStep(direction: "backward" | "forward", unit: StepUnit, selection?: EditorSelection | null): boolean;
+  /** `reported` is the range the browser would delete, for a delete the model cannot measure (a line). */
+  deleteStep(direction: "backward" | "forward", unit: StepUnit, reported?: EditorSelection | null): boolean;
   deleteSelection(): boolean;
   paste(content: PasteContent): boolean;
   toggleFormat(name: ToggleFormat): boolean;
@@ -41,20 +43,27 @@ export interface InputTarget {
   /** The DOM changed without the editor's doing: render the affected text from the model again. */
   repair(): void;
   selectionMoved(): void;
+  /** Puts the caret at the place in the text nearest to a node that is not text. */
+  placeAt(node: Node): void;
   focusChanged(focused: boolean): void;
   openLink(href: string): void;
 }
 
+/**
+ * Characters and words are stepped over in the model, which knows what the
+ * view hides. Where a line ends depends on layout, so for line deletes the
+ * range the browser reports is used when there is one.
+ */
 const DELETES: Record<string, { direction: "backward" | "forward"; unit: StepUnit }> = {
   deleteContentBackward: { direction: "backward", unit: "character" },
   deleteContentForward: { direction: "forward", unit: "character" },
   deleteWordBackward: { direction: "backward", unit: "word" },
   deleteWordForward: { direction: "forward", unit: "word" },
-  deleteSoftLineBackward: { direction: "backward", unit: "word" },
-  deleteSoftLineForward: { direction: "forward", unit: "word" },
-  deleteHardLineBackward: { direction: "backward", unit: "word" },
-  deleteHardLineForward: { direction: "forward", unit: "word" },
-  deleteEntireSoftLine: { direction: "backward", unit: "word" },
+  deleteSoftLineBackward: { direction: "backward", unit: "line" },
+  deleteSoftLineForward: { direction: "forward", unit: "line" },
+  deleteHardLineBackward: { direction: "backward", unit: "line" },
+  deleteHardLineForward: { direction: "forward", unit: "line" },
+  deleteEntireSoftLine: { direction: "backward", unit: "line" },
   deleteContent: { direction: "backward", unit: "character" },
 };
 
@@ -106,6 +115,7 @@ export class InputController {
     on("dragstart", (event) => event.preventDefault());
     on("drop", (event) => event.preventDefault());
     on("click", (event) => this.onClick(event));
+    on("mousedown", (event) => this.onMouseDown(event));
     on("focusin", () => this.target.focusChanged(true));
     on("focusout", () => this.target.focusChanged(false));
     const doc = this.surface.ownerDocument;
@@ -143,7 +153,7 @@ export class InputController {
     else if (type === "insertParagraph") this.target.insertParagraph();
     else if (type === "insertLineBreak") this.target.insertText("\n");
     else if (type === "deleteByCut" || type === "deleteByDrag") this.target.deleteSelection();
-    else if (deletion !== undefined) this.target.deleteStep(deletion.direction, deletion.unit, targetSelection(event, this.target));
+    else if (deletion !== undefined) this.target.deleteStep(deletion.direction, deletion.unit, deletion.unit === "line" ? targetSelection(event, this.target) : null);
     else if (PASTE_INPUTS.has(type)) this.pasteFrom(event.dataTransfer);
     else if (format !== undefined) this.target.toggleFormat(format);
     // Every other input type (lists, indent, colours, ...) is not supported and stays cancelled.
@@ -196,6 +206,14 @@ export class InputController {
     event.preventDefault();
     event.clipboardData.setData("text/plain", text);
     if (cut && this.target.isEditable()) this.target.deleteSelection();
+  }
+
+  private onMouseDown(event: MouseEvent): void {
+    const decoration = (event.target as Element | null)?.closest?.(`[${SKIP}]`) ?? null;
+    if (decoration === null || event.button !== 0) return;
+    // Decoration cannot hold the caret; without this the click would leave it wherever it was.
+    event.preventDefault();
+    this.target.placeAt(decoration);
   }
 
   private onClick(event: MouseEvent): void {

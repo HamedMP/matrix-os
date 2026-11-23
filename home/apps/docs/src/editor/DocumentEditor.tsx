@@ -3,7 +3,7 @@
  * element and never touches what is inside it; the editor core owns that DOM.
  */
 
-import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useSyncExternalStore } from "react";
+import { type Ref, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { DocumentSession, SessionState } from "../session/index";
 import { EditorCore } from "./editor-core";
 import "./editor.css";
@@ -35,9 +35,13 @@ export function DocumentEditor(props: DocumentEditorProps) {
     callbacks.current = { onReady, onSelectionChange, onOpenLink };
   });
 
+  const initial = useRef({ viewMode, readOnly });
   const core = useMemo(() => {
     const options: DocumentEditorOptions = {
       ariaLabel,
+      // Starting values; the effects below follow later changes of the props.
+      viewMode: initial.current.viewMode,
+      readOnly: initial.current.readOnly,
       onOpenLink: (href) => {
         const open = callbacks.current.onOpenLink;
         if (open !== undefined) open(href);
@@ -48,18 +52,21 @@ export function DocumentEditor(props: DocumentEditorProps) {
     // The accessible name is read once per editor; a new session makes a new editor.
   }, [session, ariaLabel]);
 
-  useImperativeHandle(ref, () => core, [core]);
-
-  useEffect(() => {
+  // Mounted in the layout phase, before the ref is handed out below, so the
+  // controller a parent receives is already showing the document.
+  useLayoutEffect(() => {
     const element = host.current;
     if (element === null) return undefined;
     core.mount(element);
+    return () => core.unmount();
+  }, [core]);
+
+  useImperativeHandle(ref, () => core, [core]);
+
+  useEffect(() => {
     const stop = core.onSelectionChange((selection) => callbacks.current.onSelectionChange?.(selection));
     callbacks.current.onReady?.(core);
-    return () => {
-      stop();
-      core.unmount();
-    };
+    return stop;
   }, [core]);
 
   useEffect(() => {

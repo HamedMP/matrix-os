@@ -123,7 +123,8 @@ export function insertText(host: CommandHost, selection: EditorSelection, text: 
   const result = host.session.apply(ops, {
     origin: EDITOR_ORIGIN,
     positions: [start],
-    mergeKey: selection.collapsed ? typingKey(start.blockId, clean) : undefined,
+    // Typing over a selection starts the undo step that the rest of the word joins.
+    mergeKey: typingKey(start.blockId, clean),
   });
   const caret = lastCaret(result) ?? result.positions[0] ?? null;
   return caret === null ? null : caretAt(caret);
@@ -194,7 +195,20 @@ function deleteAt(host: CommandHost, at: TextPosition, direction: "backward" | "
   return caretAt(result.positions[0] ?? join);
 }
 
-/** Backspace and Delete: removes the selection, or one character or word beside the caret. */
+/**
+ * Deletes a range the browser reported for a delete at a caret. Unlike a
+ * selection, it has a direction: tracked, a forward delete leaves the caret
+ * after the text that stays as a deletion.
+ */
+export function deleteReported(host: CommandHost, range: EditorSelection, direction: "backward" | "forward"): CommandOutcome | null {
+  const ops = deleteOps(host, range.start, range.end);
+  if (ops.length === 0) return null;
+  const result = host.session.apply(ops, { origin: EDITOR_ORIGIN, positions: [range.start, range.end] });
+  const caret = result.positions[direction === "backward" ? 0 : 1] ?? null;
+  return caret === null ? null : caretAt(caret);
+}
+
+/** Backspace and Delete: removes the selection, or one character, word or line beside the caret. */
 export function deleteStep(host: CommandHost, selection: EditorSelection, direction: "backward" | "forward", unit: StepUnit): CommandOutcome | null {
   if (!selection.collapsed) return deleteSelection(host, selection);
   return deleteAt(host, selection.start, direction, unit, 0);

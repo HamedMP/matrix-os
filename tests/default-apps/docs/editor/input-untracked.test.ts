@@ -130,6 +130,30 @@ describe("input with tracking off: every beforeinput becomes engine operations",
     expect(caretOf(m)).toEqual(at(a!, 6));
   });
 
+  it("deletes to the edge of the paragraph for a line delete the browser gives no range for", async () => {
+    const [a] = await open();
+    caret(m, a!, 5);
+    beforeInput(m, "deleteSoftLineBackward");
+    expect(paragraph(m.doc, a!).text).toBe(" world");
+    expect(caretOf(m)).toEqual(at(a!, 0));
+    beforeInput(m, "deleteHardLineForward");
+    expect(paragraph(m.doc, a!).text).toBe("");
+    expect(bodyParagraphs(m.doc)).toHaveLength(3);
+  });
+
+  it("measures character and word deletes in the model, whatever range the browser reports", async () => {
+    const [a, b] = await open();
+    caret(m, a!, 5);
+    const text = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    beforeInput(m, "deleteContentBackward", { targetRange: { startContainer: text, startOffset: 0, endContainer: text, endOffset: 5 } });
+    expect(paragraph(m.doc, a!).text).toBe("Hell world");
+    // A reported line range that leaves the caret's paragraph is not used either.
+    const other = m.editor.getBlockElement(b!)!.querySelector("[data-s]")!.firstChild!;
+    const mine = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    beforeInput(m, "deleteSoftLineForward", { targetRange: { startContainer: mine, startOffset: 4, endContainer: other, endOffset: 6 } });
+    expect(finalText(m)).toBe("Hell\nSecond paragraph\nThird\n");
+  });
+
   it("deleteByCut removes the selection", async () => {
     const [a, b, c] = await open();
     select(m, at(a!, 5), at(c!, 2));

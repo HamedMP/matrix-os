@@ -1,129 +1,27 @@
 /**
- * The editor without React: mounts the document view into a host element,
- * wires input to commands, keeps the DOM in step with the session, and
- * implements `DocumentEditorController`.
+ * The editor without React: the public controller (`DocumentEditorController`)
+ * and the handling of input events (`InputTarget`), on top of the state and
+ * rendering in `./editor-base.ts`.
  */
 
-import type { ApplyResult, BlockId, DocxOp, ParagraphBlock, ParagraphStylePatch, RunFormat, TextPosition, TextRange } from "../../../_shared/office-engine/index";
-import type { DocumentChange, DocumentSession, SessionApplyOptions } from "../session/index";
+import type { ApplyResult, BlockId, DocxOp, ParagraphStylePatch, RunFormat, TextRange } from "../../../_shared/office-engine/index";
+import type { SessionApplyOptions } from "../session/index";
 import * as commands from "./commands";
-import { DocumentView } from "./document-view";
-import { EditorStore } from "./editor-store";
-import { HighlightLayers } from "./highlights";
-import { InputController, type InputTarget } from "./input-controller";
-import { ModelIndex } from "./model-index";
+import { EditorBase } from "./editor-base";
+import type { InputTarget } from "./input-controller";
 import type { PasteContent } from "./paste";
 import { positionFromDom } from "./position-map";
-import { clampSelection, endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
-import type {
-  DocumentEditorController,
-  DocumentEditorOptions,
-  EditorHighlight,
-  EditorSelection,
-  EditorSnapshot,
-  ScrollOptions,
-  SelectionTarget,
-  SetSelectionOptions,
-  ToggleFormat,
-  ViewMode,
-} from "./types";
-import { rangeRects, revealCaret, scrollIntoView } from "./viewport";
+import { endsOf, sameSelection, toSelection } from "./selection";
+import type { DocumentEditorController, EditorHighlight, EditorSelection, ScrollOptions, SelectionTarget, SetSelectionOptions, ToggleFormat, ViewMode } from "./types";
+import { rangeRects, scrollIntoView } from "./viewport";
 import type { StepUnit } from "./visibility";
 
-type Command = (selection: EditorSelection) => commands.CommandOutcome | null;
-
-export class EditorCore implements DocumentEditorController, InputTarget {
-  readonly session: DocumentSession;
-  private readonly options: DocumentEditorOptions;
-  private readonly log: (message: string, error: unknown) => void;
-  private view: DocumentView | null = null;
-  /** The element the editor is mounted in; it is the scrolling area. */
-  private host: HTMLElement | null = null;
-  /** Formatting before each formatting revision, built when the `original` view first needs it. */
-  private formatsBefore: Map<string, Partial<RunFormat>> | null = null;
-  private input: InputController | null = null;
-  private index = ModelIndex.empty();
-  private readonly store: EditorStore;
-  private readOnly: boolean;
-  private mode: ViewMode;
-  private focused = false;
-  /** The last selection seen inside the document; kept while focus is elsewhere (a toolbar). */
-  private lastSelection: EditorSelection | null = null;
-  /** Formatting armed with a collapsed selection, for the text typed next. */
-  private pendingFormat: Partial<RunFormat> | null = null;
-  private composition: { selection: EditorSelection | null; rangeNoted: boolean } | null = null;
-  /** The document changed during a composition; render when it ends. */
-  private deferredRender = false;
-  /** True while one of the editor's own commands runs: it places the selection itself. */
-  private applying = false;
-  private readonly highlights = new HighlightLayers();
-  private readonly cleanups: Array<() => void> = [];
-
-  constructor(session: DocumentSession, options: DocumentEditorOptions = {}) {
-    this.session = session;
-    this.options = options;
-    this.log = options.log ?? ((message, error) => console.warn(message, error));
-    this.mode = options.viewMode ?? "markup";
-    this.readOnly = options.readOnly ?? false;
-    this.store = new EditorStore({ viewMode: this.mode, readOnly: !this.isEditable(), focused: false, selection: null, activeFormat: null }, this.log);
+export class EditorCore extends EditorBase implements DocumentEditorController, InputTarget {
+  protected inputTarget(): InputTarget {
+    return this;
   }
 
-  // ---------------------------------------------------------------- lifecycle
-
-  /** Renders the document into `host` and starts listening. Safe to call again after `unmount`. */
-  mount(host: HTMLElement): void {
-    if (this.view !== null) this.unmount();
-    host.classList.add("doc-editor");
-    this.host = host;
-    const view = new DocumentView(host, {
-      ariaLabel: this.options.ariaLabel ?? "Document",
-      formatBefore: (revisionId) => this.formatBefore(revisionId),
-    });
-    this.view = view;
-    view.setMode(this.mode);
-    this.input = new InputController(view.content, this);
-    this.input.attach();
-    this.cleanups.push(this.session.onChange((change) => this.onSessionChange(change)));
-    this.session.setSelectionSource(() => {
-      const selection = this.liveSelection();
-      return selection === null ? null : { anchor: selection.anchor, focus: selection.focus };
-    });
-    this.cleanups.push(() => {
-      this.session.setSelectionSource(null);
-      this.input?.detach();
-      this.input = null;
-      view.page.remove();
-      host.classList.remove("doc-editor");
-    });
-    this.renderAll();
-    this.publish();
-  }
-
-  unmount(): void {
-    for (const cleanup of this.cleanups.splice(0).reverse()) cleanup();
-    this.view = null;
-    this.host = null;
-    this.composition = null;
-    this.index = ModelIndex.empty();
-  }
-
-  // ---------------------------------------------------------------- state
-
-  getSnapshot = (): EditorSnapshot => this.store.getSnapshot();
-
-  subscribe = (listener: () => void): (() => void) => this.store.subscribe(listener);
-
-  onSelectionChange(listener: (selection: EditorSelection | null) => void): () => void {
-    return this.store.onSelectionChange(listener);
-  }
-
-  isEditable(): boolean {
-    return !this.readOnly && this.mode !== "original" && this.session.document !== null;
-  }
-
-  isComposing(): boolean {
-    return this.composition !== null;
-  }
+  // ---------------------------------------------------------------- view mode
 
   getViewMode(): ViewMode {
     return this.mode;
@@ -151,10 +49,6 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   }
 
   // ---------------------------------------------------------------- selection
-
-  getSelection(): EditorSelection | null {
-    return this.liveSelection() ?? this.validSelection(this.lastSelection);
-  }
 
   setSelection(target: SelectionTarget, options: SetSelectionOptions = {}): boolean {
     if (this.view === null) return false;
@@ -218,8 +112,13 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     return this.run((selection) => commands.deleteSelection(this.commandHost(), selection));
   }
 
-  deleteStep(direction: "backward" | "forward", unit: StepUnit, selection?: EditorSelection | null): boolean {
-    return this.run((current) => commands.deleteStep(this.commandHost(), current, direction, unit), selection);
+  deleteStep(direction: "backward" | "forward", unit: StepUnit, reported?: EditorSelection | null): boolean {
+    return this.run((selection) => {
+      const host = this.commandHost();
+      // A reported range applies to a caret only, and only inside the caret's paragraph.
+      const usable = reported != null && selection.collapsed && reported.start.blockId === reported.end.blockId && reported.start.blockId === selection.focus.blockId;
+      return usable ? commands.deleteReported(host, reported, direction) : commands.deleteStep(host, selection, direction, unit);
+    });
   }
 
   paste(content: PasteContent): boolean {
@@ -311,6 +210,16 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     this.announceSelection();
   }
 
+  /** A click on decoration (a numbering label, a paragraph mark): the caret goes beside it. */
+  placeAt(node: Node): void {
+    const selection = this.selectionOfRange({ startContainer: node, startOffset: 0, endContainer: node, endOffset: 0 });
+    if (selection === null || this.view === null) return;
+    this.view.content.focus();
+    this.pendingFormat = null;
+    this.session.sealUndoStep();
+    this.place(selection.focus, selection.focus);
+  }
+
   focusChanged(focused: boolean): void {
     this.focused = focused;
     this.publish();
@@ -343,150 +252,5 @@ export class EditorCore implements DocumentEditorController, InputTarget {
 
   getRangeRects(range: TextRange): DOMRect[] {
     return this.view === null ? [] : rangeRects(this.view, this.index, range);
-  }
-
-  // ---------------------------------------------------------------- internals
-
-  private commandHost(): commands.CommandHost {
-    return { session: this.session, index: () => this.index, mode: () => this.mode, paragraph: (id) => this.paragraph(id) };
-  }
-
-  private paragraph(id: BlockId): ParagraphBlock | null {
-    const block = this.session.document?.getBlock(id) ?? null;
-    return block !== null && block.type === "paragraph" ? block : null;
-  }
-
-  private formatBefore(revisionId: string): Partial<RunFormat> | null {
-    if (this.formatsBefore === null) {
-      this.formatsBefore = new Map();
-      for (const revision of this.session.document?.listRevisions() ?? []) {
-        if (revision.formatChange !== null) this.formatsBefore.set(revision.id, revision.formatChange.before);
-      }
-    }
-    return this.formatsBefore.get(revisionId) ?? null;
-  }
-
-  /** Runs one of the editor's own commands and puts the selection where it says. */
-  private run(command: Command, given?: EditorSelection | null): boolean {
-    if (this.view === null || !this.isEditable() || this.composition !== null) return false;
-    const selection = given ?? this.getSelection();
-    if (selection === null) return false;
-    let outcome: commands.CommandOutcome | null;
-    this.applying = true;
-    try {
-      outcome = command(selection);
-    } catch (error) {
-      // The engine refused the edit and left the document as it was.
-      this.log("docs: the edit could not be applied", error);
-      this.applying = false;
-      this.rebuild(selection);
-      this.place(selection.anchor, selection.focus);
-      return false;
-    } finally {
-      this.applying = false;
-    }
-    if (outcome === null) return false;
-    this.place(outcome.anchor, outcome.focus);
-    this.session.noteSelection({ anchor: outcome.anchor, focus: outcome.focus });
-    if (this.host !== null) revealCaret(this.host);
-    return true;
-  }
-
-  private onSessionChange(change: DocumentChange): void {
-    if (this.view === null) return;
-    this.formatsBefore = null;
-    if (change.kind === "load" || change.kind === "close") {
-      this.highlights.clear();
-      this.lastSelection = null;
-      this.pendingFormat = null;
-      this.composition = null;
-    }
-    if (this.composition !== null) {
-      this.deferredRender = true;
-      return;
-    }
-    const before = this.applying ? null : (change.selection ?? this.liveSelection());
-    const structural = change.full || change.createdBlockIds.length > 0 || change.removedBlockIds.length > 0;
-    if (structural || !this.view.refresh(change.changedBlockIds, (id) => this.session.document?.getBlock(id) ?? null)) this.renderAll();
-    // The owner's selection stays where it was while someone else edits, and returns after undo and redo.
-    if (before !== null) this.place(before.anchor, before.focus);
-    this.publish();
-  }
-
-  /** Renders the whole document and rebuilds everything derived from its structure. */
-  private renderAll(): void {
-    const view = this.view;
-    if (view === null) return;
-    const model = this.session.document?.getView() ?? null;
-    this.index = model === null ? ModelIndex.empty() : ModelIndex.build(model);
-    this.highlights.rebuild(this.index);
-    view.setSpans(this.highlights.spans);
-    view.setEditable(this.isEditable());
-    view.render(model);
-    this.deferredRender = false;
-  }
-
-  /** Renders the paragraphs of a selection from the model again, whatever the DOM holds now. */
-  private rebuild(selection: EditorSelection | null): void {
-    const view = this.view;
-    if (view === null) return;
-    const ids = selection === null ? [] : this.index.between(selection.start.blockId, selection.end.blockId).map((entry) => entry.id);
-    view.invalidate(ids);
-    if (this.deferredRender || ids.length === 0 || !view.refresh(ids, (id) => this.session.document?.getBlock(id) ?? null)) {
-      if (ids.length === 0) view.invalidate(this.index.paragraphs.map((entry) => entry.id));
-      this.renderAll();
-    }
-  }
-
-  private applyHighlights(): void {
-    const view = this.view;
-    if (view === null) return;
-    if (this.composition !== null) {
-      this.deferredRender = true;
-      return;
-    }
-    const changed = this.highlights.rebuild(this.index);
-    view.setSpans(this.highlights.spans);
-    if (changed.length === 0) return;
-    this.keepingSelection(() => {
-      if (!view.refresh(changed.filter((id) => view.element(id) !== null), (id) => this.session.document?.getBlock(id) ?? null)) this.renderAll();
-    });
-  }
-
-  /** Runs a re-render and puts the DOM selection back where it was in the document. */
-  private keepingSelection(render: () => void): void {
-    const selection = this.liveSelection();
-    render();
-    if (selection !== null) this.place(selection.anchor, selection.focus);
-  }
-
-  private liveSelection(): EditorSelection | null {
-    return this.view === null ? null : readSelection(this.view, this.index);
-  }
-
-  /** A remembered selection, when both of its ends still exist. Offsets are clamped. */
-  private validSelection(selection: EditorSelection | null): EditorSelection | null {
-    return selection === null ? null : clampSelection(this.index, selection, (id) => this.paragraph(id)?.text.length ?? null);
-  }
-
-  /** Moves the DOM selection and records it. */
-  private place(anchor: TextPosition, focus: TextPosition): boolean {
-    if (this.view === null || !writeSelection(this.view, this.index, anchor, focus)) return false;
-    const selection = toSelection(this.index, anchor, focus);
-    const changed = !sameSelection(selection, this.lastSelection);
-    this.lastSelection = selection;
-    this.publish();
-    if (changed) this.announceSelection();
-    return true;
-  }
-
-  private announceSelection(): void {
-    this.store.announceSelection(this.lastSelection);
-  }
-
-  private publish(): void {
-    const selection = this.validSelection(this.lastSelection);
-    const activeFormat = selection === null ? null : commands.activeFormat(this.commandHost(), selection, this.pendingFormat);
-    this.store.publish({ viewMode: this.mode, readOnly: !this.isEditable(), focused: this.focused, selection, activeFormat });
   }
 }
