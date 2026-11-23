@@ -6,7 +6,7 @@
 import type { BlockId, Revision, RevisionId, RevisionKind, RevisionScope, TextPosition } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import type { Flow } from "./flow.js";
-import type { ParagraphScan } from "./inline.js";
+import { type ParagraphScan, shownRevision } from "./inline.js";
 import { attr, firstChild } from "./names.js";
 import { type FormatResolver, tableStyleIdOf } from "./resolve.js";
 import { type BlockRecord, type StoryRecord, type Structure, rowCells, tableRows } from "./structure.js";
@@ -87,14 +87,20 @@ function infoOf(element: XmlElement): RevisionInfo {
   return { kind, author, date, key: `${kind}\u0000${author}\u0000${date ?? ""}` };
 }
 
-/** The `w:ins` or `w:del` in the `w:trPr` of a row, or null. */
-export function rowRevisionElement(row: XmlElement): XmlElement | null {
+/** Every `w:ins` and `w:del` in the `w:trPr` of a row, in file order: a row one author inserted and another deleted has both. */
+export function rowRevisionElements(row: XmlElement): XmlElement[] {
   const trPr = firstChild(row, "w:trPr");
-  if (trPr === null) return null;
+  const found: XmlElement[] = [];
+  if (trPr === null) return found;
   for (const node of trPr.children) {
-    if (node.kind === "element" && (node.name === "w:ins" || node.name === "w:del")) return node;
+    if (node.kind === "element" && (node.name === "w:ins" || node.name === "w:del")) found.push(node);
   }
-  return null;
+  return found;
+}
+
+/** The revision of a row a reader is shown: its `w:del`, else its `w:ins`, or null. */
+export function rowRevisionElement(row: XmlElement): XmlElement | null {
+  return shownRevision(rowRevisionElements(row));
 }
 
 function childrenNamed(parent: XmlElement | null, names: ReadonlySet<string>): XmlElement[] {
@@ -110,7 +116,8 @@ export class StoryPass {
   private ordinal = 0;
   private sequence = 0;
   private readonly open = new Map<string, Draft>();
-  private readonly rowStack: Draft[] = [];
+  /** The row revisions of the rows around the current position, innermost row last. A row can carry two. */
+  private readonly rowStack: Draft[][] = [];
   private moveFrom: string | null = null;
   private moveTo: string | null = null;
   private readonly moveRanges = new Map<string, "from" | "to">();
@@ -191,8 +198,8 @@ export class StoryPass {
     from: TextPosition,
     to: TextPosition,
   ): void {
-    const row = this.rowStack[this.rowStack.length - 1];
-    if (row !== undefined && row.info.key === info.key) {
+    const row = this.rowStack[this.rowStack.length - 1]?.find((entry) => entry.info.key === info.key);
+    if (row !== undefined) {
       this.addMember(row, member);
       return;
     }
@@ -273,10 +280,11 @@ export class StoryPass {
       );
     }
     advance(length);
-    if (scan.mark !== null) {
+    // A mark one author inserted and another deleted carries both revisions.
+    for (const mark of scan.marks) {
       this.content(
-        { element: scan.mark, role: "paragraphMark", owner: paragraph, blockId },
-        infoOf(scan.mark),
+        { element: mark, role: "paragraphMark", owner: paragraph, blockId },
+        infoOf(mark),
         base + length,
         base + length + 1,
         "\n",
@@ -387,30 +395,27 @@ export class StoryPass {
     const tblGrid = firstChild(table, "w:tblGrid");
     if (tblPr !== null) changes.push(...childrenNamed(tblPr, new Set(["w:tblPrChange"])));
     if (tblGrid !== null) changes.push(...childrenNamed(tblGrid, new Set(["w:tblGridChange"])));
-    let previous: Draft | null = null;
+    /** The row revisions of the row before, which the same revisions on this row extend. */
+    let previous: Draft[] = [];
     for (const row of tableRows(table)) {
       changes.push(...childrenNamed(firstChild(row, "w:trPr"), ROW_PROPERTY_CHANGES));
       changes.push(...childrenNamed(firstChild(row, "w:tblPrEx"), new Set(["w:tblPrExChange"])));
-      const mark = rowRevisionElement(row);
-      let draft: Draft | null = null;
-      if (mark !== null) {
+      const drafts: Draft[] = [];
+      for (const mark of rowRevisionElements(row)) {
         const info = infoOf(mark);
-        const outer = this.rowStack[this.rowStack.length - 1];
-        if (outer !== undefined && outer.info.key === info.key) draft = outer;
-        else if (previous !== null && previous.info.key === info.key) draft = previous;
-        else draft = this.draft(info, "tableRow", this.base);
+        const outer = this.rowStack[this.rowStack.length - 1]?.find((entry) => entry.info.key === info.key);
+        const draft = outer ?? previous.find((entry) => entry.info.key === info.key) ?? this.draft(info, "tableRow", this.base);
         this.addMember(draft, { element: mark, role: "tableRow", owner: row, blockId: record.id });
-        this.rowStack.push(draft);
+        if (!drafts.includes(draft)) drafts.push(draft);
       }
+      if (drafts.length > 0) this.rowStack.push(drafts);
       for (const cell of rowCells(row)) {
         changes.push(...childrenNamed(firstChild(cell, "w:tcPr"), CELL_PROPERTY_CHANGES));
         this.blocks(this.structure.blocksByContainer.get(cell) ?? []);
       }
-      if (draft !== null) {
-        this.rowStack.pop();
-        draft.text += (draft.text === "" ? "" : "\n") + this.rowText(row);
-      }
-      previous = draft;
+      if (drafts.length > 0) this.rowStack.pop();
+      for (const draft of drafts) draft.text += (draft.text === "" ? "" : "\n") + this.rowText(row);
+      previous = drafts;
     }
     if (changes.length > 0) this.otherFormat(changes, record.id, sort);
   }

@@ -9,7 +9,8 @@
  * `getPlainText` applies. The merged paragraph keeps the properties of the
  * first paragraph that contributes visible content. Such a paragraph with
  * nothing to show and no paragraph after it is left out before a table and
- * at the end of its container, as resolving the revision removes it.
+ * at the end of its container, as resolving the revision removes it. A
+ * table with no row left in the view is left out with its rows.
  */
 
 import type {
@@ -61,8 +62,17 @@ export interface FlatSectionBreak {
 
 export type FlatBlock = FlatParagraph | FlatTable | FlatSectionBreak;
 
-/** The runs of a paragraph that a view shows. */
-export type RunFilter = (block: ParagraphBlock, view: DocxTextView) => InlineRun[];
+/**
+ * The runs of a paragraph that a view shows. A filter that reads the
+ * document itself can also say whether a paragraph mark or a table row is
+ * gone in a view; without that the one revision the view model shows on
+ * the mark or row decides, which misses a mark or row that carries two.
+ */
+export interface RunFilter {
+  (block: ParagraphBlock, view: DocxTextView): InlineRun[];
+  markGone?(block: ParagraphBlock, view: DocxTextView): boolean;
+  rowGone?(table: TableBlock, rowIndex: number, view: DocxTextView): boolean;
+}
 
 /** The filter that uses the revision mark of each run only. */
 export const markRunFilter: RunFilter = (block, view) => block.runs.filter((run) => !goneInView(run.revision?.kind, view));
@@ -89,7 +99,7 @@ export function goneInView(kind: RevisionKind | undefined, view: DocxTextView): 
 }
 
 function flattenTable(table: TableBlock, view: DocxTextView, filter: RunFilter, depth: number): FlatTable {
-  const kept = table.rows.filter((row) => !goneInView(row.revision?.kind, view));
+  const kept = table.rows.filter((row, rowIndex) => !(filter.rowGone?.(table, rowIndex, view) ?? goneInView(row.revision?.kind, view)));
   const rows: FlatRow[] = kept.map((row, rowIndex) => {
     const cells: FlatCell[] = [];
     row.cells.forEach((cell, cellIndex) => {
@@ -127,12 +137,20 @@ function cellAtColumn(row: TableRow, column: number): TableCell | null {
   return null;
 }
 
-function flattenWith(blocks: readonly DocxBlock[], view: DocxTextView, filter: RunFilter, depth: number): FlatBlock[] {
+function flattenWith(source: readonly DocxBlock[], view: DocxTextView, filter: RunFilter, depth: number): FlatBlock[] {
   const out: FlatBlock[] = [];
   let carry: FlatParagraph | null = null;
+  // A table with no row left in the view is gone, for the paragraphs around it too.
+  const tables = new Map<DocxBlock, FlatTable>();
+  const blocks = source.filter((block) => {
+    if (block.type !== "table") return true;
+    const flat = flattenTable(block, view, filter, depth);
+    tables.set(block, flat);
+    return view === "markup" || flat.rows.length > 0 || block.rows.length === 0;
+  });
   blocks.forEach((block, position) => {
     if (block.type === "table") {
-      out.push(flattenTable(block, view, filter, depth));
+      out.push(tables.get(block) as FlatTable);
       return;
     }
     if (block.type === "sectionBreak") {
@@ -155,7 +173,7 @@ function flattenWith(blocks: readonly DocxBlock[], view: DocxTextView, filter: R
     }
     carry = null;
     const next = blocks[position + 1];
-    const gone = goneInView(block.markRevision?.kind, view);
+    const gone = filter.markGone?.(block, view) ?? goneInView(block.markRevision?.kind, view);
     if (gone && next !== undefined && next.type === "paragraph") {
       carry = paragraph;
       return;

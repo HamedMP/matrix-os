@@ -69,8 +69,12 @@
  *   produce no atoms. Field results are ordinary atoms.
  * - `w:commentReference`, bookmark, comment-range and move-range markers are
  *   zero width; they are in `scan.markers` with their offset.
- * - `scan.mark` is the tracked change of the paragraph mark
- *   (`w:pPr/w:rPr/w:ins|w:del|w:moveFrom|w:moveTo`), `scan.propertiesChange`
+ * - `scan.marks` are the tracked changes of the paragraph mark
+ *   (`w:pPr/w:rPr/w:ins|w:del|w:moveFrom|w:moveTo`; a mark one author
+ *   inserted and another deleted has two) and `scan.mark` the one a reader
+ *   is shown, a deletion before an insertion; `revisionsGoneInView` says
+ *   whether such a mark, or a row (`rowRevisionElements`), is in a view.
+ *   `scan.propertiesChange` is
  *   the `w:pPrChange`, `scan.markFormatChange` the `w:pPr/w:rPr/w:rPrChange`,
  *   and `scan.contentSpans` and `scan.formatSpans` give the extent of every
  *   revision container and run `w:rPrChange`.
@@ -198,6 +202,7 @@ export {
   atomInView,
   atomIndexAt,
   paragraphMarkRevision,
+  revisionsGoneInView,
   scanParagraph,
   scanText,
 } from "./model/inline.js";
@@ -222,6 +227,7 @@ export {
   type RevisionMember,
   type RevisionMemberRole,
   rowRevisionElement,
+  rowRevisionElements,
 } from "./model/revisions.js";
 export { FormatResolver, type ResolvedParagraph, tableStyleIdOf } from "./model/resolve.js";
 export {

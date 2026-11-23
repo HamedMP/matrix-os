@@ -30,7 +30,12 @@ function unknownRevision(id: unknown): OfficeError {
   return new OfficeError("stale_reference", "unknown revision id", { details: { revisionId: String(id) } });
 }
 
-/** The groups named by `ids`, with the other half of every move. */
+/**
+ * The groups named by `ids`, with the rest of every move: its other half,
+ * and every other piece of it. An edit inside moved text splits it into
+ * several revisions between one pair of range markers; half a move left
+ * behind would have neither a partner nor its markers.
+ */
 function selectGroups(index: DocxIndex, ids: readonly RevisionId[]): RevisionGroup[] {
   const revisions = index.revisions;
   const chosen = new Map<RevisionId, RevisionGroup>();
@@ -39,12 +44,22 @@ function selectGroups(index: DocxIndex, ids: readonly RevisionId[]): RevisionGro
     if (group === undefined) throw unknownRevision(id);
     chosen.set(group.revision.id, group);
   }
+  const moveNames = new Set<string>();
   for (const group of [...chosen.values()]) {
     const kind = group.revision.kind;
+    if (kind !== "moveFrom" && kind !== "moveTo") continue;
+    if (group.moveName !== null) moveNames.add(group.moveName);
     const pair = group.revision.pairedWith;
-    if (pair === null || (kind !== "moveFrom" && kind !== "moveTo")) continue;
-    const other = revisions.byId.get(pair);
-    if (other !== undefined) chosen.set(other.revision.id, other);
+    const other = pair === null ? undefined : revisions.byId.get(pair);
+    if (other !== undefined) {
+      chosen.set(other.revision.id, other);
+      if (other.moveName !== null) moveNames.add(other.moveName);
+    }
+  }
+  if (moveNames.size > 0) {
+    for (const group of revisions.groups) {
+      if (group.moveName !== null && moveNames.has(group.moveName)) chosen.set(group.revision.id, group);
+    }
   }
   // In the order of `listRevisions`.
   return revisions.groups.filter((group) => chosen.has(group.revision.id));

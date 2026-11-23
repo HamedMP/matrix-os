@@ -6,14 +6,17 @@
  * next paragraph. With no paragraph after it, it stays when it has content
  * in the view and is left out when it has none, as resolving the revision
  * removes it. Table cells are separated by `\t` and rows by `\n`; rows
- * that are gone in the view are left out. Inline objects are left out.
+ * that are gone in the view are left out, and a table with no row left is
+ * not there for its neighbours either. A mark or row that one author
+ * inserted and another deleted is gone in both views. Inline objects are
+ * left out.
  */
 
 import type { DocxTextView, TextRange } from "../../api/docx-model.js";
 import { OfficeError } from "../../errors.js";
 import type { DocxIndex } from "./doc-index.js";
-import { type ParagraphScan, atomInView } from "./inline.js";
-import { rowRevisionElement } from "./revisions.js";
+import { type ParagraphScan, atomInView, revisionsGoneInView } from "./inline.js";
+import { rowRevisionElements } from "./revisions.js";
 import { type BlockRecord, rowCells, tableRows } from "./structure.js";
 
 /** The text of a paragraph in a view between two markup offsets, without inline objects. */
@@ -29,11 +32,16 @@ export function paragraphText(scan: ParagraphScan, view: DocxTextView, from = 0,
   return text;
 }
 
-/** True when the element name of a revision removes its content from the view. */
-function goneInView(revisionName: string | undefined, view: DocxTextView): boolean {
-  if (revisionName === undefined || view === "markup") return false;
-  const removal = revisionName === "w:del" || revisionName === "w:moveFrom";
-  return view === "final" ? removal : !removal;
+/** True when a table row is not part of the view. */
+export function rowGoneInView(row: Parameters<typeof rowRevisionElements>[0], view: DocxTextView): boolean {
+  return view !== "markup" && revisionsGoneInView(rowRevisionElements(row), view);
+}
+
+/** True when a table has no row left in the view: resolving the revisions removes the table. */
+export function tableGoneInView(record: BlockRecord, view: DocxTextView): boolean {
+  if (view === "markup") return false;
+  const rows = tableRows(record.element);
+  return rows.length > 0 && rows.every((row) => rowGoneInView(row, view));
 }
 
 function stripLastNewline(text: string): string {
@@ -43,7 +51,7 @@ function stripLastNewline(text: string): string {
 function tableText(index: DocxIndex, record: BlockRecord, view: DocxTextView): string {
   let text = "";
   for (const row of tableRows(record.element)) {
-    if (goneInView(rowRevisionElement(row)?.name, view)) continue;
+    if (rowGoneInView(row, view)) continue;
     const cells = rowCells(row).map((cell) => stripLastNewline(blocksText(index, index.blocksIn(cell), view)));
     text += `${cells.join("\t")}\n`;
   }
@@ -68,7 +76,9 @@ export function emptyParagraphGoes(next: { type: string } | undefined, previous:
 }
 
 /** Plain text of a list of sibling blocks. */
-export function blocksText(index: DocxIndex, records: readonly BlockRecord[], view: DocxTextView): string {
+export function blocksText(index: DocxIndex, blocks: readonly BlockRecord[], view: DocxTextView): string {
+  // A table that is gone in the view is gone for the paragraphs around it too.
+  const records = view === "markup" ? blocks : blocks.filter((record) => !(record.type === "table" && tableGoneInView(record, view)));
   let text = "";
   /** True while the paragraph being written, with those that ran on into it, shows something. */
   let content = false;
@@ -82,7 +92,7 @@ export function blocksText(index: DocxIndex, records: readonly BlockRecord[], vi
       text += paragraphText(scan, view);
       content ||= hasContentInView(scan, view);
       const next = records[position + 1];
-      const gone = goneInView(scan.mark?.name, view);
+      const gone = revisionsGoneInView(scan.marks, view);
       if (gone && next !== undefined && next.type === "paragraph") continue;
       if (!(gone && !content && emptyParagraphGoes(next, records[position - 1]))) text += "\n";
       content = false;
@@ -115,7 +125,7 @@ export function rangeText(index: DocxIndex, range: TextRange, view: DocxTextView
   const siblings = index.blocksIn(start.container);
   let text = paragraphText(startScan, view, range.start.offset);
   const firstNext = siblings[start.indexInContainer + 1];
-  if (!(goneInView(startScan.mark?.name, view) && firstNext !== undefined && firstNext.type === "paragraph")) text += "\n";
+  if (!(revisionsGoneInView(startScan.marks, view) && firstNext !== undefined && firstNext.type === "paragraph")) text += "\n";
   text += blocksText(index, siblings.slice(start.indexInContainer + 1, end.indexInContainer), view);
   // `blocksText` cannot see that the last block before the end paragraph is followed by a paragraph.
   const before = siblings[end.indexInContainer - 1];
@@ -123,7 +133,7 @@ export function rangeText(index: DocxIndex, range: TextRange, view: DocxTextView
     before !== undefined &&
     before !== start &&
     before.type === "paragraph" &&
-    goneInView(index.scan(before.element).mark?.name, view) &&
+    revisionsGoneInView(index.scan(before.element).marks, view) &&
     text.endsWith("\n")
   ) {
     text = text.slice(0, -1);

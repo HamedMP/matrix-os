@@ -78,8 +78,9 @@ export function contentNodes(paragraph: XmlElement): XmlElement["children"][numb
 export interface MergeOptions {
   /**
    * `first`: the first paragraph always survives. `auto`: the first
-   * survives unless it is empty and the second is not, so that a paragraph
-   * that only held removed text disappears without touching its neighbour.
+   * survives unless it is empty, so that a paragraph that only held removed
+   * text disappears without touching its neighbour: the paragraph after it
+   * keeps its own properties, also when that one is empty too.
    */
   readonly survivor: "first" | "auto";
   readonly tracker?: PositionTracker;
@@ -98,7 +99,7 @@ export function mergeParagraphs(index: DocxIndex, first: XmlElement, second: Xml
   const secondLength = index.scan(second).text.length;
   const firstParent = elementParent(first);
   const secondParent = elementParent(second);
-  const keepFirst = options.survivor === "first" || firstLength > 0 || secondLength === 0;
+  const keepFirst = options.survivor === "first" || firstLength > 0;
   if (keepFirst) {
     moveMarkState(second, first);
     for (const node of contentNodes(second)) appendChild(first, node);

@@ -18,7 +18,7 @@ import { type Draft, type RevisionMember, StoryPass } from "./revision-pass.js";
 import type { Structure } from "./structure.js";
 
 export type { RevisionMember, RevisionMemberRole } from "./revision-pass.js";
-export { rowRevisionElement } from "./revision-pass.js";
+export { rowRevisionElement, rowRevisionElements } from "./revision-pass.js";
 
 export interface RevisionGroup {
   readonly revision: Revision;

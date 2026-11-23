@@ -88,8 +88,13 @@ export interface ParagraphScan {
   readonly contentSpans: readonly RevisionSpan[];
   /** Run formatting changes (`w:rPrChange`), in order. */
   readonly formatSpans: readonly RevisionSpan[];
-  /** The tracked change of the paragraph mark: the `w:ins`, `w:del`, `w:moveFrom` or `w:moveTo` in `w:pPr/w:rPr`. */
+  /**
+   * The tracked change of the paragraph mark a reader is shown: the `w:ins`, `w:del`, `w:moveFrom` or `w:moveTo`
+   * in `w:pPr/w:rPr`, a deletion before an insertion when the mark carries both.
+   */
   readonly mark: XmlElement | null;
+  /** Every tracked change of the paragraph mark, in file order. */
+  readonly marks: readonly XmlElement[];
   /** `w:pPr/w:pPrChange`, or null. */
   readonly propertiesChange: XmlElement | null;
   /** `w:pPr/w:rPr/w:rPrChange`: a formatting change of the paragraph mark, or null. */
@@ -135,25 +140,51 @@ export function atomInView(atom: InlineAtom, view: DocxTextView): boolean {
   return true;
 }
 
-/** The tracked changes a paragraph carries in its `w:pPr`: of the mark, of the mark's formatting, of the properties. */
+/**
+ * The tracked changes a paragraph carries in its `w:pPr`: of the mark, of
+ * the mark's formatting, of the properties.
+ *
+ * A mark can carry two revisions: the paragraph break one author inserted
+ * and another deleted has a `w:ins` and a `w:del`. `marks` has them all in
+ * file order; `mark` is the one a reader is shown, a deletion before an
+ * insertion, as for text deleted inside an insertion.
+ */
 export function paragraphMarkRevision(paragraph: XmlElement): {
   mark: XmlElement | null;
+  marks: readonly XmlElement[];
   propertiesChange: XmlElement | null;
   markFormatChange: XmlElement | null;
 } {
   const pPr = firstChild(paragraph, "w:pPr");
-  if (pPr === null) return { mark: null, propertiesChange: null, markFormatChange: null };
-  let mark: XmlElement | null = null;
+  if (pPr === null) return { mark: null, marks: NO_REVISIONS, propertiesChange: null, markFormatChange: null };
+  let marks: XmlElement[] | null = null;
   let markFormatChange: XmlElement | null = null;
   const rPr = firstChild(pPr, "w:rPr");
   if (rPr !== null) {
     for (const node of rPr.children) {
       if (node.kind !== "element") continue;
-      if (mark === null && REVISION_CONTAINERS.has(node.name)) mark = node;
+      if (REVISION_CONTAINERS.has(node.name)) (marks ??= []).push(node);
       else if (markFormatChange === null && node.name === "w:rPrChange") markFormatChange = node;
     }
   }
-  return { mark, propertiesChange: firstChild(pPr, "w:pPrChange"), markFormatChange };
+  return { mark: shownRevision(marks ?? NO_REVISIONS), marks: marks ?? NO_REVISIONS, propertiesChange: firstChild(pPr, "w:pPrChange"), markFormatChange };
+}
+
+/** Of the revisions on one paragraph mark or table row, the one a reader is shown: a deletion, else the first. */
+export function shownRevision(revisions: readonly XmlElement[]): XmlElement | null {
+  for (const revision of revisions) if (isDeletion(revision.name)) return revision;
+  return revisions[0] ?? null;
+}
+
+/**
+ * Whether a paragraph mark or table row with these revisions is gone in a
+ * view: a deletion removes it from `final`, an insertion from `original`,
+ * and one that carries both is in neither.
+ */
+export function revisionsGoneInView(revisions: readonly XmlElement[], view: DocxTextView): boolean {
+  if (view === "markup") return false;
+  for (const revision of revisions) if (isDeletion(revision.name) === (view === "final")) return true;
+  return false;
 }
 
 class Scanner {
@@ -319,7 +350,7 @@ export function scanParagraph(paragraph: XmlElement, fieldsIn: readonly FieldFra
   scanner.inline(paragraph, NO_REVISIONS, null);
   let text = "";
   for (const atom of scanner.atoms) text += atom.text;
-  const { mark, propertiesChange, markFormatChange } = paragraphMarkRevision(paragraph);
+  const { mark, marks, propertiesChange, markFormatChange } = paragraphMarkRevision(paragraph);
   return {
     paragraph,
     text,
@@ -328,6 +359,7 @@ export function scanParagraph(paragraph: XmlElement, fieldsIn: readonly FieldFra
     contentSpans: scanner.contentSpans,
     formatSpans: scanner.formatSpans,
     mark,
+    marks,
     propertiesChange,
     markFormatChange,
     fieldsIn,

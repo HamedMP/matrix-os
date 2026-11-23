@@ -4,7 +4,8 @@
  * another author's insertion is marked `delete`, yet it is gone in the
  * `original` view too, because the insertion around it is. The paragraph
  * scan knows both (`context.inserted`, `context.deleted`), so runs are split
- * at the atoms that the view leaves out.
+ * at the atoms that the view leaves out. The same holds for a paragraph mark
+ * and a table row that carry an insertion and a deletion.
  */
 
 import type { DocxDocument } from "../../api/docx.js";
@@ -12,11 +13,13 @@ import type { InlineRun } from "../../api/docx-model.js";
 import { isOfficeError } from "../../errors.js";
 import { getDocxIndex } from "../model/document.js";
 import type { DocxIndex } from "../model/doc-index.js";
-import { type InlineAtom, atomInView, atomIndexAt } from "../model/inline.js";
-import { type RunFilter, markRunFilter } from "./flatten.js";
+import { type InlineAtom, atomInView, atomIndexAt, revisionsGoneInView } from "../model/inline.js";
+import { rowRevisionElements } from "../model/revisions.js";
+import { tableRows } from "../model/structure.js";
+import { type RunFilter, goneInView, markRunFilter } from "./flatten.js";
 
 function filterWithIndex(index: DocxIndex): RunFilter {
-  return (block, view) => {
+  const filter: RunFilter = (block, view) => {
     const record = index.block(block.id);
     if (record === null || record.type !== "paragraph") return markRunFilter(block, view);
     const scan = index.scan(record.element);
@@ -49,6 +52,19 @@ function filterWithIndex(index: DocxIndex): RunFilter {
     }
     return out;
   };
+  // A mark or row that one author inserted and another deleted carries both revisions; the view model shows one.
+  filter.markGone = (block, view) => {
+    const record = index.block(block.id);
+    if (record === null || record.type !== "paragraph") return goneInView(block.markRevision?.kind, view);
+    return revisionsGoneInView(index.scan(record.element).marks, view);
+  };
+  filter.rowGone = (table, rowIndex, view) => {
+    const record = index.block(table.id);
+    const row = record === null || record.type !== "table" ? undefined : tableRows(record.element)[rowIndex];
+    if (row === undefined) return goneInView(table.rows[rowIndex]?.revision?.kind, view);
+    return revisionsGoneInView(rowRevisionElements(row), view);
+  };
+  return filter;
 }
 
 /** The run filter for a document: exact for handles of this engine, mark-based for anything else. */
