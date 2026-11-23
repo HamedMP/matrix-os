@@ -161,6 +161,8 @@ export function removeSheet(state: WorkbookState, sheet: SheetModel): void {
   }
   remove(sheet.entry);
   state.pkg.removeRelationship(state.workbookPart.name, sheet.relId);
+  // The tables of the sheet go with it: a table part nothing points at would keep its name taken.
+  for (const table of sheet.tables) if (state.pkg.hasPart(table.name)) state.pkg.removePart(table.name);
   state.pkg.removePart(sheet.partName);
   state.names = state.names.filter((name) => name.scope !== sheet);
   state.namesDirty = true;

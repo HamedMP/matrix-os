@@ -30,6 +30,7 @@ import { serializeXml } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, requireAddress, requireRange } from "./a1.js";
 import { checkFormula, dependents, needsRecalc, precedents, recalc } from "./calc.js";
 import { guardArrayWrite } from "./arrays.js";
+import { checkTableHeaderWrites, flushTables, holdsTableHeader } from "./tables.js";
 import {
   cellView,
   checkValue,
@@ -79,6 +80,7 @@ export function syncParts(state: WorkbookState): void {
     for (const sheet of state.sheets) references += sheet.stringRefs;
     state.strings.setReferenceCount(references);
   }
+  flushTables(pkg, state.sheets);
   flushNames(state);
   if (state.workbookPart.dirty) {
     pkg.setPart(state.workbookPart.name, serializeXml(state.workbookPart.doc));
@@ -166,6 +168,7 @@ export class WorkbookHandle implements Workbook {
     requireAddress(address);
     const checked = checkValue(value);
     guardArrayWrite(this.#state, model, { start: address, end: address }, null);
+    checkTableHeaderWrites(model, [{ ...address, value: checked, formula: null }]);
     const styleId = findCell(model, address.row, address.col)?.styleId ?? 0;
     writeCell(this.#state, model, address.row, address.col, { value: checked, formula: null, styleId }, "edit");
   }
@@ -189,6 +192,10 @@ export class WorkbookHandle implements Workbook {
       const bounds = { start, end: { row: start.row + checked.length - 1, col: start.col + width - 1 } };
       // Rows may differ in length: a cell is written when its row reaches its column.
       guardArrayWrite(this.#state, model, bounds, (row, col) => col - start.col < (checked[row - start.row] as CellValue[]).length);
+      if (model.tables.length > 0 && holdsTableHeader(model, bounds)) {
+        const writes = checked.flatMap((line, r) => line.map((value, c) => ({ row: start.row + r, col: start.col + c, value, formula: null })));
+        checkTableHeaderWrites(model, writes);
+      }
     }
     for (let r = 0; r < checked.length; r++) {
       const line = checked[r] as CellValue[];
@@ -215,6 +222,7 @@ export class WorkbookHandle implements Workbook {
     const text = formula.startsWith("=") ? formula.slice(1) : formula;
     checkFormula(this.#state, text);
     guardArrayWrite(this.#state, model, { start: address, end: address }, null);
+    checkTableHeaderWrites(model, [{ ...address, value: null, formula: text }]);
     if (text === current.formula) return;
     // The value is unknown until the next calculation.
     writeCell(this.#state, model, address.row, address.col, { value: null, formula: text, styleId: current.styleId }, "edit");
@@ -233,6 +241,7 @@ export class WorkbookHandle implements Workbook {
     guardArrayWrite(state, model, { start: address, end: address }, null);
     let styleId = findCell(model, address.row, address.col)?.styleId ?? 0;
     const value = parsed.kind === "clear" ? null : checkValue(parsed.value);
+    checkTableHeaderWrites(model, [{ ...address, value, formula: null }]);
     if (parsed.kind === "value" && parsed.format !== null && state.styles.numberFormat(styleId) === "General") {
       styleId = applyStylePatch(state.styles, styleId, { numberFormat: parsed.format });
     }
@@ -246,6 +255,9 @@ export class WorkbookHandle implements Workbook {
     }
     const checked = requireRange(range);
     if (what !== "formats") guardArrayWrite(this.#state, model, checked, null);
+    if (what !== "formats" && holdsTableHeader(model, checked)) {
+      throw new OfficeError("invalid_operation", "the header of a table cannot be cleared");
+    }
     clearRange(this.#state, model, checked, what);
   }
 

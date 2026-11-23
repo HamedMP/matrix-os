@@ -310,6 +310,7 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     rowsUnordered,
     hasShared,
     stringRefs,
+    tables: [],
     rowSetDirty: false,
     merges: readMerges(root),
     mergesDirty: false,

@@ -24,6 +24,7 @@ import {
   parseCached,
   sameValue,
 } from "./state.js";
+import { renameTableColumn } from "./tables.js";
 import { applyStylePatch } from "./style-write.js";
 
 const ERROR_CODES: ReadonlySet<string> = new Set(["#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#N/A", "#NUM!", "#NULL!"]);
@@ -144,6 +145,8 @@ export function writeCell(
   sheet.dirty = true;
   sheet.dimensions = undefined;
   if (contentChanged) {
+    // The header cell of a table and the name of its column are one thing to other software.
+    renameTableColumn(sheet, row, col, next.value);
     markEdited(state, sheet, row, col);
     if (formulaChanged) {
       invalidateGraph(state);

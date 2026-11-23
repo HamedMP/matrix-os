@@ -1,7 +1,8 @@
 /**
- * Inserting and deleting rows and columns: cells, sizes, merged ranges and
- * the ranges other sheet features point at move with them, and every formula
- * and defined name of the workbook that refers to the sheet is rewritten.
+ * Inserting and deleting rows and columns: cells, sizes, merged ranges, the
+ * ranges other sheet features point at and the ranges of tables move with
+ * them, and every formula and defined name of the workbook that refers to
+ * the sheet is rewritten. An edit that would cut a table apart is refused.
  */
 
 import type { XmlElement } from "../../api/xml.js";
@@ -15,6 +16,7 @@ import { attachSheet } from "./sheet-read.js";
 import { sheetDimensions } from "./sheet-write.js";
 import { invalidateArrayRanges } from "./arrays.js";
 import { dropCalcChain, invalidateGraph } from "./state.js";
+import { checkTablesForStructure, moveTables } from "./tables.js";
 import { isNamed, kid, kids } from "./xml-util.js";
 
 function checkOp(op: StructuralOp): void {
@@ -180,6 +182,8 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
       throw new OfficeError("invalid_operation", "the insertion would push cells off the sheet");
     }
   }
+  // A table cannot be cut apart; this throws before anything moves.
+  checkTablesForStructure(sheet, op);
   moveCells(state, sheet, op);
   // Array formulas moved with their cells, or went with deleted ones.
   invalidateArrayRanges(sheet);
@@ -192,6 +196,7 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   sheet.mergesDirty = true;
   moveColumns(sheet, op);
   moveSheetFeatures(sheet, op);
+  moveTables(sheet, op);
   // Shared formulas are written out one by one: their group ranges no longer hold.
   if (sheet.hasShared) sheet.unshare = true;
   sheet.dirty = true;

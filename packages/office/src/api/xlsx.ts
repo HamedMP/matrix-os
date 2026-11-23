@@ -59,6 +59,10 @@ export type * from "./xlsx-model.js";
  * array formula over more than 100 000 cells and a formula with an unknown
  * function keep the values stored in the file (`Cell.formulaUnsupported`).
  *
+ * Tables: the header cell of a table column is its name. Setting one renames
+ * the column; a header that is not text, is empty, repeats another column of
+ * the table or holds a formula, and clearing one, throw `invalid_operation`.
+ *
  * Change journal: between `beginProposal` and `endProposal` every content or
  * style edit to a cell is also recorded as a {@link CellChange}. The cell
  * holds the new content at once, so dependants recalculate and the owner
@@ -135,9 +139,15 @@ export interface Workbook {
   setStyle(sheet: SheetId, range: CellRange, patch: CellStylePatch): void;
 
   /**
-   * Structural edits. Cells, merged ranges, sizes, formulas and defined names
+   * Structural edits. Cells, merged ranges, sizes, formulas, defined names
+   * and the ranges of conditional formats, validations, links and tables
    * move with their rows and columns; a reference to a deleted cell becomes
    * `#REF!`. `index` is the first row or column inserted or deleted.
+   *
+   * A table (a list object with a header row) cannot be cut apart: inserting
+   * or deleting a column inside one, and deleting its header row, its totals
+   * row or all of its data rows, throw `invalid_operation`. Rows inserted or
+   * deleted among its data make it grow or shrink.
    */
   insertRows(sheet: SheetId, index: number, count: number): void;
   deleteRows(sheet: SheetId, index: number, count: number): void;

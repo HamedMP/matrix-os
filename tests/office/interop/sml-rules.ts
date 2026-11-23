@@ -136,9 +136,10 @@ export function fontsOutOfOrder(root: XmlElement): string[] {
   return out;
 }
 
-function sharedStringProblems(root: XmlElement): { problems: string[]; count: number } {
+function sharedStringProblems(root: XmlElement): { problems: string[]; count: number; texts: string[] } {
   const problems: string[] = [];
   const items = children(root, "si");
+  const texts = items.map((item) => [...walk(item)].filter((element) => element.name === "t").map((element) => text(element)).join(""));
   const unique = attr(root, "uniqueCount");
   if (unique !== null && unique !== String(items.length)) problems.push(`uniqueCount="${unique}" but there are ${items.length} <si> items`);
   items.forEach((item, index) => {
@@ -150,7 +151,59 @@ function sharedStringProblems(root: XmlElement): { problems: string[]; count: nu
       if (sourceText(element).includes("\r")) problems.push(`string ${index} holds a literal carriage return, which an XML reader turns into a line feed`);
     }
   });
-  return { problems, count: items.length };
+  return { problems, count: items.length, texts };
+}
+
+/** The text a cell shows when it holds a string, else null. */
+function cellString(cell: XmlElement, strings: readonly string[]): string | null {
+  const type = attr(cell, "t");
+  const value = child(cell, "v");
+  if (type === "s") return value === null ? null : (strings[Number(text(value))] ?? null);
+  if (type === "str") return value === null ? null : text(value);
+  if (type === "inlineStr") return [...walk(cell)].filter((element) => element.name === "t").map((element) => text(element)).join("");
+  return null;
+}
+
+/**
+ * A table against the cells of its sheet: its range holds a header row and
+ * at least one row of data, it has one column per column of the range, and
+ * every column is named as its header cell reads. Spreadsheet software
+ * repairs or refuses a workbook where they differ.
+ */
+export function tableProblems(table: XmlElement, sheet: XmlElement, strings: readonly string[]): string[] {
+  const problems: string[] = [];
+  const name = attr(table, "displayName") ?? attr(table, "name") ?? "?";
+  const box = parseRef(attr(table, "ref"));
+  if (box === null) return [`table ${name} has the malformed ref ${JSON.stringify(attr(table, "ref"))}`];
+  const headerRows = Number(attr(table, "headerRowCount") ?? "1");
+  const totalsRows = Number(attr(table, "totalsRowCount") ?? "0");
+  if (box[2] - box[0] + 1 - headerRows - totalsRows < 1) problems.push(`table ${name} ${attr(table, "ref")} has no row of data`);
+  const list = child(table, "tableColumns");
+  const columns = children(list, "tableColumn");
+  if (list !== null) problems.push(...countProblems(list, "tableColumn").problems.map((problem) => `table ${name}: ${problem}`));
+  if (columns.length !== box[3] - box[1] + 1) problems.push(`table ${name} has ${columns.length} columns for the ${box[3] - box[1] + 1} columns of ${attr(table, "ref")}`);
+  const names = columns.map((column) => (attr(column, "name") ?? "").toLowerCase());
+  if (new Set(names).size !== names.length) problems.push(`table ${name} has two columns of one name`);
+  const filter = child(table, "autoFilter");
+  const filterBox = filter === null ? null : parseRef(attr(filter, "ref"));
+  if (filter !== null && (filterBox === null || filterBox[0] !== box[0] || filterBox[1] !== box[1] || filterBox[3] !== box[3] || filterBox[2] !== box[2] - totalsRows)) {
+    problems.push(`table ${name} autoFilter ${attr(filter, "ref")} does not match its range ${attr(table, "ref")}`);
+  }
+  if (headerRows !== 1) return problems;
+  const headers = new Map<number, string | null>();
+  const data = child(sheet, "sheetData");
+  for (const row of children(data, "row")) {
+    if (Number(attr(row, "r")) !== box[0]) continue;
+    for (const cell of children(row, "c")) {
+      const match = A1.exec(attr(cell, "r") ?? "");
+      if (match !== null) headers.set(columnNumber(match[1] as string), cellString(cell, strings));
+    }
+  }
+  columns.forEach((column, index) => {
+    const shown = headers.get(box[1] + index) ?? null;
+    if (shown !== attr(column, "name")) problems.push(`table ${name} column ${index + 1} is named ${JSON.stringify(attr(column, "name"))} but its header cell reads ${JSON.stringify(shown)}`);
+  });
+  return problems;
 }
 
 interface SheetFacts {
@@ -354,16 +407,19 @@ export async function sheetProblems(bytes: Uint8Array): Promise<string[]> {
     for (const problem of result.problems) problems.push(`${part}: ${problem}`);
   }
   let strings = 0;
+  let stringTexts: string[] = [];
   let stringsRoot: XmlElement | null = null;
   for (const part of related(pkg, workbookPart, "/sharedStrings")) {
     const root = pkg.parts.get(part)?.root;
     if (root === undefined) continue;
     const result = sharedStringProblems(root);
     strings = result.count;
+    stringTexts = result.texts;
     stringsRoot = root;
     for (const problem of result.problems) problems.push(`${part}: ${problem}`);
   }
   let references = 0;
+  const tableNames: string[] = [];
   const formulasBySheet = new Map<string, Set<string>>();
   sheets.forEach((sheet, index) => {
     const target = pkg.relationships.get(workbookPart)?.get(attr(sheet, "r:id") ?? "")?.[1];
@@ -374,7 +430,14 @@ export async function sheetProblems(bytes: Uint8Array): Promise<string[]> {
     // The calculation chain names a sheet by its sheetId.
     formulasBySheet.set(attr(sheet, "sheetId") ?? String(index + 1), facts.formulas);
     for (const problem of facts.problems) problems.push(`${target}: ${problem}`);
+    for (const tablePart of related(pkg, target, "/table")) {
+      const table = pkg.parts.get(tablePart)?.root;
+      if (table === undefined) continue;
+      tableNames.push((attr(table, "displayName") ?? "").toLowerCase());
+      for (const problem of tableProblems(table, root, stringTexts)) problems.push(`${tablePart}: ${problem}`);
+    }
   });
+  if (new Set(tableNames).size !== tableNames.length) problems.push(`two tables share a name: ${tableNames.join(", ")}`);
   const declared = stringsRoot === null ? null : attr(stringsRoot, "count");
   if (declared !== null && declared !== String(references)) problems.push(`sharedStrings: count="${declared}" but the sheets hold ${references} shared string cells`);
   for (const part of related(pkg, workbookPart, "/calcChain")) {

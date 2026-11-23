@@ -11,6 +11,7 @@ import type { FormulaDeps, SheetModel, WorkbookState } from "./model.js";
 import { readNames } from "./names.js";
 import { type ReadContext, readSheet } from "./sheet-read.js";
 import { SharedStrings } from "./shared-strings.js";
+import { readTables, tablePartNames } from "./tables.js";
 import { CONTENT_TYPE_STYLES, CONTENT_TYPE_WORKBOOK, CONTENT_TYPE_WORKSHEET, REL_STYLES, REL_WORKSHEET } from "./state.js";
 import { StyleTable } from "./styles.js";
 import { NS_MAIN, NS_RELATIONSHIPS, boolAttr, isNamed, kid, kids } from "./xml-util.js";
@@ -106,6 +107,9 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
       context,
       text,
     );
+    const tableNames = tablePartNames(pkg, partName);
+    sheet.tables = readTables(tableNames, (name) => sources.texts.get(partNameKey(name)));
+    for (const name of tableNames) sources.texts.delete(partNameKey(name));
     // The model has what it needs; the texts of other parts are not kept either.
     sources.texts.delete(partNameKey(partName));
     sheets.push(sheet);
@@ -152,7 +156,10 @@ export async function openState(bytes: Uint8Array, options: OpenXlsxOptions | un
     if (relationship.targetMode !== "Internal") continue;
     if (!/\/(worksheet|sharedStrings|styles|theme)$/.test(relationship.type)) continue;
     const part = pkg.resolveTarget(workbookPart, relationship.target);
-    if (pkg.hasPart(part)) wanted.push(part);
+    if (!pkg.hasPart(part)) continue;
+    wanted.push(part);
+    // The tables of a sheet move with its rows and columns, so their parts are read too.
+    if (relationship.type.endsWith("/worksheet")) wanted.push(...tablePartNames(pkg, part));
   }
   const texts = new Map<string, string>();
   for (const part of wanted) texts.set(partNameKey(part), await pkg.getPartText(part));
