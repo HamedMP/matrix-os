@@ -19,11 +19,16 @@ const live = new Map<string, Entry>();
 
 /** The live body of a draft whose stored HTML is `bodyHtml`; `reused` is false when it was read from the HTML. */
 export function bodyFor(localId: string, bodyHtml: string, now: string): { body: ComposeBody; reused: boolean } {
+  const opened = peekBody(localId, bodyHtml, now);
+  remember(localId, opened.body, bodyHtml);
+  return opened;
+}
+
+/** Like `bodyFor` but records nothing, so it is safe in a render; call `remember` once the body is in use. */
+export function peekBody(localId: string, bodyHtml: string, now: string): { body: ComposeBody; reused: boolean } {
   const entry = live.get(localId);
   const reused = entry !== undefined && entry.written === bodyHtml;
-  const body = reused ? entry.body : ComposeBody.fromDraftHtml(bodyHtml, now);
-  remember(localId, body, bodyHtml);
-  return { body, reused };
+  return { body: reused ? entry.body : ComposeBody.fromDraftHtml(bodyHtml, now), reused };
 }
 
 /** Records what `body` wrote into the draft. */

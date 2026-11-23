@@ -11,7 +11,7 @@ import type { ProposalRegistry } from "../../agent/proposals";
 import { ASSISTANT_AUTHOR, textToBodyHtml } from "../../compose/assistant";
 import { ComposeBody, type EditAuthor } from "../../compose/compose-body";
 import { hasTrackedMarkup } from "../../compose/redline-body";
-import { bodyFor, remember } from "../../compose/sessions";
+import { peekBody, remember } from "../../compose/sessions";
 import type { DraftState, MailStore } from "../../model";
 
 /** Undo snapshots kept per composer. */
@@ -48,9 +48,23 @@ interface Options {
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
+/** The body a composer opens with: the live session, or the stored HTML, or an agent proposal shown as a redline. */
+function openInitialBody(localId: string, bodyHtml: string, now: () => number, proposals: ProposalRegistry | undefined): ComposeBody {
+  const opened = peekBody(localId, bodyHtml, iso(now()));
+  const proposal = opened.reused ? undefined : proposals?.forDraft(localId);
+  if (proposal && !opened.body.hasRedline() && bodyHtml) {
+    const fresh = ComposeBody.fromDraftHtml(proposal.original ? textToBodyHtml(proposal.original) : "", iso(now()));
+    fresh.proposeRewrite(bodyHtml, { author: ASSISTANT_AUTHOR, date: iso(proposal.createdAt || now()) });
+    if (fresh.pendingCount() > 0) return fresh;
+  }
+  return opened.body;
+}
+
 export function useComposeBody({ store, draft, ownerName, now, proposals }: Options): ComposeBodyApi {
   const localId = draft.localId;
-  const bodyRef = useRef<ComposeBody | null>(null);
+  // Computed once, without side effects; the mount effect below records it in the live sessions.
+  const [initialBody] = useState(() => openInitialBody(localId, draft.draft.bodyHtml, now, proposals));
+  const bodyRef = useRef<ComposeBody>(initialBody);
   const writtenRef = useRef(draft.draft.bodyHtml);
   const past = useRef<string[]>([]);
   const future = useRef<string[]>([]);
@@ -58,16 +72,6 @@ export function useComposeBody({ store, draft, ownerName, now, proposals }: Opti
   const [renderKey, setRenderKey] = useState(0);
   const [, setVersion] = useState(0);
 
-  if (bodyRef.current === null) {
-    const opened = bodyFor(localId, draft.draft.bodyHtml, iso(now()));
-    bodyRef.current = opened.body;
-    const proposal = opened.reused ? undefined : proposals?.forDraft(localId);
-    if (proposal && !opened.body.hasRedline() && draft.draft.bodyHtml) {
-      const fresh = ComposeBody.fromDraftHtml(proposal.original ? textToBodyHtml(proposal.original) : "", iso(now()));
-      fresh.proposeRewrite(draft.draft.bodyHtml, { author: ASSISTANT_AUTHOR, date: iso(proposal.createdAt || now()) });
-      if (fresh.pendingCount() > 0) bodyRef.current = fresh;
-    }
-  }
   const body = bodyRef.current;
 
   const owner = useCallback((): EditAuthor => ({ author: ownerName, date: iso(now()) }), [ownerName, now]);
@@ -98,8 +102,9 @@ export function useComposeBody({ store, draft, ownerName, now, proposals }: Opti
 
   // The proposal above (if any) is written once on mount.
   useEffect(() => {
-    if (bodyRef.current && bodyRef.current.draftBody().bodyHtml !== writtenRef.current) commit(true);
-  }, [commit]);
+    if (bodyRef.current.draftBody().bodyHtml !== writtenRef.current) commit(true);
+    else remember(localId, bodyRef.current, writtenRef.current);
+  }, [commit, localId]);
 
   // Someone else wrote the body: show the difference as an assistant proposal.
   const incoming = draft.draft.bodyHtml;

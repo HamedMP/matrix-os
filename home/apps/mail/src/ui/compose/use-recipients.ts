@@ -30,10 +30,9 @@ export interface RecipientsApi {
 export function useRecipients(store: MailStore, localId: string): RecipientsApi {
   const [text, setTexts] = useState<PerField<string>>({ to: "", cc: "", bcc: "" });
   const [invalid, setInvalids] = useState<PerField<string[]>>({ to: [], cc: [], bcc: [] });
+  // Every change below updates the ref first and then the state, so the refs always hold the latest values.
   const textRef = useRef(text);
   const invalidRef = useRef(invalid);
-  textRef.current = text;
-  invalidRef.current = invalid;
 
   const current = useCallback((kind: RecipientKind): MailAddress[] => store.getSnapshot().drafts[localId]?.draft[kind] ?? [], [store, localId]);
 

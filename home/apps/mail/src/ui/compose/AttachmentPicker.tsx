@@ -102,7 +102,7 @@ export function AttachmentPicker({ open, files, draft, onClose, onAttach, onBusy
       <nav className="mail-compose-picker__crumbs" aria-label="Folder">
         <button type="button" className="oui-button oui-button--ghost" onClick={() => setDir("")}><Home size={14} aria-hidden="true" /> Home</button>
         {crumbs.map((part, index) => (
-          <span key={`${index}-${part}`} className="mail-compose-picker__crumb">
+          <span key={crumbs.slice(0, index + 1).join("/")} className="mail-compose-picker__crumb">
             <ChevronRight size={12} aria-hidden="true" />
             <button type="button" className="oui-button oui-button--ghost" onClick={() => setDir(crumbs.slice(0, index + 1).join("/"))}>{part}</button>
           </span>

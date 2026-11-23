@@ -69,4 +69,4 @@ export {
   type PickerFiles,
 } from "./attachments";
 export { ASSISTANT_AUTHOR, assistantBodyHtml, buildRewritePrompt, textToBodyHtml, type RewriteInput } from "./assistant";
-export { MAX_LIVE_BODIES, bodyFor, forget, remember } from "./sessions";
+export { MAX_LIVE_BODIES, bodyFor, forget, peekBody, remember } from "./sessions";

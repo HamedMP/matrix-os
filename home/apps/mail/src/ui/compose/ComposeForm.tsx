@@ -14,7 +14,7 @@ import { agentErrorMessage, isMailAgentError } from "../../agent/errors";
 import { collectKnownAddresses } from "../../compose/address-book";
 import { assistantBodyHtml } from "../../compose/assistant";
 import { formatBytes } from "../../compose/attachments";
-import { sendComposedDraft } from "../../compose/send-flow";
+import { sendComposedDraft, type SendOutcome } from "../../compose/send-flow";
 import { SEND_BLOCK_TEXT, isExplicitSend, planSend, type SendTrigger } from "../../compose/send-plan";
 import { forget } from "../../compose/sessions";
 import { createSignatureStore, signatureHtml } from "../../compose/signature";
@@ -121,14 +121,20 @@ export function ComposeForm(props: ComposeFormProps) {
   const doSend = async (trigger: SendTrigger) => {
     setSendBusy(true);
     setNotice(null);
-    const outcome = await sendComposedDraft(store, id, trigger);
+    let outcome: SendOutcome = "failed";
+    try {
+      outcome = await sendComposedDraft(store, id, trigger);
+    } catch (error: unknown) {
+      console.warn(`[mail] compose.send.failed (${error instanceof Error ? error.name : typeof error})`);
+    } finally {
+      if (mounted.current) setSendBusy(false);
+    }
     if (outcome === "sent") {
       forget(id);
       ui?.notify("Message sent", "success");
       return;
     }
     if (!mounted.current) return;
-    setSendBusy(false);
     const after = store.getSnapshot().drafts[id];
     if (outcome === "failed" && !after?.error) setNotice(SEND_FAILED);
   };

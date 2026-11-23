@@ -94,8 +94,9 @@ export function createListActions(ctx: StoreContext): ListActions {
       return fetchers;
     }
     const accounts = descriptor.kind === "folder" ? ctx.entries().filter((e) => e.account.id === descriptor.accountId) : ctx.entries();
+    // Folder lists are fetched for every account at once, so one slow mailbox does not hold up the others.
+    await Promise.all(accounts.filter(({ account }) => !ctx.get().folders[account.id]).map(({ account }) => loadFolders(account.id)));
     for (const { account, provider } of accounts) {
-      if (!ctx.get().folders[account.id]) await loadFolders(account.id);
       const folders = ctx.get().folders[account.id] ?? [];
       const folderId = descriptor.kind === "folder"
         ? descriptor.folderId

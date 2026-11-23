@@ -78,9 +78,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const rootRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const handlers = useRef({ onInput, onUndo, onRedo, onSendShortcut, onLinkShortcut });
-  handlers.current = { onInput, onUndo, onRedo, onSendShortcut, onLinkShortcut };
   const markupRef = useRef(markup);
-  markupRef.current = markup;
+  // Latest props for the DOM listeners and the markup effect below; runs before that effect.
+  useLayoutEffect(() => {
+    handlers.current = { onInput, onUndo, onRedo, onSendShortcut, onLinkShortcut };
+    markupRef.current = markup;
+  });
 
   useImperativeHandle(ref, () => ({
     focus: () => rootRef.current?.focus(),
