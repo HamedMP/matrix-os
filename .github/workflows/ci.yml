@@ -542,6 +542,18 @@ jobs:
           fi
           rg --version
 
+      # Ubuntu's AppArmor userns restriction makes `unshare -Ur` fail, so the
+      # support-access mount-namespace install test would skip unnoticed.
+      - name: Allow user namespaces for isolated install tests
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" != "self-hosted" ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || echo "AppArmor userns restriction not adjustable here"
+          fi
+          if ! unshare -Ur -m true; then
+            echo "::warning::User namespaces unavailable; support-access-bootstrap mount-namespace test will skip"
+          fi
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
