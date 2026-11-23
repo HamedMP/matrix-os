@@ -232,7 +232,8 @@ function text(result: Awaited<ReturnType<Client["callTool"]>>): string {
 describe("board tools in a chat run", () => {
   it("reach the run's own project with the run token, acting as the chat", async () => {
     const task = await ownerTask("alpha", "Board task");
-    await sessions.link({ ownerId: OWNER.id, projectId: "proj_alpha" }, task.id, { ref: "chat_abc", kind: "chat", title: "AL-1" }, "user:user_owner", "session_started");
+    // Every task is a chat: the chat store links the task to its chat.
+    await db.updateTable("project_tasks").set({ chat_id: "chat_abc" }).where("id", "=", task.id).execute();
     const capability = registry.issue({ owner: { type: "personal", ownerId: OWNER.id }, runId: "run_1", scope: "chat_call", board: { chatId: "chat_abc", projectSlug: "alpha" } })!;
     const { client, close } = await mcp(capability.token, "chat-call");
     try {
@@ -282,7 +283,8 @@ describe("board tools in a kernel chat run", () => {
 
   it("binds a board-started chat to its task and project and acts as the chat", async () => {
     const task = await ownerTask("alpha", "Started from the board");
-    await sessions.link({ ownerId: OWNER.id, projectId: "proj_alpha" }, task.id, { ref: "chat_kernel", kind: "chat", title: "AL-1" }, "user:user_owner", "session_started");
+    // Every task is a chat: the chat store links the task to its chat.
+    await db.updateTable("project_tasks").set({ chat_id: "chat_kernel" }).where("id", "=", task.id).execute();
     const overrides: KernelDispatchOverrides[] = [];
     const adapter = createKernelChatProviderAdapter({
       dispatcher: { dispatch: vi.fn(async (_prompt, _session, onEvent, _meta, _controller, override) => {

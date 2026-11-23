@@ -67,8 +67,17 @@ export class ProjectTaskSessionRepository {
     return new Set(rows.map((row) => row.session_ref));
   }
 
-  /** The live task of `projectId` that a session (`chat_…` or `term.…`) is linked to, if any. */
+  /**
+   * The live task of `projectId` a session belongs to: a chat is its own task
+   * (every task is a chat), a terminal is whichever task it is attached to.
+   */
   async taskForSession(ownerId: string, projectId: string, ref: string): Promise<string | null> {
+    if (ref.startsWith("chat_")) {
+      const own = await this.db.selectFrom("project_tasks").select("id")
+        .where("owner_id", "=", ownerId).where("project_id", "=", projectId)
+        .where("chat_id", "=", ref).where("deleted_at", "is", null).executeTakeFirst();
+      return own?.id ?? null;
+    }
     const row = await this.db.selectFrom("project_task_sessions as session")
       .innerJoin("project_tasks as task", (join) => join
         .onRef("task.owner_id", "=", "session.owner_id").onRef("task.id", "=", "session.task_id"))
