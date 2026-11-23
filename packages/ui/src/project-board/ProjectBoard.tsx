@@ -39,9 +39,11 @@ interface PendingClose { taskId: string; status: TaskStatus; index: number }
 
 /** A project's task board: kanban or list, filters, quick create, and the task detail sheet. */
 export function ProjectBoard({ client, preferencesKey, storage, accessory, onImportLinear, onOpenSession, onOpenChat, detailsTaskId = null, active = true }: ProjectBoardProps) {
-  const board = useProjectBoard(client, { includeArchived: true });
   const nowMs = useMinuteClock(active);
   const [preferences, setPreferences] = useState<BoardPreferences>(() => readBoardPreferences(preferencesKey ? storage : undefined, preferencesKey ?? ""));
+  // Archived tasks load only when shown, or once to tell an empty board from one with only archived tasks.
+  const [probeArchived, setProbeArchived] = useState(false);
+  const board = useProjectBoard(client, { includeArchived: preferences.filter.showArchived || probeArchived });
   const [openTaskId, setOpenTaskId] = useState<string | null>(detailsTaskId);
   const [requestedDetails, setRequestedDetails] = useState(detailsTaskId);
   if (detailsTaskId !== requestedDetails) {
@@ -74,6 +76,7 @@ export function ProjectBoard({ client, preferencesKey, storage, accessory, onImp
   const liveCount = board.tasks.filter((task) => task.archivedAt === null).length;
   const hasArchived = liveCount < board.tasks.length;
   const empty = liveCount === 0 && !filter.showArchived;
+  if (board.status === "ready" && liveCount === 0 && !probeArchived && !filter.showArchived) setProbeArchived(true);
 
   const { notice, dismissNotice } = board;
   useEffect(() => {

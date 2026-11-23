@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectBoard } from "../../packages/ui/src/project-board/ProjectBoard";
 import { boardTask, fakeBoardClient } from "./project-board-fake-client";
@@ -27,5 +27,23 @@ describe("ProjectBoard with only archived tasks", () => {
 
     expect(await screen.findByRole("heading", { name: "No tasks yet" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Show/ })).toBeNull();
+  });
+});
+
+describe("ProjectBoard first open", () => {
+  // Fault detected: every open fetched the active and the archived lists up front, so each
+  // load cost two task requests per wave even when nobody looked at archived tasks.
+  it("reads each resource once and leaves archived tasks until they are shown", async () => {
+    const { client } = fakeBoardClient(() => [boardTask("t1", { title: "Live work" })]);
+    render(<ProjectBoard client={client} />);
+    expect(await screen.findByText("Live work")).toBeTruthy();
+    expect(client.listTasks).toHaveBeenCalledTimes(1);
+    expect(client.listTasks).toHaveBeenCalledWith({ includeArchived: false });
+    expect(client.listMembers).toHaveBeenCalledTimes(1);
+    expect(client.getSettings).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Show/ }));
+    fireEvent.click(await screen.findByRole("option", { name: "Archived tasks" }));
+    await waitFor(() => expect(client.listTasks).toHaveBeenLastCalledWith({ includeArchived: true }));
   });
 });

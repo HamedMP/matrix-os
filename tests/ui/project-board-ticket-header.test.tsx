@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectBoard } from "../../packages/ui/src/project-board/ProjectBoard";
 import { TicketHeader } from "../../packages/ui/src/project-board/TicketHeader";
 import { useChatTicket } from "../../packages/ui/src/project-board/use-chat-ticket";
-import { TaskConflictError } from "../../packages/ui/src/project-board/client";
+import { ProjectBoardRequestError, TaskConflictError } from "../../packages/ui/src/project-board/client";
 import { boardTask, fakeBoardClient } from "./project-board-fake-client";
 
 afterEach(cleanup);
@@ -66,6 +66,17 @@ describe("every task is a chat", () => {
     await act(() => result.current.update({ priority: "low" }));
     expect(result.current.task?.title).toBe("Theirs");
     expect(result.current.notice).toMatch(/Someone else changed/);
+  });
+
+  it("says a terminal could not start, not that a save failed", async () => {
+    const fake = fakeBoardClient(() => [boardTask("t1", { chatId: "chat_a" })]);
+    fake.client.startWork.mockRejectedValueOnce(new ProjectBoardRequestError("The session could not be started right now.", "task_session_unavailable"));
+    const { result } = renderHook(() => useChatTicket(fake.client, "chat_a"));
+    await waitFor(() => expect(result.current.task?.id).toBe("t1"));
+    let started: unknown = "pending";
+    await act(async () => { started = await result.current.startTerminal(); });
+    expect(started).toBeNull();
+    expect(result.current.notice).toBe("Couldn't start the terminal. Try again.");
   });
 
   it("has no ticket for a chat outside every board", async () => {

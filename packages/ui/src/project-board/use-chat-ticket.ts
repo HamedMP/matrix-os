@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { TaskAgentWorkingError, TaskConflictError, type ProjectBoardClient, type UpdateTaskInput } from "./client.js";
-import type { BoardMember, ProjectTask, TaskStatus } from "./types.js";
+import type { BoardMember, ProjectTask, TaskSession, TaskStatus } from "./types.js";
 
 export interface ChatTicketState {
   /** The chat's ticket; null while loading, for a chat outside a project, or when the board is unavailable. */
@@ -13,10 +13,12 @@ export interface ChatTicketState {
   notice: string | null;
   update(input: UpdateTaskInput): Promise<void>;
   setStatus(status: TaskStatus): Promise<void>;
-  startTerminal(): Promise<void>;
+  /** Attaches a new terminal to the ticket; resolves to it, or null when it could not start. */
+  startTerminal(): Promise<TaskSession | null>;
 }
 
-const FAILED = "Couldn't save the change. Try again.";
+const FAILED_SAVE = "Couldn't save the change. Try again.";
+const FAILED_TERMINAL = "Couldn't start the terminal. Try again.";
 
 /**
  * The ticket of one chat (every task is a chat), kept fresh from board change
@@ -51,7 +53,8 @@ export function useChatTicket(client: ProjectBoardClient | null, chatId: string 
     return () => { live = false; unsubscribe(); };
   }, [client, chatId, reload]);
 
-  const write = async (action: (current: ProjectTask) => Promise<ProjectTask>) => {
+  // Notices are fixed copy chosen per action; server error text is never shown here.
+  const write = async (action: (current: ProjectTask) => Promise<ProjectTask>, failure = FAILED_SAVE) => {
     if (!client || !task) return;
     setBusy(true);
     setNotice(null);
@@ -65,7 +68,7 @@ export function useChatTicket(client: ProjectBoardClient | null, chatId: string 
         setNotice("The agent is still working. Close the task from the board to confirm.");
       } else {
         console.warn("[project-board] ticket edit failed", error instanceof Error ? error.name : typeof error);
-        setNotice(FAILED);
+        setNotice(failure);
       }
     } finally {
       setBusy(false);
@@ -76,6 +79,14 @@ export function useChatTicket(client: ProjectBoardClient | null, chatId: string 
     task, members, busy, notice,
     update: (input) => write((current) => client!.updateTask(current.id, current.revision, input)),
     setStatus: (status) => write((current) => (current.status === status ? Promise.resolve(current) : client!.moveTask(current.id, { status }))),
-    startTerminal: () => write(async (current) => (await client!.startWork(current.id, { kind: "terminal" })).task),
+    startTerminal: async () => {
+      let session: TaskSession | null = null;
+      await write(async (current) => {
+        const started = await client!.startWork(current.id, { kind: "terminal" });
+        session = started.session;
+        return started.task;
+      }, FAILED_TERMINAL);
+      return session;
+    },
   };
 }
