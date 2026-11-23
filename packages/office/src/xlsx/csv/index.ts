@@ -3,12 +3,14 @@
 import type { CreateXlsx, ParseCsv } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
 import type { SheetModel } from "../workbook/model.js";
-import { writeCell } from "../workbook/cells.js";
+import { findCell, writeCell } from "../workbook/cells.js";
 import { MAX_CELL_TEXT } from "../workbook/state.js";
 import { applyStylePatch } from "../workbook/style-write.js";
 import { stateOf } from "../workbook/workbook.js";
 import { inferField } from "./infer.js";
 import { scanCsv, sniffDelimiter, stripBom } from "./parse.js";
+import { markCsvWorkbook, noteSourceText } from "./source.js";
+import { rawText } from "./write.js";
 
 export { inferField } from "./infer.js";
 export { scanCsv, sniffDelimiter } from "./parse.js";
@@ -60,10 +62,16 @@ export function makeParseCsv(createXlsx: CreateXlsx): ParseCsv {
         // A cell holds at most 32767 characters; longer text is cut, as a spreadsheet does on import.
         if (typeof value === "string" && value.length > MAX_CELL_TEXT) value = value.slice(0, MAX_CELL_TEXT);
         writeCell(state, sheet, r, c, { value, formula: null, styleId }, null);
+        // A field that would be written differently from how it came (`10.00`, a date) keeps its text.
+        if (typeof value !== "string" && (styleId !== 0 || rawText(value) !== field.text)) {
+          const cell = findCell(sheet, r, c);
+          if (cell !== undefined) noteSourceText(cell, field.text);
+        }
       }
     }
     // Nothing was calculated and nothing needs to be: the sheet holds literals only.
     state.calc.edited.clear();
+    markCsvWorkbook(state);
     return workbook;
   };
 }

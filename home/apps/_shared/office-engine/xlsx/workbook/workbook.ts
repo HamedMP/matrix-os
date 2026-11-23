@@ -475,6 +475,11 @@ export function createHandle(state: WorkbookState): WorkbookHandle {
   return handle;
 }
 
+/** As {@link stateOf}, with null for a workbook that is not a handle of this engine. */
+export function findState(workbook: Workbook): WorkbookState | null {
+  return states.get(workbook) ?? null;
+}
+
 export function stateOf(workbook: Workbook): WorkbookState {
   const state = states.get(workbook);
   if (state === undefined) throw new OfficeError("invalid_argument", "not a workbook handle of this engine");
