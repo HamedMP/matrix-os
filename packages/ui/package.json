@@ -25,6 +25,8 @@
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
     "./appearance": "./src/appearance/index.ts",
+    "./shortcuts": "./src/shortcuts/index.ts",
+    "./shortcuts.css": "./src/shortcuts/shortcuts.css",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
     "./get-started.css": "./src/get-started/get-started.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
