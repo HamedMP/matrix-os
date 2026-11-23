@@ -1,10 +1,9 @@
 /**
- * The contract between the Docs shell and the side panels other modules
- * supply: `./review/ReviewPanel.tsx`, `./agent/DocsAgentPanel.tsx` and
- * `./compare/ComparePanel.tsx`. Each module exports its component as the
- * default export or under its file name (`ReviewPanel`, `DocsAgentPanel`,
- * `ComparePanel`). The shell loads it lazily and shows a fallback when the
- * module is absent or fails to load.
+ * The contract between the Docs shell and its side panels: the Review tab
+ * (`./ReviewIntegration.tsx`), `./agent/DocsAgentPanel.tsx` and
+ * `./compare/ComparePanel.tsx`. The Assistant and Compare modules export
+ * their component as the default export; `./SidePanels.tsx` loads them
+ * lazily and shows a fallback when one fails to load or render.
  */
 
 import type { DocumentEditorController } from "../editor/index";

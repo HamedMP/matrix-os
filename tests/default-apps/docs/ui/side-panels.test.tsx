@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import React, { Suspense } from "react";
+import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
 import type { DocsPanelProps } from "../../../../home/apps/docs/src/ui/panel-types";
 import { SidePanels } from "../../../../home/apps/docs/src/ui/SidePanels";
-import { createPanelLoader } from "../../../../home/apps/docs/src/ui/panel-loader";
 import { DocumentSession } from "../../../../home/apps/docs/src/session/index";
 import { createFakeFiles } from "../session/fakes";
 
@@ -21,38 +20,20 @@ function baseProps(docs: DocumentSession): DocsPanelProps {
   return { session: docs, editor: null, pickDocument: async () => null, onClose: () => undefined };
 }
 
-describe("side panel loading", () => {
-  it("shows a fallback when the module is absent", async () => {
-    const Panel = createPanelLoader({}, "./agent/DocsAgentPanel.tsx", "DocsAgentPanel", "The assistant is not available.");
-    render(<Panel {...baseProps(await session())} />);
-    expect(screen.getByText("The assistant is not available.")).toBeTruthy();
-  });
-
-  it("renders the default or named export of a present module with the panel props", async () => {
+describe("side panel wiring", () => {
+  it("loads the real Assistant and Compare panels and shows the Review tab", async () => {
     const docs = await session();
-    function Named({ session: given }: DocsPanelProps) {
-      return <p>named panel for {given.getState().name}</p>;
+    function Harness() {
+      const [active, setActive] = React.useState<"review" | "assistant" | "compare">("review");
+      return <SidePanels {...baseProps(docs)} review={null} readOnly={false} active={active} onChange={setActive} />;
     }
-    const Panel = createPanelLoader({ "./compare/ComparePanel.tsx": async () => ({ ComparePanel: Named }) }, "./compare/ComparePanel.tsx", "ComparePanel", "absent");
-    render(
-      <Suspense fallback={<p>loading</p>}>
-        <Panel {...baseProps(docs)} />
-      </Suspense>,
-    );
-    expect(await screen.findByText("named panel for Test")).toBeTruthy();
-  });
-
-  it("shows a fallback when the module fails to load", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const Panel = createPanelLoader({ "./compare/ComparePanel.tsx": async () => Promise.reject(new Error("chunk failed")) }, "./compare/ComparePanel.tsx", "ComparePanel", "absent");
-    render(
-      <Suspense fallback={<p>loading</p>}>
-        <Panel {...baseProps(await session())} />
-      </Suspense>,
-    );
-    expect(await screen.findByText(/could not be loaded/)).toBeTruthy();
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    render(<Harness />);
+    expect(screen.getByText("Loading review")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /Assistant/ }));
+    expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: /Compare/ }));
+    expect(await screen.findByRole("button", { name: "Choose from Files…" }, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText("Not available")).toBeNull();
   });
 });
 

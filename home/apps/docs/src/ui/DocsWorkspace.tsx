@@ -16,7 +16,7 @@ import { useDocVersion } from "./hooks";
 import { OutlinePane } from "./OutlinePane";
 import type { DocsPanelId } from "./panel-types";
 import { ReferenceLayer } from "./ReferenceLayer";
-import { useReviewController } from "./review-integration";
+import { useReviewController } from "./review/index";
 import { ReviewDocumentLayer } from "./ReviewIntegration";
 import { SidePanels } from "./SidePanels";
 

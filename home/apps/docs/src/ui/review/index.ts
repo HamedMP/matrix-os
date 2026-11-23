@@ -2,7 +2,7 @@
  * Docs review UI: tracked revisions, comments and the hover card on a
  * revision in the document. The logic lives in `../../review`.
  *
- * The Docs shell (`../review-integration.tsx`) mounts the controller, the
+ * The Docs shell (`../DocsWorkspace.tsx`, `../ReviewIntegration.tsx`) mounts the controller, the
  * shortcuts, comment clicks and the hover card beside the editor for the
  * life of a document, and shows `ReviewPanel` and `CommentsPanel` in its
  * Review tab:
