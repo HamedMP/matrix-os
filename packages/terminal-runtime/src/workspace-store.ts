@@ -45,6 +45,10 @@ const InternalTabSchema = TerminalTabSchema.omit({}).extend({
   // facts file, never in this one (see launch-facts.ts); read here only from
   // state an earlier build of spec 2706 wrote.
   heldOnExit: z.boolean().optional(),
+  // The command was launched to write its exit code to an exit file (spec
+  // 2706), so the held-pane sweep asks Zellij about it only now and then. A
+  // launch fact, kept like heldOnExit in the launch facts file.
+  exitRecorded: z.boolean().optional(),
 }).strict();
 const InternalWorkspaceBaseSchema = z.object({
   id: TerminalWorkspaceIdSchema,
@@ -284,7 +288,7 @@ export class TerminalWorkspaceStore {
    */
   async activateTab(
     refInput: TerminalRef,
-    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date },
+    runtimeIds: { tabId: number; paneId: string; launchedAt?: Date; exitRecorded?: boolean },
   ): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const zellijTabId = z.number().int().min(0).parse(runtimeIds.tabId);
@@ -302,7 +306,12 @@ export class TerminalWorkspaceStore {
       // A tab from older state keeps no time until its pane changes.
       if (tab.zellijPaneId !== zellijPaneId) tab.zellijPaneAssignedAt = paneAssignedAt;
       tab.zellijPaneId = zellijPaneId;
-      if (tab.startupCommand !== undefined) tab.heldOnExit = tab.startupCommand.length > 0;
+      if (tab.startupCommand !== undefined) {
+        tab.heldOnExit = tab.startupCommand.length > 0;
+        // Recovery finds the pane without knowing how it was launched; the
+        // choice saved before launch (markExitRecorded) then stands.
+        tab.exitRecorded = runtimeIds.exitRecorded ?? tab.exitRecorded === true;
+      }
       delete tab.startupCommand;
       tab.status = tab.nativeHost?.dispatchPending ? "unavailable" : "running";
       if (tab.nativeHost?.dispatchPending) tab.exitCode = null;
@@ -565,6 +574,22 @@ export class TerminalWorkspaceStore {
     });
   }
 
+  /**
+   * Saves, before a starting tab's command is launched, that the command writes
+   * its own exit file, so a service stopped mid-launch recovers the tab without
+   * falling back to the `list-panes` sweep.
+   */
+  async markExitRecorded(refInput: TerminalRef, exitRecorded: boolean): Promise<void> {
+    const ref = TerminalRefSchema.parse(refInput);
+    await this.mutate((state) => {
+      const tab = state.workspaces[ref.workspaceId]?.tabs[ref.tabId];
+      if (!tab) throw new TerminalRuntimeError("not_found");
+      if (tab.exitRecorded === exitRecorded) return;
+      tab.exitRecorded = exitRecorded;
+      state.revision += 1;
+    });
+  }
+
   async markTabExited(refInput: TerminalRef, exitCode: number | null = null): Promise<TerminalTab> {
     const ref = TerminalRefSchema.parse(refInput);
     const now = this.now().toISOString();
@@ -748,6 +773,7 @@ export class TerminalWorkspaceStore {
       migrationKey: _migrationKey,
       startupCommand: _startupCommand,
       heldOnExit: _heldOnExit,
+      exitRecorded: _exitRecorded,
       ...publicTab
     } = tab;
     return TerminalTabSchema.parse({ ...publicTab, incarnation: terminalTabIncarnation(tab) });

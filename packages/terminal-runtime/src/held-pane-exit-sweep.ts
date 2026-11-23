@@ -15,6 +15,8 @@ interface SweepTab {
   nativeHost?: unknown;
   /** False for a shell pane, whose exit closes it; absent in older state. */
   heldOnExit?: boolean;
+  /** The command reports its exit through an exit file instead. */
+  exitRecorded?: boolean;
 }
 
 /**
@@ -31,6 +33,12 @@ export async function sweepHeldPaneExits(input: {
   record(ref: TerminalRef, expected: { zellijTabName: string; paneId: string }, exitCode: number): Promise<boolean>;
   /** One workspace's failure is logged and the pass continues with the next workspace. */
   logFailed(error: unknown): void;
+  /**
+   * Also ask about commands launched to write an exit file. Their record can
+   * be lost (a full disk, a killed recorder), so the runtime does this now
+   * and then; otherwise those workspaces stay quiet.
+   */
+  reconcileRecorded?: boolean;
 }): Promise<HeldPaneExitSweepResult> {
   const result: HeldPaneExitSweepResult = { sessions: 0, exited: 0 };
   for (const workspace of input.workspaces) {
@@ -43,7 +51,9 @@ export async function sweepHeldPaneExits(input: {
       && tab.zellijTabId !== null && tab.zellijPaneId !== null);
     // Each `list-panes` makes Zellij redraw every attached client, so a workspace
     // whose live tabs are all shells (their exit closes the pane) is not asked.
-    if (!live.some(([, tab]) => tab.heldOnExit !== false)) continue;
+    // Commands that write an exit file (spec 2706) report themselves, and are
+    // asked about only on a reconciling pass in case their record was lost.
+    if (!live.some(([, tab]) => tab.heldOnExit !== false && (tab.exitRecorded !== true || input.reconcileRecorded === true))) continue;
     result.sessions += 1;
     try {
       const exits = await input.listHeldPaneExits(workspace.zellijSessionName);

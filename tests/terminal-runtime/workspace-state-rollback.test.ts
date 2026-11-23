@@ -9,6 +9,7 @@ import {
   type ZellijRuntimeAdapter,
 } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
+import { TerminalExitRecorder } from "../../packages/terminal-runtime/src/exit-recorder.js";
 import { TerminalWorkspaceStore as PreStackStore } from "./fixtures/pre-2706-workspace-store.js";
 
 // Fault detected (review of #3540 and #3542): spec 2706's launch facts were
@@ -47,7 +48,9 @@ const statePath = (homePath: string) => join(homePath, "system", "terminal-works
 /** A shell and a command tab, activated by the current runtime. */
 async function writeWithCurrentRuntime(homePath: string) {
   const store = new TerminalWorkspaceStore({ homePath });
-  const runtime = new TerminalRuntime({ store, zellij: new TabsZellij() });
+  const exits = new TerminalExitRecorder({ directory: join(homePath, "system", "terminal-workspaces", "exits") });
+  await exits.prepare();
+  const runtime = new TerminalRuntime({ store, zellij: new TabsZellij(), exits });
   const workspace = await runtime.ensureWorkspace({ projectId: "app" });
   const shell = await runtime.createTab(workspace.id, { name: "shell", cwd: "" });
   const command = await runtime.createTab(workspace.id, { name: "tests", cwd: "", command: ["bun", "test"] });
@@ -77,7 +80,7 @@ describe("terminal workspace state across a rollback", () => {
     const current = new TerminalWorkspaceStore({ homePath });
     const tabs = (await current.getRuntimeWorkspace(workspace.id))!.tabs;
     expect(tabs[shell.id]).toMatchObject({ name: "renamed", heldOnExit: false });
-    expect(tabs[command.id]).toMatchObject({ heldOnExit: true });
+    expect(tabs[command.id]).toMatchObject({ heldOnExit: true, exitRecorded: true });
   });
 
   it("reads pre-stack state, with no launch facts, as tabs that may be held", async () => {

@@ -8,12 +8,12 @@ import { z } from "zod/v4";
  * host-bundle rollback, which keeps the owner's home and would reject any key
  * it does not know. A missing or unreadable facts file means older state.
  */
-export const LAUNCH_FACT_KEYS = ["heldOnExit"] as const;
+export const LAUNCH_FACT_KEYS = ["heldOnExit", "exitRecorded"] as const;
 export type LaunchFactKey = (typeof LAUNCH_FACT_KEYS)[number];
 export type LaunchFacts = Partial<Record<LaunchFactKey, boolean>>;
 
 const MAX_FACTS_BYTES = 4 * 1024 * 1024;
-const FactsSchema = z.object({ heldOnExit: z.boolean().optional() }).strict();
+const FactsSchema = z.object({ heldOnExit: z.boolean().optional(), exitRecorded: z.boolean().optional() }).strict();
 const FileSchema = z.object({ version: z.literal(1), tabs: z.record(z.string().max(256), z.unknown()) });
 
 /** One tab incarnation: a reused tab id with a new Zellij tab name gets no stale facts. */
