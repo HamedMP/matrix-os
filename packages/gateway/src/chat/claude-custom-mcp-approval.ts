@@ -5,12 +5,20 @@ import { CanonicalProviderRunEventSchema } from "./provider-adapter.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 
 export const CALL_TOOL = "mcp__matrix-integrations__call_custom_mcp_tool";
-const ToolInput = z.object({
+/** Matrix Core MCP broker call (spec 2691); same approval, keyed by service slug. */
+export const CORE_CALL_TOOL = "mcp__matrix-integrations__call_tool";
+const LegacyToolInput = z.object({
   server_id: z.uuid(),
   tool: z.string().min(1).max(128),
   arguments: z.record(z.string(), z.unknown()).optional(),
 }).strict();
-type ToolInput = z.infer<typeof ToolInput>;
+// Strict: a model-supplied approval_receipt is refused rather than forwarded.
+const CoreToolInput = z.object({
+  service: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+  tool: z.string().min(1).max(200),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+type ToolInput = z.infer<typeof LegacyToolInput> | z.infer<typeof CoreToolInput>;
 type Respond = (value: unknown) => Promise<void>;
 interface Pending {
   nativeRequestId: string;
@@ -54,18 +62,19 @@ export function createClaudeCustomMcpApprovalControl(options: {
   }
 
   async function prepare(nativeRequestId: string, rawInput: Record<string, unknown>, respond: Respond,
-    slot: { cancelled: boolean }): Promise<void> {
+    slot: { cancelled: boolean }, core: boolean): Promise<void> {
     try {
-      const parsed = ToolInput.safeParse(rawInput);
+      const parsed = core ? CoreToolInput.safeParse(rawInput) : LegacyToolInput.safeParse(rawInput);
       if (closed || slot.cancelled || !parsed.success) {
         await deny(respond);
         return;
       }
-      const input = parsed.data;
-      const description = `Server ${input.server_id}\nTool ${input.tool}\nArguments ${JSON.stringify(input.arguments ?? {})}`;
+      const input: ToolInput = parsed.data;
+      const target = "service" in input ? { service: input.service } : { serverId: input.server_id };
+      const description = `${"service" in input ? `Service ${input.service}` : `Server ${input.server_id}`}\nTool ${input.tool}\nArguments ${JSON.stringify(input.arguments ?? {})}`;
       if (description.length > 4_000) { await deny(respond); return; }
       const result = await options.client.prepare(options.runId, {
-        generation: options.generation, nativeRequestId, serverId: input.server_id,
+        generation: options.generation, nativeRequestId, ...target,
         tool: input.tool, arguments: input.arguments,
       });
       if (closed || slot.cancelled) {
@@ -100,7 +109,7 @@ export function createClaudeCustomMcpApprovalControl(options: {
 
   return {
     onToolPermission(request: { nativeRequestId: string; toolName: string; input: Record<string, unknown> }, respond: Respond): boolean {
-      if (request.toolName !== CALL_TOOL) return false;
+      if (request.toolName !== CALL_TOOL && request.toolName !== CORE_CALL_TOOL) return false;
       if (closed || preparing.has(request.nativeRequestId) || native.has(request.nativeRequestId)
         || preparing.size + pending.size >= 16) {
         void deny(respond).catch(options.onError);
@@ -108,7 +117,7 @@ export function createClaudeCustomMcpApprovalControl(options: {
       }
       const slot = { cancelled: false };
       preparing.set(request.nativeRequestId, slot);
-      void prepare(request.nativeRequestId, request.input, respond, slot).catch(options.onError);
+      void prepare(request.nativeRequestId, request.input, respond, slot, request.toolName === CORE_CALL_TOOL).catch(options.onError);
       return true;
     },
     onToolPermissionCancel(nativeRequestId: string): void {

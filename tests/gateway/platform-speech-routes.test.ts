@@ -129,9 +129,9 @@ describe("gateway speech routes", () => {
       method: "POST",
       headers: {
         "content-type": "application/octet-stream",
-        "content-length": String(11 * 1024 * 1024),
+        "content-length": String(21 * 1024 * 1024),
       },
-      body: new Uint8Array(11 * 1024 * 1024),
+      body: new Uint8Array(21 * 1024 * 1024),
     });
     expect(oversized.status).toBe(413);
     expect(speech.transcribe).not.toHaveBeenCalled();
@@ -208,5 +208,44 @@ describe("gateway speech routes", () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "Speech request failed" });
     expect(speech.capabilities).not.toHaveBeenCalled();
+  });
+
+  it("shows the ten-minute dictation policy only to shells that ask for it", async () => {
+    const extendedPolicy = {
+      ...capabilities,
+      fileTranscription: {
+        ...capabilities.fileTranscription,
+        dictation: {
+          ...capabilities.fileTranscription.dictation,
+          maxBytes: 20 * 1024 * 1024,
+          maxDurationMs: 600_000,
+        },
+      },
+    };
+    const routes = app({ ...client(), capabilities: vi.fn(async () => extendedPolicy) });
+
+    // A shell or desktop app released before extended dictation rejects a
+    // policy above two minutes and would hide the microphone entirely.
+    const legacy = await routes.request("/api/speech/capabilities");
+    expect(legacy.status).toBe(200);
+    expect((await legacy.json()).fileTranscription.dictation).toMatchObject({
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationMs: 120_000,
+    });
+
+    const extended = await routes.request("/api/speech/capabilities?dictation=extended");
+    expect(extended.status).toBe(200);
+    expect(await extended.json()).toEqual(extendedPolicy);
+  });
+
+  it("forwards a recording longer than the previous ten-megabyte limit", async () => {
+    const speech = client();
+    const form = new FormData();
+    form.set("requestId", requestId);
+    // Just over five minutes of 16 kHz mono PCM16.
+    form.set("recording", new File([new Uint8Array(10 * 1024 * 1024 + 1)], "recording.wav", { type: "audio/wav" }));
+    const response = await app(speech).request("/api/speech/transcriptions", { method: "POST", body: form });
+    expect(response.status).toBe(200);
+    expect(speech.transcribe).toHaveBeenCalledTimes(1);
   });
 });

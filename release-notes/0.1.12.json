@@ -1,0 +1,44 @@
+{
+  "version": "0.1.12",
+  "channel": "stable",
+  "date": "2026-10-06T08:54:00Z",
+  "locale": "en",
+  "title": "Leave with your data",
+  "shortTitle": "Account deletion",
+  "summary": "Delete your account on your terms, with time to export your data first.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Account deletion with export",
+      "body": "Delete your account from Settings. You get a grace period to export your data, and you can resume or cancel the deletion.",
+      "art": "shield",
+      "tone": "sand",
+      "prs": [
+        2177
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Shared with me opens inside Chat in the desktop app."
+    },
+    {
+      "kind": "fixed",
+      "text": "Chats you add to a shared project are shared with it."
+    },
+    {
+      "kind": "improved",
+      "text": "Your available chat credit shows the same on every device."
+    },
+    {
+      "kind": "improved",
+      "text": "Clearer messages when Matrix AI credit can't cover a request."
+    }
+  ],
+  "hidden": [
+    2130,
+    2131,
+    2167
+  ]
+}

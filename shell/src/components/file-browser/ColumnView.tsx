@@ -98,6 +98,7 @@ export function ColumnView({ onOpenFile }: ColumnViewProps) {
                 key={entry.name}
                 data-web-file-path={col.path ? `${col.path}/${entry.name}` : entry.name}
                 data-web-file-type={entry.type}
+                draggable={entry.type === "file"}
                 role="treeitem"
                 tabIndex={0}
                 aria-selected={isSelected}

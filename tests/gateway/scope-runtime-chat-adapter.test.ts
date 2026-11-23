@@ -21,7 +21,7 @@ describe("scope runtime canonical Chat adapter", () => {
         available: true as const,
         profileId: "scope-runtime-chat-v1",
         executionGeneration: "7",
-        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai" as const] }],
       }),
       createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
       runChat: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", text: "Scoped answer" })),
@@ -32,7 +32,7 @@ describe("scope runtime canonical Chat adapter", () => {
       scopeId,
       executionGeneration: "7",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox,
       runtimes: noRuntimes,
       onLoss: noLoss,
@@ -43,7 +43,7 @@ describe("scope runtime canonical Chat adapter", () => {
       scopeHandle: "scope_10000000000040008000000000000001",
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox,
     });
     expect(client.runChat).toHaveBeenCalledWith({
@@ -107,7 +107,7 @@ describe("scope runtime canonical Chat adapter", () => {
       scopeId,
       executionGeneration: "7",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       runtimes: noRuntimes,
       onLoss: noLoss,
     });
@@ -131,7 +131,7 @@ describe("scope runtime canonical Chat adapter", () => {
         available: true as const,
         profileId: "scope-runtime-chat-v1",
         executionGeneration: "7",
-        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai" as const] }],
       }),
       createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
       runChat: vi.fn(() => new Promise<{ runtimeHandle: string; executionGeneration: string; text: string }>((resolve) => {
@@ -144,7 +144,7 @@ describe("scope runtime canonical Chat adapter", () => {
       scopeId,
       executionGeneration: "7",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox,
       runtimes: noRuntimes,
       onLoss: noLoss,
@@ -178,7 +178,7 @@ describe("scope runtime canonical Chat adapter", () => {
       scopeId,
       executionGeneration: "7",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox,
       runtimes: { bind: vi.fn(), release },
       onLoss: noLoss,
@@ -198,7 +198,7 @@ describe("scope runtime canonical Chat adapter", () => {
         available: true as const,
         profileId: "scope-runtime-chat-v1",
         executionGeneration: "7",
-        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai" as const] }],
         sandbox: { policyVersion: 1, policyDigest: "c".repeat(64), workloads: ["chat_ai" as const] },
       }),
       createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
@@ -206,7 +206,7 @@ describe("scope runtime canonical Chat adapter", () => {
       stopRuntime: vi.fn(async () => ({ state: "stopped" })),
     };
     const base = {
-      client, scopeId, executionGeneration: "7", adapterId: "claude-code" as const, harnessVersion: "2.1.240",
+      client, scopeId, executionGeneration: "7", adapterId: "claude-code" as const, harnessVersion: "2.1.301",
       runtimes: noRuntimes, onLoss: noLoss,
     };
     const bare = [];

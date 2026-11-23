@@ -1,37 +1,40 @@
 "use client";
 import { useId } from "react";
-import { ChevronRight, Link2, Plus, X } from "lucide-react";
-import type { SiteAccessLinkSummary } from "@matrix-os/contracts";
+import { Link2, RotateCw, X } from "lucide-react";
 import { canResendEmailInvitation, type EmailInvitationSummary } from "./email-invitations";
-import { isInviteEmail, oneTimeLinkLabel } from "./share-model";
-import { InlineError, ShareButton, ShareCollapsible, ShareCollapsibleContent, ShareCollapsibleTrigger, ShareInput, Spinner } from "./share-controls";
-import { cn } from "./share-cn";
+import { isInviteEmail } from "./share-model";
+import { InlineError, ShareBadge, ShareButton, ShareInput, Spinner } from "./share-controls";
 import type { ShareController } from "./use-share-controller";
 import { useCopy } from "./use-copy";
 
-const STATUS: Record<SiteAccessLinkSummary["status"], string> = { unclaimed: "Unclaimed", claimed: "Claimed", expired: "Expired" };
 const DELIVERY_STATUS: Record<NonNullable<EmailInvitationSummary["deliveryState"]>, string> = { queued: "Email queued", sending: "Email processing", sent: "Email sent", failed: "Email failed", ambiguous: "Email status unknown", suppressed: "Email stopped" };
 const INVITE_STATUS: Record<EmailInvitationSummary["state"], string> = { pending: "Pending", accepted: "Accepted", expired: "Expired", revoked: "Revoked" };
 
-export interface PrivateTabState {
-  draft: string;
-  setDraft: (value: string) => void;
-  linksOpen: boolean;
-  setLinksOpen: (open: boolean) => void;
+/**
+ * Shown for email invitations, or for a legacy one-time-link site (spec 2693):
+ * one-time links are retired, so that site gets one line and a way to stop
+ * sharing. A live invite-only site keeps its list (read-only while the server
+ * capability is off) and a way to stop sharing without going public.
+ */
+export function PrivateTab({ share, ownerInitial, appUrl, draft, setDraft }: {
+  share: ShareController; ownerInitial: string; appUrl: string | null; draft: string; setDraft: (value: string) => void;
+}) {
+  const emailPublished = share.pageMode === "private_email" && share.site?.status === "published";
+  return <div className="flex flex-col gap-3">
+    {share.pageMode === "private_link" ? <div className="flex items-center justify-between gap-2">
+      <span className="text-[13px] text-[var(--share-muted-fg)]">Uses retired one-time links</span>
+      <StopPrivateSharing share={share} />
+    </div> : null}
+    {share.emailInvitesAvailable || share.pageMode === "private_email" ? <InvitePeople share={share} ownerInitial={ownerInitial} appUrl={appUrl} draft={draft} setDraft={setDraft} /> : null}
+    {emailPublished ? <div className="flex justify-end"><StopPrivateSharing share={share} /></div> : null}
+    {share.error?.operation === "stop" ? <InlineError>{share.error.message}</InlineError> : null}
+  </div>;
 }
 
-export function PrivateTab({ share, ownerInitial, appUrl, state }: { share: ShareController; ownerInitial: string; appUrl: string | null; state: PrivateTabState }) {
-  const privateOn = share.pageMode === "private_link" || share.pageMode === "private_email";
-  return <div className="flex flex-col gap-3">
-    <InvitePeople share={share} ownerInitial={ownerInitial} appUrl={appUrl} draft={state.draft} setDraft={state.setDraft} />
-    <OneTimeLinks share={share} open={state.linksOpen} setOpen={state.setLinksOpen} />
-    {privateOn ? <div className="-mt-1 flex flex-col items-end gap-1">
-      <ShareButton variant="link" disabled={share.operation !== null} onClick={() => void share.stopSharing()}>
-        {share.operation === "stop" ? <Spinner /> : null}Stop sharing privately
-      </ShareButton>
-      {share.error?.operation === "stop" ? <InlineError>{share.error.message}</InlineError> : null}
-    </div> : null}
-  </div>;
+function StopPrivateSharing({ share }: { share: ShareController }) {
+  return <ShareButton variant="link" disabled={share.operation !== null} onClick={() => void share.stopSharing()}>
+    {share.operation === "stop" ? <Spinner /> : null}Stop sharing privately
+  </ShareButton>;
 }
 
 function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share: ShareController; ownerInitial: string; appUrl: string | null; draft: string; setDraft: (value: string) => void }) {
@@ -42,7 +45,7 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
   const inviting = share.operation === "invite";
   const busy = share.operation !== null;
   const submit = async () => {
-    if (!valid || busy) return;
+    if (!available || !valid || busy) return;
     const done = await share.request({ to: "private_email", email: draft.trim() });
     // A pending mode-switch confirm keeps the draft until the owner decides.
     if (done) setDraft("");
@@ -59,71 +62,29 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
         {inviting ? <Spinner /> : null}Invite
       </ShareButton>
     </div>
-    {!available ? <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">Email invitations aren’t available yet. Use one-time links for now.</p> : null}
+    {!available ? <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">Email invitations aren’t available right now.</p> : null}
     {share.error?.operation === "invite" || share.error?.operation === "invite_change" ? <InlineError>{share.error.message}</InlineError> : null}
     {share.inviteOutcome ? <p role="status" className="m-0 text-xs text-[var(--share-muted-fg)]">{share.inviteOutcome === "queued" ? "Invitation queued." : "This address already has an invitation."}</p> : null}
     <ul aria-label="People with access" className="ph-no-capture m-0 flex list-none flex-col p-0" data-ph-mask="true">
       <li className="flex h-10 items-center gap-2.5">
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--share-primary)] text-xs font-semibold text-[var(--share-primary-fg)]">{ownerInitial}</span>
         <span className="min-w-0 flex-1 text-[13px] font-medium">You</span>
-        <span className="text-[13px] text-[var(--share-muted-fg)]">Owner</span>
+        <ShareBadge>Owner</ShareBadge>
       </li>
       {people.map((person) => <li key={person.id} className="flex min-h-10 items-center gap-2.5 py-1">
         <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--share-muted)] text-xs font-semibold">{person.emailAddress.charAt(0).toUpperCase()}</span>
         <span className="flex min-w-0 flex-1 flex-col gap-px">
-          <span className="truncate text-[13px]">{person.emailAddress}</span>
+          <span className="truncate text-[13px] font-medium">{person.emailAddress}</span>
           <span className="text-xs text-[var(--share-muted-fg)]">{INVITE_STATUS[person.state]}{person.state === "pending" && person.deliveryState ? ` · ${DELIVERY_STATUS[person.deliveryState]}` : ""}</span>
         </span>
-        {canResendEmailInvitation(person) ? <ShareButton variant="link" size="sm" disabled={busy || !available} aria-label={`Resend invitation to ${person.emailAddress}`} onClick={() => void share.resendInvite(person)}>Resend</ShareButton> : null}
-        {person.state === "pending" || person.state === "accepted" ? <ShareButton variant="ghost" size="icon" className="size-7" disabled={busy || !available} aria-label={`Revoke invitation for ${person.emailAddress}`} onClick={() => void share.revokeInvite(person)}><X className="size-3.5" /></ShareButton> : null}
+        {canResendEmailInvitation(person) ? <ShareButton variant="ghost" size="icon" aria-label={`Resend invitation to ${person.emailAddress}`} title="Resend" disabled={busy || !available} onClick={() => void share.resendInvite(person)}><RotateCw className="size-3.5" /></ShareButton> : null}
+        {person.state === "pending" || person.state === "accepted" ? <ShareButton variant="ghost" size="icon" aria-label={`Revoke invitation for ${person.emailAddress}`} title="Revoke" disabled={busy || !available} onClick={() => void share.revokeInvite(person)}><X className="size-3.5" /></ShareButton> : null}
       </li>)}
     </ul>
-    {share.invitationsNextCursor ? <ShareButton size="sm" disabled={busy || !available} onClick={() => void share.loadMoreInvitations()}>Load more invitations</ShareButton> : null}
-    {share.invitationsPaged ? <ShareButton variant="link" size="sm" disabled={busy} onClick={share.showNewestInvitations}>Show newest invitations</ShareButton> : null}
-    {share.pageMode === "private_email" && people.length > 0 && appUrl ? <div className="flex items-center gap-2.5 border-t border-[var(--share-border)] pt-3">
-      <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--share-muted)]"><Link2 className="size-3.5" /></span>
-      <span className="flex min-w-0 flex-1 flex-col gap-px">
-        <span className="text-[13px] font-medium">App link</span>
-        <span className="text-xs text-[var(--share-muted-fg)]">Invited people sign in to open it</span>
-      </span>
-      <ShareButton size="sm" className="h-9 px-3 text-[13px]" onClick={() => copy.copy("app", appUrl)}>{copy.label("app", "Copy link")}</ShareButton>
-    </div> : null}
+    {share.invitationsNextCursor ? <ShareButton size="sm" className="self-start" disabled={busy || !available} onClick={() => void share.loadMoreInvitations()}>Load more invitations</ShareButton> : null}
+    {share.invitationsPaged ? <ShareButton variant="link" size="sm" className="self-start" disabled={busy} onClick={share.showNewestInvitations}>Show newest invitations</ShareButton> : null}
+    {share.pageMode === "private_email" && people.length > 0 && appUrl ? <ShareButton size="sm" className="self-start" onClick={() => copy.copy("app", appUrl)}>
+      <Link2 aria-hidden="true" className="size-3.5" />{copy.label("app", "Copy link")}
+    </ShareButton> : null}
   </>;
-}
-
-function OneTimeLinks({ share, open, setOpen }: { share: ShareController; open: boolean; setOpen: (open: boolean) => void }) {
-  const contentId = useId();
-  const copy = useCopy();
-  const links = share.pageMode === "private_link" ? share.links : [];
-  const siteId = share.site?.id ?? "";
-  const creating = share.operation === "link_create";
-  const busy = share.operation !== null;
-  return <ShareCollapsible open={open} onOpenChange={setOpen} className="flex flex-col gap-1 border-t border-[var(--share-border)] pt-2">
-    <ShareCollapsibleTrigger aria-controls={contentId} className="flex h-8 w-full items-center gap-2 bg-transparent p-0 text-left">
-      <ChevronRight aria-hidden="true" className={cn("size-3.5 text-[var(--share-subtle-fg)] transition-transform", open && "rotate-90")} />
-      <span className="text-[13px] font-medium">One-time links</span>
-      <span className="min-w-0 flex-1 truncate text-xs text-[var(--share-subtle-fg)]">Open once, in any browser</span>
-      {links.length > 0 ? <span aria-label={`${links.length} links`} className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--share-muted)] px-1.5 text-xs font-medium">{links.length}</span> : null}
-    </ShareCollapsibleTrigger>
-    <ShareCollapsibleContent id={contentId} className="flex flex-col gap-0.5 pl-[22px]">
-      <ul aria-label="One-time links" className="m-0 flex list-none flex-col gap-0.5 p-0">
-        {links.map((link) => {
-          const fresh = share.freshLinks[link.id];
-          return <li key={link.id} className="flex h-8 items-center gap-2">
-            <span className={cn("ph-no-capture min-w-0 flex-1 truncate font-mono text-xs", link.status === "expired" ? "text-[var(--share-subtle-fg)] opacity-70" : "")} data-ph-mask="true">{oneTimeLinkLabel(siteId, link.id)}</span>
-            <span className="shrink-0 text-xs text-[var(--share-subtle-fg)]">{STATUS[link.status]}</span>
-            {fresh ? <ShareButton size="sm" className="h-7 px-2" onClick={() => copy.copy(link.id, fresh)}>{copy.label(link.id, "Copy")}</ShareButton> : null}
-            {link.status !== "expired" ? <ShareButton variant="ghost" size="icon" aria-label={`Revoke one-time link ${link.id.slice(0, 4)}`} disabled={busy} onClick={() => void share.revokeLink(link.id)}><X className="size-3.5" /></ShareButton> : null}
-          </li>;
-        })}
-      </ul>
-      {share.linksNextCursor ? <ShareButton variant="link" className="self-start" disabled={busy} onClick={() => void share.loadMoreLinks()}>Show more links</ShareButton> : null}
-      <ShareButton size="sm" disabled={busy || share.loading || share.loadFailed} className="mt-0.5 h-[30px] self-start border-dashed border-[var(--share-input)] pl-2" onClick={async () => {
-        const created = await share.request({ to: "private_link" });
-        if (created) setOpen(true);
-      }}>{creating ? <Spinner /> : <Plus className="size-3.5" />}New one-time link</ShareButton>
-      {share.error?.operation === "link_create" || share.error?.operation === "link_revoke" ? <InlineError>{share.error.message}</InlineError> : null}
-      <p className="m-0 mt-1 text-xs leading-4 text-[var(--share-subtle-fg)]">Copy a link right after creating it; it can’t be shown again. Unclaimed links expire after 7 days; an opened link works in that browser for 30 days.</p>
-    </ShareCollapsibleContent>
-  </ShareCollapsible>;
 }

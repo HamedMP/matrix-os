@@ -13,22 +13,22 @@ export async function previewRuntimeOperationBusy(
 ): Promise<boolean> {
   const lockScope = `preview-runtime-operation:${identity.ownerId}:${identity.machineId}:${identity.runtimeSlot}`;
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockScope}, 0))`.execute(executor);
-  const activeAi = await executor.selectFrom("ai_funded_usage_reservations")
+  const activeAi = executor.selectFrom("ai_funded_usage_reservations")
     .select("reservation_id")
     .where("owner_id", "=", identity.ownerId)
     .where("machine_id", "=", identity.machineId)
     .where("runtime_slot", "=", identity.runtimeSlot)
     .where("status", "in", activeAiStates)
-    .where("execution_admission_release", "is", null)
-    .limit(1).executeTakeFirst();
-  if (activeAi) return true;
-  const activeSpeech = await executor.selectFrom("speech_operations")
+    .where("execution_admission_release", "is", null);
+  const activeSpeech = executor.selectFrom("speech_operations")
     .select("operation_id")
     .where("owner_id", "=", identity.ownerId)
     .where("machine_id", "=", identity.machineId)
     .where("runtime_slot", "=", identity.runtimeSlot)
     .where("execution_state", "in", activeSpeechStates)
-    .where("updated_at", ">", speechActiveAfter)
-    .limit(1).executeTakeFirst();
-  return activeSpeech !== undefined;
+    .where("updated_at", ">", speechActiveAfter);
+  const { busy } = await executor.selectNoFrom((eb) =>
+    eb.or([eb.exists(activeAi), eb.exists(activeSpeech)]).as("busy"),
+  ).executeTakeFirstOrThrow();
+  return Boolean(busy);
 }

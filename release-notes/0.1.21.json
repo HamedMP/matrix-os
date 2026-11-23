@@ -1,0 +1,77 @@
+{
+  "version": "0.1.21",
+  "channel": "stable",
+  "date": "2026-11-03T14:51:49Z",
+  "locale": "en",
+  "title": "Schedules that run for you",
+  "shortTitle": "Schedules",
+  "summary": "Approve schedules your bots run on their own, and sign in to Hermes from the terminal.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Scheduled routines",
+      "body": "Bots can run routines on a schedule you approve. A task center lists them, and each scheduled run appears on its chat message, on desktop and mobile.",
+      "art": "notification",
+      "tone": "sand",
+      "prs": [
+        3017,
+        3018,
+        3041,
+        3054,
+        3073,
+        3074,
+        3082,
+        3084,
+        3087,
+        3092
+      ]
+    },
+    {
+      "tag": "Improved",
+      "title": "Hermes, upgraded",
+      "body": "Hermes moves to a newer version, and you can sign in to ChatGPT or Claude for it from the terminal.",
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        2695,
+        2964,
+        3024,
+        2593
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Apps can open chat recipes in the desktop app."
+    },
+    {
+      "kind": "fixed",
+      "text": "Older Codex conversations resume with the right account."
+    },
+    {
+      "kind": "fixed",
+      "text": "Finished Codex runs show their results even after a long wait."
+    },
+    {
+      "kind": "fixed",
+      "text": "The browser desktop recovers when it's running an outdated version."
+    },
+    {
+      "kind": "fixed",
+      "text": "Chats inherited from a shared project can ask the AI again."
+    }
+  ],
+  "hidden": [
+    3021,
+    2980,
+    3035,
+    3036,
+    3059,
+    3101,
+    3102,
+    3099,
+    3019,
+    3081
+  ]
+}

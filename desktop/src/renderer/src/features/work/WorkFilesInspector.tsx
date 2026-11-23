@@ -147,6 +147,7 @@ function WorkInspectorContent({
   closeButtonRef?: Ref<HTMLButtonElement>;
 }) {
   const api = useConnection((state) => state.api);
+  const ownerId = useConnection((state) => state.userId);
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
     if (!menuOpen) return;
@@ -212,6 +213,17 @@ function WorkInspectorContent({
   const openFile = (target: InspectorFileTarget) => {
     setSelectedFile(target);
     setSelectedId(FILES_TAB.id);
+  };
+
+  const allowTrash = Boolean(ownerId) && scope.kind === "home" && (!detail || (
+    detail.record.chat.ownerScope.type === "personal" && detail.record.chat.ownerScope.ownerId === ownerId
+    && detail.record.chat.lifecycle === "active" && !detail.record.chat.collaboration
+  ));
+
+  const removeTrashedPreview = (path: string) => {
+    if (selectedFile?.kind === "home" && (selectedFile.path === path || selectedFile.path.startsWith(`${path}/`))) {
+      useInspectorFileViews.getState().update(viewKey, { selectedFile: null });
+    }
   };
 
   const openTerminal = (session: TerminalSessionSummary) => {
@@ -466,7 +478,7 @@ function WorkInspectorContent({
                 background: "var(--bg-sunken)",
               }}
             >
-              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList onOpenFile={openFile} />
+              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList allowTrash={allowTrash} onFileMovedToTrash={removeTrashedPreview} onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile && fileTreeVisible ? (

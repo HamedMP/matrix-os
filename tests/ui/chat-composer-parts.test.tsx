@@ -68,7 +68,26 @@ describe("shared Chat composer parts", () => {
 
   it("gives toolbar buttons 44px targets on touch screens only", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../../packages/ui/src/chat/composer/chat-composer.css"), "utf8");
-    expect(css).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.matrix-chat-composer \[data-slot="prompt-input-toolbar"\] button\s*\{[^}]*min-width: 44px;[^}]*min-height: 44px;/);
+    render(<div className="matrix-chat-composer">
+      <ChatPromptInput value="Ready" onChange={() => {}} onSubmit={() => {}} busy={false} />
+    </div>);
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.append(style);
+    try {
+      const touch = Array.from(style.sheet!.cssRules).find((rule): rule is CSSMediaRule => (
+        rule.type === CSSRule.MEDIA_RULE && (rule as CSSMediaRule).conditionText === "(pointer: coarse)"
+      ));
+      expect(touch, "Touch sizing must remain scoped to coarse pointers").toBeDefined();
+      const send = screen.getByRole("button", { name: "Send" });
+      const sizing = Array.from(touch!.cssRules).find((rule): rule is CSSStyleRule => (
+        rule.type === CSSRule.STYLE_RULE && send.matches((rule as CSSStyleRule).selectorText)
+      ));
+      expect(sizing?.style.getPropertyValue("min-width")).toBe("44px");
+      expect(sizing?.style.getPropertyValue("min-height")).toBe("44px");
+    } finally {
+      style.remove();
+    }
   });
 
   it("gives the composer and its menus Electron Desktop's type scale and smoothing", () => {

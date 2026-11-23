@@ -5,6 +5,8 @@ import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orche
 import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
+import { createDiscussionOnlyChatExecutionGuard } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { createScopeRuntimeChatProviderAdapter } from "../../packages/gateway/src/collaboration/scope-runtime-chat-adapter.js";
 import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime/protocol";
@@ -13,6 +15,7 @@ import {
   collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 const now = "2026-09-10T00:00:00.000Z";
@@ -40,7 +43,8 @@ describe("canonical shared Chat orchestration", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;
   beforeEach(async () => {
-    fixture = await createCollaborationTestDatabase();
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase() : await createCollaborationTestDatabase();
     repository = new ChatRepository(fixture.db);
     await repository.bootstrap();
     await bootstrapCollaborationDatabase(fixture.db);
@@ -72,7 +76,7 @@ describe("canonical shared Chat orchestration", () => {
         available: true as const,
         profileId: "scope-runtime-chat-v1",
         executionGeneration: "7",
-        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai" as const] }],
       }),
       createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
       runChat: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", text: "Shared answer" })),
@@ -101,7 +105,7 @@ describe("canonical shared Chat orchestration", () => {
           scopeId: execution.scopeId,
           executionGeneration: String(execution.executionGeneration),
           adapterId: "claude-code",
-          harnessVersion: "2.1.240",
+          harnessVersion: "2.1.301",
           sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
           runtimes: noRuntimes,
           onLoss: noLoss,
@@ -189,6 +193,48 @@ describe("canonical shared Chat orchestration", () => {
     const requests = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(requests).toMatchObject([{ id: "qturn_interrupted_restart", state: "interrupted" }]);
   });
+  it.each(["claim result", "adapter"])("owner reads preserve a live shared request while awaiting %s preparation", async boundary => {
+    await enqueueSharedRequest("qturn_owner_read_during_preparation");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let preparing = false;
+    if (boundary === "claim result") {
+      const claim = repository.claimNextQueuedTurn.bind(repository);
+      vi.spyOn(repository, "claimNextQueuedTurn").mockImplementation(async (...args) => {
+        const result = await claim(...args);
+        preparing = true; await gate;
+        return result;
+      });
+    }
+    const start = vi.fn(async function* () {
+      yield { type: "assistant.delta" as const, delta: "Shared answer after owner read" };
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({ repository,
+      catalog: { getCatalog: async () => { throw new Error("Owner reads must not invoke personal providers"); } },
+      adapters: new CanonicalChatProviderRegistry([]),
+      collaborationGuard: createDiscussionOnlyChatExecutionGuard(fixture.db), now: () => new Date(now) });
+    const service = createCanonicalChatService(repository, { orchestrator });
+    const dispatch = orchestrator.dispatchNextSharedQueued(owner, collaborationIds.chat, collaborationIds.scope, async () => {
+      if (boundary === "adapter") { preparing = true; await gate; }
+      return { driverKind: "claude_code", stateSchemaVersion: 1, parseState: value => value, serializeState: value => value, start };
+    });
+    try {
+      await vi.waitFor(() => expect(preparing).toBe(true));
+      const detail = await service.getDetail(owner, collaborationIds.chat, { limit: 200 });
+      expect(detail?.runs[0]?.status).toBe("accepted");
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "claimed" }]);
+      release(); await dispatch; await orchestrator.drain();
+      expect(start).toHaveBeenCalledTimes(1);
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "completed" }]);
+      const completed = await repository.getDetailPage(owner, collaborationIds.chat, { limit: 200 });
+      expect(completed?.runs[0]?.status).toBe("completed");
+      expect(completed?.messages.some(message => message.parts.some(part => part.type === "text"
+        && part.text === "Shared answer after owner read"))).toBe(true);
+    } finally {
+      release(); await dispatch; await orchestrator.drain(); await orchestrator.close();
+    }
+  });
   it("preserves an interrupted request when isolated dispatch ends without a known completion", async () => {
     await enqueueSharedRequest("qturn_interrupted_dispatch");
     const client = {
@@ -196,7 +242,7 @@ describe("canonical shared Chat orchestration", () => {
         available: true as const,
         profileId: "scope-runtime-chat-v1",
         executionGeneration: "7",
-        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai" as const] }],
+        supportedAdapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai" as const] }],
       }),
       createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
       runChat: vi.fn(async () => { throw new Error("transport interrupted"); }),
@@ -217,7 +263,7 @@ describe("canonical shared Chat orchestration", () => {
         scopeId: execution.scopeId,
         executionGeneration: String(execution.executionGeneration),
         adapterId: "claude-code",
-        harnessVersion: "2.1.240",
+        harnessVersion: "2.1.301",
         sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
         runtimes: noRuntimes,
         onLoss: noLoss,

@@ -1,0 +1,39 @@
+{
+  "version": "0.1.23",
+  "channel": "stable",
+  "date": "2026-11-10T10:12:58Z",
+  "locale": "en",
+  "title": "GitHub, built in",
+  "shortTitle": "GitHub access",
+  "summary": "Connect GitHub to your Matrix computer and let chats and bots work on your repositories.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "GitHub for developers",
+      "body": "Connect GitHub to your Matrix computer from the browser or the desktop app. Chats and bots can then take repository actions you approve.",
+      "art": "terminal",
+      "tone": "teal",
+      "prs": [
+        2915,
+        2917,
+        3210
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "improved",
+      "text": "Claude sign-ins on your computer are detected automatically."
+    },
+    {
+      "kind": "improved",
+      "text": "Published apps no longer have a cap on private links."
+    }
+  ],
+  "hidden": [
+    3208,
+    3172,
+    3228,
+    3162
+  ]
+}

@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { motion, space, type SpaceStep } from "@/lib/theme-v2";
 
 import { PressableScale } from "./PressableScale";
+import { DISABLED_OPACITY } from "./pressable-state";
 
 export interface ItemRowProps {
   title: string;
@@ -22,27 +23,57 @@ export interface ItemRowProps {
   gap?: SpaceStep;
   onPress?: () => void;
   onLongPress?: () => void;
+  disabled?: boolean;
   accessibilityLabel?: string;
   testID?: string;
 }
 
 /** The list row for chats, agents, projects and templates. */
 export function ItemRow({
-  title,
-  subtitle,
-  leading,
-  titleAccessory,
-  meta,
-  metaAccessory,
-  trailing,
   density = "compact",
   gap = 12,
   onPress,
   onLongPress,
+  disabled = false,
   accessibilityLabel,
   testID,
+  ...contentProps
 }: ItemRowProps) {
-  const content = (
+  const content = <ItemRowContent {...contentProps} gap={gap} testID={testID} />;
+
+  if (!onPress && !onLongPress) {
+    return (
+      <View testID={testID} accessibilityLabel={accessibilityLabel} style={[styles.row, styles[density]]}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <PressableScale
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      pressedScale={motion.rowPressScale}
+      style={[styles.row, styles[density], disabled && styles.disabled]}
+    >
+      {content}
+    </PressableScale>
+  );
+}
+
+type ItemRowContentProps = Pick<ItemRowProps,
+  "title" | "subtitle" | "leading" | "titleAccessory" | "meta" | "metaAccessory" | "trailing" | "gap" | "testID"
+>;
+
+function ItemRowContent({
+  title, subtitle, leading, titleAccessory, meta, metaAccessory, trailing, gap = 12, testID,
+}: ItemRowContentProps) {
+  return (
     <>
       {leading ? (
         <View
@@ -68,28 +99,6 @@ export function ItemRow({
       {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
     </>
   );
-
-  if (!onPress && !onLongPress) {
-    return (
-      <View testID={testID} accessibilityLabel={accessibilityLabel} style={[styles.row, styles[density]]}>
-        {content}
-      </View>
-    );
-  }
-
-  return (
-    <PressableScale
-      testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      pressedScale={motion.rowPressScale}
-      style={[styles.row, styles[density]]}
-    >
-      {content}
-    </PressableScale>
-  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -102,6 +111,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   comfortable: {
     paddingVertical: theme.v2.space[12],
+  },
+  disabled: {
+    opacity: DISABLED_OPACITY,
   },
   text: {
     flex: 1,

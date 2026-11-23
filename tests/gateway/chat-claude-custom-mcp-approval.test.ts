@@ -49,6 +49,28 @@ describe("supervised Claude Custom MCP permission callback", () => {
     state.control.close();
   });
 
+  it("routes a Matrix Core call_tool through the same prepare and receipt flow, bound to service + tool", async () => {
+    // Spec 2691: Claude Code Core calls get the same human approval as Custom MCP calls.
+    const state = fixture();
+    const coreTool = "mcp__matrix-integrations__call_tool";
+    const coreInput = { service: "linear", tool: "linear.create_issue", arguments: { title: "Fixture" } };
+    expect(state.control.onToolPermission({ nativeRequestId: "native_core", toolName: coreTool, input: coreInput }, state.respond)).toBe(true);
+    await flush();
+    expect(state.prepare).toHaveBeenCalledWith("run_owner", {
+      generation: 1, nativeRequestId: "native_core", service: "linear", tool: "linear.create_issue", arguments: { title: "Fixture" },
+    });
+    expect(state.events[0]).toMatchObject({ type: "approval.requested", approvalId, title: "Allow linear.create_issue?",
+      safeDescription: expect.stringContaining("Service linear") });
+    await state.control.submit(approvalId, "approve", { chatId: "chat_owner", clientRequestId: "req_core", platformApprovalProof: "signed-fixture" });
+    expect(state.writes).toEqual([{ behavior: "allow", updatedInput: { ...coreInput, approval_receipt: "a".repeat(64) } }]);
+    // A model-supplied receipt is never forwarded as approval.
+    state.control.onToolPermission({ nativeRequestId: "native_forged", toolName: coreTool,
+      input: { ...coreInput, approval_receipt: "b".repeat(64) } }, state.respond);
+    await flush();
+    expect(state.writes.at(-1)).toEqual({ behavior: "deny", message: "Custom MCP approval is unavailable." });
+    state.control.close();
+  });
+
   it("declines without a tool call, cancels a native request and refuses session approvals", async () => {
     const state = fixture();
     state.control.onToolPermission({ nativeRequestId: "native_1", toolName, input }, state.respond);

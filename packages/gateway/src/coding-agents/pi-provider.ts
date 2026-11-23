@@ -756,7 +756,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           kind: "foreground_terminal",
           label: "Install Pi",
           command: visibleSetupCommand(
-            'npm install -g --prefix "$MATRIX_NODE_PREFIX" @earendil-works/pi-coding-agent@latest',
+            'npm install -g --prefix "$MATRIX_NODE_PREFIX" @earendil-works/pi-coding-agent@1.6.0',
           ),
         },
         {

@@ -584,6 +584,23 @@ describe("coding agent thread lifecycle", () => {
     ]);
   });
 
+  it("keeps the summary shape for older strict clients unless recent threads are requested", async () => {
+    const { app } = await createHarness();
+    // Released Electron Desktop and Native Mobile builds parse this strict
+    // schema, which has no recentThreads field.
+    const LegacyRuntimeSummarySchema = RuntimeSummarySchema.omit({ recentThreads: true }).strict();
+
+    const legacy = await (await app.request("/api/coding-agents/summary")).json();
+    expect(legacy).not.toHaveProperty("recentThreads");
+    expect(LegacyRuntimeSummarySchema.safeParse(legacy).success).toBe(true);
+
+    const current = await (await app.request("/api/coding-agents/summary?include=recentThreads")).json();
+    expect(RuntimeSummarySchema.parse(current).recentThreads).toEqual(expect.objectContaining({ items: [] }));
+    expect(current).toHaveProperty("recentThreads");
+
+    expect((await app.request("/api/coding-agents/summary?include=everything")).status).toBe(400);
+  });
+
   it("rejects stale cursors instead of replaying from the beginning", async () => {
     const { app } = await createHarness();
     const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
@@ -956,6 +973,45 @@ describe("coding agent thread lifecycle", () => {
         attention: "failed",
       }),
     ]);
+  });
+
+  it("lists recently finished threads for the owner, newest first and bounded", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let tick = 0;
+    const completing: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [AgentThreadEventSchema.parse({
+          type: "thread.completed",
+          eventId: nextEventId(),
+          threadId: thread.id,
+          occurredAt: providerNow().toISOString(),
+          outcome: "completed",
+        })];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => new Date(baseNow.getTime() + tick++ * 1000),
+      relationValidator: { validateCreate: async () => undefined },
+      providers: [completing],
+    });
+    const created = [];
+    for (let index = 0; index < 12; index += 1) {
+      created.push(await threads.createThread(ownerPrincipal, { ...createBody, clientRequestId: `req_done_${index}` }));
+    }
+    await threads.createThread(otherPrincipal, { ...createBody, clientRequestId: "req_other_done" });
+
+    const recent = await threads.listRecentThreads(ownerPrincipal);
+
+    expect(created.at(-1)!.snapshot.thread.status).toBe("completed");
+    expect(recent.limit).toBe(10);
+    expect(recent.hasMore).toBe(true);
+    expect(recent.items).toHaveLength(10);
+    expect(recent.items[0]!.id).toBe(created.at(-1)!.snapshot.thread.id);
+    expect(recent.items.every((thread) => thread.status === "completed")).toBe(true);
+    expect(JSON.stringify(recent)).not.toContain("other_user");
+    expect((await threads.listThreads(ownerPrincipal)).items).toEqual([]);
   });
 
   it("normalizes legacy failed threads with missing attention on read", async () => {

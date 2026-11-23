@@ -1,7 +1,7 @@
 import type { CanonicalChatReadState, CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable } from "kysely";
 import type { ChatDatabase, ChatsTable } from "./database.js";
-import type { ChatOwner } from "./records.js";
+import { incomingChatMessagePredicate, type ChatOwner } from "./records.js";
 import { ChatConflictError } from "./errors.js";
 
 export async function projectChatReadState(
@@ -11,8 +11,7 @@ export async function projectChatReadState(
     db.selectFrom("chat_user_state").selectAll().where("chat_id", "=", chatId)
       .where("principal_id", "=", owner.ownerId).executeTakeFirst(),
     db.selectFrom("chat_messages").select(({ fn }) => fn.max<number>("seq").as("seq"))
-      .where("chat_id", "=", chatId).where("role", "=", "assistant")
-      .where("state", "=", "committed").executeTakeFirst(),
+      .where("chat_id", "=", chatId).where(incomingChatMessagePredicate()).executeTakeFirst(),
   ]);
   return projectReadState(state, incoming?.seq);
 }
@@ -60,7 +59,7 @@ export function unreadChatPredicate(principalId: string) {
     EXISTS (SELECT 1 FROM chat_user_state s WHERE s.chat_id = chats.id
       AND s.principal_id = ${principalId} AND s.marked_unread)
     OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = chats.id
-      AND m.role = 'assistant' AND m.state = 'committed' AND m.seq > COALESCE(
+      AND ${incomingChatMessagePredicate("m")} AND m.seq > COALESCE(
         (SELECT s.read_through_seq FROM chat_user_state s
           WHERE s.chat_id = chats.id AND s.principal_id = ${principalId}), 0))
   )`;

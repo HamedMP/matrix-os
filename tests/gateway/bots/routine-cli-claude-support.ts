@@ -72,10 +72,10 @@ export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDr
     return runtime.submitChat(OWNER, chatId, runId, event.approvalId, body, proof);
   }
   return { data, f, runtime, transport, admit, approve, sourceEvents,
-    async start(chatId: string, modes = { permission: "full_access", interaction: "default" }) {
+    async start(chatId: string, modes = { permission: "full_access", interaction: "default" }, prompt = "Fixture") {
       const owner = { type: "personal" as const, ownerId: OWNER };
       await f.chats.create(owner, { id: chatId, clientRequestId: `req_create_${chatId}`, title: "Fixture" });
-      return f.canonical.admitTurn(f.principal, owner, chatId, { clientRequestId: `req_turn_${chatId}`, baseRevision: 0, parts: [{ type: "text", text: "Fixture" }], selection: { instanceId: sourceInstance, model: sourceModel }, permissionMode: modes.permission, interactionMode: modes.interaction });
+      return f.canonical.admitTurn(f.principal, owner, chatId, { clientRequestId: `req_turn_${chatId}`, baseRevision: 0, parts: [{ type: "text", text: prompt }], selection: { instanceId: sourceInstance, model: sourceModel }, permissionMode: modes.permission, interactionMode: modes.interaction });
     },
     httpCalls: () => httpCalls,
     setSourceAdapter: (value: CanonicalChatProviderAdapter) => { sourceAdapter = value; },

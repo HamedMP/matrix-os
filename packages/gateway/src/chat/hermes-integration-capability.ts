@@ -17,6 +17,15 @@ export type HermesJevScope = { kind: "jev_inbox_preview"; runId: string; agentId
   revision: number; authorityStamp?: string; account: Omit<JevInboxTriageBinding, "version" | "ownerId"> };
 const active = new Map<string, { actorId: string; expiresAt: number; scope?: HermesJevScope }>();
 
+const CORE_MCP_READ_PATHS = new Set(["/api/mcp-servers/core/services", "/api/mcp-servers/core/search", "/api/mcp-servers/core/describe"]);
+const CORE_MCP_APPROVAL_PATH = /^\/api\/mcp-servers\/core\/approvals\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Spec 2691: the Matrix Core MCP broker surface only; never legacy Custom MCP calls or approval decisions. */
+function isCoreMcpPath(method: string, path: string): boolean {
+  if (method === "GET") return CORE_MCP_READ_PATHS.has(path) || CORE_MCP_APPROVAL_PATH.test(path);
+  return method === "POST" && path === "/api/mcp-servers/core/call";
+}
+
 function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -64,6 +73,7 @@ export function resolveHermesIntegrationCapability(token: string, methodOrPath: 
   const record = active.get(digest(token));
   if (!record) return null;
   if (record.scope) return method === "POST" && path === "/api/jev/inbox/preview" ? record.actorId : null;
+  if (isCoreMcpPath(method, path)) return record.actorId;
   if (path !== "/api/integrations" && !path.startsWith("/api/integrations/")
     && path !== "/api/jev" && !path.startsWith("/api/jev/")) return null;
   return record.actorId;

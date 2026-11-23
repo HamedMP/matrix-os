@@ -146,5 +146,8 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     setActive(null);
   }, []);
 
-  return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive };
+  /** The API for one computer, addressed through the trusted core's credential for it. */
+  const api = useCallback((slot: string): ApiClient | null => client?.forRuntime(slot) ?? null, [client]);
+
+  return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive, api };
 }

@@ -21,9 +21,63 @@ export const TERMINAL_WINDOW_MAX_COMPUTERS = 20;
 const Empty = z.object({}).strict();
 const Ok = z.object({ ok: z.boolean() }).strict();
 
+/**
+ * Herdr's Terminal window shortcuts (spec 2706), delivered from menu
+ * accelerators that exist only while the Terminal window has focus.
+ */
+export const TERMINAL_WINDOW_COMMANDS = [
+  "new-terminal", "close-terminal", "select", "next", "previous", "rename", "toggle-sidebar", "picker", "find",
+  "split-right", "split-down", "close-pane", "zoom-pane", "focus-pane", "swap-pane",
+  "next-tab", "previous-tab", "space",
+] as const;
+export type TerminalWindowCommandName = (typeof TERMINAL_WINDOW_COMMANDS)[number];
+const PaneDirectionSchema = z.enum(["left", "right", "up", "down"]);
+export const TerminalWindowCommandSchema = z.discriminatedUnion("command", [
+  z.strictObject({ command: z.literal("select"), index: z.number().int().min(1).max(9) }),
+  // Ctrl+1…9 switches to that space in the sidebar's order; Ctrl+0 is All.
+  z.strictObject({ command: z.literal("space"), index: z.number().int().min(0).max(9) }),
+  z.strictObject({ command: z.enum(["focus-pane", "swap-pane"]), direction: PaneDirectionSchema }),
+  z.strictObject({ command: z.enum(TERMINAL_WINDOW_COMMANDS).exclude(["select", "space", "focus-pane", "swap-pane"]) }),
+]);
+export type TerminalWindowCommand = z.infer<typeof TerminalWindowCommandSchema>;
+
+export interface ShortcutKeyEvent {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}
+
+const PRIMARY_KEYS = new Set(["n", "t", "w", "f", "p", "d", "b", "[", "]", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+const ARROWS = new Set(["arrowleft", "arrowright", "arrowup", "arrowdown"]);
+
+/**
+ * The keys the Terminal window's menu owns (terminal-menu-items.ts). A focused
+ * terminal leaves these to the menu instead of sending them to its program or
+ * its own pane bindings, so every shortcut works while a terminal has focus.
+ * Cmd (Super off macOS) is the menu's modifier; Ctrl stays with the shell
+ * except for Ctrl+Tab and Ctrl+0…9 (spaces). Cmd+C/V/A stay with the terminal's clipboard.
+ */
+export function isTerminalWindowShortcut(event: ShortcutKeyEvent): boolean {
+  const key = event.key.toLowerCase();
+  if (key === "f2" && !event.metaKey && !event.ctrlKey && !event.altKey) return true;
+  if (key === "tab" && event.ctrlKey && !event.metaKey && !event.altKey) return true;
+  // Ctrl+0…9 switch space.
+  if (/^[0-9]$/.test(key) && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) return true;
+  if (!event.metaKey || event.ctrlKey) return false;
+  if (event.altKey) return ARROWS.has(key) || (key === "w" && !event.shiftKey);
+  return PRIMARY_KEYS.has(key);
+}
+
+export const TERMINAL_WINDOW_EVENTS = {
+  "terminal-window:command": TerminalWindowCommandSchema,
+} as const;
+
 export const TERMINAL_WINDOW_INVOKE = {
   "terminal-window:open": { request: Empty, response: Ok },
-  "terminal-window:focus-main": { request: Empty, response: Ok },
+  // `to: "settings"` also opens Settings there (the sidebar's Settings button).
+  "terminal-window:focus-main": { request: z.strictObject({ to: z.literal("settings").optional() }), response: Ok },
 } as const;
 
 /** Channels only the Terminal window may call. */
@@ -41,12 +95,14 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
   // Only for the keys in TERMINAL_WINDOW_STATE_KEYS; see windowMayInvoke.
   "state:get",
   "terminal:read-clipboard-files",
+  // So its Terminal keeps the keys its profile binds (specs/653).
+  "shortcuts:set-terminal-claims",
   ...TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 
 /** Events the Terminal window may subscribe to. */
 export const TERMINAL_WINDOW_EVENT_CHANNELS = [
-  "auth:changed", "window:focus-changed", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+  "auth:changed", "window:focus-changed", "shortcuts:changed", "terminal-window:command", ...LOCAL_TERMINAL_EVENT_CHANNELS,
 ] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";

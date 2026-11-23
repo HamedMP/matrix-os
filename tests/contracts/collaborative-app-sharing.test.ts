@@ -14,6 +14,11 @@ import {
   CollaborativeAppReadinessSchema,
   CollaborativeAppSafeErrorSchema,
   CollaborativeAppShareSchema,
+  CollaborativeAppDirectoryItemSchema,
+  CollaborationDirectoryEventSchema,
+  COLLABORATIVE_APP_ICON_MAX_BYTES,
+  collaborativeAppIconPath,
+  sniffCollaborativeAppIconContentType,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -180,6 +185,105 @@ describe("collaborative app sharing contracts", () => {
       .toBe(false);
     expect(CollaborativeAppLaunchResponseSchema.safeParse({ ...launch, ownerCredential: "secret" }).success)
       .toBe(false);
+  });
+
+  it("carries an optional bounded owner name and a scope-confined versioned icon path in directory items", () => {
+    const item = {
+      scopeId,
+      runtimeId: "runtime_owner",
+      organizationId,
+      authorityGeneration: 1,
+      appId: build.appId,
+      catalogId,
+      readinessId,
+      registrationIncarnation: "b".repeat(64),
+      buildId: digest,
+      shareRevision: "2",
+      owner,
+    };
+    // Backwards compatible: older platforms omit both fields.
+    expect(CollaborativeAppDirectoryItemSchema.parse(item)).toEqual(item);
+    const iconUrl = collaborativeAppIconPath(scopeId, "f".repeat(64));
+    expect(iconUrl).toBe(`/api/collaboration/shared-apps/${scopeId}/icon?v=${"f".repeat(64)}`);
+    const decorated = { ...item, name: "Team Tracker", iconUrl };
+    expect(CollaborativeAppDirectoryItemSchema.parse(decorated)).toEqual(decorated);
+    for (const invalid of [
+      `/icons/${build.appId}.png`,
+      "https://evil.example/icon.png",
+      `/api/collaboration/shared-apps/${eventId}/icon?v=${"f".repeat(64)}`,
+      `/api/collaboration/shared-apps/${scopeId}/icon`,
+      `/api/collaboration/shared-apps/${scopeId}/icon?v=nothex`,
+    ]) {
+      expect(CollaborativeAppDirectoryItemSchema.safeParse({ ...item, iconUrl: invalid }).success).toBe(false);
+    }
+    for (const name of ["", "   ", "x".repeat(121), "see /home/matrix/secret"]) {
+      expect(CollaborativeAppDirectoryItemSchema.safeParse({ ...item, name }).success).toBe(false);
+    }
+  });
+
+  it("adds optional owner presentation to directory app metadata without accepting secrets", () => {
+    const event = {
+      eventId,
+      scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: "user_owner",
+      kind: "app",
+      organizationId,
+      audience: "current_membership",
+      app: {
+        appId: build.appId,
+        catalogId,
+        readinessId,
+        registrationIncarnation: "b".repeat(64),
+        buildId: digest,
+        shareRevision: 2,
+        state: "active",
+      },
+      authorityGeneration: 1,
+      metadataRevision: 2,
+      recipients: [],
+    };
+    expect(CollaborationDirectoryEventSchema.parse(event)).toEqual(event);
+    const presented = { ...event, app: { ...event.app, name: "Team Tracker", iconSha256: "f".repeat(64) } };
+    expect(CollaborationDirectoryEventSchema.parse(presented)).toEqual(presented);
+    const thumbnail = { sha256: "f".repeat(64), contentType: "image/png", base64: Buffer.alloc(48 * 1024).toString("base64") };
+    const complete = { ...event, runtimeId: "r".repeat(128), ownerId: "o".repeat(128), organizationId: `org_${"g".repeat(124)}`,
+      recipients: Array.from({ length: 8 }, () => ({ actorId: "a".repeat(128), status: "accepted", invitationId: eventId, grantId: eventId })),
+      app: { ...event.app, appId: "a".repeat(256), name: "界".repeat(120), thumbnail },
+    };
+    expect(CollaborationDirectoryEventSchema.safeParse(complete).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(complete))).toBeLessThan(96 * 1024);
+    expect(CollaborationDirectoryEventSchema.parse({ ...event, app: { ...event.app, thumbnail: { ...thumbnail, base64: "!bad" } } }).app?.thumbnail)
+      .toBeUndefined();
+
+    for (const app of [
+      { ...event.app, iconSha256: "not-a-digest" },
+      { ...event.app, name: "x".repeat(121) },
+      { ...event.app, iconUrl: "https://owner.invalid/icon.png" },
+    ]) {
+      expect(CollaborationDirectoryEventSchema.safeParse({ ...event, app }).success).toBe(false);
+    }
+  });
+
+  it("sniffs only bounded raster icon bytes and never SVG or HTML", () => {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+    const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+    const webp = new TextEncoder().encode("RIFF\u0004\u0000\u0000\u0000WEBPVP8 ");
+    expect(sniffCollaborativeAppIconContentType(png)).toBe("image/png");
+    expect(sniffCollaborativeAppIconContentType(jpeg)).toBe("image/jpeg");
+    expect(sniffCollaborativeAppIconContentType(webp)).toBe("image/webp");
+    for (const invalid of [
+      new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"),
+      new TextEncoder().encode("<!doctype html><script>alert(1)</script>"),
+      new TextEncoder().encode("RIFF\u0004\u0000\u0000\u0000WAVEfmt "),
+      png.slice(0, 7),
+      new Uint8Array(),
+    ]) {
+      expect(sniffCollaborativeAppIconContentType(invalid)).toBeNull();
+    }
+    const oversized = new Uint8Array(COLLABORATIVE_APP_ICON_MAX_BYTES + 1);
+    oversized.set(png);
+    expect(sniffCollaborativeAppIconContentType(oversized)).toBeNull();
   });
 
   it("bounds participant identity to display context without membership or credential claims", () => {

@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { SPEECH_DICTATION_MAX_BYTES, SPEECH_DICTATION_MAX_DURATION_MS } from "../../packages/contracts/src/speech.js";
+import { inspectSpeechWav } from "../../packages/platform/src/speech/media.js";
 import {
+  createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
   encodePcm16WavBytes,
   normalizeSpeechInputLevel,
@@ -64,5 +67,47 @@ describe("platform speech PCM recorder", () => {
     expect(resolveSpeechWorkletUrl()).toBe(
       `${window.location.origin}/vm/alice/~runtime/studio/speech-pcm-capture-worklet.js`,
     );
+  });
+
+  it("keeps a full ten-minute dictation instead of rejecting it as too large", async () => {
+    const SAMPLE_RATE = 16_000;
+    const CHUNK_SAMPLES = 16_384; // what the capture worklet posts per message
+    const port: { onmessage: ((event: MessageEvent<unknown>) => void) | null; postMessage(message: { type: string }): void } = {
+      onmessage: null,
+      postMessage(message) {
+        if (message.type === "flush") this.onmessage?.({ data: { type: "flushed" } } as MessageEvent<unknown>);
+      },
+    };
+    vi.stubGlobal("AudioWorkletNode", class { port = port; connect() {} disconnect() {} });
+    vi.stubGlobal("AudioContext", class {
+      sampleRate = SAMPLE_RATE;
+      state = "running";
+      destination = {};
+      audioWorklet = { addModule: async () => undefined };
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      async close() { this.state = "closed"; }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+    });
+    try {
+      const capture = await createWebPcmSpeechCaptureAdapter({ workletUrl: "https://app.example/worklet.js" }).start({
+        maxBytes: SPEECH_DICTATION_MAX_BYTES,
+        signal: new AbortController().signal,
+      });
+      // Exactly ten minutes: full worklet chunks, then the partial chunk a flush posts.
+      const totalSamples = 600 * SAMPLE_RATE;
+      for (let sent = 0; sent < totalSamples; sent += CHUNK_SAMPLES) {
+        const samples = Math.min(CHUNK_SAMPLES, totalSamples - sent);
+        port.onmessage?.({ data: { type: "audio", bytes: new ArrayBuffer(samples * 2) } } as MessageEvent<unknown>);
+      }
+      const recording = await capture.stop();
+      expect(recording.type).toBe("audio/wav");
+      // The speech service must accept what the recorder produced under the advertised policy.
+      const policy = { maxBytes: SPEECH_DICTATION_MAX_BYTES, maxDurationMs: SPEECH_DICTATION_MAX_DURATION_MS };
+      expect(inspectSpeechWav(new Uint8Array(await recording.arrayBuffer()), policy).durationMs).toBe(600_000);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

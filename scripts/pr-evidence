@@ -1,0 +1,6 @@
+#!/usr/bin/env node
+// Upload PR screenshots/recordings to the Matrix PR evidence store.
+// Usage: scripts/pr-evidence upload <pr> <files...> [--commit <sha>] [--title "..."] [--no-comment]
+import { main } from './lib/pr-evidence.mjs';
+
+process.exitCode = await main(process.argv.slice(2));

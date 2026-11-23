@@ -156,4 +156,40 @@ describe("speech runtime routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(capabilities);
   });
+
+  it("advertises the ten-minute dictation policy only to gateways that can parse it", async () => {
+    const extendedPolicy = {
+      contractVersion: 1 as const,
+      fileTranscription: {
+        status: "ready" as const,
+        dictation: {
+          enabled: true as const,
+          maxBytes: 20 * 1024 * 1024,
+          maxDurationMs: 600_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav" as const],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false as const },
+      },
+    };
+    const routes = app({ ...service(), capabilities: vi.fn(() => extendedPolicy) });
+    const path = "/internal/containers/alice/speech/capabilities?runtimeSlot=primary";
+
+    // A gateway released before extended dictation rejects anything above two
+    // minutes, so it must keep receiving a policy it accepts.
+    const legacy = await routes.request(path, { headers: { authorization: `Bearer ${runtimeBearer()}` } });
+    expect(legacy.status).toBe(200);
+    expect((await legacy.json()).fileTranscription.dictation).toMatchObject({
+      enabled: true,
+      maxBytes: 10 * 1024 * 1024,
+      maxDurationMs: 120_000,
+    });
+
+    const extended = await routes.request(path, {
+      headers: { authorization: `Bearer ${runtimeBearer()}`, "x-matrix-speech-dictation": "extended" },
+    });
+    expect(extended.status).toBe(200);
+    expect(await extended.json()).toEqual(extendedPolicy);
+  });
 });

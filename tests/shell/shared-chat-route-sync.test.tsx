@@ -29,6 +29,33 @@ afterEach(() => {
 });
 
 describe("shared Chat route synchronization", () => {
+  it.each([
+    { scenario: "first verified sign-in keeps the shared URL", initialScope: undefined, leave: false, expected: { kind: "chat", scopeId } },
+    { scenario: "an intervening new Chat stays selected", initialScope: undefined, leave: true, expected: undefined },
+    { scenario: "a different verified viewer clears the previous view", initialScope: "other_viewer/runtime/main", leave: false, expected: undefined },
+  ])("reconciles startup navigation: $scenario", async ({ initialScope, leave, expected }) => {
+    window.history.replaceState(null, "", `/shared/chat/${scopeId}`);
+    stubLegacyChatFetch(vi.fn(async (url: string) => {
+      if (url.includes("/events?")) return new Response(new ReadableStream());
+      if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+      if (url.includes("/api/chats/chat_regular?")) {
+        return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
+      }
+      throw new Error("UnexpectedRequest");
+    }));
+    const hook = renderHook(({ navigationScope }: { navigationScope?: string }) => useCanonicalChatState({
+      initialCollaborationView: { kind: "chat", scopeId }, navigationScope,
+    }), { initialProps: { navigationScope: initialScope as string | undefined } });
+    await waitFor(() => expect(hook.result.current.conversations).toHaveLength(1));
+    expect(hook.result.current.collaborationView).toEqual({ kind: "chat", scopeId });
+    if (leave) await act(async () => { await hook.result.current.newChat(); });
+
+    hook.rerender({ navigationScope: "viewer_reload/runtime/main" });
+    await waitFor(() => expect(hook.result.current.conversations).toHaveLength(1));
+    expect(window.location.pathname).toBe(leave ? "/" : `/shared/chat/${scopeId}`);
+    expect(hook.result.current.collaborationView).toEqual(expected);
+  });
+
   it("keeps entering, leaving, and browser history synchronized with the Chat view", async () => {
     window.history.replaceState(null, "", "/shared");
     stubLegacyChatFetch( vi.fn(async (url: string) => {

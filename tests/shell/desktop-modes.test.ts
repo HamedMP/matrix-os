@@ -1,6 +1,21 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useDesktopMode, type DesktopMode } from "../../shell/src/stores/desktop-mode.js";
+
+// Fault detected: synchronous localStorage rehydration runs while the store is still
+// being created, so `_hydrated` never turns true and `?launch=` and the startup Chat never open.
+describe("Desktop Mode Store hydration", () => {
+  it("marks the store hydrated after synchronous localStorage rehydration", async () => {
+    vi.resetModules();
+    window.localStorage.setItem("matrix-os-desktop-mode", JSON.stringify({ state: { mode: "canvas" }, version: 0 }));
+    const fresh = await import("../../shell/src/stores/desktop-mode.js");
+    await Promise.resolve();
+    expect(fresh.useDesktopMode.getState().mode).toBe("canvas");
+    expect(fresh.useDesktopMode.getState()._hydrated).toBe(true);
+    expect(fresh.useDesktopMode.persist.hasHydrated()).toBe(true);
+    window.localStorage.removeItem("matrix-os-desktop-mode");
+  });
+});
 
 describe("Desktop Mode Store", () => {
   beforeEach(() => {

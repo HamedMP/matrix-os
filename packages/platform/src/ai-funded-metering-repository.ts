@@ -521,10 +521,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
-      const locator = await trx.executor.selectFrom("ai_funded_usage_reservations").select("owner_id")
+      const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
+        .select(sql<null>`pg_advisory_xact_lock(hashtextextended('funded-ai-owner:' || owner_id, 0))`.as("locked"))
         .where("reservation_id", "=", request.reservationId).where("token_id", "=", request.tokenId).executeTakeFirst();
       if (!locator) throw new AiFundedPolicyError("unauthorized");
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
+      // Read the row in a new statement after the owner lock has been acquired.
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
@@ -539,19 +540,6 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (reservation.status !== "reserved") throw new AiFundedPolicyError("reservation_closed");
       if (Date.parse(reservation.expires_at) <= checked.getTime()) {
         throw new AiFundedPolicyError("reservation_expired");
-      }
-      const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
-        .set({ status: "starting" }).where("reservation_id", "=", reservation.reservation_id)
-        .where("status", "=", "reserved").returning("reservation_id").executeTakeFirst();
-      if (!claimed) {
-        const latest = await trx.executor.selectFrom("ai_funded_usage_reservations")
-          .select(["status", "start_response"])
-          .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
-        if (latest.status === "in_flight" && latest.start_response !== null) {
-          return FundedAiStartResponseSchema.parse(JSON.parse(latest.start_response));
-        }
-        if (latest.status === "starting") throw new AiFundedPolicyError("rate_limited");
-        throw new AiFundedPolicyError("reservation_closed");
       }
       const expiresAt = new Date(checked.getTime() + options.inFlightTtlMs).toISOString();
       const response = FundedAiStartResponseSchema.parse({
@@ -569,17 +557,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         started_at: checkedAt,
         expires_at: expiresAt,
         start_response: JSON.stringify(response),
-      }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "starting")
+      }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "reserved")
         .returning("reservation_id").executeTakeFirst();
-      if (!updated) {
-        const latest = await trx.executor.selectFrom("ai_funded_usage_reservations")
-          .select(["status", "start_response"]).where("reservation_id", "=", reservation.reservation_id)
-          .executeTakeFirstOrThrow();
-        if (latest.status === "in_flight" && latest.start_response !== null) {
-          return FundedAiStartResponseSchema.parse(JSON.parse(latest.start_response));
-        }
-        throw new AiFundedPolicyError("reservation_closed");
-      }
+      if (!updated) throw new AiFundedPolicyError("reservation_closed");
       return response;
     });
   }

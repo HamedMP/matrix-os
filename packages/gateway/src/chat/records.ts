@@ -129,6 +129,12 @@ export function jsonb(value: unknown): RawBuilder<unknown> {
   return sql`${JSON.stringify(value)}::jsonb`;
 }
 
+/** Stored server receipts count as incoming; user text/metadata never does. */
+export function incomingChatMessagePredicate(alias = "chat_messages"): RawBuilder<boolean> {
+  const role = sql.ref<string>(`${alias}.role`), parts = sql.ref(`${alias}.parts`), state = sql.ref<string>(`${alias}.state`);
+  return sql<boolean>`${state}='committed' AND (${role}='assistant' OR (${role}='system' AND ${parts} @> '[{"type":"routine_receipt","engine":"matrix"}]'::jsonb))`;
+}
+
 export function messageSearchText(message: CanonicalChatMessage): string {
   return message.parts
     .flatMap((part) => {

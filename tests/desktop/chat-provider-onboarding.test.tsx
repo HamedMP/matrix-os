@@ -5,6 +5,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionProviderSettingsSnapshotCache } from "@matrix-os/ui";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -101,7 +102,7 @@ describe("canonical native empty Chat connection wiring", () => {
 });
 
 
-afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); sessionProviderSettingsSnapshotCache.clear(); });
 it("mounted signed-in onboarding does not invalidate the warmed provider cache on twenty application switches", async () => {
   resetProviderPreferences({ hydrated: true });
   const settings = disconnectedSnapshot(); settings.harnesses[0]!.authState = "unknown";

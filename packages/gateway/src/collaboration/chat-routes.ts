@@ -10,8 +10,10 @@ import {
   CollaborationResourceIdSchema,
   CollaborationUserStatePatchSchema,
   projectLegacyAssistantMessage,
+  projectLegacyRoutineReceiptMessage,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
+import { z } from "zod/v4";
 import {
   authorize,
   requireExecutionAdapter,
@@ -22,6 +24,8 @@ import {
   MessageQuerySchema,
   type CollaborationRouteOptions,
 } from "./route-support.js";
+
+const RequestQuerySchema = z.object({ includeMessageIds: z.literal("1").optional() }).strict();
 
 export function registerChatRoutes(routes: Hono, options: CollaborationRouteOptions): void {
   routes.get("/api/collaboration/scopes/:scopeId/user-state", async (c) => handle(c, async () => {
@@ -50,13 +54,13 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const query = MessageQuerySchema.parse(exactQuery(c, ["after", "limit"]));
-    // Shared history has strict released readers and no negotiated text version.
-    // Project the response only; preserve owner rows and sequence pagination.
+    // Shared history has strict released readers. Keep private routine links
+    // in owner storage while preserving shared text and sequence pagination.
     return c.json({
       messages: (await options.chatAdapter.listMessages(context, {
         afterSequence: query.after,
         limit: query.limit,
-      })).map(message => projectLegacyAssistantMessage(message, { maxEncodedBytes: Infinity })),
+      })).map(message => projectLegacyRoutineReceiptMessage(projectLegacyAssistantMessage(message, { maxEncodedBytes: Infinity }))),
     });
   }));
 
@@ -102,11 +106,13 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
 
   routes.get("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const query = RequestQuerySchema.parse(exactQuery(c, ["includeMessageIds"]));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const requests = await adapter.list(context);
     return c.json(CollaborationAiRequestsResponseSchema.parse({
-      requests,
+      // Older strict clients must keep receiving the original response shape.
+      requests: query.includeMessageIds ? requests : requests.map(({ messageId: _messageId, ...request }) => request),
       ...await adapter.capability(context, requests),
       resourceRevision: await adapter.resourceRevision(context),
     }));

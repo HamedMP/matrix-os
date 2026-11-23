@@ -14,6 +14,7 @@ export async function listQueuedChatCandidates(
     .innerJoin("chats as chat", "chat.id", "queued.chat_id")
     .select("queued.chat_id")
     .where("queued.status", "=", "queued")
+    .where("queued.collaboration_scope_id", "is", null)
     .where("chat.owner_type", "=", owner.type)
     .where("chat.owner_id", "=", owner.ownerId);
   if (cursor !== undefined) query = query.where("queued.chat_id", ">", cursor);

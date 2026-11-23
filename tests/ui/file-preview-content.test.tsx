@@ -56,4 +56,15 @@ describe("FilePreviewContent", () => {
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("srcdoc")).toContain("default-src 'none'");
   });
+
+  it("does not offer the image download action when preview metadata prohibits it", async () => {
+    render(<FilePreviewContent
+      descriptor={{ ...base, name: "restricted.png", kind: "image", mimeType: "image/png", canDownload: false }}
+      contentUrl="/content"
+      loadBlob={vi.fn(async () => new Blob(["image"], { type: "image/png" }))}
+      showImageDownload
+    />);
+    expect(await screen.findByRole("img", { name: "restricted.png" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Download image" })).toBeNull();
+  });
 });
