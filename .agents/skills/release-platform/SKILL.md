@@ -35,17 +35,25 @@ deploy, but a newer pending run replaces an older pending one (shown as
 
 ## 2. Manual deploy (`workflow_dispatch`)
 
-Inputs: `environment` (`staging` | `production`, default `staging`) and
-`promote` (boolean, default `false`).
+Inputs: `environment` (`staging` | `production`, default `staging`),
+`promote` (boolean, default `false`), and `expected_sha` (the approved commit).
 
 ```bash
+git fetch origin main
+SHA=$(git rev-parse origin/main)    # the commit you reviewed and got approval for
 # Staging candidate, no traffic change
-gh workflow run platform-cloud-run.yml --ref main -f environment=staging -f promote=false
+gh workflow run platform-cloud-run.yml --ref main -f expected_sha="$SHA" -f environment=staging -f promote=false
 # Production deploy + promote to 100% (ask first)
-gh workflow run platform-cloud-run.yml --ref main -f environment=production -f promote=true
+gh workflow run platform-cloud-run.yml --ref main -f expected_sha="$SHA" -f environment=production -f promote=true
 gh run list --workflow platform-cloud-run.yml --limit 1   # get the run id
 gh run watch <run-id> --exit-status
 ```
+
+`--ref main` deploys whatever `main` is when the dispatch lands. `expected_sha`
+pins the approved commit: the run fails in its first step, before any image is
+built or traffic is switched, when `main` has moved. Always pass it. If the run
+fails there, nothing was deployed: review the new commits, ask again, and
+dispatch with the new SHA.
 
 With `promote=false` the workflow builds, deploys a zero-traffic `candidate`
 revision, and smokes it (`/health`, `/sign-in`, billing shell, bundle channel
