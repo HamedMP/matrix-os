@@ -726,6 +726,7 @@ export function WorkRail({
         bounds={searchBounds}
         client={client}
         records={sourceRecords}
+        sourceFilter={sourceFilter}
         projects={projects}
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); focusProject(project); }}

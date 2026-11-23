@@ -37,6 +37,30 @@ const acceptedProject = (withOverview: boolean) => ({
   },
 });
 describe("Work search discovery", () => {
+  it.each([false, true])("preserves the selected source on every server search page (archived: %s)", async archived => {
+    const row = (source: "claude" | "codex" | undefined, page: number) => ({
+      chat: { id: `chat_${source ?? "native"}_${page}`, title: `Match ${source ?? "native"} ${page}`, lifecycle: archived ? "archived" : "active", revision: 1, updatedAt: "2026-11-12T00:00:00.000Z", createdAt: "2026-11-12T00:00:00.000Z" },
+      ...(source ? { importSource: { harness: source } } : {}),
+    });
+    const page = vi.fn(async (_query: unknown, input?: { cursor?: string }) => ({
+      items: [row("claude", input?.cursor ? 2 : 1), row("codex", input?.cursor ? 2 : 1), row(undefined, input?.cursor ? 2 : 1)],
+      nextCursor: input?.cursor ? null : "next",
+    }));
+    const client = { search: page, list: (input: { cursor?: string }) => page("", input) } as unknown as CanonicalChatClient;
+    const props = { open: true, records: [], projects: [], status: "ready" as const, client, onClose: vi.fn(), onSelect: vi.fn() };
+    const view = render(<WorkRailSearchDialog {...props} {...{ sourceFilter: "claude" as const }} />);
+    if (archived) fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+    else fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Match" } });
+    await screen.findByRole("option", { name: "Match claude 1, Global" });
+    expect(screen.queryByRole("option", { name: "Match codex 1, Global" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Match native 1, Global" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show more results" }));
+    await screen.findByRole("option", { name: "Match claude 2, Global" });
+    expect(screen.queryByRole("option", { name: "Match codex 2, Global" })).toBeNull();
+    view.rerender(<WorkRailSearchDialog {...props} {...{ sourceFilter: "codex" as const }} />);
+    expect(screen.getByRole("option", { name: "Match codex 2, Global" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Match claude 1, Global" })).toBeNull();
+  });
   it("keeps Search inside a smaller window even when the main-pane center is offset", () => {
     render(<WorkRailSearchDialog open centerX={490} bounds={{left:0,right:740}} records={[]} projects={[]} status="ready" client={null} onClose={vi.fn()} onSelect={vi.fn()}/>);
     expect(screen.getByRole("dialog",{name:"Search chats"}).style.left).toBe("424px");

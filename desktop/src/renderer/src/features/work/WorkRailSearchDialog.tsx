@@ -1,7 +1,7 @@
 import { Archive, ArchiveRestore, Check, ChevronRight, Trash2 } from "lucide-react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
-import { Badge, Button, isAcceptedProjectOwnedByRail } from "@matrix-os/ui";
+import { Badge, Button, filterChatsByImportSource, isAcceptedProjectOwnedByRail, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { Folder, MessageSquare, Search, UsersIcon, X } from "@renderer/lib/hugeicons";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Dialog } from "../../design/primitives";
@@ -122,6 +122,7 @@ function WorkRailSearchDialogContent({
   centerX,
   bounds,
   records,
+  sourceFilter = "all",
   client,
   projects,
   status,
@@ -137,6 +138,7 @@ function WorkRailSearchDialogContent({
   centerX?: number;
   bounds?: { left: number; right: number };
   records: readonly ChatNavigationRecord[];
+  sourceFilter?: ChatImportSourceFilterValue;
   client?: CanonicalChatClient | null;
   projects: readonly Project[];
   status: "idle" | "loading" | "ready" | "error";
@@ -228,8 +230,8 @@ function WorkRailSearchDialogContent({
   };
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    const remote = serverRecords ? buildWorkRailSearchResults(serverRecords, projects, "", 500) : [];
-    const local = activeFilter === "Archived" ? [] : buildWorkRailSearchResults(records, projects, query);
+    const remote = serverRecords ? buildWorkRailSearchResults(filterChatsByImportSource(serverRecords, sourceFilter, record => record.importSource), projects, "", 500) : [];
+    const local = activeFilter === "Archived" ? [] : buildWorkRailSearchResults(filterChatsByImportSource(records, sourceFilter, record => record.importSource), projects, query);
     const seen = new Set<string>();
     const chats = activeFilter === "All" || activeFilter === "Chats" || activeFilter === "Archived"
       ? [...remote, ...local].filter(result => !seen.has(result.record.chat.id) && Boolean(seen.add(result.record.chat.id)))
@@ -242,7 +244,7 @@ ${project.slug}`.toLocaleLowerCase().includes(normalized)).map(project => ({ kin
         .filter(item => !normalized || `${sharedItemLabel(item)}
 ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item => ({ kind: "shared" as const, item, label: sharedItemLabel(item), contextLabel: sharedItemContext(item), key: item.status === "invited" ? `invite:${item.invitationId}` : `shared:${item.scopeId}` })) : [];
     return [...chats, ...projectResults, ...sharedResults];
-  }, [activeFilter, projects, query, records, serverRecords, shared.items, onSelectProject]);
+  }, [activeFilter, projects, query, records, serverRecords, shared.items, onSelectProject, sourceFilter]);
   useEffect(() => {
     setSelectedIndex((current) => (
       results.length === 0 ? 0 : Math.min(current, results.length - 1)
