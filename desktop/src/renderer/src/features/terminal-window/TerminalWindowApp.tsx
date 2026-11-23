@@ -315,7 +315,8 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         // A session change remounts each pane so it attaches again with the new credentials.
         return (
           <>
-            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
+            {/* Not focused while the overview covers it, so uncovering hands the keyboard back without reattaching. */}
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused && !view.overview.open}
               findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} reservedKeys={view.reservedKeys} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>

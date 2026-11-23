@@ -57,7 +57,7 @@ export function useTerminalPreviews(options: {
   const keySignature = keys.join("\n");
   // When each computer terminal was last read, the status it had then, and whether the read worked.
   // Kept while the overview stays open, across changes to the list; bounded by the list.
-  const lastReadRef = useRef(new Map<string, { at: number; statusAt: string | undefined; ok: boolean }>());
+  const lastReadRef = useRef(new Map<string, { at: number; status: string | undefined; statusAt: string | undefined; ok: boolean }>());
   // The newest read started for each listed terminal, across rounds and reopenings: an older read
   // that finishes later never replaces a newer screen. Bounded by the list.
   const newestReadRef = useRef(new Map<string, number>());
@@ -76,7 +76,8 @@ export function useTerminalPreviews(options: {
       if (!last) return true;
       if (now - last.at < COMPUTER_PREVIEW_MIN_MS) return false;
       // A failed read is tried again; a read one only once its status changed.
-      return !last.ok || last.statusAt !== row.statusAt;
+      // Gateway status events carry no time, so the status itself counts as well as its time.
+      return !last.ok || last.status !== row.status || last.statusAt !== row.statusAt;
     };
     const round = async () => {
       if (document.visibilityState === "hidden") {
@@ -90,7 +91,7 @@ export function useTerminalPreviews(options: {
       for (const key of [...lastRead.keys()]) if (!listedKeys.has(key)) lastRead.delete(key);
       for (const key of [...newestRead.keys()]) if (!listedKeys.has(key)) newestRead.delete(key);
       const reading = listed.filter((row) => due(row, now));
-      for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, statusAt: row.statusAt, ok: true });
+      for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, status: row.status, statusAt: row.statusAt, ok: true });
       const read = await Promise.all(reading.map(async ({ key }) => {
         readCountRef.current += 1;
         const order = readCountRef.current;

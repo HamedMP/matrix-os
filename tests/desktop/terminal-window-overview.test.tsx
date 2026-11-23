@@ -4,7 +4,9 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName }: { sessionName: string }) => <div data-testid="terminal-view">{sessionName}</div>,
+  default: ({ sessionName, focused }: { sessionName: string; focused?: boolean }) => (
+    <div data-testid="terminal-view" data-focused={focused ? "true" : "false"}>{sessionName}</div>
+  ),
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
@@ -151,10 +153,14 @@ describe("Terminal window overview", () => {
     await screen.findByRole("main", { name: "Overview" });
     expect(screen.getByTestId("terminal-view")).toBe(view);
     expect(view.closest("[inert]")).not.toBeNull();
+    // Fault detected (Greptile, #3586): typing went nowhere after the overview closed; the covered pane
+    // gives up the keyboard and takes it back when uncovered, without reattaching.
+    expect(view.dataset.focused).toBe("false");
     operator.command({ command: "overview" });
     await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
     expect(screen.getByTestId("terminal-view")).toBe(view);
     expect(view.closest("[inert]")).toBeNull();
+    expect(view.dataset.focused).toBe("true");
   });
 
   it("keeps a preview's last lines that hold something, cut to width", () => {
@@ -169,7 +175,7 @@ describe("Terminal window overview", () => {
 describe("Terminal window overview previews", () => {
   const WS = `tws_${"a".repeat(32)}`;
   const TAB = `tt_${"b".repeat(32)}`;
-  const row = (key: string, statusAt: string) => ({ key, name: key, statusAt }) as unknown as TerminalSidebarRow;
+  const row = (key: string, statusAt: string, status?: string) => ({ key, name: key, statusAt, status }) as unknown as TerminalSidebarRow;
   const computerKey = `computer:primary|${WS}:${TAB}`;
   let hidden = false;
 
@@ -269,6 +275,17 @@ describe("Terminal window overview previews", () => {
     await act(async () => { pending.at(-1)!({ screen: "new screen" }); await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { pending[0]!({ screen: "old screen" }); await vi.advanceTimersByTimeAsync(0); });
     expect(hook.result.current[computerKey]).toEqual(["new screen"]);
+  });
+
+  // Fault detected (Greptile, #3586): gateway status events carry no time, so a terminal that went
+  // from idle to working kept its old preview.
+  it("reads a computer terminal again when its status changes without a new time", async () => {
+    const { get, hook } = setup();
+    await tick(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    hook.rerender({ rows: [row("local|t1", "1"), row(computerKey, "1", "working")] });
+    await tick(COMPUTER_PREVIEW_MIN_MS);
+    expect(get).toHaveBeenCalledTimes(2);
   });
 
   it("reads nothing while the window is hidden", async () => {
