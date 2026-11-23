@@ -10,7 +10,7 @@ describe("tokenize", () => {
   });
 
   it("keeps accented and combining letters inside one word", () => {
-    expect(tokenize("naïve café Zürich")).toEqual(["naïve", " ", "café", " ", "Zürich"]);
+    expect(tokenize("naïve cafe\u0301 Zürich")).toEqual(["naïve", " ", "cafe\u0301", " ", "Zürich"]);
   });
 
   it("treats quotes around a word as separate tokens", () => {
