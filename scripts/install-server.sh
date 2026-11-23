@@ -1104,10 +1104,14 @@ stop_browser_use() {
 # gets its own lingering user manager (the desktop's Files/Terminal buttons need
 # its user bus) and a private home; it never gains access to the owner's home.
 # migrate_browser_profile <account> <home>: an install whose browser ran as matrix
-# keeps its saved logins and tabs. The profile moves (never copies) into the
-# account's home once; links are never followed when giving it to the account.
+# keeps its saved logins and tabs. The profile moves (never copies) once. Root
+# never writes inside the account's home, whose directories the account could
+# swap for links: root moves the profile into a root-owned staging directory and
+# gives it to the account there (never following links); the account itself then
+# moves it into place, so any link it planted reaches only what it already can.
 migrate_browser_profile() {
-  local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}" old new group
+  local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}"
+  local stage="${MATRIX_BROWSER_PROFILE_STAGE:-/var/lib/matrix-browser-profile-move}" old new group
   new="${home}/.local/share/matrix-browser-lab/chrome"
   old="${root}/.local/share/matrix-browser-lab/chrome"
   [ ! -e "$new" ] && [ ! -L "$new" ] && [ -d "$old" ] || return 0
@@ -1119,9 +1123,14 @@ migrate_browser_profile() {
   [ "$(stat -c %U "$old")" = "$user" ] || { warn "the saved browser profile is not owned by ${user}; starting a new one"; return 0; }
   group="$(id -gn "$account")"
   systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
-  install -d -o "$account" -g "$group" -m 0700 "${home}/.local" "${home}/.local/share" "${home}/.local/share/matrix-browser-lab"
-  run_required "moving the saved browser profile" mv -T "$old" "$new"
-  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "$new"
+  rm -rf -- "$stage"
+  install -d -o root -g root -m 0711 "$stage"
+  install -d -o "$account" -g "$group" -m 0700 "${stage}/${account}"
+  run_required "moving the saved browser profile" mv -T "$old" "${stage}/${account}/chrome"
+  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "${stage}/${account}/chrome"
+  run_required "preparing the browser account's profile folder" runuser -u "$account" -- mkdir -p "${home}/.local/share/matrix-browser-lab"
+  run_required "placing the saved browser profile" runuser -u "$account" -- mv -T "${stage}/${account}/chrome" "$new"
+  rm -rf -- "$stage"
   ok "Kept your saved browser sessions"
 }
 

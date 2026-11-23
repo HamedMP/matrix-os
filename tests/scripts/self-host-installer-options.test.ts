@@ -726,12 +726,14 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=alice MATRIX_BROWSER_ACCOUNT_HOME="
     });
 
     // Found in review: an install whose browser ran as matrix lost its saved
-    // logins and tabs when the browser moved to the dedicated account.
-    function migrate(options: { newExists?: boolean; outside?: boolean } = {}) {
+    // logins and tabs when the browser moved to the dedicated account. The move
+    // must never let root write through browser-owned (swappable) directories.
+    function migrate(options: { newExists?: boolean; outside?: boolean; linkedParent?: boolean } = {}) {
       const legacyRoot = join(dir, "legacy");
       const home = join(dir, "browser-home");
+      const stage = join(dir, "stage");
       const old = join(legacyRoot, ".local/share/matrix-browser-lab/chrome");
-      spawnSync("mkdir", ["-p", join(old, "Default")]);
+      spawnSync("mkdir", ["-p", join(old, "Default"), home]);
       writeFileSync(join(old, "Default/Cookies"), "saved session");
       if (options.outside) {
         spawnSync("rm", ["-rf", old]);
@@ -739,23 +741,34 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=alice MATRIX_BROWSER_ACCOUNT_HOME="
         spawnSync("ln", ["-s", join(dir, "elsewhere"), old]);
       }
       if (options.newExists) spawnSync("mkdir", ["-p", join(home, ".local/share/matrix-browser-lab/chrome")]);
+      if (options.linkedParent) {
+        spawnSync("mkdir", ["-p", join(dir, "etc-standin")]);
+        spawnSync("ln", ["-s", join(dir, "etc-standin"), join(home, ".local")]);
+      }
       const calls = join(dir, "migrate-calls");
       const result = run(`systemctl() { printf 'systemctl %s\\n' "$*" >>"${calls}"; }
 chown() { printf 'chown %s\\n' "$*" >>"${calls}"; }
 install() { printf 'install %s\\n' "$*" >>"${calls}"; command install -d "\${@: -1}"; }
+runuser() { printf 'runuser %s\\n' "$*" >>"${calls}"; shift 3; "$@"; }
 id() { case "$*" in "-gn matrix-browser") echo matrix-browser ;; *) command id "$@" ;; esac; }
-MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${legacyRoot}" MATRIX_LEGACY_BROWSER_USER="$(command id -un)" migrate_browser_profile matrix-browser "${home}"`);
+MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${legacyRoot}" MATRIX_LEGACY_BROWSER_USER="$(command id -un)" MATRIX_BROWSER_PROFILE_STAGE="${stage}" migrate_browser_profile matrix-browser "${home}"`);
       const lines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
-      return { result, old, moved: join(home, ".local/share/matrix-browser-lab/chrome"), calls: lines };
+      return { result, old, home, stage, moved: join(home, ".local/share/matrix-browser-lab/chrome"), calls: lines };
     }
 
     it("moves an existing saved browser profile into the browser account's home", () => {
-      const { result, old, moved, calls } = migrate();
+      const { result, old, home, stage, moved, calls } = migrate();
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(moved, "Default/Cookies"), "utf8")).toBe("saved session");
       expect(existsSync(old)).toBe(false);
+      expect(existsSync(stage)).toBe(false);
       expect(calls).toContain("systemctl stop matrix-browser-lab-chrome.service");
-      expect(calls).toContain(`chown -R --no-dereference matrix-browser:matrix-browser ${moved}`);
+      // Ownership changes only in the root-owned staging area, never in the account's home.
+      expect(calls).toContain(`chown -R --no-dereference matrix-browser:matrix-browser ${stage}/matrix-browser/chrome`);
+      // Inside the account's home, only the account itself creates and moves.
+      expect(calls).toContain(`runuser -u matrix-browser -- mkdir -p ${home}/.local/share/matrix-browser-lab`);
+      expect(calls).toContain(`runuser -u matrix-browser -- mv -T ${stage}/matrix-browser/chrome ${moved}`);
+      expect(calls.filter((call) => call.startsWith("install") && call.includes(home))).toEqual([]);
     });
 
     it("leaves profiles alone when the account already has one or the old one points elsewhere", () => {
@@ -764,8 +777,16 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${legacyRoot}" MATRIX_L
         expect(result.status, result.stderr).toBe(0);
         expect(calls.filter((call) => call.startsWith("chown"))).toEqual([]);
         expect(existsSync(join(moved, "Default/Cookies"))).toBe(false);
-        spawnSync("rm", ["-rf", join(dir, "legacy"), join(dir, "browser-home"), join(dir, "elsewhere"), join(dir, "migrate-calls")]);
+        spawnSync("rm", ["-rf", join(dir, "legacy"), join(dir, "browser-home"), join(dir, "elsewhere"), join(dir, "stage"), join(dir, "migrate-calls")]);
       }
+    });
+
+    it("never writes through a browser-owned link in the destination path", () => {
+      const { calls } = migrate({ linkedParent: true });
+      // Root never creates or changes anything under the account's home; whatever
+      // the account's own mkdir does through its link affects only what it can reach.
+      expect(calls.filter((call) => call.startsWith("install") && call.includes("browser-home"))).toEqual([]);
+      expect(calls.filter((call) => call.startsWith("chown") && call.includes("browser-home"))).toEqual([]);
     });
 
     it("prepares the account before installing the browser desktop", () => {
