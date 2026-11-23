@@ -10,6 +10,8 @@ export interface CustomerVpsConfig {
   hetznerApiToken: string;
   location: string;
   serverType: string;
+  /** Hetzner type for new preview machines (ENG-563); see resolvePreviewServerType. */
+  previewServerType: string;
   image: string;
   sshKeyName?: string;
   /** Separate operator key used only for the matrix-support guest account. */
@@ -69,6 +71,27 @@ function enabledFromEnv(value: string | undefined): boolean {
   return value === 'true';
 }
 
+const DEFAULT_PREVIEW_SERVER_TYPE = 'cx23';
+const PREVIEW_SERVER_TYPE_PATTERN = /^[a-z]{2,4}[0-9]{2,3}$/;
+// Hetzner offers cx23 only in these EU locations.
+const PREVIEW_SERVER_TYPE_LOCATIONS: ReadonlySet<string> = new Set(['fsn1', 'hel1', 'nbg1']);
+
+function previewServerTypeFromEnv(value: string | undefined): string {
+  return value !== undefined && PREVIEW_SERVER_TYPE_PATTERN.test(value) ? value : DEFAULT_PREVIEW_SERVER_TYPE;
+}
+
+/**
+ * Server type for a new shared, pair, or Private Preview machine. Elsewhere
+ * the customer type is used so creation does not fail at Hetzner. Existing
+ * machines keep their stored type.
+ */
+export function resolvePreviewServerType(
+  config: Pick<CustomerVpsConfig, 'previewServerType' | 'serverType'>,
+  location: string,
+): string {
+  return PREVIEW_SERVER_TYPE_LOCATIONS.has(location) ? config.previewServerType : config.serverType;
+}
+
 function fundedAiRuntimeFromEnv(env: NodeJS.ProcessEnv): {
   fundedAiEnabled: boolean;
   fundedAiRelayUrl: string;
@@ -110,6 +133,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     hetznerApiToken: env.HETZNER_API_TOKEN ?? '',
     location: env.HETZNER_LOCATION ?? 'nbg1',
     serverType: env.HETZNER_SERVER_TYPE ?? 'cpx22',
+    previewServerType: previewServerTypeFromEnv(env.CUSTOMER_VPS_PREVIEW_SERVER_TYPE),
     image: env.HETZNER_IMAGE ?? 'ubuntu-24.04',
     sshKeyName: env.HETZNER_SSH_KEY_NAME || undefined,
     supportPublicKey: env.MATRIX_SUPPORT_SSH_PUBLIC_KEY || undefined,
