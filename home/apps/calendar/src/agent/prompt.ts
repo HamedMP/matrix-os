@@ -10,7 +10,7 @@
  */
 import { instantToMs, type CalendarEvent } from "../../../_shared/office-accounts/types/calendar";
 import { isValidMailAddress } from "../../../_shared/office-accounts/types/mail";
-import { cleanText } from "../model/proposals";
+import { cleanText } from "./parse-intent";
 import type { CalendarAgentContext } from "./types";
 
 export const MAX_REQUEST_CHARS = 1_000;

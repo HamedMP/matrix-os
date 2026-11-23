@@ -16,7 +16,7 @@ import {
   type Weekday,
 } from "../../../_shared/office-accounts/types/calendar";
 import { MINUTES_PER_DAY } from "../model/dates";
-import { cleanText } from "../model/proposals";
+import { cleanText as cleanModelText } from "../model/proposals";
 import { parseDateRef, parseWallTime, parseWindowRef } from "./relative-dates";
 import type { CalendarIntent, PeopleRef, RecurrenceRef } from "./types";
 
@@ -75,6 +75,11 @@ function matchingBrace(source: string, start: number): number {
     }
   }
   return -1;
+}
+
+/** Plain one-line text: line breaks become spaces, control and direction characters go, length is capped. */
+export function cleanText(value: unknown, maxLength: number): string {
+  return cleanModelText(typeof value === "string" ? value.replace(/[\r\n\t]+/g, " ") : value, maxLength);
 }
 
 function wholeIn(value: unknown, minimum: number, maximum: number): number | null {
