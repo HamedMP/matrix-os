@@ -14,12 +14,12 @@ import { HcCallError, type HcConnection } from "./hc-client";
 /** A dial over a slow network, with the ssh handshake and the core check there. */
 const ADD_TIMEOUT_MS = 30_000;
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
-const ADD_FAILURES = new Set<LocalMachineAddFailure>(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added"]);
+const ADD_FAILURES = new Set<LocalMachineAddFailure>(["unreachable", "needs_login", "hc_missing", "incompatible", "name_taken", "already_added"]);
 
 const ListedSchema = z.object({ machines: z.array(z.unknown()).max(LOCAL_MACHINES_MAX * 4) });
 const MachineSchema = z.object({
   name: z.string().regex(LOCAL_MACHINE_NAME_PATTERN),
-  target: z.string().max(1_024),
+  target: z.string().max(4_096),
   state: z.string().max(32).optional().catch(undefined),
   temporary: z.boolean().optional().catch(false),
 });

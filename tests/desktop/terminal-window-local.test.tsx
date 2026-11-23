@@ -78,6 +78,23 @@ describe("This Computer terminals", () => {
     expect(operator.invoke.mock.calls.some(([channel]) => channel === "local-terminal:list")).toBe(false);
   });
 
+  it("shows saved output on the first visit and marks it seen after the read succeeds", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    let finish!: (result: unknown) => void;
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t6", "completed build", { finished: true })]),
+      "local-terminal:history": () => new Promise((resolve) => { finish = resolve; }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/completed build/));
+    await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:history", { id: "t6" }));
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:seen", { id: "t6" });
+    await act(async () => finish({ ok: true, text: "build completed while the window was closed" }));
+    expect(await screen.findByText("build completed while the window was closed")).toBeTruthy();
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "t6" });
+  });
+
   it("starts a terminal and opens it", async () => {
     const terminals: Fact[] = [];
     const operator = installOperator({
@@ -167,15 +184,18 @@ describe("This Computer terminals", () => {
   });
 
   it("keeps the pane of a shell that exited, marked ended, until the user closes it", async () => {
-    const operator = installOperator({ "local-terminal:watch": watching([fact("t1", "build")]) });
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t1", "build")]),
+      "local-terminal:history": () => ({ ok: true, text: "build result" }),
+    });
     render(<TerminalWindowApp />);
     fireEvent.click(await findRow(/build/));
     await screen.findByTestId("terminal-view");
     operator.push([fact("t1", "build", { finished: true })]);
     expect(await screen.findByText("build ended")).toBeTruthy();
-    expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
+    expect(await screen.findByText("build result")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close build" }));
-    expect(screen.queryByTestId("terminal-view")).toBeNull();
+    expect(screen.queryByText("build result")).toBeNull();
   });
 
   // Fault detected (Greptile, #3567): a running terminal on an added machine read as ended.

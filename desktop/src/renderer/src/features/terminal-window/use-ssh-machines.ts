@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, onEvent } from "../../lib/operator";
 import type { LocalMachine, LocalMachineAddFailure, SshOptions, TailscalePeer } from "../../../../shared/local-terminals";
+import type { LocalTerminalsState } from "./use-local-terminals";
 
 const SETTLING_REFRESH_MS = 5_000;
 // A connected machine can drop, and an unreachable one come back, without anything here noticing.
@@ -16,9 +17,10 @@ export type TailscalePeersState =
   | { status: "ready"; peers: TailscalePeer[] }
   | { status: "missing" | "stopped" | "logged-out" | "unavailable" };
 
-export function useSshMachines() {
+export function useSshMachines(terminals: LocalTerminalsState) {
   const [state, setState] = useState<SshMachinesState>({ status: "loading" });
   const generation = useRef(0);
+  const [loginTerminal, setLoginTerminal] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -51,6 +53,14 @@ export function useSshMachines() {
     }, settling ? SETTLING_REFRESH_MS : STEADY_REFRESH_MS);
     return () => clearInterval(timer);
   }, [any, refresh, settling]);
+
+  // The pinned CLI may register a machine in an interactive Add. Refresh
+  // as soon as that shell exits, including when the machine list was empty.
+  const loginFinished = terminals.status === "ready"
+    && terminals.facts.some((terminal) => terminal.id === loginTerminal && terminal.finished);
+  useEffect(() => {
+    if (loginFinished) void refresh();
+  }, [loginFinished, loginTerminal, refresh]);
 
   const add = useCallback(async (target: string, name?: string, ssh?: SshOptions): Promise<AddMachineOutcome> => {
     let outcome: AddMachineOutcome = { ok: false, reason: "unavailable" };
@@ -95,10 +105,14 @@ export function useSshMachines() {
   }, []);
 
   /** A terminal on this device running `ssh <target>`; its id, or null. */
-  const sshLogin = useCallback(async (target: string, ssh?: SshOptions): Promise<string | null> => {
+  const sshLogin = useCallback(async (target: string, ssh?: SshOptions, name?: string): Promise<string | null> => {
     try {
-      const result = await invoke("local-terminal:ssh-login", { target, ...(ssh ? { ssh } : {}), cols: 100, rows: 30 });
-      return result.status === "ready" ? result.id : null;
+      const result = await invoke("local-terminal:ssh-login", {
+        target, ...(ssh ? { ssh } : {}), ...(name ? { name } : {}), cols: 100, rows: 30,
+      });
+      if (result.status !== "ready") return null;
+      setLoginTerminal(result.id);
+      return result.id;
     } catch (error: unknown) {
       console.warn("[terminal-window] ssh login terminal failed:", error instanceof Error ? error.name : "UnknownError");
       return null;

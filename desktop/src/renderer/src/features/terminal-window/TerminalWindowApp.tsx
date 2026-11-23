@@ -8,6 +8,7 @@ import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
+import { FinishedTerminalOutput } from "./FinishedTerminalOutput";
 import { createPaneAttachManager } from "../terminal/terminal-runtime";
 import type { AttachManager } from "../terminal/attach-manager";
 import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
@@ -263,6 +264,16 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
       renderPane={(leaf, focused) => {
         const sessionName = paneSessionName(leaf.terminal);
         if (!sessionName) return null;
+        const historyId = view.status.historyTerminalId(leaf.terminal);
+        if (historyId) {
+          return (
+            <>
+              <FinishedTerminalOutput key={leaf.terminal} terminalKey={leaf.terminal} terminalId={historyId}
+                focused={focused} onDisplayed={view.status.historyDisplayed} />
+              {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
+            </>
+          );
+        }
         // A session change remounts each pane so it attaches again with the new credentials.
         return (
           <>

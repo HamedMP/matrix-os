@@ -21,6 +21,7 @@ export const ADD_MACHINE_FAILURE: Record<LocalMachineAddFailure, string> = {
   already_added: "That machine is already added.",
   invalid: "Check the address (host, user@host or user@host:port) and the advanced fields.",
   unavailable: "Couldn't add it. Try again.",
+  needs_login: "This machine needs a password or one-time code. Complete the sign-in prompt in a terminal. If the machine doesn’t appear, try Add again.",
 };
 
 const TAILSCALE_NOTE: Record<Exclude<TailscalePeersState["status"], "ready" | "loading">, string> = {
@@ -34,7 +35,7 @@ export interface AddMachineDialogProps {
   open: boolean;
   onAdd(target: string, name?: string, ssh?: SshOptions): Promise<AddMachineOutcome>;
   /** Opens a terminal running ssh to the target, with the same options. */
-  onOpenSsh(target: string, ssh?: SshOptions): Promise<boolean>;
+  onOpenSsh(target: string, ssh?: SshOptions, name?: string): Promise<boolean>;
   /** This Mac's tailnet peers. */
   loadPeers(): Promise<TailscalePeersState>;
   onClose(): void;
@@ -127,7 +128,7 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
   const openSsh = async () => {
     if (!tried) return;
     setOpenFailed(false);
-    const opened = await onOpenSsh(tried.target, tried.ssh);
+    const opened = await onOpenSsh(tried.target, tried.ssh, name.trim().toLowerCase() || undefined);
     if (!alive.current) return;
     if (opened) onClose();
     else setOpenFailed(true);
@@ -165,7 +166,7 @@ function AddMachineForm({ onAdd, onOpenSsh, loadPeers, onClose }: AddMachineDial
       {failure ? <p role="alert" className="text-[12px]">{ADD_MACHINE_FAILURE[failure]}</p> : null}
       {openFailed ? <p role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</p> : null}
       <div className="flex flex-wrap justify-end gap-2">
-        {failure === "unreachable" && tried ? (
+        {(failure === "unreachable" || failure === "needs_login") && tried ? (
           <Button type="button" variant="secondary" size="sm" onClick={() => { void openSsh(); }}>Open in terminal</Button>
         ) : null}
         <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>

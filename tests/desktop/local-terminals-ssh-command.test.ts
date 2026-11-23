@@ -15,8 +15,20 @@ describe("custom ssh fields", () => {
     expect(SshOptionsSchema.safeParse({ port: 2222, identity: "~/.ssh/id_ed25519", jump: "me@bastion" }).success).toBe(true);
   });
 
-  it("needs no via for a plain target, a port typed into it included", () => {
-    expect(sshVia("can@10.0.0.7:2222", undefined, null)).toBeNull();
+  it("uses an explicit port when Add and the pinned installer share the SSH command", () => {
+    expect(sshVia("can@10.0.0.7:2222", undefined, null))
+      .toBe("ssh -o BatchMode=yes -p 2222 -- 'can@10.0.0.7'");
+  });
+
+  it("shares an interactive OpenSSH login with a later batch dial to the same target", () => {
+    const root = "/tmp/mx-ssh";
+    const options = { port: 2200, identity: "~/.ssh/key", jump: "me@bastion" };
+    const login = sshLoginArgv("me@box", options, null, root);
+    const socket = login[login.indexOf("-S") + 1];
+    expect(socket).toMatch(/^\/tmp\/mx-ssh\//);
+    expect(login).toEqual(expect.arrayContaining(["ControlMaster=auto", "ControlPersist=600", "BatchMode=no"]));
+    expect(sshVia("me@box", options, null, root)).toContain(`-S '${socket}'`);
+    expect(sshVia("me@box", { ...options, port: 2201 }, null, root)).not.toContain(socket);
   });
 
   it("builds a batch-mode via line with each value quoted, port, identity and jump host", () => {
