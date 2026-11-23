@@ -27,7 +27,7 @@ import type { CellRange, CellValue, ProposalOptions, SheetId } from "./xlsx-mode
 export interface DescribeDocxOptions {
   /** Upper bound on the length of the returned text. */
   maxChars: number;
-  /** Start at this body block instead of the first one, to continue a truncated description. */
+  /** Start at this block (top-level or inside a table) instead of the first one, to continue a truncated description. */
   startBlockId?: BlockId;
   /** Describe another story (a header, footer or note) instead of the body. */
   storyId?: StoryId;
@@ -56,7 +56,19 @@ export interface DescribeDocxOptions {
  *   pending deletions are not. Line breaks inside a paragraph are written as
  *   a space, inline objects are left out.
  * - A paragraph that does not fit is not cut: the description stops before
- *   it, `truncated` is true and `nextBlockId` names it.
+ *   it, `truncated` is true and `nextBlockId` names it. The one exception is
+ *   a paragraph longer than the whole budget: as the first paragraph of a
+ *   description it is cut and ends in `…`, so that a continuation always
+ *   moves forward.
+ * - The outline lists the headings of the body and takes at most 40% of
+ *   `maxChars`; headings that do not fit are counted in a last line
+ *   `… N more headings`.
+ * - A paragraph that every pending revision removes (deleted or moved away
+ *   in full) is left out. An empty paragraph is a line with only its id.
+ *
+ * Throws `invalid_argument` for a `maxChars` that is not a whole number from
+ * 1 to 4 000 000, and `stale_reference` for an unknown `startBlockId` or
+ * `storyId`.
  */
 export interface DocxDescription {
   text: string;
@@ -87,7 +99,15 @@ export interface DescribeSheetOptions {
  * A literal is written as its display text; a formula as the formula, ` => `
  * and its display text. Line breaks inside a cell are written as a space.
  * When the cells do not fit, the description stops at a row boundary and
- * `truncated` is true; `range` is then the part that was described.
+ * `truncated` is true; `range` is then the part that was described. When not
+ * even the first row fits, the cells of that row that do fit are described
+ * and `range` ends at the last of them; a single cell longer than the budget
+ * is cut and ends in `…`.
+ *
+ * A given range is cut down to the used part of the sheet. For an empty sheet,
+ * or a range outside the used part, `text` is the header alone.
+ * Throws `not_found` for an unknown sheet and `invalid_argument` for a bad
+ * `maxChars` (a whole number from 1 to 4 000 000) or range.
  */
 export interface SheetDescription {
   text: string;
@@ -125,7 +145,11 @@ export interface AgentInsertParagraphEdit {
   blockId: BlockId;
   position?: "after" | "before";
   text: string;
-  /** 1 to 9 makes the paragraph a heading; without it the paragraph copies its neighbour. */
+  /**
+   * 1 to 9 makes the paragraph a heading. Without it the paragraph copies
+   * its neighbour, except next to a heading, where it gets the default
+   * paragraph style.
+   */
   headingLevel?: number;
 }
 
@@ -225,6 +249,11 @@ export type AgentParseResult = { ok: true; envelope: AgentEditEnvelope } | { ok:
  *
  * Bounds (`too_large`): 1 MiB of text, 500 edits, 20 000 characters per
  * string, 10 000 cells per `setRange`.
+ *
+ * Also `invalid_shape`: an empty `find` of `replaceText`, an `occurrence`
+ * or `headingLevel` that is not a whole number in range, a cell address or
+ * range that is not A1 notation, a number that is not finite, and a control
+ * character other than tab and line break in document text.
  */
 export type ParseAgentEdits = (text: string, expectedKind?: AgentEditKind) => AgentParseResult;
 
@@ -264,10 +293,21 @@ export interface DocxEditPlan {
 
 /**
  * Resolves agent edits against the current document without changing it.
- * `replaceText` becomes a `replaceRange` with word granularity, so only the
- * words that differ are marked. Quoted text is matched in the `final` view
- * and mapped to markup positions. Apply the plan with
- * `document.applyOps(plan.ops, { track: true, … })`.
+ * `replaceText` becomes a `replaceRange` with word granularity over the
+ * words that differ, so text the agent repeated around its change is not
+ * marked. Quoted text is matched in the `final` view as a description shows
+ * it (on one line, without inline objects) and mapped to markup positions.
+ * Apply the plan with `document.applyOps(plan.ops, { track: true, … })`.
+ *
+ * Rejected as `invalid_operation` besides the cases on {@link RejectedEditCode}:
+ * a change that would remove an inline object (an image, a note mark), a
+ * replacement equal to the text it replaces, and an edit that overlaps an
+ * earlier edit of the same paragraph (the earlier one is kept).
+ *
+ * Every operation of the plan has been tried on the document as a tracked
+ * edit and taken back with `snapshot`/`restore`, so applying the plan does
+ * not throw. The trial uses up revision ids: the ids of the real apply are
+ * not the first free ones.
  */
 export type ToDocxOps = (document: DocxDocument, edits: readonly AgentDocxEdit[]) => DocxEditPlan;
 
@@ -289,13 +329,20 @@ export interface SheetEditPlan {
   rejected: RejectedEdit[];
 }
 
-/** Resolves agent edits against the current workbook without changing it. */
+/**
+ * Resolves agent edits against the current workbook without changing it.
+ * A `clearRange` is cut down to the used part of the sheet (a whole column
+ * clears its used rows) and is rejected as `invalid_operation` when more
+ * than 10 000 cells remain.
+ */
 export type ToSheetEdits = (workbook: Workbook, edits: readonly AgentSheetEdit[]) => SheetEditPlan;
 
 /**
  * Applies resolved edits inside a new proposal, ends the proposal and
  * recalculates. Returns the proposal id and the ids of the recorded changes.
- * Throws `invalid_operation` when a proposal is already open.
+ * Throws `invalid_operation` when a proposal is already open. All or
+ * nothing: when an edit fails, the changes recorded so far are rejected, the
+ * proposal is ended and the error is thrown again.
  */
 export type ApplySheetEdits = (
   workbook: Workbook,

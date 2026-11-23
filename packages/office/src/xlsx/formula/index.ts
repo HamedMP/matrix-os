@@ -19,6 +19,8 @@
  * - `graph/`: {@link DependencyGraph}, which tracks precedents and
  *   dependents and plans the recalculation of what is out of date.
  * - `registry.ts`: the function registry and its argument metadata.
+ * - `functions/`: the function libraries ({@link registerA},
+ *   {@link registerB}) that {@link createFunctionRegistry} loads.
  * - `coerce.ts`: conversion between value types, comparison, broadcasting.
  *
  * Beyond the contract, {@link parseFormulaExtended} accepts the reference
@@ -31,6 +33,8 @@ import type { FormulaModule, FormulaScalar } from "../../api/formula.js";
 import { registerCoreFunctions } from "./eval/core-functions.js";
 import { evaluate, type EvaluateOptions } from "./eval/evaluator.js";
 import { toCellResult } from "./eval/reference.js";
+import { registerA } from "./functions/register-a.js";
+import { registerB } from "./functions/register-b.js";
 import type { ExtendedAst } from "./parser/ast.js";
 import { parseFormula } from "./parser/parser.js";
 import { serializeFormula } from "./parser/serialize.js";
@@ -43,14 +47,22 @@ export * from "./parser/index.js";
 export * from "./eval/index.js";
 export * from "./graph/index.js";
 
+export { registerA } from "./functions/register-a.js";
+export { registerB } from "./functions/register-b.js";
+
 /**
  * The function libraries of a registry with builtins, in registration
  * order. A later library replaces a function of an earlier one.
  *
- * A library under `functions/` is added here: import its
+ * - `registerCoreFunctions`: SUM, IF, IFERROR, AND, OR, NOT.
+ * - `registerA`: math, statistical, logical and information functions.
+ * - `registerB`: text, date and time, lookup and reference, and financial
+ *   functions.
+ *
+ * A further library under `functions/` is added here: import its
  * `(registry: FunctionRegistry) => void` and append it to the list.
  */
-export const FUNCTION_LIBRARIES: readonly FunctionLibrary[] = [registerCoreFunctions];
+export const FUNCTION_LIBRARIES: readonly FunctionLibrary[] = [registerCoreFunctions, registerA, registerB];
 
 /**
  * Creates a function registry. With `builtins` (default true) it holds

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CellChange, ResolveChangesResult } from "../../../../packages/office/src/api/xlsx.js";
 import { findAll, getAttr, setAttr } from "../../../../packages/office/src/xml/index.js";
 import { createXlsx, openXlsx, parseA1, parseA1Range, parseCsv } from "../../../../packages/office/src/xlsx/index.js";
@@ -29,6 +29,8 @@ function fakeJournal(sheet: string, calls: string[]): WorkbookJournal {
   };
 }
 
+// Importing the workbook module registers the change journal. These tests are about the seam itself, so each starts without one.
+beforeEach(() => setJournalProvider(null));
 afterEach(() => setJournalProvider(null));
 
 describe("a workbook without a journal", () => {

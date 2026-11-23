@@ -2,6 +2,9 @@
  * Workbooks: opening, reading, editing and saving `.xlsx` files, CSV import
  * and export, number format rendering and A1 addressing.
  * Implements the contract in `../api/xlsx.ts`.
+ *
+ * Calculation uses the formula engine in `./formula/` with its whole
+ * function library; proposed changes are kept by the journal in `./journal/`.
  */
 
 import type { CreateXlsx, OpenXlsx, XlsxModule } from "../api/xlsx.js";
@@ -9,6 +12,7 @@ import { OfficeError } from "../errors.js";
 import { makeParseCsv, toCsv } from "./csv/index.js";
 import { formatValue } from "./format/index.js";
 import * as formula from "./formula/index.js";
+import { changeJournalProvider } from "./journal/index.js";
 import {
   MAX_COLS,
   MAX_ROWS,
@@ -20,7 +24,7 @@ import {
   parseA1Range,
   parseSheetRange,
 } from "./workbook/a1.js";
-import { attachJournal, getJournalProvider, getWorkbookInternals } from "./workbook/internals.js";
+import { attachJournal, getJournalProvider, getWorkbookInternals, setJournalProvider } from "./workbook/internals.js";
 import { type WorkbookDeps, createState, openState } from "./workbook/open.js";
 import { checkSheetNameText } from "./workbook/sheets.js";
 import { createHandle } from "./workbook/workbook.js";
@@ -94,6 +98,11 @@ export const xlsxModule: XlsxModule = Object.freeze({
   MAX_ROWS,
   MAX_COLS,
 });
+
+// The change journal. Registered here, in a statement of this module, so a
+// bundler that drops unused re-exports cannot drop the registration with them.
+setJournalProvider(changeJournalProvider);
+
 export {
   JOURNAL_CONTENT_TYPE,
   JOURNAL_PART_NAME,
