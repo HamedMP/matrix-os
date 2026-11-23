@@ -110,6 +110,7 @@ export function fieldNodesToKeep(roots: readonly XmlElement[]): Set<XmlElement> 
   }
   if (withFields.length === 0) return keep;
   if (withFields.length > 1) {
+    // Local to this call: one entry per ancestor of a removed element that holds field characters.
     const indexes = new Map<XmlElement, Map<unknown, number>>();
     const paths = new Map(withFields.map((entry) => [entry.root, pathOf(entry.root, indexes)] as const));
     withFields.sort((a, b) => comparePaths(paths.get(a.root) ?? [], paths.get(b.root) ?? []));
@@ -144,7 +145,7 @@ export function fieldNodesToKeep(roots: readonly XmlElement[]): Set<XmlElement> 
 export function collectAnchors(root: XmlElement, options: AnchorOptions = {}): XmlElement[] {
   const fields = options.fields ?? true;
   const fieldKeep: ReadonlySet<XmlElement> = fields === false ? new Set() : fields === true ? fieldNodesToKeep([root]) : fields;
-  /** Children of runs to keep, by run. */
+  /** Children of runs to keep, by run. Local to this call: at most one entry per run of the removed content. */
   const kept = new Map<XmlElement, XmlElement[]>();
   /** Range markers, and runs with something to keep, in document order. */
   const order: XmlElement[] = [];

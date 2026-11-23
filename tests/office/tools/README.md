@@ -58,8 +58,8 @@ Accept all: remove `w:del` and `w:moveFrom` with their content, unwrap `w:ins` a
 their content, unwrap `w:del` and `w:moveFrom` (deleted text becomes visible), remove
 rows marked inserted. Both drop property-change records and move range markers. A
 paragraph whose mark is removed (deleted mark on accept, inserted mark on reject, a
-moved-away mark) joins the next paragraph. Text inserted by one author and deleted by
-another disappears in both views.
+moved-away mark) joins the next paragraph, in the body and inside a table cell. Text
+inserted by one author and deleted by another disappears in both views.
 
 Text output: one line per body paragraph in document order; a table row is one line with
 cells separated by a tab (paragraphs inside a cell joined by a newline); `w:tab` is a

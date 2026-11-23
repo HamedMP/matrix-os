@@ -167,7 +167,7 @@ export interface CellWrite {
  */
 export function checkTableHeaderWrites(sheet: SheetModel, writes: Iterable<CellWrite>): void {
   if (sheet.tables.length === 0) return;
-  /** Column names as they will be, per table. */
+  /** Column names as they will be, per table. Local to this call: at most one entry per table of the sheet. */
   const names = new Map<TablePart, string[]>();
   for (const write of writes) {
     const header = headerAt(sheet, write.row, write.col);

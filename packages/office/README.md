@@ -160,6 +160,10 @@ node_modules/.bin/tsc --noEmit -p packages/office/tsconfig.json
 NODE_OPTIONS=--no-experimental-webstorage node node_modules/vitest/vitest.mjs run tests/office
 ```
 
+`tests/office/interop/` holds every file the engine writes to the rules other
+software enforces (element order, balanced anchors, unique ids, counts,
+tables against their cells); see its README.
+
 `tests/office/e2e/` runs the acceptance flows of the spec through the public
 API only. With `OFFICE_E2E_OUT=<directory>` those tests also keep every file
 they produce, for checking with the independent readers in `tests/office/tools/`.
