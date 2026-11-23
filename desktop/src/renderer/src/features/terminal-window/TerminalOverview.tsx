@@ -4,7 +4,10 @@
 // it; the pencil renames it in place. Opened from the tab bar or Cmd+Shift+O.
 import { useState, type FormEvent } from "react";
 import { LoaderCircle, Pencil, SquareTerminal } from "lucide-react";
+import { Input } from "@matrix-os/ui";
 import { terminalSinceLabel, type TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
+import { Button } from "../../design/primitives";
+import { COMPACT_ICON_BUTTON, COMPACT_ICON_BUTTON_CLASS } from "./compact-icon-button";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const STATUS_LABEL: Record<string, string> = { working: "Working", blocked: "Needs you", error: "Error", done: "Done", idle: "Idle" };
@@ -26,12 +29,12 @@ function CardName({ row, onRename }: { row: TerminalSidebarRow; onRename(name: s
     return (
       <span className="flex min-w-0 flex-1 items-center gap-1">
         <span className="min-w-0 truncate text-[13px] font-medium">{row.space ? <><span className="font-semibold">{row.space}</span><span style={secondaryText}> · {row.name}</span></> : row.name}</span>
-        <button type="button" aria-label={`Rename ${row.name}`} title="Rename"
+        <Button variant="ghost" aria-label={`Rename ${row.name}`} title="Rename"
           onClick={(event) => { event.stopPropagation(); setDraft(row.name); }}
-          className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100"
-          style={secondaryText}>
+          className={`shrink-0 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 ${COMPACT_ICON_BUTTON_CLASS}`}
+          style={{ ...COMPACT_ICON_BUTTON, width: 20, height: 20 }}>
           <Pencil size={11} aria-hidden="true" />
-        </button>
+        </Button>
       </span>
     );
   }
@@ -44,9 +47,9 @@ function CardName({ row, onRename }: { row: TerminalSidebarRow; onRename(name: s
   return (
     <form className="min-w-0 flex-1" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
       {/* react-doctor-disable-next-line react-doctor/no-autofocus -- the person just chose Rename */}
-      <input aria-label="Terminal name" value={draft} maxLength={64} autoFocus onChange={(event) => setDraft(event.target.value)}
+      <Input aria-label="Terminal name" value={draft} maxLength={64} autoFocus onChange={(event) => setDraft(event.target.value)}
         onBlur={() => setDraft(null)} onKeyDown={(event) => { if (event.key === "Escape") setDraft(null); }}
-        className="w-full rounded border bg-transparent px-1.5 py-0.5 text-[13px] outline-none" style={{ borderColor: "var(--border-default)" }} />
+        style={{ padding: "2px 6px", fontSize: 13 }} />
     </form>
   );
 }

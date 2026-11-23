@@ -40,7 +40,12 @@ function installOperator(screens: Record<string, string>) {
     },
   };
   const emit = (channel: string, payload: unknown) => { for (const listener of listeners.get(channel) ?? []) listener(payload); };
-  return { invoke, command: (command: Record<string, unknown>) => act(() => emit("terminal-window:command", command)) };
+  return {
+    invoke,
+    command: (command: Record<string, unknown>) => act(() => emit("terminal-window:command", command)),
+    push: (terminals: unknown[]) => act(() => emit("local-terminal:facts", { terminals })),
+    facts,
+  };
 }
 
 describe("Terminal window overview", () => {
@@ -113,6 +118,26 @@ describe("Terminal window overview", () => {
     await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
   });
 
+  // Fault detected (Greptile, #3586): a terminal that finished behind the overview was marked seen unopened.
+  it("marks a terminal seen only once the overview gives way to it", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const operator = installOperator({});
+    render(<TerminalWindowApp />);
+    await screen.findByRole("navigation", { name: "Terminals" });
+    operator.command({ command: "overview" });
+    fireEvent.click(within(await screen.findByRole("main", { name: "Overview" })).getByRole("button", { name: "Open build" }));
+    await screen.findByTestId("terminal-view");
+    operator.command({ command: "overview" });
+    await screen.findByRole("main", { name: "Overview" });
+    const seen = () => operator.invoke.mock.calls.filter(([channel, payload]) => channel === "local-terminal:seen" && (payload as { id: string }).id === "t1");
+    const before = seen().length;
+    operator.push(operator.facts.map((entry) => (entry.id === "t1" ? { ...entry, status: "done", statusAt: 2_000, turn: 1 } : entry)));
+    await waitFor(() => expect(within(screen.getByRole("main", { name: "Overview" })).getByRole("button", { name: "Open build" }).textContent).toMatch(/done/i));
+    expect(seen()).toHaveLength(before);
+    operator.command({ command: "overview" });
+    await waitFor(() => expect(seen()).toHaveLength(before + 1));
+  });
+
   it("keeps a preview's last lines that hold something, cut to width", () => {
     expect(previewLines(`a\n\n${"x".repeat(200)}\n  \n${Array.from({ length: 10 }, (_, index) => `line ${index}`).join("\n")}\n`))
       .toEqual(Array.from({ length: 8 }, (_, index) => `line ${index + 2}`));
@@ -138,8 +163,9 @@ describe("Terminal window overview previews", () => {
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  function setup() {
+  function setup(failFirst = false) {
     const get = vi.fn(async () => ({ screen: "computer screen" }));
+    if (failFirst) get.mockRejectedValueOnce(new Error("timed out"));
     const client = { get } as unknown as ApiClient;
     const hook = renderHook(
       ({ rows }: { rows: TerminalSidebarRow[] }) => useTerminalPreviews({ rows, enabled: true, api: () => client }),
@@ -167,6 +193,31 @@ describe("Terminal window overview previews", () => {
     expect(get).toHaveBeenCalledTimes(2);
     await tick(COMPUTER_PREVIEW_MIN_MS);
     expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  // Fault detected (Greptile, #3586): a terminal joining the list read every idle computer terminal again.
+  it("leaves idle computer terminals alone when the list changes", async () => {
+    const { get, hook } = setup();
+    await tick(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    hook.rerender({ rows: [row("local|t1", "1"), row(computerKey, "1"), row("local|t2", "1")] });
+    await tick(3_000);
+    hook.rerender({ rows: [row(computerKey, "1")] });
+    await tick(30_000);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  // Fault detected (Greptile, #3586): a computer read that failed was never tried again while its status held.
+  it("tries a failed computer read again after 15 s", async () => {
+    const { get, hook } = setup(true);
+    await tick(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(hook.result.current[computerKey]).toBeUndefined();
+    await tick(COMPUTER_PREVIEW_MIN_MS);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(hook.result.current[computerKey]).toEqual(["computer screen"]);
+    await tick(30_000);
+    expect(get).toHaveBeenCalledTimes(2);
   });
 
   it("reads nothing while the window is hidden", async () => {

@@ -3,7 +3,8 @@
 // terminal is read from the app's core every few seconds. A Matrix computer's
 // is read from its gateway, which asks Zellij for the screen and makes it
 // repaint, so it is read once and again only after its status changed (at
-// most every 15 s); an idle one is left alone. Nothing is read while the
+// most every 15 s), or 15 s after a read that failed; an idle one is left alone,
+// also when other terminals join or leave the list. Nothing is read while the
 // window is hidden. Bounded in how many are read and how much of each is
 // kept, and every failure only leaves that preview as it was.
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -54,17 +55,23 @@ export function useTerminalPreviews(options: {
   const apiRef = useRef(api);
   useEffect(() => { rowsRef.current = shownRows; apiRef.current = api; }, [api, shownRows]);
   const keySignature = keys.join("\n");
+  // When each computer terminal was last read, the status it had then, and whether the read worked.
+  // Kept while the overview stays open, across changes to the list; bounded by the list.
+  const lastReadRef = useRef(new Map<string, { at: number; statusAt: string | undefined; ok: boolean }>());
 
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the round's timer is cleared and the loop cancelled in the returned cleanup; while disabled nothing is started
   useEffect(() => {
-    if (!enabled) return undefined;
+    const lastRead = lastReadRef.current;
+    if (!enabled) { lastRead.clear(); return undefined; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    // When each computer terminal was last read, and the status it had then. Bounded by the list.
-    const lastRead = new Map<string, { at: number; statusAt: string | undefined }>();
     const due = (row: TerminalSidebarRow, now: number) => {
       if (terminalRowTarget(row.key)?.kind !== "computer") return true;
       const last = lastRead.get(row.key);
-      return !last || (last.statusAt !== row.statusAt && now - last.at >= COMPUTER_PREVIEW_MIN_MS);
+      if (!last) return true;
+      if (now - last.at < COMPUTER_PREVIEW_MIN_MS) return false;
+      // A failed read is tried again; a read one only once its status changed.
+      return !last.ok || last.statusAt !== row.statusAt;
     };
     const round = async () => {
       if (document.visibilityState === "hidden") {
@@ -77,15 +84,18 @@ export function useTerminalPreviews(options: {
       const listedKeys = new Set(shown);
       for (const key of [...lastRead.keys()]) if (!listedKeys.has(key)) lastRead.delete(key);
       const reading = listed.filter((row) => due(row, now));
-      for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, statusAt: row.statusAt });
+      for (const row of reading) if (terminalRowTarget(row.key)?.kind === "computer") lastRead.set(row.key, { at: now, statusAt: row.statusAt, ok: true });
       const read = await Promise.all(reading.map(async ({ key }) => {
+        let lines: string[] | null = null;
         try {
           const text = await readScreen(key, apiRef.current);
-          return [key, text === null ? null : previewLines(text)] as const;
+          lines = text === null ? null : previewLines(text);
         } catch (error: unknown) {
           console.warn("[terminal-window] preview failed:", error instanceof Error ? error.name : "UnknownError");
-          return [key, null] as const;
         }
+        const last = lastRead.get(key);
+        if (lines === null && last?.at === now) lastRead.set(key, { ...last, ok: false });
+        return [key, lines] as const;
       }));
       if (cancelled) return;
       setPreviews((current) => {

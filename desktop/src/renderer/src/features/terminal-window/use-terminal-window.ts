@@ -98,14 +98,15 @@ export function useTerminalWindow() {
   const { markSeen } = status;
 
   // Done since the person last looked: looking at it now counts, in this window and theirs elsewhere.
+  // The overview hides the selected terminal, so it is not looked at until the overview gives way.
   useEffect(() => {
-    if (!selectedRow || selectedRow.status !== "done" || selectedRow.seen) return;
+    if (overviewOpen || !selectedRow || selectedRow.status !== "done" || selectedRow.seen) return;
     if (document.visibilityState !== "visible" || !document.hasFocus()) return;
     markSeen(selectedRow.key);
-  }, [markSeen, selectedRow]);
+  }, [markSeen, overviewOpen, selectedRow]);
   useEffect(() => onEvent("window:focus-changed", ({ focused }) => {
-    if (focused && selectedRow?.status === "done" && !selectedRow.seen) markSeen(selectedRow.key);
-  }), [markSeen, selectedRow]);
+    if (focused && !overviewOpen && selectedRow?.status === "done" && !selectedRow.seen) markSeen(selectedRow.key);
+  }), [markSeen, overviewOpen, selectedRow]);
 
   const openLocal = useCallback((id: string, title?: string) => {
     localChoice.current += 1;
