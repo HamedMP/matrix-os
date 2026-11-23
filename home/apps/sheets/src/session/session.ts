@@ -18,10 +18,11 @@ import {
   isOfficeError,
 } from "./engine";
 import { type SessionCellEdit, type Transaction, applyCellEdit, applyInputs, clampRange } from "./edits";
-import { type LoadedWorkbook, SheetSessionError, fileName, loadWorkbook, serializeWorkbook, toSessionError } from "./file-io";
+import { type LoadedWorkbook, SheetSessionError, fileName, loadWorkbook, serializeWorkbook } from "./file-io";
 import { affectedRange } from "./history";
 import { type RecentFiles, createRecentFiles } from "./recents";
 import { Recorder } from "./recorder";
+import { ARRAY_MESSAGE, OK, PENDING_MESSAGE, failure } from "./results";
 import { DEFAULT_AUTOSAVE_DELAY_MS, SaveController, type SaveTarget } from "./save";
 import type {
   EditResult,
@@ -29,7 +30,6 @@ import type {
   SessionChangeCause,
   SessionDeps,
   SessionEvent,
-  SessionFailure,
   SessionListener,
   SessionState,
   SessionTimers,
@@ -41,12 +41,6 @@ const DEFAULT_TIMERS: SessionTimers = {
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-function failure(error: unknown): SessionFailure {
-  const mapped = toSessionError(error);
-  return { ok: false, code: mapped.code, message: mapped.message };
-}
-
-const OK: EditResult = { ok: true };
 
 export class SheetSession {
   readonly recents: RecentFiles;
@@ -291,7 +285,7 @@ export class SheetSession {
       return failure(error);
     }
     if (entry === null) return OK;
-    if (entry === "blocked") return failure(new SheetSessionError("not_allowed"));
+    if (entry === "blocked") return failure(new SheetSessionError("not_allowed", { message: PENDING_MESSAGE }));
     this.afterChange(direction, affectedRange(entry));
     return OK;
   }
@@ -308,7 +302,15 @@ export class SheetSession {
 
   /** Sets a cell from text as typed. A formula that does not parse fails with `formula` and changes nothing. */
   setCellInput(sheet: SheetId, address: CellAddress, input: string): EditResult {
-    return this.transact("Typing", (tx) => tx.workbook.setCellInput(sheet, address, input));
+    const result = this.transact("Typing", (tx) => tx.workbook.setCellInput(sheet, address, input));
+    if (result.ok || result.code !== "not_allowed") return result;
+    try {
+      if (this.wb.getCell(sheet, address).arrayRange !== null) return { ...result, message: ARRAY_MESSAGE };
+    } catch (error: unknown) {
+      // The address itself was refused: the general message stands.
+      if (!isOfficeError(error)) throw error;
+    }
+    return result;
   }
 
   /** Writes rows of typed text from `start`. Text that looks like a formula but does not parse is kept as text. */
@@ -335,20 +337,27 @@ export class SheetSession {
     });
   }
 
+  /** Rows and columns cannot move while the sheet has proposed changes waiting: say so instead of a general refusal. */
+  private structural(sheet: SheetId, label: string, run: (tx: Transaction) => void): EditResult {
+    const result = this.transact(label, run);
+    if (result.ok || result.code !== "not_allowed" || this.wb.getSheet(sheet).pendingChangeCount === 0) return result;
+    return { ...result, message: PENDING_MESSAGE };
+  }
+
   insertRows(sheet: SheetId, index: number, count: number): EditResult {
-    return this.transact("Insert rows", (tx) => tx.insertRows(sheet, index, count));
+    return this.structural(sheet, "Insert rows", (tx) => tx.insertRows(sheet, index, count));
   }
 
   deleteRows(sheet: SheetId, index: number, count: number): EditResult {
-    return this.transact("Delete rows", (tx) => tx.deleteRows(sheet, index, count));
+    return this.structural(sheet, "Delete rows", (tx) => tx.deleteRows(sheet, index, count));
   }
 
   insertColumns(sheet: SheetId, index: number, count: number): EditResult {
-    return this.transact("Insert columns", (tx) => tx.insertColumns(sheet, index, count));
+    return this.structural(sheet, "Insert columns", (tx) => tx.insertColumns(sheet, index, count));
   }
 
   deleteColumns(sheet: SheetId, index: number, count: number): EditResult {
-    return this.transact("Delete columns", (tx) => tx.deleteColumns(sheet, index, count));
+    return this.structural(sheet, "Delete columns", (tx) => tx.deleteColumns(sheet, index, count));
   }
 
   setColumnWidths(sheet: SheetId, cols: readonly number[], width: number | null): EditResult {

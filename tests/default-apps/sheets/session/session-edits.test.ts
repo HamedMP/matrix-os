@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { opc } from "../../../../home/apps/_shared/office-engine/index";
 import { type SessionEvent, type SheetSession, createSheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
 import { harness, sampleXlsx, settle } from "./fakes";
 
@@ -209,6 +210,57 @@ describe("sheet session editing", () => {
     expect(value(session, sheet, "A1")).toBe(1);
     expect(value(session, sheet, "B1")).toBe(33);
     expect(session.workbook.listChanges()).toEqual([]);
+  });
+
+  it("explains why rows cannot move, or be put back, while proposed changes wait on the sheet", async () => {
+    const { session, sheet } = await open();
+    session.insertRows(sheet, 0, 1);
+    session.workbook.beginProposal({ author: "agent", date: "2026-11-20T10:00:00Z", label: "Raise" });
+    session.workbook.setCell(sheet, { row: 1, col: 0 }, 100);
+    session.workbook.endProposal();
+
+    const refused = session.deleteRows(sheet, 3, 1);
+    expect(refused).toEqual({ ok: false, code: "not_allowed", message: "Accept or reject the proposed changes on this sheet first." });
+    expect(session.cell(sheet, 3, 0).value).toBe(3);
+
+    session.acceptChanges("all");
+    expect(session.deleteRows(sheet, 3, 1)).toEqual({ ok: true });
+  });
+
+  it("refuses to change one cell of an array formula and says what to do", async () => {
+    // An array formula over C1:C3, written into the sheet part of the sample file.
+    const h = harness();
+    const pkg = await opc.openPackage(await sampleXlsx());
+    const part = pkg.listParts().map((entry) => entry.name).find((name) => name.includes("/worksheets/"))!;
+    const xml = await pkg.getPartText(part);
+    const withArray = xml.replace(/(<row[^>]*r="1"[^>]*>)([\s\S]*?)(<\/row>)/, '$1$2<c r="C1"><f t="array" ref="C1:C3">A1:A3*2</f><v>2</v></c>$3');
+    expect(withArray).not.toBe(xml);
+    pkg.setPart(part, withArray);
+    h.files.put("Array.xlsx", await pkg.save());
+    const session = await openSheetSession(h.deps, "Array.xlsx");
+    const sheet = session.getState().activeSheetId;
+    expect(session.cell(sheet, 1, 2).arrayRange).toEqual({ start: { row: 0, col: 2 }, end: { row: 2, col: 2 } });
+
+    expect(session.setCellInput(sheet, { row: 1, col: 2 }, "9")).toEqual({
+      ok: false,
+      code: "not_allowed",
+      message: "This cell is part of an array formula. Change the whole range at once.",
+    });
+    expect(session.getState().dirty).toBe(false);
+    // An address outside the sheet keeps the general message and does not throw.
+    expect(session.setCellInput(sheet, { row: -1, col: 0 }, "1")).toMatchObject({ ok: false, code: "not_allowed", message: "This change is not possible here." });
+  });
+
+  it("keeps a bounded undo history", async () => {
+    const { session, sheet } = await open();
+    for (let i = 0; i < 230; i++) session.setCellInput(sheet, { row: 10, col: 0 }, String(i));
+    let undone = 0;
+    while (session.getState().canUndo) {
+      session.undo();
+      undone++;
+    }
+    expect(undone).toBe(200);
+    expect(session.cell(sheet, 10, 0).value).toBe(29);
   });
 
   it("notices a direct workbook edit: recalculates, marks dirty and drops the history", async () => {
