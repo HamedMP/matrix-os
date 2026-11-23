@@ -35,6 +35,9 @@ export function createInstallerHandler(script: string): (request: Request) => Re
       headers: {
         ...BASE_HEADERS,
         "cache-control": "public, max-age=300",
+        // Cloudflare ignores cache-control overrides from origin rules; state
+        // its policy separately so a deploy is visible at the edge at once.
+        "cdn-cache-control": "no-store",
         "content-length": contentLength,
       },
     });

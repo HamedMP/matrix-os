@@ -27,6 +27,8 @@ describe("get.matrix-os.com installer handler", () => {
     expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    // Cloudflare must never hold an old installer after a deploy.
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
   });
 
   it("ignores query strings so cache-busting installs still work", async () => {
