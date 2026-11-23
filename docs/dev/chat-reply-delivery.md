@@ -49,9 +49,10 @@ Native terminal boundaries flush their own batch, preserving usage association
 when a transcript contains multiple turns. An incomplete final line never
 advances the checkpoint. A single native record expanding beyond the consumer
 limit is written in bounded chunks; only its last chunk advances the durable
-byte position. Earlier chunks retain deterministic IDs for deduplication after
-a failed write or restart. Existing owner, session and generation checks remain
-authoritative.
+byte position. Earlier chunks carry the record's end boundary so replay skips
+an already committed record even after its event IDs leave retained history.
+Unfinished records still use deterministic IDs to deduplicate saved chunks.
+Existing owner, session and generation checks remain authoritative.
 
 This removes write amplification; it does not remove the shared mutation queue,
 full-history parsing, or synchronous project projection. The next architecture

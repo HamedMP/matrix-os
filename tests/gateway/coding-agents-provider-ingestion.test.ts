@@ -130,6 +130,54 @@ describe("coding-agent provider event ingestion", () => {
     } finally { await bridge.shutdown(); await store.shutdownTurns(); await rm(homePath, { recursive: true, force: true }); }
   });
 
+  it.each(["before_commit", "after_commit"])("does not replay an oversized committed record after its IDs leave retained history: %s", async failure => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-provider-evicted-replay-"));
+    const store = createCodingAgentThreadStore({ homePath, providers: [provider()] });
+    const bridge = createCodexEventBridge({ homePath, pollIntervalMs: 60_000,
+      runVersionCommand: async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}`, stderr: "" }) });
+    const original = store.ingestProviderEvents.bind(store);
+    let calls = 0;
+    const ingest = vi.spyOn(store, "ingestProviderEvents").mockImplementation(async (...args) => {
+      calls++;
+      if (calls === 10 && failure === "before_commit") throw new Error("Injected later batch failure");
+      const result = await original(...args);
+      if (calls === 10 && failure === "after_commit") throw new Error("Injected later lost acknowledgement");
+      return result;
+    });
+    const published = vi.fn();
+    store.registerEventSink(published);
+    try {
+      const { snapshot } = await store.createThread(principal, { providerId: "codex", prompt: "files", clientRequestId: "req_evicted_replay" });
+      const threadId = snapshot.thread.id;
+      bridge.attachThreadStore(store);
+      const { path } = await bridge.watch({ principal, threadId, sessionId: `sess_${threadId.slice(7)}`, checkpoint: true });
+      const lines = [
+        { type: "item.completed", item: { id: "files", type: "file_change", status: "completed",
+          changes: Array.from({ length: 200 }, (_, index) => ({ path: `src/file-${index}.ts`, kind: "update" })) } },
+        ...Array.from({ length: 650 }, (_, index) => ({ type: "matrix.codex.assistant.delta", messageId: "msg_later", delta: `part ${index} ` })),
+        { type: "turn.completed", usage: { input_tokens: 30, output_tokens: 15 } },
+      ].map(line => JSON.stringify(line) + "\n").join("");
+      await writeFile(path, lines);
+      await bridge.drain();
+      expect(calls).toBe(10);
+      const statePath = join(homePath, "system/coding-agents/threads.json");
+      const before = JSON.parse(await readFile(statePath, "utf8"));
+      expect(before.events.some((event: AgentThreadEvent) => event.type === "file.changed")).toBe(false);
+      const retainedIds = before.events.slice(-300).map((event: AgentThreadEvent) => event.eventId);
+      const publicationCount = published.mock.calls.length;
+      await bridge.drain();
+      const replayed = published.mock.calls.slice(publicationCount).flatMap(([batch]) => batch.events);
+      expect(replayed.filter(event => event.type === "file.changed")).toEqual([]);
+      const after = JSON.parse(await readFile(statePath, "utf8"));
+      expect(after.events.map((event: AgentThreadEvent) => event.eventId)).toEqual(expect.arrayContaining(retainedIds));
+      expect(after.threads[0]).toMatchObject({ status: "completed", providerEventOffset: Buffer.byteLength(lines) });
+      expect(published.mock.calls.filter(([batch]) => batch.tokenUsage)).toHaveLength(1);
+    } finally {
+      ingest.mockRestore();
+      await bridge.shutdown(); await store.shutdownTurns(); await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it.each(["before_commit", "after_commit"])("bounds checkpoint batches and resumes exactly once after %s failure", async failure => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-provider-batch-recovery-"));
     const store = createCodingAgentThreadStore({ homePath, providers: [provider()] });

@@ -14,7 +14,7 @@ export function codexEventId(sessionId: string, byteOffset: number, index: numbe
   return `evt_codex_${digest}`;
 }
 
-export type CodexEventCursor = { sessionId: string; offset: number; generation?: string; checkpoint?: false };
+export type CodexEventCursor = { sessionId: string; offset: number; generation?: string; checkpoint?: false; recordEndOffset?: number };
 type BatchStore = {
   ingestProviderEvents(principal: RequestPrincipal, threadId: string, batch: CodingAgentProviderEventBatch,
     cursor: CodexEventCursor): Promise<unknown>;
@@ -47,10 +47,11 @@ export async function ingestCodexTranscript(input: {
   let batchOffset = input.offset;
   let hasRecords = false;
 
-  async function write(batch: CodingAgentProviderEventBatch, offset: number, checkpoint: boolean): Promise<void> {
+  async function write(batch: CodingAgentProviderEventBatch, offset: number, checkpoint: boolean, recordEndOffset?: number): Promise<void> {
     await input.store.ingestProviderEvents(input.principal, input.threadId, batch, {
       sessionId: input.sessionId, offset, generation: input.generation,
       ...(checkpoint ? {} : { checkpoint: false }),
+      ...(recordEndOffset !== undefined ? { recordEndOffset } : {}),
     });
   }
 
@@ -95,7 +96,8 @@ export async function ingestCodexTranscript(input: {
         await write({ events: lineEvents.slice(start, start + MAX_BATCH_EVENTS),
           ...(start === 0 && parsed.providerThreadId ? { providerThreadId: parsed.providerThreadId } : {}),
           ...(last && parsed.outcome && parsed.tokenUsage ? { tokenUsage: parsed.tokenUsage } : {}),
-        }, input.checkpoint && last ? nextOffset : input.offset, !!input.checkpoint && last);
+        }, input.checkpoint && last ? nextOffset : input.offset, !!input.checkpoint && last,
+        input.checkpoint && !last ? nextOffset : undefined);
       }
     } else {
       events.push(...lineEvents);

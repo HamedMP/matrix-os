@@ -56,7 +56,7 @@ type ProviderEventStore = {
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false; recordEndOffset?: number },
   ): Promise<unknown>;
 };
 type WatchEntry = {

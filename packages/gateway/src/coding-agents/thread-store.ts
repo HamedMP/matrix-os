@@ -239,7 +239,7 @@ export interface CodingAgentThreadStore {
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false; recordEndOffset?: number },
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
@@ -1617,9 +1617,11 @@ export function createCodingAgentThreadStore(
         if (cursor) {
           WorkspaceSessionIdSchema.parse(cursor.sessionId);
           z.number().int().min(0).max(16 * 1024 * 1024).parse(cursor.offset);
+          if (cursor.recordEndOffset !== undefined) z.number().int().min(cursor.offset).max(16 * 1024 * 1024).parse(cursor.recordEndOffset);
           if (thread.providerResumeState?.conversationId !== cursor.sessionId) throw new Error("Provider cursor identity mismatch");
           if (thread.providerResumeState.eventGeneration !== cursor.generation) throw new Error("Provider observation generation changed");
           if (cursor.checkpoint !== false && (thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
+          if (cursor.recordEndOffset !== undefined && (thread.providerEventOffset ?? -1) >= cursor.recordEndOffset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
         }
         const existingEventIds = new Set(
           state.events
