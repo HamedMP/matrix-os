@@ -16,6 +16,14 @@ export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
 
 export const LOCAL_TERMINAL_ID_PATTERN = /^t[0-9]{1,6}[a-z]{0,2}$/;
 export const LocalTerminalIdSchema = z.string().regex(LOCAL_TERMINAL_ID_PATTERN);
+/**
+ * A terminal this core reports, here (`t7`) or on a machine it added
+ * (`vps/t7`); machine names follow herdr-core's terminal-name rules.
+ */
+export const LOCAL_TERMINAL_ADDRESS_PATTERN = /^(?:[a-z0-9][a-z0-9._-]{0,31}\/)?t[0-9]{1,6}[a-z]{0,2}$/;
+export const LocalTerminalAddressSchema = z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN);
+/** Live and finished terminals one facts update may carry. */
+export const LOCAL_TERMINAL_FACTS_MAX = 2_000;
 const AttachIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const Size = { cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) };
 const Ok = z.strictObject({ ok: z.boolean() });
@@ -38,6 +46,26 @@ export const LocalTerminalSchema = z.strictObject({
   statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
 });
 export type LocalTerminal = z.infer<typeof LocalTerminalSchema>;
+
+/**
+ * One terminal's status facts from herdr-core's `events.subscribe` (spec 2706
+ * layer 4): what the sidebar needs, nothing the program could use to reach
+ * the window beyond a bounded, sanitized title.
+ */
+export const LocalTerminalFactSchema = z.strictObject({
+  id: LocalTerminalAddressSchema,
+  title: z.string().max(256),
+  status: LocalTerminalStatusSchema.nullable(),
+  statusAt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+  turn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  seenTurn: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
+  finished: z.boolean(),
+  finishedSeen: z.boolean().optional(),
+  parent: LocalTerminalAddressSchema.optional(),
+  agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+});
+export type LocalTerminalFact = z.infer<typeof LocalTerminalFactSchema>;
+const FactsSchema = z.array(LocalTerminalFactSchema).max(LOCAL_TERMINAL_FACTS_MAX);
 
 /** Coding agents the Terminal window can start; the command line for each is fixed in the main process. */
 export const LocalTerminalAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
@@ -108,11 +136,23 @@ export const LOCAL_TERMINAL_INVOKE = {
     response: Ok,
   },
   "local-terminal:detach": { request: z.strictObject({ attachId: AttachIdSchema }), response: Ok },
+  // Starts following status (herdr-core `events.subscribe`) and returns what is known now;
+  // later changes arrive as `local-terminal:facts`.
+  "local-terminal:watch": {
+    request: z.strictObject({}),
+    response: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("ready"), terminals: FactsSchema }),
+      z.strictObject({ status: Unavailable }),
+    ]),
+  },
+  // The person opened this terminal: herdr-core's `herdr.seen` label, shared with every client of the core.
+  "local-terminal:seen": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
 } as const;
 
 export const LOCAL_TERMINAL_EVENTS = {
   "local-terminal:output": z.strictObject({ attachId: AttachIdSchema, data: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS) }),
   "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema }),
+  "local-terminal:facts": z.strictObject({ terminals: FactsSchema }),
 } as const;
 
 export const LOCAL_TERMINAL_INVOKE_CHANNELS = Object.keys(LOCAL_TERMINAL_INVOKE) as Array<keyof typeof LOCAL_TERMINAL_INVOKE>;

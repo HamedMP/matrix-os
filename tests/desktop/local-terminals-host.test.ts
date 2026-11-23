@@ -178,6 +178,71 @@ describe("local terminal host against a scripted core", () => {
     if (call.method === "terminal.list") core.reply(call.id, { result: { terminals } });
   };
 
+  // Spec 2706 layer 4: status follows herdr-core's events, and "seen" is Herdr's own label.
+  function fakeEvents(facts: Array<Record<string, unknown>>) {
+    const state = { started: 0, stopped: 0, onChange: null as null | ((facts: unknown[]) => void) };
+    return {
+      state,
+      createEvents: (options: { onChange(facts: unknown[]): void }) => {
+        state.onChange = options.onChange;
+        return {
+          start: () => { state.started += 1; },
+          stop: () => { state.stopped += 1; },
+          facts: () => facts,
+          fact: (id: string) => facts.find((fact) => fact.id === id),
+        } as never;
+      },
+    };
+  }
+
+  it("follows status only once the core runs, and stops when told", async () => {
+    const events = fakeEvents([{ id: "t1", title: "zsh", status: null, statusAt: null, turn: 0, seenTurn: null, finished: false }]);
+    const { host, sink } = start(listing([]), { createEvents: events.createEvents as never });
+    const facts = vi.fn();
+    Object.assign(sink, { facts });
+    expect(await host.watch()).toEqual([expect.objectContaining({ id: "t1" })]);
+    expect(events.state.started).toBe(1);
+    events.state.onChange?.([]);
+    expect(facts).toHaveBeenCalledWith([]);
+    host.unwatch();
+    expect(events.state.stopped).toBe(1);
+  });
+
+  // Fault detected (Greptile, #3566): a window closed while the core was starting left the events client running.
+  it("does not start following when the window left while the core was starting", async () => {
+    const events = fakeEvents([]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { host } = start(listing([]), {
+      createEvents: events.createEvents as never,
+      startCore: vi.fn(async () => { await gate; }),
+      openSocket: (() => { let dials = 0; const live = fakeCore(); return () => (dials++ === 0 ? deadSocket("ENOENT") : live.socket); })(),
+    });
+    const watching = host.watch();
+    host.unwatch();
+    release();
+    await expect(watching).rejects.toThrow("watch ended");
+    expect(events.state.started).toBe(0);
+  });
+
+  it("marks seen with Herdr's turn label, or the finished label once a terminal ended", async () => {
+    const events = fakeEvents([
+      { id: "t1", title: "claude", status: "done", statusAt: 1, turn: 7, seenTurn: 6, finished: false },
+      { id: "t2", title: "tests", status: null, statusAt: 1, turn: 2, seenTurn: null, finished: true, finishedSeen: false },
+    ]);
+    const labels: unknown[] = [];
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.label") { labels.push(call.params); core.reply(call.id, { result: {} }); }
+    }, { createEvents: events.createEvents as never });
+    await host.seen("t1");
+    await host.seen("t2");
+    expect(labels).toEqual([
+      { terminal: "t1", labels: { "herdr.seen": "7" } },
+      { terminal: "t2", labels: { "matrix.seen.finished": "1" } },
+    ]);
+    await expect(host.seen("t9")).rejects.toThrow("not listed");
+  });
+
   it("lists live terminals with safe titles, and one malformed entry does not hide the rest", async () => {
     const { host } = start(listing([
       { address: "t1", state: "live", title: "\u202Egnp.exe\u0007 build", status: { state: "blocked", message: "free text" } },

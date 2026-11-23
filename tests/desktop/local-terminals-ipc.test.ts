@@ -19,6 +19,9 @@ function setup(authorized = true) {
     detach: vi.fn(),
     detachAll: vi.fn(),
     dispose: vi.fn(),
+    watch: vi.fn(async () => [{ id: "t1", title: "zsh", status: "done", statusAt: 1, turn: 2, seenTurn: null, finished: false }]),
+    unwatch: vi.fn(),
+    seen: vi.fn(async () => undefined),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -43,14 +46,28 @@ describe("local terminal IPC", () => {
       "local-terminal:detach": { attachId: 1 },
       "local-terminal:rename": { id: "t1", name: "review" },
       "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
+      "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
       expect(authorize).toHaveBeenLastCalledWith({ sender: "window" }, channel);
     }
-    for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach]) {
+    for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach, host.watch, host.seen]) {
       expect(method).not.toHaveBeenCalled();
     }
+  });
+
+  // Spec 2706 layer 4.
+  it("returns status facts to watch and marks terminals seen, here or on an added machine", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:watch", {})).toEqual({ status: "ready", terminals: [expect.objectContaining({ id: "t1", status: "done" })] });
+    expect(await invoke("local-terminal:seen", { id: "vps/t4" })).toEqual({ ok: true });
+    expect(host.seen).toHaveBeenCalledWith("vps/t4");
+    await expect(invoke("local-terminal:seen", { id: "../t4" })).rejects.toThrow("invalid request");
+    host.seen.mockRejectedValueOnce(new Error("not listed"));
+    expect(await invoke("local-terminal:seen", { id: "t1" })).toEqual({ ok: false });
+    host.watch.mockRejectedValueOnce(new Error("down"));
+    expect(await invoke("local-terminal:watch", {})).toEqual({ status: "unavailable" });
   });
 
   it("rejects malformed requests without reaching the host", async () => {
