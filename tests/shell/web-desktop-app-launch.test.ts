@@ -36,6 +36,16 @@ describe("web Desktop built-in app launch routing", () => {
     expect(buildWebDesktopLauncherApps([])).toContainEqual(expect.objectContaining({ name: "Cloud desktop", path: "__cloud-desktop__" }));
   });
 
+  it("lists Message Board in the launcher without adding it to the default Desktop icons", () => {
+    const launcher = buildWebDesktopLauncherApps([{ name: "Notes clone", path: "apps/notes-clone/index.html" }]);
+    const index = launcher.findIndex((app) => app.path === "__message-board__");
+    expect(launcher[index]).toMatchObject({ name: "Message Board", iconUrl: expect.stringContaining("/icons/messages.svg") });
+    expect(index).toBe(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length + 1);
+    expect(launcher.at(-1)?.path).toBe("apps/notes-clone/index.html");
+    expect(buildWebDesktopIconApps([]).some((app) => app.path === "__message-board__")).toBe(false);
+    expect(resolveWebDesktopBuiltInLaunch("__message-board__")).toBeNull();
+  });
+
   it("does not hijack a user app that is merely named Browser", () => {
     expect(resolveWebDesktopBuiltInLaunch("apps/custom-browser/dist/index.html")).toBeNull();
   });

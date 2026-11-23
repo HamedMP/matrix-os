@@ -92,6 +92,8 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
   return [...firstClass.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) })), ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }
 
+const messageBoardLauncherApp = (): AppEntry => ({ name: "Message Board", path: "__message-board__", iconUrl: iconUrlForSlug("messages") });
+
 export function buildWebDesktopLauncherApps(
   apps: readonly AppEntry[],
   currentMode: DesktopMode = "desktop",
@@ -102,7 +104,10 @@ export function buildWebDesktopLauncherApps(
     path: OS_VIEW_DESTINATION_PATHS[destinationMode],
     iconUrl: gatewayAssetUrl(`/system-app-icons/v3/${destinationMode}.png`),
   };
-  return [viewDestination, ...buildWebDesktopIconApps(apps)];
+  const iconApps = buildWebDesktopIconApps(apps);
+  const firstClassCount = DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length;
+  // Launcher-only: Message Board is not part of the default Desktop icon layout.
+  return [viewDestination, ...iconApps.slice(0, firstClassCount), messageBoardLauncherApp(), ...iconApps.slice(firstClassCount)];
 }
 
 
