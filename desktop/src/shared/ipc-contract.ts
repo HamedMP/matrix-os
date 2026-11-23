@@ -69,7 +69,7 @@ import {
 } from "./desktop-update";
 import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
-import { TERMINAL_WINDOW_INVOKE } from "./terminal-window";
+import { TERMINAL_WINDOW_EVENTS, TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 import { SHORTCUT_EVENTS, SHORTCUT_INVOKE } from "./shortcuts-ipc";
 
@@ -547,6 +547,7 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
+  ...TERMINAL_WINDOW_EVENTS,
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   ...SHORTCUT_EVENTS,
