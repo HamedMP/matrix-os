@@ -102,6 +102,8 @@ describe("task chats over the owner chat store", () => {
     expect(again).toMatchObject({ created: false, task: { id: first.task.id } });
     expect(first.task).toMatchObject({ status: "backlog", priority: "high", labels: ["docs"], title: "Write the release notes", createdBy: "user:user_owner" });
     expect(await chatRow(first.task.chatId!)).toMatchObject({ title: "Write the release notes", project_id: "proj_demo", message_count: 0, lifecycle: "active" });
+    const byChat = await service.listTasks(CALLER, "board-demo", { limit: 1, includeArchived: false, chatId: first.task.chatId! });
+    expect(byChat.tasks.map((task) => task.id)).toEqual([first.task.id]);
     const runs = await chatRepository.kysely.selectFrom("chat_runs").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow();
     expect(Number(runs.n)).toBe(0);
   });

@@ -63,6 +63,7 @@ export interface ListQuery {
   assignee?: ActorRef | "unassigned";
   label?: string;
   q?: string;
+  chatId?: string;
   cursor?: string;
   limit: number;
   includeArchived: boolean;
@@ -203,7 +204,8 @@ export class ProjectTaskRepository {
   async listTasks(scope: TaskScope, query: ListQuery): Promise<{ rows: TaskRow[]; nextCursor: string | null }> {
     let builder = this.db.selectFrom("project_tasks").selectAll()
       .where("owner_id", "=", scope.ownerId).where("project_id", "=", scope.projectId).where("deleted_at", "is", null);
-    if (!query.includeArchived) builder = builder.where("archived_at", "is", null);
+    if (query.chatId) builder = builder.where("chat_id", "=", query.chatId);
+    else if (!query.includeArchived) builder = builder.where("archived_at", "is", null);
     if (query.status) builder = builder.where("status", "=", query.status);
     if (query.assignee === "unassigned") builder = builder.where("assignee", "is", null);
     else if (query.assignee) builder = builder.where("assignee", "=", query.assignee);
