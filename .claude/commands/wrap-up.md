@@ -73,6 +73,11 @@ finished is reported and left exactly as it was.
    - `git -C <worktree> status --short` must be empty and
      `git -C <worktree> log --oneline @{u}..HEAD` must be empty. Otherwise
      leave the worktree and report what is in it.
+   - The branch must still be what merged. Run `git fetch origin`, then compare
+     the local tip (`git rev-parse <branch>`) and, if the remote branch exists,
+     its tip (`git rev-parse origin/<branch>`) with the PR's `headRefOid`. A
+     tip that differs holds commits pushed after the merge that never shipped:
+     keep the worktree and both branches, and report them.
    - From the main checkout: `git worktree remove <path>`, then
      `git branch -D <branch>` (a squash merge leaves the branch unmerged in
      Git's eyes, so `-d` refuses; the `MERGED` PR state is the proof).
