@@ -232,10 +232,11 @@ describe("ReviewController comments", () => {
     const blockId = session.requireDocument().getView().body.blocks[0]!.id;
     editor.setSelection({ blockId, offset: 2 });
     expect(review.addComment("Hi")).toEqual({ ok: false, reason: "no_selection" });
-    expect(review.getSnapshot().error).toMatch(/Select the text/);
+    expect(review.getSnapshot().commentError).toMatch(/Select the text/);
+    expect(review.getSnapshot().error).toBeNull();
     editor.setSelection({ anchor: { blockId, offset: 0 }, focus: { blockId, offset: 5 } });
     expect(review.addComment("Hi").ok).toBe(true);
-    expect(review.getSnapshot().error).toBeNull();
+    expect(review.getSnapshot().commentError).toBeNull();
   });
 
   it("selects a thread and scrolls to its anchor", async () => {

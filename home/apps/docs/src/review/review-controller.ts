@@ -74,8 +74,10 @@ export interface ReviewSnapshot {
   activeThread: CommentThread | null;
   /** Bumped when the owner asks to write a comment (the shortcut); the comment box takes focus. */
   composeRequest: number;
-  /** A fixed sentence about the last failed action, safe to display. */
+  /** A fixed sentence about the last failed accept or reject, safe to display. */
   error: string | null;
+  /** A fixed sentence about the last failed comment action, safe to display. */
+  commentError: string | null;
 }
 
 export interface ReviewControllerOptions {
@@ -105,6 +107,7 @@ export class ReviewController {
   private showResolved = false;
   private composeRequest = 0;
   private error: string | null = null;
+  private commentError: string | null = null;
   private items: readonly ReviewItem[] = [];
   private threads: readonly CommentThread[] = [];
   private snapshot: ReviewSnapshot;
@@ -263,9 +266,11 @@ export class ReviewController {
     this.publish();
   }
 
+  /** Clears the messages of failed actions. */
   dismissError(): void {
-    if (this.error === null) return;
+    if (this.error === null && this.commentError === null) return;
     this.error = null;
+    this.commentError = null;
     this.publish();
   }
 
@@ -323,14 +328,19 @@ export class ReviewController {
   }
 
   private report(outcome: ResolveOutcome): ResolveOutcome {
-    if (!outcome.ok && outcome.reason === "failed") this.fail(MESSAGES.resolve);
-    else if (outcome.ok) this.dismissError();
+    if (!outcome.ok && outcome.reason === "failed") this.error = MESSAGES.resolve;
+    else if (outcome.ok) this.error = null;
+    else return outcome;
+    this.publish();
     return outcome;
   }
 
   private reportComment(outcome: CommentOutcome): CommentOutcome {
     if (outcome.ok) {
-      this.dismissError();
+      if (this.commentError !== null) {
+        this.commentError = null;
+        this.publish();
+      }
       return outcome;
     }
     const messages: Record<typeof outcome.reason, string> = {
@@ -341,13 +351,9 @@ export class ReviewController {
       not_found: MESSAGES.notFound,
       failed: MESSAGES.comment,
     };
-    this.fail(messages[outcome.reason]);
-    return outcome;
-  }
-
-  private fail(message: string): void {
-    this.error = message;
+    this.commentError = messages[outcome.reason];
     this.publish();
+    return outcome;
   }
 
   private onSessionChange(change: DocumentChange): void {
@@ -355,10 +361,14 @@ export class ReviewController {
       this.currentId = null;
       this.activeThreadId = null;
       this.error = null;
+      this.commentError = null;
       this.filter = EMPTY_FILTER;
     } else if (!this.mayMatter(change)) return;
     this.rebuild();
     this.publish();
+    // The editor clears every highlight when a document loads; when it hears
+    // about the load after this controller did, paint again once it has.
+    if (change.kind === "load") queueMicrotask(() => this.paint());
   }
 
   /** Typing in a document without revisions or comments cannot change the review. */
@@ -407,6 +417,7 @@ export class ReviewController {
       activeThread: this.threads.find((thread) => thread.id === this.activeThreadId) ?? null,
       composeRequest: this.composeRequest,
       error: this.error,
+      commentError: this.commentError,
     });
   }
 
