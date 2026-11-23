@@ -19,6 +19,7 @@ export const MAIL_AGENT_ERROR_MESSAGES = Object.freeze({
   nothing_selected: "Select at least one item first.",
   not_confirmed: "Sending needs your confirmation.",
   draft_invalid: "Check the recipients, subject and size of this draft.",
+  draft_unavailable: "The draft could not be opened. Close a draft and try again.",
 } as const);
 
 export type MailAgentErrorCode = keyof typeof MAIL_AGENT_ERROR_MESSAGES;
