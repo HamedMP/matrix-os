@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAIL_CACHE_TABLES, createDbMailCache } from "../../../../home/apps/mail/src/model/cache";
 import { threadKey } from "../../../../home/apps/mail/src/model/ids";
+import { VOICE_TABLE } from "../../../../home/apps/mail/src/agent/voice-cache";
 import { GMAIL, GMAIL_FOLDERS, OUTLOOK, page, summary } from "./fixtures";
 import { mailFakeDb } from "./fake-db";
 
@@ -84,10 +85,11 @@ describe("db mail cache", () => {
     expect(await cache.load([])).toEqual({ folders: {}, threads: [], replyMeta: {}, snoozes: {} });
   });
 
-  it("declares every cache table in the manifest", () => {
+  it("declares exactly the tables the app uses (cache and voice profiles) in the manifest", () => {
     const manifest = JSON.parse(readFileSync(resolve(__dirname, "../../../../home/apps/mail/matrix.json"), "utf8"));
     const tables = manifest.storage.tables;
-    expect(Object.keys(tables).sort()).toEqual(Object.values(MAIL_CACHE_TABLES).sort());
+    expect(Object.keys(tables).sort()).toEqual([...Object.values(MAIL_CACHE_TABLES), VOICE_TABLE].sort());
+    expect(tables[VOICE_TABLE].uniqueIndexes).toEqual(["profile_key"]);
     expect(tables.mail_threads.uniqueIndexes).toEqual(["thread_key"]);
     expect(tables.mail_folders.uniqueIndexes).toEqual(["account_id"]);
     expect(tables.mail_snoozes.uniqueIndexes).toEqual(["thread_key"]);
