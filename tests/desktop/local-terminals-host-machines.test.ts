@@ -112,6 +112,25 @@ describe("added machines over ssh", () => {
     await expect(host.removeMachine("box")).resolves.toBeUndefined();
   });
 
+  // Fault detected (review, #3579): the core update looked the machine up by name when it ran, so after
+  // a remove and a re-add of the name for another host it would have updated that other host.
+  it("updates only the machine that was picked, and refuses once its name belongs to another host", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    let listed = [machine("box", "me@box")];
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: listed } });
+      if (call.method === "machine.rm") { listed = []; core.reply(call.id, { result: {} }); }
+      if (call.method === "machine.add") { listed = [machine("box", "other@host")]; core.reply(call.id, { result: machine("box", "other@host") }); }
+    }, { runCoreCli });
+    const picked = (await host.machines()).find((entry) => entry.name === "box")!;
+    await host.removeMachine("box");
+    await host.addMachine({ target: "other@host", name: "box" });
+    expect(await host.updateMachine({ name: "box", target: picked.target })).toEqual({ ok: false, reason: "changed" });
+    expect(runCoreCli).not.toHaveBeenCalled();
+    expect(await host.updateMachine({ name: "box", target: "other@host" })).toEqual({ ok: true });
+    expect(runCoreCli).toHaveBeenCalledTimes(1);
+  });
+
   // Fault detected (Greptile, #3570): a failed save left the machine added without its settings,
   // and an unreadable settings file was replaced, erasing every machine's settings.
   it("takes the machine back out when its settings cannot be saved, and never overwrites an unreadable file", async () => {

@@ -66,6 +66,7 @@ export function useSshMachines() {
   // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
   const [coreBusy, setCoreBusy] = useState<string[]>([]);
   const [coreFailed, setCoreFailed] = useState<string[]>([]);
+  const [coreChanged, setCoreChanged] = useState<string[]>([]);
 
   const remove = useCallback(async (name: string): Promise<boolean> => {
     let removed = false;
@@ -121,17 +122,22 @@ export function useSshMachines() {
     }
   }, []);
 
-  const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean }>): Promise<boolean> => {
+  const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean; reason?: string }>): Promise<boolean> => {
     setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
     let ok = false;
+    let changed = false;
     try {
-      ok = (await job()).ok;
+      const result = await job();
+      ok = result.ok;
+      changed = result.reason === "changed";
     } catch (error: unknown) {
       console.warn("[terminal-window] machine core failed:", error instanceof Error ? error.name : "UnknownError");
     }
     setCoreBusy((current) => current.filter((entry) => entry !== name));
     // Each machine keeps its own failure until its own job succeeds.
     setCoreFailed((current) => (ok ? current.filter((entry) => entry !== name) : [...current.filter((entry) => entry !== name), name]));
+    // The name now belongs to another machine than the one picked: nothing ran, and the list shows the new one.
+    setCoreChanged((current) => (changed ? [...current.filter((entry) => entry !== name), name] : current.filter((entry) => entry !== name)));
     await refresh();
     return ok;
   }, [refresh]);
@@ -139,7 +145,8 @@ export function useSshMachines() {
   const install = useCallback((target: string, name: string, ssh?: SshOptions) => coreJob(name,
     () => invoke("local-terminal:machine-install", { target, name, ...(ssh ? { ssh } : {}) })), [coreJob]);
   /** Brings a machine's core to the app's version; its terminals keep running. */
-  const update = useCallback((name: string) => coreJob(name, () => invoke("local-terminal:machine-update", { name })), [coreJob]);
+  /** Bound to the machine as listed (name and target), so a name reused meanwhile is refused. */
+  const update = useCallback((name: string, target: string) => coreJob(name, () => invoke("local-terminal:machine-update", { name, target })), [coreJob]);
 
-  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed };
+  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged };
 }

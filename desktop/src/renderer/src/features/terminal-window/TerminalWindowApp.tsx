@@ -143,14 +143,16 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
   const busy = view.ssh.coreBusy.includes(machine.name);
   const failed = view.ssh.coreFailed.includes(machine.name);
+  const changed = view.ssh.coreChanged.includes(machine.name);
   const older = machine.version ? (compareCoreVersions(machine.version, LOCAL_TERMINAL_VERSION) ?? 0) < 0 : false;
   if (!busy && !failed && !older) return null;
   return (
     <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9 text-[12px]">
       {busy ? <span>Updating its core…</span> : (
         <>
-          <span>{failed ? "Couldn't update its core." : `Its core is ${machine.version}; this app has ${LOCAL_TERMINAL_VERSION}.`}</span>
-          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine.name); }}>
+          <span>{changed ? "Not updated: this name now belongs to a different machine. Check it, then try again."
+            : failed ? "Couldn't update its core." : `Its core is ${machine.version}; this app has ${LOCAL_TERMINAL_VERSION}.`}</span>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine.name, machine.target); }}>
             {failed ? "Try again" : "Update core"}
           </Button>
         </>

@@ -156,7 +156,7 @@ const PutFileNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._ -]+$/)
 
 const MachineCoreResponse = z.union([
   z.strictObject({ ok: z.literal(true) }),
-  z.strictObject({ ok: z.literal(false), reason: z.enum(["failed", "busy", "unavailable"]) }),
+  z.strictObject({ ok: z.literal(false), reason: z.enum(["failed", "busy", "unavailable", "changed"]) }),
 ]);
 
 export const LOCAL_TERMINAL_INVOKE = {
@@ -260,7 +260,8 @@ export const LOCAL_TERMINAL_INVOKE = {
     response: MachineCoreResponse,
   },
   // Replaces an added machine's core with the app's version; its terminals keep running.
-  "local-terminal:machine-update": { request: z.strictObject({ name: LocalMachineNameSchema }), response: MachineCoreResponse },
+  // `target` as the machine was listed: the update refuses if the name now belongs to another host.
+  "local-terminal:machine-update": { request: z.strictObject({ name: LocalMachineNameSchema, target: z.string().min(1).max(255) }), response: MachineCoreResponse },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
     request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),

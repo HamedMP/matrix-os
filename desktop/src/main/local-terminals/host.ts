@@ -267,6 +267,22 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     return result;
   }
 
+  /** Machines this core reaches over ssh, with their line state now and how the app added them. */
+  async function shownMachines(): Promise<LocalMachine[]> {
+    const [machines, saved] = await Promise.all([ensure().then(listMachines), machineSsh.all()]);
+    return machines.map((machine) => {
+      const entry = saved[machine.name];
+      if (!entry) return machine;
+      if (!machineSshMatches(entry, machine)) {
+        // The name now belongs to another host: its old settings must not reach it.
+        // Only the entry that was checked: settings saved by a re-add while this listing waited stay.
+        void machineSsh.removeIfUnchanged(machine.name, entry).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
+        return machine;
+      }
+      return { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) };
+    });
+  }
+
   async function removeMachineNow(name: string): Promise<void> {
     await (await ensure()).call("machine.rm", { machine: name });
     // The machine is gone, so this is done. Settings left behind are inert: a later add of the
@@ -380,20 +396,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     /** Machines this core reaches over ssh, with their line state now and how the app added them. */
-    async machines(): Promise<LocalMachine[]> {
-      const [machines, saved] = await Promise.all([ensure().then(listMachines), machineSsh.all()]);
-      return machines.map((machine) => {
-        const entry = saved[machine.name];
-        if (!entry) return machine;
-        if (!machineSshMatches(entry, machine)) {
-          // The name now belongs to another host: its old settings must not reach it.
-          // Only the entry that was checked: settings saved by a re-add while this listing waited stay.
-          void machineSsh.removeIfUnchanged(machine.name, entry).catch((error: unknown) => console.warn("[local-terminals] stale machine ssh not removed:", describeError(error)));
-          return machine;
-        }
-        return { ...machine, target: entry.target, ...(entry.ssh ? { ssh: entry.ssh } : {}) };
-      });
-    },
+    machines: shownMachines,
 
     /** Open in terminal for an added machine, the way it was added. Null when the core does not know it. */
     async machineLogin(name: string, size: { cols: number; rows: number }): Promise<string | null> {
@@ -426,9 +429,21 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       });
     },
 
-    /** Brings an added machine's core to the app's version; its terminals keep running. */
-    updateMachine(name: string): Promise<MachineCoreResult> {
-      return machineCore.update(name);
+    /**
+     * Brings an added machine's core to the app's version; its terminals keep running. Bound to the
+     * machine the person picked (its target as listed): if that name now belongs to another host,
+     * it refuses instead of updating that one. Queued with add, install and remove of the name, so
+     * none of those from this app can land between the check and the update.
+     */
+    updateMachine(input: { name: string; target: string }): Promise<MachineCoreResult> {
+      return forMachine(input.name, async (): Promise<MachineCoreResult> => {
+        const current = (await shownMachines()).find((machine) => machine.name === input.name);
+        if (current?.target !== input.target) return { ok: false, reason: "changed" };
+        return machineCore.update(input.name);
+      }).catch((error: unknown) => {
+        if (error instanceof MachineQueueFullError) return { ok: false, reason: "busy" } as const;
+        throw error;
+      });
     },
 
     /** Forgets a machine; its terminals keep running there. */

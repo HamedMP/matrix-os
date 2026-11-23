@@ -13,7 +13,8 @@ const INSTALL_TIMEOUT_MS = 3 * 60_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_RUNNING = 64;
 
-export type MachineCoreResult = { ok: true } | { ok: false; reason: "failed" | "busy" | "unavailable" };
+/** `changed`: the name now belongs to a different machine than the one picked. */
+export type MachineCoreResult = { ok: true } | { ok: false; reason: "failed" | "busy" | "unavailable" | "changed" };
 
 export interface MachineCoreRunner {
   (binary: string, args: string[], env: Record<string, string>, timeoutMs: number): Promise<void>;

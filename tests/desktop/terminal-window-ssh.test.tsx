@@ -25,7 +25,7 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 
 function installOperator(options: {
   peers?: unknown;
-  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[];
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[]; changedUpdate?: string[];
   holdInstall?: Promise<void>;
 } = {}) {
   let machines = options.machines ?? [];
@@ -52,7 +52,11 @@ function installOperator(options: {
         machines = [...machines, { name, target, state: "connected", temporary: false }];
         return { ok: true };
       }
-      case "local-terminal:machine-update": return options.failUpdate?.includes((payload as { name: string }).name) ? { ok: false, reason: "failed" } : { ok: true };
+      case "local-terminal:machine-update": {
+        const { name } = payload as { name: string };
+        if (options.changedUpdate?.includes(name)) return { ok: false, reason: "changed" };
+        return options.failUpdate?.includes(name) ? { ok: false, reason: "failed" } : { ok: true };
+      }
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -287,6 +291,15 @@ describe("Terminal window ssh machines", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull());
   });
 
+  // Review on #3579: an update refused because the name now belongs to another machine says so.
+  it("says when an update was refused because the name now belongs to a different machine", async () => {
+    installOperator({ changedUpdate: ["vps"], machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
+    expect(await within(machines).findByText("Not updated: this name now belongs to a different machine. Check it, then try again.")).toBeTruthy();
+  });
+
   it("shows a machine's core version and updates an older one", async () => {
     const invoke = installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
     render(<TerminalWindowApp />);
@@ -296,7 +309,7 @@ describe("Terminal window ssh machines", () => {
     // Fault detected (Greptile, #3579): a hand-styled native button; it is the shared Button now.
     expect(update.classList.contains("matrix-btn")).toBe(true);
     fireEvent.click(update);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps", target: "can@10.0.0.7" }));
   });
 
   // Fault detected (Greptile, #3579): one machine's success cleared another's update error, and a dropped line hid it.
