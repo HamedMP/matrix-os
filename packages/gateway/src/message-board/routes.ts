@@ -14,6 +14,10 @@ import { pollBoardEvents, type BoardEventHub } from "./events.js";
 import { mountTaskRoutes } from "./task-routes.js";
 import { permissionForRoute, requireBoardPermission } from "./caller.js";
 import type { BoardTaskService } from "./tasks.js";
+import { mountAutomationRoutes } from "./automation-routes.js";
+import type { BoardGrantService } from "./grants.js";
+import type { BoardScheduleService } from "./schedules.js";
+import type { BoardWatcherService } from "./watchers.js";
 
 /** Text is capped at 10,000 characters; 64 KiB leaves room for labels and JSON escaping. */
 export const MESSAGE_BOARD_BODY_LIMIT = 64 * 1024;
@@ -22,6 +26,7 @@ export interface MessageBoardRouteDeps {
   service: MessageBoardService;
   tasks?: BoardTaskService;
   hub?: BoardEventHub;
+  automation?: { watchers: BoardWatcherService; schedules: BoardScheduleService; grants: BoardGrantService };
   /** Resolves who is calling: the owner, or an agent session acting for the owner. */
   resolveCaller(c: Context): BoardCaller | Promise<BoardCaller>;
 }
@@ -84,8 +89,16 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
   app.get("/channels", handle(async (c, caller) => c.json({ channels: await service.listChannels(caller, board(c)) })));
   app.post("/channels", limit, handle(async (c, caller) => {
     const body = CreateChannelRequestSchema.parse(await readBody(c));
-    await service.createChannel(caller, board(c), body.path);
-    return c.json({ channel: { path: body.path } }, 201);
+    const grants = deps.automation?.grants;
+    if (body.private && !grants) return c.json(boardErrorBody("unavailable"), 503);
+    await service.createChannel(caller, board(c), body.path, body.private && grants
+      ? async (ctx) => {
+        // Recorded as grant.changed events in the same write, like any other grant.
+        await grants.grantInWrite(ctx, [caller.actor.id], body.path, ["read", "post", "react", "label", "manage"]);
+        await grants.grantInWrite(ctx, ["*"], body.path, []);
+      }
+      : undefined);
+    return c.json({ channel: { path: body.path, private: Boolean(body.private) } }, 201);
   }));
 
   app.get("/actors", handle(async (c, caller) => c.json({ actors: await service.listActors(caller, board(c)) })));
@@ -130,10 +143,14 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
   }));
 
   if (deps.tasks) mountTaskRoutes(app, { tasks: deps.tasks, handle, limit, readBody, withProfile });
+  if (deps.automation) mountAutomationRoutes(app, { ...deps.automation, handle, limit, readBody, withProfile });
 
   app.get("/events", handle(async (c, caller) => {
     const { board: name, wait, after, limit: pageSize, channel, thread } = EventsQuerySchema.parse(queryObject(c));
-    return c.json(await pollBoardEvents({ service, hub: deps.hub }, caller.ownerId, { board: name, after, waitSeconds: wait, limit: pageSize, channel, thread }));
+    const target = await service.resolveBoard(caller.ownerId, name);
+    const readable = await service.readableChannels(caller, target.id);
+    const canRead = readable ? (event: { channel?: string }) => !event.channel || readable.includes(event.channel) : undefined;
+    return c.json(await pollBoardEvents({ service, hub: deps.hub }, caller.ownerId, { board: name, after, waitSeconds: wait, limit: pageSize, channel, thread, canRead }));
   }));
 
   return app;

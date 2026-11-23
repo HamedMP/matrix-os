@@ -16,7 +16,12 @@ export const TERMINAL_CALLER_HEADER = "x-matrix-terminal-caller";
 const TERMINAL_CALLER = /^(matrix-(?:w-|rt_)[0-9a-f]{32}):([0-9]{1,9})$/;
 const SAFE_REF_PART = /^[A-Za-z0-9_-]{1,64}$/;
 
-export interface TerminalCallerRef { workspaceId: string; tabId: string }
+export interface TerminalCallerRef {
+  workspaceId: string;
+  tabId: string;
+  /** The tab's agent labels; a watcher-started session carries `board.watcher` and `board.depth`. */
+  labels?: Record<string, string>;
+}
 
 export interface BoardCallerOptions {
   ownerName: string;
@@ -49,7 +54,12 @@ export async function resolveBoardCaller(c: Context, options: BoardCallerOptions
     const [, sessionName, paneId] = match;
     const ref = await options.resolveTerminalCaller?.({ sessionName: sessionName!, paneId: paneId! });
     if (ref && SAFE_REF_PART.test(ref.workspaceId) && SAFE_REF_PART.test(ref.tabId)) {
-      return agentCaller(ownerId, { id: `agent:${ref.workspaceId}.${ref.tabId}`, kind: "agent", name: `terminal ${ref.tabId.slice(-8)}` });
+      const caller = agentCaller(ownerId, { id: `agent:${ref.workspaceId}.${ref.tabId}`, kind: "agent", name: `terminal ${ref.tabId.slice(-8)}` });
+      const watcher = ref.labels?.["board.watcher"];
+      const depth = Number(ref.labels?.["board.depth"]);
+      return watcher && /^[a-z][a-z0-9-]{0,47}$/.test(watcher) && Number.isInteger(depth) && depth > 0
+        ? { ...caller, origin: { watcher, depth: Math.min(depth, 99) } }
+        : caller;
     }
     // An unregistered pane still acts as an agent, never as the owner.
     return agentCaller(ownerId, { id: `agent:pane.${sessionName!.slice(-12)}.${paneId}`, kind: "agent", name: `terminal pane ${paneId}` });
@@ -63,16 +73,17 @@ function agentCaller(ownerId: string, actor: BoardActor): BoardCaller {
 
 /** The permission a board route needs; `manage` routes are owner-only. */
 export function permissionForRoute(method: string, path: string): BoardPermission {
+  // Agents may schedule their own follow-ups; boards (creating), grants and watchers are owner-only.
+  if (/\/(?:grants|watchers)(?:\/|$)/.test(path)) return "manage";
   if (method === "GET" || method === "HEAD") return "read";
   if (/\/threads\/[^/]+\/read$/.test(path)) return "read";
   if (/\/reactions$/.test(path)) return "react";
   if (/\/labels$/.test(path)) return "label";
-  // Agents may schedule their own follow-ups; boards, grants and watchers are owner-only.
-  if (/\/(?:boards|grants|watchers)(?:\/|$)/.test(path)) return "manage";
+  if (/\/boards(?:\/|$)/.test(path)) return "manage";
   return "post";
 }
 
 export function requireBoardPermission(caller: BoardCaller, permission: BoardPermission): void {
-  if (permission === "manage" && caller.actor.kind !== "user") boardFail("forbidden");
+  if (permission === "manage" && (caller.actor.kind !== "user" || (caller.principal && caller.principal !== caller.ownerId))) boardFail("forbidden");
   if (caller.can && !caller.can.includes(permission)) boardFail("forbidden");
 }
