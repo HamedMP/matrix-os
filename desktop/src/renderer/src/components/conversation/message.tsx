@@ -318,8 +318,66 @@ type InlineMarkdownNode = {
   value?: string;
   children?: InlineMarkdownNode[];
   position?: { start: { offset?: number }; end: { offset?: number } };
-  data?: { hName: string; hProperties: Record<string, string | number> };
+  data?: { hName?: string; hProperties?: Record<string, string | number> };
 };
+
+const FILE_BASE_PROPERTY = "data-chat-file-base";
+
+/** The last directory a paragraph names in inline code, outside link text. */
+function introducedDirectory(paragraph: InlineMarkdownNode): string | null {
+  let directory: string | null = null;
+  const visit = (parent: InlineMarkdownNode) => {
+    for (const child of parent.children ?? []) {
+      if (child.type === "inlineCode" && typeof child.value === "string") {
+        const value = child.value.trim();
+        if (/[\\/]/.test(value) && pathPresentation(value)?.kind === "folder") directory = value;
+      } else if (child.type !== "link" && child.type !== "linkReference") {
+        visit(child);
+      }
+    }
+  };
+  visit(paragraph);
+  return directory;
+}
+
+/** The inline code that leads a list item, through emphasis wrappers. */
+function leadingInlineCode(item: InlineMarkdownNode): InlineMarkdownNode | null {
+  const paragraph = item.children?.[0];
+  if (paragraph?.type !== "paragraph") return null;
+  let node = paragraph.children?.[0];
+  while (node && (node.type === "strong" || node.type === "emphasis")) node = node.children?.[0];
+  return node?.type === "inlineCode" ? node : null;
+}
+
+/**
+ * A list directly introduced by a paragraph that names a directory is a file
+ * listing. Mark the bare file name leading each item with that directory so it
+ * opens like a full path. Bare names anywhere else remain plain code, because
+ * package names and API members look the same.
+ */
+function listedFileDirectories() {
+  return (tree: InlineMarkdownNode) => {
+    const visit = (parent: InlineMarkdownNode) => {
+      const children = parent.children ?? [];
+      children.forEach((node, index) => {
+        const introduction = node.type === "list" ? children[index - 1] : undefined;
+        const directory = introduction?.type === "paragraph" ? introducedDirectory(introduction) : null;
+        if (directory) {
+          for (const item of node.children ?? []) {
+            const code = leadingInlineCode(item);
+            if (code && typeof code.value === "string" && BARE_FILE_PATTERN.test(code.value)) {
+              code.data = { ...code.data, hProperties: { ...code.data?.hProperties, [FILE_BASE_PROPERTY]: directory } };
+            }
+          }
+        }
+        visit(node);
+      });
+    };
+    visit(tree);
+  };
+}
+
+const MARKDOWN_PLUGINS = [remarkGfm, listedFileDirectories];
 
 /** Insert trusted inline nodes at source offsets without changing canonical Markdown. */
 function inlineCredentialMarkers(source: string) {
@@ -497,7 +555,7 @@ export function MessageResponse({
         : <img {...props} src={target.url} alt={alt ?? ""} />;
       return <span aria-label={`Unavailable image: ${label}`}>{label}</span>;
     },
-    code: ({ node: codeNode, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
+    code: ({ node: codeNode, children: codeChildren, className, [FILE_BASE_PROPERTY]: fileBase, ...props }: React.ComponentProps<"code"> & { node?: unknown; [FILE_BASE_PROPERTY]?: string }) => {
       if (props["data-chat-credential-code" as keyof typeof props] === "true") {
         return <code {...props} className={cn(className, "border border-[var(--border-subtle)]")}>{codeChildren}</code>;
       }
@@ -513,18 +571,22 @@ export function MessageResponse({
       }
       const app = resolveApp?.(value);
       if (app && openApp) return <button type="button" title={value} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(value)}>{app.name}</button>;
-      const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
-      const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
-      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
-        return <ChatFileImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+      // A bare name leading a file listing resolves against the listing's directory.
+      const reference = typeof fileBase === "string" && BARE_FILE_PATTERN.test(value)
+        ? `${fileBase.replace(/[\\/]+$/, "")}/${value}`
+        : value;
+      const path = className || !/[\\/]/.test(reference) ? null : pathPresentation(reference);
+      const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(reference) : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(reference)?.kind === "file") {
+        return <ChatFileImage src={reference} label={path!.label} path={reference} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
         return (
           <button
             type="button"
             aria-label={`Open ${path.label}`}
-            title={value}
-            onClick={() => callbacks.current.openFile?.(value)}
+            title={reference}
+            onClick={() => callbacks.current.openFile?.(reference)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
           >
             <FileText size={13} aria-hidden className="shrink-0" />
@@ -538,7 +600,7 @@ export function MessageResponse({
           <code
             {...props}
             aria-label={`${path.kind === "file" ? "File" : "Folder"} path: ${path.label}`}
-            title={value}
+            title={reference}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs"
           >
             <Icon size={13} aria-hidden className="shrink-0" />
@@ -574,7 +636,7 @@ export function MessageResponse({
       <ReferenceLinkContext.Provider value={renderReferenceLink}>
         <FileImageKeyContext.Provider value={fileImageKey}>
           <ReactMarkdown
-            remarkPlugins={renderCredentialMarker ? [remarkGfm, inlineCredentialMarkers(children)] : [remarkGfm]}
+            remarkPlugins={renderCredentialMarker ? [...MARKDOWN_PLUGINS, inlineCredentialMarkers(children)] : MARKDOWN_PLUGINS}
             components={markdownComponents}
           >
             {children}
