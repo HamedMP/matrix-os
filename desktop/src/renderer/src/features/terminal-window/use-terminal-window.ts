@@ -364,10 +364,13 @@ export function useTerminalWindow() {
 
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
+      // Actions on a pane show the panes: the overview gives way so the result is in view.
       case "split-right": case "split-down": case "close-pane": case "zoom-pane":
+        setOverviewOpen(false);
         panes.run({ command: command.command });
         return;
       case "focus-pane": case "swap-pane":
+        setOverviewOpen(false);
         panes.run({ command: command.command, direction: command.direction });
         return;
       case "new-terminal": {
@@ -391,7 +394,8 @@ export function useTerminalWindow() {
         return;
       }
       case "close-terminal":
-        // Cmd+W closes the focused pane, ending its terminal.
+        // Cmd+W closes the focused pane, ending its terminal; the pane comes into view first.
+        setOverviewOpen(false);
         if (selectedKey) requestClose(selectedKey);
         return;
       case "space": {
@@ -417,7 +421,11 @@ export function useTerminalWindow() {
       case "toggle-sidebar": sidebar.toggleRail(); return;
       case "picker": setPickerOpen(true); return;
       case "overview": setOverviewOpen((open) => !open); return;
-      case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
+      case "find":
+        // Find searches the focused terminal, which the overview covers.
+        setOverviewOpen(false);
+        setFind((current) => ({ request: current.request + 1, key: selectedKey }));
+        return;
     }
   }, [chooseSpace, createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
   // One listener for the window's life that runs the handler of the last commit: a shortcut pressed

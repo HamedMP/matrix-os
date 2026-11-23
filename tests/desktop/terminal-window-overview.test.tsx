@@ -4,8 +4,8 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: ({ sessionName, focused }: { sessionName: string; focused?: boolean }) => (
-    <div data-testid="terminal-view" data-focused={focused ? "true" : "false"}>{sessionName}</div>
+  default: ({ sessionName, focused, findRequest }: { sessionName: string; focused?: boolean; findRequest?: number }) => (
+    <div data-testid="terminal-view" data-focused={focused ? "true" : "false"} data-find={findRequest ?? 0}>{sessionName}</div>
   ),
 }));
 
@@ -161,6 +161,23 @@ describe("Terminal window overview", () => {
     expect(screen.getByTestId("terminal-view")).toBe(view);
     expect(view.closest("[inert]")).toBeNull();
     expect(view.dataset.focused).toBe("true");
+  });
+
+  // Fault detected (Greptile, #3586): Find opened in the covered terminal, behind the overview.
+  it("gives way to the panes for Find and the pane actions", async () => {
+    const operator = installOperator({});
+    render(<TerminalWindowApp />);
+    await screen.findByRole("navigation", { name: "Terminals" });
+    operator.command({ command: "overview" });
+    fireEvent.click(within(await screen.findByRole("main", { name: "Overview" })).getByRole("button", { name: "Open build" }));
+    const view = await screen.findByTestId("terminal-view");
+    for (const command of [{ command: "find" }, { command: "zoom-pane" }, { command: "focus-pane", direction: "left" }]) {
+      operator.command({ command: "overview" });
+      await screen.findByRole("main", { name: "Overview" });
+      operator.command(command);
+      await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
+    }
+    expect(view.dataset.find).toBe("1");
   });
 
   it("keeps a preview's last lines that hold something, cut to width", () => {
