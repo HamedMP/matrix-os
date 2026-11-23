@@ -1,4 +1,4 @@
-import { isReservedMatrixOsHandle } from '@matrix-os/clerk-sync';
+import { isReservedMatrixOsHandle, PRIVATE_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 import { z } from 'zod/v4';
 import { DeveloperToolsSchema } from './developer-tools.js';
 
@@ -117,7 +117,7 @@ export const SpeechActivationRequestSchema = z.object({
 export const PreviewRuntimeAccessActivationRequestSchema = z.object({
   ownerId: ClerkUserIdSchema,
   machineId: z.uuid(),
-  runtimeSlot: PreviewRuntimeSlotSchema,
+  runtimeSlot: PreviewRuntimeSlotSchema.or(z.string().regex(PRIVATE_PREVIEW_HANDLE_PATTERN)),
   expectedRuntimeTokenEpoch: z.number().int().min(1).max(2_147_483_647),
 }).strict();
 

@@ -40,11 +40,39 @@ describe('Preview runtime access activation route', () => {
   const headers = { authorization: `Bearer ${secret}`, 'content-type': 'application/json' };
   const body = JSON.stringify({ ownerId: 'user_preview', machineId: '71cf5b5b-f624-4c1c-9b6c-4dd2d46b2b02',
     runtimeSlot: 'pr-2383', expectedRuntimeTokenEpoch: 1 });
-  function routes(activate: () => Promise<never>) {
+  function routes(activate: NonNullable<Parameters<typeof createCustomerVpsRoutes>[0]["activatePreviewRuntimeAccess"]>) {
     return new Hono().route('/vps', createCustomerVpsRoutes({ platformSecret: secret,
       service: {} as Parameters<typeof createCustomerVpsRoutes>[0]['service'],
-      activatePreviewRuntimeAccess: activate as never }));
+      activatePreviewRuntimeAccess: activate }));
   }
+  it.each(["pr-3524", "pv-3524-deadbeef"])("dispatches renewal for the existing preview slot %s", async runtimeSlot => {
+    const request = { ...JSON.parse(body), runtimeSlot };
+    const activate = vi.fn(async () => ({ status: "ready" as const, allocation: {
+      identity: { ownerId: request.ownerId, machineId: request.machineId, runtimeSlot, runtimeTokenEpoch: 1 },
+      ai: { budgetMicrousd: 1_000_000, requestLimit: 25, requestsUsed: 0, requestsRemaining: 25 },
+      speech: { requestLimit: 25, requestsUsed: 0, requestsRemaining: 25 },
+      maxConcurrency: 1, expiresAt: "2026-11-23T17:00:00.000Z",
+    }, fundedAiConfigured: true as const, speechConfigured: true as const }));
+    const response = await routes(activate).request('/vps/preview/access/activate', {
+      method: 'POST', headers, body: JSON.stringify(request),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "ready", allocation: { identity: { runtimeSlot } } });
+    expect(activate).toHaveBeenCalledExactlyOnceWith(request);
+  });
+  it("retains operator authentication, bounded bodies, and exact preview slot validation", async () => {
+    const activate = vi.fn(async () => { throw new Error("Must not dispatch"); });
+    const app = routes(activate);
+    const path = '/vps/preview/access/activate';
+    for (const authorization of [undefined, "Bearer invalid-operator"]) {
+      expect((await app.request(path, { method: 'POST', headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) }, body })).status).toBe(401);
+    }
+    for (const runtimeSlot of ["primary", "nima", "pr-0", "pv-03524-deadbeef", "pv-3524-deadbee", "pv-3524-DEADBEEF", "pv-3524-deadbeef/../primary"]) {
+      expect((await app.request(path, { method: 'POST', headers, body: JSON.stringify({ ...JSON.parse(body), runtimeSlot }) })).status).toBe(400);
+    }
+    expect((await app.request(path, { method: 'POST', headers, body: 'x'.repeat(5000) })).status).toBe(413);
+    expect(activate).not.toHaveBeenCalled();
+  });
   it.each([
     ['ineligible', 'preview_access_ineligible'],
     ['identity_mismatch', 'preview_access_ineligible'],
