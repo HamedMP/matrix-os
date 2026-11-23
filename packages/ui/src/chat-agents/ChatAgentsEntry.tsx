@@ -22,6 +22,7 @@ import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
 import { editableAgentRecipe } from "./recipe-edit.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
+import { AgentSetupChat } from "./AgentSetupChat.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
 export { ChatAgentsRailSection } from "./ChatAgentsRailSection.js";
@@ -136,6 +137,10 @@ function AgentLibraryBody({ state, client, models, retainedCreation, recover, ed
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
       </header>
+      {client.setupChat ? <AgentSetupChat key={state.editing === "new" ? "new" : state.editing.id} client={client.setupChat}
+        draft={state.draft} editing={state.editing} catalog={state.catalog}
+        recipes={state.recipeLoading || state.recipeError ? null : state.recipeCatalog}
+        connections={state.connectionError ? [] : state.connections} pending={state.pending || unfinishedRecovery} change={change} /> : null}
       <AgentEditor unfinishedRecovery={unfinishedRecovery} botClient={client.bots} retainedManaged={retainedCreation?.managed} retainedSelection={retainedCreation?.input.selection} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.catalogLoading}
         recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
         connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRefreshCatalog={refreshModels} onRetryRecipe={retryRecipes} cancelLabel="Cancel" onRecover={state.editing !== "new" && savedAgentRecoveryBaseRevision(state.editing, state.managedCustomRecoveries) !== undefined && client.bots?.recoverManagedCustom ? recover : undefined}
