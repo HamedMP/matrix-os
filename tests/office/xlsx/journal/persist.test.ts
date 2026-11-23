@@ -66,6 +66,22 @@ describe("saving and reopening the journal", () => {
     expect(before.map((change) => change.id)).not.toContain(changes(reopened)[0]!.id);
   });
 
+  it("keeps deleted rows across save and open so a later reject restores them", async () => {
+    const { workbook, sheet } = smallBook();
+    workbook.setFormula(sheet, a1("B1"), "A2*10");
+    workbook.beginProposal(AGENT);
+    workbook.deleteRows(sheet, 1, 1);
+    const added = workbook.addSheet("Notes");
+    workbook.setCell(added.id, a1("A1"), "why");
+    workbook.endProposal();
+    const reopened = await openXlsx(await workbook.save());
+    expect(changes(reopened).map((change) => change.kind)).toEqual(["deleteRows", "addSheet", "cell"]);
+    reopened.rejectChanges("all");
+    expect(at(reopened, "Data", "B1")).toMatchObject({ formula: "A2*10", value: 20 });
+    expect(at(reopened, "Data", "A4")).toMatchObject({ formula: "SUM(A1:A3)", value: 6 });
+    expect(reopened.getSheetByName("Notes")).toBeNull();
+  });
+
   it("removes the part once nothing is pending", async () => {
     const { workbook, sheet } = smallBook();
     workbook.beginProposal(AGENT);
@@ -98,6 +114,18 @@ describe("unreadable and stale journals", () => {
         nextSeq: 2,
         proposals: [{ id: "p1", author: "a", date: "d", label: "l", seq: 1 }],
         changes: [{ kind: "cell", id: "c1", proposalId: "p1", seq: 1, sheet: "1", row: 0, col: 0, old: { value: { evil: true }, formula: null, styleId: 0 }, new: { value: 1, formula: null, styleId: 0 } }],
+      }),
+      "journal_unreadable",
+    ],
+    [
+      "two changes on one cell",
+      JSON.stringify({
+        version: 1,
+        nextProposal: 2,
+        nextChange: 3,
+        nextSeq: 4,
+        proposals: [{ id: "p1", author: "a", date: "d", label: "l", seq: 1 }],
+        changes: [1, 2].map((n) => ({ kind: "cell", id: `c${n}`, proposalId: "p1", seq: n + 1, sheet: "1", row: 0, col: 0, old: { value: null, formula: null, styleId: 0 }, new: { value: n, formula: null, styleId: 0 } })),
       }),
       "journal_unreadable",
     ],
@@ -162,5 +190,4 @@ describe("unreadable and stale journals", () => {
     expect(result.stale).toEqual([change!.id]);
     expect(valueAt(workbook, "Data", "B1")).toBe("typed");
   });
-
 });
