@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { FormulaArray, FormulaError, FormulaScalar } from "../../../../../packages/office/src/api/formula.js";
-import { makeArray } from "../../../../../packages/office/src/xlsx/formula/coerce.js";
-import { toCellResult } from "../../../../../packages/office/src/xlsx/formula/eval/index.js";
+import type {
+  FormulaArray,
+  FormulaError,
+  FormulaScalar,
+  FunctionRegistry,
+} from "../../../../../packages/office/src/api/formula.js";
+import { isArray, makeArray } from "../../../../../packages/office/src/xlsx/formula/coerce.js";
+import { evaluate, toCellResult } from "../../../../../packages/office/src/xlsx/formula/eval/index.js";
+import { parseFormula } from "../../../../../packages/office/src/xlsx/formula/parser/index.js";
 import { err, setup } from "./eval-setup.js";
 
 describe("literals and arithmetic", () => {
@@ -235,6 +241,26 @@ describe("function calls", () => {
     expect(value("ROWOF(B3:C9)")).toBe(3);
     expect(value("ROWOF(Items)")).toBe(1);
     expect(value("ROWOF(5)")).toEqual(err("#VALUE!"));
+  });
+
+  it("works with any registry that implements the contract", () => {
+    const { provider } = setup();
+    const functions: FunctionRegistry = {
+      register: () => undefined,
+      registerLazy: () => undefined,
+      has: (name) => name === "FIRST",
+      names: () => ["FIRST"],
+      get: (name) =>
+        name === "FIRST"
+          ? { name, minArgs: 1, maxArgs: 1, volatile: false, lazy: false, impl: ([v]) => (isArray(v ?? null) ? "range" : "scalar") }
+          : null,
+    };
+    const context = { provider, functions, sheet: "Sheet1", row: 0, col: 5 };
+    expect(evaluate(parseFormula("FIRST(A1:A3)"), context)).toBe("range");
+    expect(evaluate(parseFormula("FIRST(A1)"), context)).toBe("range");
+    expect(evaluate(parseFormula("FIRST(1)"), context)).toBe("scalar");
+    expect(evaluate(parseFormula("FIRST()"), context)).toEqual(err("#VALUE!"));
+    expect(evaluate(parseFormula("SUM(1)"), context)).toEqual(err("#NAME?"));
   });
 
   it("finds functions with the file prefix and in any case", () => {

@@ -46,6 +46,9 @@ export * from "./graph/index.js";
 /**
  * The function libraries of a registry with builtins, in registration
  * order. A later library replaces a function of an earlier one.
+ *
+ * A library under `functions/` is added here: import its
+ * `(registry: FunctionRegistry) => void` and append it to the list.
  */
 export const FUNCTION_LIBRARIES: readonly FunctionLibrary[] = [registerCoreFunctions];
 

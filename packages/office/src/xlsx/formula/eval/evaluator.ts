@@ -327,7 +327,8 @@ export function evaluate(ast: ExtendedAst, context: EvaluateOptions): FormulaVal
   try {
     return sanitize(evalNode(ast, { state, sheet: context.sheet, context: null }));
   } catch (error) {
-    if (error instanceof RangeError) return makeError("#NUM!", `evaluation failed: ${error.message}`);
+    // A stack that ran out or an impossible length inside a function: a calculation limit, not a defect.
+    if (error instanceof RangeError) return makeError("#NUM!", "evaluation ran out of room");
     throw error;
   }
 }
