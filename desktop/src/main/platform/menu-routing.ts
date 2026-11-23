@@ -1,5 +1,5 @@
 // Routes application-menu actions to the right window. The menu is global,
-// but the Terminal window must close, zoom and reload itself; main-window
+// but the Terminal window must close, minimize, zoom and reload itself; main-window
 // actions chosen while it has focus bring the main window forward first.
 import { nextZoomFactor, type ZoomAction } from "./zoom";
 
@@ -7,6 +7,7 @@ interface MenuWindow {
   isDestroyed(): boolean;
   isFocused(): boolean;
   close(): void;
+  minimize(): void;
   webContents: {
     send(channel: string, payload: unknown): void;
     reload(): void;
@@ -27,8 +28,8 @@ function live(win: MenuWindow | null): MenuWindow | null {
   return win && !win.isDestroyed() ? win : null;
 }
 
-function isCloseTab(channel: string, payload: unknown): boolean {
-  return channel === "menu:action" && (payload as { action?: unknown } | null)?.action === "close-tab";
+function isShortcut(channel: string, payload: unknown, id: string): boolean {
+  return channel === "shortcut:action" && (payload as { id?: unknown } | null)?.id === id;
 }
 
 export function createMenuRouter(options: MenuRouterOptions) {
@@ -41,8 +42,12 @@ export function createMenuRouter(options: MenuRouterOptions) {
   return {
     send(channel: string, payload: unknown): void {
       const terminal = focusedTerminal();
-      if (terminal && isCloseTab(channel, payload)) {
+      if (terminal && isShortcut(channel, payload, "tabs.close")) {
         terminal.close();
+        return;
+      }
+      if (terminal && isShortcut(channel, payload, "app.minimize")) {
+        terminal.minimize();
         return;
       }
       const target = main();

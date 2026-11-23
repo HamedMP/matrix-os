@@ -18,6 +18,15 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { useShortcuts } from "@desktop/renderer/src/stores/shortcuts";
+import {
+  SHORTCUTS_STEP_SEEN_KEY,
+  markShortcutsStepSeen,
+  readShortcutsStepSeen,
+  useShortcutsStep,
+} from "@desktop/renderer/src/features/onboarding/shortcuts-step";
+import ShortcutsSection from "@desktop/renderer/src/features/settings/sections/ShortcutsSection";
+import { resolveShortcuts, type ShortcutOverrides } from "@matrix-os/contracts/keyboard-shortcuts";
 import { useIntegrations } from "@desktop/renderer/src/features/integrations/integrations-store";
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import { desktopComposerDraftIdentity, seedNewChatDraft } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
@@ -179,6 +188,8 @@ describe("GettingStartedPopover", () => {
     useConnection.setState(useConnection.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
+    useShortcuts.setState({ snapshot: null, error: null });
+    useShortcutsStep.setState({ seen: false });
     useConnection.setState({
       status: "signed-in",
       handle: "neo",
@@ -375,7 +386,8 @@ describe("GettingStartedPopover", () => {
         expect(buttons[0].textContent).toContain("Log in to Codex");
         return buttons;
       });
-      expect(rows).toHaveLength(5);
+      // Five setup steps, then the Electron-only keyboard shortcuts step.
+      expect(rows).toHaveLength(6);
       for (const row of rows) expect(row.querySelector("svg") ?? within(row).queryByText("Try")).not.toBeNull();
       expect(within(dialog).getByTestId("getting-started-app-gallery").textContent).toContain("Build your first app in App Gallery");
     });
@@ -388,7 +400,7 @@ describe("GettingStartedPopover", () => {
       return null;
     }
     render(<><WidgetShowing /><GettingStartedPopover /></>);
-    const trigger = await screen.findByRole("button", { name: "Getting started — 3 of 5" });
+    const trigger = await screen.findByRole("button", { name: "Getting started — 3 of 6" });
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
     expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
     expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBeNull();
@@ -398,8 +410,8 @@ describe("GettingStartedPopover", () => {
 
   it("opens the checklist from a compact Setup pill that leaves once setup is done", async () => {
     render(<GettingStartedPopover />);
-    const pill = await screen.findByRole("button", { name: "Getting started — 3 of 5" });
-    expect(pill.textContent).toBe("Setup 3/5");
+    const pill = await screen.findByRole("button", { name: "Getting started — 3 of 6" });
+    expect(pill.textContent).toBe("Setup 3/6");
     fireEvent.click(pill);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
     fireEvent.click(pill);
@@ -418,11 +430,11 @@ describe("GettingStartedPopover", () => {
   it("stays open until the title-bar button is clicked again", async () => {
     render(<><button type="button">Outside</button><GettingStartedPopover /></>);
 
-    const trigger = await screen.findByRole("button", { name: "Getting started — 3 of 5" });
+    const trigger = await screen.findByRole("button", { name: "Getting started — 3 of 6" });
     const api = useConnection.getState().api!;
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
-    expect(screen.getByText("3 of 5")).not.toBeNull();
+    expect(screen.getByText("3 of 6")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Connect email & calendar" })).not.toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -443,7 +455,7 @@ describe("GettingStartedPopover", () => {
   it("matches the Figma typography, spacing, colors, and icon sizing", async () => {
     render(<GettingStartedPopover />);
     const api = useConnection.getState().api!;
-    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 6" }));
 
     const dialog = screen.getByRole("dialog", { name: "Getting started" });
     expect(dialog.style.fontFamily).toContain("Inter");
@@ -483,6 +495,77 @@ describe("GettingStartedPopover", () => {
     await waitFor(() => expect(api.get.mock.calls.filter(([path]) => path === "/api/github/status")).toHaveLength(2));
   });
 
+  describe("keyboard shortcuts step", () => {
+    function setBindings(platform: "mac" | "other", overrides: ShortcutOverrides = { version: 1, overrides: {} }) {
+      useShortcuts.setState({ snapshot: { platform, overrides, effective: resolveShortcuts(overrides, platform) } });
+    }
+
+    async function openChecklist() {
+      render(<GettingStartedPopover />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Getting started — / }));
+      return screen.findByRole("dialog", { name: "Getting started" });
+    }
+
+    it("shows a few shortcuts with their current keys and opens Settings → Shortcuts", async () => {
+      setBindings("mac", { version: 1, overrides: { "app.next": ["Cmd+Shift+J"] } });
+      const dialog = await openChecklist();
+      const row = await within(dialog).findByRole("button", { name: /^Learn keyboard shortcuts/ });
+      // A customized key shows as customized, and the launcher keeps the macOS default.
+      expect(within(row).getByRole("group", { name: "Command Shift J" }).textContent).toBe("⌘⇧J");
+      expect(within(row).getByRole("group", { name: "Option Space" })).not.toBeNull();
+      expect(within(row).getByText("Next app")).not.toBeNull();
+      expect(within(row).getByText("Open App Launcher")).not.toBeNull();
+      expect(within(row).getByText("Change them in Settings")).not.toBeNull();
+      expect(row.querySelector(":scope > svg:last-child")).not.toBeNull();
+
+      fireEvent.click(row);
+      expect(useUi.getState().requestedSettingsSection).toBe("shortcuts");
+      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "settings", title: "Settings" }));
+      expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    });
+
+    it("shows Windows and Linux keys there", async () => {
+      setBindings("other");
+      const dialog = await openChecklist();
+      const row = await within(dialog).findByRole("button", { name: /^Learn keyboard shortcuts/ });
+      expect(within(row).getByRole("group", { name: "Control Tab" })).not.toBeNull();
+      expect(within(row).getByRole("group", { name: "Control Space" })).not.toBeNull();
+    });
+
+    it("leaves out an action that has no key", async () => {
+      setBindings("mac", { version: 1, overrides: { "app.launcher": [] } });
+      const dialog = await openChecklist();
+      const row = await within(dialog).findByRole("button", { name: /^Learn keyboard shortcuts/ });
+      expect(within(row).getByText("Next app")).not.toBeNull();
+      expect(within(row).queryByText("Open App Launcher")).toBeNull();
+    });
+
+    it("is done once Settings → Shortcuts has been opened, and stays done", async () => {
+      setBindings("mac");
+      vi.stubGlobal("operator", { invoke: vi.fn(async () => useShortcuts.getState().snapshot), on: vi.fn(() => () => undefined) });
+      const dialog = await openChecklist();
+      expect(within(dialog).getByText("3 of 6")).not.toBeNull();
+      render(<ShortcutsSection />);
+      await waitFor(() => expect(within(dialog).getByText("4 of 6")).not.toBeNull());
+      expect(localStorage.getItem(SHORTCUTS_STEP_SEEN_KEY)).toBe("1");
+      expect(readShortcutsStepSeen()).toBe(true);
+      const label = within(within(dialog).getByRole("button", { name: /^Learn keyboard shortcuts/ })).getByText("Learn keyboard shortcuts");
+      expect(label.style.textDecoration).toBe("line-through");
+    });
+
+    it("does not bring back a finished checklist", async () => {
+      const api = makeApi();
+      useConnection.setState({ api: api as never });
+      render(<GettingStartedPopover />);
+      await waitFor(() => expect(api.get).toHaveBeenCalled());
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+      expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
+      markShortcutsStepSeen();
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+      expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
+    });
+  });
+
   it("consumes the shared onboarding brand palette", () => {
     const source = readFileSync(resolve(
       process.cwd(),
@@ -496,7 +579,7 @@ describe("GettingStartedPopover", () => {
   it("opens the relevant setup surface without closing the popover", async () => {
     render(<GettingStartedPopover />);
     const api = useConnection.getState().api!;
-    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 6" }));
     // Connect rows start the app's sign-in now; a step without one still opens its Settings page.
     fireEvent.click(screen.getByRole("button", { name: "Log in to Codex / Claude" }));
 
