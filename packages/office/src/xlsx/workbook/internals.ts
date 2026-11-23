@@ -132,3 +132,26 @@ export function getWorkbookInternals(workbook: Workbook): WorkbookInternals {
 export function attachJournal(workbook: Workbook, journal: WorkbookJournal | null): void {
   getWorkbookInternals(workbook).setJournal(journal);
 }
+
+/**
+ * How a change journal comes to be attached to every new handle. The journal
+ * module implements it; `xlsx/index.ts` asks the registered provider for a
+ * journal each time it makes a handle.
+ */
+export interface JournalProvider {
+  /** For a workbook opened from a file: reads the journal part (see `readPartText`) and returns its journal. */
+  open(internals: WorkbookInternals): Promise<WorkbookJournal>;
+  /** For a new workbook (`createXlsx`, `parseCsv`): returns an empty journal. */
+  create(internals: WorkbookInternals): WorkbookJournal;
+}
+
+let journalProvider: JournalProvider | null = null;
+
+/** Registers the provider used for handles made from now on; null removes it. */
+export function setJournalProvider(provider: JournalProvider | null): void {
+  journalProvider = provider;
+}
+
+export function getJournalProvider(): JournalProvider | null {
+  return journalProvider;
+}

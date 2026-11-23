@@ -244,6 +244,19 @@ function flushFrozen(sheet: SheetModel): void {
 /** Writes every pending change of the sheet model into its XML. */
 export function flushSheet(sheet: SheetModel, strings: StringSink): void {
   if (!sheet.dirty) return;
+  if (sheet.hasShared && !sheet.unshare) {
+    // A member of a shared formula whose content changed (an edit, or a new result) is written
+    // on its own; its group then has to be written out too, or the others lose their master.
+    scan: for (const row of sheet.rows.values()) {
+      if (!row.dirty) continue;
+      for (const cell of row.cells.values()) {
+        if (cell.shared >= 0 && (cell.dirty & DIRTY_CONTENT) !== 0) {
+          sheet.unshare = true;
+          break scan;
+        }
+      }
+    }
+  }
   if (sheet.unshare && sheet.hasShared) {
     for (const row of sheet.rows.values()) {
       for (const cell of row.cells.values()) {

@@ -20,6 +20,7 @@ import {
   parseA1Range,
   parseSheetRange,
 } from "./workbook/a1.js";
+import { attachJournal, getJournalProvider, getWorkbookInternals } from "./workbook/internals.js";
 import { type WorkbookDeps, createState, openState } from "./workbook/open.js";
 import { checkSheetNameText } from "./workbook/sheets.js";
 import { createHandle } from "./workbook/workbook.js";
@@ -31,7 +32,12 @@ export { quoteSheetName } from "./workbook/a1.js";
 
 const deps: WorkbookDeps = { formula };
 
-export const openXlsx: OpenXlsx = async (bytes, options) => createHandle(await openState(bytes, options, deps));
+export const openXlsx: OpenXlsx = async (bytes, options) => {
+  const handle = createHandle(await openState(bytes, options, deps));
+  const provider = getJournalProvider();
+  if (provider !== null) attachJournal(handle, await provider.open(getWorkbookInternals(handle)));
+  return handle;
+};
 
 /** Sheets a new workbook may be created with. */
 const MAX_NEW_SHEETS = 255;
@@ -49,7 +55,10 @@ export const createXlsx: CreateXlsx = (options) => {
     }
     checked.push(name);
   }
-  return createHandle(createState(checked, deps));
+  const handle = createHandle(createState(checked, deps));
+  const provider = getJournalProvider();
+  if (provider !== null) attachJournal(handle, provider.create(getWorkbookInternals(handle)));
+  return handle;
 };
 
 export const parseCsv = makeParseCsv(createXlsx);
