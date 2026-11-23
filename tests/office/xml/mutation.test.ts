@@ -192,8 +192,10 @@ describe("new nodes", () => {
       "",
     ]);
     expect(serializeXml(element)).toBe(
-      '<w:r w:rsidR="00AB" xml:space="preserve"><w:rPr><w:b/></w:rPr>a &lt; b &amp; c &gt; d<w:t xml:space="preserve"> tail\r\n</w:t></w:r>',
+      '<w:r w:rsidR="00AB" xml:space="preserve"><w:rPr><w:b/></w:rPr>a &lt; b &amp; c &gt; d<w:t xml:space="preserve"> tail&#13;\n</w:t></w:r>',
     );
+    // A literal carriage return would reach other readers as a line feed; the reference survives.
+    expect(textContent(parseXml(serializeXml(element)).root)).toBe("a < b & c > d tail\r\n");
     expect(element.parent).toBeNull();
     expect(element.selfClosing).toBe(true);
     expect(element.children).toHaveLength(3);

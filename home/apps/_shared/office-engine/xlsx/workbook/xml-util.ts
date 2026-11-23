@@ -40,7 +40,8 @@ export function qualify(reference: XmlElement, local: string): string {
   return colon < 0 ? local : `${reference.name.slice(0, colon + 1)}${local}`;
 }
 
-function localOf(name: string): string {
+/** The name of an element without its namespace prefix. */
+export function localOf(name: string): string {
   const colon = name.indexOf(":");
   return colon < 0 ? name : name.slice(colon + 1);
 }
@@ -82,13 +83,17 @@ export function decodeCellText(text: string): string {
   return text.replace(ESCAPED, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
-/** Escapes characters XML 1.0 cannot carry, and text that would read as an escape. */
+/**
+ * Escapes characters XML 1.0 cannot carry, text that would read as an
+ * escape, and the carriage return: an XML reader turns a literal one into
+ * a line feed, so spreadsheets write it as `_x000D_`.
+ */
 export function encodeCellText(text: string): string {
   let out = "";
   let from = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    const control = code < 32 && code !== 9 && code !== 10 && code !== 13;
+    const control = code < 32 && code !== 9 && code !== 10;
     const looksEscaped =
       code === 95 && text.charCodeAt(i + 1) === 120 && /^_x[0-9A-Fa-f]{4}_/.test(text.slice(i, i + 7));
     const invalid = code === 0xfffe || code === 0xffff;

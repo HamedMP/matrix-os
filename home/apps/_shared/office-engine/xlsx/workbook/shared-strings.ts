@@ -3,7 +3,9 @@
  *
  * Existing entries are never changed, so cells that are not edited keep
  * their index and their rich text. New text is appended, reusing an existing
- * plain entry with the same text.
+ * plain entry with the same text. An entry no cell uses any more stays. The
+ * table states how many cells use it (`count`) and how many entries it has
+ * (`uniqueCount`); both are kept true.
  */
 
 import type { XmlChildNode, XmlDocument, XmlElement } from "../../api/xml.js";
@@ -76,13 +78,8 @@ export class SharedStrings {
     }
     const doc = this.doc ?? (this.doc = ensureDoc());
     const root = doc.root;
-    const total = getAttr(root, "count");
-    if (total !== null && /^\d+$/.test(total)) setAttr(root, "count", String(Number(total) + 1));
     const found = this.lookup.get(text);
-    if (found !== undefined) {
-      this.dirty = this.dirty || total !== null;
-      return found;
-    }
+    if (found !== undefined) return found;
     const encoded = encodeCellText(text);
     const t = createElement(qualify(root, "t"), needsSpacePreserve(encoded) ? { "xml:space": "preserve" } : undefined, [
       encoded,
@@ -95,5 +92,18 @@ export class SharedStrings {
     if (getAttr(root, "uniqueCount") !== null) setAttr(root, "uniqueCount", String(index + 1));
     this.dirty = true;
     return index;
+  }
+
+  /**
+   * Brings the `count` attribute (the number of cells that use the table)
+   * up to date. A table that states no count keeps none.
+   */
+  setReferenceCount(total: number): void {
+    const root = this.doc?.root;
+    if (root === undefined) return;
+    const stated = getAttr(root, "count");
+    if (stated === null || stated === String(total)) return;
+    setAttr(root, "count", String(total));
+    this.dirty = true;
   }
 }

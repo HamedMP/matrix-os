@@ -65,11 +65,19 @@ function requireCount(value: number, limit: number, what: string): void {
 export function syncParts(state: WorkbookState): void {
   const pkg = state.pkg;
   const strings = (text: string): number => addSharedString(state, text);
+  // Cells may have come or gone when a sheet is written, or when the list of sheets changed.
+  let cellsChanged = state.workbookPart.dirty;
   for (const sheet of state.sheets) {
+    if (sheet.dirty) cellsChanged = true;
     flushSheet(sheet, strings);
     if (!sheet.partDirty) continue;
     pkg.setPart(sheet.partName, serializeXml(attachSheet(sheet).doc));
     sheet.partDirty = false;
+  }
+  if (cellsChanged) {
+    let references = 0;
+    for (const sheet of state.sheets) references += sheet.stringRefs;
+    state.strings.setReferenceCount(references);
   }
   flushNames(state);
   if (state.workbookPart.dirty) {

@@ -162,7 +162,7 @@ function readCell(
   return cell;
 }
 
-interface ReadRows extends Pick<SheetModel, "rows" | "rowsUnordered" | "hasShared"> {
+interface ReadRows extends Pick<SheetModel, "rows" | "rowsUnordered" | "hasShared" | "stringRefs"> {
   /** Rows in document order. */
   ordered: RowRec[];
 }
@@ -172,6 +172,7 @@ function readRows(sheetData: XmlElement, context: ReadContext): ReadRows {
   // Shared formula masters by group. One entry per group of this sheet.
   const masters = new Map<number, SharedMaster>();
   const flags = { hasShared: false };
+  let stringRefs = 0;
   const ordered: RowRec[] = [];
   let rowsUnordered = false;
   let nextRow = 0;
@@ -207,12 +208,13 @@ function readRows(sheetData: XmlElement, context: ReadContext): ReadRows {
       if (col < 0 || col >= MAX_COLS) throw corrupt("a cell reference is outside the sheet");
       if (row.cells.has(col)) throw corrupt("a cell appears twice");
       nextCol = col + 1;
+      if (getAttr(cellElement, "t") === "s") stringRefs++;
       row.cells.set(col, readCell(cellElement, index, col, context, masters, flags));
     }
     rows.set(index, row);
     ordered.push(row);
   }
-  return { rows, rowsUnordered, hasShared: flags.hasShared, ordered };
+  return { rows, rowsUnordered, hasShared: flags.hasShared, ordered, stringRefs };
 }
 
 const COLUMN_OWN_ATTRS: ReadonlySet<string> = new Set(["min", "max", "width", "customWidth", "hidden"]);
@@ -289,7 +291,7 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     const value = format === null ? Number.NaN : Number(getAttr(format, name) ?? "NaN");
     return Number.isFinite(value) && value > 0 ? value : fallback;
   };
-  const { rows, rowsUnordered, hasShared, ordered } = readRows(sheetData, context);
+  const { rows, rowsUnordered, hasShared, ordered, stringRefs } = readRows(sheetData, context);
   const detached = sourceText !== undefined;
   if (detached) {
     for (const row of ordered) {
@@ -307,6 +309,7 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     rows,
     rowsUnordered,
     hasShared,
+    stringRefs,
     rowSetDirty: false,
     merges: readMerges(root),
     mergesDirty: false,

@@ -298,6 +298,15 @@ export function flushSheet(model: SheetModel, strings: StringSink): void {
     const dimensions = sheetDimensions(sheet);
     syncAttr(dimension, "ref", dimensions === null ? "A1" : formatA1Range(dimensions));
   }
+  // The cells that point into the shared string table, for the count that part states.
+  let stringRefs = 0;
+  for (const row of sheet.rows.values()) {
+    if (row.el === null) continue;
+    for (const node of row.el.children) {
+      if (node.kind === "element" && isNamed(node.name, "c") && getAttr(node, "t") === "s") stringRefs++;
+    }
+  }
+  sheet.stringRefs = stringRefs;
   sheet.dirty = false;
   sheet.partDirty = true;
 }

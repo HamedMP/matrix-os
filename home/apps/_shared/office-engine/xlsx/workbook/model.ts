@@ -119,6 +119,8 @@ export interface SheetModel {
   /** Shared formulas must be written out as ordinary ones at the next flush. */
   unshare: boolean;
   hasShared: boolean;
+  /** Cells of the part that point into the shared string table, as of the last read or write of its XML. */
+  stringRefs: number;
   /** Cached result of the dimension scan; undefined when out of date. */
   dimensions: CellRange | null | undefined;
 }

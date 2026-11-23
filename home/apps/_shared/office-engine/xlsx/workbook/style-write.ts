@@ -21,7 +21,7 @@ import {
 import { FIRST_CUSTOM_FORMAT_ID, builtinFormatId } from "../format/builtin.js";
 import { isHexColor, toArgb } from "./colors.js";
 import type { StyleTable } from "./styles.js";
-import { boolAttr, insertInOrder, kid, qualify } from "./xml-util.js";
+import { boolAttr, insertInOrder, kid, localOf, qualify, setChildren } from "./xml-util.js";
 
 const STYLE_SHEET_ORDER = [
   "numFmts",
@@ -181,9 +181,26 @@ function colorElement(parent: XmlElement, local: string, color: string): XmlElem
   return createElement(qualify(parent, local), { rgb: toArgb(color) });
 }
 
+/**
+ * Puts the children of a new element into schema order. A font copied from
+ * a file can have them in another order, which lenient readers accept; one
+ * the engine writes follows the sequence every reader accepts. Children the
+ * order does not name keep their place after the others.
+ */
+function sortChildren(element: XmlElement, order: readonly string[]): void {
+  const ranked = element.children.map((node, position) => {
+    const rank = node.kind === "element" ? order.indexOf(localOf(node.name)) : -1;
+    return { node, position, rank: rank === -1 ? order.length : rank };
+  });
+  const sorted = [...ranked].sort((a, b) => a.rank - b.rank || a.position - b.position);
+  if (sorted.every((entry, at) => entry === ranked[at])) return;
+  setChildren(element, sorted.map((entry) => entry.node));
+}
+
 function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: NonNullable<CellStylePatch["font"]>): number {
   const base = table.fonts[baseId];
   const font = base === undefined ? createElement(qualify(table.doc.root, "font")) : cloneNode(base);
+  const before = serializeXml(font);
   if (patch.bold !== undefined) setFlagChild(font, "b", patch.bold, FONT_ORDER);
   if (patch.italic !== undefined) setFlagChild(font, "i", patch.italic, FONT_ORDER);
   if (patch.strike !== undefined) setFlagChild(font, "strike", patch.strike, FONT_ORDER);
@@ -206,6 +223,8 @@ function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: 
     // A theme font scheme would override the name.
     setValueChild(font, "scheme", null, FONT_ORDER);
   }
+  // A patch that changes nothing keeps the font it started from, whatever its order.
+  if (serializeXml(font) !== before) sortChildren(font, FONT_ORDER);
   return intern(table, "fonts", table.fonts, state.fonts, font);
 }
 

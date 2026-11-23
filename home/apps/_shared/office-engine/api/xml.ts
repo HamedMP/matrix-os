@@ -215,7 +215,7 @@ export type PrefixOf = (qualifiedName: string) => string;
  */
 export type LookupNamespace = (element: XmlElement, prefix: string) => string | null;
 
-/** Escapes `&`, `<` and `>`. */
+/** Escapes `&`, `<`, `>` and the carriage return (`&#13;`: a reader turns a literal one into a line feed). */
 export type EscapeXmlText = (value: string) => string;
 /** Escapes for a double-quoted attribute value, as described on {@link SerializeXml}. */
 export type EscapeXmlAttr = (value: string) => string;

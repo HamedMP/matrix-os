@@ -4,13 +4,14 @@
  *
  * Characters XML 1.0 cannot carry at all (most C0 controls, U+FFFE, U+FFFF)
  * are dropped: there is no way to write them, and a part containing one would
- * be refused by every reader.
+ * be refused by every reader. A carriage return in text is written as a
+ * character reference: a reader turns a literal one into a line feed.
  */
 
 import type { EscapeXmlAttr, EscapeXmlText } from "../api/xml.js";
 
-const TEXT_SPECIAL = /[&<>\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/;
-const TEXT_SPECIAL_ALL = /[&<>\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
+const TEXT_SPECIAL = /[&<>\r\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/;
+const TEXT_SPECIAL_ALL = /[&<>\r\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
 const DOUBLE_QUOTED_SPECIAL = /[&<"\t\n\r\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/;
 const DOUBLE_QUOTED_SPECIAL_ALL = /[&<"\t\n\r\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g;
 const SINGLE_QUOTED_SPECIAL = /[&<'\t\n\r\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/;
@@ -39,7 +40,7 @@ function replacement(char: string): string {
   }
 }
 
-/** Escapes `&`, `<` and `>` for element content. */
+/** Escapes `&`, `<`, `>` and the carriage return for element content. */
 export const escapeXmlText: EscapeXmlText = (value) =>
   TEXT_SPECIAL.test(value) ? value.replace(TEXT_SPECIAL_ALL, replacement) : value;
 
