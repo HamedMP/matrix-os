@@ -206,11 +206,12 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
     fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
     expect(await screen.findByRole("region", { name: "Archived chats" })).toBeVisible();
-    expect(screen.queryByText("Inspect this answer")).toBeNull();
+    expect(screen.getByText("Inspect this answer")).not.toBeVisible();
     const unseen = { ...seen, unread: true, version: 2, latestIncomingSeq: 2 };
     view.rerender(<ChatApp {...props} messages={[...props.messages,
       { id: "answer", role: "assistant", content: "An unseen answer", timestamp: 2000 }]}
       readState={unseen} displayedThroughSeq={2} />);
+    expect(screen.getByText("An unseen answer")).not.toBeVisible();
     act(() => window.dispatchEvent(new Event("focus")));
     expect(onRead).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Selected chat", exact: true }));
