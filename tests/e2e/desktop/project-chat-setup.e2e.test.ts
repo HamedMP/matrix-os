@@ -9,6 +9,7 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import {
   CanonicalChatDetailResponseSchema,
+  CanonicalChatContentFrameSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatNavigationResponseSchema,
   CanonicalChatRecordSchema,
@@ -32,7 +33,7 @@ import { closeElectronApp } from "./fixtures/close-electron";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const root = resolve(import.meta.dirname, "../../..");
-const main = join(root, "desktop/out/main/index.js");
+const main = process.env.MATRIX_PROJECT_SETUP_DESKTOP_MAIN ?? join(root, "desktop/out/main/index.js");
 const built = existsSync(main);
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !built)
   throw new Error("Required Electron Desktop build is missing");
@@ -49,6 +50,9 @@ function setupFixture() {
   let draft: ProjectSetupDraft | null = null;
   let chatRevision = 0;
   let cursor = 0;
+  let publishedMessageCount = 0;
+  let publishedTurnCount = 0;
+  let publishedRunCount = 0;
   const streams = new Set<ServerResponse>(); // Maximum four fixture streams, drained on teardown.
   const messages: CanonicalChatMessage[] = [];
   const turns: CanonicalChatTurn[] = [];
@@ -119,7 +123,21 @@ function setupFixture() {
   const publish = () => {
     cursor++;
     const event = { cursor, revision: chatRevision, chatId, eventType: "chat.updated", createdAt: now };
-    for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "chat.event", event })}\n\n`);
+    const frame = CanonicalChatContentFrameSchema.parse({
+      type: "chat.content",
+      event,
+      content: {
+        record: record(),
+        messages: messages.slice(publishedMessageCount),
+        turns: turns.slice(publishedTurnCount),
+        runs: runs.slice(publishedRunCount),
+        queuedTurns: [],
+      },
+    });
+    for (const stream of streams) stream.write(`data: ${JSON.stringify(frame)}\n\n`);
+    publishedMessageCount = messages.length;
+    publishedTurnCount = turns.length;
+    publishedRunCount = runs.length;
   };
   const navigation = () => {
     const {
@@ -400,7 +418,7 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     if (profile) await rm(profile, { recursive: true, force: true });
   });
 
-  it("skips without mutation, then completes setup through the real Chat renderer and composer", async () => {
+  it("skips cleanly, then uses custom Chat answers and explicitly reviews the MCP and file changes", async () => {
     onTestFailed(async () => {
       if (!page?.isClosed()) {
         console.error((await page.locator("body").ariaSnapshot({ timeout: 2_000 })).slice(0, 5000));
@@ -415,17 +433,44 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     await page.getByRole("button", { name: "Set up with Chat", exact: true }).click();
     await page.getByText(`What are you using ${project.name} for?`, { exact: true }).waitFor();
     expect(state.draft).toBeNull();
-    await page.getByRole("button", { name: "A website or app", exact: true }).click();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.guidance, { exact: true }).waitFor();
-    expect(state.draft?.chatId).toBe(chatId);
+    await page.screenshot({ path: join(evidence, "electron-setup-fixture-custom-answer.png") });
     const composer = page.locator('[contenteditable="true"]').last();
+    const messages = page.getByRole("region", { name: "Messages", exact: true });
+    const purpose = "A public archive for my illustration portfolio.";
+    await composer.fill(purpose);
+    await composer.press("Enter");
+    await messages.getByText(purpose, { exact: true }).waitFor();
+    await page.getByText(PROJECT_SETUP_QUESTIONS.guidance.split("\n\n")[0]!, { exact: true }).waitFor();
+    expect(state.draft).toMatchObject({ chatId, answers: { purpose } });
+    expect(await page.getByText("Worked for 0s", { exact: true }).count()).toBe(0);
+    const guidanceQuestion = page.getByText(PROJECT_SETUP_QUESTIONS.guidance.split("\n\n").at(-1)!, { exact: true });
+    const guidanceChoice = page.getByRole("button", { name: "Keep changes small", exact: true });
+    await guidanceChoice.waitFor();
+    const questionBox = await guidanceQuestion.boundingBox();
+    const choiceBox = await guidanceChoice.boundingBox();
+    expect(choiceBox!.y - (questionBox!.y + questionBox!.height)).toBeLessThan(22);
     await composer.fill("Keep changes small, run the checks, and ask before publishing.");
     await composer.press("Enter");
+    await page.getByText(PROJECT_SETUP_QUESTIONS.skill.split("\n\n")[0]!, { exact: true }).waitFor();
     await page.getByRole("button", { name: "Create a skill", exact: true }).click();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.skill_instructions, { exact: true }).waitFor();
-    await page.getByRole("button", { name: "A release checklist", exact: true }).click();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.mcp, { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Skip for now", exact: true }).click();
+    await page.getByText(PROJECT_SETUP_QUESTIONS.skill_instructions.split("\n\n")[0]!, { exact: true }).waitFor();
+    const skill = "Review the diff and list the checks for every release.";
+    await composer.fill(skill);
+    await composer.press("Enter");
+    await messages.getByText(skill, { exact: true }).waitFor();
+    await page.getByText(PROJECT_SETUP_QUESTIONS.mcp.split("\n\n")[0]!, { exact: true }).waitFor();
+    expect(state.draft?.answers.skillInstructions).toBe(skill);
+    await page.getByRole("button", { name: "Connect Linear", exact: true }).click();
+    await page.getByRole("button", { name: "Open MCP Settings", exact: true }).click();
+    const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
+    await settings.getByRole("heading", { name: "MCP servers", exact: true }).waitFor();
+    expect(state.draft?.mcp).toEqual({ state: "pending", service: "Linear" });
+    await settings.getByRole("button", { name: "Close", exact: true }).click();
+    const focusChat = page.getByRole("button", { name: "Focus Chat", exact: true });
+    if (await focusChat.isVisible()) await focusChat.click();
+    await page.getByText("Awaiting MCP authorization", { exact: true }).waitFor();
+    await page.screenshot({ path: join(evidence, "electron-setup-fixture-mcp-authorization.png") });
+    await page.getByRole("button", { name: "Continue to review", exact: true }).click();
     await page.getByRole("region", { name: "Review AGENTS.md", exact: true }).waitFor();
     expect(state.files.size).toBe(0);
     await page.getByRole("button", { name: /^(Draft project files|Regenerate drafts)$/ }).click();
@@ -433,6 +478,8 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
       .getByText("I drafted your project guidance and skill. Review the Markdown below before saving.", { exact: true })
       .waitFor();
     await page.getByRole("region", { name: "Review .agents/skills/release-check/SKILL.md", exact: true }).waitFor();
+    expect(state.draft?.mcp.state).toBe("pending");
+    expect(await page.getByRole("button", { name: "Open MCP Settings", exact: true }).count()).toBe(0);
     expect(state.files.size).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-review.png") });
     await page.getByRole("button", { name: "Save project setup", exact: true }).click();

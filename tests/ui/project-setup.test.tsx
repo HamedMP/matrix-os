@@ -170,3 +170,24 @@ it("encodes generation through the strict PATCH schema and preserves its canonic
   expect(first).toEqual(retry);
   expect(first.action).toEqual({ type: "generate", selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol", options: [{ id: "effort", value: "low" }] } });
 });
+
+it("waits for an explicit review action before treating typed text as guidance revisions", async () => {
+  const client = transport();
+  const pending = { ...draft, step: "review", mcp: { state: "pending", service: "Linear" } };
+  client.get.mockResolvedValue({ draft: pending });
+  client.patch.mockResolvedValue({ draft: { ...pending, currentQuestionMessageId: "msg_review" } });
+  const { result } = renderHook(() => useProjectSetup({
+    client, scope: "owner:computer", projectId: "project_a", chatId: "chat_setup", eligible: true,
+  }));
+  await act(async () => {});
+  await act(async () => {
+    expect(await result.current.answer("An unrelated message")).toBe(false);
+  });
+  expect(client.patch).not.toHaveBeenCalled();
+  await act(async () => result.current.continueToReview());
+  expect(ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[0]?.[1]).action).toEqual({ type: "prepare_review" });
+  await act(async () => result.current.answer("Run tests"));
+  expect(ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[1]?.[1]).action).toEqual({
+    type: "revise", field: "guidance", text: "Run tests",
+  });
+});

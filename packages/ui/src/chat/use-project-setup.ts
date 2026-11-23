@@ -43,6 +43,7 @@ export function useProjectSetup(options: Options) {
     pending: boolean;
     error: string | null;
   }>({ identity, draft: null, introduction: false, pending: false, error: null });
+  const [reviewMcpKey, setReviewMcpKey] = useState<string | null>(null);
   const lifetime = useRef<{ identity: string; controller: AbortController } | null>(null);
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<{ identity: string; key: string; requestId: string } | null>(null);
@@ -145,8 +146,17 @@ export function useProjectSetup(options: Options) {
     if (accepted) attempt.current = null;
     return accepted;
   };
+  const pendingService = currentState.draft?.mcp.state === "pending" ? currentState.draft.mcp.service : undefined;
+  const mcpReviewKey = pendingService ? JSON.stringify([identity, pendingService]) : null;
+  const mcpHandoff = Boolean(currentState.draft?.step === "review" && mcpReviewKey
+    && reviewMcpKey !== mcpReviewKey && !currentState.draft.generation);
+  const continueToReview = async () => {
+    if (!mcpHandoff || !await dispatch({ type: "prepare_review" })) return false;
+    setReviewMcpKey(mcpReviewKey);
+    return true;
+  };
   const answer = async (text: string): Promise<boolean> => {
-    if (!text.trim() || !client || !projectId) return false;
+    if (!text.trim() || !client || !projectId || mcpHandoff) return false;
     if (stateRef.current.draft?.step === "review")
       return dispatch({ type: "revise", field: "guidance", text: text.trim() });
     if (stateRef.current.draft) return dispatch({ type: "answer", text: text.trim() });
@@ -177,6 +187,8 @@ export function useProjectSetup(options: Options) {
     start,
     dismiss,
     answer,
+    mcpHandoff,
+    continueToReview,
     dispatch,
     reload,
     active: currentState.introduction || Boolean(currentState.draft && currentState.draft.step !== "saved"),

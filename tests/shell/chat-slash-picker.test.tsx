@@ -15,14 +15,14 @@ const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCa
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false,bot=false}: {
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false,bot=false,setupAnswer=false}: {
  selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
- projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;bot?:boolean;
+ projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;bot?:boolean;setupAnswer?:boolean;
 }) {
  const composer=useChatComposerDraft(scope,"owner");
  const {setText}=composer;
  useLayoutEffect(()=>{setText(initial);},[setText,initial]);
- return <ChatInput composer={composer} scope={scope} permissionMode={bot ? "default" : "supervised"} connected busy={busy} attachmentsEnabled={!bot}
+ return <ChatInput composer={composer} scope={scope} permissionMode={bot ? "default" : "supervised"} connected busy={busy} attachmentsEnabled={!bot} setupAnswer={setupAnswer}
   activeRunId={busy ? "run_web_slash" : undefined} onAbortCurrent={busy ? () => undefined : undefined}
   onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={bot ? undefined : selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
 }
@@ -170,6 +170,18 @@ const inventory = (name: string) => ({
 });
 const projectScope = (projectId: string, name: string): ProjectChatSlashScope => ({
   scope: "test-runtime", projectId, read: vi.fn(async () => inventory(name)),
+});
+
+it("accepts a literal typed setup answer without waiting for provider Skills or attaching project context", async () => {
+  const submit = vi.fn();
+  const projectSlash = projectScope("proj_one", "review");
+  const answer = "Build a playbook for /review";
+  render(<Harness setupAnswer loading projectSlash={projectSlash} initial={answer} submit={submit} />);
+
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(projectSlash.read).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Message chat" }), { key: "Enter" });
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith(answer, undefined, { resources: [] }));
 });
 
 it("selects a project skill separately from the message and only passes its relative path on Send", async () => {

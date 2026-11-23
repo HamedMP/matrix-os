@@ -58,6 +58,7 @@ export function ChatInput({
   speechClient,
   speechCaptureAdapter,
   placeholder = "Reply to chat…",
+  setupAnswer = false,
   leadingControls,
   toolbarControls,
   queue,
@@ -91,6 +92,7 @@ export function ChatInput({
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
   placeholder?: string;
+  setupAnswer?: boolean;
   /** Controls after attach (+), such as the project picker, like Electron Desktop. */
   leadingControls?: React.ReactNode;
   /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
@@ -106,17 +108,17 @@ export function ChatInput({
   const [slashDismissal, setSlashDismissal] = useState<string|null>(null);
   const skillBinding = JSON.stringify([scope, composer.permissionIdentity, projectSlash?.scope, projectSlash?.projectId, Boolean(projectSlash?.read), slashInstance?.id]);
   const projectSkillDraft = useProjectSkillDraft(skillBinding);
-  const slashToken = matchChatSlashToken(input,cursor);
+  const slashToken = setupAnswer ? null : matchChatSlashToken(input,cursor);
   const slashKey = JSON.stringify([skillBinding, input, slashToken?.start]);
   const slashQuery = slashToken && slashDismissal !== slashKey ? slashToken.query : null;
   const slashListRef = useRef<HTMLDivElement|null>(null);
   const slashAnchorRef = useRef<HTMLDivElement|null>(null);
-  const queryMatch = /(?:^|\s)@([^\s@]*)$/.exec(input);
+  const queryMatch = setupAnswer ? null : /(?:^|\s)@([^\s@]*)$/.exec(input);
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
-  const mayQueue = referenceCount > 0;
+  const mayQueue = !setupAnswer && referenceCount > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -160,9 +162,9 @@ export function ChatInput({
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
-  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = !failedSend && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
-  const canRetry = failedSend && !speechBusy && !matrixAttachment.pending
+  const blockedDriveContext = !setupAnswer && resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
+  const canSend = (setupAnswer || !failedSend) && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: setupAnswer ? 0 : referenceCount, text: input, attachments: setupAnswer ? 0 : attachments.length });
+  const canRetry = !setupAnswer && failedSend && !speechBusy && !matrixAttachment.pending
     && permissionMode === failedSend.permissionMode
     && (attachmentsEnabled || !failedSend.files.length)
     && (contextEnabled || !failedSend.options.resources.some(resource => resource.kind === "organization_drive"))
@@ -239,10 +241,10 @@ export function ChatInput({
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!canSend) return;
-    const attachmentError = attachmentPolicy?.(attachments.map(item => item.file));
+    const attachmentError = !setupAnswer && attachmentPolicy?.(attachments.map(item => item.file));
     if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
-    const projectSkillProjectId = projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
+    const projectSkillProjectId = !setupAnswer && projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
     const preserveSkillSelection = Boolean(projectSkillProjectId && composer.permissionIdentity);
     let draftCleared = false;
     const sameDraft = () => currentComposer.current.scope === scope
@@ -291,6 +293,10 @@ export function ChatInput({
     });
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finally is required to release the submission guard on every failure.
     try {
+      if (setupAnswer) {
+        if ((await onSubmit(text, undefined, { resources: [] })) !== false && sameDraft()) composer.clear();
+        return;
+      }
       const attachedFiles = attachments.map(({ file }) => file);
       const files = attachedFiles.length ? await encodeChatAttachments(attachedFiles) : undefined;
       if (projectSkillProjectId && !currentSkillScope()) return;
@@ -318,7 +324,7 @@ export function ChatInput({
     } finally { setSending(false); }
   };
 
-  const editorPlaceholder = connected ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
+  const editorPlaceholder = connected || setupAnswer ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
 
   function addFilesFromInput(list: FileList, validateSize = true) {
     if (list.length + attachments.length > ATTACHMENT_COUNT_LIMIT) {
@@ -376,7 +382,7 @@ export function ChatInput({
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-      {failedSend ? <FailedChatMessage text={failedSend.text} canRetry={Boolean(canRetry)} sending={sending} unconfirmed={failedSend.unconfirmed}
+      {!setupAnswer && failedSend ? <FailedChatMessage text={failedSend.text} canRetry={Boolean(canRetry)} sending={sending} unconfirmed={failedSend.unconfirmed}
         onRetry={() => void retryFailedSend()} onDiscard={() => clearFailedSend(failedSend.options.clientRequestId)} /> : null}
       {!matrixPickerOpen && matrixAttachment.error ? <p role="alert" className="text-xs text-destructive">{matrixAttachment.error}</p> : null}
       {!matrixPickerOpen && matrixAttachment.pending ? <p role="status" className="text-xs">Reading Matrix file…</p> : null}

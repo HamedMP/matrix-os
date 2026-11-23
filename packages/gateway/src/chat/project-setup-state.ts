@@ -10,11 +10,11 @@ export class ProjectSetupError extends Error {
 }
 
 export const PROJECT_SETUP_QUESTIONS: Record<ProjectSetupDraft["step"], string> = {
-  guidance: "How should I work on this project? Tell me what to keep consistent and when I should check with you.",
-  skill: "Is there anything you do repeatedly? You can create a reusable skill, import a SKILL.md file, or skip for now.",
-  skill_instructions: "What should the skill do? Tell me the steps you want to repeat and the result you expect.",
-  mcp: "Do you need any connected tools? I can help you connect a service such as Linear through Settings, or you can continue without a connection.",
-  review: "Here’s your project setup. Review the complete Markdown and the destination files before saving. MCP connections are managed separately in Settings on this computer.",
+  guidance: "How should I work on this project?\n\nTell me what to keep consistent and when I should check with you.",
+  skill: "Is there anything you do repeatedly?\n\nA skill saves steps you can reuse in future Chats. You can create a skill or bring your own SKILL.md.",
+  skill_instructions: "What should the skill do?\n\nTell me the steps you want to repeat and the result you expect.",
+  mcp: "Do you need any connected tools?\n\nIf you track work in Linear, I can help you connect it in Settings. You can also finish setup without a connection.",
+  review: "Here’s your project setup.\n\nReview the Markdown and destination files before saving. MCP connections are managed in Settings on this computer.",
   saved: "Your project setup is saved. You can open the files from the project overview and select your project skill from the Chat slash menu.",
 };
 
@@ -57,12 +57,16 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
   if (current.step === "saved" && action.type !== "sync_generation") throw new ProjectSetupError("conflict");
   const draft = structuredClone(current);
   let userText: string | undefined;
+  let acknowledgement: string | undefined;
   switch (action.type) {
     case "answer":
       userText = action.text;
       if (draft.step === "guidance") { draft.answers.guidance = action.text; draft.step = "skill"; }
-      else if (draft.step === "skill_instructions") { draft.answers.skillInstructions = action.text; draft.step = "mcp"; }
-      else if (draft.step === "skill") { draft.answers.skillInstructions = action.text; draft.step = "mcp"; }
+      else if (draft.step === "skill_instructions" || draft.step === "skill") {
+        draft.answers.skillInstructions = action.text;
+        draft.step = "mcp";
+        acknowledgement = "I’ll draft the skill from those steps when we review your setup.";
+      }
       else if (draft.step === "mcp") { draft.mcp = { state: "pending", service: action.text.slice(0, 80) }; draft.step = "review"; }
       else throw new ProjectSetupError("invalid");
       break;
@@ -121,8 +125,14 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
       return { draft };
   }
   if (draft.step === "review" && action.type !== "review_file") draft.proposals = reviewedFiles(draft);
+  const opensConnection = current.step === "mcp" && draft.mcp.state === "pending";
+  const nextPrompt = opensConnection
+    ? (draft.mcp.service === "Linear" ? "Let’s connect Linear." : "Let’s set up that connection.")
+      + "\n\nOpen MCP Settings on this computer and return here after authorization."
+    : PROJECT_SETUP_QUESTIONS[draft.step];
+  const assistantText = acknowledgement ? `${acknowledgement}\n\n${nextPrompt}` : nextPrompt;
   return { draft: ProjectSetupDraftSchema.parse(draft), ...(userText ? { userText } : {}),
-    ...(userText || action.type === "prepare_review" ? { assistantText: PROJECT_SETUP_QUESTIONS[draft.step] } : {}) };
+    ...(userText || action.type === "prepare_review" ? { assistantText } : {}) };
 }
 
 const GeneratedSetupSchema = z.object({

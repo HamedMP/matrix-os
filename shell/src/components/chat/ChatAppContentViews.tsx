@@ -30,6 +30,8 @@ export function EmptyState({
   composerDraftRequest,
   onComposerDraftConsumed,
   providerReady,
+  setupAnswer,
+  setupPending = false,
   attachmentsEnabled,
   projectHome,
 }: {
@@ -62,6 +64,8 @@ export function EmptyState({
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
   providerReady: boolean;
+  setupAnswer?: string;
+  setupPending?: boolean;
   attachmentsEnabled: boolean;
   projectHome?: React.ReactNode;
 }) {
@@ -71,10 +75,11 @@ export function EmptyState({
       key={composerKey}
       {...composerProps}
       connected={connected && providerReady}
-      busy={false}
+      busy={setupPending}
       onSubmit={onSubmit}
-      autoFocus={!mobile && !projectHome}
-      placeholder="How can I help you today?"
+      autoFocus={!mobile && (!projectHome || Boolean(setupAnswer))}
+      placeholder={setupAnswer ?? "How can I help you today?"}
+      setupAnswer={Boolean(setupAnswer)}
       draftRequest={composerDraftRequest}
       onDraftConsumed={onComposerDraftConsumed}
       unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
@@ -84,8 +89,8 @@ export function EmptyState({
   if (projectHome) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {projectHome}
-        <ChatComposerColumn layout={layout}>{input}</ChatComposerColumn>
+        {setupAnswer ? <div className="min-h-0 flex-1 overflow-y-auto">{projectHome}</div> : projectHome}
+        {setupAnswer ? <div className="mx-auto w-full max-w-[768px] shrink-0 px-6 pb-5">{input}</div> : <ChatComposerColumn layout={layout}>{input}</ChatComposerColumn>}
       </div>
     );
   }

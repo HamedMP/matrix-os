@@ -4,6 +4,9 @@ import {
   useProjectSetupLaunch,
   ProjectSetupControls,
   ProjectSetupIntroduction,
+  ProjectSetupProgress,
+  ProjectSetupAcceptedNote,
+  projectSetupAnswerPlaceholder,
   type ProjectSetupTransport,
   type ProjectSetupMarkdownState,
 } from "@matrix-os/ui";
@@ -28,6 +31,7 @@ export function useDesktopProjectSetup({
   projectId,
   chatId,
   eligible,
+  live,
   selection,
   openChat,
   refresh,
@@ -36,6 +40,7 @@ export function useDesktopProjectSetup({
   projectId: string | null;
   chatId?: string | null;
   eligible: boolean;
+  live: boolean;
   selection?: CanonicalChatModelSelection | null;
   openChat: (id: string) => void;
   refresh: () => void;
@@ -54,6 +59,9 @@ export function useDesktopProjectSetup({
     setEditors({ scope: editorScope, files: {} });
   }, [editorScope]);
   const project = useBoard((state) => state.projects.find((item) => item.id === projectId));
+  const mcpSettingsOpen = useTabs(state => state.tabs.some(tab => tab.id === state.activeTabId && tab.kind === "settings"));
+  const [mcpHandoff, setMcpHandoff] = useState<string | null>(null);
+  const setupEligible = eligible && (live || (mcpSettingsOpen && mcpHandoff === editorScope));
   const transport = useMemo<ProjectSetupTransport | null>(() => {
     if (!api || typeof api.forRuntime !== "function") return null;
     const client = api.forRuntime(runtimeSlot);
@@ -113,7 +121,7 @@ export function useDesktopProjectSetup({
     scope,
     projectId,
     chatId,
-    eligible,
+    eligible: setupEligible,
     selection,
     onOpenChat: (id) => {
       launch?.dismiss();
@@ -135,10 +143,10 @@ export function useDesktopProjectSetup({
   const seenRequest = useRef(0);
   const startSetup = useEffectEvent(() => setup.start());
   useEffect(() => {
-    if (!launch?.requested || launch.sequence === seenRequest.current) return;
+    if (!setupEligible || !launch?.requested || launch.sequence === seenRequest.current) return;
     seenRequest.current = launch.sequence;
     void startSetup();
-  }, [launch?.requested, launch?.sequence, eligible, transport]);
+  }, [launch?.requested, launch?.sequence, setupEligible, transport]);
   const view = {
     ...setup,
     dismiss: () => {
@@ -147,6 +155,7 @@ export function useDesktopProjectSetup({
     },
   };
   const openMcpSettings = () => {
+    setMcpHandoff(editorScope);
     useUi.getState().requestSettingsSection("mcps");
     useTabs.getState().openTab({ kind: "settings", title: "Settings" });
   };
@@ -197,22 +206,27 @@ export function useDesktopProjectSetup({
       return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await blob.arrayBuffer());
     },
   };
+  const introductionVisible = setup.introduction || Boolean(launch?.requested && !setup.draft);
+  const projectName = project?.name ?? "this project";
   return {
     ...view,
-    controls: eligible ? (
+    introductionVisible,
+    placeholder: projectSetupAnswerPlaceholder(introductionVisible, setup.draft?.step, setup.mcpHandoff),
+    note: setup.draft ? <ProjectSetupAcceptedNote draft={setup.draft} /> : null,
+    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} /> : null,
+    controls: setupEligible ? (
       <ProjectSetupControls
         setup={view}
         transport={transport}
         selection={selection}
         onOpenMcpSettings={openMcpSettings}
+        mcpSettingsOpen={mcpSettingsOpen}
         markdownEdits={markdownEdits}
         onOpenFile={openFile}
         {...sources}
       />
     ) : null,
     introductionContent:
-      setup.introduction || (launch?.requested && !setup.draft) ? (
-        <ProjectSetupIntroduction projectName={project?.name ?? "this project"} setup={view} />
-      ) : null,
+      introductionVisible ? <ProjectSetupIntroduction projectName={projectName} setup={view} /> : null,
   };
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatModelSelection, ProjectSetupDraft } from "@matrix-os/contracts";
+import { remoteMcpCatalogEntryForUrl } from "@matrix-os/contracts/remote-mcp-catalog";
 import { Button } from "../Button.js";
 import {
   ImportSkillForm,
@@ -11,13 +12,14 @@ import type { ProjectSetupController, ProjectSetupTransport } from "./use-projec
 
 import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
 import { ProjectSetupMarkdown, type ProjectSetupMarkdownState } from "./ProjectSetupMarkdown.js";
+import { ProjectSetupReviewSummary } from "./ProjectSetupReviewSummary.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction } from "./ProjectSetupEntry.js";
 
 interface Props extends ProjectSkillSourceActions {
   setup: ProjectSetupController;
   transport: ProjectSetupTransport | null;
   selection?: CanonicalChatModelSelection | null;
-  onOpenMcpSettings: () => void;
+  onOpenMcpSettings?: () => void;
   mcpSettingsOpen?: boolean;
   markdownEdits?: {
     files: Readonly<Record<string, ProjectSetupMarkdownState>>;
@@ -55,6 +57,9 @@ function ProjectSetupControlsScoped({
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
   const [connected, setConnected] = useState(false);
+  const pendingService = draft.mcp.state === "pending" ? draft.mcp.service : undefined;
+  const showConnectionCard = pendingService && setup.mcpHandoff;
+  const showReview = draft.step === "review" && !showConnectionCard;
   const [dirtyFiles, setDirtyFiles] = useState<string[]>(() =>
     Object.entries(markdownEdits?.files ?? {})
       .filter(([path, edit]) => draft.proposals.some(file => file.path === path) && edit.value !== edit.baseline)
@@ -98,16 +103,18 @@ function ProjectSetupControlsScoped({
       const payload = await transport.get("/api/mcp-servers", controller.signal);
       if (controller.signal.aborted) return;
       // Only the current Settings projection can confirm a ready connection.
+      const linear = draft.mcp.service.toLowerCase() === "linear";
       const matches = Array.isArray(payload)
         ? payload.filter((item: unknown) => {
             if (typeof item !== "object" || item === null) return false;
             const entry = item as Record<string, unknown>;
             return (
               typeof entry.id === "string" &&
-              typeof entry.name === "string" &&
-              entry.name.toLowerCase() === draft.mcp.service?.toLowerCase() &&
               entry.status === "ready" &&
-              entry.enabled === true
+              entry.enabled === true &&
+              (linear
+                ? typeof entry.url === "string" && remoteMcpCatalogEntryForUrl(entry.url)?.id === "linear"
+                : typeof entry.name === "string" && entry.name.toLowerCase() === draft.mcp.service?.toLowerCase())
             );
           })
         : [];
@@ -200,29 +207,28 @@ function ProjectSetupControlsScoped({
       setSourceError("The file could not be opened. Try again.");
     }
   };
-  const chooseMcp = async () => {
-    if (await setup.dispatch({ type: "choose_mcp", choice: "connect", service: "Linear" }))
-      onOpenMcpSettings();
-  };
   return (
     <div className="min-w-0 space-y-3 text-sm" data-slot="project-setup-controls" aria-busy={busy}>
       {draft.step === "guidance" ? (
-        <div className="flex flex-wrap gap-2">
-          {[
-            "Keep changes small, run checks, and ask before publishing.",
-            "Explain the plan before making changes.",
-          ].map((text) => (
-            <Action
-              key={text}
-              disabled={busy}
-              onClick={() => {
-                void setup.answer(text);
-              }}
-            >
-              {text}
-            </Action>
-          ))}
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            {([
+              ["Keep changes small", "Keep changes small, run checks, and ask before publishing."],
+              ["Suggest a starting point", "Explain the plan before making changes."],
+            ] as const).map(([label, text]) => (
+              <Action
+                key={label}
+                disabled={busy}
+                onClick={() => {
+                  void setup.answer(text);
+                }}
+              >
+                {label}
+              </Action>
+            ))}
+          </div>
+          <p className="text-xs" style={mutedStyle}>Or write your own guidance below.</p>
+        </>
       ) : null}
       {draft.step === "skill" ? (
         <>
@@ -281,7 +287,7 @@ function ProjectSetupControlsScoped({
               );
             }}
           >
-            A release checklist
+            Use a release checklist
           </Action>
           <Action disabled={busy} onClick={() => dispatch({ type: "choose_skill", choice: "skip" })}>
             Continue without a skill
@@ -289,45 +295,42 @@ function ProjectSetupControlsScoped({
         </div>
       ) : null}
       {draft.step === "mcp" ? (
-        <div className="flex flex-wrap gap-2">
-          <Action
-            disabled={busy}
-            onClick={() => {
-              void chooseMcp();
-            }}
-          >
-            Connect Linear
-          </Action>
-          <Action disabled={busy} onClick={() => dispatch({ type: "choose_mcp", choice: "skip" })}>
-            Skip for now
-          </Action>
-        </div>
-      ) : null}
-      {draft.mcp.state === "pending" ? (
-        <div className="space-y-2">
-          <p className="text-xs" role="status" style={mutedStyle}>
-            {connected
-              ? `${draft.mcp.service} is connected on this computer.`
-              : "Authorization pending. Continue in MCP Settings or save without connecting."}
-          </p>
+        <>
           <div className="flex flex-wrap gap-2">
-            <Action onClick={onOpenMcpSettings}>Open MCP settings</Action>
-            <Action
-              disabled={busy}
-              onClick={() => {
-                void checkConnection();
-              }}
-            >
-              Check connection
+            <Action disabled={busy || !onOpenMcpSettings} onClick={() => dispatch({ type: "choose_mcp", choice: "connect", service: "Linear" })}>
+              Connect Linear
             </Action>
             <Action disabled={busy} onClick={() => dispatch({ type: "choose_mcp", choice: "skip" })}>
-              Continue without connecting
+              Skip for now
             </Action>
           </div>
-        </div>
+          <p className="text-xs" style={mutedStyle}>Connections are managed for this computer. Tool approvals still apply.</p>
+        </>
       ) : null}
-      {draft.step === "review" ? (
+      {showConnectionCard ? (
+        <section aria-label={`Connect ${pendingService}`} className="space-y-2 rounded-xl border px-4 py-3" style={borderStyle}>
+          <h3 className="font-semibold">{pendingService}</h3>
+          <p className="text-xs" role="status" style={mutedStyle}>
+            {connected
+              ? `${pendingService} is connected on this computer.`
+              : "Awaiting MCP authorization"}
+          </p>
+          <p className="text-xs">{pendingService.toLowerCase() === "linear"
+            ? "In MCP Settings, find Linear under Add services. Approve access there, then return here."
+            : "Manage this connection in MCP Settings for this computer, then return here."}</p>
+          <div className="flex flex-wrap gap-2">
+            {onOpenMcpSettings && !connected ? <Action variant="primary" disabled={busy || mcpSettingsOpen} onClick={onOpenMcpSettings}>Open MCP Settings</Action> : null}
+            <Action disabled={busy || mcpSettingsOpen} onClick={() => { void checkConnection(); }}>Check connection</Action>
+            <Action variant={connected ? "primary" : "ghost"} disabled={busy} onClick={() => { void setup.continueToReview(); }}>Continue to review</Action>
+            {!connected ? <Action variant="ghost" disabled={busy} onClick={() => dispatch({ type: "choose_mcp", choice: "skip" })}>
+              Continue without connecting
+            </Action> : null}
+          </div>
+        </section>
+      ) : null}
+      {showReview ? (
         <>
+          <ProjectSetupReviewSummary draft={draft} connected={connected} />
           {draft.generation?.status === "running" ? (
             <p role="status">Drafting your project files…</p>
           ) : (

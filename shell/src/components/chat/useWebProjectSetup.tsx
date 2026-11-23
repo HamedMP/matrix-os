@@ -4,6 +4,10 @@ import {
   useProjectSetup,
   ProjectSetupControls,
   ProjectSetupIntroduction,
+  ProjectSetupProgress,
+  ProjectSetupAcceptedNote,
+  projectSetupAnswerPlaceholder,
+  projectSetupControlsMessageId,
   type ProjectSetupTransport,
 } from "@matrix-os/ui";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -35,6 +39,7 @@ export function useWebProjectSetup({
   selection,
   isCurrentAuthority,
   openChat,
+  messages,
 }: {
   project?: WebProject;
   chatId?: string;
@@ -44,6 +49,7 @@ export function useWebProjectSetup({
   selection?: CanonicalChatModelSelection;
   isCurrentAuthority?: () => boolean;
   openChat: (id: string) => void;
+  messages: readonly { id: string; role: string; requestId?: string; tool?: string }[];
 }) {
   const navigation = useContext(WebProjectAgentContextNavigation);
   const authorityCheck = useRef(isCurrentAuthority);
@@ -131,8 +137,17 @@ export function useWebProjectSetup({
       if (fileRequest.current === controller) fileRequest.current = null;
     }
   };
+  const projectName = project?.name ?? "this project";
+  const draft = setup.draft;
+  const messageId = draft?.generation?.runId ? projectSetupControlsMessageId(draft,
+    messages.map(({ id, role, requestId, tool }) => ({ id, role, runId: requestId, tool }))) : draft?.currentQuestionMessageId;
   return {
     ...setup,
+    messageId,
+    awaitingMessage: Boolean(messageId && !messages.some(message => message.id === messageId)),
+    placeholder: projectSetupAnswerPlaceholder(setup.introduction, draft?.step, setup.mcpHandoff),
+    note: draft ? <ProjectSetupAcceptedNote draft={draft} /> : null,
+    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} /> : null,
     controls: eligible ? (
       <ShellFileAuthority>
         {(authority) => (
@@ -141,7 +156,7 @@ export function useWebProjectSetup({
             setup={setup}
             transport={transport}
             selection={selection}
-            onOpenMcpSettings={() => navigation?.openMcpSettings()}
+            onOpenMcpSettings={navigation?.openMcpSettings}
             mcpSettingsOpen={navigation?.mcpSettingsOpen}
             onOpenFile={(path) => openFile(path, authority)}
             {...sources}
@@ -150,7 +165,7 @@ export function useWebProjectSetup({
       </ShellFileAuthority>
     ) : null,
     introductionContent: setup.introduction ? (
-      <ProjectSetupIntroduction projectName={project?.name ?? "this project"} setup={setup} />
+      <ProjectSetupIntroduction projectName={projectName} setup={setup} />
     ) : null,
   };
 }

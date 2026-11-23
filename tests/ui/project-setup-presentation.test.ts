@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { canonicalAssistantContinuationId, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { canonicalAssistantContinuationId, type CanonicalChatDetailResponse, type ProjectSetupDraft } from "@matrix-os/contracts";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
-import { projectSetupDetailPresentation } from "../../packages/ui/src/chat/project-setup-presentation.js";
+import { projectSetupControlsMessageId, projectSetupDetailPresentation } from "../../packages/ui/src/chat/project-setup-presentation.js";
 import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-terminal-notices.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 
@@ -17,6 +17,25 @@ function generationDetail(): CanonicalChatDetailResponse {
 }
 
 describe("durable setup generation presentation", () => {
+  it("keeps the controls by the newest canonical setup answer through review and partial save", () => {
+    const detail = generationDetail();
+    const result = detail.messages.at(-1)!;
+    const question = { ...result, id: "msg_review", runId: undefined, seq: 1 };
+    const receipt = { ...question, id: "msg_partial_save", seq: 4 };
+    const draft: ProjectSetupDraft = {
+      chatId: result.chatId, projectId: "matrix-os", revision: 3, step: "review",
+      currentQuestionMessageId: question.id, answers: { purpose: "Portfolio" }, proposals: [],
+      mcp: { state: "skipped" }, generation: { runId: result.runId!, status: "completed" },
+      updatedAt: result.createdAt,
+    };
+    detail.messages = [question, result, { ...result, id: canonicalAssistantContinuationId(result.id, 1), seq: 3 }];
+    const displayed = projectSetupDetailPresentation(detail, draft).messages;
+    expect(projectSetupControlsMessageId(draft, displayed)).toBe(result.id);
+    expect(projectSetupControlsMessageId({ ...draft, currentQuestionMessageId: receipt.id }, displayed)).toBe(receipt.id);
+    expect(projectSetupControlsMessageId({ ...draft, currentQuestionMessageId: receipt.id }, [...displayed, receipt])).toBe(receipt.id);
+    expect(projectSetupControlsMessageId({ ...draft, step: "saved", currentQuestionMessageId: receipt.id }, [...displayed, receipt])).toBe(receipt.id);
+  });
+
   it("hides the exact synthetic input while keeping both preceding setup answers and later user turns", () => {
     const detail = generationDetail();
     const [userInput, result] = detail.messages;

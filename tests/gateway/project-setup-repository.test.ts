@@ -6,7 +6,11 @@ import { ProjectSetupRepository } from "../../packages/gateway/src/chat/project-
 import { Kysely } from "kysely";
 import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { jsonb } from "../../packages/gateway/src/chat/records.js";
-import { transitionProjectSetup } from "../../packages/gateway/src/chat/project-setup-state.js";
+import { PROJECT_SETUP_QUESTIONS, transitionProjectSetup } from "../../packages/gateway/src/chat/project-setup-state.js";
+import type { CanonicalChatTransportFrame } from "@matrix-os/contracts";
+import { createCanonicalChatEventStream } from "../../packages/gateway/src/chat/event-stream.js";
+import { captureChatContent } from "../../packages/gateway/src/chat/content-projection.js";
+import { applyCanonicalChatContent } from "../../packages/ui/src/canonical-chat-content.js";
 
 const owner = { type: "personal" as const, ownerId: "user_a" };
 const root = "a".repeat(64);
@@ -33,6 +37,61 @@ describe("Chat-owned project setup draft", () => {
     expect(page?.messages[0]?.parts).toEqual([{ type: "text", text: "A portfolio" }]);
     expect((await chats.kysely.selectFrom("chats").select("id").execute()).length).toBe(1);
   });
+  it("updates an open Chat with each committed setup answer and its matching assistant question", async () => {
+    let response = await setup.start(owner, "project_a", root, { clientRequestId: "req_first", answer: "Portfolio" });
+    const chatId = response.draft!.chatId;
+    let visible = (await chats.getDetailPage(owner, chatId, { limit: 30 }))!;
+    const stream = createCanonicalChatEventStream({ repository: chats });
+    const frames: CanonicalChatTransportFrame[] = [];
+    try {
+      await stream.open({
+        principal: { userId: owner.ownerId, source: "jwt" },
+        content: true,
+        sink: { send: frame => { frames.push(frame); return true; }, close: () => {} },
+      });
+
+      const actions = [
+        { type: "answer", text: "Keep changes small and check them before release" },
+        { type: "choose_skill", choice: "create" },
+        { type: "answer", text: "Review the diff and summarize any skipped checks" },
+        { type: "choose_mcp", choice: "connect", service: "Linear" },
+      ] as const;
+      for (const [index, action] of actions.entries()) {
+        response = await setup.mutate(owner, chatId, root, {
+          baseRevision: response.draft!.revision, clientRequestId: `req_action_${index}`, action,
+        }, draft => transitionProjectSetup(draft, action));
+        const frame = frames.at(-1);
+        if (frame?.type !== "chat.content") throw new Error("Expected a committed Chat content frame");
+        // Older gateways used the ordinary chat.updated projection for setup and
+        // sent only metadata for a turn with no model Run.
+        const legacyContent = await captureChatContent(
+          chats.kysely, owner, chatId, "chat.updated", {}, (scope, id) => chats.get(scope, id),
+        );
+        expect(legacyContent?.messages).toEqual([]);
+        expect(applyCanonicalChatContent(visible, { ...frame, content: legacyContent! })).toBeNull();
+        const next = applyCanonicalChatContent(visible, frame);
+        expect(next).not.toBeNull();
+        visible = next!;
+        expect(visible.messages.slice(-2).map(message => message.role)).toEqual(["user", "assistant"]);
+        expect(visible.messages.at(-1)?.id).toBe(response.draft?.currentQuestionMessageId);
+        expect(visible.turns.at(-1)?.inputMessageId).toBe(visible.messages.at(-2)?.id);
+      }
+      expect(visible.messages).toHaveLength(10);
+      expect(visible.messages[6]?.parts).toEqual([{ type: "text", text: actions[2].text }]);
+      expect(visible.messages[7]?.parts).toEqual([{ type: "text", text: "I’ll draft the skill from those steps when we review your setup.\n\n" + PROJECT_SETUP_QUESTIONS.mcp }]);
+      expect(response.draft?.mcp).toEqual({ state: "pending", service: "Linear" });
+      expect(visible.messages.at(-1)?.parts).toEqual([{
+        type: "text", text: "Let’s connect Linear.\n\nOpen MCP Settings on this computer and return here after authorization.",
+      }]);
+      const reopened = await chats.getDetailPage(owner, chatId, { limit: 30 });
+      expect(visible.messages).toEqual(reopened?.messages);
+      expect(visible.turns).toEqual(reopened?.turns);
+      expect(visible.runs).toEqual([]);
+    } finally {
+      stream.shutdown();
+    }
+  });
+
   it("links generation with the same Chat-before-draft lock order as mutations", async () => {
     let response = await setup.start(owner, "project_a", root, { clientRequestId: "req_first", answer: "Portfolio" });
     const actions = [

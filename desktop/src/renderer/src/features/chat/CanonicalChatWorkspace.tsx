@@ -1,4 +1,4 @@
-import { projectSetupDetailPresentation } from "@matrix-os/ui";
+import { projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
 import { useDesktopProjectSetup } from "../project/use-desktop-project-setup";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { SourceChatRoutines } from "./SourceChatRoutines";
@@ -467,7 +467,7 @@ function CanonicalChatWorkspaceContent({
   const activeRun = controller.detail?.record.activeRun;
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const projectSetup = useDesktopProjectSetup({ api, projectId: slashProjectId ?? null, chatId: routedComposerChatId,
-    eligible: Boolean(live && slashProjectId && !directBotId && !explicitSharedRoute && !projectedSharedChat && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project")),
+    live, eligible: Boolean(slashProjectId && !directBotId && !explicitSharedRoute && !projectedSharedChat && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project")),
     selection, openChat: id => selectChat(id), refresh: () => { void controller.refresh(); } });
   const nativeChatChecksActive = active && !inspectorExclusive && !projectSetup.active && !botIdentityUnknown && !directBotId
     && authStatus === "signed-in" && routedComposerChatId === controller.detail?.record.chat.id;
@@ -507,6 +507,8 @@ function CanonicalChatWorkspaceContent({
       ? projectSetupDetailPresentation(shownTranscript.detail, projectSetup.draft) : shownTranscript.transcript),
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
+  const setupMessageId = projectSetup.draft ? projectSetupControlsMessageId(projectSetup.draft, transcript.flatMap(turn =>
+    turn.final?.kind === "message" ? [{ id: turn.final.id, role: turn.final.role, runId: turn.runIds?.at(-1) }] : [])) : undefined;
   const pendingTool = pendingSupervisedTool(transcript);
   const privateOwner = controller.detail?.record.chat.ownerScope;
   const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
@@ -637,7 +639,8 @@ function CanonicalChatWorkspaceContent({
       return;
     }
     if (
-      !selection
+      projectSetup.introductionVisible
+      || !selection
       || (!directBotId && providerCatalogLoading)
       || !selectionAvailable
       || (activeRun && !mentionResources.length)
@@ -1048,6 +1051,7 @@ function CanonicalChatWorkspaceContent({
         draftScopeKey={draftScope}
         projectSlashScope={projectSlashScope}
         projectSkillSubmitEnabled={selectionAvailable && !uploadingAttachments}
+        setupAnswer={projectSetup.active}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}
@@ -1066,8 +1070,8 @@ function CanonicalChatWorkspaceContent({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || projectSetup.pending}
-        canSubmit={Boolean((selectionAvailable || projectSetup.active) && !projectSetup.pending && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
+        disabled={controller.status === "loading" || uploadingAttachments || projectSetup.pending || projectSetup.mcpHandoff || (projectSetup.introductionVisible && !projectSetup.active)}
+        canSubmit={projectSetup.active ? Boolean(draft.trim() && !projectSetup.pending) : Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
         catalog={providerCatalog}
         attachmentsEnabled={attachmentPolicy.enabled && !projectSetup.active}
         automaticRouting={botPresentation?.kind === "recipe"}
@@ -1091,9 +1095,10 @@ function CanonicalChatWorkspaceContent({
         )}
         onNewChat={startNewChat}
         focusRequestId={active ? composerFocusRequestId + localComposerFocusRequestId : 0}
-        placeholder={editingQueuedTurn
+        autoFocus={projectSetup.introduction}
+        placeholder={projectSetup.placeholder ?? (editingQueuedTurn
           ? "Edit queued message…"
-          : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
+          : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?")}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
         leadingControls={(
           <ConversationContextPicker
@@ -1280,7 +1285,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
-              afterTranscript={projectSetup.controls}
+              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.controls, messageId: setupMessageId } : undefined}
               ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
               identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,
@@ -1324,7 +1329,7 @@ function CanonicalChatWorkspaceContent({
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
+            <div className={cn("mx-auto w-full shrink-0 px-6 pb-5", projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]")}>
               <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
                 active={nativeChatChecksActive}

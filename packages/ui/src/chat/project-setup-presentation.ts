@@ -26,6 +26,19 @@ export function projectSetupGenerationResultId(
     : null;
 }
 
+/** Use displayed messages in transcript order so the anchor exists after continuations are combined. */
+export function projectSetupControlsMessageId(
+  draft: ProjectSetupDraft | null,
+  messages: Parameters<typeof projectSetupGenerationResultId>[1],
+): string | undefined {
+  const questionId = draft?.currentQuestionMessageId;
+  if (!questionId || draft?.step !== "review" || !draft.generation?.runId) return questionId;
+  const questionIndex = messages.findIndex((message) => message.id === questionId);
+  // The draft response can reach the client before the matching transcript event.
+  if (questionIndex < 0) return questionId;
+  return projectSetupGenerationResultId(draft, messages.slice(questionIndex + 1)) ?? questionId;
+}
+
 export function projectSetupDetailPresentation(
   detail: CanonicalChatDetailResponse,
   draft: ProjectSetupDraft | null,
