@@ -4,6 +4,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import Ajv from "codex-fixture-ajv";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 
@@ -16,9 +19,16 @@ vi.mock("../../packages/gateway/src/ai-providers/codex-native-account-metadata.j
     actual.createCodexNativeAccountMetadataReader({ ...input, timeoutMs: 50, spawnProcess: transport.spawn }) };
 });
 import { createNativeCodexRuntime } from "../../packages/gateway/src/server/native-codex-runtime.js";
-import { markCodexCatalogObservation } from "../../packages/gateway/src/ai-providers/codex-native-observation.js";
+import { codexCatalogObservation, markCodexCatalogObservation } from "../../packages/gateway/src/ai-providers/codex-native-observation.js";
 import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
+import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+
+const protocol = JSON.parse(gunzipSync(readFileSync(new URL("../fixtures/codex-0171/app-server-schema-0171.json.gz", import.meta.url))).toString("utf8"));
+const ajv = new Ajv({ schemaId: "auto", unknownFormats: "ignore", logger: false });
+const clientRequest = ajv.compile({ $ref: "#/definitions/ClientRequest", definitions: protocol.definitions });
+const clientNotification = ajv.compile({ $ref: "#/definitions/ClientNotification", definitions: protocol.definitions });
 
 const homes: string[] = [];
 afterEach(async () => {
@@ -28,7 +38,7 @@ afterEach(async () => {
 
 async function fixture(stallFirst = true) {
   const homePath = await mkdtemp(join(tmpdir(), "codex-identity-recovery-")); homes.push(homePath);
-  let principal = { type: "chatgpt", email: "owner@example.test", id: "synthetic-native-owner" };
+  let principal: { type: "chatgpt"; email: string; id: string } | null = { type: "chatgpt", email: "owner@example.test", id: "synthetic-native-owner" };
   const generation = createHash("sha256").update(JSON.stringify({ principal })).digest("hex");
   const directory = join(homePath, "system/ai-providers");
   await mkdir(directory, { recursive: true });
@@ -40,6 +50,7 @@ async function fixture(stallFirst = true) {
   }));
   const methods: string[][] = [];
   let stallNext = stallFirst;
+  let accountReads = 0, changeAfter = Infinity;
   transport.spawn.mockImplementation(() => {
     const stalled = stallNext; stallNext = false;
     const requests: string[] = []; methods.push(requests);
@@ -47,10 +58,22 @@ async function fixture(stallFirst = true) {
       kill: () => { queueMicrotask(() => child.emit("close")); return true; } });
     child.stdin.on("data", chunk => {
       const request = JSON.parse(chunk.toString());
+      const isRequest = Object.hasOwn(request, "id");
+      const validate = isRequest ? clientRequest : clientNotification;
+      expect(validate(request), ajv.errorsText(validate.errors)).toBe(true);
       requests.push(request.method);
-      if (!request.id || stalled && request.method === "account/read") return;
-      const result = request.method === "initialize" ? {} : request.method === "config/read"
-        ? { config: { cli_auth_credentials_store: "keyring" } } : { account: principal };
+      let result: unknown;
+      switch (request.method) {
+        case "initialized": return;
+        case "initialize": result = {}; break;
+        case "config/read": result = { config: { cli_auth_credentials_store: "keyring" } }; break;
+        case "account/rateLimits/read": result = { rateLimits: null }; break;
+        case "account/read":
+          if (stalled) return;
+          if (++accountReads > changeAfter) principal = { type: "chatgpt", email: "other@example.test", id: "synthetic-other-owner" };
+          result = { account: principal }; break;
+        default: throw new Error("Unsupported Codex fixture method");
+      }
       queueMicrotask(() => child.stdout.write(JSON.stringify({ id: request.id, result }) + "\n"));
     });
     return child;
@@ -60,17 +83,48 @@ async function fixture(stallFirst = true) {
     accounts: [{ id: "owner_codex", providerId: "openai", accessSourceId: "owner_openai_profile", authMethod: "terminal", authState: "authenticated" }],
   } as unknown as ProviderSettingsSnapshot;
   const getSnapshot = vi.fn(async () => snapshot);
+  let settings: Pick<ProviderSettingsStore, "getSnapshot"> = { getSnapshot };
   const runtime = createNativeCodexRuntime({ homePath, executable: "/fixture/codex", ownerIds: ["owner"],
     environment: () => ({ HOME: homePath, CODEX_HOME: join(homePath, ".codex") }),
-    profileGuard: { assertReadable: async () => undefined }, getSettings: () => ({ getSnapshot }), getRuntime: () => undefined,
+    profileGuard: { assertReadable: async () => undefined }, getSettings: () => settings, getRuntime: () => undefined,
   });
   const config: ProviderSettingsConfiguration = JSON.parse(await readFile(join(directory, "settings.json"), "utf8"));
   const unavailable = (state: "unavailable" | "signed_out" | "changed" = "unavailable") => markCodexCatalogObservation({
     ...snapshot, accounts: snapshot.accounts.map(account => ({ ...account, authState: "unknown" })),
   }, config, state);
   return { runtime, methods, config, directory, getSnapshot, unavailable, failNextProbe: () => { stallNext = true; },
-    changeAccount: () => { principal = { ...principal, id: "synthetic-other-owner" }; } };
+    changeAccount: () => { principal = { type: "chatgpt", email: "other@example.test", id: "synthetic-other-owner" }; },
+    signOut: () => { principal = null; }, changeDuringVerification: () => { changeAfter = 2; },
+    realSettings: async () => {
+      const canonical = providerSettingsCanonicalFixture();
+      canonical.refreshedAt = new Date().toISOString();
+      const unknown = { state: "unknown" as const, checkedAt: null, staleAfter: null, action: "retry" as const, safeReason: "unknown" as const };
+      canonical.accessSources.push({ ...canonical.accessSources[1]!, id: "owner_openai_profile", vendor: "openai", eligibleModelIds: ["codex-model"], ...unknown });
+      canonical.accounts.push({ ...canonical.accounts[0]!, id: "owner_openai", vendor: "openai", ...unknown });
+      canonical.drivers.push({ ...canonical.drivers[1]!, id: "codex" });
+      canonical.instances.push({ ...canonical.instances[1]!, id: "codex_owner", driverId: "codex", accountId: "owner_openai", accessSourceId: "owner_openai_profile", vendor: "openai", modelIds: ["codex-model"], defaultModelId: "codex-model" });
+      canonical.models.push({ ...canonical.models[0]!, id: "codex-model", vendor: "openai", eligibleAccessSourceIds: ["owner_openai_profile"], dataPolicies: [{ accessSourceId: "owner_openai_profile", route: "owner_direct", disclosureKey: "owner-openai" }] });
+      const store = new ProviderSettingsStore({ homePath, providerSnapshotReader: { getSnapshot: async () => canonical },
+        runtimeCoordinator: { supportedActions: ["set_harness_enabled"], reconcilePending: async () => undefined,
+          isRecoveryReady: () => true, applyConfiguration: async () => undefined, rollbackConfiguration: async () => undefined },
+        codexNativeAccountMetadataReader: runtime.readAccount });
+      await store.getSnapshot();
+      settings = store;
+      return vi.spyOn(store, "getSnapshot");
+    },
+  };
 }
+
+it.each(["signed_out", "changed"] as const)("does not retry confirmed %s through the real Settings store", async state => {
+  const f = await fixture(false);
+  const readSettings = await f.realSettings();
+  if (state === "signed_out") f.signOut(); else f.changeDuringVerification();
+  await expect(f.runtime.admission.start("owner", "sess_confirmed_failure")).rejects.toThrow("account is unavailable");
+  expect(readSettings).toHaveBeenCalledOnce();
+  const snapshot = await readSettings.mock.results[0]!.value;
+  expect(snapshot.access.mode).toBe("writable");
+  expect(codexCatalogObservation(snapshot)).toBe("authentication_required");
+});
 
 it("admits a healthy Codex session immediately after an optional observation timed out", async () => {
   const f = await fixture();
