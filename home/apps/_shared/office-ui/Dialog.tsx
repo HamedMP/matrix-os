@@ -71,7 +71,9 @@ function DialogSurface({ onClose, title, description, children, footer, initialF
   useFocusTrap(panelRef, true, { onEscape: onClose, initialFocusRef });
 
   return (
+    // Pointer light dismiss only; the keyboard closes with Escape through the focus trap.
     <div
+      role="presentation"
       className="oui-backdrop"
       data-testid="oui-dialog-backdrop"
       onMouseDown={(event) => {

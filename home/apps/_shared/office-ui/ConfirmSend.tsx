@@ -24,10 +24,14 @@ const MAX_RECIPIENTS_SHOWN = 20;
 
 /**
  * Explicit owner confirmation before anything leaves Matrix. Cancel is focused
- * first so Enter never sends by accident.
+ * first so Enter never sends by accident. The dialog's state (sending, the
+ * last failure) lives only while it is open.
  */
-export function ConfirmSend({
-  open,
+export function ConfirmSend(props: ConfirmSendProps) {
+  return props.open ? <OpenConfirmSend {...props} /> : null;
+}
+
+function OpenConfirmSend({
   onCancel,
   onConfirm,
   kind = "mail",
@@ -49,13 +53,6 @@ export function ConfirmSend({
       mounted.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!open) {
-      setFailure(null);
-      setSending(false);
-    }
-  }, [open]);
 
   const isBusy = busy || sending;
   const heading = title ?? (kind === "invite" ? "Send this invitation?" : "Send this email?");
@@ -80,7 +77,7 @@ export function ConfirmSend({
 
   return (
     <Dialog
-      open={open}
+      open
       onClose={() => {
         if (!isBusy) onCancel();
       }}

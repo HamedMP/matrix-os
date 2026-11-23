@@ -94,7 +94,7 @@ export function Dropdown({ label, ariaLabel, items, onSelect, align = "start", d
         <div ref={menuRef} id={menuId} role="menu" className={cx("oui-menu", align === "end" && "oui-menu--end")} onKeyDown={onMenuKeyDown}>
           {items.map((item) => (
             <div key={item.id} role="none">
-              {item.separatorBefore && <div role="separator" className="oui-menu__separator" />}
+              {item.separatorBefore && <hr className="oui-menu__separator" />}
               <button
                 type="button"
                 role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
