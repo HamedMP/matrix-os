@@ -753,6 +753,10 @@ function ChatAppContent({
           </>}
           onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision}>
         {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}
+        {/* Every task is a chat: a project chat shows its ticket, also before its first message. */}
+        {!mobile && chatProjectId && sessionId ? <ChatTicketBar gatewayUrl={projectGatewayUrl} chatId={sessionId}
+          project={webProjects.projects.find((project) => project.id === chatProjectId)}
+          onOpenDetails={(project, task) => { setProjectHomeView("board", project.id); setBoardDetails({ projectId: project.id, taskId: task.id }); openProjectHome(project); }} /> : null}
         {/* Empty state or conversation */}
         <BotTranscriptLayout empty={isEmpty}>{showEmpty=>showEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/><RoutineMessageReadNotice/></div><EmptyState
@@ -775,9 +779,6 @@ function ChatAppContent({
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
-            {!mobile && chatProjectId && sessionId ? <ChatTicketBar gatewayUrl={projectGatewayUrl} chatId={sessionId}
-              project={webProjects.projects.find((project) => project.id === chatProjectId)}
-              onOpenDetails={(project, task) => { setProjectHomeView("board", project.id); setBoardDetails({ projectId: project.id, taskId: task.id }); openProjectHome(project); }} /> : null}
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>
