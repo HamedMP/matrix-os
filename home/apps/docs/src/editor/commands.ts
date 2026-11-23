@@ -85,6 +85,19 @@ function typingKey(blockId: BlockId, text: string): string | undefined {
   return /^\s+$/.test(text) ? `space:${blockId}` : `type:${blockId}`;
 }
 
+/**
+ * Deletes a selection that is about to be replaced and returns where the
+ * replacement goes: after what is left of the selection. Tracked, the deleted
+ * text stays in the document, and the new text follows it as a replacement
+ * does; untracked, the place is where the selection was.
+ */
+function deleteForReplacement(host: CommandHost, selection: EditorSelection): TextPosition {
+  const ops = deleteOps(host, selection.start, selection.end);
+  if (ops.length === 0) return selection.start;
+  const result = host.session.apply(ops, { origin: EDITOR_ORIGIN, positions: [selection.end] });
+  return result.positions[0] ?? selection.start;
+}
+
 /** Replaces the selection with text. `format` is direct formatting for the new text. */
 export function insertText(host: CommandHost, selection: EditorSelection, text: string, format: Partial<RunFormat> | null): CommandOutcome | null {
   const clean = cleanText(text);
@@ -96,7 +109,17 @@ export function insertText(host: CommandHost, selection: EditorSelection, text: 
   const only = deletes[0];
   if (clean === "") ops = deletes;
   else if (deletes.length === 1 && only !== undefined) ops = [{ type: "replaceRange", range: only.range, text: clean, ...formatted }];
-  else ops = [...deletes, { type: "insertText", at: start, text: clean, ...formatted }];
+  else if (deletes.length > 1) {
+    // Several stretches go (hidden text or a table lies between them): delete, then insert, as one step.
+    return host.session.batch(
+      () => {
+        const at = deleteForReplacement(host, selection);
+        const inserted = host.session.apply([{ type: "insertText", at, text: clean, ...formatted }], { origin: EDITOR_ORIGIN });
+        return caretAt(lastCaret(inserted) ?? at);
+      },
+      { origin: EDITOR_ORIGIN },
+    );
+  } else ops = [{ type: "insertText", at: start, text: clean, ...formatted }];
   const result = host.session.apply(ops, {
     origin: EDITOR_ORIGIN,
     positions: [start],
@@ -199,8 +222,7 @@ export function setParagraphStyle(host: CommandHost, selection: EditorSelection,
 export function paste(host: CommandHost, selection: EditorSelection, content: PasteContent): CommandOutcome | null {
   return host.session.batch(
     () => {
-      let caret = selection.start;
-      if (!selection.collapsed) caret = deleteSelection(host, selection)?.anchor ?? caret;
+      let caret = selection.collapsed ? selection.start : deleteForReplacement(host, selection);
       content.paragraphs.forEach((segments, at) => {
         if (at > 0) {
           const split = host.session.apply([{ type: "splitParagraph", at: caret }], { origin: EDITOR_ORIGIN });
@@ -293,4 +315,20 @@ export function selectedText(host: CommandHost, selection: EditorSelection): str
   for (const entry of host.index().between(selection.start.blockId, selection.end.blockId)) lines.set(entry.id, "");
   for (const run of selectedRuns(host, selection)) lines.set(run.block.id, (lines.get(run.block.id) ?? "") + run.text.replace(/￼/g, ""));
   return [...lines.values()].join("\n");
+}
+
+/**
+ * Where Tab goes from a paragraph in a table: the first paragraph of the next
+ * cell, or of the previous one. Null at the first or last cell, undefined
+ * outside a table.
+ */
+export function adjacentCell(index: ModelIndex, blockId: BlockId, backward: boolean): TextPosition | null | undefined {
+  const cells = index.tableParagraphs(blockId);
+  const here = index.entry(blockId);
+  if (here === null || cells.length === 0) return undefined;
+  const others = cells.filter((entry) => entry.containerKey !== here.containerKey && (backward ? entry.order < here.order : entry.order > here.order));
+  // Backward lands on the first paragraph of the previous cell.
+  const previousCell = others[others.length - 1]?.containerKey;
+  const target = backward ? others.find((entry) => entry.containerKey === previousCell) : others[0];
+  return target === undefined ? null : { blockId: target.id, offset: 0 };
 }

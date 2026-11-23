@@ -8,12 +8,12 @@ import type { ApplyResult, BlockId, DocxOp, ParagraphBlock, ParagraphStylePatch,
 import type { DocumentChange, DocumentSession, SessionApplyOptions } from "../session/index";
 import * as commands from "./commands";
 import { DocumentView } from "./document-view";
-import { MAX_HIGHLIGHTS_PER_LAYER, MAX_HIGHLIGHT_LAYERS, buildSpans, changedBlocks, isLayerName } from "./highlights";
+import { EditorStore } from "./editor-store";
+import { HighlightLayers } from "./highlights";
 import { InputController, type InputTarget } from "./input-controller";
 import { ModelIndex } from "./model-index";
 import type { PasteContent } from "./paste";
 import { positionFromDom } from "./position-map";
-import type { HighlightSpan } from "./render-paragraph";
 import { domPointOf, domRangeOf, endsOf, readSelection, sameSelection, toSelection, writeSelection } from "./selection";
 import type {
   DocumentEditorController,
@@ -29,7 +29,6 @@ import type {
 } from "./types";
 import type { StepUnit } from "./visibility";
 
-const MAX_LISTENERS = 64;
 type Command = (selection: EditorSelection) => commands.CommandOutcome | null;
 
 export class EditorCore implements DocumentEditorController, InputTarget {
@@ -39,7 +38,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   private view: DocumentView | null = null;
   private input: InputController | null = null;
   private index = ModelIndex.empty();
-  private snapshot: EditorSnapshot;
+  private readonly store: EditorStore;
   private readOnly: boolean;
   private mode: ViewMode;
   private focused = false;
@@ -52,10 +51,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   private deferredRender = false;
   /** True while one of the editor's own commands runs: it places the selection itself. */
   private applying = false;
-  private readonly layers = new Map<string, readonly EditorHighlight[]>();
-  private spans = new Map<BlockId, HighlightSpan[]>();
-  private readonly listeners = new Set<() => void>();
-  private readonly selectionListeners = new Set<(selection: EditorSelection | null) => void>();
+  private readonly highlights = new HighlightLayers();
   private readonly cleanups: Array<() => void> = [];
 
   constructor(session: DocumentSession, options: DocumentEditorOptions = {}) {
@@ -64,7 +60,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     this.log = options.log ?? ((message, error) => console.warn(message, error));
     this.mode = options.viewMode ?? "markup";
     this.readOnly = options.readOnly ?? false;
-    this.snapshot = Object.freeze({ viewMode: this.mode, readOnly: !this.isEditable(), focused: false, selection: null, activeFormat: null });
+    this.store = new EditorStore({ viewMode: this.mode, readOnly: !this.isEditable(), focused: false, selection: null, activeFormat: null }, this.log);
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -106,22 +102,12 @@ export class EditorCore implements DocumentEditorController, InputTarget {
 
   // ---------------------------------------------------------------- state
 
-  getSnapshot = (): EditorSnapshot => this.snapshot;
+  getSnapshot = (): EditorSnapshot => this.store.getSnapshot();
 
-  subscribe = (listener: () => void): (() => void) => {
-    if (this.listeners.size >= MAX_LISTENERS) throw new Error("too many editor listeners");
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
+  subscribe = (listener: () => void): (() => void) => this.store.subscribe(listener);
 
   onSelectionChange(listener: (selection: EditorSelection | null) => void): () => void {
-    if (this.selectionListeners.size >= MAX_LISTENERS) throw new Error("too many editor listeners");
-    this.selectionListeners.add(listener);
-    return () => {
-      this.selectionListeners.delete(listener);
-    };
+    return this.store.onSelectionChange(listener);
   }
 
   isEditable(): boolean {
@@ -268,15 +254,9 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   /** Tab in a table: moves to the next or previous cell. False outside a table. */
   moveInTable(backward: boolean): boolean {
     const selection = this.getSelection();
-    if (selection === null) return false;
-    const cells = this.index.tableParagraphs(selection.focus.blockId);
-    const here = this.index.entry(selection.focus.blockId);
-    if (here === null || cells.length === 0) return false;
-    const others = cells.filter((entry) => entry.containerKey !== here.containerKey && (backward ? entry.order < here.order : entry.order > here.order));
-    // Backward lands on the first paragraph of the previous cell.
-    const previousCell = others[others.length - 1]?.containerKey;
-    const target = backward ? others.find((entry) => entry.containerKey === previousCell) : others[0];
-    if (target !== undefined) this.place({ blockId: target.id, offset: 0 }, { blockId: target.id, offset: 0 });
+    const target = selection === null ? undefined : commands.adjacentCell(this.index, selection.focus.blockId, backward);
+    if (target === undefined) return false;
+    if (target !== null) this.place(target, target);
     return true;
   }
 
@@ -340,15 +320,12 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   }
 
   setHighlights(layer: string, highlights: readonly EditorHighlight[]): void {
-    if (!isLayerName(layer)) throw new Error("a highlight layer name is lower-case letters, digits and hyphens");
-    if (highlights.length === 0) this.layers.delete(layer);
-    else if (this.layers.has(layer) || this.layers.size < MAX_HIGHLIGHT_LAYERS) this.layers.set(layer, highlights.slice(0, MAX_HIGHLIGHTS_PER_LAYER));
+    this.highlights.set(layer, highlights);
     this.applyHighlights();
   }
 
   clearHighlights(layer?: string): void {
-    if (layer === undefined) this.layers.clear();
-    else this.layers.delete(layer);
+    this.highlights.clear(layer);
     this.applyHighlights();
   }
 
@@ -406,9 +383,7 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   private onSessionChange(change: DocumentChange): void {
     if (this.view === null) return;
     if (change.kind === "load" || change.kind === "close") {
-      this.layers.clear();
-      this.spans = new Map();
-      this.view.setSpans(this.spans);
+      this.highlights.clear();
       this.lastSelection = null;
       this.pendingFormat = null;
       this.composition = null;
@@ -431,8 +406,8 @@ export class EditorCore implements DocumentEditorController, InputTarget {
     if (view === null) return;
     const model = this.session.document?.getView() ?? null;
     this.index = model === null ? ModelIndex.empty() : ModelIndex.build(model);
-    this.spans = buildSpans(this.layers, this.index);
-    view.setSpans(this.spans);
+    this.highlights.rebuild(this.index);
+    view.setSpans(this.highlights.spans);
     view.setEditable(this.isEditable());
     view.render(model);
     this.deferredRender = false;
@@ -457,10 +432,8 @@ export class EditorCore implements DocumentEditorController, InputTarget {
       this.deferredRender = true;
       return;
     }
-    const next = buildSpans(this.layers, this.index);
-    const changed = changedBlocks(this.spans, next);
-    this.spans = next;
-    view.setSpans(next);
+    const changed = this.highlights.rebuild(this.index);
+    view.setSpans(this.highlights.spans);
     if (changed.length === 0) return;
     this.keepingSelection(() => {
       if (!view.refresh(changed.filter((id) => view.element(id) !== null), (id) => this.session.document?.getBlock(id) ?? null)) this.renderAll();
@@ -502,37 +475,12 @@ export class EditorCore implements DocumentEditorController, InputTarget {
   }
 
   private announceSelection(): void {
-    for (const listener of [...this.selectionListeners]) {
-      try {
-        listener(this.lastSelection);
-      } catch (error) {
-        this.log("docs: a selection listener failed", error);
-      }
-    }
+    this.store.announceSelection(this.lastSelection);
   }
 
-  /** Publishes a new snapshot when something in it changed. */
   private publish(): void {
     const selection = this.validSelection(this.lastSelection);
     const activeFormat = selection === null ? null : commands.activeFormat(this.commandHost(), selection, this.pendingFormat);
-    const next: EditorSnapshot = { viewMode: this.mode, readOnly: !this.isEditable(), focused: this.focused, selection, activeFormat };
-    const current = this.snapshot;
-    if (
-      current.viewMode === next.viewMode &&
-      current.readOnly === next.readOnly &&
-      current.focused === next.focused &&
-      sameSelection(current.selection, next.selection) &&
-      JSON.stringify(current.activeFormat) === JSON.stringify(next.activeFormat)
-    ) {
-      return;
-    }
-    this.snapshot = Object.freeze(next);
-    for (const listener of [...this.listeners]) {
-      try {
-        listener();
-      } catch (error) {
-        this.log("docs: an editor listener failed", error);
-      }
-    }
+    this.store.publish({ viewMode: this.mode, readOnly: !this.isEditable(), focused: this.focused, selection, activeFormat });
   }
 }

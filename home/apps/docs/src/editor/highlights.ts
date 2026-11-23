@@ -59,3 +59,34 @@ export function changedBlocks(before: ReadonlyMap<BlockId, HighlightSpan[]>, aft
   }
   return changed;
 }
+
+/** The layers of one editor and the spans last built from them. */
+export class HighlightLayers {
+  private readonly layers = new Map<string, readonly EditorHighlight[]>();
+  private current = new Map<BlockId, HighlightSpan[]>();
+
+  get spans(): Map<BlockId, HighlightSpan[]> {
+    return this.current;
+  }
+
+  /** Replaces one layer; an empty list removes it. */
+  set(layer: string, highlights: readonly EditorHighlight[]): void {
+    if (!isLayerName(layer)) throw new Error("a highlight layer name is lower-case letters, digits and hyphens");
+    if (highlights.length === 0) this.layers.delete(layer);
+    else if (this.layers.has(layer) || this.layers.size < MAX_HIGHLIGHT_LAYERS) this.layers.set(layer, highlights.slice(0, MAX_HIGHLIGHTS_PER_LAYER));
+  }
+
+  /** Removes one layer, or all of them. */
+  clear(layer?: string): void {
+    if (layer === undefined) this.layers.clear();
+    else this.layers.delete(layer);
+  }
+
+  /** Builds the spans for a document structure again. Returns the paragraphs whose spans changed. */
+  rebuild(index: ModelIndex): BlockId[] {
+    const next = buildSpans(this.layers, index);
+    const changed = changedBlocks(this.current, next);
+    this.current = next;
+    return changed;
+  }
+}
