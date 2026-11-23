@@ -27,6 +27,9 @@
  * Aggregates ({@link collectNumbers}): a value typed directly as an argument
  * is converted (`SUM("2", TRUE)` is 3), while text, booleans and blanks
  * inside a range or array are skipped.
+ *
+ * Arrays ({@link broadcast}, {@link mapValue}): a scalar function applied
+ * element by element, with single rows, columns and cells repeated.
  */
 
 import type {
@@ -380,4 +383,87 @@ export function collectNumbers(
     out.push(converted);
   }
   return out;
+}
+
+/** The most cells {@link broadcast} builds unless the caller gives another bound. */
+export const MAX_BROADCAST_CELLS = 1_000_000;
+
+/** Number of cells of a value: 1 for a scalar. */
+export function cellCount(value: FormulaValue): number {
+  return isArray(value) ? value.rows * value.cols : 1;
+}
+
+/**
+ * The size of the result when the values are combined element by element,
+ * or null when every value is a scalar or has at most one cell (the result
+ * is then a scalar).
+ */
+export function broadcastShape(values: readonly FormulaValue[]): { rows: number; cols: number } | null {
+  let rows = 1;
+  let cols = 1;
+  let any = false;
+  for (const value of values) {
+    if (!isArray(value) || value.rows * value.cols <= 1) continue;
+    any = true;
+    if (value.rows > rows) rows = value.rows;
+    if (value.cols > cols) cols = value.cols;
+  }
+  return any ? { rows, cols } : null;
+}
+
+function elementAt(value: FormulaValue, row: number, col: number): FormulaScalar {
+  if (!isArray(value)) return value;
+  if (value.rows === 0 || value.cols === 0) return null;
+  const r = value.rows === 1 ? 0 : row;
+  const c = value.cols === 1 ? 0 : col;
+  if (r >= value.rows || c >= value.cols) return ERR.NA;
+  return (value.values[r] as FormulaScalar[])[c] as FormulaScalar;
+}
+
+/**
+ * Applies a scalar function element by element, the way an operator works
+ * on arrays (`A1:A3*2`, `{1,2}+{10;20}`).
+ *
+ * When every value is a scalar or a single cell the result is a scalar.
+ * Otherwise the result is a computed array as tall and as wide as the
+ * largest value: a single row is repeated down, a single column is repeated
+ * across, a single cell everywhere, and a position outside a smaller array
+ * reads `#N/A`. An array without cells reads as one blank.
+ *
+ * `fn` receives one scalar per value. The list it receives is reused
+ * between calls: read it, do not keep it. Errors are not filtered out, so
+ * `fn` decides how they propagate. A result larger than `maxCells` is `#NUM!`.
+ */
+export function broadcast(
+  values: readonly FormulaValue[],
+  fn: (scalars: readonly FormulaScalar[]) => FormulaScalar,
+  maxCells: number = MAX_BROADCAST_CELLS,
+): FormulaValue {
+  const shape = broadcastShape(values);
+  const scratch: FormulaScalar[] = new Array<FormulaScalar>(values.length).fill(null);
+  if (shape === null) {
+    for (let i = 0; i < values.length; i += 1) scratch[i] = elementAt(values[i] as FormulaValue, 0, 0);
+    return fn(scratch);
+  }
+  if (shape.rows * shape.cols > maxCells) return makeError("#NUM!", "array result is too large");
+  const out: FormulaScalar[][] = [];
+  for (let row = 0; row < shape.rows; row += 1) {
+    const line: FormulaScalar[] = new Array<FormulaScalar>(shape.cols);
+    for (let col = 0; col < shape.cols; col += 1) {
+      for (let i = 0; i < values.length; i += 1) scratch[i] = elementAt(values[i] as FormulaValue, row, col);
+      line[col] = fn(scratch);
+    }
+    out.push(line);
+  }
+  return { kind: "array", rows: shape.rows, cols: shape.cols, values: out, ref: null };
+}
+
+/** {@link broadcast} for one value: a scalar gives a scalar, an array gives a computed array of the same size. */
+export function mapValue(value: FormulaValue, fn: (scalar: FormulaScalar) => FormulaScalar): FormulaValue {
+  return broadcast([value], (scalars) => fn(scalars[0] as FormulaScalar));
+}
+
+/** A number result checked for overflow: `NaN` and infinities become `#NUM!`. */
+export function finiteOrError(value: number): number | FormulaError {
+  return Number.isFinite(value) ? value : ERR.NUM;
 }

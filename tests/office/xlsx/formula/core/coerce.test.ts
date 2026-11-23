@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { FormulaArray, FormulaError } from "../../../../../packages/office/src/api/formula.js";
+import type { FormulaArray, FormulaError, FormulaValue } from "../../../../../packages/office/src/api/formula.js";
 import {
   ERR,
   asArray,
+  broadcast,
+  broadcastShape,
+  cellCount,
   collectNumbers,
   compareValues,
   dateSerial,
+  finiteOrError,
   firstError,
   flattenValues,
   isArray,
   isError,
   makeArray,
   makeError,
+  mapValue,
   numberToText,
   parseNumberText,
   toBoolean,
@@ -245,5 +250,53 @@ describe("collectNumbers", () => {
     expect(collectNumbers([cells], { inRange: "zero" })).toEqual([1, 0, 1, 0, 4]);
     expect(collectNumbers([1, "x", true], { direct: "skip" })).toEqual([1]);
     expect(collectNumbers([1, ERR.NA, makeArray([[ERR.REF, 2]])], { errors: "skip" })).toEqual([1, 2]);
+  });
+});
+
+describe("broadcast", () => {
+  const add = (values: readonly FormulaValue[]) =>
+    broadcast(values, ([a, b]) => (typeof a === "number" && typeof b === "number" ? a + b : ERR.VALUE));
+
+  it("gives a scalar for scalars and single cells", () => {
+    expect(add([1, 2])).toBe(3);
+    expect(add([makeArray([[5]]), 2])).toBe(7);
+    expect(broadcastShape([1, makeArray([[5]])])).toBeNull();
+  });
+
+  it("applies a function element by element", () => {
+    const result = add([makeArray([[1, 2], [3, 4]]), 10]);
+    expect(result).toEqual({ kind: "array", rows: 2, cols: 2, values: [[11, 12], [13, 14]], ref: null });
+  });
+
+  it("repeats a single row down and a single column across", () => {
+    const result = add([makeArray([[1, 2, 3]]), makeArray([[10], [20]])]) as FormulaArray;
+    expect(result.values).toEqual([
+      [11, 12, 13],
+      [21, 22, 23],
+    ]);
+  });
+
+  it("reads #N/A outside a smaller array", () => {
+    const pick = broadcast([makeArray([[1, 2], [3, 4]]), makeArray([[1, 2, 3], [4, 5, 6], [7, 8, 9]])], ([a]) => a ?? null);
+    expect((pick as FormulaArray).values[0]).toEqual([1, 2, err("#N/A")]);
+    expect((pick as FormulaArray).values[2]).toEqual([err("#N/A"), err("#N/A"), err("#N/A")]);
+  });
+
+  it("reads an empty array as one blank", () => {
+    expect(broadcast([makeArray([]), 1], ([a, b]) => (a === null ? b ?? null : ERR.VALUE))).toBe(1);
+  });
+
+  it("refuses a result above the bound", () => {
+    expect(add([makeArray([[1, 2, 3]]), makeArray([[1], [2], [3]])])).toMatchObject({ rows: 3, cols: 3 });
+    expect(broadcast([makeArray([[1, 2, 3]]), makeArray([[1], [2], [3]])], () => 0, 8)).toEqual(err("#NUM!"));
+  });
+
+  it("maps one value and counts cells", () => {
+    expect(mapValue(2, (v) => (v as number) * 2)).toBe(4);
+    expect((mapValue(makeArray([[1, 2]]), (v) => (v as number) * 2) as FormulaArray).values).toEqual([[2, 4]]);
+    expect(cellCount(makeArray([[1, 2], [3, 4]]))).toBe(4);
+    expect(cellCount("a")).toBe(1);
+    expect(finiteOrError(1 / 0)).toEqual(err("#NUM!"));
+    expect(finiteOrError(2)).toBe(2);
   });
 });
