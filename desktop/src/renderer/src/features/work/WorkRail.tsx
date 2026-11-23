@@ -160,6 +160,8 @@ export function WorkRail({
     lastRenderedCohort.current = { items: records, fresh: navigation.fresh };
     markChatNavigation("render-ready", records.length);
   }, [active, committedCohort, records, navigation.fresh]);
+  const [mutationRevision, setMutationRevision] = useState(0);
+  const pageVersion = navigation.updatedAt + mutationRevision;
   const setRecords=useCallback((action:ChatNavigationRecord[]|((records:ChatNavigationRecord[])=>ChatNavigationRecord[]))=>{
     if (!authorityCurrent()) return;
     navigation.store?.update(current=>{
@@ -171,6 +173,8 @@ export function WorkRail({
         return known?[mergeChatNavigationRecord(known,record)]:[];
       });
     });
+    // Page-backed project/status placements also refresh after committed local actions.
+    setMutationRevision(value => value + 1);
   },[navigation.store,authorityCurrent]);
   const status=navigation.status;
   const { sections, setExpanded } = useWorkRailDisclosure();
@@ -187,6 +191,7 @@ export function WorkRail({
   const [bulkArchivePending, setBulkArchivePending] = useState(false);
   const [bulkArchiveError, setBulkArchiveError] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renamingPlacement, setRenamingPlacement] = useState<"project" | "pinned" | "recent">("recent");
   const [renamePending, setRenamePending] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
@@ -454,7 +459,10 @@ export function WorkRail({
     } else if (event.altKey && key === "p") {
       event.preventDefault(); updatePinned(record);
     } else if (event.altKey && key === "r" && !renamePending) {
-      event.preventDefault(); setRenameError(null); setRenamingChatId(record.chat.id);
+      event.preventDefault(); setRenameError(null);
+      const placement = target instanceof HTMLElement ? target.closest("[data-placement]")?.getAttribute("data-placement") : null;
+      setRenamingPlacement(placement === "project" || placement === "pinned" ? placement : "recent");
+      setRenamingChatId(record.chat.id);
     } else if (event.shiftKey && key === "u") {
       event.preventDefault(); void toggleRead(record);
     }
@@ -564,7 +572,7 @@ export function WorkRail({
         group={group}
         client={authorityReady ? client : null}
         scopeKey={`${authorityKey}:${authorityEpoch}`}
-        navigationUpdatedAt={navigation.updatedAt}
+        navigationUpdatedAt={pageVersion}
         sourceFilter={sourceFilter}
         orderRows={order.orderRows}
         fresh={navigation.fresh}
@@ -575,13 +583,14 @@ export function WorkRail({
         activeProjectSlug={activeProjectSlug}
         activeChatId={activeChatId}
         pinning={pinning}
-        renamingChatId={renamingChatId}
+        renamingChatId={renamingPlacement === "project" ? renamingChatId : null}
         renamePending={renamePending}
         onToggleRead={(record) => { void toggleRead(record); }}
         readPending={readPending}
         onRenameChat={(record) => {
           if (renamePending) return;
           setRenameError(null);
+          setRenamingPlacement("project");
           setRenamingChatId(record.chat.id);
         }}
         onRenameCommit={(record, title) => { void renameChat(record, title); }}
@@ -615,10 +624,10 @@ export function WorkRail({
   };
 
   const renderChatRow = (record: ChatNavigationRecord, placement: "pinned" | "recent") => <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={placement === "pinned" ? "pinned-chats" : resolveCanonicalChatLifecycleGroup(record) === "recent" ? "done" : resolveCanonicalChatLifecycleGroup(record)}><WorkRailChatRow projectName={projects.find(project => project.id === record.projectId || project.slug === record.projectId)?.name} fresh={navigation.fresh} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
-    pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id}
+    pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id && renamingPlacement === placement}
     renamePending={renamePending && renamingChatId === record.chat.id} renameDisabled={renamePending}
     onToggleRead={() => { void toggleRead(record); }} readPending={readPending}
-    onRenameStart={() => { if (renamePending) return; setRenameError(null); setRenamingChatId(record.chat.id); }}
+    onRenameStart={() => { if (renamePending) return; setRenameError(null); setRenamingPlacement(placement); setRenamingChatId(record.chat.id); }}
     onRenameCommit={(title) => { void renameChat(record, title); }} onRenameCancel={() => setRenamingChatId(null)}
     onSelect={() => onSelectChat(record)}
     onPin={() => updatePinned(record)} onArchive={() => { void archiveChat(record); }} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
@@ -642,13 +651,13 @@ export function WorkRail({
       {sourceFilter !== "all" && sourceRecords.length === 0 && status === "ready" ? <p className="px-3 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats match this source.</p> : null}
       <WorkRailScrollArea>
       {focusedGroup && focusedRecords ? <FocusedProjectRail group={focusedGroup} records={focusedRecords} sections={sections} onToggle={toggleSection}
-        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={pageVersion} sourceFilter={sourceFilter}
         orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderChat={renderChatRow} onBack={() => setFocusedProjectId(null)} onNewChat={onNewProjectChat} /> : <>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
-        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={navigation.updatedAt} sourceFilter={sourceFilter}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={pageVersion} sourceFilter={sourceFilter}
         orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}

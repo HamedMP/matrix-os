@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
+import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
 import { compactChatStartLabel } from "@matrix-os/ui";
 
@@ -128,4 +129,48 @@ it("drops expanded project page titles when its navigation authority is revoked"
   expect(await screen.findByRole("button", { name: "Chat 1" })).toBeTruthy();
   view.rerender(<WorkRailProjectGroup {...props} client={null} scopeKey="owner:1" />);
   expect(screen.queryByRole("button", { name: "Chat 1" })).toBeNull();
+});
+
+
+it.each(["rename", "pin", "read", "archive", "delete"] as const)("updates both paged placements after %s without live events", async action => {
+  let current = { ...chat(1), readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 1, markedUnread: false, unread: true } };
+  let removed = false;
+  const navigationPage = vi.fn(async ({ group }: { group: string }) => {
+    const items = removed || group === "working" || group === "needsYou" || group === "pinned" && !current.chat.userState?.pinned ? [] : [current];
+    return { items, totalCount: items.length };
+  });
+  const client = {
+    list: vi.fn(async () => ({ items: removed ? [] : [current] })), navigationPage,
+    navigation: vi.fn(async () => {
+      const { ownerScope: _owner, ...navigationChat } = current.chat;
+      return { version: 1, items: removed ? [] : [{ ...current, chat: navigationChat, classification: { kind: "ordinary" }, persistence: "personal" }], truncated: false };
+    }),
+    updateTitle: vi.fn(async () => { current = { ...current, chat: { ...current.chat, title: "Updated title", revision: 2 } }; return current; }),
+    updateUserState: vi.fn(async () => { current = { ...current, chat: { ...current.chat, userState: { readThroughSeq: 0, muted: false, pinned: true } } }; return current; }),
+    updateReadState: vi.fn(async () => { current = { ...current, readState: { ...current.readState, version: 1, readThroughSeq: 1, unread: false } }; return current; }),
+    updateLifecycle: vi.fn(async () => { removed = true; return { ...current, chat: { ...current.chat, lifecycle: "archived", revision: 2 } }; }),
+    delete: vi.fn(async () => { removed = true; return { chatId: current.chat.id, deletedAt: new Date(NOW).toISOString() }; }),
+  };
+  render(<WorkRail client={client as never} projects={[alpha]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+    onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Expand Alpha chats" }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Chat 1", exact: true })).toHaveLength(2));
+  await waitFor(() => expect(screen.getByRole("navigation", { name: "Chat navigation" }).getAttribute("aria-busy")).toBe("false"));
+  expect(screen.getAllByLabelText("Unread Chat 1")).toHaveLength(2);
+  const row = screen.getAllByRole("button", { name: "Chat 1", exact: true })[0]!;
+  if (action === "rename") {
+    fireEvent.doubleClick(row);
+    const input = await screen.findByRole("textbox", { name: "Rename Chat 1" });
+    fireEvent.change(input, { target: { value: "Updated title" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Updated title", exact: true })).toHaveLength(2));
+    expect(screen.queryAllByRole("button", { name: "Chat 1", exact: true })).toHaveLength(0);
+  } else {
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByRole("menuitem", { name: { pin: "Pin", read: "Mark as read", archive: "Archive", delete: "Delete" }[action], exact: true }));
+    if (action === "delete") fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
+    if (action === "pin") await waitFor(() => expect(screen.getAllByRole("button", { name: "Unpin Chat 1" })).toHaveLength(3));
+    else if (action === "read") await waitFor(() => expect(screen.queryAllByLabelText("Unread Chat 1")).toHaveLength(0));
+    else await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1", exact: true })).toHaveLength(0));
+  }
 });

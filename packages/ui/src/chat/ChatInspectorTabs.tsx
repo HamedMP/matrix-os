@@ -1,9 +1,11 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Copy, FileCode2, Folder, Globe, Maximize2, MessagesSquare, Plus, SquareTerminal, X } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Tooltip } from "../Tooltip.js";
 import { Button } from "../Button.js";
 import "./desktop-chat.css";
+
+const pickerActionStyle: CSSProperties = { width: "100%", justifyContent: "flex-start", gap: 10, padding: "8px 12px", borderRadius: 8, color: "var(--chat-fg)", font: "inherit", background: "var(--chat-inspector-picker-background, transparent)" };
 
 export type InspectorTool = "files" | "terminal" | "side-chat" | "browser" | "new";
 export interface InspectorTabItem { id: string; kind: InspectorTool; label: string; closing?: boolean }
@@ -30,8 +32,8 @@ export function ChatInspectorTabs({ tabs, selectedId, onSelect, onClose, onAdd, 
 }) {
   return <header className="desktop-chat-design chat-inspector-tabs"><div role="tablist" aria-label="Inspector tabs">
     {tabs.map(tab => <div key={tab.id} className="chat-inspector-tab" data-selected={selectedId === tab.id || undefined}>
-      <button type="button" role="tab" aria-selected={selectedId === tab.id} aria-controls={`work-inspector-panel-${tab.id}`} onClick={() => onSelect(tab.id)}><InspectorToolIcon kind={tab.kind}/><span>{tab.label}</span></button>
-      {selectedId === tab.id ? <button type="button" aria-label={`Close ${tab.label} tab`} title={`Close ${tab.label}`} disabled={tab.closing} onClick={() => onClose(tab.id)}><X size={14} aria-hidden/></button> : null}
+      <Button variant="ghost" style={{ padding: 0, height: 40, gap: 6, color: "inherit", font: "500 14px/20px Geist, sans-serif" }} role="tab" aria-selected={selectedId === tab.id} aria-controls={`work-inspector-panel-${tab.id}`} onClick={() => onSelect(tab.id)}><InspectorToolIcon kind={tab.kind}/><span>{tab.label}</span></Button>
+      {selectedId === tab.id ? <Button variant="ghost" size="icon" style={{ width: 14, height: "100%", padding: 0, ...(tab.closing ? {} : { color: "inherit" }) }} aria-label={`Close ${tab.label} tab`} title={`Close ${tab.label}`} disabled={tab.closing} onClick={() => onClose(tab.id)}><X size={14} aria-hidden/></Button> : null}
     </div>)}
   </div>{tabs.find(tab => tab.id === selectedId)?.kind !== "new" ? addControl ?? <Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label="Add inspector tab" onClick={onAdd}><Plus size={16} aria-hidden/></Button> : null}{trailing}</header>;
 }
@@ -43,8 +45,8 @@ export function ChatInspectorNewTab({ browser = false, sideChat = true, onChoose
   const choices = [{ kind: "files" as const, label: "Files", shortcut: "⌘P" }, { kind: "terminal" as const, label: "Terminal", shortcut: "⌃`" },
     ...(sideChat ? [{ kind: "side-chat" as const, label: "Side chat", shortcut: "⌥⌘S" }] : []), ...(browser ? [{ kind: "browser" as const, label: "Browser", shortcut: "⌘T" }] : [])];
   return <div className="desktop-chat-design chat-inspector-picker" role="tabpanel" aria-label="New tab" id="work-inspector-panel-new-tab"><h2>Open</h2>
-    {choices.map(choice => <button type="button" key={choice.kind} onClick={() => onChoose(choice.kind)}><InspectorToolIcon kind={choice.kind}/><span>{choice.label}</span><kbd>{choice.shortcut}</kbd></button>)}
-    {recent.length ? <><h2>Recent</h2>{recent.map(item => <button type="button" key={item.id} onClick={item.onOpen}><InspectorToolIcon kind={item.kind}/><span>{item.title}{item.subtitle ? <small>{item.subtitle}</small> : null}</span></button>)}</> : null}
+    {choices.map(choice => <Button variant="ghost" style={pickerActionStyle} key={choice.kind} onClick={() => onChoose(choice.kind)}><InspectorToolIcon kind={choice.kind}/><span>{choice.label}</span><kbd>{choice.shortcut}</kbd></Button>)}
+    {recent.length ? <><h2>Recent</h2>{recent.map(item => <Button variant="ghost" style={pickerActionStyle} key={item.id} onClick={item.onOpen}><InspectorToolIcon kind={item.kind}/><span>{item.title}{item.subtitle ? <small>{item.subtitle}</small> : null}</span></Button>)}</> : null}
   </div>;
 }
 
