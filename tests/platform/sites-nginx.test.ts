@@ -169,7 +169,7 @@ nginxIt('lets an existing VPS accept the save of a 10 MiB document while other A
  } finally { await new Promise<void>(resolve => upstream.close(() => resolve())); }
 });
 it('upgrades a VPS that an earlier helper already gave the speech location, and only once', async () => {
- const upgrade = (text: string) => execFileSync('/usr/bin/python3', ['-I', '-c', 'import sys\nfrom importlib.machinery import SourceFileLoader\nsys.stdout.write(SourceFileLoader("matrix_nginx", sys.argv[1]).load_module().upgrade(sys.stdin.read()))', helper], { input: text, encoding: 'utf8', timeout: 15000 });
+ const upgrade = (text: string) => execFileSync('/usr/bin/python3', ['-I', '-B', '-c', 'import sys\nfrom importlib.machinery import SourceFileLoader\nsys.stdout.write(SourceFileLoader("matrix_nginx", sys.argv[1]).load_module().upgrade(sys.stdin.read()))', helper], { input: text, encoding: 'utf8', timeout: 15000 });
  const api = '  location /api/ {\n    proxy_pass http://127.0.0.1:4000;\n  }';
  const publishing = '  # matrix-sites-publish-timeout-v1\n  location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site$" {\n    proxy_read_timeout 300s;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n';
  const speech = '  # matrix-speech-upload-limit-v1\n  location = /api/speech/transcriptions {\n    client_max_body_size 21m;\n    proxy_read_timeout 90s;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n';
