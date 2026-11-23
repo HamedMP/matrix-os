@@ -194,3 +194,40 @@ it("preserves a bot workspace root when resolving and opening its app artifact",
   expect(resolveApp).toHaveBeenCalledWith("apps/chart", root);
   expect(openApp).toHaveBeenCalledWith("apps/chart", root);
 });
+
+it("opens bare file names listed under the directory that introduces them", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>
+    {"Files are in `specs/2709-actor-bound-execution/`:\n\n- `spec.md`\n- **`research.md`**: findings\n- `plan.md` and `tasks.md`"}
+  </MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open spec.md" }));
+  expect(openFile).toHaveBeenLastCalledWith("specs/2709-actor-bound-execution/spec.md");
+  fireEvent.click(screen.getByRole("button", { name: "Open research.md" }));
+  expect(openFile).toHaveBeenLastCalledWith("specs/2709-actor-bound-execution/research.md");
+  fireEvent.click(screen.getByRole("button", { name: "Open plan.md" }));
+  expect(openFile).toHaveBeenLastCalledWith("specs/2709-actor-bound-execution/plan.md");
+  // Only the name that leads an item is a listing entry; later mentions stay prose.
+  expect(screen.queryByRole("button", { name: "Open tasks.md" })).toBeNull();
+});
+
+it("resolves listed file names against a home directory and a nested list's own directory", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>
+    {"Moved from `old/notes/` to `~/dev/demo/specs`:\n\n- `plan.md`\n- `packages/ui/`:\n  - `SharedAppViewer.tsx`"}
+  </MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open plan.md" }));
+  expect(openFile).toHaveBeenLastCalledWith("~/dev/demo/specs/plan.md");
+  fireEvent.click(screen.getByRole("button", { name: "Open SharedAppViewer.tsx" }));
+  expect(openFile).toHaveBeenLastCalledWith("packages/ui/SharedAppViewer.tsx");
+});
+
+it("keeps listed names as plain code when no directory introduces the list", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>
+    {"Dependencies:\n\n- `chess.js`\n- `MatrixOS.db`\n\nSee `src/`.\n\nUnrelated paragraph.\n\n- `notes.md`"}
+  </MessageResponse>);
+  for (const name of ["chess.js", "MatrixOS.db", "notes.md"]) {
+    expect(screen.queryByRole("button", { name: `Open ${name}` })).toBeNull();
+    expect(screen.getByText(name).tagName).toBe("CODE");
+  }
+});
