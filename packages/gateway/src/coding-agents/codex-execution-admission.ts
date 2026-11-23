@@ -1,6 +1,7 @@
 import { isSessionStartClean, isSessionStopConfirmed } from "./session-start-cleanup-proof.js";
 import { timeChatSendStage } from "../chat/send-timing.js";
 import { nativeCodexConfigurationFingerprint } from "./native-codex-configuration-fingerprint.mjs";
+import { readCodexConsentAlias, savedCodexConsentMatches } from "./codex-consent-alias.mjs";
 import { createCodexExecutionSessions } from "./codex-execution-sessions.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { createHash } from "node:crypto";
@@ -109,8 +110,12 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     await sessions.assertOpen();
     const latest = await readSavedProviderSettingsConfiguration(path);
     if (!latest || latest.revision !== config!.revision) reject();
-    const principal = nativeAccountPrincipalFingerprint(metadata!);
-    if (!principal || row.nativeAccountGeneration !== principal || row.nativeAccountConsentRevision === undefined) reject();
+    const current = nativeAccountPrincipalFingerprint(metadata!);
+    // Bind the saved consent identity, not the observed generation, so an
+    // upgraded same-account alias keeps existing session bindings and runners.
+    const alias = row.nativeAccountGeneration && current !== row.nativeAccountGeneration ? await readCodexConsentAlias(resolve(options.homePath)) : null;
+    if (!savedCodexConsentMatches(row.nativeAccountGeneration, current, alias) || row.nativeAccountConsentRevision === undefined) reject();
+    const principal = row.nativeAccountGeneration;
     const configurationFingerprint = nativeCodexConfigurationFingerprint(row);
     const binding = createHash("sha256").update(JSON.stringify({
       owner: userId, computer: resolve(options.homePath), configurationFingerprint, principal,

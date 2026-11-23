@@ -28,6 +28,7 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import type { HarnessConfiguration, ProviderSettingsConfiguration } from "./provider-settings-persistence.js";
+import { savedCodexConsentMatches, type CodexConsentAlias } from "../coding-agents/codex-consent-alias.mjs";
 import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
 import type { GenericHarnessModelCatalog } from "./generic-harness-model-catalog.js";
 
@@ -355,6 +356,8 @@ function projectHarness(input: {
 export async function projectProviderSettings(input: {
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
   codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
+  /** Same-account upgrade alias for legacy token-bound consent (ENG-523). */
+  codexConsentAlias?: CodexConsentAlias | null;
   hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   canonical: AiProviderSnapshotV3;
   config: ProviderSettingsConfiguration;
@@ -438,7 +441,7 @@ export async function projectProviderSettings(input: {
     const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
     const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
     const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
-    const changedPrincipal = fingerprint !== null && saved?.nativeAccountGeneration !== fingerprint;
+    const changedPrincipal = fingerprint !== null && !savedCodexConsentMatches(saved?.nativeAccountGeneration, fingerprint, input.codexConsentAlias);
     if (missingConsent || changedPrincipal) {
       nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
     } else if (fingerprint !== null && nativeAuthenticatedAccountId) {

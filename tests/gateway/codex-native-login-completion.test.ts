@@ -21,7 +21,7 @@ afterEach(async () => { services.splice(0).forEach(service => service.close()); 
 async function fixture(unboundProof = false, withClaude = false, tokenBound = false) {
   const root = await mkdtemp(join(tmpdir(), "codex-completion-admission-")); roots.push(root);
   const home = join(root, "home"); await mkdir(home, { mode: 0o700 });
-  let loggedIn = true, principal = "fixture@example.invalid", installed = true, metadataMode = "native", tokenGeneration = 1;
+  let loggedIn = true, principal = "fixture@example.invalid", installed = true, metadataMode = "native", tokenGeneration = 1, legacyReader = false;
   const runCommand = vi.fn(async () => ({ principal, loggedIn }));
   const readMetadata = async (options?: { purpose: "native_completion" }) => {
     const observation = await runCommand();
@@ -32,7 +32,7 @@ async function fixture(unboundProof = false, withClaude = false, tokenBound = fa
     const exact = tokenBound ? `${observation.principal}:token-${tokenGeneration}` : observation.principal;
     const observedToken = tokenGeneration;
     return unboundProof ? metadata : bindNativeAccountMetadata(metadata, async () => loggedIn && principal === observation.principal && (!tokenBound || observedToken === tokenGeneration),
-      exact, tokenBound ? { generation: observation.principal } : {});
+      exact, tokenBound && !legacyReader ? { generation: observation.principal } : {});
   };
   const systemUpdate = vi.fn(async () => { throw new Error("fixed native completion cannot change system routing"); });
   const systemRead = vi.fn(async () => { throw new Error("fixed native completion cannot inspect system routing"); });
@@ -57,6 +57,8 @@ async function fixture(unboundProof = false, withClaude = false, tokenBound = fa
   return { home, store, before, input, runtime, prepareRevocation, releaseRevocation, systemRead, systemUpdate, readMetadata, runCommand,
     setLoggedIn: (value: boolean) => { loggedIn = value; }, setPrincipal: (value: string) => { principal = value; },
     refreshTokens: () => { tokenGeneration += 1; },
+    // Pre-upgrade gateways bound consent to the exact token bytes.
+    setLegacyReader: (value: boolean) => { legacyReader = value; },
     removeDriver: () => { installed = false;  }, setMetadataMode: (mode: string) => { metadataMode = mode; } };
 }
 
@@ -395,20 +397,39 @@ it('keeps a verified native Codex connection ready after Codex refreshes its tok
     .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
   expect(JSON.parse(await readFile(f.store.configurationPath, 'utf8')).revision).toBe(consented);
 });
-it('upgrades consent saved under the legacy token-bound generation of the same login', async () => {
+it('upgrades legacy same-account consent without breaking a chat admitted before the upgrade', async () => {
   const f = await fixture(false, false, true);
+  f.setLegacyReader(true);
   const id = await savedNativeRoute(f);
-  const config = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
-  const row = config.harnesses.find((item: {id: string}) => item.id === id);
-  row.nativeAccountGeneration = createHash('sha256').update('fixture@example.invalid:token-1').digest('hex');
-  row.nativeAccountConsentRevision = config.revision;
-  await writeFile(f.store.configurationPath, JSON.stringify(config));
-  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true }), id))
-    .toEqual({ account: 'authenticated', readiness: 'auth_required', harness: false });
+  await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  const consented = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  const admission = createCodexExecutionAdmission({ homePath: f.home, isOwner: user => user === 'owner',
+    getSnapshot: () => f.store.getSnapshot({ includeNativeAccountMetadata: true }), readNativeAccount: f.readMetadata });
+  // A live runner admitted before the upgrade keeps this session binding.
+  const binding = await admission.start('owner', 'sess_live_runner');
+  const launched = await admission.validateLaunch('owner', 'sess_live_runner');
+
+  f.setLegacyReader(false); // deploy: durable generations
   expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
     .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
-  const saved = JSON.parse(await readFile(f.store.configurationPath, 'utf8')).harnesses.find((item: {id: string}) => item.id === id);
-  expect(saved.nativeAccountGeneration).toBe(createHash('sha256').update('fixture@example.invalid').digest('hex'));
+  const upgraded = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(upgraded.revision).toBe(consented.revision);
+  expect(upgraded.harnesses).toEqual(consented.harnesses);
+  expect(JSON.parse(await readFile(join(f.home, 'system/ai-providers/codex-consent-alias.json'), 'utf8'))).toEqual({ version: 1,
+    saved: consented.harnesses.find((row: {id: string}) => row.id === id).nativeAccountGeneration,
+    durable: createHash('sha256').update('fixture@example.invalid').digest('hex') });
+
+  f.refreshTokens();
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
+  await expect(admission.validate('owner', binding, 'sess_live_runner')).resolves.toBeUndefined();
+  await expect(admission.validateLaunch('owner', 'sess_live_runner')).resolves.toEqual(launched);
+
+  // A real account change is still a switch: no readiness and no resume.
+  f.setPrincipal('other@example.invalid'); f.refreshTokens();
+  expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
+    .toEqual({ account: 'authenticated', readiness: 'auth_required', harness: false });
+  await expect(admission.validate('owner', binding, 'sess_live_runner')).rejects.toThrow();
 });
 it('still requires explicit consent when a different account signs in to Codex', async () => {
   const f = await fixture(false, false, true);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { codexNativeGenerationSource, createCodexCredentialFileEvidenceReader } from "./codex-credential-file-proof.mjs";
+import { readCodexConsentAlias, savedCodexConsentMatches } from "./codex-consent-alias.mjs";
 const Account = z.object({ type: z.literal("chatgpt"), email: z.email().max(120), planType: z.string().max(64).optional(), id: z.string().max(160).optional() });
 
 /** Equality is not consent: caller supplies a server-admitted fingerprint and
@@ -70,7 +71,11 @@ export async function createNativeCodexExecutionProof(expected, environment, raw
     if (!principal.id && !evidence) throw new Error("native_subscription_unavailable");
     const fingerprint = createHash("sha256").update(codexNativeGenerationSource({ principal,
       credentialProof: evidence?.proof ?? null, credentialIdentity: evidence?.identity ?? null })).digest("hex");
-    if (fingerprint !== expected || (fileBackend && !sameCredential(evidence, await readEvidence()))) throw new Error("native_subscription_unavailable");
+    // `expected` is the saved consent, rechecked against the row above. A
+    // same-account upgrade alias keeps legacy consent resumable (ENG-523).
+    const alias = fingerprint === expected ? null : await readCodexConsentAlias(environment.HOME);
+    if (!savedCodexConsentMatches(expected, fingerprint, alias)
+      || (fileBackend && !sameCredential(evidence, await readEvidence()))) throw new Error("native_subscription_unavailable");
     await assertSavedConsent(expected, consent, environment);
   };
 }
