@@ -393,3 +393,33 @@ describe("createApiClient", () => {
     ).rejects.toMatchObject({ message: "file_too_large" });
   });
 });
+
+describe("fetchGateway", () => {
+  it("routes a gateway URL to the bound computer and hands back the raw response", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(409, { error: { code: "task_revision_conflict" } }));
+    const api = createApiClient({ baseUrl: "https://matrix.test/", getRuntimeSlot: () => "primary", fetchFn }).forRuntime("vm-2");
+
+    const response = await api.fetchGateway("https://matrix.test/api/projects/alpha/tasks?limit=100", { method: "GET" });
+
+    expect(response.status).toBe(409);
+    expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/projects/alpha/tasks?limit=100&runtime=vm-2", { method: "GET" });
+  });
+
+  it("reports an expired session on 401", async () => {
+    const onUnauthorized = vi.fn();
+    const api = createApiClient({ baseUrl: "https://matrix.test", getRuntimeSlot: () => "primary", onUnauthorized,
+      fetchFn: vi.fn(async () => jsonResponse(401, {})) });
+
+    expect((await api.fetchGateway("https://matrix.test/api/projects/alpha/tasks")).status).toBe(401);
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses URLs outside the gateway", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(200, {}));
+    const api = createApiClient({ baseUrl: "https://matrix.test", getRuntimeSlot: () => "primary", fetchFn });
+
+    await expect(api.fetchGateway("https://matrix.test.evil.example/api/x")).rejects.toBeInstanceOf(TypeError);
+    await expect(api.fetchGateway("https://other.test/api/x")).rejects.toBeInstanceOf(TypeError);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});

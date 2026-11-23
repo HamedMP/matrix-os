@@ -1,5 +1,5 @@
-// Per-project shell view state: which view (Overview | Board | Chats) a project tab shows
-// and which chat is selected in the Chats view. Persisted under the
+// Per-project shell view state: which home view (Overview | Board) a project
+// page shows and which chat is selected in the project's Chats. Persisted under the
 // `projectViews` local-state key, scoped to the current runtime so another
 // computer's selections never leak in. Bounded to MAX_PROJECT_VIEW_ENTRIES
 // with least-recently-touched eviction.
@@ -156,7 +156,7 @@ export const useProjectView = create<ProjectViewState>()((set, get) => ({
     // Pre-hydration launch intents still win as complete entries. For entries
     // first created while the read was pending, merge each field independently:
     // workspace auto-selection changes only selectedThreadId, while a click on
-    // the Board/Chats switch changes only view.
+    // the Overview | Board switch changes only view.
     const currentEntries = get().entries;
     const merged = { ...persisted };
     for (const [projectId, current] of Object.entries(currentEntries)) {

@@ -70,7 +70,6 @@ describe("MissionControl initial project selection", () => {
     useBoard.setState({
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
       firstLoadPending: false,
       refreshing: false,
       error: null,
@@ -88,14 +87,12 @@ describe("MissionControl initial project selection", () => {
       selectProject,
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
     });
-    const api = useConnection.getState().api;
 
     render(<MissionControl />);
 
     await waitFor(() => {
-      expect(selectProject).toHaveBeenCalledWith(api, "alpha");
+      expect(selectProject).toHaveBeenCalledWith("alpha");
     });
   });
 });

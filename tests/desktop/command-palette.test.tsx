@@ -133,7 +133,7 @@ describe("CommandPalette", () => {
       this.removeAttribute("open");
     };
     useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
-    useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
+    useBoard.setState({ activeProjectSlug: null, projects: [] });
     useSessions.setState({ sessions: [] });
     useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);
     useTabs.setState({ tabs: [], activeTabId: null, openTab: vi.fn() });
@@ -205,7 +205,6 @@ describe("CommandPalette", () => {
     useBoard.setState({
       activeProjectSlug: null,
       projects: [{ slug: "matrix-os", name: "Matrix OS" }],
-      cardsByProject: {},
     });
 
     loadBindings();
@@ -301,13 +300,13 @@ describe("CommandPalette", () => {
     expect(useTabs.getState().openTab).not.toHaveBeenCalledWith({ kind: "apps", title: "Apps" });
   });
 
-  it("opens project results on the sessions overview instead of restoring a stale subview", () => {
+  it("opens project results on the overview instead of restoring a stale subview", () => {
     const openTab = vi.fn();
     useTabs.setState({ openTab });
     useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
     useProjectView.setState({
       entries: {
-        "matrix-os": { view: "board", selectedThreadId: "thread-old", touchedAt: Date.now() },
+        "matrix-os": { view: "chats", selectedThreadId: "thread-old", touchedAt: Date.now() },
       },
     });
 
@@ -320,6 +319,32 @@ describe("CommandPalette", () => {
       projectSlug: "matrix-os",
       title: "Matrix OS",
     });
+  });
+
+  it("opens project results on a remembered Board", () => {
+    useTabs.setState({ openTab: vi.fn() });
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }] });
+    useProjectView.setState({
+      entries: { "matrix-os": { view: "board", selectedThreadId: null, touchedAt: Date.now() } },
+    });
+
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByText("Matrix OS"));
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+  });
+
+  it("opens the active project's task board", () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }], activeProjectSlug: "matrix-os" });
+    useProjectView.setState({ entries: {} });
+
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByText("Open Matrix OS board"));
+
+    expect(useProjectView.getState().viewFor("matrix-os")).toBe("board");
+    expect(openTab).toHaveBeenCalledWith({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" });
   });
 
   it("routes new agent runs into the default project's chats view", async () => {
@@ -340,7 +365,6 @@ describe("CommandPalette", () => {
       projectSlug: "matrix-os",
       title: "Matrix OS",
     });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
     expect(useUi.getState().composerOpen).toBe(false);

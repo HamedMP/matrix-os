@@ -74,7 +74,6 @@ describe("MissionControl", () => {
     useBoard.setState({
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
       firstLoadPending: false,
       refreshing: false,
       error: null,
@@ -84,46 +83,6 @@ describe("MissionControl", () => {
       composerOpen: false,
       paletteOpen: false,
     });
-  });
-
-  it("logs restore selection failures instead of detaching the rejected promise", async () => {
-    const projects: Project[] = [{ slug: "saved-project", name: "Saved Project" }];
-    const api = { get: vi.fn() };
-    const loadProjects = vi.fn(async () => {
-      useBoard.setState({ projects });
-    });
-    const selectProject = vi.fn(async () => {
-      throw new Error("project refresh failed");
-    });
-    const invoke = vi.fn(async () => ({ value: "saved-project" }));
-    vi.stubGlobal("operator", {
-      invoke,
-      on: vi.fn(),
-    });
-    useConnection.setState({
-      status: "signed-in",
-      handle: "operator",
-      platformHost: "https://platform.test",
-      runtimeSlot: "primary",
-      api: api as never,
-    });
-    useBoard.setState({
-      loadProjects,
-      selectProject,
-      projects: [],
-      activeProjectSlug: null,
-      cardsByProject: {},
-    });
-
-    render(<MissionControl />);
-
-    await waitFor(() => {
-      expect(selectProject).toHaveBeenCalledWith(api, "saved-project");
-    });
-    expect(console.warn).toHaveBeenCalledWith(
-      "[mission-control] restore last project failed:",
-      "project refresh failed",
-    );
   });
 
   it("loads canonical shell sessions immediately for the signed-in desktop", async () => {
@@ -207,7 +166,7 @@ describe("MissionControl", () => {
           : [{ slug: "main-project", name: "Main Project" }],
       });
     });
-    const selectProject = vi.fn(async (_api, slug: string) => {
+    const selectProject = vi.fn((slug: string) => {
       useBoard.setState({ activeProjectSlug: slug });
     });
     vi.stubGlobal("operator", {
@@ -224,14 +183,14 @@ describe("MissionControl", () => {
     useBoard.setState({ loadProjects, selectProject, projects: [], activeProjectSlug: null });
 
     render(<MissionControl />);
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "main-project"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("main-project"));
 
     act(() => {
       useBoard.setState({ projects: [], activeProjectSlug: null });
       useConnection.setState({ runtimeSlot: "preview" });
     });
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(api, "preview-project"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("preview-project"));
     expect(useBoard.getState().activeProjectSlug).toBe("preview-project");
   });
 

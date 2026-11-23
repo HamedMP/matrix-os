@@ -430,7 +430,7 @@ describe("shortcuts that open or focus an app", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
-    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    useBoard.setState({ projects: [], activeProjectSlug: null });
     useProjectView.setState({ entries: {}, runtimeScope: null });
     useProjectWorkspaces.setState({ entries: {} });
     useProjectChatLauncher.setState({ composerRequest: null });
@@ -589,7 +589,6 @@ describe("handleNewAgentRunShortcut", () => {
       projectSlug: "matrix-os",
       title: "Chat",
     });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
     expect(useUi.getState().composerOpen).toBe(false);
@@ -615,8 +614,6 @@ describe("handleNewAgentRunShortcut", () => {
       tab.kind === "work" && tab.workRoute === "project"
     ))).toHaveLength(1);
     expect(useProjectChatLauncher.getState().composerRequest).toMatchObject({ projectId: "matrix-os" });
-    expect(useProjectView.getState().viewFor("matrix-os")).toBe("chats");
-    expect(useProjectView.getState().viewFor("website")).toBe("overview");
   });
 
   it("keeps the legacy composer open when desktop workspace routing is disabled", () => {
@@ -659,7 +656,7 @@ describe("runShortcutAction", () => {
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
     useClosedApps.setState(useClosedApps.getInitialState(), true);
-    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    useBoard.setState({ projects: [], activeProjectSlug: null });
     listeners = new Map();
     invoke = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("operator", {

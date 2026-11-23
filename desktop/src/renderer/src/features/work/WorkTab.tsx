@@ -29,7 +29,6 @@ import {
 import { useBoard, type Project } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
-import { useProjectView } from "../../stores/project-view";
 import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -351,11 +350,6 @@ function WorkTabContent({
     setRenamingChatTitle(false);
     setRenameChatError(null);
   }, [initialChatId, client]);
-
-  useLayoutEffect(() => {
-    if (!active || route !== "project" || !projectSlug) return;
-    useProjectView.getState().setView(projectSlug, "chats");
-  }, [active, projectSlug, route]);
 
   useLayoutEffect(() => {
     if (responsive.narrowPaneRouteKey === null || responsive.narrowPaneRouteKey === routeKey) return;
@@ -717,7 +711,7 @@ function WorkTabContent({
   const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false}
     sharedHeaderContainer={sharedHeaderContainer} onSharedChatMetadata={updateSharedChatMetadata} /> : null;
   const projectCenter = selectedProject
-    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding>
+    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"} chatId={initialChatId}>{projectChats}</ProjectLanding>
     : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}

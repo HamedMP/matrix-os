@@ -8,7 +8,7 @@ import { useUi } from "../../stores/ui";
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { toUserMessage } from "../../lib/errors";
-import { openProjectOverview } from "../../lib/project-navigation";
+import { openProjectHome } from "../../lib/project-navigation";
 import { Button, EmptyState } from "../../design/primitives";
 
 function projectCaption(project: Project): string {
@@ -291,7 +291,7 @@ export default function ProjectsIndex() {
                   <ProjectCard
                     project={project}
                     summaryUpdatedAt={summary?.updatedAt}
-                    onOpen={() => openProjectOverview(project.slug, project.name || project.slug)}
+                    onOpen={() => openProjectHome(project.slug, project.name || project.slug)}
                   />
                 </li>
               );

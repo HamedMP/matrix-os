@@ -27,13 +27,10 @@ describe("desktop runtime transition", () => {
     useBoard.setState({
       projects: [{ slug: "old-project", name: "Old project" }],
       activeProjectSlug: "old-project",
-      cardsByProject: { "old-project": [] },
-      firstLoadByProject: { "old-project": false },
-      refreshing: false,
       error: null,
     });
     useTabs.setState({
-      tabs: [{ id: "old-task", kind: "task", title: "Old task", projectSlug: "old-project", taskId: "task_old", closable: true }],
+      tabs: [{ id: "old-task", kind: "project", title: "Old project", projectSlug: "old-project", closable: true }],
       activeTabId: "old-task",
     });
     useSessions.setState({ sessions: [{ name: "old", attachName: "old", status: "active", source: "zellij" }], aliasMap: { session_old: "old" } });
@@ -81,7 +78,7 @@ describe("desktop runtime transition", () => {
     reconcileDesktopRuntimeChange({ disposeRuntimeAttachments });
 
     expect(disposeRuntimeAttachments).toHaveBeenCalledOnce();
-    expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    expect(useBoard.getState()).toMatchObject({ projects: [], activeProjectSlug: null });
     expect(useTabs.getState().tabs.some((tab) => tab.id === "old-task")).toBe(false);
     expect(useSessions.getState()).toMatchObject({ sessions: [], aliasMap: {} });
     expect(useShellSessions.getState().sessions).toEqual([]);
@@ -296,44 +293,6 @@ describe("desktop runtime transition", () => {
 
     expect(created).toBeNull();
     expect(useBoard.getState().projects).toEqual([]);
-  });
-
-  it("does not commit stale task-session linkage after the computer changes", async () => {
-    const card = {
-      id: "task_old",
-      projectSlug: "old-project",
-      title: "Old task",
-      description: "",
-      status: "todo" as const,
-      priority: "normal" as const,
-      order: 0,
-      parentTaskId: null,
-      linkedSessionId: null,
-      linkedWorktreeId: null,
-      previewIds: [],
-      tags: [],
-      updatedAt: null,
-      revision: null,
-    };
-    useBoard.setState({ cardsByProject: { "old-project": [card] }, error: null });
-    let rejectLink: ((err: unknown) => void) | undefined;
-    const api = {
-      patch: vi.fn(() => new Promise((_resolve, reject) => {
-        rejectLink = reject;
-      })),
-      get: vi.fn(async () => ({ tasks: [], nextCursor: null })),
-    } as never;
-
-    const pending = useBoard.getState().linkSession(api, "old-project", "task_old", { linkedSessionId: "session-old" });
-    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
-    // The per-task mutation queue starts the request on a microtask.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    rejectLink?.(new Error("old runtime rejected"));
-    await pending;
-
-    // The failure belongs to the previous computer; the new board must not
-    // inherit its error state.
-    expect(useBoard.getState().error).toBeNull();
   });
 
   it("rejects a project response that settles after the computer changes", async () => {

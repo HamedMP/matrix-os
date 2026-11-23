@@ -33,9 +33,6 @@ describe("CreateProjectDialog", () => {
     useBoard.setState({
       projects: [],
       activeProjectSlug: null,
-      cardsByProject: {},
-      firstLoadByProject: {},
-      refreshing: false,
       error: null,
     });
     useTabs.setState({ tabs: [], activeTabId: null });
@@ -198,7 +195,7 @@ describe("CreateProjectDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open matrix-os" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("matrix-os"));
     expect(createProject).not.toHaveBeenCalled();
     expect(openTab).toHaveBeenCalledWith({
       kind: "project",
@@ -243,7 +240,7 @@ describe("CreateProjectDialog", () => {
     expect(screen.getByText("This folder is already connected to Matrix OS.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open Matrix OS" }));
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("matrix-os"));
     expect(createProject).not.toHaveBeenCalled();
     expect(openTab).toHaveBeenCalledWith({
       kind: "project",
@@ -364,7 +361,7 @@ describe("CreateProjectDialog", () => {
     fireEvent.click(repo);
     fireEvent.click(screen.getByRole("button", { name: "Open Scratch Project" }));
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "scratch-project"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("scratch-project"));
     expect(createProject).not.toHaveBeenCalled();
     expect(openTab).toHaveBeenCalledWith({
       kind: "project",
@@ -415,7 +412,7 @@ describe("CreateProjectDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose matrix-os" }));
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "matrix-os"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("matrix-os"));
     expect(post).toHaveBeenCalledWith(
       "/api/projects",
       expect.objectContaining({ name: "Temporary", mode: "folder", path: "apps/matrix-os" }),
@@ -482,7 +479,7 @@ describe("CreateProjectDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("Project name"), { target: { value: "Desktop" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() => expect(selectProject).toHaveBeenCalledWith(expect.anything(), "desktop"));
+    await waitFor(() => expect(selectProject).toHaveBeenCalledWith("desktop"));
     await waitFor(() => expect(openTab).toHaveBeenCalledWith({
       kind: "project",
       projectSlug: "desktop",

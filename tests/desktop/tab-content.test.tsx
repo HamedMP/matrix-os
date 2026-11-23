@@ -12,7 +12,6 @@ const settingsMock = vi.hoisted(() => vi.fn(() => <div>Settings</div>));
 vi.mock("@desktop/renderer/src/features/settings/SettingsView", () => ({ default: settingsMock, SettingsSidebar: () => <div>Settings sidebar</div> }));
 
 const workTabMock = vi.hoisted(() => vi.fn(() => <div>Work</div>));
-const taskWorkspaceMock = vi.hoisted(() => vi.fn(() => <div>Task</div>));
 const terminalsTabMock = vi.hoisted(() => vi.fn(() => <div>Terminal</div>));
 const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
 const browserMock = vi.hoisted(() => vi.fn(() => <div>Web Browser</div>));
@@ -20,7 +19,6 @@ const editorMock = vi.hoisted(() => vi.fn(() => <div>Editor</div>));
 const notesMock = vi.hoisted(() => vi.fn(() => <div>Notes</div>));
 
 vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
-vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
 vi.mock("@desktop/renderer/src/features/terminal/TerminalsTab", () => ({ default: terminalsTabMock }));
 vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ default: homeMock }));
 vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
@@ -161,15 +159,6 @@ describe("current desktop tab panes", () => {
         projectSlug: "alpha", initialChatId: "chat-a", initialChatTitle: "Chat A",
       }), undefined);
     }
-  });
-
-  it("forwards task project identity to the live task workspace", () => {
-    render(<TabPane tab={{
-      id: "task", kind: "task", taskId: "task_a", projectSlug: "alpha", title: "Task A", closable: true,
-    }} active />);
-    expect(taskWorkspaceMock).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }), undefined,
-    );
   });
 
   it("keeps terminal visibility separate from keyboard ownership", () => {

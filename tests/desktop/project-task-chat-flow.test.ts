@@ -64,15 +64,15 @@ describe("project to task to chat flow", () => {
     const api = {
       get: vi.fn(async (path: string) => path === "/api/workspace/projects"
         ? { projects: [{ slug: "desktop", name: "Desktop", localPath: "/home/matrix/home/projects/desktop" }] }
-        : { tasks: [{ id: "task_build", projectSlug: "desktop", title: "Build chat", status: "todo", priority: "normal", order: 0 }], nextCursor: null }),
+        : {}),
       post: vi.fn(async (path: string) => path === "/api/projects"
         ? { project: { slug: "desktop", name: "Desktop", localPath: "/home/matrix/home/projects/desktop" } }
         : { task: { id: "task_build", projectSlug: "desktop", title: "Build chat", status: "todo", priority: "normal", order: 0, previewIds: [], tags: [] } }),
     } as never;
 
     const project = await useBoard.getState().createProject(api, { name: "Desktop", mode: "scratch" });
-    await useBoard.getState().selectProject(api, project!.slug);
-    const task = useBoard.getState().cardsByProject[project!.slug]?.[0];
+    useBoard.getState().selectProject(project!.slug);
+    const task = { id: "task_build", title: "Build chat" };
     expect(api.post).toHaveBeenCalledWith(
       "/api/projects",
       {
@@ -82,7 +82,6 @@ describe("project to task to chat flow", () => {
       },
       { timeoutMs: 30_000 },
     );
-    expect(task?.id).toBe("task_build");
 
     const runtimeSummary = summary();
     useCodingAgentWorkspace.setState({ summary: runtimeSummary, status: "ready" });
@@ -94,7 +93,7 @@ describe("project to task to chat flow", () => {
           fetchedAt: 1,
           workspace: {
             project: runtimeSummary.projects.items[0]!,
-            tasks: { items: [{ id: task!.id, projectId: "desktop", title: task!.title, status: "todo", priority: "normal", order: 0, threadCount: 0, activeThreadCount: 0, attentionCount: 0 }], hasMore: false, limit: 100 },
+            tasks: { items: [{ id: task.id, projectId: "desktop", title: task.title, status: "todo", priority: "normal", order: 0, threadCount: 0, activeThreadCount: 0, attentionCount: 0 }], hasMore: false, limit: 100 },
             projectThreads: { items: [], hasMore: false, limit: 100 },
             taskThreads: { items: [], hasMore: false, limit: 100 },
             updatedAt: NOW,
@@ -117,8 +116,8 @@ describe("project to task to chat flow", () => {
     };
 
     const base = defaultAgentThreadComposerDraft(runtimeSummary);
-    const firstId = await useCodingAgentWorkspace.getState().createThread({ ...base, prompt: "First chat", projectId: "desktop", taskId: task!.id });
-    const secondId = await useCodingAgentWorkspace.getState().createThread({ ...base, prompt: "Second chat", projectId: "desktop", taskId: task!.id });
+    const firstId = await useCodingAgentWorkspace.getState().createThread({ ...base, prompt: "First chat", projectId: "desktop", taskId: task.id });
+    const secondId = await useCodingAgentWorkspace.getState().createThread({ ...base, prompt: "Second chat", projectId: "desktop", taskId: task.id });
     expect([firstId, secondId]).toEqual(["thread_one", "thread_two"]);
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:create-thread", expect.objectContaining({ projectId: "desktop", taskId: "task_build" }));
 
