@@ -315,6 +315,26 @@ export const BoardSettingsResponseSchema = z.object({ settings: BoardSettingsSch
 export const BoardMembersResponseSchema = z.object({ members: z.array(BoardMemberSchema) });
 export const AttachableSessionsResponseSchema = z.object({ sessions: z.array(AttachableSessionSchema) });
 
+/**
+ * The project (and task) the gateway bounds a session credential to: a terminal pane's
+ * loopback token or a chat run's token. Null for an owner credential, which is unbounded.
+ */
+export const PROJECT_TASK_SESSION_PATH = "/api/project-tasks/session";
+export const ProjectTaskSessionSchema = z.object({
+  projectId: ProjectIdSchema,
+  projectSlug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
+  taskId: TaskIdSchema.optional(),
+}).strict();
+export type ProjectTaskSessionBinding = z.infer<typeof ProjectTaskSessionSchema>;
+export const ProjectTaskSessionResponseSchema = z.object({ session: ProjectTaskSessionSchema.nullable() });
+/**
+ * A task terminal tab's gateway-issued credential: set in the tab's environment at launch
+ * and presented with the local terminal token. The gateway derives the tab's project and
+ * actor only from a credential it signed.
+ */
+export const TASK_SESSION_TOKEN_ENV = "MATRIX_TASK_SESSION_TOKEN";
+export const TASK_SESSION_TOKEN_HEADER = "x-matrix-task-session-token";
+
 /** Stable error codes; messages are generic. */
 export const PROJECT_TASK_ERROR_CODES = [
   "invalid_request", "project_not_found", "task_not_found", "comment_not_found", "task_revision_conflict",
