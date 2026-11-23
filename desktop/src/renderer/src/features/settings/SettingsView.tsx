@@ -5,6 +5,7 @@ import {
   Clock,
   CreditCard,
   Cpu,
+  KeyboardIcon,
   Palette,
   Server,
   Sparkles,
@@ -29,6 +30,8 @@ import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
 import AiUsageSection from "./sections/AiUsageSection";
 import "@matrix-os/ui/ai-usage.css";
+import "@matrix-os/ui/shortcuts.css";
+import ShortcutsSection from "./sections/ShortcutsSection";
 import ChatImportSection from "./sections/ChatImportSection";
 import { useUi } from "../../stores/ui";
 import OrganizationSection from "../organization/OrganizationSection";
@@ -36,6 +39,7 @@ import OrganizationSection from "../organization/OrganizationSection";
 export type SettingsSectionId =
   | "account"
   | "appearance"
+  | "shortcuts"
   | "organization"
   | "billing"
   | "runtime"
@@ -61,6 +65,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "chat-import", label: "Import chats", icon: <Upload size={15} />, group: "Integrations" },
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
+  { id: "shortcuts", label: "Shortcuts", icon: <KeyboardIcon size={15} />, group: "You" },
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
@@ -161,6 +166,7 @@ export default function SettingsView({
           {section === "account" ? <AccountSection /> : null}
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
+          {section === "shortcuts" ? <ShortcutsSection /> : null}
           {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}

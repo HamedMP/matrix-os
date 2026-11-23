@@ -12,6 +12,7 @@ import { useGit } from "../../desktop/src/renderer/src/stores/git";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useClosedApps } from "../../desktop/src/renderer/src/stores/closed-apps";
 import { useThreads } from "../../desktop/src/renderer/src/stores/threads";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 import { desktopQueryClient } from "../../desktop/src/renderer/src/lib/query-client";
@@ -95,6 +96,14 @@ describe("desktop runtime transition", () => {
     expect(useDesktopSurfaces.getState()).toMatchObject({ surfaces: {}, workspaceView: "desktop" });
     expect(useDesktopIcons.getState()).toMatchObject({ icons: [], loaded: false });
     expect(useCreateAppRequest.getState().request).toBeNull();
+  });
+
+  it("forgets apps closed on the previous computer so Reopen closed app cannot open them on the next", () => {
+    useClosedApps.setState({ entries: [{ kind: "chat", title: "Chat", closable: false }] });
+
+    reconcileDesktopRuntimeChange({ disposeRuntimeAttachments: vi.fn() });
+
+    expect(useClosedApps.getState().pop()).toBeNull();
   });
 
   it("clears unsent chat drafts owned by the previous identity", () => {

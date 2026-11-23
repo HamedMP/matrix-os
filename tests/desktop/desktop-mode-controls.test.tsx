@@ -65,9 +65,9 @@ describe("Desktop mode controls", () => {
   it("leads with the Setup pill, drops Help and keeps Update beside the same-size avatar", async () => {
     useConnection.setState({ status: "signed-in", runtimeSlot: "primary", api: makeApi(true) as never });
     renderControls();
-    await screen.findByRole("button", { name: "Getting started — 4 of 5" });
+    await screen.findByRole("button", { name: "Getting started — 4 of 6" });
     expect(labels()).toEqual([
-      "Getting started — 4 of 5",
+      "Getting started — 4 of 6",
       "Search",
       "Terminal window",
       "Inbox",
@@ -99,7 +99,7 @@ describe("Desktop mode controls", () => {
   it("toggles the checklist from the pill and opens it from the account menu", async () => {
     useConnection.setState({ status: "signed-in", runtimeSlot: "primary", api: makeApi(true) as never });
     renderControls();
-    const pill = await screen.findByRole("button", { name: "Getting started — 4 of 5" });
+    const pill = await screen.findByRole("button", { name: "Getting started — 4 of 6" });
     fireEvent.click(pill);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
     fireEvent.click(pill);
@@ -108,7 +108,7 @@ describe("Desktop mode controls", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Open account menu" }), { button: 0, ctrlKey: false });
     expect(useUi.getState().rendererOverlayCount).toBeGreaterThan(0);
     const row = await screen.findByRole("menuitem", { name: /Getting started/ });
-    expect(row.textContent).toContain("4 of 5");
+    expect(row.textContent).toContain("4 of 6");
     expect(row.textContent).toContain("Next: Connect email & calendar");
     expect(screen.getByRole("menuitem", { name: /Join Discord/ }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
     fireEvent.click(row);
