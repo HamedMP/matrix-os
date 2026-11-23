@@ -17,6 +17,7 @@ export function nativePaths(source = process.env) {
     chromeProfile: path(source.MATRIX_BROWSER_CHROME_PROFILE, '/home/matrix/.local/share/matrix-browser-lab/chrome'),
     accountHome: path(source.MATRIX_BROWSER_HOME, '/home/matrix'),
     workdir: path(source.MATRIX_BROWSER_WORKDIR, '/home/matrix/home'),
+    agentSocketDirectory: path(source.MATRIX_BROWSER_AGENT_SOCKET_DIR, '/tmp/matrix-browser-lab-agent'),
   };
 }
 const { chromeProfile, accountHome, workdir: matrixHome } = nativePaths();

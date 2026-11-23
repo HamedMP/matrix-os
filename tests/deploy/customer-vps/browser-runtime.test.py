@@ -932,6 +932,7 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertIn('Environment=MATRIX_BROWSER_CHROME_PROFILE=/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome\n', supervisor)
         self.assertIn('Environment=MATRIX_BROWSER_HOME=/var/lib/matrix-browser\n', supervisor)
         self.assertIn('Environment=MATRIX_BROWSER_WORKDIR=/var/lib/matrix-browser\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_AGENT_SOCKET_DIR=/var/lib/matrix-browser/.cache/matrix-browser-lab-agent\n', supervisor)
 
     def test_browser_account_with_matrix_or_docker_access_is_refused(self):
         self.runtime.prepare()

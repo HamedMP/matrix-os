@@ -318,7 +318,8 @@ class Runtime:
                 # The supervisor's native helpers accept this profile and open this home.
                 home = owner.pw_dir.rstrip('/')
                 account += (f'Environment=MATRIX_BROWSER_CHROME_PROFILE={profile}\n'
-                            f'Environment=MATRIX_BROWSER_HOME={home}\nEnvironment=MATRIX_BROWSER_WORKDIR={home}\n')
+                            f'Environment=MATRIX_BROWSER_HOME={home}\nEnvironment=MATRIX_BROWSER_WORKDIR={home}\n'
+                            f'Environment=MATRIX_BROWSER_AGENT_SOCKET_DIR={home}/.cache/matrix-browser-lab-agent\n')
             content = content.replace('User=matrix\nGroup=matrix\n', account)
             content = content.replace('/home/matrix/.local/share/matrix-browser-lab/chrome', profile)
             if '/home/matrix' in content:

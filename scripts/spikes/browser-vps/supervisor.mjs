@@ -6,11 +6,12 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { dirname, join, resolve, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInvoiceFixture } from './invoices/fixture.mjs';
-import { createNativeWindows, parseBrowserControl, parseBrowserSession, InvalidBrowserControl } from './native-windows.mjs';
+import { createNativeWindows, nativePaths, parseBrowserControl, parseBrowserSession, InvalidBrowserControl } from './native-windows.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const session = 'matrix-browser-lab';
-const socketDirectory = '/tmp/matrix-browser-lab-agent';
+// The Browser account's own directory: a dedicated account keeps it in its home.
+const socketDirectory = nativePaths().agentSocketDirectory;
 const engines = ['agent-browser', 'browser-use'];
 const fixtureUrl = 'http://127.0.0.1:8730/fixture';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

@@ -193,12 +193,15 @@ describe('native paths for the Browser account', () => {
   it('keeps the matrix account paths by default', () => {
     expect(nativePaths({})).toEqual({
       chromeProfile: '/home/matrix/.local/share/matrix-browser-lab/chrome', accountHome: '/home/matrix', workdir: '/home/matrix/home',
+      agentSocketDirectory: '/tmp/matrix-browser-lab-agent',
     });
   });
 
   it('takes the dedicated account paths its unit sets, and refuses unsafe ones', () => {
-    const env = { MATRIX_BROWSER_CHROME_PROFILE: '/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome', MATRIX_BROWSER_HOME: '/var/lib/matrix-browser', MATRIX_BROWSER_WORKDIR: '/var/lib/matrix-browser' };
-    expect(nativePaths(env)).toEqual({ chromeProfile: env.MATRIX_BROWSER_CHROME_PROFILE, accountHome: '/var/lib/matrix-browser', workdir: '/var/lib/matrix-browser' });
+    // Found live: the agent socket directory under /tmp still belonged to matrix,
+    // so the supervisor running as the dedicated account refused to start.
+    const env = { MATRIX_BROWSER_CHROME_PROFILE: '/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome', MATRIX_BROWSER_HOME: '/var/lib/matrix-browser', MATRIX_BROWSER_WORKDIR: '/var/lib/matrix-browser', MATRIX_BROWSER_AGENT_SOCKET_DIR: '/var/lib/matrix-browser/.cache/matrix-browser-lab-agent' };
+    expect(nativePaths(env)).toEqual({ chromeProfile: env.MATRIX_BROWSER_CHROME_PROFILE, accountHome: '/var/lib/matrix-browser', workdir: '/var/lib/matrix-browser', agentSocketDirectory: env.MATRIX_BROWSER_AGENT_SOCKET_DIR });
     for (const bad of ['relative/path', '/var/lib/../etc', '/tmp/a b', '/x\n/y', '']) {
       expect(() => nativePaths({ ...env, MATRIX_BROWSER_HOME: bad })).toThrow('Invalid Browser path');
     }
