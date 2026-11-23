@@ -4,6 +4,7 @@ import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appFileVersion } from "@matrix-os/contracts/app-files";
 import { hasSymlinkComponent, lstatOrNull } from "../app-files/paths.js";
+import { unguardedProjectWrite, type ProjectWriteGuard } from "../app-files/project-write-fence.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
 import {
   isDeniedFileApiPath, isProtectedHomeSubpath, resolveExistingFileApiPath, resolveWithinHome, resolveWritableFileApiPath,
@@ -18,6 +19,8 @@ export interface OfficeFileStoreOptions {
   maxFileBytes: number;
   /** Runs after an edit is computed and before the version check and publish. A test seam for racing saves. */
   beforeCommit?: (absolutePath: string) => Promise<void>;
+  /** The collaboration project fence; a save into a shared or mid-transition project is refused. */
+  writeGuard?: ProjectWriteGuard;
 }
 
 export interface LoadedOfficeFile {
@@ -125,13 +128,15 @@ export class OfficeFileStore {
    * Atomic save with a version check. `expectedVersion` is the version the
    * edit was computed from; `null` means the file must not exist yet. The
    * compare, the temp write and the publish run inside the owner file
-   * mutation guard, so a newer save is never overwritten.
+   * mutation guard, so a newer save is never overwritten, and inside the
+   * project write fence, like every owner file route.
    */
   async commit(path: string, bytes: Uint8Array, expectedVersion: string | null): Promise<CommittedOfficeFile> {
     if (bytes.byteLength > this.options.maxFileBytes) throw new OfficeDocumentError("too_large", "result too large");
     const target = await this.resolveWritable(path);
     if (this.options.beforeCommit) await this.options.beforeCommit(target);
-    return withOwnerFileMutation(this.options.homePath, async () => {
+    const guard = this.options.writeGuard ?? unguardedProjectWrite;
+    return withOwnerFileMutation(this.options.homePath, () => guard([path], async () => {
       const parent = await this.ensureParent(path, target);
       const current = await lstatOrNull(target, true);
       if (current && !current.isFile()) {
@@ -173,7 +178,7 @@ export class OfficeFileStore {
 
       const written = await lstat(target, { bigint: true });
       return { path, version: appFileVersion(written.size, written.mtimeNs), size: Number(written.size) };
-    });
+    }));
   }
 
   private async ensureParent(path: string, target: string): Promise<string> {

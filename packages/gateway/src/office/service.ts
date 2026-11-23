@@ -12,6 +12,7 @@ import {
   type SheetReadRangeReply, type SheetResolveChangesReply,
 } from "@matrix-os/contracts/office-documents";
 import type { z } from "zod/v4";
+import type { ProjectWriteGuard } from "../app-files/project-write-fence.js";
 import {
   addDocumentComment, applyDocumentEdits, describeDocument, listDocumentRevisions, readDocumentText, resolveDocumentRevisions,
 } from "./docx-operations.js";
@@ -35,6 +36,8 @@ export interface OfficeDocumentServiceOptions {
   maxWaitersPerPath?: number;
   /** Test seam: runs right before a save's version check. */
   beforeCommit?: (absolutePath: string) => Promise<void>;
+  /** The collaboration project fence every save runs inside. */
+  writeGuard?: ProjectWriteGuard;
 }
 
 const UNTRUSTED = "untrusted" as const;
@@ -55,6 +58,7 @@ export class OfficeDocumentService {
       homePath: options.homePath,
       maxFileBytes: options.maxFileBytes ?? OFFICE_DOCUMENT_MAX_BYTES,
       ...(options.beforeCommit ? { beforeCommit: options.beforeCommit } : {}),
+      ...(options.writeGuard ? { writeGuard: options.writeGuard } : {}),
     });
     this.mutex = new KeyedMutex({ maxKeys: options.maxActivePaths ?? 64, maxWaitersPerKey: options.maxWaitersPerPath ?? 16 });
     this.clock = options.clock ?? (() => new Date());

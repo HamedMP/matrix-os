@@ -1,12 +1,15 @@
 import type { Hono } from "hono";
 import { APP_FILES_BRIDGE_PATH } from "@matrix-os/contracts/app-files";
 import { createAppFileRoutes } from "../app-files/routes.js";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { readPrincipalRuntimeConfig, requireRequestPrincipal } from "../request-principal.js";
 
 export interface BridgeFileRouteOptions {
   homePath: string;
   /** Defaults to `process.env`; read once at registration. */
   env?: NodeJS.ProcessEnv;
+  /** The owner file routes' collaboration fence; app writes into a shared or fenced project are refused. */
+  projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
 /**
@@ -22,5 +25,6 @@ export function registerBridgeFileRoutes(app: Hono, options: BridgeFileRouteOpti
     homePath: options.homePath,
     ownerIds,
     resolveOwner: (context) => requireRequestPrincipal(context, principalConfig).userId,
+    ...(options.projectPathAdmission ? { projectPathAdmission: options.projectPathAdmission } : {}),
   }));
 }

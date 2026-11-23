@@ -10,6 +10,7 @@ import { withOwnerFileMutation } from "../owner-file-mutations.js";
 import { AppFileError, errnoCode } from "./errors.js";
 import { appFileIo } from "./io.js";
 import { hasSymlinkComponent, lstatOrNull, resolveWritableAppFilePath } from "./paths.js";
+import { unguardedProjectWrite, type ProjectWriteGuard } from "./project-write-fence.js";
 import { modifiedAtFromMs } from "./read-ops.js";
 
 /** Prefix of the temporary file a write publishes from, in the target's directory. */
@@ -54,11 +55,17 @@ async function removeTemp(path: string): Promise<void> {
  * publish run inside the owner file mutation guard, so two writers holding the
  * same version cannot both succeed. `ifVersion: null` publishes with an
  * exclusive `link`, so a file created by anyone in the meantime is a conflict.
+ * `guard` is the collaboration project fence; it is held inside the mutation
+ * guard from before path resolution until the write settles.
  */
-export async function writeAppFile(homePath: string, request: AppFileWriteRequest): Promise<AppFileWriteReply> {
+export async function writeAppFile(
+  homePath: string,
+  request: AppFileWriteRequest,
+  guard: ProjectWriteGuard = unguardedProjectWrite,
+): Promise<AppFileWriteReply> {
   const content = Buffer.from(request.contentBase64, "base64");
   if (content.length > APP_FILE_MAX_BYTES) throw new AppFileError("too_large");
-  return withOwnerFileMutation(homePath, async () => {
+  return withOwnerFileMutation(homePath, () => guard([request.path], async () => {
     const target = await resolveWritableAppFilePath(homePath, request.path);
     const parent = await ensureParent(homePath, request.path, target, request.createParents === true);
     const current = await lstatOrNull(target, true);
@@ -105,12 +112,16 @@ export async function writeAppFile(homePath: string, request: AppFileWriteReques
       size: Number(written.size),
       modifiedAt: modifiedAtFromMs(written.mtimeMs),
     };
-  });
+  }));
 }
 
 /** Recursive and idempotent; an existing directory is success. */
-export async function mkdirAppFile(homePath: string, path: string): Promise<AppFileMkdirReply> {
-  return withOwnerFileMutation(homePath, async () => {
+export async function mkdirAppFile(
+  homePath: string,
+  path: string,
+  guard: ProjectWriteGuard = unguardedProjectWrite,
+): Promise<AppFileMkdirReply> {
+  return withOwnerFileMutation(homePath, () => guard([path], async () => {
     const target = await resolveWritableAppFilePath(homePath, path);
     const existing = await lstatOrNull(target);
     if (existing) {
@@ -120,5 +131,5 @@ export async function mkdirAppFile(homePath: string, path: string): Promise<AppF
     await mkdir(target, { recursive: true });
     if (await hasSymlinkComponent(homePath, path)) throw new AppFileError("forbidden", "symlink");
     return { path };
-  });
+  }));
 }

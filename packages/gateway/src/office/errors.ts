@@ -1,5 +1,6 @@
 import { isOfficeError } from "@matrix-os/office";
 import type { OfficeDocumentErrorCode } from "@matrix-os/contracts/office-documents";
+import { ProjectWriteRefusedError } from "../app-files/project-write-fence.js";
 import { OwnerFileMutationBusyError } from "../owner-file-mutations.js";
 import { KeyedMutexBusyError } from "./path-mutex.js";
 
@@ -47,6 +48,8 @@ function officeEngineCode(error: unknown): OfficeDocumentErrorCode | null {
 export function officeErrorCodeFor(error: unknown): OfficeDocumentErrorCode {
   if (error instanceof OfficeDocumentError) return error.code;
   if (error instanceof KeyedMutexBusyError || error instanceof OwnerFileMutationBusyError) return "busy";
+  // A shared or fenced project is written through the shared project route, never this one.
+  if (error instanceof ProjectWriteRefusedError) return error.refusal === "refused" ? "forbidden" : "unavailable";
   const engine = officeEngineCode(error);
   if (engine) return engine;
   switch (errnoCode(error)) {
@@ -63,6 +66,10 @@ export function officeErrorCodeFor(error: unknown): OfficeDocumentErrorCode {
 
 /** Logs the failure without document text or the home path. */
 export function logOfficeFailure(route: string, code: OfficeDocumentErrorCode, error: unknown): void {
+  if (error instanceof ProjectWriteRefusedError) {
+    console.warn("[office-documents] project write not admitted", { route, refusal: error.refusal, reason: error.reason });
+    return;
+  }
   const detail = {
     route,
     code,

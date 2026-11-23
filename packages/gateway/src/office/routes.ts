@@ -9,6 +9,9 @@ import {
   SheetReadRangeRequestSchema, SheetResolveChangesRequestSchema, officeDocumentErrorBody,
   type OfficeDocumentErrorCode,
 } from "@matrix-os/contracts/office-documents";
+import { createProjectWriteGuard } from "../app-files/project-write-fence.js";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { readPrincipalRuntimeConfig } from "../request-principal.js";
 import { logOfficeFailure, officeErrorCodeFor } from "./errors.js";
 import { OfficeDocumentService } from "./service.js";
 
@@ -21,9 +24,34 @@ export interface OfficeDocumentRouteOptions {
   maxInFlight?: number;
   /** Test seam: runs right before a save's version check. */
   beforeCommit?: (absolutePath: string) => Promise<void>;
+  /**
+   * The collaboration fence of the owner file routes. With it, a save into a
+   * shared or mid-transition project is refused; without it (no collaboration
+   * database) every save is admitted.
+   */
+  projectPathAdmission?: LegacyProjectPathAdmission;
+  /**
+   * Every identity the gateway's owner may hold projects under. Agent tools
+   * call this service in process, with no request principal, so the fence is
+   * asked for each of them. Required with `projectPathAdmission`; empty fails closed.
+   */
+  ownerIds?: readonly string[];
 }
 
 export const OFFICE_DOCUMENT_MAX_IN_FLIGHT = 8;
+
+/**
+ * The identities to ask the project fence for on this gateway: the VPS owner
+ * (`MATRIX_USER_ID`, or `MATRIX_CLERK_USER_ID` on hosts provisioned before it
+ * existed), or the development principal where requests carry no owner.
+ */
+export function officeFenceOwnerIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const configured = [env.MATRIX_USER_ID, env.MATRIX_CLERK_USER_ID].filter((id): id is string => Boolean(id));
+  if (configured.length > 0) return [...new Set(configured)];
+  const principal = readPrincipalRuntimeConfig(env);
+  const development = principal.isLocalDevelopment && !principal.authEnabled && !principal.isProduction;
+  return development ? [principal.devDefaultUserId] : [];
+}
 
 function fail(c: Context, code: OfficeDocumentErrorCode): Response {
   return c.json(officeDocumentErrorBody(code), OFFICE_DOCUMENT_ERROR_STATUS[code]);
@@ -44,6 +72,9 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
         ...(options.clock ? { clock: options.clock } : {}),
         ...(options.maxFileBytes ? { maxFileBytes: options.maxFileBytes } : {}),
         ...(options.beforeCommit ? { beforeCommit: options.beforeCommit } : {}),
+        ...(options.projectPathAdmission
+          ? { writeGuard: createProjectWriteGuard(options.projectPathAdmission, options.ownerIds ?? []) }
+          : {}),
       })
     : null;
   const maxInFlight = options.maxInFlight ?? OFFICE_DOCUMENT_MAX_IN_FLIGHT;

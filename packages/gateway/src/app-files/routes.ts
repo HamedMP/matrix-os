@@ -4,8 +4,10 @@ import {
   APP_FILE_ERROR_STATUS, APP_FILE_MAX_BYTES, AppFileRequestSchema, MAX_APP_FILE_REQUEST_BYTES,
   appFileBase64ByteLength, appFileErrorBody, type AppFileErrorCode, type AppFileInput,
 } from "@matrix-os/contracts/app-files";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { appFilesAllowed } from "./access.js";
 import { AppFileError, appFileErrorCodeFor, logAppFileFailure } from "./errors.js";
+import { createProjectWriteGuard, unguardedProjectWrite, type ProjectWriteGuard } from "./project-write-fence.js";
 import { listAppFiles, readAppFile, statAppFile } from "./read-ops.js";
 import { mkdirAppFile, writeAppFile } from "./write-ops.js";
 
@@ -15,6 +17,12 @@ export interface AppFileRouteOptions {
   ownerIds: readonly string[];
   /** The authenticated principal, or null. May throw when no principal can be resolved. */
   resolveOwner: (context: Context) => string | null;
+  /**
+   * The collaboration fence of the owner file routes. With it, a write or
+   * mkdir inside a shared or mid-transition project is refused; without it
+   * (no collaboration database) every write is admitted.
+   */
+  projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
 /** Same admission budget as the app capability route. */
@@ -35,13 +43,13 @@ function oversizedWrite(body: unknown): boolean {
   return kind === "files.write" && typeof contentBase64 === "string" && appFileBase64ByteLength(contentBase64) > APP_FILE_MAX_BYTES;
 }
 
-async function runOperation(homePath: string, input: AppFileInput): Promise<unknown> {
+async function runOperation(homePath: string, input: AppFileInput, guard: ProjectWriteGuard): Promise<unknown> {
   switch (input.kind) {
     case "files.list": return listAppFiles(homePath, input.dir, input.limit);
     case "files.stat": return statAppFile(homePath, input.path);
     case "files.read": return readAppFile(homePath, input.path);
-    case "files.write": return writeAppFile(homePath, input);
-    case "files.mkdir": return mkdirAppFile(homePath, input.path);
+    case "files.write": return writeAppFile(homePath, input, guard);
+    case "files.mkdir": return mkdirAppFile(homePath, input.path, guard);
   }
 }
 
@@ -55,6 +63,8 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
   let inFlight = 0;
   let windowStart = 0;
   let requests = 0;
+  // The admitted owner of each in-flight request; entries die with their context.
+  const owners = new WeakMap<Context, string>();
 
   const admission: MiddlewareHandler = async (context, next) => {
     if (!options.homePath) {
@@ -68,6 +78,7 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       return fail(context, "forbidden");
     }
     if (!owner || !options.ownerIds.includes(owner)) return fail(context, "forbidden");
+    owners.set(context, owner);
     const now = Date.now();
     if (now - windowStart >= RATE_WINDOW_MS) { windowStart = now; requests = 0; }
     if (requests >= APP_FILE_RATE_LIMIT_PER_MINUTE || inFlight >= APP_FILE_MAX_IN_FLIGHT) return fail(context, "unavailable");
@@ -96,7 +107,11 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       const { app, input } = parsed.data;
       try {
         if (!await appFilesAllowed(homePath, app)) throw new AppFileError("forbidden");
-        return context.json(await runOperation(homePath, input), 200);
+        const owner = owners.get(context);
+        const guard = options.projectPathAdmission
+          ? createProjectWriteGuard(options.projectPathAdmission, owner ? [owner] : [])
+          : unguardedProjectWrite;
+        return context.json(await runOperation(homePath, input, guard), 200);
       } catch (error: unknown) {
         logAppFileFailure(input.kind, error);
         return fail(context, appFileErrorCodeFor(error));

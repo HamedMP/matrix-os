@@ -257,7 +257,7 @@ import { registerCollaborationChatRoutes } from "./server/collaboration-chat-rou
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
-import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
+import { createGatewayProjectPathAdmission, registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -283,7 +283,7 @@ import {
 } from "./shell/index.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
-import { createOfficeDocumentRoutes } from "./office/routes.js";
+import { createOfficeDocumentRoutes, officeFenceOwnerIds } from "./office/routes.js";
 
 export {
   buildAllowedOrigins,
@@ -914,7 +914,14 @@ export async function createGateway(config: GatewayConfig) {
     repository: osViewStateRepository, ownerId: process.env.MATRIX_USER_ID, homePath, broadcastToOwner,
   });
   // One document service for the kernel tools and the `/api/office` routes: one per-path lock.
-  const officeDocumentRoutes = createOfficeDocumentRoutes({ homePath });
+  // The owner file routes' project fence also guards document saves and app file writes.
+  const ownerProjectPathAdmission = createGatewayProjectPathAdmission({
+    homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
+  });
+  const officeDocumentRoutes = createOfficeDocumentRoutes({
+    homePath,
+    ...(ownerProjectPathAdmission ? { projectPathAdmission: ownerProjectPathAdmission, ownerIds: officeFenceOwnerIds() } : {}),
+  });
   const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -1386,6 +1393,7 @@ export async function createGateway(config: GatewayConfig) {
     homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
     broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
     logUnexpectedJsonParseFailure,
+    ...(ownerProjectPathAdmission ? { projectPathAdmission: ownerProjectPathAdmission } : {}),
   });
 
   registerAppIntegrationCapabilities(app, {
