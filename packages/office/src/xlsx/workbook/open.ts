@@ -9,6 +9,7 @@ import { getAttr, parseXml } from "../../xml/index.js";
 import { readThemeColors } from "./colors.js";
 import type { FormulaDeps, SheetModel, WorkbookState } from "./model.js";
 import { readNames } from "./names.js";
+import { MAX_NOTE_PARTS, notePartNames, readNotes } from "./notes.js";
 import { type ReadContext, readSheet } from "./sheet-read.js";
 import { SharedStrings } from "./shared-strings.js";
 import { readTables, tablePartNames } from "./tables.js";
@@ -116,6 +117,9 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
     const tableNames = tablePartNames(pkg, partName);
     sheet.tables = readTables(tableNames, (name) => sources.texts.get(partNameKey(name)));
     for (const name of tableNames) sources.texts.delete(partNameKey(name));
+    const noteNames = notePartNames(pkg, partName);
+    sheet.notes = readNotes(noteNames, (name) => sources.texts.get(partNameKey(name)));
+    for (const { name } of noteNames) sources.texts.delete(partNameKey(name));
     // The model has what it needs; the texts of other parts are not kept either.
     sources.texts.delete(partNameKey(partName));
     sheets.push(sheet);
@@ -174,7 +178,11 @@ export async function openState(bytes: Uint8Array, options: OpenXlsxOptions | un
     if (!pkg.hasPart(part)) continue;
     wanted.push(part);
     // The tables of a sheet move with its rows and columns, so their parts are read too.
-    if (relationship.type.endsWith("/worksheet")) wanted.push(...tablePartNames(pkg, part));
+    if (relationship.type.endsWith("/worksheet")) {
+      wanted.push(...tablePartNames(pkg, part));
+      // So do its notes; a sheet relates to a handful of such parts at most.
+      wanted.push(...notePartNames(pkg, part).slice(0, MAX_NOTE_PARTS).map((entry) => entry.name));
+    }
   }
   const texts = new Map<string, string>();
   for (const part of wanted) texts.set(partNameKey(part), await pkg.getPartText(part));

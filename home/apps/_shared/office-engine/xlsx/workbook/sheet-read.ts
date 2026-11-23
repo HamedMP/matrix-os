@@ -314,6 +314,7 @@ export function readSheet(identity: SheetIdentity, doc: XmlDocument, context: Re
     hasShared,
     stringRefs,
     tables: [],
+    notes: null,
     rowSetDirty: false,
     merges: readMerges(root),
     mergesDirty: false,

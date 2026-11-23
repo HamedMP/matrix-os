@@ -15,6 +15,7 @@ import type { CellRange, CellValue, FrozenPanes, SheetId, StyleId } from "../../
 import type { XmlDocument, XmlElement } from "../../api/xml.js";
 import type { CellMutationListener, WorkbookJournal } from "./internals.js";
 import type { SharedStrings } from "./shared-strings.js";
+import type { SheetNotes } from "./notes.js";
 import type { TablePart } from "./tables.js";
 import type { StyleTable } from "./styles.js";
 
@@ -122,6 +123,8 @@ export interface SheetModel {
   hasShared: boolean;
   /** The tables of the sheet, each a part of its own; see `./tables.ts`. At most `MAX_TABLES_PER_SHEET`. */
   tables: TablePart[];
+  /** The comment parts of the sheet, or null when it has none; see `./notes.ts`. */
+  notes: SheetNotes | null;
   /** Cells of the part that point into the shared string table, as of the last read or write of its XML. */
   stringRefs: number;
   /** Cached result of the dimension scan; undefined when out of date. */

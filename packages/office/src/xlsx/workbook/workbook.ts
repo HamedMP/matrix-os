@@ -47,6 +47,7 @@ import { type CellMutationListener, type RawCell, type WorkbookInternals, type W
 import { setColumnWidth, setMerge, unmerge } from "./layout.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { flushNames, listNames, removeName, setName } from "./names.js";
+import { flushNotes } from "./notes.js";
 import { attachSheet } from "./sheet-read.js";
 import { flushSheet } from "./sheet-write.js";
 import { addSheet, removeSheet, renameSheet, sheetInfo } from "./sheets.js";
@@ -83,6 +84,7 @@ export function syncParts(state: WorkbookState): void {
     state.strings.setReferenceCount(references);
   }
   flushTables(pkg, state.sheets);
+  flushNotes(pkg, state.sheets);
   flushNames(state);
   if (state.workbookPart.dirty) {
     pkg.setPart(state.workbookPart.name, serializeXml(state.workbookPart.doc));

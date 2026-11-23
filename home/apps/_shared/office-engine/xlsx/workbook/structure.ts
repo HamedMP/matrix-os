@@ -1,14 +1,16 @@
 /**
  * Inserting and deleting rows and columns: cells, sizes, merged ranges, the
- * ranges other sheet features point at and the ranges of tables move with
- * them, and every formula and defined name of the workbook that refers to
- * the sheet is rewritten. An edit that would cut a table apart is refused.
+ * ranges other sheet features point at, the ranges of tables and the notes
+ * on cells move with them, and every formula and defined name of the
+ * workbook that refers to the sheet is rewritten. An edit that would cut a
+ * table apart is refused.
  */
 
 import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { getAttr, remove, setAttr, setTextContent, textContent } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, formatA1Range, tryParseA1Range } from "./a1.js";
+import { checkNotesForStructure, moveNotes } from "./notes.js";
 import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState } from "./model.js";
 import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./refs-rewrite.js";
 import { rewriteAllFormulas } from "./sheets.js";
@@ -189,6 +191,7 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   }
   // A table cannot be cut apart; this throws before anything moves.
   checkTablesForStructure(sheet, op);
+  checkNotesForStructure(sheet);
   moveCells(state, sheet, op);
   // Array formulas moved with their cells, or went with deleted ones.
   invalidateArrayRanges(sheet);
@@ -202,6 +205,7 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   moveColumns(sheet, op);
   moveSheetFeatures(sheet, op);
   moveTables(sheet, op);
+  moveNotes(sheet, op);
   // Shared formulas are written out one by one: their group ranges no longer hold.
   if (sheet.hasShared) sheet.unshare = true;
   sheet.dirty = true;
