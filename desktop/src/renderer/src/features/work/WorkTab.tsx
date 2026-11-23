@@ -793,7 +793,8 @@ function WorkTabContent({
     <div
       ref={workRef}
       className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${hostedChrome && hasInspector ? "[&_[data-slot=shared-chat-surface]]:pt-12" : ""}`}
-      data-chat-header-reserved={hostedChrome && hasInspector || undefined}
+      style={{ paddingTop: hostedChrome && agentsOpen ? "3rem" : undefined }}
+      data-chat-header-reserved={hostedChrome && (hasInspector || agentsOpen) || undefined}
       data-layout={layout}
       data-pane={layout === "narrow" ? narrowPane : undefined}
     >
