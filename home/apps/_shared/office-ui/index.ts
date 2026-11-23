@@ -47,6 +47,51 @@ export {
 } from "./AgentPanel";
 export { ReviewBar, type ReviewBarProps } from "./ReviewBar";
 export { ConfirmSend, type ConfirmSendProps } from "./ConfirmSend";
+export { Ribbon, type BackstageState, type RibbonProps } from "./Ribbon";
+export type {
+  BackstageApi,
+  BackstageItem,
+  RibbonBackstage,
+  RibbonBackstageTab,
+  RibbonButtonItem,
+  RibbonColorItem,
+  RibbonColorSwatch,
+  RibbonGalleryItem,
+  RibbonGalleryOption,
+  RibbonGroup,
+  RibbonItem,
+  RibbonMenuButtonItem,
+  RibbonMenuItem,
+  RibbonPanelTab,
+  RibbonSelectItem,
+  RibbonSelectOption,
+  RibbonSeparatorItem,
+  RibbonSplitItem,
+  RibbonStackItem,
+  RibbonTab,
+  RibbonToggleItem,
+} from "./ribbon-types";
+export { DEFAULT_RIBBON_PALETTE, clearRecentColors, recentColors } from "./RibbonPickers";
+export { fitGroups } from "./ribbon-layout";
+export { BackToHome, DocumentTitleBar, type BackToHomeProps, type DocumentTitleBarProps, type SaveState } from "./TitleBar";
+export {
+  CSV_MIME,
+  DOCX_MIME,
+  LocalFileError,
+  MAX_LOCAL_FILE_BYTES,
+  TSV_MIME,
+  XLSX_MIME,
+  describeAccept,
+  downloadBytes,
+  fileMatchesAccept,
+  pickLocalFile,
+  readDroppedFile,
+  type DroppedFiles,
+  type LocalFile,
+  type LocalFileErrorCode,
+  type LocalFileOptions,
+} from "./local-files";
+export { FileDropZone, type FileDropZoneProps } from "./FileDropZone";
 export { cx } from "./internal";
 export { watchLeave, type LeaveGuard } from "./leave-guard";
 export { aiAccessMessage, readAiAccess, replyText, useAiAccess, type AiAccess, type AiAccessBridge } from "./ai-access";

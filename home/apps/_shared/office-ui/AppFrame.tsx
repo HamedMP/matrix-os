@@ -3,7 +3,9 @@ import { cx } from "./internal";
 
 export interface AppFrameProps {
   /** App or document title shown in the title bar area. */
-  title: ReactNode;
+  title?: ReactNode;
+  /** Replaces the whole default title row, e.g. a <DocumentTitleBar>. */
+  titleBar?: ReactNode;
   /** Small leading element in the title bar, such as an app icon. */
   titleIcon?: ReactNode;
   /** Trailing title-bar content: account switcher, share, agent toggle. */
@@ -30,6 +32,7 @@ export interface AppFrameProps {
  */
 export function AppFrame({
   title,
+  titleBar,
   titleIcon,
   titleActions,
   toolbar,
@@ -45,9 +48,13 @@ export function AppFrame({
   return (
     <div className={cx("oui-frame", "oui-root", Boolean(leftRail) && "has-left", Boolean(rightPanel) && "has-right", className)}>
       <header className="oui-frame__titlebar">
-        {titleIcon && <span className="oui-frame__title-icon" aria-hidden="true">{titleIcon}</span>}
-        <h1 className="oui-frame__title">{title}</h1>
-        {titleActions && <div className="oui-frame__title-actions">{titleActions}</div>}
+        {titleBar ?? (
+          <>
+            {titleIcon && <span className="oui-frame__title-icon" aria-hidden="true">{titleIcon}</span>}
+            <h1 className="oui-frame__title">{title}</h1>
+            {titleActions && <div className="oui-frame__title-actions">{titleActions}</div>}
+          </>
+        )}
       </header>
       {toolbar && <div className="oui-frame__toolbar">{toolbar}</div>}
       {banner && <div className="oui-frame__banner">{banner}</div>}

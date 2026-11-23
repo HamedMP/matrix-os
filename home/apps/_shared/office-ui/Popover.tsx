@@ -29,7 +29,8 @@ interface Position {
   left: number;
 }
 
-function place(anchor: DOMRect, panel: DOMRect, placement: NonNullable<PopoverProps["placement"]>): Position {
+/** Position a floating panel next to its anchor, kept inside the viewport. */
+export function placeFloating(anchor: DOMRect, panel: DOMRect, placement: NonNullable<PopoverProps["placement"]>): Position {
   const gap = 6;
   const vw = window.innerWidth || 1024;
   const vh = window.innerHeight || 768;
@@ -42,6 +43,14 @@ function place(anchor: DOMRect, panel: DOMRect, placement: NonNullable<PopoverPr
 }
 
 /**
+ * Where floating surfaces render: inside the popover that holds the anchor, so
+ * a nested popover or menu counts as inside its parent, else the document body.
+ */
+export function floatingContainer(anchor: HTMLElement | null): HTMLElement {
+  return anchor?.closest<HTMLElement>(".oui-popover") ?? document.body;
+}
+
+/**
  * Non-modal floating panel anchored to an element. Escape and outside clicks
  * close it; focus moves in on open and back to the anchor on close.
  */
@@ -51,7 +60,7 @@ export function Popover({ open, onClose, anchorRef, children, label, placement =
     <PopoverSurface onClose={onClose} anchorRef={anchorRef} label={label} placement={placement} className={className}>
       {children}
     </PopoverSurface>,
-    document.body,
+    floatingContainer(anchorRef.current),
   );
 }
 
@@ -60,13 +69,20 @@ function PopoverSurface({ onClose, anchorRef, children, label, placement, classN
   const [position, setPosition] = useState<Position>({ top: -9999, left: -9999 });
   useFocusTrap(panelRef, true, { onEscape: onClose });
   useOutsidePointer([panelRef, anchorRef], true, onClose);
+  // Runs after the trap's cleanup: when the opener never took focus (browsers
+  // that do not focus a clicked button), focus would stay in the closing panel or fall to the
+  // page, so return it to the anchor.
+  useIsomorphicLayoutEffect(() => () => {
+    const active = document.activeElement;
+    if (!active || active === document.body || panelRef.current?.contains(active)) anchorRef.current?.focus();
+  }, [anchorRef]);
 
   useIsomorphicLayoutEffect(() => {
     const update = () => {
       const anchor = anchorRef.current;
       const panel = panelRef.current;
       if (!anchor || !panel) return;
-      setPosition(place(anchor.getBoundingClientRect(), panel.getBoundingClientRect(), placement));
+      setPosition(placeFloating(anchor.getBoundingClientRect(), panel.getBoundingClientRect(), placement));
     };
     update();
     window.addEventListener("resize", update);
