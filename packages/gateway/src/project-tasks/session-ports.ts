@@ -9,6 +9,7 @@ import type { TaskAgentStatus, TaskPullRequest } from "@matrix-os/contracts/proj
 import type { ProjectConfig } from "../project-manager.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { OwnerScope } from "../state-ops.js";
+import type { ProjectTaskTrx } from "./database.js";
 
 export interface TaskWorktree {
   id: string;
@@ -41,7 +42,24 @@ export interface GitPort {
   summary(input: { cwd: string; defaultBranch: string }): Promise<GitSummary>;
 }
 
+/** Chat writes made inside a board transaction; the chat hook sees each one in the same transaction. */
+export interface TaskChatTransaction {
+  /** The owner database transaction both stores share. */
+  board: ProjectTaskTrx;
+  rename(ownerScope: OwnerScope, chatId: string, title: string): Promise<void>;
+  setArchived(ownerScope: OwnerScope, chatId: string, archived: boolean): Promise<void>;
+  remove(ownerScope: OwnerScope, chatId: string, clientRequestId: string): Promise<void>;
+}
+
 export interface ChatPort {
+  /**
+   * Create a project chat with its task seed. The chat repository inserts the
+   * task in the same transaction (see task-chats.ts); retries with the same
+   * `clientRequestId` return the same chat.
+   */
+  create(ownerScope: OwnerScope, input: { clientRequestId: string; title: string; projectId: string; ticket: unknown }): Promise<{ id: string; revision: number }>;
+  /** Run board writes and chat writes in one transaction; chat events go out after it commits. */
+  transaction<T>(run: (tx: TaskChatTransaction) => Promise<T>): Promise<T>;
   /** Make a worktree the chat's default root, so turns without one (the composer) run in it. */
   bindWorktree(ownerScope: OwnerScope, chatId: string, input: { projectId: string; worktreeId: string }): Promise<void>;
   /** The chat's current revision, or null when the owner has no such chat. */

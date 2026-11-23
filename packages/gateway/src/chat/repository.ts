@@ -1,4 +1,5 @@
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
+import { projectChatSnapshot, type ProjectChatHook } from "./project-chat-hook.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
@@ -157,6 +158,8 @@ export interface CreateChatInput {
   currentSelection?: CanonicalChatModelSelection;
   /** Server-only: the worktree turns without a root run in (see execution-defaults.ts). Requires `projectId`. */
   defaultWorktreeId?: string;
+  /** Server-only: the board's task seed for a project chat, passed to the project chat hook. */
+  ticket?: unknown;
 }
 
 export interface UpdateChatInput {
@@ -429,6 +432,12 @@ export class ChatRepository {
   private readonly queue: ChatQueueRepository;
   private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
+  private projectChatHook: ProjectChatHook | null = null;
+
+  /** Installed by the project board at startup; runs inside every project chat write (spec 2699). */
+  setProjectChatHook(hook: ProjectChatHook | null): void {
+    this.projectChatHook = hook;
+  }
 
   /** Installed by the collaboration runtime before accepting shared requests. */
   setSharedAuthorizer(authorize: import("../collaboration/shared-chat-authority.js").SharedChatAuthorizer): void {
@@ -525,13 +534,23 @@ export class ChatRepository {
     return this.outboxDelivery.registerSink(sink);
   }
 
+  /** A committed-event observer beside the event-stream sink (see ChatOutboxDelivery.addObserver). */
+  addOutboxObserver(observer: ChatOutboxSink): { dispose(): void } {
+    return this.outboxDelivery.addObserver(observer);
+  }
+
   /** Deliver an event written by another owner-database transaction after its commit. */
   publishCommittedExternalOutbox(owner: ChatOwner, event: ChatOutboxEvent): void {
     this.outboxDelivery.flush([{ owner, event }]);
   }
 
+  /** Run `fn` with a repository bound to one transaction; events go out after it commits. */
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
-    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
+    return this.transact((trx) => {
+      const scoped = new ChatRepository(trx, true, this.outboxDelivery);
+      scoped.projectChatHook = this.projectChatHook;
+      return fn(scoped);
+    });
   }
 
   /** Server-only source projection, committed independently of canonical target work. */
@@ -740,6 +759,7 @@ export class ChatRepository {
       }).execute();
       await bindDefault(trx, inserted.id);
       await this.appendOutbox(trx, owner, inserted.id, 0, "chat.created");
+      if (inserted.project_id !== null) await this.projectChatHook?.created(trx, owner, projectChatSnapshot(inserted), input.ticket);
       return toPrincipalRecord(trx, owner, inserted);
     });
   }
@@ -928,6 +948,7 @@ export class ChatRepository {
       transact: <T>(fn: (trx: Executor) => Promise<T>) => this.transact(fn),
       selectOwnedChat, toPrincipalRecord, activeRunQuery,
       appendOutbox: this.appendOutbox.bind(this),
+      projectChatHook: this.projectChatHook,
     };
   }
 
@@ -1733,6 +1754,7 @@ export class ChatRepository {
         throw new ChatNotFoundError(input.chatId);
       }
       if (await activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
+      if (chat.project_id !== null) await this.projectChatHook?.deleted(trx, owner, input.chatId);
       const deletion = await trx.insertInto("chat_deletions").values({
         owner_type: owner.type,
         owner_id: owner.ownerId,

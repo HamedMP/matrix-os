@@ -1,3 +1,4 @@
+import { projectChatChanged, projectChatSnapshot, type ProjectChatHook } from "./project-chat-hook.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatIdSchema, CanonicalChatModelSelectionSchema, CanonicalOwnerScopeSchema, CanonicalUpdateChatTitleRequestSchema, type CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
@@ -16,6 +17,14 @@ interface MetadataDependencies {
   toPrincipalRecord(executor: Executor, owner: ChatOwner, row: Selectable<ChatsTable>, collaborationProjection?: undefined, knownImportSource?: ChatRecord["importSource"] | null): Promise<ChatRecord>;
   activeRunQuery(executor: Executor, chatId: string): Promise<Selectable<ChatRunsTable> | undefined>;
   appendOutbox(executor: Executor, owner: ChatOwner, chatId: string, revision: number, type: ChatOutboxEventType): Promise<void>;
+  projectChatHook?: ProjectChatHook | null;
+}
+
+async function notifyProjectChat(deps: MetadataDependencies, trx: Executor, owner: ChatOwner, before: Selectable<ChatsTable>, after: Selectable<ChatsTable>): Promise<void> {
+  if (!deps.projectChatHook || (before.project_id === null && after.project_id === null)) return;
+  const previous = projectChatSnapshot(before);
+  const next = projectChatSnapshot(after);
+  if (projectChatChanged(previous, next)) await deps.projectChatHook.updated(trx, owner, previous, next);
 }
 const validateOwner = (owner: ChatOwner) => CanonicalOwnerScopeSchema.parse(owner);
 const requireSafeRef = (value: string) => z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(value);
@@ -94,6 +103,7 @@ export async function updateChat(deps: MetadataDependencies, ownerInput: ChatOwn
         .where("revision", "=", input.baseRevision)
         .returningAll().executeTakeFirst();
       if (!updated) throw new ChatConflictError(chatId, Number(current.revision));
+      await notifyProjectChat(deps, trx, owner, current, updated);
       const record = await deps.toPrincipalRecord(trx, owner, updated);
       await deps.appendOutbox(trx, owner, chatId, record.chat.revision, "chat.updated");
       return record;
@@ -108,6 +118,7 @@ export async function renameChat(deps: MetadataDependencies, ownerInput: ChatOwn
   CanonicalChatIdSchema.parse(chatId);
   const request = CanonicalUpdateChatTitleRequestSchema.parse(input);
   return deps.transact(async (trx) => {
+    const before = deps.projectChatHook ? await deps.selectOwnedChat(trx, owner, chatId, true) : undefined;
     let update = trx.updateTable("chats").set({
       title: request.title,
       title_version: sql<number>`title_version + 1`,
@@ -124,6 +135,7 @@ export async function renameChat(deps: MetadataDependencies, ownerInput: ChatOwn
       if (automatic) return deps.toPrincipalRecord(trx, owner, current);
       throw new ChatConflictError(chatId, Number(current.revision));
     }
+    if (before) await notifyProjectChat(deps, trx, owner, before, updated);
     const record = await deps.toPrincipalRecord(trx, owner, updated);
     await deps.appendOutbox(trx, owner, chatId, record.chat.revision, "chat.updated");
     return record;
