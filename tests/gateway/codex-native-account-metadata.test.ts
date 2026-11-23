@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { hasNativeAccountCredentialIdentity, nativeAccountPrincipalFingerprint, sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
-import { createCodexNativeAccountMetadataReader, normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
+import { CODEX_IDENTITY_REUSE_MAX_MS, createCodexNativeAccountMetadataReader, normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
+import { createChatSendTimer } from "../../packages/gateway/src/chat/send-timing.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "../../packages/gateway/src/ai-providers/provider-cli-account-lifecycle.js";
 import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 const now = new Date("2026-10-02T08:00:00Z");
@@ -491,5 +492,177 @@ describe("native Codex account metadata", () => {
   it("preserves identity when allowance method is unsupported", async () => {
     const f = fixture(false, true);
     expect(await createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, spawnProcess: f.spawnProcess })()).toMatchObject({ accountLabel: "owner@example.test" });
+  });
+  describe("bounded admission identity reuse", () => {
+    // Let a completed observation release its coalescing slot before the next call.
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    function reuseReader(options: { proof?: () => string; executable?: () => string | null; config?: () => string | null; clock?: () => Date; reuseMs?: number } = {}) {
+      const spawnProcess = vi.fn(() => fixture(false, false, account, undefined, undefined, undefined, "file").spawnProcess());
+      const reader = createCodexNativeAccountMetadataReader({ executable: "/opt/codex/bin/codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" },
+        now: options.clock ?? (() => now), timeoutMs: 40, spawnProcess: spawnProcess as never, identityReuseMs: options.reuseMs ?? 30_000,
+        readCredentialFileProof: async () => (options.proof ?? (() => "stable-proof"))(),
+        readExecutableFingerprint: async () => (options.executable ?? (() => "codex-1"))(),
+        readConfigFingerprint: async () => (options.config ?? (() => "config-1"))() });
+      return { reader, spawnProcess };
+    }
+    it("reuses one private identity read for observe and verify within the window", async () => {
+      const { reader, spawnProcess } = reuseReader();
+      const first = await reader.observeIdentity!(); await settle();
+      expect(first.state).toBe("observed");
+      expect(await verifyNativeAccountMetadata(first.metadata)).toBe(first.metadata);
+      const second = await reader({ includeUsage: false });
+      expect(second).toBe(first.metadata);
+      expect(await verifyNativeAccountMetadata(second)).toBe(second);
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+    });
+    it("never reuses across a credential (login/logout) or executable version change", async () => {
+      let proof = "stable-proof";
+      let executable: string | null = "codex-1";
+      const { reader, spawnProcess } = reuseReader({ proof: () => proof, executable: () => executable });
+      const observed = await reader.observeIdentity!();
+      proof = "replacement-proof";
+      expect(await verifyNativeAccountMetadata(observed.metadata)).toBeNull();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      executable = "codex-2";
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(3);
+      executable = null; // an unprovable executable never records or serves reuse
+      await reader.observeIdentity!(); await settle();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(5);
+    });
+    it("never reuses across a Codex config change (for example the credential store backend)", async () => {
+      let config: string | null = "config-1";
+      const { reader, spawnProcess } = reuseReader({ config: () => config });
+      await reader.observeIdentity!(); await settle();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      config = "config-keyring";
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      config = null;
+      await reader.observeIdentity!(); await settle();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(4);
+    });
+    it("expires after the bounded window and on explicit invalidation", async () => {
+      let time = now.getTime();
+      const { reader, spawnProcess } = reuseReader({ clock: () => new Date(time), reuseMs: 120_000 });
+      await reader.observeIdentity!(); await settle();
+      time += 29_000;
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      reader.invalidateIdentity!();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      time += 119_000; // still inside the 120 s bound for the second proof
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      time += 1_000; // exactly at the bound: a fresh proof is required
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(3);
+    });
+    it("reuses an unchanged credential proof across minutes-apart sends and restamps a fresh observation", async () => {
+      let time = now.getTime();
+      const { reader, spawnProcess } = reuseReader({ clock: () => new Date(time), reuseMs: CODEX_IDENTITY_REUSE_MAX_MS });
+      const first = await reader.observeIdentity!(); await settle();
+      const principal = nativeAccountPrincipalFingerprint(first.metadata!);
+      expect(principal).toMatch(/^[a-f0-9]{64}$/);
+      time += 4 * 60_000; // past the 30 s observation freshness
+      const later = await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      expect(later.state).toBe("observed");
+      expect(later.metadata).not.toBe(first.metadata);
+      expect(later.metadata).toMatchObject({ accountLabel: "owner@example.test", authMethod: "terminal", checkedAt: new Date(time).toISOString(),
+        staleAfter: new Date(time + 30_000).toISOString() });
+      expect(later.metadata?.usage).toBeUndefined();
+      expect(nativeAccountPrincipalFingerprint(later.metadata!)).toBe(principal);
+      expect(sameBoundNativeAccountPrincipal(first.metadata!, later.metadata!)).toBe(true);
+      expect(hasNativeAccountCredentialIdentity(later.metadata)).toBe(true);
+      // Catalog admission then execution admission verify the same reused proof without a spawn.
+      expect(await verifyNativeAccountMetadata(later.metadata)).toBe(later.metadata);
+      expect(await reader({ includeUsage: false })).toBe(later.metadata);
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      // The original observation stays stale; only the restamped copy is current.
+      expect(await verifyNativeAccountMetadata(first.metadata)).toBeNull();
+    });
+    it("misses after minutes when the credential file or config changed in between", async () => {
+      let time = now.getTime();
+      let proof = "stable-proof";
+      let config = "config-1";
+      const { reader, spawnProcess } = reuseReader({ clock: () => new Date(time), reuseMs: CODEX_IDENTITY_REUSE_MAX_MS, proof: () => proof, config: () => config });
+      const first = await reader.observeIdentity!(); await settle();
+      time += 3 * 60_000;
+      proof = "rotated-proof"; // auth.json rewritten (refresh, relogin, other account)
+      const second = await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(second.metadata).not.toBe(first.metadata);
+      time += 3 * 60_000;
+      config = "config-2";
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(3);
+    });
+    it("misses after explicit invalidation (login, logout, revocation) even minutes later", async () => {
+      let time = now.getTime();
+      const { reader, spawnProcess } = reuseReader({ clock: () => new Date(time), reuseMs: CODEX_IDENTITY_REUSE_MAX_MS });
+      const first = await reader.observeIdentity!(); await settle();
+      time += 2 * 60_000;
+      reader.invalidateIdentity!();
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(await verifyNativeAccountMetadata(first.metadata)).toBeNull();
+    });
+    it("never caches a failed or signed-out observation as reusable identity", async () => {
+      let time = now.getTime();
+      let result: unknown = { account: null };
+      const spawnProcess = vi.fn(() => fixture(false, false, result, undefined, undefined, undefined, "file").spawnProcess());
+      const reader = createCodexNativeAccountMetadataReader({ executable: "/opt/codex/bin/codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" },
+        now: () => new Date(time), timeoutMs: 40, spawnProcess: spawnProcess as never, identityReuseMs: CODEX_IDENTITY_REUSE_MAX_MS,
+        readCredentialFileProof: async () => "stable-proof", readExecutableFingerprint: async () => "codex-1", readConfigFingerprint: async () => "config-1" });
+      expect(await reader.observeIdentity!()).toEqual({ metadata: null, state: "signed_out" }); await settle();
+      time += 60_000;
+      expect((await reader.observeIdentity!()).metadata).toBeNull(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      result = account;
+      expect((await reader.observeIdentity!()).state).toBe("observed"); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(3);
+    });
+    it("marks admission reuse hit or miss on the active send timing without private values", async () => {
+      vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+      const lines: string[] = [];
+      const spy = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { if (args[0] === "[chat-send-timing]") lines.push(String(args[1])); });
+      try {
+        let time = now.getTime();
+        const { reader } = reuseReader({ clock: () => new Date(time), reuseMs: CODEX_IDENTITY_REUSE_MAX_MS });
+        const timer = createChatSendTimer("req_private_reuse");
+        await timer.run(async () => { await reader.observeIdentity!(); await settle(); time += 5 * 60_000; await reader.observeIdentity!(); await settle(); });
+        await reader.observeIdentity!(); // outside a timed send: nothing emitted
+        const events = lines.map(line => JSON.parse(line) as { stage: string; result?: string });
+        expect(events.filter(event => event.stage === "codex_identity_reuse").map(event => event.result)).toEqual(["miss", "hit"]);
+        expect(lines.join(" ")).not.toMatch(/owner@example|private|proof/);
+      } finally { spy.mockRestore(); vi.unstubAllEnvs(); }
+    });
+    it("keeps a single reusable entry and clamps the requested window to the upper bound", async () => {
+      let time = now.getTime();
+      const { reader, spawnProcess } = reuseReader({ clock: () => new Date(time), reuseMs: 60 * 60_000 });
+      await reader.observeIdentity!(); await settle();
+      time += CODEX_IDENTITY_REUSE_MAX_MS - 1;
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      time += 1;
+      await reader.observeIdentity!(); await settle();
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(CODEX_IDENTITY_REUSE_MAX_MS).toBe(10 * 60_000);
+    });
+    it("stays off by default so verifiers keep sampling a fresh identity", async () => {
+      const spawnProcess = vi.fn(() => fixture(false, false, account, undefined, undefined, undefined, "file").spawnProcess());
+      const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => now, timeoutMs: 40,
+        spawnProcess: spawnProcess as never, readCredentialFileProof: async () => "stable-proof" });
+      const observed = await reader.observeIdentity!();
+      expect(await verifyNativeAccountMetadata(observed.metadata)).toBe(observed.metadata);
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+    });
   });
 });

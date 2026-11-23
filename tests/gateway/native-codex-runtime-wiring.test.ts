@@ -37,10 +37,21 @@ describe("native Codex runtime wiring", () => {
     expect(await runtime.readAccount()).toBe(observation);
     expect(mocks.createReader).toHaveBeenCalledTimes(1);
     expect(mocks.createReader).toHaveBeenCalledWith({ executable: "/fixture/codex", cwd: "/fixture/home",
-      environment: { HOME: "/fixture/home", CODEX_HOME: "/fixture/home/.codex" } });
+      environment: { HOME: "/fixture/home", CODEX_HOME: "/fixture/home/.codex" }, identityReuseMs: 10 * 60_000 });
     expect(guard.assertReadable).toHaveBeenCalledTimes(4);
     expect(guard.assertReadable.mock.invocationCallOrder[0]).toBeLessThan(mocks.reader.mock.invocationCallOrder[0]!);
     expect(guard.assertReadable.mock.invocationCallOrder[1]).toBeGreaterThan(mocks.reader.mock.invocationCallOrder[0]!);
+  });
+  it("lets the Settings store drop the reused identity through the shared reader", async () => {
+    const { runtime } = fixture();
+    const invalidate = vi.fn();
+    Object.assign(mocks.reader, { invalidateIdentity: invalidate });
+    runtime.readAccount.invalidateIdentity!(); // before the reader exists: nothing to drop
+    expect(invalidate).not.toHaveBeenCalled();
+    mocks.reader.mockResolvedValue(null);
+    await runtime.readAccount();
+    runtime.readAccount.invalidateIdentity!();
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
   it("forwards forced-fresh completion reads without changing ordinary observation", async () => {
     const { runtime, guard } = fixture();
@@ -71,13 +82,27 @@ describe("native Codex runtime wiring", () => {
     const getSnapshot = vi.fn().mockResolvedValue({ revision: 2 });
     getSettings.mockReturnValue({ getSnapshot });
     expect(await admissionOptions.getSnapshot()).toEqual({ revision: 2 });
-    expect(getSnapshot).toHaveBeenCalledWith({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+    expect(getSnapshot).toHaveBeenCalledWith({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false, nativeAccountHarnesses: ["codex"] });
     const stopSession = vi.fn().mockResolvedValue({ ok: false });
     getRuntime.mockReturnValue({ stopSession });
     await expect(admissionOptions.stopSession!("session")).rejects.toThrow("unavailable");
     stopSession.mockResolvedValue({ ok: true });
     await admissionOptions.stopSession!("session");
     expect(stopSession).toHaveBeenLastCalledWith("session");
+  });
+  it("admits on identity only and drops reusable identity on credential invalidation", async () => {
+    const { runtime, admissionOptions } = fixture();
+    const invalidateIdentity = vi.fn();
+    mocks.reader.mockResolvedValue(null);
+    Object.assign(mocks.reader, { invalidateIdentity });
+    await admissionOptions.readNativeAccount();
+    expect(mocks.reader).toHaveBeenLastCalledWith({ includeUsage: false });
+    runtime.invalidateIdentity();
+    expect(invalidateIdentity).toHaveBeenCalledTimes(1);
+    const launcherInvalidate = vi.fn();
+    runtime.withIdentityInvalidation(launcherInvalidate)();
+    expect(launcherInvalidate).toHaveBeenCalledTimes(1);
+    expect(invalidateIdentity).toHaveBeenCalledTimes(2);
   });
   it("forwards the private deletion receipt and binds launch to the owner profile", async () => {
     const { runtime } = fixture();

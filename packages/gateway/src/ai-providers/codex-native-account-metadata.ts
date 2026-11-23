@@ -1,6 +1,9 @@
 import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
+import { recordCodexIdentityReuse } from "../chat/send-timing.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { lstat, stat } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
 
@@ -62,6 +65,42 @@ export interface CodexNativeAccountMetadataReader {
   observeIdentity?: () => Promise<CodexNativeAccountObservation>;
   /** Private outcome of the final proof; unavailable by default, never authority. */
   identityFailureState?: (metadata: CodexNativeAccountMetadata) => CodexNativeObservationState;
+  /** Drop any reusable admission identity (login, logout, executable change). */
+  invalidateIdentity?: () => void;
+}
+
+/**
+ * Upper bound for admission identity reuse, counted from the last app-server
+ * proof. Within it, a reused identity is served as a new 30 s observation only
+ * after the credential file digest, executable, and Codex config are rechecked.
+ */
+export const CODEX_IDENTITY_REUSE_MAX_MS = 10 * 60_000;
+const OBSERVATION_FRESHNESS_MS = 30_000;
+
+/** Stat identity of the Codex config (credential store backend lives there); absent is its own state. */
+async function defaultConfigFingerprint(path: string): Promise<string | null> {
+  try {
+    const info = await lstat(path);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch (error: unknown) {
+    if (!(error instanceof Error && "code" in error)) throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    console.warn("[provider-settings] Codex config fingerprint unavailable:", error.name);
+    return null;
+  }
+}
+
+async function defaultExecutableFingerprint(executable: string): Promise<string | null> {
+  // A bare command name has no stable file to compare; treat it as one fixed identity.
+  if (!isAbsolute(executable)) return `command:${executable}`;
+  try {
+    const info = await stat(executable);
+    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  } catch (error: unknown) {
+    if (!(error instanceof Error && "code" in error)) throw error;
+    console.warn("[provider-settings] Codex executable fingerprint unavailable:", error.name);
+    return null;
+  }
 }
 
 type SpawnProcess = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
@@ -71,6 +110,18 @@ export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
   readCredentialFileProof?: () => Promise<string | null>;
+  /**
+   * Opt-in, owner-reviewed: reuse one file-backed private identity proof for up
+   * to this long after the app-server proved it (capped at
+   * CODEX_IDENTITY_REUSE_MAX_MS) instead of spawning an app-server per
+   * observe/verify. Every reuse rechecks the auth.json digest, executable, and
+   * config fingerprints; past the 30 s observation freshness the identity is
+   * restamped as a new observation without allowance usage. Off (0) by
+   * default. Runner-side native account proofs remain the execution authority.
+   */
+  identityReuseMs?: number;
+  readExecutableFingerprint?: () => Promise<string | null>;
+  readConfigFingerprint?: () => Promise<string | null>;
 }): CodexNativeAccountMetadataReader {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
   const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true });
@@ -84,9 +135,102 @@ export function createCodexNativeAccountMetadataReader(input: {
   const principals = new WeakMap<CodexNativeAccountMetadata, string>();
   const identityFailures = new WeakMap<CodexNativeAccountMetadata, CodexNativeObservationState>();
   const verificationObservations = new WeakMap<Promise<CodexNativeAccountMetadata | null>, { state: CodexNativeObservationState }>();
+  const reuseMs = Math.max(0, Math.min(input.identityReuseMs ?? 0, CODEX_IDENTITY_REUSE_MAX_MS));
+  const readExecutableFingerprint = input.readExecutableFingerprint ?? (() => defaultExecutableFingerprint(input.executable));
+  const configPath = join(resolve(input.cwd, input.environment.CODEX_HOME ?? ".codex"), "config.toml");
+  const readConfigFingerprint = input.readConfigFingerprint ?? (() => defaultConfigFingerprint(configPath));
+  // Executable and config identity together; null when either cannot be proven.
+  const readRuntimeFingerprint = async () => {
+    const [executable, config] = await Promise.all([readExecutableFingerprint(), readConfigFingerprint()]);
+    return executable === null || config === null ? null : `${executable}#${config}`;
+  };
+  const clock = () => (input.now ?? (() => new Date()))().getTime();
+  // Single entry (size cap 1): at most one reusable identity per reader, and
+  // one reader per runtime owner. Replaced by each new proof, dropped on any
+  // mismatch, expiry, or invalidation. Failed reads never record an entry.
+  let recentIdentity: { value: CodexNativeAccountMetadata; proof: string; credentialProof: string; executable: string; provenAt: number } | null = null;
+  let identityEpoch = 0;
+  const withinReuse = (provenAt: number, time: number) => time >= provenAt && time - provenAt < reuseMs;
+  const reusableIdentity = async (): Promise<CodexNativeAccountMetadata | null> => {
+    const recent = recentIdentity;
+    if (!recent || reuseMs === 0) return null;
+    if (!withinReuse(recent.provenAt, clock())) {
+      if (recentIdentity === recent) recentIdentity = null;
+      return null;
+    }
+    const epoch = identityEpoch;
+    const [credentialProof, executable] = await Promise.all([readCredentialFileProof(), readRuntimeFingerprint()]);
+    if (epoch !== identityEpoch || recentIdentity !== recent) return null;
+    const time = clock();
+    if (credentialProof !== recent.credentialProof || executable !== recent.executable || !withinReuse(recent.provenAt, time)) {
+      recentIdentity = null;
+      return null;
+    }
+    if (freshAt(recent.value, time)) return recent.value;
+    // The credential source is provably unchanged since the app-server proof:
+    // serve it as a new observation. Allowance usage is never carried forward.
+    const at = new Date(time);
+    const value: CodexNativeAccountMetadata = {
+      accountLabel: recent.value.accountLabel, authMethod: recent.value.authMethod,
+      ...(recent.value.connectionDetails ? { connectionDetails: { ...recent.value.connectionDetails } } : {}),
+      checkedAt: at.toISOString(), staleAfter: new Date(time + OBSERVATION_FRESHNESS_MS).toISOString(),
+    };
+    principals.set(value, recent.proof);
+    bindIdentity(value, recent.proof, recent.credentialProof, true);
+    recent.value = value;
+    return value;
+  };
   const freshAt = (value: CodexNativeAccountMetadata, time: number): boolean =>
     Date.parse(value.checkedAt) <= time && Date.parse(value.staleAfter) > time
     && (!value.usage?.resetsAt || Date.parse(value.usage.resetsAt) > time);
+  // Bound verifier for one observation. A restamped reuse binds the same proof.
+  const bindIdentity = (value: CodexNativeAccountMetadata, proof: string, credentialProof: string | null, fileBackend: boolean) => {
+    bindNativeAccountMetadata(value, async () => {
+      identityFailures.delete(value);
+      const requestedAt = (input.now ?? (() => new Date()))().getTime();
+      if (!freshAt(value, requestedAt)) {
+        if (cached === value) cached = null;
+        return false;
+      }
+      const inFlightIdentity = verification;
+      let valid: boolean;
+      if (inFlightIdentity) {
+        const current = await inFlightIdentity;
+        valid = current !== null && principals.get(current) === proof
+          && freshAt(current, (input.now ?? (() => new Date()))().getTime());
+        // Cleanup can keep a pre-request observation in flight.
+        // Only identity sampled after this request can coalesce.
+        if (!valid) recordIdentityFailure(value, current, proof, inFlightIdentity);
+        if (valid && Date.parse(current!.checkedAt) <= requestedAt) valid = await verifyProof(proof, value);
+      } else {
+        // Public reads do not call bound verifiers: no wait cycle.
+        // A full quota read is not itself the final identity proof.
+        if (pending) {
+          const observed = await pending;
+          if (!observed || principals.get(observed) !== proof) {
+            identityFailures.set(value, observed ? "changed" : "unavailable");
+            return false;
+          }
+        }
+        valid = await verifyProof(proof, value);
+      }
+      // File authority was explicitly established by config/read.
+      // Recheck private file proof after the shared RPC handoff.
+      if (valid && credentialProof) {
+        try {
+          valid = await readCredentialFileProof() === credentialProof;
+          if (!valid) identityFailures.set(value, "changed");
+        }
+        catch (error: unknown) {
+          if (cached === value) cached = null;
+          throw error;
+        }
+      }
+      valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
+      if (!valid && cached === value) cached = null;
+      return valid;
+    }, proof, { credentialIdentityBound: fileBackend && Boolean(credentialProof) });
+  };
   const startVerification = (): Promise<CodexNativeAccountMetadata | null> => {
     const observation = { state: "unavailable" as CodexNativeObservationState };
     const task = read(true, observation).catch((error: unknown) => {
@@ -103,6 +247,10 @@ export function createCodexNativeAccountMetadataReader(input: {
       : verificationObservations.get(task)?.state ?? "unavailable");
   };
   const verifyProof = async (proof: string, value?: CodexNativeAccountMetadata): Promise<boolean> => {
+    if (reuseMs > 0) {
+      const reused = await reusableIdentity();
+      if (reused && principals.get(reused) === proof) return true;
+    }
     const task = verification ?? startVerification();
     const current = await task;
     const valid = current !== null && principals.get(current) === proof;
@@ -115,6 +263,8 @@ export function createCodexNativeAccountMetadataReader(input: {
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
     if (!identityOnly && waitMs > 0) return null;
     if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    const readEpoch = identityEpoch;
+    const executableAtStart = reuseMs > 0 ? await readRuntimeFingerprint() : null;
     // Tentative evidence precedes process startup: the app-server can cache
     // account state at spawn. It becomes usable only after effective file authority.
     const tentativeCredentialProof = await readCredentialFileProof();
@@ -242,51 +392,12 @@ export function createCodexNativeAccountMetadataReader(input: {
               if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
                 const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
                 principals.set(value, proof);
-                bindNativeAccountMetadata(value, async () => {
-                  identityFailures.delete(value);
-                  const requestedAt = (input.now ?? (() => new Date()))().getTime();
-                  if (!freshAt(value, requestedAt)) {
-                    if (cached === value) cached = null;
-                    return false;
-                  }
-                  const inFlightIdentity = verification;
-                  let valid: boolean;
-                  if (inFlightIdentity) {
-                    const current = await inFlightIdentity;
-                    valid = current !== null && principals.get(current) === proof
-                      && freshAt(current, (input.now ?? (() => new Date()))().getTime());
-                    // Cleanup can keep a pre-request observation in flight.
-                    // Only identity sampled after this request can coalesce.
-                    if (!valid) recordIdentityFailure(value, current, proof, inFlightIdentity);
-                    if (valid && Date.parse(current!.checkedAt) <= requestedAt) valid = await verifyProof(proof, value);
-                  } else {
-                    // Public reads do not call bound verifiers: no wait cycle.
-                    // A full quota read is not itself the final identity proof.
-                    if (pending) {
-                      const observed = await pending;
-                      if (!observed || principals.get(observed) !== proof) {
-                        identityFailures.set(value, observed ? "changed" : "unavailable");
-                        return false;
-                      }
-                    }
-                    valid = await verifyProof(proof, value);
-                  }
-                  // File authority was explicitly established by config/read.
-                  // Recheck private file proof after the shared RPC handoff.
-                  if (valid && credentialProof) {
-                    try {
-                      valid = await readCredentialFileProof() === credentialProof;
-                      if (!valid) identityFailures.set(value, "changed");
-                    }
-                    catch (error: unknown) {
-                      if (cached === value) cached = null;
-                      throw error;
-                    }
-                  }
-                  valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
-                  if (!valid && cached === value) cached = null;
-                  return valid;
-                }, proof, { credentialIdentityBound: fileBackend && Boolean(credentialProof) });
+                // Only file-backed proofs can be cheaply rechecked; an invalidation
+                // after this read started must not repopulate reuse.
+                if (reuseMs > 0 && fileBackend && credentialProof && executableAtStart && readEpoch === identityEpoch) {
+                  recentIdentity = { value, proof, credentialProof, executable: executableAtStart, provenAt: finalAccountObservedAt.getTime() };
+                }
+                bindIdentity(value, proof, credentialProof, fileBackend);
               }
               finish(value);
             })().catch((error: unknown) => {
@@ -306,6 +417,12 @@ export function createCodexNativeAccountMetadataReader(input: {
       const result = (async (): Promise<CodexNativeAccountObservation> => {
         if (preceding) await preceding;
         if (verification) await verification;
+        const reused = reuseMs > 0 ? await reusableIdentity() : null;
+        if (reuseMs > 0) recordCodexIdentityReuse(reused ? "hit" : "miss");
+        if (reused) {
+          cached = reused;
+          return { metadata: reused, state: "observed" };
+        }
         const metadata = await read(true, observation);
         cached = metadata && principals.has(metadata) ? metadata : null;
         return { metadata, state: metadata ? "observed" : observation.state };
@@ -375,5 +492,6 @@ export function createCodexNativeAccountMetadataReader(input: {
   };
   source.observeIdentity = observeIdentity;
   source.identityFailureState = value => identityFailures.get(value) ?? "unavailable";
+  source.invalidateIdentity = () => { identityEpoch += 1; recentIdentity = null; };
   return source;
 }
