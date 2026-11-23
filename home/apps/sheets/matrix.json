@@ -5,6 +5,21 @@
   "icon": "grid",
   "author": "system",
   "version": "0.1.0",
+  "storage": {
+    "tables": {
+      "recent_files": {
+        "columns": {
+          "path": "text",
+          "name": "text",
+          "opened_at": "timestamptz"
+        },
+        "indexes": [
+          "path",
+          "opened_at"
+        ]
+      }
+    }
+  },
   "slug": "sheets",
   "runtime": "vite",
   "runtimeVersion": "^1.0.0",

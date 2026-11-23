@@ -1,0 +1,505 @@
+/**
+ * One open spreadsheet: the engine workbook, its undo history and its file.
+ * See `./index.ts` for how to use it.
+ */
+
+import {
+  type Cell,
+  type CellAddress,
+  type CellRange,
+  type CellStylePatch,
+  type FrozenPanes,
+  type RawCell,
+  type ResolveChangesResult,
+  type SheetId,
+  type SheetInfo,
+  type SheetRangeRef,
+  type Workbook,
+  createXlsx,
+  isOfficeError,
+} from "./engine";
+import { type SessionCellEdit, type Transaction, applyCellEdit, applyInputs, clampRange } from "./edits";
+import { type LoadedWorkbook, SheetSessionError, fileName, formatOfPath, loadWorkbook, serializeWorkbook, toSessionError } from "./file-io";
+import { affectedRange } from "./history";
+import { type RecentFiles, createRecentFiles } from "./recents";
+import { Recorder } from "./recorder";
+import { DEFAULT_AUTOSAVE_DELAY_MS, SaveController, type SaveTarget } from "./save";
+import type {
+  EditResult,
+  SaveOutcome,
+  SessionChangeCause,
+  SessionDeps,
+  SessionEvent,
+  SessionFailure,
+  SessionListener,
+  SessionState,
+  SessionTimers,
+} from "./types";
+
+const MAX_LISTENERS = 64;
+const DEFAULT_TIMERS: SessionTimers = {
+  set: (callback, ms) => setTimeout(callback, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+function failure(error: unknown): SessionFailure {
+  const mapped = toSessionError(error);
+  return { ok: false, code: mapped.code, message: mapped.message };
+}
+
+const OK: EditResult = { ok: true };
+
+export class SheetSession {
+  readonly recents: RecentFiles;
+  private wb: Workbook;
+  private recorder: Recorder;
+  private readonly saver: SaveController;
+  private readonly listeners = new Set<SessionListener>();
+  private readonly now: () => number;
+  private readonly log: (message: string, error: unknown) => void;
+  private state: SessionState;
+  private editSeq = 0;
+  private revision = 0;
+  private activeSheet: SheetId;
+  private calcComplete = true;
+  private untracked = false;
+  private mutating = false;
+  private disposed = false;
+  private readonly unsavedName: string;
+
+  constructor(
+    private readonly deps: SessionDeps,
+    loaded: LoadedWorkbook,
+    target: Pick<SaveTarget, "path" | "format" | "version">,
+    unsavedName = "Untitled.xlsx",
+  ) {
+    this.now = deps.now ?? Date.now;
+    this.log = deps.log ?? (() => undefined);
+    this.unsavedName = unsavedName;
+    this.wb = loaded.workbook;
+    this.recorder = new Recorder(this.wb, () => this.onUntracked());
+    this.activeSheet = this.firstVisibleSheet();
+    this.recents = createRecentFiles(deps.db, { now: this.now, log: this.log });
+    this.saver = new SaveController(
+      {
+        serialize: (format, csv) => serializeWorkbook(this.wb, format, csv),
+        editSeq: () => this.editSeq,
+        changed: () => this.refresh(true),
+        log: this.log,
+      },
+      { files: deps.files, timers: deps.timers ?? DEFAULT_TIMERS, now: this.now, delayMs: deps.autosaveDelayMs ?? DEFAULT_AUTOSAVE_DELAY_MS },
+      { ...target, csv: loaded.csv },
+    );
+    this.state = this.buildState();
+  }
+
+  // ------------------------------------------------------------ reading
+
+  /** The engine workbook. Read from it freely; edit through the session so that undo, calculation and saving follow. */
+  get workbook(): Workbook {
+    return this.wb;
+  }
+
+  getState(): SessionState {
+    return this.state;
+  }
+
+  /** Calls back after every change. Returns the function that stops it. */
+  subscribe(listener: SessionListener): () => void {
+    if (this.listeners.size >= MAX_LISTENERS) throw new SheetSessionError("failed", { message: "Too many listeners on one session." });
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  sheets(): SheetInfo[] {
+    return this.wb.listSheets();
+  }
+
+  sheet(id: SheetId): SheetInfo {
+    return this.wb.getSheet(id);
+  }
+
+  cell(sheet: SheetId, row: number, col: number): Cell {
+    return this.wb.getCell(sheet, { row, col });
+  }
+
+  /** Value, formula and style id without formatting: cheap enough for scans. */
+  raw(sheet: SheetId, row: number, col: number): RawCell {
+    return this.recorder.internals.readRawCell(sheet, { row, col });
+  }
+
+  isBlank(sheet: SheetId, row: number, col: number): boolean {
+    const cell = this.raw(sheet, row, col);
+    return cell.value === null && cell.formula === null;
+  }
+
+  setActiveSheet(id: SheetId): void {
+    this.wb.getSheet(id);
+    if (this.activeSheet === id) return;
+    this.activeSheet = id;
+    this.refresh(true);
+  }
+
+  // ------------------------------------------------------------ state and events
+
+  private firstVisibleSheet(): SheetId {
+    const sheets = this.wb.listSheets();
+    const sheet = sheets.find((entry) => entry.state === "visible") ?? sheets[0];
+    if (sheet === undefined) throw new SheetSessionError("corrupt");
+    return sheet.id;
+  }
+
+  private buildState(): SessionState {
+    const history = this.recorder.history;
+    const path = this.saver.path;
+    return {
+      revision: this.revision,
+      path,
+      name: path === null ? this.unsavedName : fileName(path),
+      format: this.saver.format,
+      dirty: this.saver.dirty,
+      saveState: this.saver.saveState,
+      saveError: this.saver.saveError,
+      lastSavedAt: this.saver.lastSavedAt,
+      autosave: this.saver.autosave,
+      canUndo: history.canUndo,
+      canRedo: history.canRedo,
+      undoLabel: history.undoLabel,
+      redoLabel: history.redoLabel,
+      activeSheetId: this.activeSheet,
+      calcComplete: this.calcComplete,
+      valuesOnlyFormat: this.saver.format !== "xlsx",
+    };
+  }
+
+  private emit(event: SessionEvent): void {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(event);
+      } catch (error: unknown) {
+        this.log("a session listener failed", error);
+      }
+    }
+  }
+
+  /** Replaces the state snapshot when a field changed. With `notify`, tells listeners about a state-only change. */
+  private refresh(notify: boolean): void {
+    if (this.disposed) return;
+    const next = this.buildState();
+    const previous = this.state as unknown as Record<string, unknown>;
+    const changed = Object.entries(next).some(([key, value]) => previous[key] !== value);
+    if (!changed) return;
+    this.state = next;
+    if (notify) this.emit({ type: "state" });
+  }
+
+  private afterChange(cause: SessionChangeCause, affected: SheetRangeRef | null): void {
+    const result = this.wb.recalc({ now: new Date(this.now()).toISOString() });
+    this.calcComplete = result.complete;
+    this.revision += 1;
+    if (cause !== "load") {
+      this.editSeq += 1;
+      this.saver.noteEdit();
+    }
+    if (this.wb.listSheets().every((sheet) => sheet.id !== this.activeSheet)) this.activeSheet = this.firstVisibleSheet();
+    this.refresh(false);
+    this.emit({ type: "change", cause, recalculated: result.changed, affected });
+  }
+
+  private onUntracked(): void {
+    if (this.mutating || this.untracked || this.disposed) return;
+    this.untracked = true;
+    queueMicrotask(() => {
+      this.untracked = false;
+      if (this.disposed) return;
+      this.recorder.history.clear();
+      this.afterChange("external", null);
+    });
+  }
+
+  // ------------------------------------------------------------ transactions
+
+  private transaction(): Transaction {
+    const recorder = this.recorder;
+    const workbook = this.wb;
+    return {
+      workbook,
+      insertRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, true),
+      deleteRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, false),
+      insertColumns: (sheet, index, count) => recorder.axis(sheet, "col", index, count, true),
+      deleteColumns: (sheet, index, count) => recorder.axis(sheet, "col", index, count, false),
+      setColumnWidths: (sheet, cols, width) => recorder.sizes(sheet, "col", cols, width),
+      setRowHeights: (sheet, rows, heightPt) => recorder.sizes(sheet, "row", rows, heightPt),
+      mergeCells: (sheet, range) => recorder.merges(sheet, () => workbook.mergeCells(sheet, range)),
+      unmergeCells: (sheet, range) => recorder.merges(sheet, () => workbook.unmergeCells(sheet, range)),
+      setFrozenPanes: (sheet, frozen) => recorder.frozen(sheet, frozen),
+      renameSheet: (sheet, name) => recorder.rename(sheet, name),
+    };
+  }
+
+  /**
+   * Runs edits as one undoable step, then recalculates and tells listeners.
+   * When `run` throws, everything it did is taken back and the failure is
+   * returned. A call inside another transaction joins it.
+   */
+  transact(label: string, run: (tx: Transaction) => void): EditResult {
+    if (this.disposed) return failure(new SheetSessionError("failed"));
+    if (this.recorder.active) {
+      run(this.transaction());
+      return OK;
+    }
+    this.recorder.begin(label);
+    try {
+      run(this.transaction());
+    } catch (error: unknown) {
+      this.recorder.rollback();
+      if (!isOfficeError(error) && !(error instanceof SheetSessionError)) this.log("an edit failed", error);
+      return failure(error);
+    }
+    if (this.recorder.commit().changed) this.afterChange("edit", null);
+    return OK;
+  }
+
+  /**
+   * Runs a change that cannot be undone here: proposals, accepting and
+   * rejecting changes, adding or removing a sheet. Clears the undo history.
+   */
+  mutate<T>(run: (workbook: Workbook) => T): T {
+    if (this.disposed) throw new SheetSessionError("failed");
+    this.mutating = true;
+    try {
+      return run(this.wb);
+    } finally {
+      this.mutating = false;
+      this.recorder.history.clear();
+      this.afterChange("external", null);
+    }
+  }
+
+  private replay(direction: "undo" | "redo"): EditResult {
+    if (this.disposed || this.recorder.active) return failure(new SheetSessionError("failed"));
+    let entry;
+    try {
+      entry = direction === "undo" ? this.recorder.undo() : this.recorder.redo();
+    } catch (error: unknown) {
+      // The history no longer fits the workbook: drop it instead of failing again and again.
+      this.log(`${direction} failed`, error);
+      this.recorder.history.clear();
+      this.afterChange("external", null);
+      return failure(error);
+    }
+    if (entry === null) return OK;
+    if (entry === "blocked") return failure(new SheetSessionError("not_allowed"));
+    this.afterChange(direction, affectedRange(entry));
+    return OK;
+  }
+
+  undo(): EditResult {
+    return this.replay("undo");
+  }
+
+  redo(): EditResult {
+    return this.replay("redo");
+  }
+
+  // ------------------------------------------------------------ edits
+
+  /** Sets a cell from text as typed. A formula that does not parse fails with `formula` and changes nothing. */
+  setCellInput(sheet: SheetId, address: CellAddress, input: string): EditResult {
+    return this.transact("Typing", (tx) => tx.workbook.setCellInput(sheet, address, input));
+  }
+
+  /** Writes rows of typed text from `start`. Text that looks like a formula but does not parse is kept as text. */
+  setInputs(sheet: SheetId, start: CellAddress, rows: ReadonlyArray<ReadonlyArray<string>>, label = "Paste"): EditResult {
+    return this.transact(label, (tx) => applyInputs(tx.workbook, sheet, start, rows));
+  }
+
+  applyEdits(edits: readonly SessionCellEdit[], label = "Edit"): EditResult {
+    return this.transact(label, (tx) => {
+      for (const edit of edits) applyCellEdit(tx.workbook, edit);
+    });
+  }
+
+  clear(sheet: SheetId, ranges: readonly CellRange[], what: "contents" | "formats" | "all" = "contents"): EditResult {
+    return this.transact("Clear", (tx) => {
+      for (const range of ranges) tx.workbook.clearRange(sheet, range, what);
+    });
+  }
+
+  /** Applies a style patch. A whole-row or whole-column range is cut to the used area plus a margin. */
+  setStyle(sheet: SheetId, ranges: readonly CellRange[], patch: CellStylePatch): EditResult {
+    return this.transact("Format", (tx) => {
+      for (const range of ranges) tx.workbook.setStyle(sheet, clampRange(tx.workbook, sheet, range), patch);
+    });
+  }
+
+  insertRows(sheet: SheetId, index: number, count: number): EditResult {
+    return this.transact("Insert rows", (tx) => tx.insertRows(sheet, index, count));
+  }
+
+  deleteRows(sheet: SheetId, index: number, count: number): EditResult {
+    return this.transact("Delete rows", (tx) => tx.deleteRows(sheet, index, count));
+  }
+
+  insertColumns(sheet: SheetId, index: number, count: number): EditResult {
+    return this.transact("Insert columns", (tx) => tx.insertColumns(sheet, index, count));
+  }
+
+  deleteColumns(sheet: SheetId, index: number, count: number): EditResult {
+    return this.transact("Delete columns", (tx) => tx.deleteColumns(sheet, index, count));
+  }
+
+  setColumnWidths(sheet: SheetId, cols: readonly number[], width: number | null): EditResult {
+    return this.transact("Column width", (tx) => tx.setColumnWidths(sheet, cols, width));
+  }
+
+  setRowHeights(sheet: SheetId, rows: readonly number[], heightPt: number | null): EditResult {
+    return this.transact("Row height", (tx) => tx.setRowHeights(sheet, rows, heightPt));
+  }
+
+  mergeCells(sheet: SheetId, range: CellRange): EditResult {
+    return this.transact("Merge cells", (tx) => tx.mergeCells(sheet, range));
+  }
+
+  unmergeCells(sheet: SheetId, range: CellRange): EditResult {
+    return this.transact("Unmerge cells", (tx) => tx.unmergeCells(sheet, range));
+  }
+
+  setFrozenPanes(sheet: SheetId, frozen: FrozenPanes): EditResult {
+    return this.transact("Freeze panes", (tx) => tx.setFrozenPanes(sheet, frozen));
+  }
+
+  renameSheet(sheet: SheetId, name: string): EditResult {
+    return this.transact("Rename sheet", (tx) => tx.renameSheet(sheet, name));
+  }
+
+  /** Adds a sheet and makes it active. Not undoable; clears the undo history. */
+  addSheet(name?: string): EditResult & { sheet?: SheetId } {
+    try {
+      const taken = new Set(this.wb.listSheets().map((sheet) => sheet.name.toLowerCase()));
+      let chosen = name;
+      for (let n = taken.size + 1; chosen === undefined; n++) if (!taken.has(`sheet${n}`)) chosen = `Sheet${n}`;
+      const wanted = chosen;
+      const added = this.mutate((workbook) => workbook.addSheet(wanted));
+      this.setActiveSheet(added.id);
+      return { ok: true, sheet: added.id };
+    } catch (error: unknown) {
+      return failure(error);
+    }
+  }
+
+  /** Removes a sheet. Not undoable; clears the undo history. */
+  removeSheet(sheet: SheetId): EditResult {
+    try {
+      this.mutate((workbook) => workbook.removeSheet(sheet));
+      return OK;
+    } catch (error: unknown) {
+      return failure(error);
+    }
+  }
+
+  /** Accepts proposed changes, then recalculates. Not undoable. */
+  acceptChanges(ids: readonly string[] | "all"): ResolveChangesResult {
+    return this.mutate((workbook) => workbook.acceptChanges(ids));
+  }
+
+  /** Rejects proposed changes, then recalculates. Not undoable. */
+  rejectChanges(ids: readonly string[] | "all"): ResolveChangesResult {
+    return this.mutate((workbook) => workbook.rejectChanges(ids));
+  }
+
+  // ------------------------------------------------------------ file
+
+  /** Saves to the file's path. `conflict` means the file changed on disk: offer {@link reload} or {@link saveCopy}. */
+  save(): Promise<SaveOutcome> {
+    return this.saver.save();
+  }
+
+  /** Saves under a new path, which must not exist yet, and continues there. The extension decides the format. */
+  async saveAs(path: string): Promise<SaveOutcome> {
+    const outcome = await this.saver.saveAs(path);
+    if (outcome.status === "saved") void this.recents.touch(outcome.path);
+    return outcome;
+  }
+
+  /** Saves beside the file as "name (copy).xlsx" and continues there. Resolves a conflict without losing edits. */
+  async saveCopy(): Promise<SaveOutcome> {
+    const outcome = await this.saver.saveCopy();
+    if (outcome.status === "saved") void this.recents.touch(outcome.path);
+    return outcome;
+  }
+
+  /** Saves pending edits now. Call before closing the session. */
+  flush(): Promise<SaveOutcome> {
+    return this.saver.flush();
+  }
+
+  setAutosave(on: boolean): void {
+    this.saver.setAutosave(on);
+  }
+
+  /**
+   * Reads the file again and replaces the workbook, dropping local edits and
+   * the undo history. When reading fails the local workbook stays as it is.
+   */
+  reload(): Promise<EditResult> {
+    return this.saver.enqueue(async () => {
+      const path = this.saver.path;
+      if (this.disposed || path === null) return failure(new SheetSessionError("failed"));
+      try {
+        const content = await this.deps.files.read(path);
+        const loaded = await loadWorkbook(content.bytes, this.saver.format);
+        // Closed while reading: this document is no longer the one on screen.
+        if (this.disposed) return failure(new SheetSessionError("failed"));
+        const activeName = this.wb.getSheet(this.activeSheet).name;
+        this.recorder.detach();
+        this.wb = loaded.workbook;
+        this.recorder = new Recorder(this.wb, () => this.onUntracked());
+        this.activeSheet = this.wb.getSheetByName(activeName)?.id ?? this.firstVisibleSheet();
+        this.saver.adopt({ path, format: this.saver.format, version: content.version, csv: loaded.csv });
+        this.afterChange("load", null);
+        return OK;
+      } catch (error: unknown) {
+        this.log("reload failed", error);
+        return failure(error);
+      }
+    });
+  }
+
+  /** Stops timers and listeners. Pending edits are not saved: call {@link flush} first. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.saver.dispose();
+    this.recorder.detach();
+    this.listeners.clear();
+  }
+
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+}
+
+/** Opens a file from the owner's home. Throws {@link SheetSessionError}; the file is never written when opening fails. */
+export async function openSheetSession(deps: SessionDeps, path: string): Promise<SheetSession> {
+  const format = formatOfPath(path);
+  if (format === null) throw new SheetSessionError("unsupported");
+  let content;
+  try {
+    content = await deps.files.read(path);
+  } catch (error: unknown) {
+    throw toSessionError(error);
+  }
+  const loaded = await loadWorkbook(content.bytes, format);
+  const session = new SheetSession(deps, loaded, { path: content.path, format, version: content.version });
+  void session.recents.touch(content.path);
+  return session;
+}
+
+/** A new, empty workbook that has no file yet. `saveAs` gives it one. */
+export function createSheetSession(deps: SessionDeps, options: { name?: string } = {}): SheetSession {
+  const loaded: LoadedWorkbook = { workbook: createXlsx(), csv: null };
+  return new SheetSession(deps, loaded, { path: null, format: "xlsx", version: null }, options.name);
+}
