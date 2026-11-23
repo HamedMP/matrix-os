@@ -94,6 +94,24 @@ describe("added machines over ssh", () => {
     });
   });
 
+  // Fault detected (Greptile, #3579): the per-name queue took unlimited work in the main process.
+  it("refuses machine requests past the queue's limit instead of piling them up", async () => {
+    let release: () => void = () => undefined;
+    const runCoreCli = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: [machine("box", "me@box")] } });
+      if (call.method === "machine.rm") core.reply(call.id, { result: {} });
+    }, { runCoreCli });
+    const install = host.installMachine({ target: "me@box", name: "box" });
+    await vi.waitFor(() => expect(runCoreCli).toHaveBeenCalled());
+    const removes = [host.removeMachine("box"), host.removeMachine("box"), host.removeMachine("box")];
+    expect(await host.installMachine({ target: "me@box", name: "box" })).toEqual({ ok: false, reason: "busy" });
+    await expect(host.removeMachine("box")).rejects.toThrow("too many machine requests waiting");
+    release();
+    await Promise.all([install, ...removes]);
+    await expect(host.removeMachine("box")).resolves.toBeUndefined();
+  });
+
   // Fault detected (Greptile, #3570): a failed save left the machine added without its settings,
   // and an unreadable settings file was replaced, erasing every machine's settings.
   it("takes the machine back out when its settings cannot be saved, and never overwrites an unreadable file", async () => {

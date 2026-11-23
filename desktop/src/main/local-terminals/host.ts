@@ -96,6 +96,14 @@ export interface LocalTerminalHostSink extends HcSessionSink {
   facts?(terminals: LocalTerminalFact[]): void;
 }
 
+/** Machines' add, install and remove wait in a bounded queue (see forMachine). */
+const MACHINE_QUEUE_NAMES = 64;
+const MACHINE_QUEUE_DEPTH = 4;
+
+export class MachineQueueFullError extends Error {
+  constructor() { super("too many machine requests waiting"); }
+}
+
 export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: LocalTerminalHostSink) {
   const now = options.now ?? Date.now;
   const socketPath = join(options.runtimeDir, "herdr-core", `${SESSION}.sock`);
@@ -202,15 +210,26 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     ...(options.runCoreCli ? { run: options.runCoreCli } : {}),
   });
   // Add, install and remove of one machine name run one after another, so a remove and re-add of the
-  // name can never land between an install and the save of its settings. Bounded: an entry lives
-  // only while that name has work queued.
-  const machineQueue = new Map<string, Promise<unknown>>();
+  // name can never land between an install and the save of its settings. Bounded: an entry lives only
+  // while that name has work queued, at most MACHINE_QUEUE_NAMES names wait, each with at most
+  // MACHINE_QUEUE_DEPTH jobs; past that new work is refused, never an active guard evicted.
+  const machineQueue = new Map<string, { tail: Promise<unknown>; pending: number }>();
   const forMachine = <T>(name: string, work: () => Promise<T>): Promise<T> => {
-    const previous = machineQueue.get(name) ?? Promise.resolve();
-    const next = previous.then(work, work);
-    const settled = next.catch(() => undefined);
-    machineQueue.set(name, settled);
-    void settled.then(() => { if (machineQueue.get(name) === settled) machineQueue.delete(name); });
+    const entry = machineQueue.get(name);
+    if (entry ? entry.pending >= MACHINE_QUEUE_DEPTH : machineQueue.size >= MACHINE_QUEUE_NAMES) {
+      return Promise.reject(new MachineQueueFullError());
+    }
+    const queued = entry ?? { tail: Promise.resolve(), pending: 0 };
+    const next = queued.tail.then(work, work);
+    // The caller gets the job's result or error from `next`; the queue only waits for it to settle.
+    const release = () => {
+      queued.pending -= 1;
+      if (queued.pending === 0 && machineQueue.get(name) === queued) machineQueue.delete(name);
+    };
+    const settled = next.then(release, release);
+    queued.tail = settled;
+    queued.pending += 1;
+    machineQueue.set(name, queued);
     return next;
   };
   async function addMachineNow(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
@@ -401,7 +420,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
 
     /** Adds a machine that has no core or an old one, installing the app's own core there. */
     installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
-      return forMachine(input.name, () => installMachineNow(input));
+      return forMachine(input.name, () => installMachineNow(input)).catch((error: unknown) => {
+        if (error instanceof MachineQueueFullError) return { ok: false, reason: "busy" } as const;
+        throw error;
+      });
     },
 
     /** Brings an added machine's core to the app's version; its terminals keep running. */
