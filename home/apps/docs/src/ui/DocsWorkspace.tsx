@@ -121,6 +121,7 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
       {state.conflict === null && state.saveStatus === "error" && state.saveError !== null && <SaveErrorBanner message={state.saveError.message} onRetry={() => void save()} />}
       {findOpen && (
         <FindReplaceBar
+          key={state.documentKey}
           session={session}
           editor={editor}
           viewMode={viewMode}
@@ -196,7 +197,7 @@ export function DocsWorkspace({ session, state, onOpen, onNew, onClose, onSaveAs
       >
         <div ref={setPane} className="docs-pane" style={{ "--docs-zoom": zoom / 100 } as CSSProperties}>
           <DocumentEditor session={session} ref={setEditor} viewMode={viewMode} ariaLabel="Document" />
-          <ReferenceLayer session={session} editor={editor} docVersion={derivedVersion} container={pane} />
+          <ReferenceLayer key={state.documentKey} session={session} editor={editor} docVersion={derivedVersion} container={pane} />
           <ReviewDocumentLayer controller={review} container={pane} readOnly={readOnly} />
         </div>
       </AppFrame>

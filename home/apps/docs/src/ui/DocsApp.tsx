@@ -86,7 +86,6 @@ function DocsHome({ handles, files, author }: { handles: SessionHandles; files: 
     <>
       {hasDocument ? (
         <DocsWorkspace
-          key={state.documentKey}
           session={session}
           state={state}
           onOpen={() => void openWithPicker()}

@@ -71,7 +71,7 @@ export function ReferenceLayer({ session, editor, docVersion, container }: Refer
     };
   }, [editor, index]);
 
-  // The workspace remounts this layer for every document, so the way back never leads into another one.
+  // The workspace remounts this layer for every document (keyed by it), so the way back never leads into another one.
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelHide = () => {
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
