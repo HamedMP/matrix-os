@@ -72,7 +72,8 @@ export abstract class EditorBase {
     this.input.attach();
     this.cleanups.push(this.session.onChange((change) => this.onSessionChange(change)));
     this.session.setSelectionSource(() => {
-      const selection = this.liveSelection();
+      // While composing, the DOM holds the browser's uncommitted text: the place the composition goes is the one to carry through edits.
+      const selection = this.composition !== null ? this.composition.selection : this.liveSelection();
       return selection === null ? null : { anchor: selection.anchor, focus: selection.focus };
     });
     this.cleanups.push(() => {
@@ -176,6 +177,12 @@ export abstract class EditorBase {
     }
     if (this.composition !== null) {
       this.deferredRender = true;
+      // Someone else's edit moved the text around the composition: the composed text goes where its place moved to.
+      const carried = change.selection;
+      const document = this.session.document;
+      if (carried !== null && this.composition.selection !== null && document !== null) {
+        this.composition.selection = toSelection(ModelIndex.build(document.getView()), carried.anchor, carried.focus);
+      }
       return;
     }
     const before = this.applying ? null : (change.selection ?? this.liveSelection());
