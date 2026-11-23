@@ -1,3 +1,4 @@
+import type { OwnerHttpInputProvenance } from "./owner-http-input.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
@@ -164,7 +165,7 @@ export interface UpdateChatInput {
   currentSelection?: CanonicalChatModelSelection;
 }
 
-export interface AdmitTurnInput {
+export interface AdmitTurnInput extends OwnerHttpInputProvenance {
   requestHash?: string;
   chatId: string;
   baseRevision: number;

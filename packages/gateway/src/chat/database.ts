@@ -116,6 +116,8 @@ export interface ChatAttachmentsTable {
 }
 
 export interface ChatTurnsTable {
+  /** Server-only original-input provenance; never projected into public Turn JSON. */
+  owner_http_input: Generated<boolean>;
   id: string;
   chat_id: string;
   client_request_id: string;
@@ -152,6 +154,7 @@ export interface ChatRunsTable {
 }
 
 export interface ChatQueuedTurnsTable {
+  owner_http_input: Generated<boolean>;
   id: string;
   chat_id: string;
   client_request_id: string;
@@ -517,6 +520,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (chat_id, client_request_id)
     )
   `.execute(db);
+  await sql`ALTER TABLE chat_turns ADD COLUMN IF NOT EXISTS owner_http_input BOOLEAN NOT NULL DEFAULT false`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS owner_http_input BOOLEAN NOT NULL DEFAULT false`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS actor_request_id TEXT`.execute(db);

@@ -1,3 +1,4 @@
+import { ownerHttpInputProvenance } from "./owner-http-input.js";
 import { ROUTINE_CREATION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
@@ -613,7 +614,8 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
+        { ...ownerHttpInputProvenance(principal, ownerFromPrincipal(principal)),
+          routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
           previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
           routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },
       );
@@ -642,7 +644,8 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER) },
+        { ...ownerHttpInputProvenance(principal, ownerFromPrincipal(principal)),
+          routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER) },
       );
       return chatJson(context, CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
     } catch (error: unknown) {
