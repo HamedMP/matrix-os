@@ -187,8 +187,8 @@ function focusMainWindow(to?: "settings"): void {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
-  // The same route as the application menu's Settings… item.
-  if (to === "settings") sendEvent("menu:navigate", { kind: "settings" });
+  // The same route as the application menu's Settings… item (the nav.settings shortcut action).
+  if (to === "settings") sendEvent("shortcut:action", { id: "nav.settings" });
 }
 
 // Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
