@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod/v4";
 import { registerLocalTerminalIpc } from "@desktop/main/local-terminals/ipc";
 import type { LocalTerminalHost, LocalTerminalHostStatus } from "@desktop/main/local-terminals/host";
 import { LOCAL_TERMINAL_INVOKE_CHANNELS } from "@desktop/shared/local-terminals";
@@ -167,6 +168,9 @@ describe("local terminal IPC", () => {
     await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "timeout" });
     host.create.mockRejectedValueOnce(new HcCallError("invalid_params"));
     await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "refused" });
+    // Fault detected (Greptile, #3639): a reply without a valid address failed its schema and said nothing.
+    host.create.mockRejectedValueOnce(z.object({ address: z.string() }).safeParse({}).error);
+    await expect(invoke("local-terminal:create", { cols: 80, rows: 24 })).resolves.toEqual({ status: "unavailable", reason: "protocol" });
   });
 
   // Fault detected (Mac, 2026-11-22): every pane of a finished terminal logged a failure with no reason.

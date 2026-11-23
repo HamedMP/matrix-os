@@ -47,6 +47,8 @@ export type ComputerCreateFailure =
 export function createFailure(error: unknown): ComputerCreateFailure {
   if (error instanceof z.ZodError) return { kind: "unexpected" };
   if (!(error instanceof AppError)) return { kind: "unknown" };
+  // A successful answer whose body is not JSON: the API client wraps the parse error.
+  if (error.category === "server" && error.httpStatus === undefined && error.cause instanceof SyntaxError) return { kind: "unexpected" };
   if (error.category === "timeout" || error.category === "offline") return { kind: error.category };
   const status = error.httpStatus;
   if (status === undefined || !Number.isInteger(status) || status < 400 || status > 599) return { kind: "unknown" };

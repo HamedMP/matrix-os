@@ -1,5 +1,6 @@
 // IPC for local terminals. Every channel is Terminal-window-only; requests are
 // validated here again, and failures reach the renderer as fixed outcomes.
+import { z } from "zod/v4";
 import { INVOKE_CHANNELS, type InvokeRequest, type InvokeResponse } from "../../shared/ipc-contract";
 import { LOCAL_TERMINAL_INVOKE_CHANNELS, type LocalCreateFailure } from "../../shared/local-terminals";
 import { describeError } from "./describe-error";
@@ -9,7 +10,8 @@ import { LocalTerminalFolderError, type LocalTerminalHost } from "./host";
 /** A failed start as a bounded kind for the window; the error itself stays in this log. */
 export function localCreateFailure(error: unknown): LocalCreateFailure {
   if (error instanceof HcCallError) return "refused";
-  if (error instanceof HcProtocolError) return "protocol";
+  // An answer the core sent that does not have the expected shape is unexpected too.
+  if (error instanceof HcProtocolError || error instanceof z.ZodError) return "protocol";
   if (error instanceof LocalTerminalFolderError) return "folder";
   const message = error instanceof Error ? error.message : "";
   if (/did not answer|timed out/.test(message)) return "timeout";
