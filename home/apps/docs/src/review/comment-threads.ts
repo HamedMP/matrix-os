@@ -30,14 +30,22 @@ export interface ThreadFilter {
   showResolved: boolean;
 }
 
-/** The thread root of a comment: follows `parentId` up, stopping on unknown parents and cycles. */
-function rootOf(comment: DocxComment, byId: ReadonlyMap<CommentId, DocxComment>): DocxComment {
+/**
+ * The thread root of a comment: follows `parentId` up. An unknown parent ends
+ * the walk; a cycle (a damaged file) ends at the cycle's first-listed comment,
+ * so every member of the cycle lands in the same thread.
+ */
+function rootOf(comment: DocxComment, byId: ReadonlyMap<CommentId, DocxComment>, listed: ReadonlyMap<CommentId, number>): DocxComment {
+  const chain: DocxComment[] = [comment];
   let current = comment;
-  const seen = new Set<CommentId>([current.id]);
   while (current.parentId !== null) {
     const parent = byId.get(current.parentId);
-    if (parent === undefined || seen.has(parent.id)) break;
-    seen.add(parent.id);
+    if (parent === undefined) break;
+    const seenAt = chain.indexOf(parent);
+    if (seenAt >= 0) {
+      return chain.slice(seenAt).reduce((first, member) => (listed.get(member.id)! < listed.get(first.id)! ? member : first));
+    }
+    chain.push(parent);
     current = parent;
   }
   return current;
@@ -48,10 +56,10 @@ const LAST: PositionKey = { paragraph: Number.MAX_SAFE_INTEGER, offset: Number.M
 /** Threads in document order of their anchors; replies oldest first. */
 export function buildThreads(comments: readonly DocxComment[], index: ModelIndex): CommentThread[] {
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
+  const listed = new Map(comments.map((comment, at) => [comment.id, at]));
   const threads = new Map<CommentId, CommentThread>();
-  const listed = new Map<CommentId, number>();
-  comments.forEach((comment, at) => {
-    const root = rootOf(comment, byId);
+  comments.forEach((comment) => {
+    const root = rootOf(comment, byId, listed);
     let thread = threads.get(root.id);
     if (thread === undefined) {
       thread = {
@@ -64,7 +72,6 @@ export function buildThreads(comments: readonly DocxComment[], index: ModelIndex
         position: root.range === null ? LAST : positionKey(index, root.range.start),
       };
       threads.set(root.id, thread);
-      listed.set(root.id, at);
     }
     if (comment.id !== root.id) thread.replies.push(comment);
   });
