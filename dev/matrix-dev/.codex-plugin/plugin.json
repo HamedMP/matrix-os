@@ -1,0 +1,15 @@
+{
+  "name": "matrix-dev",
+  "description": "Matrix OS engineering workflow: PR loop, stack reviews, releases, daily updates, and chat wrap-up",
+  "author": {
+    "name": "Matrix OS"
+  },
+  "repository": "https://github.com/HamedMP/matrix-os",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Matrix OS dev",
+    "shortDescription": "Engineering workflow skills for the Matrix OS repository",
+    "developerName": "Matrix OS",
+    "category": "Productivity"
+  }
+}

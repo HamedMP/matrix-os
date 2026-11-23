@@ -1,147 +1,129 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then mark the PR ready for review and wait for its CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
+description: Take one Matrix OS change from a manual git worktree to a merge-ready PR - verify the Linear ticket, implement and validate, open a draft PR, get Greptile to 5/5 on the current head, mark it ready, and watch CI until it passes. Use when asked to ship a change as a PR, run the worktree to PR to monitor workflow, or get a PR to Greptile 5/5 plus green CI.
 ---
 
 # Worktree PR Monitor
 
-Use this skill only when the requester explicitly asks for the manual git
-worktree -> PR -> monitor workflow. It keeps `/home/deploy/matrix-os` on `main`
-while implementation happens in `/home/deploy/matrix-os.worktrees/<slug>`.
+Use this skill to carry a standalone change through the Matrix OS PR loop, or
+when invoked as `worktree-pr-monitor`. The request may give a branch slug or a
+task summary. For dependent PRs use a GitHub native stack and
+`monitor-stack-reviews` instead.
 
-This skill does not coordinate Swarm or multi-agent runs. The repo-level Swarm
-ban on `isolation: "worktree"` still applies; this workflow is a user-requested
-manual git worktree flow for isolated PR publication.
+`AGENTS.md` is the source of truth for every rule this skill applies. Where
+this file and `AGENTS.md` disagree, follow `AGENTS.md` and say so.
 
 ## Preconditions
 
-- `gh` is installed and authenticated.
-- The current repository is `HamedMP/matrix-os`.
-- The requester wants a PR in a worktree, not only a local patch.
-- The requester explicitly asked for a worktree or invoked this workflow.
+- `gh` is installed and authenticated (`gh auth status`).
+- You are in a checkout of the Matrix OS repository.
+- A Linear ticket covers the task. Follow the Linear Ticket Check in
+  `AGENTS.md`: reuse an existing ticket, and ask once before creating one.
 
 ## Rules
 
-- If the requester did not explicitly ask for a worktree, follow the current
-  branch workflow instead.
-- Keep `/home/deploy/matrix-os` on `main`.
-- Put feature work in `/home/deploy/matrix-os.worktrees/<slug>`.
-- Use a semantic branch and PR title. Do not prefix titles with agent/tool tags.
-- Stage only files in scope.
-- Do not merge unless explicitly asked.
+- All changes ship from a manual git worktree. Never commit to `main`, and
+  never use the Agent tool's `isolation: "worktree"`.
+- Use a kebab-case branch and a Conventional Commit PR title with no agent or
+  tool tag.
+- Stage explicit paths only. Check `git status --short --branch` first and
+  leave unrelated changes alone.
+- Do not merge unless asked. A merge request authorizes only that merge; every
+  gate below still applies.
 - Approval is risk-tiered (`docs/dev/review-pipeline.md#risk-tiered-merge-approval`):
   a `5/5` with Greptile's own approval (Low/Medium risk) can merge; a `5/5`
   without it (High/Critical) needs a human approval. Report which applies;
-  never self-approve or use admin bypass, even when asked to merge.
-- For dependent PRs, always use GitHub native stacks and the official `gh stack`
-  extension under `docs/dev/stacked-prs.md`. Publish with `gh stack submit` rather
-  than the standalone push recipe below; link the shared ENG ticket and native
-  stack in each layer. Use `/monitor-stack-reviews` for stack-wide review fixes.
-  If merge is authorized, use `gh stack merge` after every included head passes
-  its gates; never loop `gh pr merge`.
-- Plan about 5-6 PRs per stack; never exceed 10, counting all layers. Check the
-  planned count before adding a branch. Consolidate related work within the
-  per-PR size limits or start a follow-on stack after this one merges.
-- If Greptile has reviewed the PR, the loop is complete only when the latest
-  trusted Greptile result is `5/5`.
-- Open the PR as a draft. Full PR CI runs on every non-draft head, so mark it
-  ready for review (`gh pr ready`) only after the latest trusted Greptile
-  result is `5/5`.
-- If CI fails after the PR is ready, convert it back to draft
-  (`gh pr ready --undo`), fix the failures, commit and push, then return to the
-  Greptile fulfillment loop before marking it ready again.
-- Treat unresolved human review threads, Codex review issue comments, and
-  Greptile findings as blockers until they are fixed, acknowledged, or
-  explicitly deferred by the requester.
+  never self-approve or use admin bypass.
+- Greptile reviews only when asked. After every push, post
+  `@greptileai please review` once, unless a review already names the new head
+  or `node scripts/review/review-carryover.mjs check <pr>` accepts the earlier
+  one.
+- Read the score and `Last reviewed commit` from the comment that contains
+  `greptile_summary`, and compare that SHA with the PR's `headRefOid`. A score
+  for an older head is not a score for this one. Follow the stale-review table
+  in `AGENTS.md`.
+- Unresolved human review threads, Codex review comments, and Greptile findings
+  are blockers until fixed, answered, or explicitly deferred by the requester.
+- If feedback conflicts with the task, reply with the reason and ask before
+  changing behavior.
+- A failed check is a finding, not noise. Read the log before calling it
+  unrelated, and say what you found.
 
 ## Workflow
 
-1. Establish scope.
-   - Inspect `git status --short --branch`.
-   - If main contains relevant uncommitted work, move only that work into the
-     target worktree via a scoped stash or patch.
-   - If unrelated changes are present, leave them alone and ask only if they
-     block the requested PR.
+1. **Establish scope.**
+   - Inspect `git status --short --branch` in the main checkout.
+   - If it holds uncommitted work for this task, move only that work into the
+     worktree with a scoped stash or patch.
 
-2. Create or enter the worktree.
-   - Slug: concise task slug, e.g. `fix-canvas-terminal-clicks`.
-   - Branch: `codex/<slug>` unless the requester named a branch.
-   - Path: `/home/deploy/matrix-os.worktrees/<slug>`.
-   - Command shape:
-     `git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main`
+2. **Create or enter the worktree.**
+   - `git fetch origin main`, then
+     `git worktree add -b <kebab-branch> ../<dir-name> origin/main`.
+   - Run `pnpm install --frozen-lockfile` in the new worktree before testing.
 
-3. Implement.
-   - Follow TDD where practical: add a failing focused regression before the
-     fix, then make it green.
-   - Keep edits scoped and compatible with Matrix OS conventions.
+3. **Implement.**
+   - Tests first: add a failing focused test, then make it pass
+     (`docs/dev/testing-effectiveness.md`).
+   - Keep the diff to the task and under the PR size limits.
 
-4. Validate.
-   - Run the narrow changed-area tests.
-   - Run broader Matrix gates when feasible:
-     - `bun run typecheck`
-     - `bun run check:patterns`
-     - `bun run test`
-   - Record any skipped broad check with the exact reason.
+4. **Validate.**
+   - Run the focused tests for the changed area
+     (`pnpm exec vitest run <path>`).
+   - Run the Pre-PR Checklist in `AGENTS.md`: `bun run typecheck`,
+     `bun run check:patterns`, `bun run test`, and
+     `npx react-doctor@latest <project-dir>` when a React file changed. Run
+     `bun run build:shell:production` when `shell/` or the auth shell changed.
+   - Record any check you skipped and why.
 
-5. Commit and push.
-   - Commit with a Conventional Commit message.
-   - Push with `git push -u origin HEAD`.
+5. **Commit and push.**
+   - Commit with a Conventional Commit message that names the ticket.
+   - `git push -u origin HEAD`.
 
-6. Open or update the PR.
-   - Use `gh pr view` to detect an existing PR for the branch.
-   - Create the PR as a draft (`gh pr create --draft`) or edit it, with a
-     semantic title.
-   - PR body must include:
-     - `Summary`
-     - `Tests`
-     - `Review/Monitoring`
-     - `Invariants` when backend code changed
+6. **Open or update the PR.**
+   - `gh pr view` to find an existing PR for the branch; otherwise
+     `gh pr create --draft`.
+   - Use the PR body template in `AGENTS.md`: `Summary`, `Tests`, `Process`
+     with the Linear link, and collapsed `Invariants` for backend changes.
+   - A user-visible change needs the surface matrix and live evidence gate from
+     `AGENTS.md`. Missing evidence is a readiness blocker; report it.
 
-7. Monitor review feedback until Greptile is complete.
-   - Use `gh pr checks --watch` or equivalent GitHub API status reads for
-     already-running checks.
-   - Use thread-aware review inspection for unresolved GitHub review threads.
-   - Inspect issue comments for Codex reviews.
-   - Inspect Greptile feedback and rating. If the latest trusted Greptile
-     result is below `5/5`, implement fixes, rerun relevant checks, commit,
-     push, and continue monitoring.
+7. **Get Greptile to 5/5 on the current head.**
+   - Request the review (see Rules) and wait; a review usually lands within a
+     few minutes.
+   - Read findings from the summary comment and from the inline review
+     comments. Fix valid ones test-first, push, and request again.
+   - Repeat until the current head, or a head the carry-over check accepts, is
+     `5/5`.
 
-8. Mark the PR ready and monitor its CI.
-   - Once the latest trusted Greptile result is `5/5`, mark the PR ready for
-     review with `gh pr ready`. That starts full PR CI.
-   - Wait for the triggered checks with `gh pr checks --watch` or equivalent
-     GitHub API status reads.
-   - If every required triggered check passes, the PR is ready.
-   - If any triggered check fails, convert the PR back to draft with
-     `gh pr ready --undo`, inspect the failure, implement the fix, rerun
-     relevant local checks, commit, push, and return to step 7. Do not mark it
-     ready again until Greptile is again `5/5` on the latest commit.
+8. **Mark ready and watch CI.**
+   - `gh pr ready` starts full PR CI. Watch it with `gh pr checks --watch`.
+   - On a failure, read the failing job's log. Fix a real failure: convert the
+     PR back to draft (`gh pr ready --undo`), push the fix, and return to
+     step 7. For a failure the diff cannot have caused, say what it is and
+     rerun the failed jobs.
 
-9. Ping completion.
-   - Reply with:
-     - PR URL
-     - branch and worktree path
-     - latest commit SHA
-     - checks run and result
-     - latest Greptile status, explicitly `5/5`
-     - approval: Greptile-approved, or needs human approval
-     - ready-for-review status and CI result
-     - skipped checks or residual risk
-   - If blocked, reply with the exact blocker and the next action needed.
+9. **Report.**
+   - PR URL, branch, worktree path, and head SHA.
+   - Checks run and their result, including anything skipped.
+   - Greptile score and the commit it reviewed.
+   - Approval state: Greptile-approved, or waiting on a human.
+   - If blocked: the exact blocker and the next action.
+
+10. **After the merge.** Run the `wrap-up` skill to check post-merge deploys,
+    remove the worktree and branch, and close the ticket.
 
 ## Useful Commands
 
 ```sh
 git status --short --branch
 git worktree list
-git worktree add -b codex/<slug> /home/deploy/matrix-os.worktrees/<slug> origin/main
-bun run typecheck
-bun run check:patterns
-bun run test
-git push -u origin HEAD
-gh pr view --json number,url,title,state,headRefName,baseRefName
+git worktree add -b <kebab-branch> ../<dir-name> origin/main
+pnpm exec vitest run <path>
+bun run typecheck && bun run check:patterns
 gh pr create --draft
+gh pr comment <n> --body "@greptileai please review"
+node scripts/review/review-carryover.mjs check <n>
 gh pr ready
-gh pr ready --undo
-gh pr checks --watch
+gh pr checks <n> --watch
+gh run view --job <job-id> --log-failed
 ```

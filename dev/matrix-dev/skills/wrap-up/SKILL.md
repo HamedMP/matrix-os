@@ -1,17 +1,15 @@
 ---
-description: Close out a finished chat - verify its PRs merged, remove its worktrees and branches, mark its Linear tickets Done, report, and close the chat's terminal.
-argument-hint: [pr-numbers | ticket-ids] [--keep-open]
+name: wrap-up
+description: Close out a finished chat whose work has shipped - verify its PRs are merged and post-merge runs passed, remove its worktrees and branches, mark its Linear tickets Done (through the Linear MCP server), report, and close the chat's terminal. Use when asked to wrap up, clean up and close this chat, or to run wrap-up.
 ---
+
 
 # Wrap Up
 
-Usage: `/wrap-up [pr-numbers | ticket-ids] [--keep-open]`
-
-Arguments:
-
-```text
-$ARGUMENTS
-```
+Use this skill when the requester says the work is finished and asks to wrap
+up, clean up, or close the chat, or invokes `wrap-up`. The request may name PR
+numbers or ticket IDs, and `--keep-open` to skip closing the chat; with none,
+it covers the work of this chat.
 
 ## Goal
 
@@ -34,7 +32,7 @@ finished is reported and left exactly as it was.
 
 ## Rules
 
-- This command cleans up after shipped work. It never merges, approves,
+- This skill cleans up after shipped work. It never merges, approves,
   force-pushes, rebases, or deploys. If a PR is not merged, say what it is
   waiting on and stop for that item.
 - Never use `--force` to remove a worktree or `git branch -D` on a branch whose

@@ -648,24 +648,30 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - `matrix shell list` groups tabs by project. `matrix shell connect --project <project> --tab <tab>` attaches to exactly one tab; closing the local client only detaches it.
 - If `matrix run -it` or `matrix shell new` fails with `zellij_failed`, run `matrix shell list` and connect to an existing tab instead of retrying the same create path.
 
+### Workflow skills and the matrix-dev plugin
+
+- Each workflow skill has one canonical copy in `.agents/skills/<name>/`, read by Codex directly and by Claude Code through a `.claude/skills/<name>` link. Do not add a second copy under `.claude/commands/`.
+- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
+- To take one change from a worktree to a merge-ready PR, use the `worktree-pr-monitor` skill; after the merge, `wrap-up`.
+
 ### Stack review monitor
 
-- For existing GitHub native stacks, use `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
+- For existing GitHub native stacks, use the `monitor-stack-reviews` skill (`.agents/skills/monitor-stack-reviews/`): `/monitor-stack-reviews <pr-or-range-or-branch>` in Claude Code.
 - That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
 - Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Unblock tickets
 
-- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
+- To clear decisions that are waiting on an author, use the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` (`/unblock-tickets [github-login | ticket-ids | pr-numbers]` in Claude Code).
 - It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
 
 ### Daily update
 
-- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
+- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use the `daily-update` skill in `.agents/skills/daily-update/` (`/daily-update [date | yesterday | today] [github-login]` in Claude Code). It is read-only and posts nothing.
 
 ### Wrap up
 
-- To close out a chat whose work has shipped, use `.claude/commands/wrap-up.md` in Claude Code (`/wrap-up [pr-numbers | ticket-ids] [--keep-open]`) or the `wrap-up` skill in `.agents/skills/wrap-up/` in Codex. Keep the two files in step.
+- To close out a chat whose work has shipped, use the `wrap-up` skill in `.agents/skills/wrap-up/` (`/wrap-up [pr-numbers | ticket-ids] [--keep-open]` in Claude Code).
 - It checks that the chat's PRs are merged and their post-merge runs passed, removes its worktrees and branches, marks its Linear tickets Done, reports, and closes the chat's terminal. It never merges or deploys, and it leaves unmerged, uncommitted, or unpushed work untouched.
 
 ### Backlog
