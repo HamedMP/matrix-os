@@ -95,6 +95,36 @@ describe("This Computer terminals", () => {
     expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "t6" });
   });
 
+  it("finds literal text in a finished terminal and restores focus when Find closes", async () => {
+    const output = "Error[1]\nsuccess\nerror[1]";
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t6", "completed build", { finished: true })]),
+      "local-terminal:history": () => ({ ok: true, text: output }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/completed build/));
+    const saved = await screen.findByLabelText("Saved terminal output");
+    operator.command({ command: "find" });
+    const field = screen.getByRole("textbox", { name: "Find in terminal" });
+    expect(document.activeElement).toBe(field);
+    fireEvent.change(field, { target: { value: "error[1]" } });
+    expect(screen.getByText("1 of 2")).toBeTruthy();
+    expect(saved.querySelector("mark")?.textContent).toBe("Error[1]");
+    fireEvent.keyDown(field, { key: "Enter", shiftKey: true });
+    expect(screen.getByText("2 of 2")).toBeTruthy();
+    expect(saved.querySelector("mark")?.textContent).toBe("error[1]");
+    fireEvent.click(screen.getByRole("button", { name: "Next match" }));
+    expect(screen.getByText("1 of 2")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "absent" } });
+    expect(screen.getByText("No results")).toBeTruthy();
+    expect(saved.querySelector("mark")).toBeNull();
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Find in terminal" })).toBeNull();
+    expect(document.activeElement).toBe(saved);
+    expect(saved.textContent).toBe(output);
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+  });
+
   it("starts a terminal and opens it", async () => {
     const terminals: Fact[] = [];
     const operator = installOperator({

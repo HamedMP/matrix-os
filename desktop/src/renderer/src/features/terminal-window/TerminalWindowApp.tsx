@@ -269,7 +269,7 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
           return (
             <>
               <FinishedTerminalOutput key={leaf.terminal} terminalKey={leaf.terminal} terminalId={historyId}
-                focused={focused} onDisplayed={view.status.historyDisplayed} />
+                focused={focused} findRequest={view.findRequestFor(leaf.terminal)} onDisplayed={view.status.historyDisplayed} />
               {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
             </>
           );
