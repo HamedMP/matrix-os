@@ -7,6 +7,39 @@
 
 import type { ClipboardPayload } from "./actions-clipboard";
 
+/**
+ * Puts text and an HTML table on the clipboard through the browser's own copy
+ * command: the command raises a `copy` event, and filling that event needs no
+ * permission, also in a sandboxed frame. Call it from a click. False when the
+ * browser has no such command or did not raise the event.
+ */
+export function commandClipboard(payload: ClipboardPayload): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
+  let written = false;
+  const write = (event: ClipboardEvent): void => {
+    if (event.clipboardData === null) return;
+    event.clipboardData.setData("text/plain", payload.text);
+    event.clipboardData.setData("text/html", payload.html);
+    event.preventDefault();
+    // The grid's own copy handler must not answer this event a second time.
+    event.stopPropagation();
+    written = true;
+  };
+  // Without a text selection some browsers ask first whether the page handles the copy.
+  const allow = (event: Event): void => event.preventDefault();
+  document.addEventListener("copy", write, true);
+  document.addEventListener("beforecopy", allow, true);
+  try {
+    document.execCommand("copy");
+  } catch (error: unknown) {
+    console.warn("the browser copy command failed", error instanceof Error ? error.name : "error");
+  } finally {
+    document.removeEventListener("copy", write, true);
+    document.removeEventListener("beforecopy", allow, true);
+  }
+  return written;
+}
+
 /** Puts text and an HTML table on the clipboard. False when the browser refused. */
 export async function writeSystemClipboard(payload: ClipboardPayload): Promise<boolean> {
   try {

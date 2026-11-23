@@ -112,6 +112,23 @@ export function copySelection(ctx: GridContext, cut: boolean): ClipboardPayload 
   return { text, html: serializeHtmlTable(cells, { row: range.start.row, col: range.start.col }) };
 }
 
+/**
+ * Pastes the cells last copied or cut in this window, for when the system
+ * clipboard cannot be read. False when nothing is marked as copied.
+ */
+export function pasteOwnCopy(ctx: GridContext): boolean {
+  const clip = clips.get(ctx);
+  if (clip === undefined || ctx.store.getState().copy === null || !ctx.session.sheets().some((sheet) => sheet.id === clip.sheet)) return false;
+  pasting.add(ctx);
+  try {
+    if (clip.cut) pasteMove(ctx, clip);
+    else pasteCopy(ctx, clip);
+  } finally {
+    pasting.delete(ctx);
+  }
+  return true;
+}
+
 export function clearCopyMark(ctx: GridContext): void {
   clips.delete(ctx);
   ctx.store.set({ copy: null });

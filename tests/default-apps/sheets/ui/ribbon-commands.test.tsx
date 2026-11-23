@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Ribbon commands the old toolbar did not have, run through the real app against the engine. */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runProposal } from "../../../../home/apps/sheets/src/agent";
 import { flush, pick, renderWithWorkbook } from "./harness";
 
@@ -165,10 +165,68 @@ describe("Assistant tab", () => {
 });
 
 describe("Clipboard", () => {
-  it("says how to paste when the window may not read the clipboard", async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (document as { execCommand?: unknown }).execCommand;
+  });
+
+  it("says how to paste when the window may not read the clipboard and nothing was copied here", async () => {
     await renderWithWorkbook();
     fireEvent.click(screen.getByRole("button", { name: "Paste" }));
     await flush();
     expect(toastText()).toContain("Ctrl+V");
+  });
+
+  it("copies and pastes inside the workbook when the window may not use the clipboard, and says so", async () => {
+    const app = await renderWithWorkbook();
+    const session = app.session();
+    const sheet = session.getState().activeSheetId;
+    goTo("B1");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await flush();
+    expect(toastText()).toContain("Copied for pasting in this workbook");
+    goTo("B5");
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    await flush();
+    // The copied formula moved with its references.
+    expect(session.cell(sheet, 4, 1)).toMatchObject({ formula: "SUM(A5:A7)" });
+    expect(toastText()).not.toContain("Ctrl+V");
+
+    goTo("C1");
+    fireEvent.click(screen.getByRole("button", { name: "Cut" }));
+    await flush();
+    goTo("D4");
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    await flush();
+    expect(session.cell(sheet, 3, 3).value).toBe("apple");
+    expect(session.cell(sheet, 0, 2).value).toBeNull();
+  });
+
+  it("copies through the browser's own copy command, which needs no clipboard permission", async () => {
+    await renderWithWorkbook();
+    const copied: Record<string, string> = {};
+    (document as { execCommand?: unknown }).execCommand = vi.fn((command: string) => {
+      const event = new Event(command, { bubbles: true, cancelable: true });
+      Object.assign(event, { clipboardData: { setData: (type: string, data: string) => void (copied[type] = data), getData: () => "" } });
+      (document.activeElement ?? document.body).dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    goTo("C1");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await flush();
+    expect(copied["text/plain"]).toBe("apple");
+    expect(copied["text/html"]).toContain("apple");
+    expect(toastText()).toBe("");
+  });
+
+  it("pastes the system clipboard when the window may read it", async () => {
+    const app = await renderWithWorkbook();
+    const session = app.session();
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { readText: async () => "x\ty", writeText: async () => undefined } });
+    goTo("E1");
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    await flush();
+    const sheet = session.getState().activeSheetId;
+    expect([session.cell(sheet, 0, 4).value, session.cell(sheet, 0, 5).value]).toEqual(["x", "y"]);
   });
 });

@@ -99,6 +99,24 @@ describe("Sheets ribbon", () => {
     expect([0, 1, 2].map((row) => session.cell(sheet, row, 5).value)).toEqual([1, 2, 3]);
   });
 
+  it("shows that a filter is on as soon as it is set, and lets it be cleared without moving the selection", async () => {
+    await renderWithWorkbook();
+    const box = screen.getByLabelText(/^Name box/);
+    fireEvent.change(box, { target: { value: "A2" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await pick("Filter", "Show rows with the selected value");
+    expect(screen.getByRole("button", { name: "Filter, on" })).toBeTruthy();
+    await pick("Filter, on", "Show all rows");
+    expect(screen.getByRole("button", { name: "Filter" })).toBeTruthy();
+
+    openTab("Data");
+    const toggle = () => screen.getByRole("button", { name: "Filter by selected value" });
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("hides the formula bar and gridlines from the View tab", async () => {
     const app = await renderWithWorkbook();
     openTab("View");

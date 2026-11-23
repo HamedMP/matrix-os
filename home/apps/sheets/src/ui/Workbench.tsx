@@ -12,7 +12,7 @@ import { useAssistantState } from "./agent";
 import { logFailure } from "./bridge";
 import { type Download, type Notify, downloadActiveSheetCsv, downloadWorkbook, saveCopyNow, saveDocument } from "./file-actions";
 import { FindReplace } from "./FindReplace";
-import { useGridSelection, useSessionState } from "./hooks";
+import { useGridFiltered, useGridSelection, useSessionState } from "./hooks";
 import { NameBox } from "./NameBox";
 import { AgentPanelSlot, ReviewPanelSlot, useSheetPanels } from "./panel-slots";
 import { useReviewState } from "./review";
@@ -76,6 +76,7 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
     [session, controller],
   );
   const reported = useGridSelection(controller);
+  const filtered = useGridFiltered(controller);
   const { revision } = state;
   // Right after the active sheet changes (one was removed), the last reported selection may name the old sheet.
   const selection = reported.sheet === state.activeSheetId ? reported : controller.getSelection();
@@ -165,8 +166,8 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
     [controller, style, review, assistant, notify, fileCommands, togglePanel, view],
   );
   const model = useMemo(
-    () => ({ state, style, review: reviewState, panel, view, filtered: controller.isFiltered, names, aiAvailable, assistantBusy }),
-    [state, style, reviewState, panel, view, controller.isFiltered, names, aiAvailable, assistantBusy],
+    () => ({ state, style, review: reviewState, panel, view, filtered, names, aiAvailable, assistantBusy }),
+    [state, style, reviewState, panel, view, filtered, names, aiAvailable, assistantBusy],
   );
 
   return (
@@ -189,7 +190,7 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
         )
       }
       rightPanelLabel={panel === "review" ? "Review changes" : "Assistant"}
-      statusBar={<StatusBar session={session} state={state} selection={selection} filtered={controller.isFiltered} />}
+      statusBar={<StatusBar session={session} state={state} selection={selection} filtered={filtered} />}
     >
       <div className="sheets-main">
         {find !== null && (

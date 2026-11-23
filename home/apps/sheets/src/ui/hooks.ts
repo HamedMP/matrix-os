@@ -17,6 +17,13 @@ export function useSessionState(session: SheetSession): SessionState {
   return useSyncExternalStore(subscribe, read, read);
 }
 
+/** Whether the active sheet's view has a filter. A filter changes the view only, so neither the session nor the selection reports it. */
+export function useGridFiltered(controller: SheetGridController): boolean {
+  const subscribe = useCallback((listener: () => void) => controller.context.store.subscribe(listener), [controller]);
+  const read = useCallback(() => controller.isFiltered, [controller]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
 /** The grid selection; a new object whenever the selection or the active sheet changes. */
 export function useGridSelection(controller: SheetGridController): GridSelection {
   const subscribe = useCallback((listener: () => void) => mirrorOf(controller).subscribe(listener), [controller]);

@@ -1,5 +1,4 @@
 import { useCallback } from "react";
-import { copySelection, pasteClipboard } from "./actions-clipboard";
 import {
   applyFilter,
   clearSelection,
@@ -13,9 +12,10 @@ import {
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import type { GridContext } from "./context";
 import type { MenuState } from "./store";
-import { readSystemClipboard, writeSystemClipboard } from "./system-clipboard";
+import { clickCopy, clickPaste } from "./click-clipboard";
 
-const CLIPBOARD_BLOCKED = "The browser did not let the menu use the clipboard. Use Ctrl+C, Ctrl+X and Ctrl+V.";
+const CLIPBOARD_BLOCKED = "The browser did not let the menu read the clipboard. Press Ctrl+V to paste.";
+const COPIED_HERE = "Kept for pasting in this workbook. To paste in another app, use Ctrl+C or Ctrl+X.";
 
 function itemsFor(menu: MenuState, readOnly: boolean, filtered: boolean): MenuItem[] {
   const items: MenuItem[] = [
@@ -66,19 +66,14 @@ export function GridMenu({ ctx, menu, readOnly, onDone }: GridMenuProps) {
     close();
     switch (id) {
       case "cut":
-      case "copy": {
-        const payload = copySelection(ctx, id === "cut");
-        if (payload !== null) {
-          void writeSystemClipboard(payload).then((ok) => {
-            if (!ok) ctx.notice(CLIPBOARD_BLOCKED);
-          });
-        }
+      case "copy":
+        void clickCopy(ctx, id === "cut").then((outcome) => {
+          if (outcome === "own") ctx.notice(COPIED_HERE);
+        });
         return;
-      }
       case "paste":
-        void readSystemClipboard().then((data) => {
-          if (data === null) ctx.notice(CLIPBOARD_BLOCKED);
-          else pasteClipboard(ctx, data);
+        void clickPaste(ctx).then((outcome) => {
+          if (outcome === "blocked") ctx.notice(CLIPBOARD_BLOCKED);
         });
         return;
       case "clear":

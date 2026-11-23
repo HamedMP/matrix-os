@@ -97,3 +97,4 @@ export { createFunctionCatalog } from "./function-hints";
 export type { FunctionCatalog, FunctionHint } from "./function-hints";
 export { editTextOf } from "./actions-edit";
 export { readSystemClipboard, writeSystemClipboard } from "./system-clipboard";
+export type { ClickCopyOutcome, ClickPasteOutcome } from "./click-clipboard";

@@ -8,6 +8,7 @@ import type { SessionCellEdit } from "../session/edits";
 import type { SheetSession } from "../session/session";
 import type { EditResult, SessionEvent } from "../session/types";
 import { type ClipboardPayload, clearCopyMark, copySelection, isPasting, pasteClipboard } from "./actions-clipboard";
+import { type ClickCopyOutcome, type ClickPasteOutcome, clickCopy, clickPaste } from "./click-clipboard";
 import {
   applyFilter,
   clearSelection,
@@ -220,6 +221,16 @@ export class SheetGridController {
   /** Like `copy`, and the cells are emptied when they are pasted. */
   cut(): ClipboardPayload | null {
     return copySelection(this.context, true);
+  }
+
+  /** Copy (or cut) started by a click: on the system clipboard when the browser allows it, else kept for pasting in this window. */
+  copyToClipboard(cut = false): Promise<ClickCopyOutcome> {
+    return clickCopy(this.context, cut);
+  }
+
+  /** Paste started by a click: the system clipboard, or else the cells last copied or cut in this window. */
+  pasteFromClipboard(): Promise<ClickPasteOutcome> {
+    return clickPaste(this.context);
   }
 
   /** Pastes clipboard text and HTML at the selection. */

@@ -12,7 +12,6 @@ import type { SheetGridController } from "../../grid";
 import type { SheetReviewController } from "../../review";
 import type { CellStyle } from "../../session/engine";
 import type { EditResult } from "../../session/types";
-import { readSystemClipboard, writeSystemClipboard } from "../../grid";
 import { selectionFromGrid } from "../agent";
 import type { Notify } from "../file-actions";
 import { NUMBER_FORMAT_PRESETS, changeDecimals } from "../number-format";
@@ -102,11 +101,9 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
   const vertical = (value: "top" | "middle" | "bottom") => () => run(() => controller.format({ alignment: { vertical: value } }));
   const formatCode = (id: string) => NUMBER_FORMAT_PRESETS.find((preset) => preset.id === id)?.code ?? null;
   const toClipboard = (cut: boolean): void => {
-    const payload = cut ? controller.cut() : controller.copy();
-    done();
-    if (payload === null) return;
-    void writeSystemClipboard(payload).then((ok) => {
-      if (!ok) notify(`This window may not use the clipboard. Press ${cut ? "Ctrl+X" : "Ctrl+C"} instead.`, "warning");
+    void controller.copyToClipboard(cut).then((outcome) => {
+      if (outcome === "own") notify(`${cut ? "Cut" : "Copied"} for pasting in this workbook. To paste in another app, press ${cut ? "Ctrl+X" : "Ctrl+C"}.`, "info");
+      done();
     });
   };
   const withSelection = (action: (selection: NonNullable<ReturnType<typeof selectionFromGrid>>) => void) => () => {
@@ -137,9 +134,8 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     cut: () => toClipboard(true),
     copy: () => toClipboard(false),
     paste: () => {
-      void readSystemClipboard().then((data) => {
-        if (data === null) notify("This window may not read the clipboard. Press Ctrl+V to paste.", "warning");
-        else controller.paste(data);
+      void controller.pasteFromClipboard().then((outcome) => {
+        if (outcome === "blocked") notify("This window may not read the clipboard. Press Ctrl+V to paste.", "warning");
         done();
       });
     },
