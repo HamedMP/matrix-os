@@ -1,11 +1,19 @@
 import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 
 import {
   createNotificationHandler,
+  enablePushNotifications,
   isNotificationTap,
   parseNotificationDestination,
   type NotificationScreen,
 } from "../lib/push";
+
+const mockUpdatePushRegistration = jest.fn((_input: unknown) => Promise.resolve());
+
+jest.mock("@/lib/requests/settings", () => ({
+  updatePushRegistration: (input: unknown) => mockUpdatePushRegistration(input),
+}));
 
 const CHAT_ID = "chat_mobile_reply";
 const THREAD_ID = "thread_mobile_attention";
@@ -191,5 +199,24 @@ describe("createNotificationHandler", () => {
     ["the push names nothing", { category: "cron" }, { kind: "chat", handle: "alice", chatId: CHAT_ID }],
   ] as const)("shows a push when %s", async (_case, data, screen) => {
     await expect(present(data, screen)).resolves.toEqual(SHOWN);
+  });
+});
+
+describe("enablePushNotifications", () => {
+  it("gives up on a push token that never arrives, without registering or saving one", async () => {
+    jest.useFakeTimers();
+    try {
+      jest.mocked(Notifications.getExpoPushTokenAsync).mockReturnValueOnce(new Promise(() => {}));
+      const enabling = enablePushNotifications({ clerkToken: "clerk-token", gatewayUrl: "https://app.example.test/vm/amin" });
+      const outcome = expect(enabling).rejects.toThrow("Push token unavailable.");
+
+      await jest.advanceTimersByTimeAsync(15_000);
+
+      await outcome;
+      expect(mockUpdatePushRegistration).not.toHaveBeenCalled();
+      expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

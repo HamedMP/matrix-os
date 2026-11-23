@@ -5,6 +5,8 @@ import { DesignPreview } from "../dev/design-preview/DesignPreview";
 
 const mockSetParams = jest.fn();
 
+// Preview frames use local data and never authenticate or read Matrix files.
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ isLoaded: true, isSignedIn: false }) }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ setParams: mockSetParams }),
 }));

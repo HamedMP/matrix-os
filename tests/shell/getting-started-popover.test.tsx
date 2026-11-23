@@ -151,30 +151,25 @@ describe("web getting started status", () => {
     expect(DESKTOP_APP_DOWNLOAD_URL).toBe("https://matrix-os.com/desktop");
   });
 
-  it("opens the Web checklist through the shared nested Help menu", async () => {
+  it("hides the Setup pill once every step is complete", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     installSuccessfulFetch();
     window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
-    render(<GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()}
-      helpMenu={{ onSupport: vi.fn(), discordIcon: <span /> }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    const trigger = await screen.findByRole("button", { name: "Getting started — 5 of 5" });
-    fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Support chat" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
-    expect(screen.getByRole("dialog", { name: "Help" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Getting started —/ }));
-    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
-    expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull();
+    render(<GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
   });
 
   it("stays open until its title-bar trigger is clicked and offers the detected desktop download", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     vi.stubGlobal("navigator", { platform: "Win32", userAgent: "Windows NT 10.0" });
-    installSuccessfulFetch();
+    // Billing is still open, so the Setup pill (and its checklist) remains in the bar.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } } : responseFor(url);
+      return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
     window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
     const onOpenSettings = vi.fn();
     const onOpenFirstWork = vi.fn();
@@ -189,10 +184,10 @@ describe("web getting started status", () => {
       </>,
     );
 
-    const trigger = await screen.findByRole("button", { name: "Getting started — 5 of 5" });
+    const trigger = await screen.findByRole("button", { name: "Getting started — 4 of 5" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
-    expect(screen.getByTestId("getting-started-counter").textContent).toBe("5 of 5");
+    expect(screen.getByTestId("getting-started-counter").textContent).toBe("4 of 5");
 
     const download = screen.getByRole("link", { name: "Download for Windows" });
     expect(download.getAttribute("href")).toBe("https://matrix-os.com/api/desktop-release?platform=windowsX64");
@@ -464,6 +459,29 @@ describe("web getting started status", () => {
     expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBeNull();
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
+  });
+
+  it("keeps the Setup pill reachable when a status request times out on the first load", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/github/status")) {
+        // A slow gateway: this request only ends when the loader gives up on it.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        });
+      }
+      return new Response(JSON.stringify(responseFor(url)), { status: 200 });
+    });
+
+    render(<GettingStartedPopover onOpenSettings={() => {}} onOpenFirstWork={() => {}} />);
+    await act(async () => Promise.resolve());
+    expect(screen.queryByRole("button", { name: /Getting started —/ })).toBeNull();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByRole("button", { name: "Getting started — 4 of 5" })).toBeTruthy();
   });
 
   it("refreshes completion while the persistent popover remains open", async () => {

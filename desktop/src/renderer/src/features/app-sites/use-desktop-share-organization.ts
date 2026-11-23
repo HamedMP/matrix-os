@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
+import { sharedAppShareOpenPath } from "@matrix-os/contracts";
 import { useShareOrganization } from "@matrix-os/ui/share";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
@@ -32,7 +32,7 @@ export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch 
     orgLink: (share, hints) => {
       const origin = import.meta.env.VITE_CHAT_SHARE_ORIGIN || platformHost;
       if (!origin) return null;
-      return new URL(sharedAppOpenPath({ scopeId: share.scopeId, expectedShareRevision: share.shareRevision, app: sharedAppDisplayHint(hints.app), org: sharedAppDisplayHint(hints.org) }), origin).toString();
+      return new URL(sharedAppShareOpenPath(share, hints), origin).toString();
     },
   });
 }

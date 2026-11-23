@@ -19,6 +19,8 @@ export type BotChatEventType =
 
 export interface BotStateTransaction {
   db: BotExecutor;
+  /** Supplied only by the source Chat decision service after browser-proof verification. */
+  routineOriginDecision?: { sourceChatId: string; interactionId: string };
   /** Queues an event for the owner's chat; it is delivered only if the transaction commits. */
   publish(chatId: string, eventType: BotChatEventType, payload: Record<string, string | number | boolean | null>): Promise<void>;
 }

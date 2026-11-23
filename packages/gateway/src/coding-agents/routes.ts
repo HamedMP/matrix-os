@@ -124,6 +124,8 @@ const SummaryQuerySchema = z.object({
   projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
     message: "Invalid project id",
   }).optional(),
+  // Opt-in, so released clients with a strict summary schema keep parsing it.
+  include: z.literal("recentThreads").optional(),
 }).strict();
 const ProjectWorkspaceProjectIdSchema = ProjectIdSchema.refine(
   (value) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(value),
@@ -430,8 +432,18 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   app.get("/summary", async (c) => {
     try {
       const principal = principalFor(c);
-      const query = SummaryQuerySchema.parse({ projectId: c.req.query("projectId") });
-      return c.json(await deps.service.getSummary(principal, query));
+      const { projectId, include } = SummaryQuerySchema.parse({
+        projectId: c.req.query("projectId"),
+        include: c.req.query("include"),
+      });
+      const includeRecentThreads = include === "recentThreads";
+      const summary = await deps.service.getSummary(principal, {
+        ...(projectId ? { projectId } : {}),
+        ...(includeRecentThreads ? { includeRecentThreads } : {}),
+      });
+      if (includeRecentThreads) return c.json(summary);
+      const { recentThreads: _recentThreads, ...legacySummary } = summary;
+      return c.json(legacySummary);
     } catch (err: unknown) {
       if (isRequestPrincipalError(err)) {
         const mapped = mapRequestPrincipalError(err);

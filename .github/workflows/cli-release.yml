@@ -119,18 +119,19 @@ jobs:
         working-directory: packages/sync-client
         run: |
           set -euo pipefail
-          PACK_JSON="$(pnpm pack --config.node-linker=hoisted --pack-destination "$RUNNER_TEMP" --json)"
+          # pack-cli.mjs wraps `pnpm pack --config.node-linker=hoisted` and removes
+          # bundled dependency edges so `npm install -g` fetches zod and micromark.
+          PACK_JSON="$(node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP")"
           printf '%s\n' "$PACK_JSON"
           TARBALL="$(printf '%s' "$PACK_JSON" | node -e '
-            const { resolve } = require("node:path");
             let input = "";
             process.stdin.on("data", (chunk) => { input += chunk; });
             process.stdin.on("end", () => {
               const result = JSON.parse(input);
-              if (!result || typeof result.filename !== "string" || result.filename.length === 0) {
-                throw new Error("pnpm pack did not return a filename");
+              if (!result || typeof result.tarball !== "string" || result.tarball.length === 0) {
+                throw new Error("pack-cli did not return a tarball path");
               }
-              process.stdout.write(resolve(process.env.RUNNER_TEMP, result.filename));
+              process.stdout.write(result.tarball);
             });
           ')"
           test -f "$TARBALL"

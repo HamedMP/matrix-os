@@ -1,1 +1,1 @@
-export const CHAT_CONTENT_WIDTH_CLASS = "max-w-[868px]";
+export { CHAT_CONTENT_WIDTH_CLASS } from "@matrix-os/ui/chat-conversation";

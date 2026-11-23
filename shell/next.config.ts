@@ -39,6 +39,48 @@ function setRelativeCssAssetPaths(rules: CssRule[], extractionLoader: string): v
   }
 }
 
+type NextWebpack = Parameters<NonNullable<NextConfig["webpack"]>>[1]["webpack"];
+type WebpackCompiler = { hooks: { thisCompilation: { tap(name: string, fn: (compilation: never) => void): void } } };
+
+const RUNTIME_PUBLIC_PATH_PLUGIN = "MatrixRuntimePublicPathPlugin";
+
+// Next copies output.publicPath into each client reference manifest and
+// prefixes server-rendered chunk tags with it, so output.publicPath must stay
+// the built absolute "/_next/" string ("auto" rendered "autostatic/chunks/...").
+// Lazy chunks instead resolve from the URL the Webpack runtime was served from,
+// so one host bundle works at "/" and under an assigned Preview URL path.
+function runtimePublicPathPlugin(webpack: NextWebpack) {
+  const { RuntimeGlobals, RuntimeModule } = webpack;
+  class RuntimePublicPathModule extends RuntimeModule {
+    constructor() {
+      // Attach runs after the static public-path module and overrides it.
+      super("matrix runtime public path", RuntimeModule.STAGE_ATTACH);
+    }
+
+    generate(): string {
+      return [
+        "var matrixScript = typeof document !== \"undefined\" ? document.currentScript : null;",
+        "var matrixSrc = matrixScript && String(matrixScript.tagName).toUpperCase() === \"SCRIPT\" ? matrixScript.src : \"\";",
+        "var matrixStatic = matrixSrc ? matrixSrc.indexOf(\"/_next/static/\") : -1;",
+        `if (matrixStatic >= 0) ${RuntimeGlobals.publicPath} = matrixSrc.slice(0, matrixStatic) + "/_next/";`,
+      ].join("\n");
+    }
+  }
+  return {
+    apply(compiler: WebpackCompiler) {
+      compiler.hooks.thisCompilation.tap(RUNTIME_PUBLIC_PATH_PLUGIN, (compilation: never) => {
+        const typed = compilation as unknown as {
+          hooks: { runtimeRequirementInTree: { for(key: string): { tap(name: string, fn: (chunk: unknown) => void): void } } };
+          addRuntimeModule(chunk: unknown, module: InstanceType<typeof RuntimeModule>): void;
+        };
+        typed.hooks.runtimeRequirementInTree.for(RuntimeGlobals.publicPath).tap(RUNTIME_PUBLIC_PATH_PLUGIN, chunk => {
+          typed.addRuntimeModule(chunk, new RuntimePublicPathModule());
+        });
+      });
+    },
+  };
+}
+
 const nextConfig: NextConfig = {
   assetPrefix: platformShellAssetPrefix ?? privatePreviewAssetPrefix,
   env: {
@@ -86,7 +128,7 @@ const nextConfig: NextConfig = {
   // Production builds still use webpack. Some NodeNext workspace packages are
   // consumed as TS source with emitted .js specifiers, so webpack needs this
   // alias while Turbopack development consumes bundler-style source imports.
-  webpack: (config, { dev, isServer }) => {
+  webpack: (config, { dev, isServer, webpack }) => {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,
       ".js": [".ts", ".tsx", ".js"],
@@ -95,7 +137,7 @@ const nextConfig: NextConfig = {
     // The host bundle is built once, then Next serves it under the assigned
     // Preview URL. Resolve lazy chunks from the loaded Webpack runtime script.
     if (dev === false && isServer === false && !platformShellAssetPrefix) {
-      config.output.publicPath = "auto";
+      config.plugins = [...(config.plugins ?? []), runtimePublicPathPlugin(webpack)];
       // Keep fonts and other media relative to the emitted stylesheet URL.
       const extractionLoader = requireFromShell.resolve("next/dist/compiled/mini-css-extract-plugin/loader");
       setRelativeCssAssetPaths(config.module?.rules ?? [], extractionLoader);

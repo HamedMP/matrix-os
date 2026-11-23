@@ -64,7 +64,7 @@ vi.mock("../../shell/src/lib/collaboration", () => ({
         }],
       };
       if (path.includes("/chat/messages")) return { messages: [] };
-      if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+      if (path.split("?")[0]!.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
       if (path.endsWith("/chat")) return {
         id: "chat_shared",
         scopeId,

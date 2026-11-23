@@ -15,17 +15,37 @@ import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 
 const MENU_ITEM = "flex min-h-9 cursor-default items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none transition-colors data-[highlighted]:bg-foreground/[0.06]";
 
-export function OrganizationSwitcherView({ organizations, organizationId, onSelect, onOpenSettings, onOpenInvite }: {
+function ActiveOrganizationSummary({ active, onViewMembers }: {
+  active: OrganizationManagementSummary | null;
+  onViewMembers?: (organizationId: string) => void;
+}) {
+  const memberLabel = active ? `${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}` : "Your private workspace";
+  return (
+    <div className="flex items-center gap-3 px-2 py-2">
+      {active ? <OrganizationMark name={active.name} className="size-9" /> : <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><UserRound className="size-4" /></span>}
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold">{active?.name ?? "Personal"}</p>
+        {active && onViewMembers ? <button type="button" aria-label={`View ${memberLabel}`} onClick={() => onViewMembers(active.organizationId)} className="text-xs text-muted-foreground hover:underline">{memberLabel}</button>
+          : <p className="text-xs text-muted-foreground">{memberLabel}</p>}
+      </div>
+    </div>
+  );
+}
+
+export function OrganizationSwitcherView({ organizations, organizationId, onSelect, onOpenSettings, onOpenInvite, showSettingsAction = true }: {
   organizations: readonly OrganizationManagementSummary[];
   organizationId: string | null;
   onSelect: (organizationId: string | null) => void;
-  onOpenSettings: (organizationId: string) => void;
+  onOpenSettings?: (organizationId: string) => void;
   onOpenInvite: (organization: OrganizationManagementSummary) => void;
+  /** False on the Organization page itself, where a link back to the page would be a no-op. */
+  showSettingsAction?: boolean;
 }) {
   const active = organizationId
     ? organizations.find((organization) => organization.organizationId === organizationId) ?? organizations[0]
     : null;
   const admin = active?.role === "org:admin";
+  const openSettings = showSettingsAction ? onOpenSettings : undefined;
   return (
     <>
       <DropdownMenuPrimitive.Trigger asChild>
@@ -37,17 +57,10 @@ export function OrganizationSwitcherView({ organizations, organizationId, onSele
       </DropdownMenuPrimitive.Trigger>
       <DropdownMenuPrimitive.Portal>
         <DropdownMenuPrimitive.Content align="start" sideOffset={7} className="w-[286px] rounded-2xl border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]" style={{ zIndex: SHELL_Z_INDEX.popover }}>
-          <div className="flex items-center gap-3 px-2 py-2">
-            {active ? <OrganizationMark name={active.name} className="size-9" /> : <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><UserRound className="size-4" /></span>}
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">{active?.name ?? "Personal"}</p>
-              {active && !admin ? <button type="button" aria-label={`View ${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}`} onClick={() => onOpenSettings(active.organizationId)} className="text-xs text-muted-foreground hover:underline">{active.memberCount} {active.memberCount === 1 ? "member" : "members"}</button>
-                : <p className="text-xs text-muted-foreground">{active ? `${active.memberCount} ${active.memberCount === 1 ? "member" : "members"}` : "Your private workspace"}</p>}
-            </div>
-          </div>
+          <ActiveOrganizationSummary active={active ?? null} onViewMembers={admin ? undefined : openSettings} />
           {admin ? <div className="space-y-2 px-1 pb-2 pt-1">
             <DropdownMenuPrimitive.Item className={`${MENU_ITEM} min-h-7 justify-center border border-border`} onSelect={() => { if (active) onOpenInvite(active); }}><Plus className="size-4 text-muted-foreground" />Invite members</DropdownMenuPrimitive.Item>
-            <DropdownMenuPrimitive.Item className={`${MENU_ITEM} min-h-7 justify-center border border-border`} onSelect={() => { if (active) onOpenSettings(active.organizationId); }}><Settings className="size-4 text-muted-foreground" />Organization settings</DropdownMenuPrimitive.Item>
+            {openSettings ? <DropdownMenuPrimitive.Item className={`${MENU_ITEM} min-h-7 justify-center border border-border`} onSelect={() => { if (active) openSettings(active.organizationId); }}><Settings className="size-4 text-muted-foreground" />Organization settings</DropdownMenuPrimitive.Item> : null}
           </div> : null}
           <DropdownMenuPrimitive.Separator className="my-1 h-px bg-border/60" />
           <DropdownMenuPrimitive.Label className="px-2 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Organizations</DropdownMenuPrimitive.Label>
@@ -72,16 +85,31 @@ export function OrganizationSwitcher({ onOpenSettings }: { onOpenSettings: (sect
 }
 
 function ClerkOrganizationSwitcher({ onOpenSettings }: { onOpenSettings: (section: "organization") => void }) {
-  const { userId } = useAuth();
-  const { organization } = useOrganization();
-  const { isLoaded, setActive } = useOrganizationList();
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((current) => current + 1), []);
   const listing = useShellOrganizations(refreshKey);
+  if (listing.state !== "loaded") return null;
+  return <OrganizationSwitcherMenu organizations={listing.organizations} onChanged={refresh} onOpenSettings={() => onOpenSettings("organization")} />;
+}
+
+/**
+ * The Clerk-backed switcher over an organization listing the caller already holds, so the
+ * Organization page can mount it without a second directory read. Callers must already be
+ * inside a Clerk-enabled host.
+ */
+export function OrganizationSwitcherMenu({ organizations, onChanged, onOpenSettings, showSettingsAction = true }: {
+  organizations: readonly OrganizationManagementSummary[];
+  onChanged: () => void;
+  onOpenSettings?: (organizationId: string) => void;
+  showSettingsAction?: boolean;
+}) {
+  const { userId } = useAuth();
+  const { organization } = useOrganization();
+  const { isLoaded, setActive } = useOrganizationList();
   const [inviteOrganization, setInviteOrganization] = useState<OrganizationManagementSummary | null>(null);
   const [failedName, setFailedName] = useState<string | null>(null);
-  const actions = useShellOrganizationActions(inviteOrganization?.organizationId ?? null, refresh);
-  if (!isLoaded || !setActive || listing.state !== "loaded" || listing.organizations.length === 0) return null;
+  const actions = useShellOrganizationActions(inviteOrganization?.organizationId ?? null, onChanged);
+  if (!isLoaded || !setActive || organizations.length === 0) return null;
 
   const select = (organizationId: string | null) => {
     const actorId = userId ?? null;
@@ -92,14 +120,14 @@ function ClerkOrganizationSwitcher({ onOpenSettings }: { onOpenSettings: (sectio
       console.warn("[organization-management] activation failed", error instanceof Error ? error.name : "UnknownError");
       if (previous) writeOrganizationSelection(actorId, previous);
       else clearOrganizationSelection(actorId);
-      setFailedName(organizationId ? listing.organizations.find((candidate) => candidate.organizationId === organizationId)?.name ?? "organization" : "Personal");
+      setFailedName(organizationId ? organizations.find((candidate) => candidate.organizationId === organizationId)?.name ?? "organization" : "Personal");
     });
   };
 
   return (
     <>
       <DropdownMenuPrimitive.Root>
-        <OrganizationSwitcherView organizations={listing.organizations} organizationId={organization?.id ?? null} onSelect={select} onOpenSettings={() => onOpenSettings("organization")} onOpenInvite={setInviteOrganization} />
+        <OrganizationSwitcherView organizations={organizations} organizationId={organization?.id ?? null} onSelect={select} onOpenSettings={onOpenSettings} showSettingsAction={showSettingsAction} onOpenInvite={setInviteOrganization} />
       </DropdownMenuPrimitive.Root>
       {failedName ? <span role="alert" className="sr-only">Couldn&apos;t switch to {failedName}. Try again.</span> : null}
       {actions.error ? <span role="alert" className="sr-only">{actions.error}</span> : null}

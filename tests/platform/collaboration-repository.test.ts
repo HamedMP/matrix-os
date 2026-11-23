@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "kysely";
@@ -54,8 +55,12 @@ describe("PlatformCollaborationRepository", () => {
       authorityGeneration: 1,
       status: "invited",
     }]);
-    expect(JSON.stringify(await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute()))
-      .not.toMatch(/title|message|transcript|content/i);
+    const rows = await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute();
+    for (const { app_icon_bytes, app_icon_content_type, ...routing } of rows) {
+      expect(app_icon_bytes).toBeNull();
+      expect(app_icon_content_type).toBeNull();
+      expect(JSON.stringify(routing)).not.toMatch(/title|message|transcript|content/i);
+    }
   });
 
   it("projects standalone file, folder and app scopes for member discovery", async () => {
@@ -97,6 +102,46 @@ describe("PlatformCollaborationRepository", () => {
     });
     await expect(repository.getDirectoryRoute("10000000-0000-4000-8000-000000000104"))
       .resolves.toMatchObject({ kind: "file" });
+  });
+
+  it("adds shared app presentation columns to an existing directory and clears the icon when a share stops", async () => {
+    await sql`ALTER TABLE collaboration_directory DROP COLUMN app_name`.execute(fixture.collaborationDb);
+    await sql`ALTER TABLE collaboration_directory DROP COLUMN app_icon_sha256`.execute(fixture.collaborationDb);
+
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+
+    const icon = await sharp({ create: { width: 16, height: 16, channels: 4, background: "red" } }).png().toBuffer();
+    const iconSha256 = createHash("sha256").update(icon).digest("hex");
+    const appScope = "10000000-0000-4000-8000-000000000105";
+    const app = {
+      appId: "team-tracker",
+      catalogId: "50000000-0000-4000-8000-000000000001",
+      readinessId: "60000000-0000-4000-8000-000000000001",
+      registrationIncarnation: "a".repeat(64),
+      buildId: "b".repeat(64),
+    };
+    const event = (revision: number, state: "active" | "stopped") => repository.applyDirectoryEvent({
+      eventId: `20000000-0000-4000-8000-00000000010${revision}`,
+      scopeId: appScope,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "app",
+      organizationId: "org_matrix_team",
+      ...(state === "active" ? { audience: "current_membership" as const } : {}),
+      authorityGeneration: 1,
+      metadataRevision: revision,
+      app: { ...app, shareRevision: revision, state, name: "Team Tracker", thumbnail: { sha256: iconSha256, contentType: "image/png", base64: icon.toString("base64") } },
+      recipients: [],
+    });
+    await event(1, "active");
+    await expect(repository.getDirectoryRoute(appScope)).resolves.toMatchObject({
+      app: { name: "Team Tracker", iconSha256 },
+    });
+    await event(2, "stopped");
+    const stopped = await repository.getDirectoryRoute(appScope);
+    expect(stopped?.app).toMatchObject({ state: "stopped", name: "Team Tracker" });
+    expect(stopped?.app?.iconSha256).toBeUndefined();
   });
 
   it("does not let a different event at the same revision replace newer directory state", async () => {

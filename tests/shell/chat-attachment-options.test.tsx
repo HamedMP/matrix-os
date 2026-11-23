@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat.js";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
@@ -11,7 +11,7 @@ vi.mock("@clerk/nextjs", async importOriginal => ({
 }));
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 beforeEach(() => { vi.stubGlobal("localStorage", { getItem: () => null, setItem() {}, removeItem() {}, clear() {} }); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it.each([false, true])("uses the current source options before uploading ordinary Web Chat images (mobile=%s)", async mobile => {
   const catalog = createCanonicalProviderCatalogFixture(); const instance = catalog.instances[0]!;
@@ -33,4 +33,35 @@ it.each([false, true])("uses the current source options before uploading ordinar
   expect(screen.queryByText("Images for this Matrix AI source must total 1 MiB or less.")).toBeNull();
   await waitFor(() => expect(submit).toHaveBeenCalledOnce());
   expect(submit.mock.calls[0]?.[2]).toMatchObject({ modelOptions: [{ id: "source", value: "own" }] });
+});
+
+it.each([false, true])("sends a pending attachment only while its original Web draft is open (switch Chat=%s)", async switchChat => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  let reader: FileReader | undefined;
+  vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { reader = this; });
+
+  const submit = vi.fn<React.ComponentProps<typeof ChatApp>["onSubmit"]>(async () => true);
+  const props = { messages: [], busy: false, connected: true, conversations: [],
+    onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: submit,
+    providerSelection: catalog.instances[0]!.defaultSelection };
+  const view = render(<ChatApp {...props} sessionId={undefined} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Attach files" })).toHaveProperty("disabled", false));
+  fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "Private draft" } });
+  fireEvent.change(view.container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(["private attachment"], "draft.txt", { type: "text/plain" })] },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(reader).toBeInstanceOf(FileReader);
+  expect(submit).not.toHaveBeenCalled();
+  if (switchChat) view.rerender(<ChatApp {...props} sessionId="chat_other" />);
+
+  const data = "data:text/plain;base64,cHJpdmF0ZSBhdHRhY2htZW50";
+  await act(async () => {
+    Object.defineProperty(reader!, "result", { value: data });
+    reader!.dispatchEvent(new Event("load"));
+  });
+  if (switchChat) expect(submit).not.toHaveBeenCalled();
+  else expect(submit).toHaveBeenCalledExactlyOnceWith("Private draft", [{ name: "draft.txt", type: "text/plain", data }], expect.any(Object));
 });

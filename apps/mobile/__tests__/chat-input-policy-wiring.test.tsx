@@ -20,7 +20,7 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   useCanonicalChatDetail: () => ({
     detail: {
-      record: { chat: { id: "chat_a", revision: 1, currentSelection: mockSelection } }, runs: [], messages: [], turns: [],
+      record: { chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_a", revision: 1, currentSelection: mockSelection } }, runs: [], messages: [], turns: [],
     },
     computer: mockComputer,
   }),

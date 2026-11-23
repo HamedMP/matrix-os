@@ -1,7 +1,9 @@
 import { Children, Fragment, type ReactNode, type Ref } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import {
+  Pressable,
   ScrollView,
+  Switch,
   Text as NativeText,
   View,
   type ScrollViewInstance,
@@ -11,6 +13,7 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Divider, Icon, PressableScale, Spacer, type IconData } from "@/components/ui";
+import { selectHaptic } from "@/lib/haptics";
 import { motion } from "@/lib/theme-v2";
 
 export function SettingsPage({ children, scrollRef }: {
@@ -91,6 +94,105 @@ export function SettingsRow({
 }: SettingsRowProps) {
   const { theme } = useUnistyles();
   const content = (
+    <SettingsRowContent
+      title={title}
+      detail={detail}
+      detailNumberOfLines={detailNumberOfLines}
+      icon={icon}
+      leading={leading}
+      trailing={trailing ?? (onPress ? <Icon icon={ArrowRight01Icon} size={18} color={theme.v2.appColors.muted} /> : null)}
+      tone={tone}
+    />
+  );
+  const rowStyle = [styles.row, card ? styles.card : null, style];
+
+  if (!onPress) return <View style={rowStyle}>{content}</View>;
+  return (
+    <PressableScale
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
+      onPress={onPress}
+      pressedScale={motion.rowPressScale}
+      style={rowStyle}
+    >
+      {content}
+    </PressableScale>
+  );
+}
+
+interface SettingsSwitchRowProps {
+  title: string;
+  detail?: string;
+  icon?: IconData;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  disabled?: boolean;
+  card?: boolean;
+  style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * A row with a switch at its end. The switch takes taps across the row's
+ * whole height and out to its edge, so it is easy to hit; the title and
+ * detail do nothing. The switch drawn there only shows the value, so a tap
+ * toggles once and screen readers find a single switch named by the title.
+ */
+export function SettingsSwitchRow({
+  title,
+  detail,
+  icon,
+  value,
+  onValueChange,
+  disabled = false,
+  card = false,
+  style,
+}: SettingsSwitchRowProps) {
+  const { theme } = useUnistyles();
+  return (
+    <View style={[styles.row, styles.switchRow, card ? styles.card : null, style]}>
+      <View style={styles.copy}>
+        <SettingsRowContent title={title} detail={detail} icon={icon} />
+      </View>
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityLabel={title}
+        accessibilityState={{ checked: value, disabled }}
+        disabled={disabled}
+        onPress={() => {
+          if (disabled) return;
+          selectHaptic();
+          onValueChange(!value);
+        }}
+        style={styles.switchTarget}
+      >
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <Switch
+            disabled={disabled}
+            value={value}
+            trackColor={{ false: theme.v2.appColors.line, true: theme.v2.appColors.green }}
+            thumbColor={theme.v2.appColors.surface}
+          />
+        </View>
+      </Pressable>
+    </View>
+  );
+}
+
+function SettingsRowContent({
+  title,
+  detail,
+  detailNumberOfLines = 2,
+  icon,
+  leading,
+  trailing,
+  tone = "default",
+}: Pick<SettingsRowProps, "title" | "detail" | "detailNumberOfLines" | "icon" | "leading" | "trailing" | "tone">) {
+  const { theme } = useUnistyles();
+  return (
     <>
       <Spacer size="md" />
       <View style={styles.rowContent}>
@@ -108,24 +210,10 @@ export function SettingsRow({
             </>
           ) : null}
         </View>
-        {trailing ?? (onPress ? <Icon icon={ArrowRight01Icon} size={18} color={theme.v2.appColors.muted} /> : null)}
+        {trailing}
       </View>
       <Spacer size="md" />
     </>
-  );
-  const rowStyle = [styles.row, card ? styles.card : null, style];
-
-  if (!onPress) return <View style={rowStyle}>{content}</View>;
-  return (
-    <PressableScale
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
-      onPress={onPress}
-      pressedScale={motion.rowPressScale}
-      style={rowStyle}
-    >
-      {content}
-    </PressableScale>
   );
 }
 
@@ -156,6 +244,16 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.v2.appColors.line,
     borderRadius: 16,
+  },
+  switchRow: {
+    flexDirection: "row",
+  },
+  // Spans the row's full height and runs past its padding to the edge.
+  switchTarget: {
+    justifyContent: "center",
+    paddingLeft: 16,
+    paddingRight: 14,
+    marginRight: -14,
   },
   rowContent: {
     flexDirection: "row",

@@ -240,7 +240,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(installer).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(installer).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
-    expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
+    expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-1.6.0}"');
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('run_npm_install()');
     expect(installer).toContain('run_as_root()');

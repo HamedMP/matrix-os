@@ -31,7 +31,7 @@ suite("Electron Getting started overlay coexistence", () => {
     page = await app.firstWindow();
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(async () => { await window.operator.invoke("auth:start-device-flow", {}); });
-    await page.getByRole("button", { name: "Help", exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByRole("button", { name: /^Getting started —/ }).waitFor({ timeout: 20_000 });
   }, 60_000);
   afterAll(async () => {
     await app?.close();
@@ -39,16 +39,17 @@ suite("Electron Getting started overlay coexistence", () => {
     if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  it("Help handoff keeps one checklist anchored to the title bar", async () => {
-    const help = page.getByRole("button", { name: "Help", exact: true });
+  it("Setup pill keeps one checklist anchored to the title bar", async () => {
+    const pill = page.getByRole("button", { name: /^Getting started —/ });
     const card = page.getByRole("dialog", { name: "Getting started", exact: true });
-    const menu = page.getByRole("dialog", { name: "Help", exact: true });
-    await help.click();
-    await menu.waitFor();
-    await page.getByRole("button", { name: /Getting started —/ }).click();
+    expect(await page.getByRole("button", { name: "Help", exact: true }).count()).toBe(0);
+    if (await card.isVisible()) {
+      await pill.click();
+      await card.waitFor({ state: "hidden" });
+    }
+    await pill.click();
     await card.waitFor();
-    await menu.waitFor({ state: "hidden" });
-    const anchor = await help.boundingBox();
+    const anchor = await pill.boundingBox();
     await expect.poll(async () => {
       const bounds = await card.boundingBox();
       return Math.abs(bounds!.x + bounds!.width - anchor!.x - anchor!.width);
@@ -56,17 +57,15 @@ suite("Electron Getting started overlay coexistence", () => {
     const bounds = await card.boundingBox();
     expect(bounds!.y).toBeGreaterThanOrEqual(anchor!.y + anchor!.height);
     expect(bounds!.y).toBeLessThan(anchor!.y + anchor!.height + 16);
-    await page.screenshot({ path: join(evidence, "help-handoff-checklist.png") });
-    await help.click();
+    await page.screenshot({ path: join(evidence, "setup-pill-checklist.png") });
+    await pill.click();
     await card.waitFor({ state: "hidden" });
-    await menu.waitFor();
-    await page.getByRole("button", { name: /Getting started —/ }).focus();
+    await pill.focus();
     await page.keyboard.press("Enter");
     await card.waitFor();
-    await menu.waitFor({ state: "hidden" });
   });
 
-  it("dismisses the checklist through Help before unrelated actions", async () => {
+  it("dismisses the checklist through the Setup pill before unrelated actions", async () => {
     await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await page.getByRole("dialog", { name: "Command palette", exact: true }).waitFor();
@@ -78,10 +77,7 @@ suite("Electron Getting started overlay coexistence", () => {
   it("restores the checklist across both presentations without taking launcher or palette focus", async () => {
     const card = page.getByRole("dialog", { name: "Getting started" });
     const trigger = page.locator('button[aria-label^="Getting started —"]');
-    if (!await card.isVisible()) {
-      await page.getByRole("button", { name: "Help", exact: true }).click();
-      await trigger.click();
-    }
+    if (!await card.isVisible()) await trigger.click();
     for (const presentation of ["desktop", "canvas"] as const) {
       await card.waitFor();
       await page.screenshot({ path: join(evidence, `${presentation}-checklist.png`) });
@@ -110,7 +106,8 @@ suite("Electron Getting started overlay coexistence", () => {
         await card.waitFor();
       }
     }
-    await page.getByRole("button", { name: "Help", exact: true }).click();
+    await trigger.click();
+    await card.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Open App Launcher", exact: true }).click();
     await page.keyboard.press("Escape");
     expect(await card.count()).toBe(0);

@@ -18,6 +18,10 @@ export function hashAccountDeletionOwner(owner: string, secret: string): string 
 export async function lockAccountDeletionOwner(db: Kysely<PlatformDatabase> | Transaction<PlatformDatabase>, ownerHash: string): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${'account-deletion:' + ownerHash}, 0))`.execute(db);
 }
+/** Admit independent storage/financial work together while still fencing exclusive deletion transitions. */
+export async function lockAccountDeletionOwnerShared(db: Kysely<PlatformDatabase> | Transaction<PlatformDatabase>, ownerHash: string): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${'account-deletion:' + ownerHash}, 0))`.execute(db);
+}
 export type DeletionJob = Selectable<AccountDeletionJobsTable>;
 export class AccountDeletionConflictError extends Error {
   constructor() { super('Account deletion can no longer be cancelled.'); this.name = 'AccountDeletionConflictError'; }

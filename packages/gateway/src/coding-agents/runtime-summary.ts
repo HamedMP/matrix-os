@@ -40,11 +40,17 @@ export interface CodingAgentRuntimeSummaryService {
 
 export interface CodingAgentRuntimeSummaryRequestOptions {
   projectId?: string;
+  /**
+   * Only clients that ask get recently finished threads: released Electron
+   * Desktop and Native Mobile builds parse a strict schema without them.
+   */
+  includeRecentThreads?: boolean;
 }
 
 export interface CodingAgentThreadSummaryStore {
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   listAttentionThreads?(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  listRecentThreads?(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
 }
 
 export interface CodingAgentPreviewSummaryStore {
@@ -199,6 +205,22 @@ async function readAttentionThreads(
   }
 }
 
+const RECENT_THREAD_SUMMARY_LIMIT = 10;
+
+async function readRecentThreads(
+  store: CodingAgentThreadSummaryStore | undefined,
+  principal: RequestPrincipal,
+): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }> {
+  const empty = { items: [], hasMore: false, limit: RECENT_THREAD_SUMMARY_LIMIT };
+  if (!store?.listRecentThreads) return empty;
+  try {
+    return await store.listRecentThreads(principal);
+  } catch (err: unknown) {
+    logCodingAgentWarning("recent thread summary unavailable", err);
+    return empty;
+  }
+}
+
 async function readPreviewSessions(
   store: CodingAgentPreviewSummaryStore | undefined,
   principal: RequestPrincipal,
@@ -306,6 +328,9 @@ export function createCodingAgentRuntimeSummaryService(
       }));
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
+      const recentThreads = summaryOptions.includeRecentThreads
+        ? await readRecentThreads(options.threads, principal)
+        : { items: [], hasMore: false, limit: RECENT_THREAD_SUMMARY_LIMIT };
       const projectSummaryTimeoutMs = Math.min(
         Math.max(options.projectSummaryTimeoutMs ?? DEFAULT_PROJECT_SUMMARY_TIMEOUT_MS, 10),
         MAX_PROJECT_SUMMARY_TIMEOUT_MS,
@@ -376,6 +401,7 @@ export function createCodingAgentRuntimeSummaryService(
         projects: projectRead.page,
         activeThreads,
         attentionThreads,
+        recentThreads,
         terminalWorkspaces: await terminalWorkspaces,
         previewSessions: await previewSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },

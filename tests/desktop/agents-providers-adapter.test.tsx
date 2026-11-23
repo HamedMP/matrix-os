@@ -20,6 +20,7 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/speech/browser-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
+  sessionProviderSettingsSnapshotCache: undefined,
 }));
 
 import AgentsProvidersAdapter from "../../desktop/src/renderer/src/features/settings/AgentsProvidersAdapter";
@@ -89,7 +90,7 @@ describe("desktop shared agents and providers adapter", () => {
       previewQuota: { requestsRemaining: 24 },
     });
     expect(fetcher).toHaveBeenCalledWith(
-      "https://app.matrix-os.com/api/speech/capabilities?runtime=vm-2",
+      "https://app.matrix-os.com/api/speech/capabilities?runtime=vm-2&dictation=extended",
       expect.objectContaining({ method: "GET", credentials: "include", redirect: "error" }),
     );
   });

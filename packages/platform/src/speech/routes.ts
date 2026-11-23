@@ -1,4 +1,7 @@
 import {
+  SPEECH_DICTATION_LIMITS_HEADER,
+  SPEECH_DICTATION_MAX_BYTES,
+  SPEECH_EXTENDED_DICTATION_LIMITS,
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
   SpeechLanguageHintsSchema,
@@ -7,6 +10,7 @@ import {
   SpeechSourceKindSchema,
   SpeechStatusResponseSchema,
   SpeechTranscriptionResponseSchema,
+  withLegacyDictationLimits,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -21,7 +25,7 @@ import {
   type PreviewRuntimeAccessSummary,
 } from "../preview-runtime-access.js";
 
-const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
+const MAX_DICTATION_BODY_BYTES = SPEECH_DICTATION_MAX_BYTES + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const RuntimeQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema }).strict();
@@ -161,7 +165,12 @@ export function createSpeechRuntimeRoutes(options: {
   app.get("/capabilities", async (c) => {
     const runtime = await authenticate(c, options);
     if ("response" in runtime) return runtime.response;
-    const capabilities = options.service.capabilities();
+    // Gateways released before extended dictation reject a policy above the
+    // legacy limits, which would switch speech off for their owners.
+    const extended = c.req.header(SPEECH_DICTATION_LIMITS_HEADER) === SPEECH_EXTENDED_DICTATION_LIMITS;
+    const capabilities = extended
+      ? options.service.capabilities()
+      : withLegacyDictationLimits(options.service.capabilities());
     return c.json(SpeechCapabilitiesResponseSchema.parse({
       ...capabilities,
       ...(runtime.previewAccess ? { previewQuota: {

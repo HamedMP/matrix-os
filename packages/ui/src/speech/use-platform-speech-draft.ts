@@ -20,6 +20,8 @@ export interface UsePlatformSpeechDraftResult {
   previewQuota: SpeechCapabilitiesResponse["previewQuota"];
   capabilitiesStale: boolean;
   elapsedMs: number;
+  /** Longest single dictation the current policy records, or null before it is known. */
+  maxDurationMs: number | null;
   /** Current microphone energy, normalized to the inclusive range 0..1. */
   inputLevel: number;
   /** Monotonic meter sample sequence so equal consecutive levels still render. */
@@ -74,6 +76,12 @@ export function platformSpeechControlState(
   };
 }
 
+/** Minutes and seconds, e.g. 65_000 -> "1:05". */
+export function formatSpeechClock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1_000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 export interface PlatformSpeechRecording {
   size: number;
   type: string;
@@ -113,6 +121,23 @@ interface ActiveRecording<TRecording extends PlatformSpeechRecording> {
   elapsedTimer: ReturnType<typeof setInterval>;
   stopping: boolean;
   maxBytes: number;
+}
+
+/**
+ * When the duration limit stops a recording, the mic control changes from
+ * "Stop recording" to "Cancel transcription" under the pointer. A stop click
+ * that lands just after the limit must not discard the whole dictation.
+ */
+export const SPEECH_LIMIT_STOP_CANCEL_GUARD_MS = 2_000;
+
+/**
+ * The service rejects a recording even one sample over the limit, and a timer
+ * can fire late, so recording stops this long before the advertised limit.
+ */
+export const SPEECH_LIMIT_STOP_MARGIN_MS = 1_000;
+
+export function speechLimitStopDelayMs(maxDurationMs: number): number {
+  return maxDurationMs > 10 * SPEECH_LIMIT_STOP_MARGIN_MS ? maxDurationMs - SPEECH_LIMIT_STOP_MARGIN_MS : maxDurationMs;
 }
 
 interface ActiveRequest {
@@ -175,6 +200,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const requestRef = useRef<ActiveRequest | null>(null);
   const captureStartRef = useRef<AbortController | null>(null);
   const quotaRefreshRef = useRef<AbortController | null>(null);
+  const limitStoppedAtRef = useRef<number | null>(null);
 
   const cancelRemote = async (requestId: string): Promise<void> => {
     if (!client) return;
@@ -330,6 +356,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
     const generation = ++generationRef.current;
+    limitStoppedAtRef.current = null;
     setError(null);
     setElapsedMs(0);
     setInputMeter({ level: 0, sequence: 0 });
@@ -367,8 +394,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       capture,
       generation,
       timeout: setTimeout(() => {
+        limitStoppedAtRef.current = Date.now();
         void finishRecording(active);
-      }, policy.maxDurationMs),
+      }, speechLimitStopDelayMs(policy.maxDurationMs)),
       elapsedTimer: setInterval(() => {
         if (generationRef.current === generation) setElapsedMs(Date.now() - startedAt);
       }, 250),
@@ -385,6 +413,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   }
 
   function cancel(): void {
+    const limitStoppedAt = limitStoppedAtRef.current;
+    if (limitStoppedAt !== null && !recordingRef.current
+      && Date.now() - limitStoppedAt < SPEECH_LIMIT_STOP_CANCEL_GUARD_MS) return;
     const cancelledRequest = requestRef.current !== null;
     const generation = ++generationRef.current;
     const cancellation = disposeActive(true);
@@ -446,6 +477,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     previewQuota: capabilities?.previewQuota,
     capabilitiesStale,
     elapsedMs,
+    maxDurationMs: capabilities?.fileTranscription.status === "ready"
+      ? capabilities.fileTranscription.dictation.maxDurationMs
+      : null,
     inputLevel: inputMeter.level,
     inputLevelSequence: inputMeter.sequence,
     start,

@@ -369,6 +369,41 @@ describe("UserButton", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "View plans" }));
     expect(onOpenSettings).toHaveBeenCalledWith("billing");
   });
+  it("shows Getting started progress in the top-bar menu and opens the checklist from it", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const ui = await import("@matrix-os/ui");
+    const open = vi.fn();
+    function Publisher() {
+      ui.usePublishGettingStartedProgress(React.useMemo(() => ({ completed: 2, total: 5, next: "Add billing", open }), []));
+      return null;
+    }
+    render(<ui.GettingStartedVisibilityProvider scope="web"><Publisher /><UserButton variant="menubar" onOpenSettings={vi.fn()} /></ui.GettingStartedVisibilityProvider>);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    const row = await screen.findByRole("menuitem", { name: /Getting started/ });
+    expect(row.textContent).toContain("2 of 5");
+    expect(row.textContent).toContain("Next: Add billing");
+    expect(screen.queryByRole("menuitem", { name: /What's New/ })).toBeNull();
+    const discord = screen.getByRole("menuitem", { name: /Join Discord/ });
+    expect(discord.getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
+    expect(discord.getAttribute("target")).toBe("_blank");
+    fireEvent.click(row);
+    expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("hides the Getting started row once setup is complete", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const ui = await import("@matrix-os/ui");
+    function Publisher() {
+      ui.usePublishGettingStartedProgress(React.useMemo(() => ({ completed: 5, total: 5, next: null, open: vi.fn() }), []));
+      return null;
+    }
+    render(<ui.GettingStartedVisibilityProvider scope="web"><Publisher /><UserButton variant="menubar" onOpenSettings={vi.fn()} /></ui.GettingStartedVisibilityProvider>);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.queryByRole("menuitem", { name: /Getting started/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /Join Discord/ })).toBeTruthy();
+  });
+
   it("excludes hosted computer actions in self-hosted mode", async () => {
     document.documentElement.dataset.matrixSelfHosted = "1";
     const { UserButton } = await import("../../shell/src/components/UserButton.js");

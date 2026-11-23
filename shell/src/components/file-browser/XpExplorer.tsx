@@ -16,6 +16,7 @@ import { XpStatusBar } from "./XpStatusBar";
 import "./xp-explorer.css";
 
 interface XpExplorerProps {
+  gatewayUrl: string;
   renamingPath: string | null;
   onStartRename: (name: string) => void;
   onCancelRename: () => void;
@@ -32,6 +33,7 @@ interface XpExplorerProps {
  * clipboard behavior stay identical to the classic UI.
  */
 export function XpExplorer({
+  gatewayUrl,
   renamingPath,
   onStartRename,
   onCancelRename,
@@ -48,7 +50,7 @@ export function XpExplorer({
 
   let main: React.ReactNode;
   if (showingTrash) {
-    main = <TrashView />;
+    main = <TrashView gatewayUrl={gatewayUrl} />;
   } else if (searchResults) {
     main = <SearchResults onOpenFile={onOpenFile} />;
   } else if (loading) {

@@ -120,6 +120,15 @@ interface DesktopSurfacesState {
   workspaceView: "desktop" | "tabs";
   desktopHiddenSurfaceIds: string[];
   desktopTransition: DesktopTransition | null;
+  /** Full-size app that was showing when Show desktop hid the tabs view. */
+  desktopRestoreTabId: string | null;
+  /**
+   * Floating bounds each app had before its first move to a screen half, for
+   * Restore app size. Session-only, never persisted; one entry per surface at most.
+   */
+  tileRestoreBounds: Record<string, DesktopSurfaceBounds>;
+  rememberTileRestoreBounds(tabId: string): void;
+  forgetTileRestoreBounds(tabId: string): void;
   reconcileTabs(tabIds: readonly string[], viewport: DesktopViewport, constrainToViewport?: boolean): void;
   showDesktop(): void;
   finishDesktopTransition(): void;
@@ -199,6 +208,25 @@ function syncDesktopHiddenState(
   };
 }
 
+function topmostTabSurfaceId(surfaces: Readonly<Record<string, DesktopSurface>>): string | null {
+  let topmost: DesktopSurface | null = null;
+  for (const surface of Object.values(surfaces)) {
+    if (surface.mode === "tab" && (!topmost || surface.zIndex > topmost.zIndex)) topmost = surface;
+  }
+  return topmost?.tabId ?? null;
+}
+
+/** Drops remembered bounds of apps that are gone or closed; same object when nothing changes. */
+function retainedTileRestoreBounds(
+  restoreBounds: Record<string, DesktopSurfaceBounds>,
+  surfaces: Readonly<Record<string, DesktopSurface>>,
+): Record<string, DesktopSurfaceBounds> {
+  const ids = Object.keys(restoreBounds);
+  const kept = ids.filter((tabId) => surfaces[tabId] !== undefined && surfaces[tabId].mode !== "closed");
+  if (kept.length === ids.length) return restoreBounds;
+  return Object.fromEntries(kept.map((tabId) => [tabId, restoreBounds[tabId]!]));
+}
+
 function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -209,6 +237,8 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
   workspaceView: "desktop",
   desktopHiddenSurfaceIds: [],
   desktopTransition: null,
+  desktopRestoreTabId: null,
+  tileRestoreBounds: {},
 
   reconcileTabs: (tabIds, viewport, constrainToViewport = true) => set((state) => {
     const retained = new Set(tabIds);
@@ -261,34 +291,49 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         syncedHiddenState.desktopTransition?.surfaceIds ?? [],
         state.desktopTransition?.surfaceIds ?? [],
       );
+    // Also prunes entries left by a direct setState of surfaces (layout restore).
+    const tileRestoreBounds = retainedTileRestoreBounds(state.tileRestoreBounds, surfaces);
     return unchanged && workspaceView === state.workspaceView && hiddenStateUnchanged
+      && tileRestoreBounds === state.tileRestoreBounds
       ? state
-      : { surfaces, nextZIndex, workspaceView, ...syncedHiddenState };
+      : { surfaces, nextZIndex, workspaceView, ...syncedHiddenState, tileRestoreBounds };
   }),
 
   showDesktop: () => set((state) => {
-    if (state.desktopHiddenSurfaceIds.length > 0) {
+    if (state.desktopHiddenSurfaceIds.length > 0 || state.desktopRestoreTabId !== null) {
+      const restoreTabId = state.desktopRestoreTabId;
+      const restoreTab = restoreTabId !== null && state.surfaces[restoreTabId]?.mode === "tab";
       return {
+        ...(restoreTab ? nextFocusedState(state, restoreTabId) : {}),
         desktopHiddenSurfaceIds: [],
-        desktopTransition: { phase: "restoring", surfaceIds: state.desktopHiddenSurfaceIds },
-        workspaceView: "desktop",
+        desktopTransition: state.desktopHiddenSurfaceIds.length > 0
+          ? { phase: "restoring", surfaceIds: state.desktopHiddenSurfaceIds }
+          : null,
+        desktopRestoreTabId: null,
+        workspaceView: restoreTab ? "tabs" : "desktop",
       };
     }
 
+    const desktopRestoreTabId = state.workspaceView === "tabs"
+      ? topmostTabSurfaceId(state.surfaces)
+      : null;
     const visibleSurfaceIds = Object.values(state.surfaces)
       .filter((surface) => surface.mode === "window")
       .map((surface) => surface.tabId);
-    if (visibleSurfaceIds.length === 0) return { workspaceView: "desktop", desktopTransition: null };
+    if (visibleSurfaceIds.length === 0) {
+      return { workspaceView: "desktop", desktopTransition: null, desktopRestoreTabId };
+    }
     return {
       desktopHiddenSurfaceIds: visibleSurfaceIds,
       desktopTransition: { phase: "hiding", surfaceIds: visibleSurfaceIds },
+      desktopRestoreTabId,
       workspaceView: "desktop",
     };
   }),
 
   finishDesktopTransition: () => set({ desktopTransition: null }),
 
-  setWorkspaceView: (view) => set({ workspaceView: view }),
+  setWorkspaceView: (view) => set({ workspaceView: view, desktopRestoreTabId: null }),
 
   activateSurface: (tabId) => set((state) => {
     const surface = state.surfaces[tabId];
@@ -311,6 +356,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         state.desktopTransition?.surfaceIds.filter((id) => id !== tabId),
       ),
       workspaceView: mode === "tab" ? "tabs" : "desktop",
+      desktopRestoreTabId: null,
     };
   }),
 
@@ -337,6 +383,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       restoreMode: "tab",
     }),
     workspaceView: "tabs",
+    desktopRestoreTabId: null,
   })),
 
   openSiblingTab: (sourceTabId, newTabId, retainedTabIds, presentation = "tab") => set((state) => {
@@ -367,6 +414,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     const focused = nextFocusedState({ surfaces, nextZIndex: state.nextZIndex }, newTabId);
     return {
       ...focused,
+      tileRestoreBounds: retainedTileRestoreBounds(state.tileRestoreBounds, focused.surfaces),
       ...syncDesktopHiddenState(
         state,
         focused.surfaces,
@@ -392,6 +440,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
       restoreMode: "window",
     }),
     workspaceView: "desktop",
+    desktopRestoreTabId: null,
   })),
 
   closeSurface: (tabId) => set((state) => {
@@ -408,6 +457,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     return {
       surfaces,
       ...syncDesktopHiddenState(state, surfaces),
+      tileRestoreBounds: retainedTileRestoreBounds(state.tileRestoreBounds, surfaces),
       workspaceView: Object.values(surfaces).some((candidate) => candidate.mode === "tab")
         ? state.workspaceView
         : "desktop",
@@ -431,5 +481,17 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         },
       },
     };
+  }),
+
+  rememberTileRestoreBounds: (tabId) => set((state) => {
+    const surface = state.surfaces[tabId];
+    if (!surface || surface.mode === "closed" || Object.hasOwn(state.tileRestoreBounds, tabId)) return state;
+    return { tileRestoreBounds: { ...state.tileRestoreBounds, [tabId]: { ...surface.bounds } } };
+  }),
+
+  forgetTileRestoreBounds: (tabId) => set((state) => {
+    if (!Object.hasOwn(state.tileRestoreBounds, tabId)) return state;
+    const { [tabId]: _forgotten, ...tileRestoreBounds } = state.tileRestoreBounds;
+    return { tileRestoreBounds };
   }),
 }));

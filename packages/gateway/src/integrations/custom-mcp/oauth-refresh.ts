@@ -7,6 +7,8 @@ interface Token { access_token: string; refresh_token?: string; expires_in?: num
 
 export async function resolveCustomMcpOAuthAuthorization(options: {
   db: PlatformDb; encryptionKey: Buffer; userId: string; row: CustomMcpServerBrokerRow; now: Date; configuredClientId?: string;
+  /** Throws `action_required` when the grant's Matrix-owned app is gone or changed. */
+  assertClient?(oauth: NonNullable<CustomMcpCredential["oauth"]>): void;
   exchangeToken(endpoint: string, fields: Record<string, string>, oauth?: CustomMcpCredential["oauth"]): Promise<Token>;
 }): Promise<string | undefined> {
   const { db, encryptionKey, userId, row: selected, now } = options;
@@ -22,6 +24,8 @@ export async function resolveCustomMcpOAuthAuthorization(options: {
   if (!credential || typeof credential !== "object" || Array.isArray(credential)) throw new CustomMcpBrokerError("action_required");
   const oauth = credential.oauth;
   if (!oauth || typeof oauth !== "object" || oauth.removing || !validToken(oauth.accessToken) || oauth.state) throw new CustomMcpBrokerError("action_required");
+  // A saved token is only as valid as the app that issued it: check before any return.
+  options.assertClient?.(oauth);
   const encrypt = (next: CustomMcpCredential) => encryptCustomMcpCredential(next, encryptionKey, { userId, serverId: row.id });
   const cas = (expected: string, encrypted: string, status = row.status) => db.updateCustomMcpCredentialsIfCurrent(row.id, userId, row.revision, expected, encrypted, status);
   const settle = (expected: string, encrypted: string, authorizationRequired = false) =>

@@ -14,7 +14,7 @@ import type { RoutineCliScope } from "./repositories/routine-cli-preferences.js"
 import { RoutineCliError } from "./routine-cli-errors.js";
 import { lockRoutineCliPolicyScope } from "./routine-cli-lock-order.js";
 import type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
-import type { RoutineCliResolvedTarget, RoutineCliTargetService } from "./routine-cli-targets.js";
+import type { RoutineCliRememberedTarget, RoutineCliTargetService } from "./routine-cli-targets.js";
 
 const PROOF_TTL_MS = 60_000;
 const RUN_TTL_MS = 30 * 60_000;
@@ -38,7 +38,7 @@ const SOURCE_BY_DRIVER: Partial<Record<CanonicalChatRun["driverKind"], SourceTyp
 type Lease = {
   admission: Omit<RoutineFullAccessTurnAdmission, "proof" | "body">;
   sourceType: SourceType;
-  target: RoutineCliResolvedTarget;
+  target: RoutineCliRememberedTarget;
   expiresAt: number;
   binding?: RoutineCliSourceContext;
   detach?: () => void;
@@ -46,7 +46,7 @@ type Lease = {
 };
 
 export interface RoutineFullAccessSourceLease {
-  readonly target: RoutineCliResolvedTarget;
+  readonly target: RoutineCliRememberedTarget;
   current(): boolean;
   validateWithin(trx: Transaction<OwnerBotDatabase>): Promise<boolean>;
   release(): void;
@@ -82,7 +82,7 @@ export function createRoutineFullAccessTurnService(options: {
   timer.unref?.();
 
   const inspectWithin = async (trx: Transaction<OwnerBotDatabase>, admission: Lease["admission"],
-    clientRequestId: string, pinned?: RoutineCliResolvedTarget) => {
+    clientRequestId: string, pinned?: RoutineCliRememberedTarget) => {
     const { owner, chatId, run, principal } = admission;
     await lockRoutineCliPolicyScope(trx, options.scope);
     const chat = await trx.selectFrom("chats").select("id").where("id", "=", chatId)

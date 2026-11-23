@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
+    "./chat-conversation": "./src/chat/ChatConversation.tsx",
     "./bot-routine-client": "./src/chat-agents/bots/routine-client.ts",
     "./bot-routine-presentation": "./src/chat-agents/bots/routine-presentation.ts",
     "./bot-routine-review": "./src/chat-agents/bots/routine-review-clock.ts",
@@ -17,6 +18,8 @@
     "./default-organization": "./src/collaboration/default-organization.ts",
     "./feature-flags": "./src/feature-flags.ts",
     "./terminal-agents": "./src/terminal-agents/index.ts",
+    "./terminal-pane-tree": "./src/terminal-pane-tree/index.ts",
+    "./terminal-status-sidebar": "./src/terminal-status-sidebar/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./chat-composer.css": "./src/chat/composer/chat-composer.css",
@@ -24,6 +27,8 @@
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
     "./appearance": "./src/appearance/index.ts",
+    "./shortcuts": "./src/shortcuts/index.ts",
+    "./shortcuts.css": "./src/shortcuts/shortcuts.css",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
     "./get-started.css": "./src/get-started/get-started.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
@@ -40,7 +45,8 @@
     "./ai-usage-load": "./src/ai-usage/load-matrix-usage.ts",
     "./routine-destination": "./src/routine-destination/index.ts",
     "./routine-action": "./src/routine-action/index.ts",
-    "./terminal-launch": "./src/terminal/agent-launch.ts"
+    "./terminal-launch": "./src/terminal/agent-launch.ts",
+    "./routine-origin": "./src/chat/routine-origin.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",

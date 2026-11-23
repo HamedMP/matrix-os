@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/nextjs";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { RenameableConversation } from "./ChatTitleRename";
@@ -26,7 +26,7 @@ export interface WebProjectsState {
 
 /** The owner's projects on the routed computer; a former computer's or account's list is never shown. */
 export function useWebProjects(gatewayUrl: string, scopeKey: string): WebProjectsState {
-  const { userId, sessionId } = useAuth();
+  const { userId, sessionId } = useShellAuthIdentity();
   const identity = `${userId ?? "self-hosted"}\n${sessionId ?? ""}\n${scopeKey}\n${gatewayUrl}`;
   const [result, setResult] = useState<ProjectsResult | null>(null);
   const [attempt, setAttempt] = useState(0);

@@ -1,3 +1,4 @@
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { CanonicalChatExecutionRootRef, CanonicalChatRun } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -53,6 +54,7 @@ export function createChatTerminalSessionService(options: {
 }): ChatTerminalSessionService {
   return {
     async prepare(principal, chatId) {
+      if (isRoutineDirectChatId(chatId)) throw new Error("Chat is unavailable");
       const owner = ownerFromPrincipal(principal);
       const run = await options.repository.getLatestRunForTerminalBinding(owner, chatId);
       if (!run) {
@@ -76,6 +78,7 @@ export function createChatTerminalSessionService(options: {
     },
 
     async bind(principal, input) {
+      if (isRoutineDirectChatId(input.chatId)) throw new Error("Chat is unavailable");
       await options.repository.bindTerminalSession(ownerFromPrincipal(principal), input);
     },
   };

@@ -58,7 +58,7 @@ import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
+import { createGatewayMatrixMcpCapabilities } from "./startup/matrix-mcp-capabilities.js";
 import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
 import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
@@ -252,6 +252,7 @@ import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
+import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
@@ -322,14 +323,7 @@ export async function createGateway(config: GatewayConfig) {
   const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
-  const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
-    // The VPS runner projects its single owner into both variables. If they
-    // disagree, this runtime cannot safely bind a Chat owner to its broker.
-    configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
-      ? process.env.MATRIX_CLERK_USER_ID
-      : undefined,
-    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
-  });
+  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env);
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -579,6 +573,7 @@ export async function createGateway(config: GatewayConfig) {
     worktreeManager: codingAgentWorktreeManager,
     agentLauncher: agentCredentialLauncher,
     resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    issueMatrixCoreMcp: ({ ownerId, sessionId, readOnly }) => issueCoreMcpRunCapability(ownerId, sessionId, readOnly ? "discovery" : "call"),
     beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     terminalRuntime: terminalWorkspaceRuntime,
     terminalLaunch: input => preparedTerminalLaunch ? preparedTerminalLaunch(input) : Promise.resolve(undefined),
@@ -627,6 +622,9 @@ export async function createGateway(config: GatewayConfig) {
         }),
       },
       opencode: {
+        // OpenCode runs for the configured owner only; the registry refuses any other owner.
+        issueMatrixCoreMcp: ({ runId }) => process.env.MATRIX_CLERK_USER_ID
+          ? issueCoreMcpRunCapability(process.env.MATRIX_CLERK_USER_ID, runId, "call") : null,
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "opencode",
           homePath,
@@ -1281,6 +1279,7 @@ export async function createGateway(config: GatewayConfig) {
     resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
     localTerminalAgentToken: () => localTerminalAgentToken?.token,
   }));
+  registerRoutineDirectResourceFence(app);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1631,6 +1630,7 @@ export async function createGateway(config: GatewayConfig) {
     if (botServices?.managedAdapter) canonicalExecutableDriverKinds.push("matrix_pi");
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
+      beforeRoutineCreationAdmission: botServices?.beforeRoutineCreationAdmission,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
@@ -1653,7 +1653,7 @@ export async function createGateway(config: GatewayConfig) {
     botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     nativeClaudeChatRuntime?.bind(() => canonicalChatOrchestrator);
-    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }, "approval"));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the

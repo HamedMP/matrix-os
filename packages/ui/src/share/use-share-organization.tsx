@@ -73,8 +73,6 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
     shared: flow.shared,
     slot: {
       shared: flow.shared,
-      organizationName: selected.name,
-      collaborativeStep: collaborativeStep(flow.step),
       content: <OrganizationTab organizations={organizations} selectedId={selected.organizationId} onSelect={setChosenId}
         flow={flow} orgLink={sharing.share && flow.shared ? safeOrgLink(host, sharing.share, selected.name) : null} onOpenChat={host.openChat} busy={busy} />,
     },
@@ -88,11 +86,6 @@ function safeOrgLink(host: ShareOrganizationHost, share: CollaborativeAppShare, 
     console.warn("[share] org link unavailable", error instanceof Error ? error.name : "UnknownError");
     return null;
   }
-}
-
-function collaborativeStep(step: string): "none" | "required" | "running" {
-  if (step === "running" || step === "applying") return "running";
-  return step === "required" ? "required" : "none";
 }
 
 /** A live share or running handoff pins the org; otherwise the owner's pick, then the active org. */
