@@ -124,7 +124,7 @@ async function freePort(): Promise<number> {
 }
 
 /** The production gateway pieces behind the ingress: Origin gate, bearer auth, the Herdr socket. */
-async function gateway(env: NodeJS.ProcessEnv) {
+async function gateway(env: NodeJS.ProcessEnv, ownerLogin?: string) {
   const core = createFakeHerdrCore();
   core.add("t1", { screen: "owner secrets" });
   const adapter = createHerdrAdapter({ open: async () => core.connect(), captureQuietMs: 5, captureMaxMs: 100 });
@@ -136,7 +136,9 @@ async function gateway(env: NodeJS.ProcessEnv) {
   registerWebSocketOriginGate(app, resolveWebSocketOriginPolicy(env, createGatewayAllowedOriginController(env)));
   app.use("*", authMiddleware(TOKEN));
   // The owner identity check nginx asks before every private request (layer 5 implements it).
-  app.get("/api/system/private-network/identity", (c) => c.json({ ok: true }));
+  // With ownerLogin, it answers like the real check: only that exact login passes.
+  app.get("/api/system/private-network/identity", (c) => (ownerLogin === undefined || c.req.header("tailscale-user-login") === ownerLogin
+    ? c.json({ ok: true }) : c.json({ error: "Forbidden" }, 403)));
   const viewers = registerHerdrTerminalWebSocket({
     app, upgradeWebSocket: ws.upgradeWebSocket, adapter, getPrincipal: (c) => requireRequestPrincipal(c),
     terminalOwnerIds: [OWNER], terminalLiveOwnership: ownership,
@@ -154,10 +156,12 @@ async function gateway(env: NodeJS.ProcessEnv) {
 /** The installer's nginx site, on a free loopback port in front of the test gateway. */
 async function ingress(access: "public" | "tailscale", gatewayPort: number): Promise<number> {
   const port = await freePort();
+  tailnetSocket = join(dir, "tailnet.sock");
   const htpasswd = join(dir, "htpasswd");
   writeFileSync(htpasswd, "owner:{PLAIN}pass\n");
   const site = installer(`render_nginx_site ${access} _ ${htpasswd} off`)
     .replace(/listen (127\.0\.0\.1:)?80 default_server;/, `listen 127.0.0.1:${port};`)
+    .replace("listen unix:/run/matrix-nginx/tailnet.sock;", `listen unix:${tailnetSocket};`)
     .replaceAll("include /opt/matrix/env/gateway-auth-token.conf;", `proxy_set_header Authorization "Bearer ${TOKEN}";`)
     .replaceAll("127.0.0.1:4000", `127.0.0.1:${gatewayPort}`);
   writeFileSync(join(dir, "site.conf"), site);
@@ -175,8 +179,11 @@ http { access_log off; client_body_temp_path ${dir}/body; proxy_temp_path ${dir}
   }
 }
 
-function connect(port: number, headers: Record<string, string>) {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws/terminal/herdr?id=t1&lease=exclusive`, { headers });
+let tailnetSocket = "";
+/** `port` is nginx's loopback listener; "tailnet" is the Tailscale Serve socket. */
+function connect(port: number | "tailnet", headers: Record<string, string>) {
+  const target = port === "tailnet" ? `ws+unix://${tailnetSocket}:/ws/terminal/herdr?id=t1&lease=exclusive` : `ws://127.0.0.1:${port}/ws/terminal/herdr?id=t1&lease=exclusive`;
+  const socket = new WebSocket(target, { headers });
   const frames: Array<Record<string, unknown>> = [];
   let status: number | null = null;
   let done = false;
@@ -224,6 +231,25 @@ describe("self-host WebSocket origins: through the rendered nginx site", () => {
 
     const cli = connect(port, {});
     await cli.until(() => cli.frames.some((frame) => frame.type === "attached"));
+  });
+
+  // Found in review: any local account (the browser account included) could send
+  // the owner's Tailscale login to nginx on loopback and get the owner's bearer.
+  nginxIt("private mode: a tailnet identity counts only through the Tailscale Serve socket", async () => {
+    const env = installedEnv("tailscale", true);
+    const { core, port: gatewayPort } = await gateway(env, "alice@example.com");
+    const port = await ingress("tailscale", gatewayPort);
+    const owner = { "Tailscale-User-Login": "alice@example.com", Origin: "https://box.tail1.ts.net" };
+    const forged = connect(port, owner);
+    await forged.until(() => forged.status() !== null);
+    expect(forged.status()).toBe(403);
+    expect(core.viewers).toEqual([]);
+    const anonymous = connect(port, { Origin: "https://box.tail1.ts.net" });
+    await anonymous.until(() => anonymous.status() !== null);
+    expect(anonymous.status()).toBe(403);
+    const served = connect("tailnet", owner);
+    await served.until(() => served.frames.some((frame) => frame.type === "attached"));
+    expect(served.frames[0]).toMatchObject({ type: "attached", ownership: "writer" });
   });
 
   nginxIt("public mode: a same-host page attaches, a foreign page carrying cached Basic Auth is refused", async () => {
