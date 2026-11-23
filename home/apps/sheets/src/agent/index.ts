@@ -33,3 +33,9 @@ export { TABLE_BAND, TABLE_BODY, TABLE_HEADER, fixFinding, formatAsTable, tableR
 export { directPrecedents, traceText, traceValue } from "./trace";
 export type { Trace, TraceLimits, TraceNode, TraceNodeKind } from "./trace";
 export { CLOSE_MARKER, OPEN_MARKER, sanitizeMarkers, wrapUntrusted } from "./untrusted";
+export { FINDINGS_LAYER, SOURCES_LAYER, SheetsAssistant } from "./assistant";
+export type { AssistantDeps, AssistantGrid, AssistantMessage, AssistantState, AssistantStatusLine } from "./assistant";
+export { pendingOf, resolvedStatus, snapshotProposal } from "./results";
+export type { AnswerResult, AssistantResult, AssistantResultStatus, FindingsResult, ProposalResult } from "./results";
+export { routeInstruction } from "./routing";
+export type { AssistantIntent } from "./routing";
