@@ -145,9 +145,51 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  global-install-smoke:
+    name: npm install -g (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        node: [20, 24]
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      - name: Download npm package
+        uses: actions/download-artifact@v7
+        with:
+          name: cli-npm-package
+          path: dist/npm-package
+
+      # The release tarball must install globally into a clean prefix on every
+      # supported platform before it is published; npm versions are immutable.
+      - name: Install the release tarball globally and run it
+        env:
+          EXPECTED_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$PWD/dist/npm-package" -maxdepth 1 -type f -name '*.tgz' -print)"
+          test -f "$TARBALL"
+          PREFIX="$RUNNER_TEMP/matrix-global-prefix"
+          export HOME="$RUNNER_TEMP/matrix-smoke-home"
+          mkdir -p "$PREFIX" "$HOME"
+          cd "$RUNNER_TEMP"
+          npm install --global --prefix "$PREFIX" "$TARBALL"
+          ACTUAL="$("$PREFIX/bin/matrix" --version)"
+          echo "matrix --version: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_VERSION"
+
   publish:
     name: Publish CLI to npm
-    needs: package
+    needs: [package, global-install-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -27,17 +27,23 @@ with `node ./scripts/pack-cli.mjs --pack-destination <dir>` from
 `packages/sync-client`, as the release workflows do. It runs
 `pnpm pack --config.node-linker=hoisted` (plain `npm pack` preserves
 `workspace:*`, and a registry-only dependency cannot resolve this private
-package), then removes the dependency lists from the bundled contracts
-manifest. npm treats a bundled package's dependencies as already bundled when
-they sit beside it, which is the layout of `npm install -g` and Homebrew, and
-installs empty `zod` and `micromark` directories. The CLI declares the same
-packages at the same ranges, so npm installs them for the CLI and contracts
-resolves them from there; `pack-cli.mjs` fails if a contracts dependency is
-missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
-`pnpm publish` of this package. The dedicated CLI workflow publishes that exact
+package), then rewrites the published manifest: it removes
+`bundledDependencies` and the `@matrix-os/contracts` dependency entry, while
+the contracts files stay in the tarball at `node_modules/@matrix-os/contracts`.
+npm mishandles a globally installed package that declares bundled
+dependencies (`npm install -g`, Homebrew): on Linux it installed empty `zod`
+and `micromark` directories, and on macOS it made the optional `fsevents`
+build fatal. Without the declaration npm installs every dependency for the
+CLI, and contracts resolves its imports from there; `pack-cli.mjs` fails if a
+contracts dependency is missing from the CLI's own dependencies or declared at
+a different range. Never publish a bare `pnpm pack` or `pnpm publish` of this
+package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
 package-runner check; it verifies bundled contract files and runs the
-tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
+tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo. The
+`CLI Release` workflow also installs the packed tarball globally into a clean
+prefix on macOS and Linux (Node 20 and 24) and blocks publication if
+`matrix --version` does not run.
 
 Run these from the repo root before dispatching the release workflow:
 

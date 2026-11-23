@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { removeBundledDependencyEdges } from "../../packages/sync-client/scripts/pack-cli.mjs";
+import { vendorBundledDependencies } from "../../packages/sync-client/scripts/pack-cli.mjs";
 
-// npm treats every dependency of a bundled package as part of the bundle and
-// skips fetching it on `npm install -g`. These tests cover the tarball rewrite
-// that keeps a globally installed CLI from losing zod and micromark (ENG-300).
-describe("removeBundledDependencyEdges", () => {
+// npm mishandles packages that declare bundledDependencies when it installs
+// them globally: it skips the bundled package's own dependencies (zod and
+// micromark were missing on Linux) and treats a failed optional build as fatal
+// (fsevents on macOS). These tests cover the tarball rewrite that ships the
+// private contracts files without that declaration (ENG-300).
+describe("vendorBundledDependencies", () => {
   let workDir: string;
 
   beforeEach(async () => {
@@ -51,31 +53,44 @@ describe("removeBundledDependencyEdges", () => {
     dependencies: { "@matrix-os/contracts": "0.0.1", zod: "^4.6.6", micromark: "^4.0.2" },
   };
 
-  it("removes dependency edges from bundled manifests and keeps every other file", async () => {
-    const tarball = await buildTarball({
-      root,
-      bundled: {
-        name: "@matrix-os/contracts",
-        version: "0.0.1",
-        exports: { ".": "./src/index.ts" },
-        dependencies: { zod: "^4.6.6", micromark: "^4.0.2" },
-        devDependencies: { typescript: "^5.9.3" },
-      },
-    });
+  it("ships bundled files without declaring them bundled, so npm installs every dependency itself", async () => {
+    const bundledManifest = {
+      name: "@matrix-os/contracts",
+      version: "0.0.1",
+      exports: { ".": "./src/index.ts" },
+      dependencies: { zod: "^4.6.6", micromark: "^4.0.2" },
+      devDependencies: { typescript: "^5.9.3" },
+    };
+    const tarball = await buildTarball({ root, bundled: bundledManifest });
 
-    const removed = await removeBundledDependencyEdges(tarball);
+    const vendored = await vendorBundledDependencies(tarball);
 
-    expect(removed).toEqual([{ name: "@matrix-os/contracts", dependencies: ["micromark", "zod"] }]);
+    expect(vendored).toEqual([{ name: "@matrix-os/contracts", dependencies: ["micromark", "zod"] }]);
     const result = await readTarball(tarball);
-    const bundled = await result.readJson("node_modules/@matrix-os/contracts/package.json");
-    expect(bundled.dependencies).toBeUndefined();
-    expect(bundled.devDependencies).toBeUndefined();
-    expect(bundled).toMatchObject({ name: "@matrix-os/contracts", exports: { ".": "./src/index.ts" } });
-    expect(await result.readJson("package.json")).toEqual(root);
+    const packedRoot = await result.readJson("package.json");
+    expect(packedRoot.bundledDependencies).toBeUndefined();
+    expect(packedRoot.bundleDependencies).toBeUndefined();
+    expect(packedRoot.dependencies).toEqual({ zod: "^4.6.6", micromark: "^4.0.2" });
+    expect(packedRoot).toMatchObject({ name: "@finnaai/matrix", version: "1.2.3" });
+    expect(await result.readJson("node_modules/@matrix-os/contracts/package.json")).toEqual(bundledManifest);
     expect(await result.read("bin/matrix.mjs")).toBe("#!/usr/bin/env node\n");
     expect(await result.read("node_modules/@matrix-os/contracts/src/index.ts")).toBe(
       "export const contract = 1;\n",
     );
+  });
+
+  it("also removes the legacy bundleDependencies spelling", async () => {
+    const { bundledDependencies, ...rest } = root;
+    const tarball = await buildTarball({
+      root: { ...rest, bundleDependencies: bundledDependencies },
+      bundled: { name: "@matrix-os/contracts", version: "0.0.1" },
+    });
+
+    await vendorBundledDependencies(tarball);
+
+    const packedRoot = await (await readTarball(tarball)).readJson("package.json");
+    expect(packedRoot.bundleDependencies).toBeUndefined();
+    expect(packedRoot.dependencies).not.toHaveProperty("@matrix-os/contracts");
   });
 
   it("refuses a bundled dependency the CLI does not install itself", async () => {
@@ -88,7 +103,7 @@ describe("removeBundledDependencyEdges", () => {
       },
     });
 
-    await expect(removeBundledDependencyEdges(tarball)).rejects.toThrow(/left-pad/);
+    await expect(vendorBundledDependencies(tarball)).rejects.toThrow(/left-pad/);
   });
 
   it("refuses a bundled dependency whose version range differs from the CLI's", async () => {
@@ -101,7 +116,7 @@ describe("removeBundledDependencyEdges", () => {
       },
     });
 
-    await expect(removeBundledDependencyEdges(tarball)).rejects.toThrow(/zod/);
+    await expect(vendorBundledDependencies(tarball)).rejects.toThrow(/zod/);
   });
 
   it("refuses bundled peer or optional dependencies it cannot guarantee", async () => {
@@ -114,7 +129,7 @@ describe("removeBundledDependencyEdges", () => {
       },
     });
 
-    await expect(removeBundledDependencyEdges(tarball)).rejects.toThrow(/peerDependencies/);
+    await expect(vendorBundledDependencies(tarball)).rejects.toThrow(/peerDependencies/);
   });
 
   it("fails when a declared bundled dependency is absent from the tarball", async () => {
@@ -123,6 +138,6 @@ describe("removeBundledDependencyEdges", () => {
       bundled: { name: "@matrix-os/contracts", version: "0.0.1" },
     });
 
-    await expect(removeBundledDependencyEdges(tarball)).rejects.toThrow(/@matrix-os\/missing/);
+    await expect(vendorBundledDependencies(tarball)).rejects.toThrow(/@matrix-os\/missing/);
   });
 });

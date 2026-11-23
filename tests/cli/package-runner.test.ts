@@ -28,6 +28,10 @@ describe("published CLI package runners", () => {
     expect(cliRelease).toContain('node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP"');
     expect(cliRelease).not.toMatch(/^\s*[^#\s].*pnpm pack /m);
     expect(cliRelease).toContain('path: ${{ steps.pack.outputs.tarball }}');
+    // npm versions are immutable, so a clean global install on macOS and Linux gates publication.
+    expect(cliRelease).toContain("os: [macos-latest, ubuntu-latest]");
+    expect(cliRelease).toContain('npm install --global --prefix "$PREFIX" "$TARBALL"');
+    expect(cliRelease).toContain("needs: [package, global-install-smoke]");
     expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
     expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
 
