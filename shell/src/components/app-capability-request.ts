@@ -139,7 +139,9 @@ function appFileKindOf(init: RequestInit): AppFileKind {
   const known = appFileRequestKinds.get(init);
   if (known) return known;
   if (typeof init.body !== "string") throw new Error("Invalid app file request");
-  return AppFileInputSchema.parse((JSON.parse(init.body) as { input?: unknown }).input).kind;
+  const parsed: unknown = JSON.parse(init.body);
+  if (!parsed || typeof parsed !== "object" || !("input" in parsed)) throw new Error("Invalid app file request");
+  return AppFileInputSchema.parse(parsed.input).kind;
 }
 
 /**
