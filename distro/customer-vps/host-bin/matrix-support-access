@@ -141,12 +141,24 @@ finalize_rotation() {
   printf 'matrix-support-access: rotation finalized for %s\n' "$fingerprint"
 }
 
+# Socket-activated sshd (Ubuntu 24.04) creates /run/sshd only after its first
+# connection, and `sshd -t` refuses to run without it.
+ensure_sshd_privsep_dir() {
+  local dir=/run/sshd
+  if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    fail 'sshd privilege separation directory is invalid'
+  fi
+  install -d -o root -g root -m 0755 "$dir" \
+    || fail 'cannot create sshd privilege separation directory'
+}
+
 install_support_account() {
   local account="" temp_key="" temp_sudoers=""
   [ "$(id -u)" -eq 0 ] || fail 'installation requires root'
   require_root_owned_source
   command -v visudo >/dev/null || fail 'sudo is not installed'
   command -v sshd >/dev/null || fail 'sshd is not installed'
+  ensure_sshd_privsep_dir
   sshd -t || fail 'sshd configuration is invalid'
 
   account="$(getent passwd "$SUPPORT_USER" || true)"

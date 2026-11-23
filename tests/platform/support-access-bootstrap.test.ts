@@ -6,7 +6,29 @@ import { describe, expect, it } from 'vitest';
 
 const helper = resolve(import.meta.dirname, '../../distro/customer-vps/host-bin/matrix-support-access');
 const isolatedInstallFixture = resolve(import.meta.dirname, '../fixtures/support-access-install-isolated.sh');
-const supportsUserMountNamespace = spawnSync('unshare', ['-Ur', '-m', 'true']).status === 0;
+// Ubuntu 24.04 hosts with kernel.apparmor_restrict_unprivileged_userns=1 refuse
+// `unshare -Ur`, but its bwrap profile still grants user namespaces.
+const namespaceRunner = ((): string[] | null => {
+  const candidates = [
+    ['unshare', '-Ur', '-m'],
+    ['bwrap', '--unshare-user', '--uid', '0', '--gid', '0', '--cap-add', 'ALL', '--dev-bind', '/', '/'],
+  ];
+  return candidates.find(([command, ...args]) => spawnSync(command!, [...args, 'true']).status === 0) ?? null;
+})();
+const supportsUserMountNamespace = namespaceRunner !== null;
+
+function runIsolatedInstall(scenario: 'full' | 'fresh-boot' | 'privsep-symlink') {
+  let result: ReturnType<typeof spawnSync<string>> | undefined;
+  withGeneratedKey((activeKey, directory) => {
+    const candidatePrivate = join(directory, 'candidate_ed25519');
+    execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', candidatePrivate]);
+    const [command, ...args] = namespaceRunner!;
+    result = spawnSync(command!, [
+      ...args, 'bash', isolatedInstallFixture, helper, activeKey, `${candidatePrivate}.pub`, scenario,
+    ], { encoding: 'utf8' });
+  });
+  return result!;
+}
 
 function withGeneratedKey(run: (publicKeyPath: string, directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-support-key-'));
@@ -60,14 +82,21 @@ describe('support SSH key bootstrap validation', () => {
   });
 
   it.skipIf(!supportsUserMountNamespace)('installs, refuses an existing different key, and rotates inside an isolated mount namespace', () => {
-    withGeneratedKey((activeKey, directory) => {
-      const candidatePrivate = join(directory, 'candidate_ed25519');
-      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', candidatePrivate]);
-      const result = spawnSync('unshare', [
-        '-Ur', '-m', 'bash', isolatedInstallFixture, helper, activeKey, `${candidatePrivate}.pub`,
-      ], { encoding: 'utf8' });
-      expect(result.status, result.stderr).toBe(0);
-    });
+    const result = runIsolatedInstall('full');
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // Ubuntu 24.04 socket-activates sshd, so /run/sshd is absent until the first
+  // inbound connection and `sshd -t` fails; cloud-init then aborts bootstrap.
+  it.skipIf(!supportsUserMountNamespace)('a fresh VPS with no prior SSH connection still installs the support login and continues bootstrap', () => {
+    const result = runIsolatedInstall('fresh-boot');
+    expect(result.stderr).not.toContain('sshd configuration is invalid');
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.skipIf(!supportsUserMountNamespace)('refuses a symlinked sshd privilege separation directory before installing the login', () => {
+    const result = runIsolatedInstall('privsep-symlink');
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it('has a fixed, root-owned source and does not copy root authorized_keys', () => {
