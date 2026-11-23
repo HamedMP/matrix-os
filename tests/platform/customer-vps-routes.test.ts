@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createCustomerVpsRoutes } from '../../packages/platform/src/customer-vps-routes.js';
 import { PreviewSnapshotUnavailableError } from '../../packages/platform/src/customer-vps-errors.js';
@@ -27,6 +28,7 @@ describe('platform/customer-vps-routes', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         PLATFORM_PORT: '9000',
         PLATFORM_SECRET: platformSecret,
         HETZNER_API_TOKEN: 'token',

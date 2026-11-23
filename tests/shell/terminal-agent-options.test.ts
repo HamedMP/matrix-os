@@ -76,7 +76,7 @@ describe("terminal agent options", () => {
     const command = terminalAgentVisibleInstallCommand(pi!);
     expect(command).toContain("sh -lc ");
     expect(command).toContain("--ignore-scripts --prefix");
-    expect(command).toContain("@earendil-works/pi-coding-agent@latest");
+    expect(command).toContain("@earendil-works/pi-coding-agent@1.6.0");
     expect(command).not.toContain('exec "${SHELL:-sh}" -l');
   });
 

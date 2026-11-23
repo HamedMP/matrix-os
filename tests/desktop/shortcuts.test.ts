@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SHORTCUT_ACTION_IDS } from "@matrix-os/contracts/keyboard-shortcuts";
 import {
   handleCloseSelectedAppShortcut,
   handleCloseTopLevelTabShortcut,
-  handleCycleTabShortcut,
-  handleMenuNavigate,
   handleNewContextShortcut,
   handleNewAgentRunShortcut,
   handleNewTopLevelTabShortcut,
-  handleTerminalFocusShortcut,
-  isTerminalFocusShortcut,
+  runShortcutAction,
+  useGlobalShortcuts,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
+import { useClosedApps } from "@desktop/renderer/src/stores/closed-apps";
+import { holdGetStartedBlocking } from "@desktop/renderer/src/features/get-started/get-started-blocking";
 import { useProjectChatLauncher } from "@desktop/renderer/src/lib/project-chat";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
-import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { isDesktopSurfaceVisible, useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { useHermesChat } from "@desktop/renderer/src/stores/hermes-chat";
 import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "@desktop/renderer/src/stores/project-workspaces";
@@ -26,6 +28,28 @@ describe("handleCloseSelectedAppShortcut", () => {
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useClosedApps.setState(useClosedApps.getInitialState(), true);
+  });
+
+  it("closes like a click: records the app once for Reopen closed app", () => {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: true });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(terminalId);
+    useDesktopSurfaces.getState().activateSurface(terminalId);
+    const tracked: string[] = [];
+    const onEvent = (event: Event) => tracked.push((event as CustomEvent<{ name: string }>).detail.name);
+    window.addEventListener("matrix:desktop-analytics", onEvent);
+
+    handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+    window.removeEventListener("matrix:desktop-analytics", onEvent);
+
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
+    expect(useClosedApps.getState().entries).toEqual([
+      expect.objectContaining({ kind: "terminals", title: "Terminal" }),
+    ]);
+    expect(tracked).toContain("desktop_app_closed");
+    expect(useTabs.getState().activeTabId).toBe(filesId);
   });
 
   it("closes the selected Matrix app surface and focuses the topmost remaining app", () => {
@@ -139,6 +163,8 @@ describe("handleCloseSelectedAppShortcut", () => {
     useTabs.getState().focusTab(terminalId);
 
     handleCloseSelectedAppShortcut({ preventDefault: vi.fn() });
+    // The mounted shell reconciles surfaces with the remaining tabs.
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
 
     expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([filesId]);
     expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
@@ -218,10 +244,12 @@ describe("top-level app tab shortcuts", () => {
     expect(duplicateId).not.toBe(filesId);
 
     handleCloseTopLevelTabShortcut({ preventDefault: vi.fn() });
+    // The mounted shell reconciles surfaces with the remaining tabs.
+    useDesktopSurfaces.getState().reconcileTabs([filesId], { width: 1280, height: 720 });
 
     expect(useTabs.getState().tabs).toHaveLength(1);
     expect(useTabs.getState().activeTabId).toBe(filesId);
-    expect(useDesktopSurfaces.getState().surfaces[duplicateId!]?.mode).toBe("closed");
+    expect(useDesktopSurfaces.getState().surfaces[duplicateId!]).toBeUndefined();
   });
 
   it("does not invent a new top-level tab for unsupported apps", () => {
@@ -395,102 +423,122 @@ describe("handleNewContextShortcut", () => {
 
 });
 
-describe("handleCycleTabShortcut", () => {
-  it("focuses the first tab on forward cycle when no tab is active", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
+describe("shortcuts that open or focus an app", () => {
+  const VIEWPORT = { width: 1280, height: 720 };
 
-    handleCycleTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: null,
-        tabs: [{ id: "one" }, { id: "two" }],
-        focusTab,
-      },
-      1,
+  beforeEach(() => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
+    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    useProjectView.setState({ entries: {}, runtimeScope: null });
+    useProjectWorkspaces.setState({ entries: {} });
+    useProjectChatLauncher.setState({ composerRequest: null });
+    useCodingAgentWorkspace.setState({ summary: null, composerFocusRequestId: 0 });
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async () => ({ ok: true })),
+      on: vi.fn(() => () => undefined),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function reconcile() {
+    useDesktopSurfaces.getState().reconcileTabs(useTabs.getState().tabs.map((tab) => tab.id), VIEWPORT);
+  }
+
+  /** Files is open and selected; `appId` exists in the given state. */
+  function withApp(open: () => string, state: "closed" | "minimized" | "behind" | "tabs-view"): string {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const appId = open();
+    reconcile();
+    const surfaces = useDesktopSurfaces.getState();
+    if (state === "closed") surfaces.closeSurface(appId);
+    if (state === "minimized") surfaces.minimizeSurface(appId);
+    if (state === "tabs-view") surfaces.maximizeToTab(filesId);
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    expect(isDesktopSurfaceVisible(appId, useDesktopSurfaces.getState()) && useTabs.getState().activeTabId === appId).toBe(false);
+    return appId;
+  }
+
+  function expectShownAndActive(appId: string) {
+    expect(useTabs.getState().activeTabId).toBe(appId);
+    expect(isDesktopSurfaceVisible(appId, useDesktopSurfaces.getState())).toBe(true);
+    const surfaces = useDesktopSurfaces.getState().surfaces;
+    const topZ = Math.max(...Object.values(surfaces).filter((surface) => surface.mode !== "closed").map((surface) => surface.zIndex));
+    if (surfaces[appId]?.mode === "window") expect(surfaces[appId]?.zIndex).toBe(topZ);
+  }
+
+  const openTerminal = () => useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+
+  it("terminal.focus opens and shows the Terminal when none exists", () => {
+    useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    reconcile();
+
+    runShortcutAction("terminal.focus");
+
+    const terminal = useTabs.getState().tabs.find((tab) => tab.kind === "terminals");
+    expect(terminal).toBeDefined();
+    reconcile();
+    expectShownAndActive(terminal!.id);
+  });
+
+  it.each(["closed", "minimized", "behind", "tabs-view"] as const)(
+    "terminal.focus shows a Terminal that is %s",
+    (state) => {
+      const terminalId = withApp(openTerminal, state);
+
+      runShortcutAction("terminal.focus");
+
+      expectShownAndActive(terminalId);
+      expect(useTabs.getState().tabs.filter((tab) => tab.kind === "terminals")).toHaveLength(1);
+    },
+  );
+
+  it("chat.open shows a Chat whose window was closed", () => {
+    const chatId = withApp(() => useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }), "closed");
+
+    runShortcutAction("chat.open");
+
+    expectShownAndActive(chatId);
+  });
+
+  it("nav.settings shows Settings whose window was closed", () => {
+    const settingsId = withApp(() => useTabs.getState().openTab({ kind: "settings", title: "Settings", closable: false }), "closed");
+
+    runShortcutAction("nav.settings");
+
+    expectShownAndActive(settingsId);
+  });
+
+  it("chat.new-thread shows the project's Chat whose window was closed", () => {
+    useBoard.setState({ projects: [{ slug: "matrix-os", name: "Matrix OS" }], activeProjectSlug: "matrix-os" });
+    const projectId = withApp(
+      () => useTabs.getState().openTab({ kind: "project", projectSlug: "matrix-os", title: "Matrix OS" }),
+      "closed",
     );
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("one");
+    runShortcutAction("chat.new-thread");
+
+    expectShownAndActive(projectId);
   });
 
-  it("focuses the last tab on reverse cycle when no tab is active", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
+  it.each(["tabs.new", "tabs.new-context", "app.close", "tabs.close"] as const)(
+    "%s acts on the selected visible app, so it leaves a closed app closed",
+    (id) => {
+      const chatId = withApp(() => useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false }), "closed");
+      useTabs.getState().focusTab(chatId);
+      const tabsBefore = useTabs.getState().tabs;
 
-    handleCycleTabShortcut(
-      { preventDefault },
-      {
-        activeTabId: null,
-        tabs: [{ id: "one" }, { id: "two" }],
-        focusTab,
-      },
-      -1,
-    );
+      runShortcutAction(id);
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("two");
-  });
-});
-
-describe("handleTerminalFocusShortcut", () => {
-  it("matches only the exact terminal focus modifier chord", () => {
-    expect(isTerminalFocusShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "t",
-      metaKey: true,
-      shiftKey: false,
-    })).toBe(true);
-    expect(isTerminalFocusShortcut({
-      altKey: true,
-      ctrlKey: false,
-      key: "t",
-      metaKey: true,
-      shiftKey: true,
-    })).toBe(false);
-  });
-
-  it("prevents default and focuses an existing terminal tab", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-    const openTab = vi.fn();
-
-    handleTerminalFocusShortcut(
-      { preventDefault },
-      {
-        tabs: [
-          { id: "home", kind: "home" },
-          { id: "term", kind: "terminal" },
-        ],
-        focusTab,
-        openTab,
-      },
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).toHaveBeenCalledWith("term");
-    expect(openTab).not.toHaveBeenCalled();
-  });
-
-  it("opens the terminal workspace when no terminal tab exists", () => {
-    const preventDefault = vi.fn();
-    const focusTab = vi.fn();
-    const openTab = vi.fn();
-
-    handleTerminalFocusShortcut(
-      { preventDefault },
-      {
-        tabs: [{ id: "home", kind: "home" }],
-        focusTab,
-        openTab,
-      },
-    );
-
-    expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(focusTab).not.toHaveBeenCalled();
-    expect(openTab).toHaveBeenCalledWith({ kind: "terminals", title: "Terminal" });
-  });
+      expect(useTabs.getState().tabs).toBe(tabsBefore);
+      expect(useDesktopSurfaces.getState().surfaces[chatId]?.mode).toBe("closed");
+    },
+  );
 });
 
 describe("handleNewAgentRunShortcut", () => {
@@ -602,78 +650,106 @@ describe("handleNewAgentRunShortcut", () => {
   });
 });
 
-describe("handleMenuNavigate", () => {
+describe("runShortcutAction", () => {
+  let invoke: ReturnType<typeof vi.fn>;
+  let listeners: Map<string, (payload: unknown) => void>;
+
   beforeEach(() => {
-    useBoard.setState({
-      projects: [],
-      activeProjectSlug: null,
-      cardsByProject: {},
-    });
-    useTabs.setState({ tabs: [], activeTabId: null });
-    vi.restoreAllMocks();
-  });
-
-  it("opens project tabs for active projects", () => {
-    useBoard.setState({
-      projects: [{ slug: "matrix", name: "Matrix OS" }],
-      activeProjectSlug: "matrix",
-    });
-
-    handleMenuNavigate("board");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "work",
-      workRoute: "project",
-      projectSlug: "matrix",
-      title: "Chat",
+    useTabs.setState(useTabs.getInitialState(), true);
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
+    useClosedApps.setState(useClosedApps.getInitialState(), true);
+    useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
+    listeners = new Map();
+    invoke = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("operator", {
+      invoke,
+      on: (channel: string, callback: (payload: unknown) => void) => {
+        listeners.set(channel, callback);
+        return () => listeners.delete(channel);
+      },
     });
   });
 
-  it("treats the retired agents kind as unsupported and falls back home", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    handleMenuNavigate("agents");
-
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: agents");
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it("focuses an existing terminal tab from menu navigation", () => {
-    const terminalId = useTabs.getState().openTab({ kind: "terminal", sessionName: "matrix-main", title: "matrix-main" });
-    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+  function openTwoWindows(): [string, string] {
+    const filesId = useTabs.getState().openTab({ kind: "files", title: "Files", closable: false });
+    const terminalId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal", closable: false });
+    useDesktopSurfaces.getState().reconcileTabs([filesId, terminalId], { width: 1280, height: 720 });
+    useTabs.getState().focusTab(filesId);
+    useDesktopSurfaces.getState().activateSurface(filesId);
+    return [filesId, terminalId];
+  }
 
-    handleMenuNavigate("terminals");
+  it.each(SHORTCUT_ACTION_IDS)("runs %s against fresh stores", (id) => {
+    expect(() => runShortcutAction(id)).not.toThrow();
+  });
 
+  it("toggles the App Launcher like the taskbar button, analytics included", () => {
+    const tracked: Array<{ name: string; open?: boolean }> = [];
+    const onEvent = (event: Event) => tracked.push((event as CustomEvent<{ name: string; open?: boolean }>).detail);
+    window.addEventListener("matrix:desktop-analytics", onEvent);
+
+    runShortcutAction("app.launcher");
+    expect(useUi.getState().appLauncherOpen).toBe(true);
+    expect(tracked).toEqual([{ name: "desktop_launcher_toggled", open: true }]);
+    runShortcutAction("app.launcher");
+    window.removeEventListener("matrix:desktop-analytics", onEvent);
+
+    expect(useUi.getState().appLauncherOpen).toBe(false);
+    expect(tracked).toHaveLength(2);
+  });
+
+  it("opens the Terminal window through main", () => {
+    runShortcutAction("terminal.window");
+    expect(invoke).toHaveBeenCalledWith("terminal-window:open", {});
+  });
+
+  it("opens Settings", () => {
+    runShortcutAction("nav.settings");
+    expect(useTabs.getState().tabs.find((tab) => tab.id === useTabs.getState().activeTabId)?.kind).toBe("settings");
+  });
+
+  it("does nothing while the Getting Started wizard is open, and runs again once it closes", () => {
+    const [filesId, terminalId] = openTwoWindows();
+    const release = holdGetStartedBlocking();
+
+    runShortcutAction("app.next");
+    expect(useTabs.getState().activeTabId).toBe(filesId);
+
+    release();
+    runShortcutAction("app.next");
     expect(useTabs.getState().activeTabId).toBe(terminalId);
   });
 
-  it("falls back to home and logs unsupported menu kinds", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("dispatches shortcut:action events from main", () => {
+    const [, terminalId] = openTwoWindows();
+    const { unmount } = renderHook(() => useGlobalShortcuts());
 
-    handleMenuNavigate("apps");
+    listeners.get("shortcut:action")?.({ id: "app.next" });
 
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: apps");
+    expect(useTabs.getState().activeTabId).toBe(terminalId);
+    unmount();
+    expect(listeners.has("shortcut:action")).toBe(false);
   });
 
-  it("falls back to home without warning when board navigation has no project", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  it("no longer handles shortcut keys in the page: main dispatches them", () => {
+    const [filesId] = openTwoWindows();
+    renderHook(() => useGlobalShortcuts());
 
-    handleMenuNavigate("board");
+    fireEvent.keyDown(window, { key: "q", code: "KeyQ", metaKey: true });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", metaKey: true });
 
-    expect(useTabs.getState().tabs[0]).toMatchObject({
-      kind: "home",
-      title: "Browser",
-      closable: false,
-    });
-    expect(warn).not.toHaveBeenCalled();
+    expect(useDesktopSurfaces.getState().surfaces[filesId]?.mode).toBe("window");
+    expect(useUi.getState().paletteOpen).toBe(false);
+  });
+
+  it("listens only for shortcut:action", () => {
+    renderHook(() => useGlobalShortcuts());
+
+    expect([...listeners.keys()]).toEqual(["shortcut:action"]);
   });
 });

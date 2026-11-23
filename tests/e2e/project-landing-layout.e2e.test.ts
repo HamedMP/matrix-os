@@ -35,6 +35,7 @@ describe("Project detail and composer geometry in the actual browser layout engi
     css = tailwind.build(new Scanner({ sources: [
       { base: resolve(root, "desktop/src/renderer/src/features/project"), pattern: "ProjectLanding.tsx", negated: false },
       { base: resolve(root, "desktop/src/renderer/src/features/chat"), pattern: "CanonicalNewChatContent.tsx", negated: false },
+      { base: resolve(root, "packages/ui/src/chat"), pattern: "ProjectConversationList.tsx", negated: false },
       { base: __dirname, pattern: "project-landing-layout.e2e.test.ts", negated: false },
     ] }).scan());
     browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
@@ -77,7 +78,7 @@ describe("Project detail and composer geometry in the actual browser layout engi
         const onboarding = panel.querySelector<HTMLElement>('[data-slot="chat-project-draft-scroll"]')!;
         const p = panel.getBoundingClientRect(), m = metadata.getBoundingClientRect(), c = composer.getBoundingClientRect(), o = onboarding.getBoundingClientRect();
         metadata.scrollTop = metadata.scrollHeight;
-        const lastCard = metadata.querySelector<HTMLElement>('[aria-label="Open Plan 29"]')!.getBoundingClientRect();
+        const lastCard = metadata.querySelector<HTMLElement>('[aria-label="Open Plan 29, Done"]')!.getBoundingClientRect();
         return { gap: c.top - m.bottom, metadataHeight: m.height, panelHeight: p.height,
           composerBottom: c.bottom, panelBottom: p.bottom, composerHeight: c.height,
           composerWidth: c.width, composerLeft: c.left, composerValue: composer.value,

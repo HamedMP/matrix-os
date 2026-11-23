@@ -212,7 +212,7 @@ describe("agent chat route", () => {
       state.agentId = "bot_custom001";
       state.statuses = customStatuses;
       state.detail = chatDetail({
-        record: { projectId: null, chat: { id: "chat_custom", title: "Release notes", revision: 2, currentSelection: managed } },
+        record: { projectId: null, chat: { ownerScope: { type: "personal", ownerId: "user_a" }, id: "chat_custom", title: "Release notes", revision: 2, currentSelection: managed } },
       });
       state.botError = true;
       render(<AgentChatRoute />);

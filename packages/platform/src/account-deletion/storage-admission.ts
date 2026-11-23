@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
 import type { PlatformDB } from '../db.js';
-import { withAccountDeletionOwnerLock } from './admission.js';
+import { withAccountDeletionStorageLock } from './admission.js';
 
 const READ_OPERATIONS = ['/presign/get', '/system/exists', '/system/presign/get', '/multipart/list', '/object/head'] as const;
 
@@ -14,7 +14,7 @@ export function createStorageDeletionAdmissionMiddleware(db: PlatformDB): Middle
     const read = c.req.method === 'GET' && suffix === '/object'
       || c.req.method === 'POST' && READ_OPERATIONS.some((operation) => suffix === operation);
     try {
-      return await withAccountDeletionOwnerLock(db, owner, async (_trx, admission) => {
+      return await withAccountDeletionStorageLock(db, owner, async (_trx, admission) => {
         if (admission.runtimeAccess === 'blocked' || (!read && !admission.newWorkAllowed)) {
           return c.json({ error: 'Account deletion is pending' }, 409);
         }

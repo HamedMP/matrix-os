@@ -7,6 +7,7 @@ import { createSiteSubmissionTransport } from '../../packages/platform/src/sites
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 
 const connectionString = process.env.MATRIX_TEST_POSTGRES_URL;
 describe.skipIf(!connectionString)('publication recovery across independent PostgreSQL sessions', () => {
@@ -48,7 +49,7 @@ describe.skipIf(!connectionString)('publication recovery across independent Post
     const admission = sites.admitted(site.id, (record, trx) => submit(record, trx, 'rsvp', { fields: { email: 'guest@example.com' }, idempotencyKey: 'live-recovery-request' }));
     await started.promise;
     const customer = createCustomerVpsService({ db: dbB, hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore({ hasDbLatest: async () => true }),
-      config: loadCustomerVpsConfig({ PLATFORM_SECRET: secret, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
+      config: loadCustomerVpsConfig({ PLATFORM_SECRET: secret, MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE, HETZNER_API_TOKEN: 'test', S3_ACCESS_KEY_ID: 'test', S3_SECRET_ACCESS_KEY: 'test', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
       machineIdFactory: () => 'recovered-sites-runtime' });
     let recovered = false;
     const recovery = customer.recover({ clerkUserId: owner.ownerId }).then(result => { recovered = true; return result; });

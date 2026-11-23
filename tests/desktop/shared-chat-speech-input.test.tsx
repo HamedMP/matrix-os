@@ -219,4 +219,35 @@ describe("Electron shared Chat speech input", () => {
     expect(await screen.findByText(`Preview dictation: 2 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Speech is unavailable" }).hasAttribute("disabled")).toBe(true);
   });
+
+  it("shows the dictation limit next to the elapsed time while recording", async () => {
+    const tenMinutes = {
+      ...capabilities,
+      fileTranscription: {
+        ...capabilities.fileTranscription,
+        dictation: {
+          ...capabilities.fileTranscription.dictation,
+          maxBytes: 20 * 1024 * 1024,
+          maxDurationMs: 600_000,
+        },
+      },
+    };
+    const captureAdapter: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(async () => ({
+        stop: vi.fn(async () => new Blob([new Uint8Array(44)], { type: "audio/wav" })),
+        cancel: vi.fn(async () => undefined),
+      })),
+    };
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:primary:chat-a"
+      client={{ ...client(), capabilities: vi.fn(async () => tenMinutes) }}
+      captureAdapter={captureAdapter}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByText("0:00 / 10:00")).toBeTruthy();
+  });
 });

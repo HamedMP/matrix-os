@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { RoutineCliOperationSchema, routineCliResultMatchesOperation, type RoutineCliOperation, type RoutineCliEnvelope } from "@matrix-os/contracts/routine-cli";
+import {
+  isRoutineCliMutation, ROUTINE_CLI_NATIVE_TIMEOUT_MS, ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS,
+  RoutineCliOperationSchema, routineCliResultMatchesOperation, type RoutineCliOperation, type RoutineCliEnvelope,
+} from "@matrix-os/contracts/routine-cli";
 import { boundedOperation } from "../bounded-operation.js";
 import { parseManagedFrame } from "../coding-agents/managed-launch-protocol.mjs";
 import { TerminalHostFrameSchema, TerminalShimFrameSchema, TerminalProcessSchema, type TerminalShimFrame, type TerminalBoundFrame } from "../coding-agents/terminal-launch-protocol.mjs";
@@ -95,7 +98,8 @@ export function createTerminalHostChannel(options: {
           cancelled.set(actionId, Date.now() + 120000); finish();
           send({ type: "terminal.cancel", admissionId: currentAdmission, actionId });
         };
-        const timer = setTimeout(abort, 120000); timer.unref();
+        const timeout = isRoutineCliMutation(operation) ? ROUTINE_CLI_NATIVE_TIMEOUT_MS : ROUTINE_CLI_READ_TRANSPORT_TIMEOUT_MS;
+        const timer = setTimeout(abort, timeout); timer.unref();
         pending.set(actionId, { operation, finish }); signal.addEventListener("abort", abort, { once: true });
         if (!send({ type: "terminal.call", admissionId: currentAdmission, actionId, writer, operation })) finish();
       });

@@ -96,7 +96,12 @@ describe("createCanonicalChatEventSource", () => {
     const { source } = connectedSource();
     await settle();
 
-    expect(mockFetch).toHaveBeenCalledWith(STREAM_URL, expect.objectContaining({
+    const [requestUrl, requestInit] = mockFetch.mock.calls[0]!;
+    const url = new URL(requestUrl);
+    expect(url.searchParams.getAll("routineReceiptVersion")).toEqual(["1"]);
+    url.searchParams.delete("routineReceiptVersion");
+    expect(url.toString()).toBe(STREAM_URL);
+    expect(requestInit).toEqual(expect.objectContaining({
       headers: {
         Accept: "text/event-stream",
         "X-Matrix-Chat-Protocol": "2",

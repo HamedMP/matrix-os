@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CollaborationIdSchema, CollaborationRevisionSchema } from "#collaboration";
+import { CollaborationIdSchema, CollaborationOrganizationIdSchema, CollaborationRevisionSchema } from "#collaboration";
 
 /**
  * Org link for an organization-shared app (spec 2693 phase 4).
@@ -10,8 +10,10 @@ import { CollaborationIdSchema, CollaborationRevisionSchema } from "#collaborati
  * Copied links carry `expectedShareRevision` (so a stopped and restarted share
  * invalidates them) but not the build ID, so app updates do not break links.
  * The link is only an address: the platform still requires current membership
- * in the sharing organization before anything opens. `app` and `org` are
- * display hints for the hand-off page, never used for authorization.
+ * in the sharing organization before anything opens. `app`, `org` and `orgId`
+ * are display hints for the hand-off page (`orgId` keeps its badge colour equal
+ * to the member launcher's), never used for authorization and never forwarded
+ * to the desktop deep link. Links copied before `orgId` existed still parse.
  */
 export const SHARED_APP_OPEN_PATH_PREFIX = "/open/shared-app/";
 export const SHARED_APP_DEEP_LINK_HOST = "shared-app";
@@ -23,6 +25,7 @@ export const SharedAppLinkSchema = z.strictObject({
   expectedShareRevision: CollaborationRevisionSchema.optional(),
   app: DisplayHintSchema.optional(),
   org: DisplayHintSchema.optional(),
+  orgId: CollaborationOrganizationIdSchema.optional(),
 });
 export type SharedAppLink = z.infer<typeof SharedAppLinkSchema>;
 
@@ -44,6 +47,7 @@ function query(link: SharedAppLink, includeHints: boolean): string {
   if (link.expectedShareRevision) params.set("expectedShareRevision", link.expectedShareRevision);
   if (includeHints && link.app) params.set("app", link.app);
   if (includeHints && link.org) params.set("org", link.org);
+  if (includeHints && link.orgId) params.set("orgId", link.orgId);
   const value = params.toString();
   return value ? `?${value}` : "";
 }
@@ -52,6 +56,23 @@ function query(link: SharedAppLink, includeHints: boolean): string {
 export function sharedAppOpenPath(link: SharedAppLink): string {
   const parsed = SharedAppLinkSchema.parse(link);
   return `${SHARED_APP_OPEN_PATH_PREFIX}${encodeURIComponent(parsed.scopeId)}${query(parsed, true)}`;
+}
+
+/**
+ * Copied org link path for a live share; `hints` are the app and org display
+ * names. Shared by the Web Desktop/Canvas and Electron Desktop Share popovers.
+ */
+export function sharedAppShareOpenPath(
+  share: { scopeId: string; shareRevision: string; organizationId: string },
+  hints: { app: string; org: string },
+): string {
+  return sharedAppOpenPath({
+    scopeId: share.scopeId,
+    expectedShareRevision: share.shareRevision,
+    app: sharedAppDisplayHint(hints.app),
+    org: sharedAppDisplayHint(hints.org),
+    orgId: share.organizationId,
+  });
 }
 
 /** Desktop deep link the hand-off page opens. Display hints stay on the web page. */

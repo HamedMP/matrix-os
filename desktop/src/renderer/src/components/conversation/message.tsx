@@ -5,6 +5,7 @@ import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
+import { invoke } from "../../lib/operator";
 import type { ConversationPresentationCallbacks } from "./presentation";
 import { normalizeDesktopEditorPath } from "../../features/editor/desktop-editor-store";
 import { MermaidDiagram } from "../markdown/MermaidDiagram";
@@ -186,6 +187,10 @@ const RELATIVE_PATH_PATTERN = /^(?:[A-Za-z0-9_.@+-]+\/)+[A-Za-z0-9_.@+-]+\/?$/;
 const BARE_FILE_PATTERN = /^[A-Za-z0-9_.@+-]+\.[A-Za-z0-9]{1,12}$/;
 const IMAGE_FILE_PATTERN = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 
+async function openImageInSystemBrowser(url: string): Promise<void> {
+  await invoke("shell:open-external", { url });
+}
+
 function pathPresentation(value: string): { kind: "file" | "folder"; label: string } | null {
   const normalized = value.trim();
   if (!normalized || /\s/.test(normalized)) return null;
@@ -300,6 +305,12 @@ function MarkdownTable({
 }
 
 const ReferenceLinkContext = React.createContext<((href: string) => React.ReactNode | undefined) | undefined>(undefined);
+const FileImageKeyContext = React.createContext<ConversationPresentationCallbacks["fileImageKey"]>(undefined);
+
+function ChatFileImage(props: React.ComponentProps<typeof AttachmentImage> & { path: string }) {
+  const fileImageKey = React.useContext(FileImageKeyContext);
+  return <AttachmentImage key={fileImageKey?.(props.path)} {...props} />;
+}
 
 const CREDENTIAL_MARKER = /\[redacted(?: credential)?\]/g;
 type InlineMarkdownNode = {
@@ -395,6 +406,7 @@ export function MessageResponse({
   openFile,
   openWebLink,
   loadFileImage,
+  fileImageKey,
   resolveApp,
   openApp,
   renderReferenceLink,
@@ -406,6 +418,7 @@ export function MessageResponse({
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
   loadFileImage?: (path: string) => Promise<Blob>;
+  fileImageKey?: ConversationPresentationCallbacks["fileImageKey"];
   resolveApp?: ConversationPresentationCallbacks["resolveApp"];
   openApp?: ConversationPresentationCallbacks["openApp"];
   renderReferenceLink?: (href: string) => React.ReactNode | undefined;
@@ -438,7 +451,7 @@ export function MessageResponse({
       const external = target?.kind === "web";
       const editorPath = target?.kind === "file" ? target.path : null;
       if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
-        return <AttachmentImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+        return <ChatFileImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
@@ -464,7 +477,7 @@ export function MessageResponse({
       const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
       const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
       if (target?.kind === "file") {
-        if (hasImageLoader) return <AttachmentImage src={src!} label={label} path={src!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+        if (hasImageLoader) return <ChatFileImage src={src!} label={label} path={src!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
         if (!hasFileNavigation) return <span aria-label={`Image file: ${label}`}>{label}</span>;
         return (
           <button
@@ -479,7 +492,9 @@ export function MessageResponse({
           </button>
         );
       }
-      if (target?.kind === "web") return <img {...props} src={target.url} alt={alt ?? ""} />;
+      if (target?.kind === "web") return target.url.startsWith("https:") && target.url.length <= 2048
+        ? <AttachmentImage src={target.url} label={label} openInBrowser={openImageInSystemBrowser} inline />
+        : <img {...props} src={target.url} alt={alt ?? ""} />;
       return <span aria-label={`Unavailable image: ${label}`}>{label}</span>;
     },
     code: ({ node: codeNode, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
@@ -501,7 +516,7 @@ export function MessageResponse({
       const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
       const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
       if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
-        return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
+        return <ChatFileImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
         return (
@@ -557,12 +572,14 @@ export function MessageResponse({
       data-selectable
     >
       <ReferenceLinkContext.Provider value={renderReferenceLink}>
-        <ReactMarkdown
-          remarkPlugins={renderCredentialMarker ? [remarkGfm, inlineCredentialMarkers(children)] : [remarkGfm]}
-          components={markdownComponents}
-        >
-          {children}
-        </ReactMarkdown>
+        <FileImageKeyContext.Provider value={fileImageKey}>
+          <ReactMarkdown
+            remarkPlugins={renderCredentialMarker ? [remarkGfm, inlineCredentialMarkers(children)] : [remarkGfm]}
+            components={markdownComponents}
+          >
+            {children}
+          </ReactMarkdown>
+        </FileImageKeyContext.Provider>
       </ReferenceLinkContext.Provider>
     </div>
   );

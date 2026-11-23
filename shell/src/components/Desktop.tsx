@@ -35,6 +35,7 @@ import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
+import { ShellExternalMcpApprovalsPill } from "./ShellExternalMcpApprovalsPill";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
 import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
@@ -145,7 +146,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
-  const { settingsOpen, settingsDefaultSection, setSettingsOpen, openSettings, toggleSettings } = useSettingsNavigation();
+  const { settingsOpen, settingsDefaultSection, settingsNavigationRequestId, setSettingsOpen, openSettings, toggleSettings } = useSettingsNavigation();
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
   // Shell hydration always uses the shared Matrix brand surface. Theme-specific
@@ -883,6 +884,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
+        <ShellExternalMcpApprovalsPill openSettings={openSettings} />
       </ShellNotificationStack>
       {desktopMode !== "desktop" && (isWindowsDesign ? (
         <WindowsTaskbar
@@ -1384,6 +1386,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         defaultSection={settingsDefaultSection}
+        navigationRequestId={settingsNavigationRequestId}
         onOpenAgentTerminal={(action) => {
           setSettingsOpen(false);
           openSetupTerminal(action);

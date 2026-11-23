@@ -4,10 +4,14 @@
 // funnel through openProjectChat so there is exactly one way to land on a
 // conversation.
 import { create } from "zustand";
+import type { AgentThreadChat } from "@matrix-os/contracts";
 import { invoke } from "./operator";
 import { diagnosticErrorKind } from "./errors";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../stores/runtime-generation";
 import { useBoard } from "../stores/board";
+import { useConnection } from "../stores/connection";
+import { createCanonicalChatClient } from "./canonical-chat-client";
+import { openWorkProject } from "../features/work/work-navigation";
 import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { useProjectView } from "../stores/project-view";
 import { useProjectWorkspaces } from "../stores/project-workspaces";
@@ -160,7 +164,47 @@ async function resolveThreadProjectId(threadId: string): Promise<string | undefi
   }
 }
 
+type CanonicalOpen = "opened" | "superseded" | "unowned";
+
+/**
+ * Inbox, palette and notification rows carry agent-thread ids, while Work tabs
+ * render canonical Chats by Chat id. Resolve the Chat that owns the thread and
+ * open exactly that conversation; "unowned" leaves the agent-thread route.
+ */
+async function openCanonicalAgentChat(threadId: string, isLatest: () => boolean): Promise<CanonicalOpen> {
+  const api = useConnection.getState().api;
+  if (!api) return "unowned";
+  const runtimeGeneration = captureRuntimeGeneration();
+  let owner: AgentThreadChat | null = null;
+  try {
+    owner = await createCanonicalChatClient(api).chatForAgentThread?.(threadId) ?? null;
+  } catch (err: unknown) {
+    console.warn("[project-chat] canonical chat lookup failed:", diagnosticErrorKind(err));
+  }
+  if (!isLatest() || !isCurrentRuntimeGeneration(runtimeGeneration) || useConnection.getState().api !== api) return "superseded";
+  if (!owner) return "unowned";
+  const projectId = owner.projectId;
+  const project = projectId
+    ? useBoard.getState().projects.find((candidate) => (candidate.id !== undefined && candidate.id === projectId) || candidate.slug === projectId)
+    : undefined;
+  if (project) {
+    openWorkProject(project, owner.chatId);
+  } else {
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId: owner.chatId, chatView: "conversation", closable: false });
+  }
+  return "opened";
+}
+
+// Each open supersedes the ones before it, so a slow lookup for an earlier
+// click can never replace the conversation the user chose afterwards.
+let latestThreadOpen = 0;
+
 export async function openCodingAgentThread(threadId: string): Promise<void> {
+  const request = ++latestThreadOpen;
+  const isLatest = () => request === latestThreadOpen;
+  // Without a connection there is nothing to resolve; keep the local route synchronous.
+  if (useConnection.getState().api && await openCanonicalAgentChat(threadId, isLatest) !== "unowned") return;
+  if (!isLatest()) return;
   const workspace = useCodingAgentWorkspace.getState();
   const listed = [
     // Attention entries win the dedupe: they carry the actionable state.
@@ -194,7 +238,7 @@ export async function openCodingAgentThread(threadId: string): Promise<void> {
     // openProjectChat persists a thread selection, so committing after an
     // account or computer change would pin a thread that does not exist on the
     // machine now in view.
-    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return;
+    if (!isLatest() || !isCurrentRuntimeGeneration(runtimeGeneration)) return;
     // Only guess when the runtime genuinely could not resolve it. The guess
     // opens the chat under whichever project is active and nothing reroutes.
     projectId = resolved ?? defaultProjectId() ?? undefined;

@@ -2,6 +2,7 @@ import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js"
 import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
+import { createGenerationIdentityReader, identitiesMatch } from "./funded-relay-generation-identity.js";
 import type { FundedPricingReviews } from "./funded-pricing-review.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
@@ -63,13 +64,6 @@ interface FundedRelayDependencies extends FundedRelayConfig {
   requestIdFactory?: () => string;
   platformClient?: FundedPlatformClient;
 }
-
-type VerifiedFundedIdentity = FundedAiIdentity & {
-  tokenId: string;
-  audience: string;
-  scope: string;
-  expiresAt: string;
-};
 
 interface ActiveRequestState {
   controller: AbortController;
@@ -244,12 +238,6 @@ function rateLimitHeader(response: Response, name: string): number | undefined {
   return value && /^\d{1,12}$/.test(value) ? Number(value) : undefined;
 }
 
-function identitiesMatch(left: VerifiedFundedIdentity, right: VerifiedFundedIdentity): boolean {
-  return left.tokenId === right.tokenId && left.ownerId === right.ownerId
-    && left.machineId === right.machineId && left.runtimeSlot === right.runtimeSlot
-    && left.audience === right.audience && left.scope === right.scope && left.expiresAt === right.expiresAt;
-}
-
 function fundedCredential(c: Context): string {
   const key = c.req.header("x-api-key") ?? "";
   if (isFundedProxyApiKey(key)) return key;
@@ -283,6 +271,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const createControlClient = () => createFundedPlatformClient({ ...config, fetch: fetchImpl });
   const registryClient = config.pricingRegistryEnabled ? createControlClient() : undefined;
   const platform = config.platformClient ?? registryClient ?? createControlClient();
+  const readGenerationIdentity = createGenerationIdentityReader({ platform, now, secret: config.metadataSecret });
   const shutdown = new AbortController();
   const pricingShutdown = new AbortController();
   const pricingRegistry = registryClient && createFundedPricingRegistry({
@@ -397,17 +386,20 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       modelId: model.canonicalModelId,
     });
     if (!checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
-    let checked: Awaited<ReturnType<FundedPlatformClient["check"]>>;
+    // Reuse identity only when no upstream request can precede live admission.
+    const boundsInputTokens = c.req.path !== COUNT_TOKENS_PATH && (isOpenAi || config.reservationMode === "usage");
+    let checked: Awaited<ReturnType<typeof readGenerationIdentity>>;
     try {
-      checked = await platform.check(checkInput.data, state.lifetimeSignal);
+      checked = await readGenerationIdentity(checkInput.data, state.lifetimeSignal, boundsInputTokens);
     } catch (error) {
       return controlPlaneError(c, error);
     }
+    const { identity } = checked;
     const reviews = pricingRegistry
       ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : config.pricingReviews;
     if (reviews === null) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
 
-    const runtimeRef = runtimeAdmissionRef(checked.identity, config.metadataSecret);
+    const runtimeRef = runtimeAdmissionRef(identity, config.metadataSecret);
     const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
     if (!runtimeAttempt) {
       return rateLimited(c);
@@ -417,7 +409,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       anthropicBeta,
       gatewayToken: config.gatewayToken,
       metadata: cloudflareMetadata({
-        identity: checked.identity,
+        identity,
         canonicalModelId: model.canonicalModelId,
         requestId,
         secret: config.metadataSecret,
@@ -433,7 +425,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let inputTokens: number;
     try {
-      if (c.req.path !== COUNT_TOKENS_PATH && (isOpenAi || config.reservationMode === "usage")) {
+      if (boundsInputTokens) {
         // Bound provider liability without requiring an unavailable tokenizer.
         // This is not an observed count and never substitutes for actual usage.
         inputTokens = maximumFundedInputTokens(model.canonicalModelId);
@@ -489,11 +481,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
-      refundFundedCapacityAttempt(runtimeAttempt, error);
+      if (checked.discardCachedIdentity && error instanceof FundedControlPlaneError && error.identityDenied) {
+        // Stale credentials and policy cannot consume the runtime's attempt quota.
+        checked.discardCachedIdentity();
+        runtimeAttempt.refund();
+      } else {
+        refundFundedCapacityAttempt(runtimeAttempt, error);
+      }
       return controlPlaneError(c, error);
     }
     const reservation = authorization.reservation;
-    if (!identitiesMatch(checked.identity, authorization.identity)
+    if (!identitiesMatch(identity, authorization.identity)
       || !postpaidAuthorizationMatches(reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");

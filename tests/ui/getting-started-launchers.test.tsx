@@ -37,7 +37,7 @@ for (const presentation of ["desktop", "canvas-glass", "canvas-classic"] as cons
     const client = createShellQueryClient();
     const scene = (open: boolean) => <QueryClientProvider client={client}><GettingStartedVisibilityProvider scope="test"><GettingStartedPopover onOpenSettings={noop} onOpenFirstWork={noop} /><MissionControl open={open} nativePresentation={presentation === "desktop"} {...launcherProps} /></GettingStartedVisibilityProvider></QueryClientProvider>;
     const view = render(scene(false));
-    fireEvent.click(screen.getByRole("button", { name: /Getting started/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Getting started/ }));
     expect(screen.queryByRole("dialog", { name: "Getting started" })).not.toBeNull();
     view.rerender(scene(true));
     expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
@@ -55,7 +55,7 @@ for (const presentation of ["desktop", "canvas"] as const) {
   it(`Electron ${presentation} suppresses the real checklist while its launcher is open`, async () => {
     const scene = (open: boolean) => <GettingStartedVisibilityProvider scope="test"><ElectronCard /><DesktopLaunchpad open={open} onClose={noop} osViewMode={presentation} onSwitchOsView={noop} /></GettingStartedVisibilityProvider>;
     const view = render(scene(false));
-    fireEvent.click(screen.getByRole("button", { name: /Getting started/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Getting started/ }));
     view.rerender(scene(true));
     expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
     const search = screen.getByRole("textbox");

@@ -61,4 +61,22 @@ describe("Hermes integration capability", () => {
       expect(restarted.resolveHermesIntegrationCapability(second.token, "POST", "/api/jev/inbox/preview")).toBeNull();
     } finally { second.revoke(); }
   });
+
+  it("reaches only the Matrix Core MCP broker paths, never legacy Custom MCP calls or approvals", () => {
+    // Spec 2691: Hermes Chat runs share the Core tool surface through the same broker.
+    const capability = issueHermesIntegrationCapability("user_core");
+    const approval = "123e4567-e89b-42d3-a456-426614174000";
+    for (const [method, path] of [["GET", "/api/mcp-servers/core/services"], ["GET", "/api/mcp-servers/core/search"],
+      ["GET", "/api/mcp-servers/core/describe"], ["POST", "/api/mcp-servers/core/call"],
+      ["GET", `/api/mcp-servers/core/approvals/${approval}`]] as const) {
+      expect(resolveHermesIntegrationCapability(capability.token, method, path)).toBe("user_core");
+    }
+    for (const [method, path] of [["GET", "/api/mcp-servers"], ["POST", "/api/mcp-servers"],
+      ["POST", `/api/mcp-servers/${approval}/call`], ["GET", "/api/mcp-servers/core/call"],
+      ["POST", `/api/mcp-servers/core/approvals/${approval}`], ["POST", `/api/mcp-approvals/${approval}`],
+      ["GET", "/api/mcp-servers/core/approvals/not-a-uuid"]] as const) {
+      expect(resolveHermesIntegrationCapability(capability.token, method, path)).toBeNull();
+    }
+    capability.revoke();
+  });
 });

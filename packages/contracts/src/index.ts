@@ -83,6 +83,8 @@ export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
 export * from "#organization-management";
+export * from "#organization-mcp";
+export * from "#core-repo";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#jev-hermes-route";
@@ -1002,6 +1004,12 @@ export const RuntimeSummarySchema = z.object({
     hasMore: false,
     limit: 20,
   }),
+  /** Recently completed or aborted runs, newest first; empty from older gateways. */
+  recentThreads: boundedListSchema(AgentThreadSummarySchema, 20).default({
+    items: [],
+    hasMore: false,
+    limit: 10,
+  }),
   terminalWorkspaces: boundedListSchema(TerminalWorkspaceSchema, 100).default({
     items: [],
     hasMore: false,
@@ -1517,4 +1525,7 @@ export * from "#routine-action";
 export * from "#routine-full-access";
 export * from "#routine-full-access-view";
 
+export * from "#routine-chat-origin";
 export * from "#routine-origin-proof";
+
+export * from "#runtime-substrate";

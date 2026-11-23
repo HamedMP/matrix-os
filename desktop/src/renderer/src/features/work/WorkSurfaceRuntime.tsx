@@ -53,7 +53,7 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     if (!api || !active) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")))), {
+        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events", true)))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

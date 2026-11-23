@@ -209,8 +209,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.169.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.169.0");
+  it("retains reviewed Codex schemas through 0.171.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.171.0");
     expect(contract.verifiedVersions["0.162.1"]).toEqual(contract.verifiedVersions["0.162.0"]);
     expect(appServerContract.verifiedVersions["0.162.1"]).toEqual(appServerContract.verifiedVersions["0.162.0"]);
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
@@ -240,11 +240,13 @@ describe("Codex provider contract checker", () => {
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
     expect(contract.verifiedVersions["0.166.0"]).toEqual(contract.verifiedVersions["0.165.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.169.0");
+    expect(appServerContract.latestVerifiedVersion).toBe("0.171.0");
     expect(contract.verifiedVersions["0.167.1"]).toEqual(contract.verifiedVersions["0.167.0"]);
     expect(appServerContract.verifiedVersions["0.167.1"]).toEqual(appServerContract.verifiedVersions["0.167.0"]);
     expect(contract.verifiedVersions["0.167.2"]).toEqual(contract.verifiedVersions["0.167.1"]);
     expect(appServerContract.verifiedVersions["0.167.2"]).toEqual(appServerContract.verifiedVersions["0.167.1"]);
+    expect(contract.verifiedVersions["0.169.1"]).toEqual(contract.verifiedVersions["0.169.0"]);
+    expect(appServerContract.verifiedVersions["0.169.1"]).toEqual(appServerContract.verifiedVersions["0.169.0"]);
     expect(appServerContract.verifiedVersions["0.166.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "8aabf260bb66e9ca9ae5d20253f443971834644fe4659c85f8b1cc9e1d22dd5c",
@@ -284,10 +286,10 @@ describe("Codex provider contract checker", () => {
       },
     });
     expect(appServerContract.requiredServerProtocolSchemaDigests).toMatchObject({
-      "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-      "item/started": "617275c94854b1871af5371cbfdfdd88d03c66d681983ed82e3efeea1adec800",
-      "item/completed": "bd38783bca8b6bd3ecf75796883f3784bffca1d7797c33b3248e43a754e92c0d",
-      "turn/completed": "ea32be3552e720e9f07bffae9bb0b4270c0f33a7d86a1df9c701fc77197e3906",
+      "mcpServer/elicitation/request": "62f54dddd212962a5658c2ffe6009edcbead3a9c6890fd8f2b313a6b155ef2d8",
+      "item/started": "1cf755b3b0248c131b3cce5356815d36693f883465cc466732e37545c7176f6d",
+      "item/completed": "eb0ef6d56c7b04e2bc7965790427397d7968475fb05dcc5cbd623028f6ab845e",
+      "turn/completed": "b6bd55f1da742df68c275dd2e016f76152bd705b223ef4fc5652446b3be6b3df",
     });
   });
 

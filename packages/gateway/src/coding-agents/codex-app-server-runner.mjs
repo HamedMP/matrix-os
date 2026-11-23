@@ -27,6 +27,7 @@ import { deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
+import { createCodexSendTiming } from "./codex-send-timing.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -121,10 +122,14 @@ let nativeGeneration, routineFeatureThread = false;
 const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => PendingTurnSchema.parse({ prompt: config.prompt, model: config.model, modelOptions: [
   ...(config.effort ? [{ id: "effort", value: config.effort }] : []), ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
 ] }), enqueue: (turn, requestId) => { const accepted = enqueuePendingTurn(turn); if (accepted && requestId) executionObservation.admitted(requestId); return accepted; }, sendNative: value => sendProvider(value),
-  current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId });
+  current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId,
+  ownerWaitChanged: (callId, turnId, waiting) => executionWatchdog.setToolOwnerWait(itemIdentity(turnId, callId), waiting),
+});
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
+const sendTiming = createCodexSendTiming(artifactSessionId, undefined, process.env.MATRIX_CODEX_SEND_TIMINGS === "1");
+sendTiming.runnerBoot();
 const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
 
 function withinArtifactRoot(path) {
@@ -382,6 +387,9 @@ async function persist(value) {
   }
   await eventFile.write(`${line}\n`);
   transcriptBytes += bytes;
+  if (value.type === "matrix.codex.assistant.delta" && typeof value.delta === "string" && value.delta.length > 0) {
+    sendTiming.firstPersistedText();
+  }
 }
 
 async function flushAssistantDelta(messageId) {
@@ -699,7 +707,9 @@ async function handleItemLifecycle(raw) {
       ...details,
     });
     startedToolItems.add(matrixItemId);
-    executionWatchdog.toolStarted(matrixItemId, item.type);
+    const ownerWaiting = item.type === "dynamicToolCall" && item.tool === CODEX_ROUTINE_TOOL.name
+      ? routines.isWaitingForOwner(item.id, parsed.data.params.turnId) : undefined;
+    executionWatchdog.toolStarted(matrixItemId, item.type, ownerWaiting);
     return true;
   }
 
@@ -823,6 +833,7 @@ async function handleProviderMessage(raw) {
   }
   const delta = AgentDeltaSchema.safeParse(raw);
   if (delta.success) {
+    if (delta.data.params.delta.length > 0) sendTiming.firstProviderDelta();
     const messageId = itemIdentity(delta.data.params.turnId, delta.data.params.itemId);
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
@@ -1190,8 +1201,12 @@ async function runTurn(threadId, turn) {
   activeTurnTokenUsage = undefined;
   activeTurnFailureReason = undefined;
   try {
+    const proofStartedAt = sendTiming.now();
     await verifyNativeSubscription?.(request);
+    sendTiming.mark("turn_account_proof", proofStartedAt);
+    const turnStartAt = sendTiming.now();
     const started = await request("turn/start", turnStartParams(threadId, turn));
+    sendTiming.mark("turn_start", turnStartAt);
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
     }).passthrough().parse(started).turn.id;
@@ -1237,6 +1252,8 @@ process.once("SIGINT", () => { userStopped = true; stop(); });
 
 async function startNativeSession(lease) {
   const resumeId = nativeThreadId ?? config.providerThreadId;
+  const turnIndex = terminalEventCount + 1;
+  const processStartedAt = sendTiming.now();
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
     cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
     onChild(value) {
@@ -1258,10 +1275,14 @@ async function startNativeSession(lease) {
     },
     onRetry: async ({ label }) => { startupReconnecting = true; await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect", kind: "phase", displayName: label }); },
   });
+  sendTiming.mark("process_ready", processStartedAt, turnIndex);
   childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
   if (startupReconnecting) { await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" }); startupReconnecting = false; }
   startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
+  const proofStartedAt = sendTiming.now();
   await verifyNativeSubscription?.(request);
+  sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
+  const threadStartedAt = sendTiming.now();
   const started = await request(resumeId ? "thread/resume" : "thread/start", {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
@@ -1275,11 +1296,14 @@ async function startNativeSession(lease) {
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
   if (!resumeId) routineFeatureThread = routines.canRegister();
   nativeThreadId = identity;
+  sendTiming.mark(resumeId ? "thread_resume" : "thread_start", threadStartedAt, turnIndex);
   if (lease) {
+    const browserStartedAt = sendTiming.now();
     const catalog = await request("mcpServerStatus/list", { threadId: identity, serverName: "matrix_shared_browser", limit: 10 });
     const parsed = z.object({ data: z.array(z.object({ name: z.string(), runtimeStatus: z.string().nullable().optional(), tools: z.record(z.string(), z.unknown()) }).passthrough()).max(10) }).passthrough().parse(catalog);
     const entry = parsed.data.find(server => server.name === "matrix_shared_browser");
     if (!entry || entry.runtimeStatus !== "connected" || Object.keys(entry.tools).length !== 1 || !entry.tools.shared_browser) throw new Error("Browser startup unavailable");
+    sendTiming.mark("browser_mcp_ready", browserStartedAt, turnIndex);
   }
   currentBrowserLease = lease;
   await persist({ type: "thread.started", thread_id: identity });
@@ -1289,12 +1313,18 @@ let exitCode = 0;
 let verifyNativeSubscription;
 let pendingAdmittedTurn = false;
 try {
+  const proofSetupStartedAt = sendTiming.now();
   if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  sendTiming.mark("native_proof_setup", proofSetupStartedAt, 1);
   const initialRoutineTurn = await routines.initial(startupController.signal);
+  const leaseStartedAt = sendTiming.now();
   const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
+  sendTiming.mark("browser_lease_wait", leaseStartedAt, 1);
   await startNativeSession(initialBrowser);
   browserBootstrap.markReady();
+  const releaseStartedAt = sendTiming.now();
   await browserBootstrap.waitRelease(startupController.signal);
+  sendTiming.mark("browser_release_wait", releaseStartedAt, 1);
   let turn = initialRoutineTurn ?? PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1306,10 +1336,13 @@ try {
   let firstTurn = true;
   while (turn && !stopping) {
     pendingAdmittedTurn = true;
+    sendTiming.beginTurn(terminalEventCount + 1, turn.clientRequestId);
     if (!firstTurn && (currentBrowserLease || turn.browser)) {
       renewingNativeTurn = true;
       try {
+        const closeStartedAt = sendTiming.now();
         await nativeSession.close(); startupController.signal.throwIfAborted();
+        sendTiming.mark("previous_session_close", closeStartedAt, terminalEventCount + 1);
         await startNativeSession(turn.browser ?? undefined);
       } finally {
         renewingNativeTurn = false;

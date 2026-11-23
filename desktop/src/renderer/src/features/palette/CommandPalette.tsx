@@ -1,6 +1,5 @@
 import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { Command } from "cmdk";
-import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { Notebook } from "@renderer/lib/hugeicons";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { AgentThreadSummary, ReviewSummary, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
@@ -18,6 +17,7 @@ import { defaultProjectId, openCodingAgentThread, openProjectChat } from "../../
 import { openProjectOverview } from "../../lib/project-navigation";
 import { HOSTED_SHELL_TAB_SPEC } from "../../lib/hosted-shell";
 import { handleNewAgentRunShortcut } from "../mission-control/shortcuts";
+import { useShortcutLabel } from "../../stores/shortcuts";
 import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
 import { runtimeTerminalTabs, type RuntimeTerminalTab } from "../../lib/terminal-workspaces";
 
@@ -136,6 +136,9 @@ export default function CommandPalette() {
   const [category, setCategory] = useState<PaletteCategory>("all");
   const [query, setQuery] = useState("");
   const open = useUi((s) => s.paletteOpen);
+  const paletteLabel = useShortcutLabel("nav.palette");
+  const newThreadLabel = useShortcutLabel("chat.new-thread");
+  const settingsLabel = useShortcutLabel("nav.settings");
   useGettingStartedBlocker(open);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const openTab = useTabs((s) => s.openTab);
@@ -261,7 +264,7 @@ export default function CommandPalette() {
             className="min-w-0 flex-1 rounded-none bg-transparent text-lg outline-none focus-visible:shadow-none"
             style={{ color: "var(--text-primary)" }}
           />
-          <kbd className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>⌘K</kbd>
+          {paletteLabel ? <kbd className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>{paletteLabel}</kbd> : null}
         </div>
         <div role="tablist" aria-label="Command categories" className="flex h-11 items-stretch gap-1 border-b px-4" style={{ borderColor: "var(--border-subtle)" }}>
           {PALETTE_CATEGORIES.map((item) => (
@@ -320,7 +323,7 @@ export default function CommandPalette() {
             <PaletteItem
               icon={<MessageSquarePlus size={14} />}
               label="New agent run"
-              shortcut={desktopShortcutLabel("J")}
+              shortcut={newThreadLabel ?? undefined}
               onSelect={() =>
                 run(() => {
                   handleNewAgentRunShortcut(
@@ -358,7 +361,7 @@ export default function CommandPalette() {
               <PaletteItem
                 icon={<Settings size={14} />}
                 label="Open settings"
-                shortcut="⌘,"
+                shortcut={settingsLabel ?? undefined}
                 keywords={["preferences", "services", "integrations", "account", "runtime"]}
                 onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))}
               />

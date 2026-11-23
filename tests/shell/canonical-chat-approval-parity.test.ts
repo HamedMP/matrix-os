@@ -5,15 +5,66 @@ import { buildTranscript } from "../../apps/mobile/lib/canonical-chat-transcript
 import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-terminal-notices";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 
-function fixture() {
+function fixture(): CanonicalChatDetailResponse {
   const { snapshot } = createCanonicalChatFixture("approval_required");
   const run = snapshot.runs[0]!;
-  return { ...snapshot, activities: [{
+  const { providerBinding, activeRun, ...chat } = snapshot.chat;
+  return { record: { chat, providerBinding, activeRun }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [{
     id: "activity_confirm", chatId: snapshot.chat.id, runId: run.id,
     occurredAt: run.updatedAt, type: "approval.requested", approvalId: "approval_confirm",
     title: "Use integration", risk: "high", allowedDecisions: ["approve", "decline", "cancel"],
-  }] } as unknown as CanonicalChatDetailResponse;
+  }] };
 }
+
+function routineFixture() {
+  const detail = fixture();
+  const run = detail.runs[0]!;
+  const request = detail.activities[0]!;
+  if (request.type !== "approval.requested") throw new Error("Missing fixture approval");
+  request.approvalId = `rcact_${"a".repeat(32)}`;
+  request.title = "Allow routine propose?";
+  request.occurredAt = "2026-08-25T00:00:02.000Z";
+  run.status = "completed";
+  detail.activities.push({ id: "evt_routine_approve", chatId: run.chatId, runId: run.id,
+    type: "approval.resolved", approvalId: request.approvalId, decision: "approve", occurredAt: "2026-08-25T00:00:03.000Z" });
+  const source = detail.messages[0]!;
+  detail.messages.push(
+    { ...source, id: "msg_intro", seq: 2, role: "assistant", runId: run.id, createdAt: "2026-08-25T00:00:01.000Z",
+      parts: [{ type: "text", text: "I can schedule this." }] },
+    { ...source, id: "msg_proposed", seq: 3, role: "assistant", runId: run.id, createdAt: "2026-08-25T00:00:04.000Z",
+      parts: [{ type: "text", text: "I submitted the proposal." }] },
+    { id: "msg_routine_result", seq: 4, chatId: source.chatId, role: "system", purpose: "system", state: "committed", createdAt: "2026-08-25T00:02:04.000Z",
+      parts: [{ type: "routine_receipt", engine: "matrix", kind: "output", routineId: `rt_${"a".repeat(24)}`,
+        fireId: `fire_${"a".repeat(24)}`, attempt: 1, status: "completed", scheduledFor: "2026-08-25T00:02:03.000Z",
+        canonicalChatId: "chat_bot", canonicalTaskId: "task_routine", model: "gpt-fixture" }, { type: "text", text: "The schedule ran." }] },
+  );
+  return detail;
+}
+
+it("keeps a resolved routine operation in its turn ahead of the proposal reply and scheduled result", () => {
+  const detail = routineFixture();
+  const expected = [detail.messages[0]!.id, "msg_intro", "activity_confirm", "msg_proposed", "msg_routine_result"];
+  const web = projectCanonicalTranscript(detail);
+  const mobile = buildTranscript(detail).reverse();
+  const electron = canonicalChatPresentation(detail);
+
+  expect(web.map(message => message.id)).toEqual(expected);
+  expect(mobile.map(message => message.id)).toEqual(expected);
+  expect(canonicalChatApprovals(detail)[0]).toMatchObject({ pending: false, decision: "approve" });
+  expect(web.at(-1)?.routineReceipt).toMatchObject({ status: "completed" });
+  expect(mobile.at(-1)?.routineReceipt).toMatchObject({ status: "completed" });
+  expect(electron[0]?.work).toContainEqual(expect.objectContaining({ requestId: `rcact_${"a".repeat(32)}`, state: "resolved" }));
+  expect(electron[1]?.routineReceipt?.receipt).toMatchObject({ status: "completed" });
+});
+
+it("keeps the routine operation ahead of the later scheduled result when its source input is on an older page", () => {
+  const detail = routineFixture();
+  detail.messages = detail.messages.filter(message => message.id === "msg_intro" || message.id === "msg_routine_result");
+  const expected = ["msg_intro", "activity_confirm", "msg_routine_result"];
+
+  expect(projectCanonicalTranscript(detail).map(message => message.id)).toEqual(expected);
+  expect(buildTranscript(detail).map(message => message.id).reverse()).toEqual(expected);
+});
 
 it("preserves the exact action digest from native and legacy approval records", () => {
   const detail = fixture();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProviderConnectionAttempt, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { HarnessIcon } from "./HarnessRail.js";
-import { useProviderSettingsController, type ProviderSettingsTransport, type ProviderSettingsControllerOptions, ProviderSettingsTransportError } from "./provider-settings-controller.js";
+import { sessionProviderSettingsSnapshotCache, useProviderSettingsController, type ProviderSettingsTransport, type ProviderSettingsControllerOptions, ProviderSettingsTransportError } from "./provider-settings-controller.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
 export type ChatProviderConnectionState = "connected" | "disconnected" | "checking" | "unknown" | "unavailable";
@@ -136,7 +136,7 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
       return value;
     },
   }), [transport, isIdentityCurrent]);
-  const options = useMemo(() => ({ identityKey, transport: scopedTransport, onCatalogChanged }), [identityKey, scopedTransport, onCatalogChanged]);
+  const options = useMemo(() => ({ identityKey, transport: scopedTransport, onCatalogChanged, snapshotCache: sessionProviderSettingsSnapshotCache }), [identityKey, scopedTransport, onCatalogChanged]);
   const controller = useProviderSettingsController(options);
   const refreshSettings = controller.refresh;
   const refreshing = useRef(false);

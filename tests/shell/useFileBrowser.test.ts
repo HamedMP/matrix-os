@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser.js";
+import { usePreviewWindow } from "../../shell/src/hooks/usePreviewWindow.js";
 import { getGatewayUrl } from "../../shell/src/lib/gateway.js";
 
 // Mock fetch globally
@@ -8,6 +9,7 @@ global.fetch = mockFetch;
 
 describe("useFileBrowser store", () => {
   beforeEach(() => {
+    vi.stubGlobal("window", { confirm: vi.fn(() => true), location: new URL("http://localhost:4000") });
     // Reset the store state
     useFileBrowser.setState({
       currentPath: "",
@@ -36,6 +38,11 @@ describe("useFileBrowser store", () => {
       ok: true,
       json: () => Promise.resolve({ path: "", entries: [] }),
     });
+  });
+
+  afterEach(() => {
+    usePreviewWindow.getState().setDraftAuthority(null);
+    vi.unstubAllGlobals();
   });
 
   describe("navigation", () => {
@@ -339,6 +346,48 @@ describe("useFileBrowser store", () => {
       );
       expect(deleteCalls).toHaveLength(2);
       expect(useFileBrowser.getState().selectedPaths.size).toBe(0);
+    });
+
+    it("keeps files unchanged when Move to Trash is canceled", async () => {
+      vi.mocked(window.confirm).mockReturnValue(false);
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md"]) });
+
+      await useFileBrowser.getState().deleteFiles(["a.md"]);
+
+      expect(window.confirm).toHaveBeenCalledOnce();
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["a.md"]);
+    });
+
+    it("retains failed rows and reports a bounded error after a mixed Trash result", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+      mockFetch.mockRejectedValueOnce(new Error("raw filesystem path"));
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md", "b.md"]) });
+
+      await useFileBrowser.getState().deleteFiles(["a.md", "b.md"]);
+
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["b.md"]);
+      expect(useFileBrowser.getState().error).toBe("Move to Trash could not be confirmed for every item. Check Files or Trash.");
+      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining("/api/files/list?path="), expect.anything());
+    });
+
+    it("stops a Trash batch when the file authority changes at the same gateway", async () => {
+      const preview = usePreviewWindow.getState();
+      preview.setDraftAuthority("first-session");
+      let finishMove!: (response: { ok: boolean }) => void;
+      mockFetch.mockReturnValueOnce(new Promise(resolve => { finishMove = resolve; }));
+      useFileBrowser.setState({ selectedPaths: new Set(["a.md", "b.md"]) });
+
+      const operation = useFileBrowser.getState().deleteFiles(["a.md", "b.md"]);
+      const signal = mockFetch.mock.calls[0][1].signal as AbortSignal;
+      preview.setDraftAuthority("replacement-session");
+      preview.setDraftAuthority("first-session");
+      finishMove({ ok: true });
+      await operation;
+
+      expect(signal.aborted).toBe(true);
+      expect(mockFetch).toHaveBeenCalledOnce();
+      expect([...useFileBrowser.getState().selectedPaths]).toEqual(["a.md", "b.md"]);
     });
 
     it("rename calls rename API", async () => {

@@ -327,6 +327,16 @@ export function createChatGptPlanPeers(deps: {
                 models: saved?.accountId ? saved.models.filter(compatible).map(m => ({ id: m.id, displayName: m.displayName, input: m.input })) : [],
                 authorization: { revision: saved?.grantRevision ?? 0, enabled: !reason, background: !reason && Boolean(saved?.background) }, coordinatorFunding: 'subscription' };
         },
+        /** The caller has claimed a direct Chat proposal. Use the live peer's own account
+         * and revision; the proposal contains only the requested model. */
+        async resolveRoutineProposal(owner: string, model: string) {
+            scope(owner);
+            const saved = current()?.snapshot;
+            if (!saved?.accountId) throw new BotRouteError('model_unavailable');
+            return service.resolve({ instanceId: 'matrix_chatgpt_plan', model, options: [
+                { id: 'accountId', value: saved.accountId }, { id: 'grantRevision', value: String(saved.grantRevision) },
+            ] }, owner, 'interactive');
+        },
         async resolve(selection: CanonicalChatModelSelection, owner: string, requestClass: 'interactive' | 'background' | 'routine') {
             scope(owner);
             const selected = current();

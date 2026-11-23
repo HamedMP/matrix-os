@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { SignUp } from "@clerk/nextjs";
 import { shellAuthAppearance } from "@/components/auth/auth-brand";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
@@ -12,6 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default async function SignUpPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // Self-hosted computers are gated by the local reverse proxy and render without
+  // ClerkProvider, so there is no Matrix account to sign in to.
+  if (process.env.MATRIX_SELF_HOSTED === "1") redirect("/");
   const params = await searchParams;
   // A new account from a Clerk satellite goes straight back to it; nothing else leaves the app.
   const returnTarget = clerkSatelliteReturnTarget(params.redirect_url) ?? "/";

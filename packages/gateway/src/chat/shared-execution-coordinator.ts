@@ -67,6 +67,12 @@ export class SharedChatExecutionCoordinator {
     return this.queueDispatches.size;
   }
 
+  /** Covers the claim transaction and async adapter preparation, before active registration. */
+  isPreparingChat(chatId: string): boolean {
+    // Chat IDs are globally unique; dispatch keys are scopeId:chatId and capped above.
+    return [...this.queueDispatches].some(key => key.endsWith(`:${chatId}`));
+  }
+
   async dispatchNextQueued(
     owner: ChatOwner,
     chatId: string,

@@ -10,6 +10,7 @@ const projects = [
   ['packages/platform', 'tsconfig.typecheck.json', true],
   ['packages/proxy', 'tsconfig.json', true],
   ['packages/edge-router', 'tsconfig.json', false],
+  ['packages/pr-evidence-worker', 'tsconfig.json', false],
   ['desktop', 'tsconfig.json', false],
   ['desktop', 'tsconfig.node.json', false],
 ];

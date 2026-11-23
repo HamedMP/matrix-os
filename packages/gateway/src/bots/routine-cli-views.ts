@@ -2,7 +2,7 @@ import { routineCliProposalView } from "./routine-cli-proposal-view.js";
 import { RoutineCliRoutineViewSchema, RoutineCliReceiptSchema, type RoutineCliRoutineView, type RoutineCliResult } from "@matrix-os/contracts";
 import { createBotRoutinesRepository, type BotRoutine } from "./repositories/routines.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import type { RoutineCliResolvedTarget } from "./routine-cli-targets.js";
+import type { RoutineCliResolvedTarget, RoutineCliRememberedTarget } from "./routine-cli-targets.js";
 import type { RoutineCliRequestRecord } from "./repositories/routine-cli-requests.js";
 import { RoutineCliError } from "./routine-cli-errors.js";
 const observed = (fire: { status: string; scheduledFor: string; updatedAt: string }) => ({ status: fire.status, scheduledFor: fire.scheduledFor, updatedAt: fire.updatedAt });
@@ -22,11 +22,16 @@ export function createRoutineCliViews(executor: BotExecutor, now: () => Date = (
     return { kind: "show" as const, routine: await view(record, history), history: { fires: history.fires.map(observed), truncated: history.truncated } };
   };
   return {
-    async list(target: RoutineCliResolvedTarget) {
-      const page = await routines.listForChat(target, executor);
+    async list(target: RoutineCliResolvedTarget, supplement?: RoutineCliRememberedTarget) {
+      const primary = await routines.listForChat(target, executor);
+      const additional = supplement ? await routines.listForChat(supplement, executor) : undefined;
+      const records = additional ? [...primary.routines, ...additional.routines].sort((left, right) =>
+        Number(left.status === "archived") - Number(right.status === "archived")
+        || right.createdAt.localeCompare(left.createdAt) || left.routineId.localeCompare(right.routineId)) : primary.routines;
+      const maxItems = 32;
       const views: RoutineCliRoutineView[] = [];
-      for (const record of page.routines) views.push(await view(record));
-      return { kind: "list" as const, routines: views, truncated: page.truncated };
+      for (const record of records.slice(0, maxItems)) views.push(await view(record));
+      return { kind: "list" as const, routines: views, truncated: primary.truncated || !!additional?.truncated || records.length > maxItems };
     },
     show,
     /** Observation in the owning DB transaction; later post-commit stop work may change fire state.

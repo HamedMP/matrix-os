@@ -267,6 +267,7 @@ export default function FilesWorkspace() {
                   </section>
                   {!tab.project.directory ? <InspectorFilePreview target={tab.project.target} /> : <p className="p-4 text-sm">Choose a file to preview.</p>}
                 </div> : <ComputerFileBrowser
+                  allowTrash
                   // Keep the creation seed stable; current tab path is navigation output.
                   initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}

@@ -4,9 +4,11 @@ import {
   renderCloudInitTemplate,
 } from '../../packages/platform/src/customer-vps-cloud-init.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../../packages/platform/src/customer-vps-host-config.js';
 
 const config = loadCustomerVpsConfig({
+  MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
   PLATFORM_PORT: '9000',
   PLATFORM_SECRET: 'platform-secret',
   HETZNER_API_TOKEN: 'token',

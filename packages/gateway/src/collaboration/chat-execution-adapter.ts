@@ -85,7 +85,12 @@ export class CollaborationChatExecutionAdapter {
     requests: readonly CollaborationAiRequest[],
   ) {
     requireChatContext(context, "read");
-    const { capability } = await this.resolveCapability(context);
+    // This is a membership-authorized read, not admission to a provider.
+    // Project Chats can be opened while native discovery is slow/offline.
+    // submit() and dispatch still resolve the fresh owner route independently.
+    const { capability } = context.membershipScopeId !== context.scopeId
+      ? await this.projectReadCapability(context)
+      : await this.resolveCapability(context);
     const pending = await this.options.repository.listSharedPendingApprovals(
       ownerFor(context), context.resourceId, context.scopeId,
     );
@@ -271,6 +276,7 @@ export class CollaborationChatExecutionAdapter {
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
       ...(row.runId ? { runId: row.runId } : {}),
+      ...(row.messageId ? { messageId: row.messageId } : {}),
       ...(state === "interrupted" && interruption ? { interruptedReason: interruption.reason } : {}),
       ...(state === "cancelled" && decision ? { decidedBy: { actorId: decision.actorId, relation: decision.relation } } : {}),
       acceptedAt: row.createdAt,
@@ -371,6 +377,14 @@ export class CollaborationChatExecutionAdapter {
       return { capability };
     }
     return { capability: effectiveCapability, canonicalProviderAuthority };
+  }
+
+  private async projectReadCapability(context: AuthorizedCollaborationContext): Promise<{ capability: SharedAiCapability }> {
+    const { boundDriverKind: _driver, ...capability } = await this.options.repository.getSharedAiCapability(
+      ownerFor(context), { chatId: context.resourceId, scopeId: context.scopeId, actorId: context.actorId },
+    );
+    return { capability: { ...capability, status: this.options.resolveCanonicalProviderAuthority
+      && capability.status !== "unavailable" ? "available" : "unavailable" } };
   }
 
   private async notify(scopeId: string): Promise<void> {

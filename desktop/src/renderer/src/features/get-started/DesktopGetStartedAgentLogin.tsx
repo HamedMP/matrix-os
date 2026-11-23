@@ -1,5 +1,5 @@
 import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
-import { useProviderSettingsController, type GetStartedAgentLoginPort, type ProviderSettingsMutationIntent } from "@matrix-os/ui";
+import { sessionProviderSettingsSnapshotCache, useProviderSettingsController, type GetStartedAgentLoginPort, type ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useMemo, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
@@ -18,7 +18,7 @@ function ConnectedAgentLogin({ children, api, runtimeSlot, identityKey }: { chil
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, previous?: ProviderSettingsSnapshot, receipt?: ProviderWorkflow) => {
     if (isIdentityCurrent()) invalidateDesktopProviderCatalog(identityKey, intent, previous, receipt);
   }, [identityKey, isIdentityCurrent]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, snapshotCache: sessionProviderSettingsSnapshotCache });
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const { snapshot, error, refresh, refreshForConnection } = controller;
   const port = useMemo<GetStartedAgentLoginPort>(() => ({

@@ -1,3 +1,6 @@
+import {useCanonicalChatSession} from "@/lib/canonical-chat-session-context";
+import {openRoutineHistory} from "@/lib/open-routine-history";
+import {NativeRoutineReceipt} from "./NativeRoutineReceipt";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
@@ -59,6 +62,7 @@ export function useChatThread({
   sentAttachments = NOTHING_SENT,
 }: ChatThreadInput) {
   const router = useRouter();
+  const {selectChat}=useCanonicalChatSession();
   const { mutate: requestCancel, isPending: cancelPending } = useCancelRun();
   const {
     mutate: requestRetry,
@@ -113,6 +117,7 @@ export function useChatThread({
   ), [chatId, activeRunId, cancelPending, requestCancel]);
 
   const renderRequest = useCallback((item: TranscriptMessage) => {
+    if(item.routineReceipt)return <NativeRoutineReceipt sourceChatId={chatId??undefined} receipt={item.routineReceipt} text={item.text} onOpenChat={id=>openRoutineHistory(id,selectChat,()=>router.replace("/(drawer)/(tabs)/(chats)" as never))}/>;
     if (item.notice?.tone === "failed") {
       const turnId = item.notice.retryTurnId;
       const thisTurn = turnId !== undefined && retried?.chatId === chatId && retried?.turnId === turnId;
@@ -151,7 +156,7 @@ export function useChatThread({
       );
     }
     return null;
-  }, [chatId, gatewayUrl, refresh, grantRefreshKey, refreshApprovals, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
+  }, [chatId, gatewayUrl, router, selectChat, refresh, grantRefreshKey, refreshApprovals, retryTurn, retryPending, retryFailed, retried, activeRunId, sendOnItsWay]);
 
   const openApp = useCallback((app: ChatResultApp) => {
     router.push({

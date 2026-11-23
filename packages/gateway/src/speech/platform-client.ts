@@ -1,4 +1,7 @@
 import {
+  SPEECH_DICTATION_LIMITS_HEADER,
+  SPEECH_EXTENDED_DICTATION_LIMITS,
+  SPEECH_TRANSCRIPTION_GATEWAY_TIMEOUT_MS,
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
   SpeechRequestIdSchema,
@@ -14,7 +17,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-const DEFAULT_TIMEOUT_MS = 65_000;
+const DEFAULT_TIMEOUT_MS = SPEECH_TRANSCRIPTION_GATEWAY_TIMEOUT_MS;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const IdentitySchema = z.object({
@@ -207,6 +210,9 @@ export function createPlatformSpeechClient(
         headers: {
           authorization: `Bearer ${config.runtimeAuthToken}`,
           accept: "application/json",
+          // This gateway parses the extended dictation policy; without the
+          // opt-in the platform answers with the legacy two-minute limits.
+          [SPEECH_DICTATION_LIMITS_HEADER]: SPEECH_EXTENDED_DICTATION_LIMITS,
         },
         body: options.body,
       });
