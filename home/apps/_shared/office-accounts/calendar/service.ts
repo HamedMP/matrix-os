@@ -6,9 +6,17 @@
  */
 import type { MatrixOSBridge } from "../../matrix-os";
 import { ProviderError, isProviderError, providerErrorCodeForStatus } from "../types/calendar.js";
+import type { CalendarAccount } from "../types/calendar.js";
 
 /** The part of the bridge an adapter needs. */
 export type CalendarServiceBridge = Pick<MatrixOSBridge, "service">;
+
+export interface CalendarProviderOptions {
+  account: CalendarAccount;
+  /** The integration account label; omit when only one account of the service is connected. */
+  label?: string;
+  bridge: CalendarServiceBridge;
+}
 
 export interface CalendarCaller {
   readonly service: string;

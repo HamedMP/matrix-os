@@ -41,6 +41,17 @@ export function hexColor(value: unknown): string | undefined {
   return typeof value === "string" && HEX_COLOR.test(value.trim()) ? value.trim().toLowerCase() : undefined;
 }
 
+/** Join links are opened only when they are `https:`. */
+export function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch (error: unknown) {
+    // An unparsable URL is a TypeError; anything else is a real fault.
+    if (!(error instanceof TypeError)) throw error;
+    return false;
+  }
+}
+
 /** Positive and at most `MAX_EVENT_RANGE_DAYS` long. */
 export function requireRange(start: IsoInstant, end: IsoInstant): { startMs: number; endMs: number } {
   if (!isIsoInstant(start) || !isIsoInstant(end)) throw notSupported("Choose a valid time range.");

@@ -5,7 +5,6 @@
 import { CALENDAR_SERVICE_IDS, ProviderError } from "../types/calendar.js";
 import type {
   BusyBlock,
-  CalendarAccount,
   CalendarEvent,
   CalendarInfo,
   CalendarProvider,
@@ -41,14 +40,7 @@ import type { CachedEvent, ResolvedTimes } from "./common.js";
 import { normalizeGoogleCalendar, normalizeGoogleEvent } from "./google-normalize.js";
 import { rruleForDraft } from "./recurrence.js";
 import { asArray, asRecord, asString, createCalendarCaller, requireRecord } from "./service.js";
-import type { CalendarServiceBridge, JsonRecord } from "./service.js";
-
-export interface CalendarProviderOptions {
-  account: CalendarAccount;
-  /** The integration account label; omit when only one account of the service is connected. */
-  label?: string;
-  bridge: CalendarServiceBridge;
-}
+import type { CalendarProviderOptions, JsonRecord } from "./service.js";
 
 const PAGE_SIZE = 250;
 /** At most this many pages per list: 2,500 events per calendar, 2,500 calendars. */

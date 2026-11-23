@@ -11,7 +11,7 @@ import type {
   CalendarInfo,
   OnlineMeeting,
 } from "../types/calendar.js";
-import { DEFAULT_CALENDAR_COLOR, allDayRange, hexColor, instantWithOffset } from "./common.js";
+import { DEFAULT_CALENDAR_COLOR, allDayRange, hexColor, instantWithOffset, isHttpsUrl } from "./common.js";
 import type { CachedEvent } from "./common.js";
 import { descriptionToText } from "./description.js";
 import { GENERIC_RECURRENCE_TEXT, describeRRuleLines } from "./recurrence.js";
@@ -47,24 +47,15 @@ function response(value: unknown): AttendeeResponse {
   return RESPONSES.includes(value as AttendeeResponse) ? value as AttendeeResponse : "needsAction";
 }
 
-function isHttps(value: string): boolean {
-  try {
-    return new URL(value).protocol === "https:";
-  } catch (error: unknown) {
-    if (!(error instanceof TypeError)) throw error;
-    return false;
-  }
-}
-
 function onlineMeeting(raw: JsonRecord): OnlineMeeting | undefined {
   const conference = asRecord(raw.conferenceData);
   const solution = asString(asRecord(asRecord(conference.conferenceSolution).key).type);
   const hangout = asString(raw.hangoutLink);
-  if (hangout && isHttps(hangout)) return { provider: "google_meet", joinUrl: hangout };
+  if (hangout && isHttpsUrl(hangout)) return { provider: "google_meet", joinUrl: hangout };
   for (const entry of asArray(conference.entryPoints)) {
     const point = asRecord(entry);
     const uri = asString(point.uri);
-    if (asString(point.entryPointType) === "video" && uri && isHttps(uri)) {
+    if (asString(point.entryPointType) === "video" && uri && isHttpsUrl(uri)) {
       return { provider: solution === "hangoutsMeet" ? "google_meet" : "other", joinUrl: uri };
     }
   }
