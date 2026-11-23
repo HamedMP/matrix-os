@@ -4,11 +4,32 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { AgentModule, DocxModule, FormulaModule, OpcModule, RedlineModule, XlsxModule, XmlModule } from "../../../packages/office/src/index.js";
 import * as office from "../../../packages/office/src/index.js";
 import { openDocx, openXlsx } from "../../../packages/office/src/index.js";
 import { DOCX_FIXTURES, XLSX_FIXTURES, changedParts, keepOutput, loadFixture, readParts } from "./helpers.js";
 
+/** Each namespace of the package root against its contract; a module that drifts from `src/api` stops compiling here. */
+const contracts: {
+  opc: OpcModule;
+  xml: XmlModule;
+  docx: DocxModule;
+  xlsx: XlsxModule;
+  formula: FormulaModule;
+  redline: RedlineModule;
+  agent: AgentModule;
+} = office;
+
 describe("the public API", () => {
+  it("implements the contract of every module", () => {
+    for (const [name, module] of Object.entries(contracts)) {
+      for (const [key, value] of Object.entries(module)) expect(value, `${name}.${key}`).toBeDefined();
+    }
+    expect(contracts.xlsx.MAX_ROWS).toBe(1_048_576);
+    expect(contracts.xlsx.MAX_COLS).toBe(16_384);
+    expect(contracts.opc.DEFAULT_ZIP_LIMITS).toMatchObject({ maxEntries: 5000 });
+  });
+
   it("exports every module as a namespace and the main entry points by name", () => {
     for (const name of ["opc", "xml", "docx", "xlsx", "formula", "redline", "agent"] as const) {
       expect(Object.keys(office[name]).length, name).toBeGreaterThan(3);
