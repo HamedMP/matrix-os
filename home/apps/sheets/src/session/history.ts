@@ -7,7 +7,8 @@
  * methods, so formulas follow their rows and columns.
  */
 
-import type { CellRange, DefinedName, FrozenPanes, RawCell, SheetId, Workbook, WorkbookInternals } from "./engine";
+import type { CellChange, CellRange, DefinedName, FrozenPanes, RawCell, SheetId, Workbook, WorkbookInternals } from "./engine";
+import { acceptAgain, restoreAccepted } from "./implicit-accept";
 
 /** One cell before and after an edit. */
 export interface CellDelta {
@@ -42,7 +43,9 @@ export type HistoryStep =
   | { kind: "size"; sheet: SheetId; axis: "row" | "col"; changes: Array<{ index: number; before: number | null; after: number | null }> }
   | { kind: "merges"; sheet: SheetId; before: CellRange[]; after: CellRange[] }
   | { kind: "frozen"; sheet: SheetId; before: FrozenPanes; after: FrozenPanes }
-  | { kind: "rename"; sheet: SheetId; before: string; after: string };
+  | { kind: "rename"; sheet: SheetId; before: string; after: string }
+  /** Proposed changes the edit accepted by writing over their cells; first in its entry. See `./implicit-accept.ts`. */
+  | { kind: "accepted"; changes: CellChange[] };
 
 export interface HistoryEntry {
   label: string;
@@ -57,6 +60,7 @@ export const MAX_HISTORY_CELLS = 1_000_000;
 function stepWeight(step: HistoryStep): number {
   if (step.kind === "cells") return step.deltas.length;
   if (step.kind === "axis" && !step.insert) return step.band.cells.length + step.band.rewrites.length + 1;
+  if (step.kind === "accepted") return step.changes.length;
   return 1;
 }
 
@@ -195,6 +199,10 @@ function restoreBand(
 export function applyStep(internals: WorkbookInternals, step: HistoryStep, forward: boolean): void {
   const { workbook } = internals;
   switch (step.kind) {
+    case "accepted":
+      if (forward) acceptAgain(internals, step.changes);
+      else restoreAccepted(internals, step.changes);
+      return;
     case "cells":
       for (const delta of step.deltas) {
         internals.writeRawCell(delta.sheet, { row: delta.row, col: delta.col }, forward ? delta.after : delta.before);

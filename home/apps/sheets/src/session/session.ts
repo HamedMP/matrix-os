@@ -20,6 +20,7 @@ import {
 import { type SessionCellEdit, type Transaction, applyCellEdit, applyInputs, clampRange } from "./edits";
 import { type LoadedWorkbook, SheetSessionError, fileName, loadWorkbook, serializeWorkbook } from "./file-io";
 import { affectedRange } from "./history";
+import { acceptedBy } from "./implicit-accept";
 import { type RecentFiles, createRecentFiles } from "./recents";
 import { Recorder } from "./recorder";
 import { ARRAY_MESSAGE, OK, PENDING_MESSAGE, failure } from "./results";
@@ -245,6 +246,7 @@ export class SheetSession {
       run(this.transaction());
       return OK;
     }
+    const pending = this.wb.listChanges();
     this.recorder.begin(label);
     try {
       run(this.transaction());
@@ -253,7 +255,11 @@ export class SheetSession {
       if (!isOfficeError(error) && !(error instanceof SheetSessionError)) this.log("an edit failed", error);
       return failure(error);
     }
-    if (this.recorder.commit().changed) this.afterChange("edit", null);
+    const committed = this.recorder.commit();
+    // Writing over a proposed cell accepts its change; undo must bring it back for review.
+    const accepted = committed.entry === null ? [] : acceptedBy(pending, this.wb.listChanges());
+    if (accepted.length > 0) committed.entry?.steps.unshift({ kind: "accepted", changes: accepted });
+    if (committed.changed) this.afterChange("edit", null);
     return OK;
   }
 
