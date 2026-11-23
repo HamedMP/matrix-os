@@ -38,7 +38,7 @@ export function useTaskDetail(client: ProjectBoardClient, taskId: string) {
   }, [client, taskId, refreshKey]);
 
   useEffect(() => client.subscribe((event) => {
-    if (event.taskId === taskId) setRefreshKey((key) => key + 1);
+    if (event.type === "board.resync" || event.taskId === taskId) setRefreshKey((key) => key + 1);
   }), [client, taskId]);
 
   const current = data?.taskId === taskId ? data : null;
