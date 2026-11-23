@@ -201,6 +201,60 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
     ...(options.runCoreCli ? { run: options.runCoreCli } : {}),
   });
+  // Add, install and remove of one machine name run one after another, so a remove and re-add of the
+  // name can never land between an install and the save of its settings. Bounded: an entry lives
+  // only while that name has work queued.
+  const machineQueue = new Map<string, Promise<unknown>>();
+  const forMachine = <T>(name: string, work: () => Promise<T>): Promise<T> => {
+    const previous = machineQueue.get(name) ?? Promise.resolve();
+    const next = previous.then(work, work);
+    const settled = next.catch(() => undefined);
+    machineQueue.set(name, settled);
+    void settled.then(() => { if (machineQueue.get(name) === settled) machineQueue.delete(name); });
+    return next;
+  };
+  async function addMachineNow(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
+    const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+    const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
+    if (result.ok) {
+      try {
+        await machineSsh.set(result.machine.name, {
+          target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), coreTarget: result.machine.target,
+        });
+      } catch (error: unknown) {
+        // Without its settings the machine would be reached the wrong way later: take it back out so a retry starts clean.
+        await (await ensure()).call("machine.rm", { machine: result.machine.name })
+          .catch((rollback: unknown) => console.warn("[local-terminals] add rollback failed:", describeError(rollback)));
+        throw error;
+      }
+      return { ok: true, machine: { ...result.machine, target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) } };
+    }
+    return result;
+  }
+
+  async function installMachineNow(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
+    const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+    const result = await machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
+    if (!result.ok) return result;
+    // Kept like an add, so Open in terminal reaches it the same way (port, identity, jump host, Tailscale SSH).
+    try {
+      const current = (await listMachines(await ensure())).find((machine) => machine.name === input.name);
+      await machineSsh.set(input.name, {
+        target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), ...(current ? { coreTarget: current.target } : {}),
+      });
+    } catch (error: unknown) {
+      console.warn("[local-terminals] installed machine's ssh settings not saved:", describeError(error));
+    }
+    return result;
+  }
+
+  async function removeMachineNow(name: string): Promise<void> {
+    await (await ensure()).call("machine.rm", { machine: name });
+    // The machine is gone, so this is done. Settings left behind are inert: a later add of the
+    // name overwrites them, and they never reach a different host (machineSshMatches).
+    await machineSsh.remove(name).catch((error: unknown) => console.warn("[local-terminals] removed machine's ssh not cleared:", describeError(error)));
+  }
+
   // Changes on every unwatch: a watch still waiting for the core must not start after its window left.
   let watchEpoch = 0;
   const events = (options.createEvents ?? createLocalTerminalEvents)({
@@ -335,23 +389,9 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       return this.sshLogin(target, size, saved?.ssh);
     },
 
-    async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
-      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
-      const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
-      if (result.ok) {
-        try {
-          await machineSsh.set(result.machine.name, {
-            target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), coreTarget: result.machine.target,
-          });
-        } catch (error: unknown) {
-          // Without its settings the machine would be reached the wrong way later: take it back out so a retry starts clean.
-          await (await ensure()).call("machine.rm", { machine: result.machine.name })
-            .catch((rollback: unknown) => console.warn("[local-terminals] add rollback failed:", describeError(rollback)));
-          throw error;
-        }
-        return { ok: true, machine: { ...result.machine, target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}) } };
-      }
-      return result;
+    addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
+      // Without a name the core picks one; the queue then keys on the target instead.
+      return forMachine(input.name ?? `target:${input.target}`, () => addMachineNow(input));
     },
 
     /** This Mac's tailnet peers, for one-click Add machine. */
@@ -360,20 +400,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     /** Adds a machine that has no core or an old one, installing the app's own core there. */
-    async installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
-      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
-      const result = await machineCore.install({ name: input.name, target: input.target, ...(via ? { via } : {}) });
-      if (!result.ok) return result;
-      // Kept like an add, so Open in terminal reaches it the same way (port, identity, jump host, Tailscale SSH).
-      try {
-        const current = (await listMachines(await ensure())).find((machine) => machine.name === input.name);
-        await machineSsh.set(input.name, {
-          target: input.target, ...(input.ssh ? { ssh: input.ssh } : {}), ...(current ? { coreTarget: current.target } : {}),
-        });
-      } catch (error: unknown) {
-        console.warn("[local-terminals] installed machine's ssh settings not saved:", describeError(error));
-      }
-      return result;
+    installMachine(input: { target: string; name: string; ssh?: SshOptions }): Promise<MachineCoreResult> {
+      return forMachine(input.name, () => installMachineNow(input));
     },
 
     /** Brings an added machine's core to the app's version; its terminals keep running. */
@@ -382,12 +410,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     /** Forgets a machine; its terminals keep running there. */
-    async removeMachine(name: string): Promise<void> {
-      await (await ensure()).call("machine.rm", { machine: name });
-      // The machine is gone, so this is done. Settings left behind are inert: a later add of the
-      // name overwrites them, and they never reach a different host (machineSshMatches).
-      await machineSsh.remove(name).catch((error: unknown) => console.warn("[local-terminals] removed machine's ssh not cleared:", describeError(error)));
+    removeMachine(name: string): Promise<void> {
+      return forMachine(name, () => removeMachineNow(name));
     },
+
 
     /** Dials a machine now (after a login in a terminal) instead of at its next retry. */
     async connectMachine(name: string): Promise<void> {

@@ -72,6 +72,28 @@ describe("added machines over ssh", () => {
     });
   });
 
+  // Fault detected (Greptile, #3579): a remove and re-add of the name while an install ran paired the
+  // replacement machine with the installed host's settings, so Open in terminal reached the old host.
+  it("keeps an install and a remove or re-add of the same name from interleaving", async () => {
+    let release: () => void = () => undefined;
+    const runCoreCli = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    let listed = [machine("box", "me@box")];
+    const { host, dataDir } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: listed } });
+      if (call.method === "machine.rm") { listed = []; core.reply(call.id, { result: {} }); }
+      if (call.method === "machine.add") { listed = [machine("box", "new@box")]; core.reply(call.id, { result: machine("box", "new@box") }); }
+    }, { runCoreCli });
+    const install = host.installMachine({ target: "me@box", name: "box", ssh: { port: 2222 } });
+    await vi.waitFor(() => expect(runCoreCli).toHaveBeenCalled());
+    const removed = host.removeMachine("box");
+    const added = host.addMachine({ target: "new@box", name: "box" });
+    release();
+    await Promise.all([install, removed, added]);
+    expect(JSON.parse(await readFile(join(dataDir, "machine-ssh.json"), "utf8")).machines).toEqual({
+      box: { target: "new@box", coreTarget: "new@box" },
+    });
+  });
+
   // Fault detected (Greptile, #3570): a failed save left the machine added without its settings,
   // and an unreadable settings file was replaced, erasing every machine's settings.
   it("takes the machine back out when its settings cannot be saved, and never overwrites an unreadable file", async () => {
