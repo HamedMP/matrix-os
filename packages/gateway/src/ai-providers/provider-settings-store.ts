@@ -233,10 +233,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             ? [harness.harness]
             : []))],
       });
-      return await projectProviderSettings({
+      return await this.#projectSettings({
         canonical,
         config,
-        codexConsentAlias: codexNativeAccountMetadata ? await this.#codexConsentAlias() : null,
         claudeNativeAccountMetadata,
         codexNativeAccountMetadata,
         hermesNativeAccountMetadata,
@@ -506,7 +505,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           // Owner-paid native readiness is independent of Matrix funding and
           // generic catalogs. This hot admission path must honor suppressed
           // funded probes and project only canonical inventory + saved consent.
-          projected = await projectProviderSettings({
+          projected = await this.#projectSettings({
             canonical,
             config,
             claudeNativeAccountMetadata: claudeMetadata,
@@ -684,6 +683,13 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   async completeCodexNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse> {
     const { verifyNativeAccount, ...request } = input;
     return this.#mutate({ ...request, type: "select_access_source", accessSourceId: "owner_openai_profile", enableHarness: true }, false, true, verifyNativeAccount);
+  }
+
+  /** The only projection entry point: Settings and Chat must apply the same saved
+   * consent, including the same-account upgrade alias (ENG-523). */
+  async #projectSettings(input: Omit<Parameters<typeof projectProviderSettings>[0], "codexConsentAlias">): Promise<ProviderSettingsSnapshot> {
+    return await projectProviderSettings({ ...input,
+      codexConsentAlias: input.codexNativeAccountMetadata ? await this.#codexConsentAlias() : null });
   }
 
   async #codexConsentAlias(): Promise<CodexConsentAlias | null> {

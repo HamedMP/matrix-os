@@ -424,12 +424,21 @@ it('upgrades legacy same-account consent without breaking a chat admitted before
     .toEqual({ account: 'authenticated', readiness: 'ready', harness: true });
   await expect(admission.validate('owner', binding, 'sess_live_runner')).resolves.toBeUndefined();
   await expect(admission.validateLaunch('owner', 'sess_live_runner')).resolves.toEqual(launched);
+  // Chat reads the canonical collaboration projection; it must agree with Settings.
+  const modelId = consented.harnesses.find((row: {id: string}) => row.id === id).route.modelId;
+  const chat = async () => f.store.getCanonicalCollaborationSnapshot({ collaborationChatRoute: { driverKind: 'codex', modelId } });
+  const ready = await chat();
+  expect(ready.accessSources.find(row => row.id === 'owner_openai_profile')?.state).toBe('ready');
+  expect(ready.active).toMatchObject({ accessSourceId: 'owner_openai_profile' });
 
   // A real account change is still a switch: no readiness and no resume.
   f.setPrincipal('other@example.invalid'); f.refreshTokens();
   expect(codexState(await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true }), id))
     .toEqual({ account: 'authenticated', readiness: 'auth_required', harness: false });
   await expect(admission.validate('owner', binding, 'sess_live_runner')).rejects.toThrow();
+  const switched = await chat();
+  expect(switched.accessSources.find(row => row.id === 'owner_openai_profile')?.state).not.toBe('ready');
+  expect(switched.active.accessSourceId).not.toBe('owner_openai_profile');
 });
 it('still requires explicit consent when a different account signs in to Codex', async () => {
   const f = await fixture(false, false, true);
