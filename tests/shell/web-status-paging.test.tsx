@@ -58,3 +58,19 @@ it("keeps Pinned and Show more available when unread pinned chats are on a later
   fireEvent.click(more);
   expect(await screen.findByText("Later unread pinned chat")).toBeTruthy();
 });
+
+
+it.each(["pinned", "needsYou", "working", "done"])("retries a failed first %s page independently", async group => {
+  const loadPage = vi.fn(async (input: { group: string }) => {
+    if (input.group !== group) return { items: [], totalCount: 0 };
+    if (loadPage.mock.calls.filter(([query]) => query.group === group).length === 1) throw new Error("Transient connection failure");
+    return { items: [{ chat: { id: "chat_retry", title: "Recovered chat", messageCount: 1, updatedAt: "2026-11-12T00:00:00.000Z" } }], totalCount: 1 };
+  });
+  const labels = { pinned: "Pinned", needsYou: "Needs you", working: "Working", done: "Done" };
+  render(<WebChatLifecycleGroups conversations={[]} loadPage={loadPage as never} renderRow={row => <div>{row.title}</div>}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Retry ${labels[group as keyof typeof labels]} chats` }));
+  expect(await screen.findByText("Recovered chat")).toBeTruthy();
+  expect(loadPage.mock.calls.filter(([query]) => query.group === group)).toHaveLength(2);
+  expect(loadPage).toHaveBeenCalledTimes(5);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

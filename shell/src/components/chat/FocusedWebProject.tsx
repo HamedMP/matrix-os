@@ -14,7 +14,7 @@ import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageRespo
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
 export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle, renamedTitles = {},
-  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion = 0, chatReadStateUpdates }: {
+  onSelectChat, renderRow, renderOlderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion = 0, chatReadStateUpdates }: {
   project: WebProject;
   gatewayUrl: string;
   /** The project's chats from navigation, pinned ones included. */
@@ -26,6 +26,8 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   renamedTitles?: Readonly<Record<string, string>>;
   onSelectChat(chatId: string): void;
   renderRow(chat: RenameableConversation): ReactNode;
+  /** ProjectChatRows supplies the ordering wrapper for this action row. */
+  renderOlderRow?(chat: RenameableConversation, nowMs: number): ReactNode;
   onBack(): void;
   onOpenHome?: () => void;
   mobile: boolean;
@@ -72,7 +74,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
     {older.length > 0 || (!empty && (error || hasMore || capped)) ? <ChatRailSection label="Older chats" count={older.length}
       expanded={olderExpanded} onExpandedChange={setOlderExpanded}>
       <ProjectChatRows rows={older.map(chat => ({ kind: "fetched", chat } as const))} projectId={project.id} nowMs={nowMs}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={chat => renderRow(chat)} mobile={mobile} />
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={renderOlderRow ?? renderRow} mobile={mobile} />
       {error ? <ProjectChatStatus rowCount={older.length} loading={false} error mobile={mobile} retry={retry} hasMore={hasMore} filtered={false} /> : null}
       <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore} capped={capped}
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />

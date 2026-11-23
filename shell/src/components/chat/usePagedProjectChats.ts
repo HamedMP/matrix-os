@@ -161,6 +161,7 @@ function conversation(item: CanonicalChatNavigationPageResponse["items"][number]
 export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?: string, version?: number) {
   const key = `${scopeKey ?? ""}\0${group}`;
   const [state, setState] = useState<PageState>({ key: "", rows: [], count: 0, loading: false, error: false });
+  const [retryCount, setRetryCount] = useState(0);
   const generation = useRef(0);
   useEffect(() => {
     if (!loadPage) return;
@@ -188,7 +189,11 @@ export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?
       setState(previous => ({ ...previous, loading: false, error: true }));
     });
     return () => { generation.current++; };
-  }, [group, key, loadPage, version]);
+  }, [group, key, loadPage, version, retryCount]);
+  const retry = useCallback(() => {
+    if (!loadPage || state.loading) return;
+    setRetryCount(value => value + 1);
+  }, [loadPage, state.loading]);
   const loadMore = useCallback(() => {
     if (!loadPage || state.key !== key || !state.cursor || state.loading) return;
     const current = generation.current;
@@ -209,5 +214,5 @@ export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?
       setState(previous => ({ ...previous, loading: false, error: true }));
     });
   }, [group, key, loadPage, state]);
-  return state.key === key ? { ...state, loadMore } : { key, rows: [], count: 0, loading: Boolean(loadPage), error: false, loadMore };
+  return state.key === key ? { ...state, loadMore, retry } : { key, rows: [], count: 0, loading: Boolean(loadPage), error: false, loadMore, retry };
 }

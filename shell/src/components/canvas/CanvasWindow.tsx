@@ -539,6 +539,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onRenameConversation={chatState.renameConversation}
               onDeleteConversation={chatState.deleteConversation}
               loadNavigationPage={chatState.navigationPage}
+              chatReadStateUpdates={chatState.chatReadStateUpdates}
               searchConversations={chatState.searchConversations}
               navigationUpdatedAt={chatState.navigationUpdatedAt}
               onArchiveConversation={chatState.archiveConversation}

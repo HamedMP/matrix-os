@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import { CanonicalChatNavigationItemSchema } from "@matrix-os/contracts";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
@@ -661,7 +662,7 @@ it("opens project configuration in the main pane and keeps project chat navigati
   expect(screen.getByRole("navigation", { name: "Projects" })).toBeTruthy();
 });
 
-function renderFocusable(request: (url: string) => Response, extra: { mobile?: boolean } = {}) {
+function renderFocusable(request: (url: string) => Response, extra: { mobile?: boolean; loadNavigationPage?: React.ComponentProps<typeof ChatApp>["loadNavigationPage"] } = {}) {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] }) : request(url)));
@@ -784,4 +785,26 @@ it("updates read marks on retained project pages without refetching or losing th
   expect(result.current.hasMore).toBe(true);
   act(()=>result.current.loadMore());
   await waitFor(()=>expect(load).toHaveBeenCalledWith(expect.objectContaining({cursor:"navcur_third"})));
+});
+
+
+it("reorders adjacent older project chats across lifecycle states without moving listed chats", async () => {
+  const older = [10, 11, 12].map(index => {
+    const row = projectConversation(index).canonicalRecord!;
+    return CanonicalChatNavigationItemSchema.parse({ ...row, readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 0, markedUnread: false, unread: false }, classification: { kind: "ordinary" }, persistence: "personal" });
+  });
+  older[1] = { ...older[1]!, chat: { ...older[1]!.chat, attention: "input_required" } };
+  renderFocusable(() => Response.json({ items: [], nextCursor: null }), { loadNavigationPage: async ({ group }) => ({ items: group === "project" ? older : [], totalCount: group === "project" ? older.length : 0 }) });
+  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
+  const region = await screen.findByRole("region", { name: "Older chats" });
+  await within(region).findByRole("button", { name: /^Chat 11/ });
+  const titles = () => within(region).getAllByRole("button", { name: /^Chat 1[012]/ }).map(row => row.closest("[data-rail-order-id]")?.getAttribute("data-rail-order-id"));
+  expect(titles()).toEqual(["chat_10", "chat_11", "chat_12"]);
+  const listedRegion = screen.getByRole("region", { name: "Done" });
+  const listedTitles = () => within(listedRegion).getAllByRole("button", { name: /^Chat [12]$/ }).map(row => row.textContent);
+  const listedBefore = listedTitles();
+  fireEvent.keyDown(within(region).getByRole("button", { name: /^Chat 10/ }), { altKey: true, key: "ArrowDown" });
+  await waitFor(() => expect(titles()).toEqual(["chat_11", "chat_10", "chat_12"]));
+  expect(listedTitles()).toEqual(listedBefore);
+  expect(region.querySelectorAll("[data-rail-order-id]")).toHaveLength(3);
 });

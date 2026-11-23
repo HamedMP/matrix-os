@@ -4,6 +4,7 @@ import type { RenameableConversation } from './ChatTitleRename';
 import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from '@matrix-os/contracts';
 import { orderWebChatRows } from "./useWebChatRailOrder";
 import { usePagedStatusGroup, withConversationReadUpdates } from './usePagedProjectChats';
+import { Button } from '@/components/ui/button';
 
 type GroupKey = 'pinned' | 'needsYou' | 'working' | 'done';
 export function webChatLifecycleGroup(item: RenameableConversation): GroupKey {
@@ -46,12 +47,13 @@ export function WebChatLifecycleGroups({ conversations, projects, attention, att
       : loadPage ? groups[key].slice(0, 10) : groups[key];
     const rows = orderWebChatRows(unordered, order.chatIds, row=>row.id);
     const count = page && loadPage && (page.rows.length > 0 || !page.loading && !page.error) ? page.count : groups[key].length;
-    return rows.length || extra || key !== "pinned" || Boolean(page?.cursor && loadPage) ? <ChatRailSection key={key} label={label}
+    return rows.length || extra || key !== "pinned" || Boolean((page?.cursor || page?.error) && loadPage) ? <ChatRailSection key={key} label={label}
     count={count + (key === "needsYou" ? attentionCount : 0)} attention={key === "needsYou"} expanded={current.expanded[key]}
     onExpandedChange={expanded => setState(value => value.scopeKey === scopeKey ? {...value, expanded: {...value.expanded, [key]: expanded}} : value)}>
     {rows.map(item => <Fragment key={item.id}>{renderRow(item)}</Fragment>)}{extra}
     {page && loadPage && page.cursor ? <button type="button" aria-label={`Show more ${label} chats`} className="matrix-web-project-more" disabled={page.loading} onClick={page.loadMore}>Show more</button> : null}
-    {page?.error && loadPage ? <p role="alert" className="matrix-web-project-note">Chats could not be loaded.</p> : null}
+    {page?.error && loadPage ? <div><p role="alert" className="matrix-web-project-note">Chats could not be loaded.</p>
+      <Button variant="ghost" size="sm" aria-label={`Retry ${label} chats`} disabled={page.loading} onClick={page.retry}>Retry</Button></div> : null}
   </ChatRailSection> : null;
   };
   return <>{section('pinned','Pinned')}{projects}{section('needsYou','Needs you',attention)}{section('working','Working')}{section('done','Done')}</>;

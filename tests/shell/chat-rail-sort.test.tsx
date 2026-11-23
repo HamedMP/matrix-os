@@ -7,6 +7,8 @@ import { ChatAgentsWorkspace } from "@matrix-os/ui";
 import { RenameableConversationRow } from "../../shell/src/components/chat/ChatTitleRename";
 import { WebChatSearchDialog } from "../../shell/src/components/chat/WebChatSearchDialog";
 import { useGlobalShortcuts } from "../../shell/src/hooks/useGlobalShortcuts";
+import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow";
+import { ChatProvider } from "../../shell/src/stores/chat-context";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { useWebChatRailOrder } from "../../shell/src/components/chat/useWebChatRailOrder";
 import { clientFixture } from "../desktop/chat-agents-fixture";
@@ -272,4 +274,24 @@ it.each(["Chats", "All"])("finds restored chats in %s first and subsequent searc
   await waitFor(()=>expect(screen.queryByText("Restored answer")).toBeNull());
   fireEvent.click(screen.getByRole("button",{name:"Show more"}));
   expect(await screen.findByText("Restored answer")).toBeTruthy();
+});
+
+
+it("updates an older paged Canvas chat read mark through the real window and ChatApp", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
+  const client = clientFixture();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(await client.catalog())));
+  const row = { chat: { id: "chat_canvas_old", title: "Older Canvas chat", lifecycle: "active", attention: "none", revision: 1,
+    messageCount: 2, createdAt: "2026-11-12T00:00:00.000Z", updatedAt: "2026-11-12T00:00:00.000Z" },
+    readState: { version: 1, readThroughSeq: 0, latestIncomingSeq: 2, markedUnread: false, unread: true } };
+  const navigationPage = vi.fn(async ({ group }: { group: string }) => ({ items: group === "done" ? [row] : [], totalCount: group === "done" ? 1 : 0 }));
+  const chat = { messages: [], busy: false, connected: true, conversations: [], newChat: vi.fn(), switchConversation: vi.fn(),
+    submitMessage: vi.fn(), agentClient: client, navigationPage, chatReadStateUpdates: [] };
+  const win = { id: "canvas-read-regression", path: "__chat__", title: "Chat", x: 0, y: 0, width: 1000, height: 700, minimized: false, zIndex: 1 };
+  const view = render(<ChatProvider value={chat as never}><CanvasWindow win={win}/></ChatProvider>);
+  expect(await screen.findByLabelText("Unread Older Canvas chat")).toBeTruthy();
+  const updated = { ...row, readState: { ...row.readState, version: 2, readThroughSeq: 2, unread: false } };
+  view.rerender(<ChatProvider value={{ ...chat, chatReadStateUpdates: [updated] } as never}><CanvasWindow win={win}/></ChatProvider>);
+  await waitFor(() => expect(screen.queryByLabelText("Unread Older Canvas chat")).toBeNull());
+  expect(screen.getByRole("button", { name: "Older Canvas chat", exact: true })).toBeTruthy();
 });
