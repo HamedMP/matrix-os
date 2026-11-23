@@ -1,8 +1,9 @@
-import { CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
+import { COLLABORATION_HTTP_BODY_LIMIT, COLLABORATIVE_APP_ICON_MAX_BYTES, CollaborativeAppThumbnailSchema, CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
 import type { Kysely, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 import { PROJECT_CHAT_ROUTE_EVENT } from "./project-chat-routes.js";
+import type { CollaborativeAppPresentation } from "./collaborative-app-presentation.js";
 
 const BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 20;
@@ -63,6 +64,11 @@ export class CollaborationDirectoryOutbox {
     fetchImpl?: typeof fetch;
     now?: () => Date;
     startTimer?: boolean;
+    /**
+     * ENG-490: the owner's manifest name and raster icon for a shared app, read from the same
+     * files the owner launcher uses. Best-effort presentation: a failure only omits it.
+     */
+    resolveAppPresentation?: (appId: string) => Promise<CollaborativeAppPresentation | null>;
   }) {
     const baseUrl = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     if (Buffer.byteLength(options.serviceToken) < 32) {
@@ -127,18 +133,18 @@ export class CollaborationDirectoryOutbox {
         })),
       });
       try {
-        const response = await this.fetchImpl(this.endpoint, {
-          method: "PUT",
-          redirect: "error",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${this.options.serviceToken}`,
-            "content-type": "application/json",
-            "x-matrix-runtime-id": this.options.runtimeId,
-          },
-          body: JSON.stringify(payload),
-        });
+        const presented = payload.app && payload.app.state !== "stopped"
+          ? await this.presentApp(payload.app.appId)
+          : {};
+        const decorated = payload.app ? { ...payload, app: { ...payload.app, ...presented } } : payload;
+        // Budget the entire UTF-8 event, including recipients and base64 expansion.
+        let response = await this.putDirectoryEvent(Buffer.byteLength(JSON.stringify(decorated)) <= COLLABORATION_HTTP_BODY_LIMIT ? decorated : payload);
+        // A platform that predates presentation fields rejects them as unknown; resend routing
+        // metadata alone so a host bundle shipped ahead of the platform never stalls a share.
+        if (response.status === 422 && Object.keys(presented).length > 0) {
+          await response.body?.cancel();
+          response = await this.putDirectoryEvent(payload);
+        }
         await response.body?.cancel();
         if (!response.ok) {
           console.warn("[collaboration-directory] platform rejected event", response.status);
@@ -159,6 +165,46 @@ export class CollaborationDirectoryOutbox {
       }
     }
     return delivered;
+  }
+
+  private putDirectoryEvent(payload: ReturnType<typeof CollaborationDirectoryEventSchema.parse>): Promise<Response> {
+    return this.fetchImpl(this.endpoint, {
+      method: "PUT",
+      redirect: "error",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.options.serviceToken}`,
+        "content-type": "application/json",
+        "x-matrix-runtime-id": this.options.runtimeId,
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Presentation is local and best-effort; no icon service can consume a share retry. */
+  private async presentApp(appId: string): Promise<{ name?: string; thumbnail?: ReturnType<typeof CollaborativeAppThumbnailSchema.parse> }> {
+    if (!this.options.resolveAppPresentation) return {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const presentation = await Promise.race([
+        this.options.resolveAppPresentation(appId),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 3_000); }),
+      ]);
+      if (!presentation) return {};
+      const name = CollaborationDirectoryEventSchema.shape.app.unwrap().shape.name.safeParse(presentation.name);
+      const thumbnail = CollaborativeAppThumbnailSchema.safeParse(presentation.icon ? {
+        sha256: presentation.icon.sha256,
+        contentType: presentation.icon.contentType,
+        base64: presentation.icon.bytes.byteLength <= COLLABORATIVE_APP_ICON_MAX_BYTES ? Buffer.from(presentation.icon.bytes).toString("base64") : "",
+      } : undefined);
+      return { ...(name.success && name.data ? { name: name.data } : {}), ...(thumbnail.success ? { thumbnail: thumbnail.data } : {}) };
+    } catch (error: unknown) {
+      console.warn("[collaboration-directory] app presentation unavailable", error instanceof Error ? error.name : "UnknownError");
+      return {};
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /** A failed final attempt will never be retried: mark it so it stops holding back its scope. */
