@@ -27,22 +27,6 @@ WorkTab already exceeds the entrypoint size guideline. Extract responsive layout
 
 The six failing native suites reproduce ten failures locally. Keep the existing assertions for unread mutations without opening a chat, import filtering, preview-read cancellation, destructive-menu separation and accessible status text. Update the UI entry points and semantic menu-label queries for the approved Figma layout. The status audit stays unchanged; production status/error labels use danger-text instead of fill tokens. Co-locate the small paging, persisted inspector layout, Side draft context, filter menu and archive destination helpers with their existing owning modules so this layer remains within 50 files without dropping tests or adding a PR. The first prepared three suites retain their 14 passing checks.
 
-### Web full-CI consumer reconciliation
-
-Seven Web suites fail red against the old input, width, preview-close and reorder signatures. Use the 240px desktop rail, actual filter popover and Search combobox, visible file-preview host control, and bounded visible-ID reorder argument. Preserve phone inline source+search coverage and add the desktop filter/global-dialog path. Small related helpers are co-located with existing paging, ordering, history, project-navigation and client modules to retain the 50-file limit.
-
 ### Full-CI unit shard reconciliation
 
 The Linux shard exposed three stale consumer tests: the agent chrome fixture replaced the archive hook, the token audit omitted shared UI CSS, and Done expected its Figma live count to disappear while expanded. Preserve the real archive exports, include shared CSS definitions in the existing token audit, and retain the live-count assertion through collapse/expand. CI supplies red evidence for all four assertions. Archive, Side chat, and paged-rail regression suites are retained unchanged in the final integration layer to keep the native layer at 50 files; none of their assertions are deleted. Runtime source is unchanged by this reconciliation.
-## Retained archive protection
-
-The bespoke Web archive dialog and its three tests are replaced by the shared full-page archive implementation. The shared archive suite retains title/message search with cursor paging, restore and confirmed deletion, late-page rejection, failures/retry and Undo coverage. Web navigation tests additionally exercise Search → Archived → full page and restoring an older chat back into an already-expanded project. Project filter chips were an implementation addition absent from the Figma; the archive page keeps project context and searches all projects.
-
-
-### Canonical file-scope review correction
-
-Extract active/latest run-root selection into the pure shared `canonicalChatFileScope` contract helper, with missing-run and mismatched-project roots failing closed. Keep useCanonicalChatState as a projection call and pass its result through Web Desktop, Web Canvas and Web Mobile adapters. Inspector consumers retain worktree IDs for browsing and previews. The follow-up composition extraction for the existing large ChatApp/useCanonicalChatState entrypoints remains scoped to their routing and rendering responsibilities; this fix adds no duplicate run-root business rules there. Native scope adapts the same shared selector while preserving its verified project slug lookup.
-
-### Paged read and restored search correction
-
-Successful read mutations publish a versioned, owner/runtime-scoped cache of at most 500 recently updated chat records. Project and status placements merge that read projection without resetting rows, cursor positions, counts, or transcript metadata; unread-only project rows filter the merged state. Older records are not inserted into the initial global navigation window. Restored search tombstones affect Archived only; permanent deletions affect every lifecycle, including subsequent pages. Focused production-boundary regressions exercise the state producer, retained page consumer, and restoration across active search scopes. Broad unit qualification completes in exact-head CI under the requester’s recorded exception; focused tests, typecheck, patterns and React review still run locally.

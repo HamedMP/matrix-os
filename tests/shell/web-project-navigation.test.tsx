@@ -809,9 +809,9 @@ it("reorders adjacent older project chats across lifecycle states without moving
   expect(region.querySelectorAll("[data-rail-order-id]")).toHaveLength(3);
 });
 
-it.each([false, true])("refreshes loaded project run states across shifted pages (insert=%s)", async insert => {
+it.each([{ insert: false, total: 25, pages: 1 }, { insert: true, total: 25, pages: 1 }, { insert: true, total: 600, pages: 27 }])("refreshes loaded project run states across shifted pages (%o)", async ({ insert, total, pages }) => {
   let completed = false;
-  const order = Array.from({ length: 25 }, (_, index) => `chat_${index + 1}`);
+  const order = Array.from({ length: total }, (_, index) => `chat_${index + 1}`);
   const item = (id: string) => CanonicalChatNavigationItemSchema.parse({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
     createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
     classification: { kind: "ordinary" }, persistence: "personal", readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 0, markedUnread: false, unread: false },
@@ -824,20 +824,26 @@ it.each([false, true])("refreshes loaded project run states across shifted pages
   const project = { id: "proj_one", slug: "proj_one", name: "One" };
   const hook = renderHook(({ version }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, version), { initialProps: { version: 0 } });
   await waitFor(() => expect(hook.result.current.fetched.map(row => row.canonicalRecord?.activeRun?.status)).toEqual(Array(5).fill("running")));
-  act(() => hook.result.current.loadMore());
-  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(25));
+  for (let page = 1; page <= pages; page++) {
+    act(() => hook.result.current.loadMore());
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+    expect(hook.result.current.fetched.at(-1)?.id).toBe(`chat_${5 + page * 20}`);
+  }
+  const before = hook.result.current.fetched.map(row => row.id);
   completed = true;
   if (insert) order.unshift("chat_new");
+  const expected = pages > 25 ? before : order.slice(0, 25);
   hook.rerender({ version: 1 });
-  expect(hook.result.current.fetched).toHaveLength(25);
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(before);
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   expect(hook.result.current.fetched.every(row => !row.canonicalRecord?.activeRun)).toBe(true);
-  expect(hook.result.current.fetched.map(row => row.id)).toEqual(order.slice(0, 25));
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(expected);
   expect(hook.result.current.hasMore).toBe(insert);
   if (!insert) return;
+  const following = order.slice(order.indexOf(expected.at(-1)!) + 1, order.indexOf(expected.at(-1)!) + 21);
   act(() => hook.result.current.loadMore());
-  await waitFor(() => expect(hook.result.current.fetched.map(row => row.id)).toEqual(order));
-  expect(hook.result.current.hasMore).toBe(false);
+  await waitFor(() => expect(hook.result.current.fetched.map(row => row.id)).toEqual([...expected, ...following].slice(-500)));
+  expect(hook.result.current.hasMore).toBe(pages > 25);
 });
 
 it.each(["navigation", "run", "selection"])("unblocks an older project chat after %s refresh", async trigger => {

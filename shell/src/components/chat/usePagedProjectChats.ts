@@ -49,7 +49,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const [retryCount, setRetryCount] = useState(0);
   const previousVersion = useRef({ refreshVersion, membershipVersion });
   const reloading = useRef(false);
-  const retainedPages = useRef({ id: 0, slug: 0 });
+  const retainedCursors = useRef<{ id: Array<string | null>; slug: Array<string | null> }>({ id: [], slug: [] });
   useEffect(() => {
     if (previousVersion.current.refreshVersion === refreshVersion && previousVersion.current.membershipVersion === membershipVersion) return;
     previousVersion.current = { refreshVersion, membershipVersion };
@@ -72,9 +72,11 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
     if (cursors.slug !== undefined) sources.push({ key: "slug", value: project.slug, cursor: cursors.slug });
     void Promise.all(sources.map(async source => {
       const rows: FetchedProjectChat[] = [];
-      let cursor: string | null | undefined = source.cursor, count = 0;
+      const loaded = retainedCursors.current[source.key], windowCursors: Array<string | null> = [];
+      let cursor: string | null | undefined = reload ? loaded[0] ?? source.cursor : source.cursor;
       do {
         if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        windowCursors.push(cursor ?? null);
         const canonical: CanonicalChatNavigationPageResponse | undefined = loadNavigationPage
           ? await loadNavigationPage({ group: "project", projectId: source.value, limit: cursor ? 20 : 5, ...(cursor ? { cursor } : {}) }) : undefined;
         const page: CanonicalChatNavigationPageResponse | z.infer<typeof ProjectChatsResponseSchema> = canonical ?? await loadProjectChats(gatewayUrl, source.value, cursor ?? null, unreadOnly, controller.signal);
@@ -83,9 +85,8 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
           canonicalRecord: canonical?.items[index],
         })).filter(row => !unreadOnly || !row.canonicalRecord || row.canonicalRecord.readState.unread));
         cursor = page.nextCursor;
-        count++;
-      } while (cursor && reload && count < retainedPages.current[source.key]);
-      return { key: source.key, count, nextCursor: cursor, rows };
+      } while (cursor && reload && windowCursors.length < loaded.length);
+      return { key: source.key, cursors: windowCursors, nextCursor: cursor, rows };
     })).then(pages => {
       if (controller.signal.aborted) return;
       const rows: FetchedProjectChat[] = pages.flatMap(({ rows }) => rows);
@@ -103,10 +104,10 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
         return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};
-      for (const { key, nextCursor, count } of pages) {
+      for (const { key, nextCursor, cursors } of pages) {
         next[key] = nextCursor ?? undefined;
         // At most 26 pages cover the bounded 500-row window, including its partial edge.
-        retainedPages.current[key] = Math.min(26, reload || cursors[key] === null ? count : retainedPages.current[key] + count);
+        retainedCursors.current[key] = (reload || cursors[0] === null ? cursors : [...retainedCursors.current[key], ...cursors]).slice(-26);
       }
       reloading.current = false;
       setNextCursors(next);
@@ -120,7 +121,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
 
   const toggleExpanded = () => {
     if (expanded) {
-      retainedPages.current = { id: 0, slug: 0 };
+      retainedCursors.current = { id: [], slug: [] };
       reloading.current = false;
       setExpanded(false);
       setFetched([]);
