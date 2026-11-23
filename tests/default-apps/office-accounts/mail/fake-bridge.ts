@@ -20,6 +20,13 @@ export class FakeBridge {
   caps: MatrixOSCapabilities = { version: 1, integrations: true, ai: true };
   integrationsCalls = 0;
   private readonly replies = new Map<string, Reply[]>();
+  private readonly handlers = new Map<string, (params: Record<string, unknown>) => unknown>();
+
+  /** Answer every call to one action from its parameters; used when calls run in parallel. */
+  handle(service: string, action: string, handler: (params: Record<string, unknown>) => unknown): this {
+    this.handlers.set(`${service}/${action}`, handler);
+    return this;
+  }
 
   /** Queue replies (raw provider `data`) for one action, answered in order. */
   reply(service: string, action: string, ...data: Reply[]): this {
@@ -38,6 +45,11 @@ export class FakeBridge {
     const sent = JSON.parse(JSON.stringify(params ?? {})) as Record<string, unknown>;
     this.calls.push({ service, action, params: sent, label });
     await Promise.resolve();
+    const handler = this.handlers.get(`${service}/${action}`);
+    if (handler) {
+      const data = handler(sent);
+      return { data: data === undefined ? undefined : JSON.parse(JSON.stringify(data)), service, action };
+    }
     const queue = this.replies.get(`${service}/${action}`);
     if (!queue || queue.length === 0) throw new Error(`No reply queued for ${service}/${action}`);
     const next = queue.shift();
