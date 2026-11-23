@@ -880,10 +880,8 @@ class BrowserRuntimeTest(unittest.TestCase):
             if name.endswith('.service'):
                 self.assertIn('User=matrix', content)
 
-    # Fault detected (review P1): the browser desktop ran as the matrix account,
-    # which reads host.env (MATRIX_AUTH_TOKEN, DATABASE_URL) through the matrix
-    # group and gets root through the docker group. A self-host install names a
-    # dedicated account; the runtime must run every native unit as that account.
+    # Review P1: the matrix account reads host.env (group) and gets root (docker);
+    # a self-host install names a dedicated account that runs every native unit.
     def dedicated_account(self, *, groups=None, primary_gid=4242):
         owner = type('Owner', (), {'pw_uid': os.getuid(), 'pw_gid': primary_gid, 'pw_dir': '/var/lib/matrix-browser', 'pw_name': 'matrix-browser'})()
         table = groups if groups is not None else {'matrix': (1000, []), 'docker': (999, ['matrix', 'alice'])}
@@ -981,9 +979,7 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertEqual(by_path[self.env], (0o640, self.runtime.gid))
 
     def test_existing_viewer_password_moves_to_the_browser_account_group_unchanged(self):
-        # Found in review: an existing install keeps its credential pair, so the
-        # saved viewer.passwd stayed root:matrix and the dedicated account's Xvnc
-        # could not read it.
+        # Review: a kept credential pair left viewer.passwd unreadable to Xvnc.
         self.runtime.prepare()
         owner, getgrnam, group = self.dedicated_account()
         password_file = self.runtime.prefix / 'viewer.passwd'

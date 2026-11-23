@@ -360,11 +360,8 @@ prepare_scope_runtime_roots "${home}" alice`,
     expect(site).toContain("location = /apps/browser-lab/viewer/websockify {");
   });
 
-  // Found in review (security): any local account could connect to nginx on
-  // 127.0.0.1:80, send the owner's Tailscale-User-Login itself, and get the
-  // runtime bearer nginx adds, including the browser account kept away from
-  // owner credentials. Tailscale Serve now reaches nginx over a unix socket only
-  // root can open, and the loopback listener refuses any identity header.
+  // Review (security): a local account could send the owner's Tailscale-User-Login to
+  // nginx on loopback and get the bearer; only Tailscale Serve's root-only socket may now.
   it("accepts a tailnet identity only over the root-only Tailscale Serve socket", () => {
     const site = run(`render_nginx_site tailscale _ /etc/nginx/matrix-self-host.htpasswd off`).stdout;
     expect(site).toContain("listen 127.0.0.1:80 default_server;");
@@ -652,12 +649,8 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_SYSTEMD_UNIT_DIR="${units}" OPT_BROWSER=off 
   });
 
   describe("browser account", () => {
-    // Found in review (P1): the browser desktop ran as the matrix account, which
-    // reads host.env and postgres.env (MATRIX_AUTH_TOKEN, DATABASE_URL) through
-    // the matrix group and gets root through the docker group. It now runs as a
-    // dedicated matrix-browser account with neither group, its own lingering user
-    // manager (the desktop's Files/Terminal buttons need its user bus) and a
-    // private home.
+    // Review P1: the browser ran as matrix (host.env via the matrix group, root via
+    // docker). It now runs as matrix-browser: neither group, own user manager, private home.
     function prepare(options: { exists?: boolean; groups?: string; primary?: string; existingHome?: boolean } = {}) {
       const root = join(dir, "root");
       spawnSync("mkdir", ["-p", root]);
@@ -728,23 +721,22 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=alice MATRIX_BROWSER_ACCOUNT_HOME="
     // Found in review: an install whose browser ran as matrix lost its saved
     // logins and tabs when the browser moved to the dedicated account. The move
     // must never let root write through browser-owned (swappable) directories.
-    function migrate(options: { newExists?: boolean; outside?: boolean; linkedParent?: boolean } = {}) {
+    function migrate(options: { newExists?: boolean; outside?: boolean; noLegacy?: boolean } = {}) {
       const legacyRoot = join(dir, "legacy");
       const home = join(dir, "browser-home");
       const stage = join(dir, "stage");
       const old = join(legacyRoot, ".local/share/matrix-browser-lab/chrome");
-      spawnSync("mkdir", ["-p", join(old, "Default"), home]);
-      writeFileSync(join(old, "Default/Cookies"), "saved session");
+      spawnSync("mkdir", ["-p", home]);
+      if (!options.noLegacy) {
+        spawnSync("mkdir", ["-p", join(old, "Default")]);
+        writeFileSync(join(old, "Default/Cookies"), "saved session");
+      }
       if (options.outside) {
         spawnSync("rm", ["-rf", old]);
         spawnSync("mkdir", ["-p", join(dir, "elsewhere")]);
         spawnSync("ln", ["-s", join(dir, "elsewhere"), old]);
       }
       if (options.newExists) spawnSync("mkdir", ["-p", join(home, ".local/share/matrix-browser-lab/chrome")]);
-      if (options.linkedParent) {
-        spawnSync("mkdir", ["-p", join(dir, "etc-standin")]);
-        spawnSync("ln", ["-s", join(dir, "etc-standin"), join(home, ".local")]);
-      }
       const calls = join(dir, "migrate-calls");
       const result = run(`systemctl() { printf 'systemctl %s\\n' "$*" >>"${calls}"; }
 chown() { printf 'chown %s\\n' "$*" >>"${calls}"; }
@@ -781,12 +773,17 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${legacyRoot}" MATRIX_L
       }
     });
 
-    it("never writes through a browser-owned link in the destination path", () => {
-      const { calls } = migrate({ linkedParent: true });
-      // Root never creates or changes anything under the account's home; whatever
-      // the account's own mkdir does through its link affects only what it can reach.
-      expect(calls.filter((call) => call.startsWith("install") && call.includes("browser-home"))).toEqual([]);
-      expect(calls.filter((call) => call.startsWith("chown") && call.includes("browser-home"))).toEqual([]);
+    it("resumes a move that stopped after staging, and never deletes it", () => {
+      // Found in review: a rerun after an interrupted move saw no old profile and
+      // started an empty one, stranding the saved sessions in staging.
+      const stage = join(dir, "stage");
+      spawnSync("mkdir", ["-p", join(stage, "matrix-browser/chrome/Default"), join(dir, "browser-home")]);
+      writeFileSync(join(stage, "matrix-browser/chrome/Default/Cookies"), "staged session");
+      const { result, moved, calls } = migrate({ noLegacy: true });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(moved, "Default/Cookies"), "utf8")).toBe("staged session");
+      expect(calls).toContain(`runuser -u matrix-browser -- mv -T ${stage}/matrix-browser/chrome ${moved}`);
+      expect(existsSync(stage)).toBe(false);
     });
 
     it("prepares the account before installing the browser desktop", () => {

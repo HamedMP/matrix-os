@@ -1106,26 +1106,30 @@ stop_browser_use() {
 # profile in a root-owned directory; the account itself moves it into place.
 migrate_browser_profile() {
   local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}"
-  local stage="${MATRIX_BROWSER_PROFILE_STAGE:-/var/lib/matrix-browser-profile-move}" old new group
+  local stage="${MATRIX_BROWSER_PROFILE_STAGE:-/var/lib/matrix-browser-profile-move}" old new staged group
   new="${home}/.local/share/matrix-browser-lab/chrome"
   old="${root}/.local/share/matrix-browser-lab/chrome"
-  [ ! -e "$new" ] && [ ! -L "$new" ] && [ -d "$old" ] || return 0
-  old="$(readlink -f "$old")"
-  case "$old" in
-    "$root"/*) ;;
-    *) warn "the saved browser profile is outside ${root}; starting a new one"; return 0 ;;
-  esac
-  [ "$(stat -c %U "$old")" = "$user" ] || { warn "the saved browser profile is not owned by ${user}; starting a new one"; return 0; }
+  staged="${stage}/${account}/chrome"
+  [ ! -e "$new" ] && [ ! -L "$new" ] || return 0
   group="$(id -gn "$account")"
-  systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
-  rm -rf -- "$stage"
-  install -d -o root -g root -m 0711 "$stage"
-  install -d -o "$account" -g "$group" -m 0700 "${stage}/${account}"
-  run_required "moving the saved browser profile" mv -T "$old" "${stage}/${account}/chrome"
-  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "${stage}/${account}/chrome"
+  # A move that stopped after staging resumes; a staged profile is never deleted.
+  if [ ! -d "$staged" ] || [ -L "$staged" ] || [ -L "${stage}/${account}" ] || [ -L "$stage" ]; then
+    [ -d "$old" ] || return 0
+    old="$(readlink -f "$old")"
+    case "$old" in
+      "$root"/*) ;;
+      *) warn "the saved browser profile is outside ${root}; starting a new one"; return 0 ;;
+    esac
+    [ "$(stat -c %U "$old")" = "$user" ] || { warn "the saved browser profile is not owned by ${user}; starting a new one"; return 0; }
+    systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+    install -d -o root -g root -m 0711 "$stage"
+    install -d -o "$account" -g "$group" -m 0700 "${stage}/${account}"
+    run_required "moving the saved browser profile" mv -T "$old" "$staged"
+  fi
+  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "$staged"
   run_required "preparing the browser account's profile folder" runuser -u "$account" -- mkdir -p "${home}/.local/share/matrix-browser-lab"
-  run_required "placing the saved browser profile" runuser -u "$account" -- mv -T "${stage}/${account}/chrome" "$new"
-  rm -rf -- "$stage"
+  run_required "placing the saved browser profile" runuser -u "$account" -- mv -T "$staged" "$new"
+  rmdir "${stage}/${account}" "$stage" 2>>"$MATRIX_INSTALL_LOG" || warn "could not remove the empty staging folder ${stage}"
   ok "Kept your saved browser sessions"
 }
 
