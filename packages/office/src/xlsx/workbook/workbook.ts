@@ -55,6 +55,8 @@ import { applyStructuralOp } from "./structure.js";
 import { applyStylePatch } from "./style-write.js";
 
 const MAX_LISTENERS = 16;
+/** Calculation runs one save makes at most: each takes 200 000 formulas, a workbook holds 2 000 000 cells. */
+const MAX_SAVE_RUNS = 64;
 
 function requireCount(value: number, limit: number, what: string): void {
   if (!Number.isInteger(value) || value < 0 || value >= limit) {
@@ -392,7 +394,8 @@ export class WorkbookHandle implements Workbook {
 
   async save(): Promise<Uint8Array> {
     const state = this.#state;
-    if (needsRecalc(state)) recalc(state, undefined, false);
+    // One run is bounded; a file is not saved with formulas a bound left behind.
+    for (let runs = 0; runs < MAX_SAVE_RUNS && needsRecalc(state); runs++) recalc(state, undefined, false);
     state.journal?.beforeSave();
     syncParts(state);
     return state.pkg.save();

@@ -1,9 +1,7 @@
 /**
  * The dependency graph of a workbook: one node per formula cell the engine
- * can calculate, and the order in which to calculate them.
- *
- * Nothing here recurses: the order is found with an explicit stack, so a
- * chain of ten thousand cells cannot overflow the call stack.
+ * can calculate, with the cells each formula reads. `calc-order.ts` finds
+ * the order in which to calculate them.
  */
 
 import type { FormulaAst, FunctionRegistry } from "../../api/formula.js";
@@ -33,8 +31,24 @@ export interface CalcNode {
    * left. Null for an ordinary formula.
    */
   spill: CellRange | null;
-  /** Calculated on every run: a volatile function, or one that picks its cells at run time. */
-  always: boolean;
+  /** Calls a volatile function (NOW, RAND): calculated on every run the caller asks for. */
+  volatile: boolean;
+  /** Calls a function that picks its cells at run time (OFFSET, INDIRECT). */
+  dynamic: boolean;
+  /** Calls a function that needs the time of the run (NOW, TODAY). */
+  clock: boolean;
+  /**
+   * For a dynamic node: the rectangles its last calculation read, or null
+   * before the first one. At most `MAX_READS`; beyond that {@link readsAll} is set.
+   */
+  reads: Dep[] | null;
+  /** The last calculation read more rectangles than are kept: any change may concern it. */
+  readsAll: boolean;
+  /** How many values the run had stored when this node was last calculated in it, before and after its own. */
+  evalAt: number;
+  doneAt: number;
+  /** How often the run calculated this node again because a cell it read was stored after it. */
+  turns: number;
   /** Visit number of the ordering pass; -1 before the visit. */
   index: number;
   /** Lowest visit number reachable from this node (strongly connected components). */
@@ -42,6 +56,8 @@ export interface CalcNode {
   onStack: boolean;
   /** True when the formula is part of a circular reference. */
   circular: boolean;
+  /** Left out of the order of this run: it reads, directly or not, a chain deeper than the bound. */
+  blocked: boolean;
 }
 
 export interface CalcGraph {
@@ -50,12 +66,22 @@ export interface CalcGraph {
   columns: Map<SheetModel, Map<number, CalcNode[]>>;
   /** Array formulas that fill more than their own cell: reading any cell of their range reads them. */
   spills: CalcNode[];
+  /** The nodes that pick their cells at run time. */
+  dynamic: CalcNode[];
   /** Nodes with their precedents first; null until computed. */
   order: CalcNode[] | null;
 }
 
 /** Functions whose result depends on cells their arguments do not name. */
 const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
+/** Functions that need the time of the run. */
+const CLOCK_FUNCTIONS: ReadonlySet<string> = new Set(["NOW", "TODAY"]);
+/**
+ * Functions that use where a reference points and never the values there.
+ * A reference given to one of them directly is not read: `ROW(A1)` in A1 is
+ * no circular reference.
+ */
+const POSITION_FUNCTIONS: ReadonlySet<string> = new Set(["ROW", "COLUMN", "ROWS", "COLUMNS", "AREAS", "SHEET", "SHEETS", "ISREF"]);
 /** How many defined names may be followed inside one another. */
 const MAX_NAME_DEPTH = 8;
 /** Largest range one array formula fills; a larger one keeps its stored values. */
@@ -77,38 +103,67 @@ export function arrayFormulaRange(cell: CellRec, row: number, col: number): Cell
   return extra.ref;
 }
 
+/** The nodes inside `node`, for a walk with an explicit stack. */
+function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
+  switch (node.type) {
+    case "call":
+      for (const arg of node.args) stack.push(arg);
+      break;
+    case "unary":
+      stack.push(node.operand);
+      break;
+    case "binary":
+      stack.push(node.left, node.right);
+      break;
+    case "paren":
+      stack.push(node.inner);
+      break;
+    case "array":
+      for (const row of node.rows) for (const item of row) stack.push(item);
+      break;
+    default: {
+      // The reference operators of the full grammar (`A1:INDEX(B:B,3)`, a union) have two sides.
+      const sides = node as { left?: FormulaAst; right?: FormulaAst };
+      if (sides.left !== undefined && sides.right !== undefined) stack.push(sides.left, sides.right);
+      break;
+    }
+  }
+}
+
 /** True when some function call of the formula satisfies `test`. */
 function someCall(ast: FormulaAst, test: (name: string) => boolean): boolean {
   const stack: FormulaAst[] = [ast];
   while (stack.length > 0) {
     const node = stack.pop() as FormulaAst;
-    switch (node.type) {
-      case "call":
-        if (test(node.name)) return true;
-        for (const arg of node.args) stack.push(arg);
-        break;
-      case "unary":
-        stack.push(node.operand);
-        break;
-      case "binary":
-        stack.push(node.left, node.right);
-        break;
-      case "paren":
-        stack.push(node.inner);
-        break;
-      case "array":
-        for (const row of node.rows) for (const item of row) stack.push(item);
-        break;
-      default:
-        break;
-    }
+    if (node.type === "call" && test(node.name)) return true;
+    pushChildren(node, stack);
   }
   return false;
 }
 
-/** True when the formula calls a volatile or a dynamic-reference function. */
-function callsAlways(ast: FormulaAst, functions: FunctionRegistry): boolean {
-  return someCall(ast, (name) => DYNAMIC_FUNCTIONS.has(name) || functions.get(name)?.volatile === true);
+/** What the functions of a formula, and of the names it uses, ask of the calculation. */
+interface Traits {
+  volatile: boolean;
+  dynamic: boolean;
+  clock: boolean;
+}
+
+function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, functions: FunctionRegistry, depth: number, traits: Traits): void {
+  const stack: FormulaAst[] = [ast];
+  while (stack.length > 0) {
+    const node = stack.pop() as FormulaAst;
+    if (node.type === "call") {
+      if (DYNAMIC_FUNCTIONS.has(node.name)) traits.dynamic = true;
+      else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
+      if (CLOCK_FUNCTIONS.has(node.name)) traits.clock = true;
+    } else if (node.type === "name" && depth < MAX_NAME_DEPTH) {
+      const scope = node.sheet === null ? sheet : (state.sheetsByKey.get(node.sheet.toLowerCase()) ?? null);
+      const name = lookupName(state, node.name, scope);
+      const inner = name === null ? null : parseCached(state, name.refersTo);
+      if (name !== null && inner !== null) addTraits(state, inner, name.scope ?? sheet, functions, depth + 1, traits);
+    }
+    pushChildren(node, stack);
+  }
 }
 
 /** Whether a parsed formula calls a function the registry lacks. Entries go away with their trees. */
@@ -135,39 +190,70 @@ export function callsUnknownFunction(state: WorkbookState, ast: FormulaAst): boo
   return unknown;
 }
 
-/** The rectangles a formula reads, following defined names. */
+/** True for a reference, in parentheses or not, whose cells a position function does not read. */
+function isPlainReference(state: WorkbookState, node: FormulaAst, sheet: SheetModel, depth: number): boolean {
+  let inner = node;
+  while (inner.type === "paren") inner = inner.inner;
+  if (inner.type === "cell" || inner.type === "range") return true;
+  if (inner.type !== "name" || depth >= MAX_NAME_DEPTH) return false;
+  // A name for a plain range is as good as the range; a name for a formula may read cells.
+  const scope = inner.sheet === null ? sheet : (state.sheetsByKey.get(inner.sheet.toLowerCase()) ?? null);
+  const name = lookupName(state, inner.name, scope);
+  const ast = name === null ? null : parseCached(state, name.refersTo);
+  return name !== null && ast !== null && isPlainReference(state, ast, name.scope ?? sheet, depth + 1);
+}
+
+/**
+ * The rectangles whose values a formula reads, following defined names. A
+ * reference handed straight to a function that only asks where it points
+ * (`ROW(A1)`, `COLUMNS($C$1:C1)`) is left out.
+ */
 export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, depth: number, out: Dep[]): void {
-  const formula = state.formula;
-  if (formula === null) return;
-  for (const ref of formula.collectReferences(ast)) {
-    const target = ref.sheet === null ? sheet : state.sheetsByKey.get(ref.sheet.toLowerCase());
-    if (ref.type === "name") {
-      if (depth >= MAX_NAME_DEPTH) continue;
-      const name = lookupName(state, ref.name, target ?? null);
-      const inner = name === null ? null : parseCached(state, name.refersTo);
-      if (name !== null && inner !== null) collectDeps(state, inner, name.scope ?? sheet, depth + 1, out);
-    } else if (target === undefined) {
+  if (state.formula === null) return;
+  // Reversed pushes keep the rectangles in the order the formula names them.
+  const stack: FormulaAst[] = [ast];
+  const children: FormulaAst[] = [];
+  while (stack.length > 0) {
+    const node = stack.pop() as FormulaAst;
+    if (node.type === "cell" || node.type === "range" || node.type === "name") {
+      const target = node.sheet === null ? sheet : state.sheetsByKey.get(node.sheet.toLowerCase());
+      if (node.type === "name") {
+        if (depth >= MAX_NAME_DEPTH) continue;
+        const name = lookupName(state, node.name, target ?? null);
+        const inner = name === null ? null : parseCached(state, name.refersTo);
+        if (name !== null && inner !== null) collectDeps(state, inner, name.scope ?? sheet, depth + 1, out);
+      } else if (target === undefined) {
+        continue;
+      } else if (node.type === "cell") {
+        out.push({ sheet: target, r1: node.row, c1: node.col, r2: node.row, c2: node.col });
+      } else {
+        out.push({
+          sheet: target,
+          r1: Math.min(node.start.row, node.end.row),
+          c1: Math.min(node.start.col, node.end.col),
+          r2: Math.max(node.start.row, node.end.row),
+          c2: Math.max(node.start.col, node.end.col),
+        });
+      }
       continue;
-    } else if (ref.type === "cell") {
-      out.push({ sheet: target, r1: ref.row, c1: ref.col, r2: ref.row, c2: ref.col });
-    } else {
-      out.push({
-        sheet: target,
-        r1: Math.min(ref.start.row, ref.end.row),
-        c1: Math.min(ref.start.col, ref.end.col),
-        r2: Math.max(ref.start.row, ref.end.row),
-        c2: Math.max(ref.start.col, ref.end.col),
-      });
     }
+    children.length = 0;
+    if (node.type === "call" && POSITION_FUNCTIONS.has(node.name)) {
+      for (const arg of node.args) if (!isPlainReference(state, arg, sheet, depth)) children.push(arg);
+    } else {
+      pushChildren(node, children);
+    }
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i] as FormulaAst);
   }
 }
 
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
   const functions = functionsOf(state);
-  if (functions === null) return { nodes, columns: new Map(), spills: [], order: null };
+  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], order: null };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
   const spills: CalcNode[] = [];
+  const dynamic: CalcNode[] = [];
   for (const sheet of state.sheets) {
     const byColumn = new Map<number, CalcNode[]>();
     for (const row of sheet.rows.values()) {
@@ -182,6 +268,8 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         if (cell.value !== null && callsUnknownFunction(state, ast)) continue;
         const deps: Dep[] = [];
         collectDeps(state, ast, sheet, 0, deps);
+        const traits: Traits = { volatile: false, dynamic: false, clock: false };
+        addTraits(state, ast, sheet, functions, 0, traits);
         const node: CalcNode = {
           sheet,
           row: row.index,
@@ -190,13 +278,20 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           ast,
           deps,
           spill,
-          always: callsAlways(ast, functions),
+          ...traits,
+          reads: null,
+          readsAll: false,
+          evalAt: 0,
+          doneAt: 0,
+          turns: 0,
           index: -1,
           low: -1,
           onStack: false,
           circular: false,
+          blocked: false,
         };
         nodes.push(node);
+        if (node.dynamic) dynamic.push(node);
         if (spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col)) spills.push(node);
         const list = byColumn.get(col);
         if (list === undefined) byColumn.set(col, [node]);
@@ -206,149 +301,5 @@ export function buildGraph(state: WorkbookState): CalcGraph {
     for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
     if (byColumn.size > 0) columns.set(sheet, byColumn);
   }
-  return { nodes, columns, spills, order: null };
-}
-
-function lowerBound(list: readonly CalcNode[], row: number): number {
-  let low = 0;
-  let high = list.length;
-  while (low < high) {
-    const mid = (low + high) >>> 1;
-    if ((list[mid] as CalcNode).row < row) low = mid + 1;
-    else high = mid;
-  }
-  return low;
-}
-
-/** Walks the formula cells a node reads, one at a time, without building a list of them. */
-class Precedents {
-  private depIndex = 0;
-  private lists: CalcNode[][] = [];
-  private listIndex = 0;
-  private list: CalcNode[] | null = null;
-  private position = 0;
-  private lastRow = 0;
-  /** The rectangle whose array formulas are being listed, and how far the listing got. */
-  private spillDep: Dep | null = null;
-  private spillIndex = 0;
-
-  constructor(
-    private readonly graph: CalcGraph,
-    private readonly deps: readonly Dep[],
-  ) {}
-
-  next(): CalcNode | null {
-    for (;;) {
-      const list = this.list;
-      if (list !== null) {
-        const candidate = list[this.position];
-        if (candidate !== undefined && candidate.row <= this.lastRow) {
-          this.position++;
-          return candidate;
-        }
-        this.list = null;
-      }
-      if (this.listIndex < this.lists.length) {
-        const nextList = this.lists[this.listIndex++] as CalcNode[];
-        this.list = nextList;
-        this.position = lowerBound(nextList, (this.deps[this.depIndex - 1] as Dep).r1);
-        continue;
-      }
-      const spillDep = this.spillDep;
-      if (spillDep !== null) {
-        // An array formula is read through every cell of the range it fills.
-        const spills = this.graph.spills;
-        while (this.spillIndex < spills.length) {
-          const node = spills[this.spillIndex++] as CalcNode;
-          const area = node.spill as CellRange;
-          if (
-            node.sheet === spillDep.sheet &&
-            area.start.row <= spillDep.r2 &&
-            area.end.row >= spillDep.r1 &&
-            area.start.col <= spillDep.c2 &&
-            area.end.col >= spillDep.c1
-          ) {
-            return node;
-          }
-        }
-        this.spillDep = null;
-      }
-      const dep = this.deps[this.depIndex++];
-      if (dep === undefined) return null;
-      if (this.graph.spills.length > 0) {
-        this.spillDep = dep;
-        this.spillIndex = 0;
-      }
-      this.lists = [];
-      this.listIndex = 0;
-      this.lastRow = dep.r2;
-      const columns = this.graph.columns.get(dep.sheet);
-      if (columns === undefined) continue;
-      if (dep.c2 - dep.c1 + 1 <= columns.size) {
-        for (let col = dep.c1; col <= dep.c2; col++) {
-          const found = columns.get(col);
-          if (found !== undefined) this.lists.push(found);
-        }
-      } else {
-        for (const [col, found] of columns) if (col >= dep.c1 && col <= dep.c2) this.lists.push(found);
-      }
-    }
-  }
-}
-
-/**
- * Orders the nodes so that each comes after the formula cells it reads, and
- * flags every node of a circular reference (a strongly connected component
- * of more than one node, or a formula that reads its own cell). Returns
- * false when a chain is deeper than `maxDepth`; the order then holds only
- * the nodes finished before that.
- */
-export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNode[]; complete: boolean } {
-  for (const node of graph.nodes) {
-    node.index = -1;
-    node.onStack = false;
-    node.circular = false;
-  }
-  const order: CalcNode[] = [];
-  const stack: CalcNode[] = [];
-  const walkers: Precedents[] = [];
-  const component: CalcNode[] = [];
-  let counter = 0;
-  const enter = (node: CalcNode): void => {
-    node.index = counter;
-    node.low = counter++;
-    node.onStack = true;
-    component.push(node);
-    stack.push(node);
-    walkers.push(new Precedents(graph, node.deps));
-  };
-  for (const root of graph.nodes) {
-    if (root.index !== -1) continue;
-    enter(root);
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1] as CalcNode;
-      const next = (walkers[walkers.length - 1] as Precedents).next();
-      if (next === null) {
-        if (top.low === top.index) {
-          // `top` closes a component: everything above it on the component stack belongs to it.
-          const first = component.lastIndexOf(top);
-          if (component.length - first > 1) for (let i = first; i < component.length; i++) (component[i] as CalcNode).circular = true;
-          for (let i = first; i < component.length; i++) (component[i] as CalcNode).onStack = false;
-          component.length = first;
-        }
-        order.push(top);
-        stack.pop();
-        walkers.pop();
-        const parent = stack[stack.length - 1];
-        if (parent !== undefined && top.low < parent.low) parent.low = top.low;
-      } else if (next.index === -1) {
-        if (stack.length >= maxDepth) return { order, complete: false };
-        enter(next);
-      } else if (next.onStack) {
-        if (next === top) top.circular = true;
-        if (next.index < top.low) top.low = next.index;
-      }
-    }
-  }
-  return { order, complete: true };
+  return { nodes, columns, spills, dynamic, order: null };
 }

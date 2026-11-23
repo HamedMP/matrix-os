@@ -90,6 +90,8 @@ export interface HandmadeWorkbook {
   styles?: string;
   /** A calculation chain part, to check that it is dropped. */
   calcChain?: boolean;
+  /** Attributes of `<calcPr>`; the element is left out without them. */
+  calcPr?: string;
 }
 
 /** Builds a small workbook from markup, for cases the generated fixtures do not cover. */
@@ -132,7 +134,7 @@ export async function buildXlsx(spec: HandmadeWorkbook): Promise<Uint8Array> {
   const names = spec.definedNames === undefined ? "" : `<definedNames>${spec.definedNames}</definedNames>`;
   pkg.setPart(
     "/xl/workbook.xml",
-    `${HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><workbookPr${spec.workbookPr ?? ""}/><bookViews><workbookView activeTab="0"/></bookViews><sheets>${entries}</sheets>${names}</workbook>`,
+    `${HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><workbookPr${spec.workbookPr ?? ""}/><bookViews><workbookView activeTab="0"/></bookViews><sheets>${entries}</sheets>${names}${spec.calcPr === undefined ? "" : `<calcPr${spec.calcPr}/>`}</workbook>`,
   );
   return pkg.save();
 }

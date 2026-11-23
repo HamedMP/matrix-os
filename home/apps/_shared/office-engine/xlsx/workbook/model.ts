@@ -164,6 +164,19 @@ export interface CalcState {
   edited: Map<SheetModel, Set<number>>;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;
+  /**
+   * The first run calculates everything: the file came with formulas that
+   * have no stored value, or asks for a full calculation on load. Unlike
+   * {@link all} it does not by itself make `save` calculate, so a file that
+   * is opened and saved untouched keeps its parts as they were.
+   */
+  onLoad: boolean;
+  /**
+   * Formula cells a bounded calculation did not reach, per sheet, as
+   * `row * 16384 + col`. The next run starts with them. Bounded by the
+   * formula cell count; emptied when `all` is set or a run completes.
+   */
+  pending: Map<SheetModel, Set<number>>;
   /** The dependency graph, or null when a formula or the structure changed since it was built. */
   graph: unknown;
   /** The `now` of the last explicit calculation, reused by the one `save` runs. */

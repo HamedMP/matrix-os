@@ -2,7 +2,7 @@
 
 import type { OpcPackage, PartName } from "../../api/opc.js";
 import type { OpenXlsxOptions } from "../../api/xlsx.js";
-import type { XmlDocument } from "../../api/xml.js";
+import type { XmlDocument, XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { createPackage, findMainDocumentPart, openPackage, partNameKey } from "../../opc/index.js";
 import { getAttr, parseXml } from "../../xml/index.js";
@@ -62,6 +62,12 @@ function relationshipIdOf(entry: { attrs: ReadonlyArray<{ name: string; value: s
   return null;
 }
 
+/** True when the workbook part asks for every formula to be calculated when the file is loaded. */
+function asksFullCalc(root: XmlElement): boolean {
+  const properties = kid(root, "calcPr");
+  return properties !== null && boolAttr(getAttr(properties, "fullCalcOnLoad"), false);
+}
+
 /** Builds the state from parts that were already read. Synchronous, so a new workbook needs no await. */
 export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps, maxCells: number): WorkbookState {
   const workbookDoc = parsePart(sources, sources.workbookPart);
@@ -81,7 +87,7 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
   const list = kid(root, "sheets");
   const entries = list === null ? [] : kids(list, "sheet");
   if (entries.length === 0) throw new OfficeError("corrupt_package", "the workbook lists no sheets");
-  const context: ReadContext = { strings, date1904, cellCount: 0, maxCells };
+  const context: ReadContext = { strings, date1904, cellCount: 0, maxCells, uncalculated: false };
   const sheets: SheetModel[] = [];
   const sheetsById = new Map<string, SheetModel>();
   const sheetsByKey = new Map<string, SheetModel>();
@@ -132,7 +138,16 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
     date1904,
     formula: deps.formula,
     functions: null,
-    calc: { edited: new Map(), all: false, graph: null, lastNow: null },
+    // A file whose formulas come without values (written by a library, not a spreadsheet program), or one that
+    // asks for it, is calculated in full by the first run.
+    calc: {
+      edited: new Map(),
+      pending: new Map(),
+      all: false,
+      onLoad: context.uncalculated === true || asksFullCalc(root),
+      graph: null,
+      lastNow: null,
+    },
     listeners: [],
     journal: null,
     cellCount: context.cellCount,

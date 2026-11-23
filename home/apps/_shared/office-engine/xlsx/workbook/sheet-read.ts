@@ -32,6 +32,8 @@ export interface ReadContext {
   /** Running count of non-empty cells across the workbook. */
   cellCount: number;
   maxCells: number;
+  /** Set when a formula cell comes without a stored value. */
+  uncalculated?: boolean;
 }
 
 function corrupt(message: string): OfficeError {
@@ -152,6 +154,7 @@ function readCell(
       cell.formula = text;
     }
   }
+  if (cell.formula !== null && cell.value === null) context.uncalculated = true;
   if (cell.value !== null || cell.formula !== null) {
     if (++context.cellCount > context.maxCells) {
       throw new OfficeError("limit_exceeded", "the workbook has more cells than the limit allows", {
