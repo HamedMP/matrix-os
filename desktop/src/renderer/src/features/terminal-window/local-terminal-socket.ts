@@ -156,6 +156,8 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           if (!result.ok) { events.onState("ended"); release(); return; }
           attachId = result.attachId;
           events.onOwnershipChange?.("writer");
+          // The core sizes a terminal to its latest viewer: the attach size is now its grid.
+          events.onCanonicalSize?.(requested);
           events.onState("attached");
           const held = early;
           early = [];
@@ -176,8 +178,9 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           // Resized while attaching: the shell must learn the size now, not at the next resize.
           if (size.cols !== requested.cols || size.rows !== requested.rows) {
             const attached = result.attachId;
-            void invoke("local-terminal:resize", { attachId: attached, ...size })
-              .then((resized) => { if (!resized.ok) lost(attached); })
+            const wanted = size;
+            void invoke("local-terminal:resize", { attachId: attached, ...wanted })
+              .then((resized) => { if (!resized.ok) lost(attached); else if (attachId === attached && !released) events.onCanonicalSize?.(wanted); })
               .catch((error: unknown) => warn("resize", error));
           }
         })
@@ -189,8 +192,10 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
       size = { cols: Math.min(500, Math.max(20, Math.floor(cols))), rows: Math.min(200, Math.max(5, Math.floor(rows))) };
       if (attachId !== null && !released) {
         const current = attachId;
-        void invoke("local-terminal:resize", { attachId: current, ...size })
-          .then((result) => { if (!result.ok) lost(current); })
+        const wanted = size;
+        void invoke("local-terminal:resize", { attachId: current, ...wanted })
+          // Accepted: the xterm takes the new grid. Without this a local pane only scaled after a split or window resize.
+          .then((result) => { if (!result.ok) lost(current); else if (attachId === current && !released && size === wanted) events.onCanonicalSize?.(wanted); })
           .catch((error: unknown) => warn("resize", error));
       }
     },

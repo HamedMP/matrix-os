@@ -25,8 +25,8 @@ describe("published CLI package runners", () => {
       );
     }
     const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
-    expect(cliRelease).toContain("pnpm pack --config.node-linker=hoisted");
-    expect(cliRelease).toContain('resolve(process.env.RUNNER_TEMP, result.filename)');
+    expect(cliRelease).toContain('node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP"');
+    expect(cliRelease).not.toMatch(/^\s*[^#\s].*pnpm pack /m);
     expect(cliRelease).toContain('path: ${{ steps.pack.outputs.tarball }}');
     expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
     expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
@@ -37,9 +37,14 @@ describe("published CLI package runners", () => {
     }
 
     const manualRelease = await readFile(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
-    expect(manualRelease).toContain("pnpm publish --config.node-linker=hoisted");
+    expect(manualRelease).toContain('node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP"');
+    expect(manualRelease).toContain('pnpm publish "$TARBALL" --provenance --access public --no-git-checks');
+    expect(manualRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
+    const packer = await readFile(resolve(repoRoot, "packages/sync-client/scripts/pack-cli.mjs"), "utf8");
+    expect(packer).toContain('["pack", "--config.node-linker=hoisted", "--pack-destination", destination, "--json"]');
     const validator = await readFile(resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"), "utf8");
-    expect(validator).toContain('run("pnpm", [');
+    expect(validator).toContain("await packCli({");
+    expect(validator).toContain('run("npm", ["install", "--global", "--prefix", globalPrefix, tarball]');
     expect(validator).toContain("node_modules/@matrix-os/contracts/package.json");
     const collaboration = await readFile(resolve(repoRoot, "packages/sync-client/src/cli/commands/collaboration.ts"), "utf8");
     expect(collaboration).toContain('from "@matrix-os/contracts/collaboration"');

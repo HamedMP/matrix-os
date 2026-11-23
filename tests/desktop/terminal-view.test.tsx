@@ -308,13 +308,41 @@ describe("TerminalView session switching", () => {
     const fitCallsBeforeResize = fit.fitCalls;
     attachmentResize.mockClear();
 
+    // A host change that keeps the grid sends nothing.
     act(() => {
+      resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
+    });
+    expect(attachmentResize).not.toHaveBeenCalled();
+
+    const terminal = createdTerminals.at(-1)! as unknown as { cols: number; rows: number };
+    terminal.cols = 100;
+    terminal.rows = 30;
+    act(() => {
+      resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
       resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver);
     });
 
     expect(fit.fitCalls).toBe(fitCallsBeforeResize);
     expect(attachmentResize).toHaveBeenCalledOnce();
-    expect(attachmentResize).toHaveBeenCalledWith(80, 24);
+    expect(attachmentResize).toHaveBeenCalledWith(100, 30);
+  });
+
+  // Fault detected (Hamed, 2026-11-22): clicking between panes redrew the prompt each time,
+  // because a focus change reached the program as a resize.
+  it("sends no resize and no input when focus moves between live panes", () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const { rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    attachmentResize.mockClear();
+    attachmentWrite.mockClear();
+    const attaches = attachMock.mock.calls.length;
+    for (let round = 0; round < 10; round += 1) {
+      rerender(<TerminalView sessionName="alpha" active focused={round % 2 === 0} />);
+      act(() => { resizeObserverCallbacks.at(-1)?.([], {} as ResizeObserver); });
+    }
+    expect(attachmentResize).not.toHaveBeenCalled();
+    expect(attachmentWrite).not.toHaveBeenCalled();
+    expect(attachMock.mock.calls.length).toBe(attaches);
   });
 
   it("keeps xterm mounted and asks the authority for its grid when it becomes active again", () => {
@@ -440,6 +468,30 @@ describe("TerminalView session switching", () => {
     act(() => textarea.focus());
     unmount();
     expect(claimCalls().at(-1)![1].bindings).toEqual([]);
+  });
+
+  // Spec 2706: every Terminal window pane stays live, and only the focused one takes the keyboard.
+  // Fault detected (Greptile, #3569): clicking a pane's open Find field focused the pane, which pulled
+  // the keyboard back to the terminal, so Find text went to the program.
+  it("leaves the keyboard on its own control when its pane becomes focused", () => {
+    const { container, rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    const terminal = createdTerminals.at(-1)!;
+    const field = document.createElement("input");
+    container.querySelector("[data-terminal-surface]")!.appendChild(field);
+    field.focus();
+    rerender(<TerminalView sessionName="alpha" active focused />);
+    expect(terminal.focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("keeps a live pane unfocused until it becomes the focused pane", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active focused={false} />);
+    const terminal = createdTerminals.at(-1)!;
+    expect(attachMock).toHaveBeenCalledOnce();
+    expect(terminal.focus).not.toHaveBeenCalled();
+    rerender(<TerminalView sessionName="alpha" active focused />);
+    expect(terminal.focus).toHaveBeenCalledOnce();
+    expect(attachMock).toHaveBeenCalledOnce();
   });
 
   it("releases keyboard focus when a retained terminal becomes inactive", () => {

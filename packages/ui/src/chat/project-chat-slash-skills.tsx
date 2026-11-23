@@ -1,3 +1,5 @@
+import { Box, X } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useProjectAgentContext, type ProjectAgentContextRead } from "./project-agent-context.js";
@@ -71,16 +73,20 @@ export function useProjectSkillDraft(binding: string) {
 export function ProjectSkillDraftChips({ paths, onRemove }: { paths: readonly string[]; onRemove(path: string): void }) {
   if (!paths.length) return null;
   return <>
-    <ul aria-label="Selected project skills" className="flex min-w-0 flex-wrap gap-1.5 px-2 pb-1">
+    <ul aria-label="Selected project skills" className="flex min-w-0 max-w-full flex-wrap gap-1.5">
       {paths.map(path => {
         const name = path.split("/")[2];
-        return <li key={path} className="flex min-w-0 items-center rounded-md border border-border bg-muted px-2 text-xs" title={path}>
-          <span className="truncate">{name}</span>
-          <button type="button" aria-label={`Remove skill ${name}`} className="ml-1 px-1 py-0.5" onClick={() => onRemove(path)}>×</button>
+        return <li key={path} className="flex min-h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg border pl-2.5 pr-0.5 text-xs font-medium" title={path}
+          style={{ background: "var(--bg-hover, var(--muted))", borderColor: "var(--border-subtle, var(--border))", color: "var(--text-primary, var(--foreground))" }}>
+          <HugeiconsIcon icon={Box} size={14} strokeWidth={1.5} aria-hidden className="shrink-0" style={{ color: "var(--text-secondary, var(--muted-foreground))" }} />
+          <span className="min-w-0 truncate">{name}</span>
+          <button type="button" aria-label={`Remove skill ${name}`} className="project-skill-chip-remove flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-active,var(--accent))] active:bg-[var(--bg-active,var(--accent))] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--composer-focus,var(--accent))]" onClick={() => onRemove(path)}>
+            <HugeiconsIcon icon={X} size={12} strokeWidth={1.5} aria-hidden />
+          </button>
         </li>;
       })}
     </ul>
-    {paths.length === MAX_PROJECT_SKILLS ? <p role="status" className="px-2 pb-1 text-xs text-muted-foreground">
+    {paths.length === MAX_PROJECT_SKILLS ? <p role="status" className="pt-1 text-xs" style={{ color: "var(--text-secondary, var(--muted-foreground))" }}>
       Remove a project skill to add another.
     </p> : null}
   </>;

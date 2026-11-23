@@ -131,3 +131,34 @@ The existing **Publish app** control opens one contained owner popover. Within i
 - **SC-004**: A builder can identify why an ineligible app cannot be shared in one check, and a ready owner can complete sharing in under 2 minutes.
 - **SC-005**: Two concurrent members can recover from a conflicting edit without silent data loss in every acceptance run.
 - **SC-006**: After a creator-hosted runtime restarts, authorized colleagues can reopen the app and see every confirmed record.
+
+## ENG-490: owner presentation, simplified directory projection
+
+Organization-shared apps retain the owner's manifest name and recognizable raster artwork in
+Web Canvas, Web Desktop, Electron Desktop, and Web Mobile launchers. This adds no setting or
+sharing permission. Missing, corrupt, unsafe, or over-limit source images use the existing letter
+tile; large valid artwork is resized rather than rejected at the thumbnail byte threshold.
+
+The owner gateway reads at most 8 MiB, rejects symlinks and non-PNG/WebP/JPEG inputs, bounds
+source decoding to 8192 pixels per axis and 16 megapixels, and generates a PNG thumbnail within
+96×96 pixels and 48 KiB with a two-second processing limit. The existing authenticated directory
+event carries the name and base64 thumbnail within its unchanged 96 KiB complete-body limit.
+Presentation resolution has a three-second deadline. Presentation failures omit artwork and never
+consume routing retries. Older platforms rejecting additive fields receive routing metadata alone.
+
+The existing directory transaction stores name, thumbnail bytes, content type, and hash together,
+under its authority and revision fences. Replacement replaces all presentation; stopping clears
+artwork; directory deletion/account erasure removes its bytes. Existing preview icon rows are
+converted into directory thumbnails before removing the obsolete upload table. No upload service,
+icon quota, reference lookup, or orphan collector remains. The icon-read route checks current
+membership and active share on every request, including conditional requests. Listings keep URLs,
+with `fields=display` required for released strict-client compatibility.
+
+Acceptance includes large valid/corrupt/symlink/oversized-dimension files, complete event budget,
+last-attempt delivery despite icon failure, stale/replay isolation, membership revocation, scope and
+runtime isolation, preview migration and account erasure, and renderer fallback tests.
+
+Recommend engineering and product review of this simplification. Live screenshots and recordings
+remain required separately for all four affected surfaces, from the current PR build. Public docs
+in `FinnaAI/matrix-os-site/content/docs/` should describe owner names/icons and letter fallback;
+check existing coverage and use a separate documentation PR if an update is needed.

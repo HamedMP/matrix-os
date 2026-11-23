@@ -1,5 +1,5 @@
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
-import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppDisplayName } from "@matrix-os/ui/collaborative-app-sharing";
+import { SharedAppBadge, SharedAppDirectoryNotice, sharedAppIconUrl, sharedAppTargetName } from "@matrix-os/ui/collaborative-app-sharing";
 import { useSharedLauncherApps } from "../collaboration/useSharedLauncherApps";
 import { useDesktopOrganizations } from "../collaboration/useDesktopOrganizations";
 import {
@@ -202,7 +202,7 @@ export default function AppLauncher({
   }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const allEntries = useMemo<LauncherEntry[]>(() => [...entries, ...shared.items.map((target) => ({
-    type: "shared" as const, key: `shared:${target.scopeId}`, name: sharedAppDisplayName(target.appId), target,
+    type: "shared" as const, key: `shared:${target.scopeId}`, name: sharedAppTargetName(target), target,
   }))], [entries, shared.items]);
   const filterEntry = (entry: LauncherEntry) => ({
     organizationId: entry.type === "shared" ? entry.target.organizationId : null,
@@ -390,7 +390,8 @@ export default function AppLauncher({
                   onClick={() => open(entry)}
                 >
                   {entry.type === "shared" ? <span className="relative inline-flex">
-                    <AppIcon url={null} name={entry.name} large={presentation === "launchpad"} /><SharedAppBadge appName={entry.name} organization={organizationFor(entry)} />
+                    {/* Platform origin: the trusted core attaches the member's bearer to this request. */}
+                    <AppIcon url={sharedAppIconUrl(entry.target, platformHost) ?? null} name={entry.name} large={presentation === "launchpad"} /><SharedAppBadge appName={entry.name} organization={organizationFor(entry)} />
                   </span> : entry.type === "create" ? (
                     <span
                       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"

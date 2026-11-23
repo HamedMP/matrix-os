@@ -39,7 +39,8 @@ export interface HandlerContext {
   /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
   authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
   openTerminalWindow: () => Promise<void>;
-  focusMainWindow: () => void;
+  /** Brings the main window forward, opening Settings there when asked. */
+  focusMainWindow: (to?: "settings") => void;
   setTitlebarOverlay: (colors: InvokeRequest<"window:set-titlebar-overlay">) => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
@@ -339,8 +340,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.openTerminalWindow();
     return { ok: true };
   });
-  handle("terminal-window:focus-main", () => {
-    ctx.focusMainWindow();
+  handle("terminal-window:focus-main", ({ to }) => {
+    ctx.focusMainWindow(to);
     return { ok: true };
   });
   handle("window:toggle-maximize", () => {

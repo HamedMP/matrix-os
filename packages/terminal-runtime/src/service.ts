@@ -7,6 +7,7 @@ import { initializeMatrixZellijConfig } from "./zellij-bootstrap.js";
 import { TerminalRuntime } from "./runtime.js";
 import { TerminalRuntimeSocketClient } from "./socket-client.js";
 import { TerminalRuntimeSocketServer } from "./socket-server.js";
+import { TerminalExitRecorder } from "./exit-recorder.js";
 import { TerminalWorkspaceStore } from "./workspace-store.js";
 import { createTerminalAgentStatusIndex } from "./agent-status.js";
 import { ZellijCliRuntimeAdapter } from "./zellij-adapter.js";
@@ -99,8 +100,13 @@ async function main(): Promise<void> {
   if (mode === "--migrate-only") return;
 
   const store = new TerminalWorkspaceStore({ homePath });
+  // Next to the workspace state, private to the owner (spec 2706).
+  const exits = new TerminalExitRecorder({ directory: join(homePath, "system", "terminal-workspaces", "exits") });
+  // An unusable exit directory must not stop the service: commands then launch without it.
+  await exits.prepareForStartup();
   const runtime = new TerminalRuntime({
     store,
+    exits,
     nativeHosts: createNativeTerminalHosts({ homePath, runtimeRoot: terminalRuntimeRoot }),
     zellij,
     ...resolveTerminalRuntimeLimits(process.env),
@@ -129,10 +135,17 @@ async function main(): Promise<void> {
     },
   });
   // Zellij keeps a command tab's pane open after its program exits and sends no
-  // pane_closed, so finished programs are noticed by asking it every 2 s.
+  // pane_closed. New command tabs write an exit file, read every 2 s without a
+  // Zellij call; tabs from older state are still noticed by asking Zellij.
   const heldPaneExits = startHeldPaneExitSweep({
     intervalMs: 2_000,
-    sweep: () => runtime.sweepHeldPaneExits(),
+    sweep: async () => {
+      // An unreadable exit directory must not stop the Zellij sweep for older tabs.
+      await runtime.sweepRecordedExits().catch((error: unknown) => {
+        console.warn("[terminal-runtime] exit file pass failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+      return runtime.sweepHeldPaneExits();
+    },
     logFailed: (error) => {
       console.warn("[terminal-runtime] held-pane exit sweep failed:", error instanceof Error ? error.name : "UnknownError");
     },
