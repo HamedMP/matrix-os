@@ -40,7 +40,7 @@ export class FakeBridge {
     return this.reply(service, action, () => { throw error; });
   }
 
-  async service(service: string, action: string, params?: Record<string, unknown>, label?: string): Promise<{ data: unknown; service: string; action: string }> {
+  async service<T = unknown>(service: string, action: string, params?: Record<string, unknown>, label?: string): Promise<{ data: T; service: string; action: string }> {
     // Round-trip through JSON like the real bridge, so undefined fields vanish.
     const sent = JSON.parse(JSON.stringify(params ?? {})) as Record<string, unknown>;
     this.calls.push({ service, action, params: sent, label });
@@ -48,13 +48,13 @@ export class FakeBridge {
     const handler = this.handlers.get(`${service}/${action}`);
     if (handler) {
       const data = handler(sent);
-      return { data: data === undefined ? undefined : JSON.parse(JSON.stringify(data)), service, action };
+      return { data: (data === undefined ? undefined : JSON.parse(JSON.stringify(data))) as T, service, action };
     }
     const queue = this.replies.get(`${service}/${action}`);
     if (!queue || queue.length === 0) throw new Error(`No reply queued for ${service}/${action}`);
     const next = queue.shift();
     const data = typeof next === "function" ? (next as () => unknown)() : next;
-    return { data: data === undefined ? undefined : JSON.parse(JSON.stringify(data)), service, action };
+    return { data: (data === undefined ? undefined : JSON.parse(JSON.stringify(data))) as T, service, action };
   }
 
   async integrations(): Promise<MatrixOSConnectedService[]> {

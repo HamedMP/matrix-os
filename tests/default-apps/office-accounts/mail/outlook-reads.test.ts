@@ -208,7 +208,7 @@ describe("outlook getThread", () => {
     const { bridge, provider } = setup();
     bridge.reply(SERVICE, "list_conversation", { value: [] }).fail(SERVICE, "list_conversation", statusError(404));
     await expect(provider.getThread("conv-none")).rejects.toMatchObject({ code: "not_supported" });
-    const error = await provider.getThread("conv-x").catch((caught: unknown) => caught as Error);
+    const error = (await provider.getThread("conv-x").catch((caught: unknown) => caught)) as Error;
     expect(error).toMatchObject({ code: "not_connected" });
     expect(error.message).not.toMatch(/tenant|HTTP/);
   });
