@@ -102,3 +102,29 @@ describe("host helpers", () => {
     }
   });
 });
+
+// Found in review (P2): the Hermes installer's owner-directory branch passed the
+// account name as the group, so an owner alice whose primary group is staff (no
+// group named alice) failed during directory creation.
+describe("matrix-install-hermes owner directories", () => {
+  it("creates the owner's directories with the runtime group, not the account name", () => {
+    const hermes = read("matrix-install-hermes");
+    const ownerEnv = read("matrix-owner-env");
+    const branch = hermes.match(/\nif declare -F matrix_install_owner_dirs[\s\S]*?\nfi\n/)?.[0];
+    if (!branch) throw new Error("Missing owner-directory branch");
+    const body = [
+      `id() { case "$*" in "-u") echo 0 ;; *) command id "$@" ;; esac; }`,
+      // The real install(1) refuses a group that does not exist.
+      `install() { local group=""; while [ $# -gt 0 ]; do case "$1" in -g) group="$2"; shift 2 ;; -o|-m) shift 2 ;; *) shift ;; esac; done; [ "$group" = staff ] || { echo "install: invalid group '$group'" >&2; return 1; }; printf 'install -g %s\\n' "$group"; }`,
+      functionSource(ownerEnv, "matrix_install_dir"),
+      functionSource(ownerEnv, "matrix_install_owner_dirs"),
+      "MATRIX_RUNTIME_USER=alice MATRIX_RUNTIME_GROUP=staff MATRIX_HOME=/home/alice/matrix MATRIX_RUNTIME_HOME=/home/alice/matrix",
+      "set -e",
+      branch,
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", body], { encoding: "utf8", timeout: 5_000 });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("install -g staff");
+    expect(result.stdout).not.toContain("install -g alice");
+  });
+});

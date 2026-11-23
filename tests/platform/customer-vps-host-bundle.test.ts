@@ -289,7 +289,7 @@ describe('customer VPS host bundle', () => {
     expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"');
     expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700 "$owner" "$group"');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
-    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
+    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_GROUP"');
     expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
     expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
     expect(hermesInstaller).toContain('HERMES_HOME="$HERMES_HOME"');

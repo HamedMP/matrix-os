@@ -45,7 +45,7 @@ if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
 fi
 
 if declare -F matrix_install_owner_dirs >/dev/null 2>&1; then
-  matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"
+  matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_GROUP"
 else
   install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0755 \
     "$MATRIX_RUNTIME_HOME/.local" \
