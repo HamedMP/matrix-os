@@ -328,6 +328,8 @@ export class PartStore {
 
   /** Puts back a slot that a snapshot holds and the store no longer has. */
   reinstate(slot: PartSlot): void {
+    // The package may hold what another slot of the same name wrote since: write this one again.
+    slot.packageVersion = -1;
     this.addSlot(slot);
   }
 

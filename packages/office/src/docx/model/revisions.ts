@@ -12,7 +12,6 @@
 import type { Revision, RevisionId, RevisionMark } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import type { Flow } from "./flow.js";
-import { REVISION_CONTAINERS } from "./names.js";
 import type { PartStore } from "./parts.js";
 import type { FormatResolver } from "./resolve.js";
 import { type Draft, type RevisionMember, StoryPass } from "./revision-pass.js";
@@ -168,9 +167,4 @@ export function buildRevisionIndex(
     for (const member of draft.members) index.marks.set(member.element, mark);
   }
   return index;
-}
-
-/** True for the names of content revision containers; re-exported for the engines that resolve revisions. */
-export function isContentRevision(element: XmlElement): boolean {
-  return REVISION_CONTAINERS.has(element.name);
 }

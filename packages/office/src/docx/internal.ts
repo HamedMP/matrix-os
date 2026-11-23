@@ -71,8 +71,12 @@
  *   zero width; they are in `scan.markers` with their offset.
  * - `scan.mark` is the tracked change of the paragraph mark
  *   (`w:pPr/w:rPr/w:ins|w:del|w:moveFrom|w:moveTo`), `scan.propertiesChange`
- *   the `w:pPrChange`, `scan.contentSpans` and `scan.formatSpans` the extent
- *   of every revision container and `w:rPrChange`.
+ *   the `w:pPrChange`, `scan.markFormatChange` the `w:pPr/w:rPr/w:rPrChange`,
+ *   and `scan.contentSpans` and `scan.formatSpans` give the extent of every
+ *   revision container and run `w:rPrChange`.
+ * - A paragraph whose mark is deleted or moved away runs on into the next
+ *   paragraph in the `final` view (an inserted or moved-in mark does so in
+ *   `original`); `blocksText` and `rangeText` apply that rule, a scan does not.
  * - Views: `atomInView(atom, view)`; `scanText(scan, view)` (objects kept);
  *   `paragraphText(scan, view, from?, to?)` (objects dropped, markup offsets
  *   as bounds); `textSegments(scan, view)` to walk the text of a view with
@@ -88,9 +92,12 @@
  * - `splitRunAt(index, position)` makes the position a boundary between two
  *   sibling nodes. Inside a `w:t` it splits the text and the run; both halves
  *   keep the run properties (a copied `w:rPrChange` gets a new `w:id`). It
- *   returns the runs on both sides and an `InsertionPoint` (`parent`,
- *   `before`): directly after the run that ends at the position, inside
- *   whatever wraps that run.
+ *   returns the runs on both sides and three `InsertionPoint`s (`parent`,
+ *   `before`): `afterPrevious` (directly after the run that ends at the
+ *   position, inside whatever wraps that run), `beforeNext` (directly in
+ *   front of the run that starts there), and `point`, the one typed text
+ *   should use: `afterPrevious`, except where a field result or a hyperlink
+ *   ends, so that new text does not become part of the field or the link.
  * - `splitContainerAt(index, point)` lifts a point out of one inline wrapper
  *   (`w:ins`, `w:del`, `w:hyperlink`, …), cutting the wrapper in two unless
  *   the point is at its edge; `liftToParagraph` repeats that up to the `w:p`.
@@ -124,7 +131,9 @@
  * missing part; its relationship and content type are added on save. Edit
  * the root like any other tree and call `markDirty`. Styles and numbering are
  * resolved by `index.resolver` (`resolver.styles`, `resolver.numbering`,
- * `resolver.paragraph(p, tableStyleId)`, `resolver.runFormat(base, rPr)`);
+ * `resolver.paragraph(p, tableStyleId)`, `resolver.numberingOf(p, tableStyleId)`,
+ * `resolver.runFormat(base, rPr)`, with `tableStyleIdOf(tbl)` for a
+ * paragraph in a table cell and null outside one);
  * `index.labels` holds the numbering label of every numbered `w:p`.
  * `index.package` is the OPC package for everything else (media, relationship
  * targets); changes made there are not covered by `restore`.
@@ -132,9 +141,19 @@
  * ## Undo and atomic edits
  *
  * `index.snapshot()` is cheap (it copies only the units changed since the
- * last one) and `index.restore(snapshot)` brings back trees, ids and parts.
- * An engine that can fail half way takes a snapshot first and restores it
- * before it throws.
+ * last one; a unit is a top-level block, one note, one comment or one style)
+ * and `index.restore(snapshot)` brings back trees, ids and parts. An engine
+ * that can fail half way takes a snapshot first and restores it before it
+ * throws. Element objects of a changed unit are replaced by a restore: look
+ * elements up again through block ids afterwards, never keep them across it.
+ *
+ * ## The rule that makes all of this work
+ *
+ * Every change to a tree is followed by `index.markDirty(element)` on the
+ * deepest attached element that contains the whole change, before the index
+ * is read again. For a change inside one paragraph that is the `w:p`; after
+ * inserting or removing blocks it is the new block, or the parent that lost
+ * one. A change without `markDirty` is not saved and leaves stale scans.
  *
  * ## Plugging into the handle
  *

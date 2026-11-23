@@ -61,6 +61,14 @@ describe("untrusted documents stay within bounds", () => {
     expect(references.every((reference) => reference.broken)).toBe(true);
   });
 
+  it("cuts the preview of a long cross-reference target at 240 characters", () => {
+    const long = `1.\tStart ${"lorem ipsum ".repeat(40)}end`;
+    const document = buildDocument({ body: p(r(long)) + p(r("As set out in clause 1.")) });
+    const [reference] = document.getCrossReferences();
+    expect(reference).toMatchObject({ text: "clause 1", targetLabel: "1.", broken: false });
+    expect(reference?.targetText).toBe(long.slice(0, 240));
+  });
+
   it("stops following a style chain and a numbering link that loop", () => {
     const style = (id: string, basedOn: string): string =>
       `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${id}"/><w:basedOn w:val="${basedOn}"/><w:pPr><w:jc w:val="center"/></w:pPr></w:style>`;

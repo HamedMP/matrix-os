@@ -39,10 +39,15 @@ export interface RunBoundary {
   readonly before: XmlElement | null;
   /** The `w:r` (or paragraph-level object) that starts at the position, or null at the end of the paragraph. */
   readonly after: XmlElement | null;
+  /** Directly after `before`, inside whatever wraps it; null at the start of the paragraph. */
+  readonly afterPrevious: InsertionPoint | null;
+  /** Directly in front of `after`, inside whatever wraps it; at the end of the paragraph, the end of the `w:p`. */
+  readonly beforeNext: InsertionPoint;
   /**
-   * Where to insert at the position: directly after `before`, in its parent,
-   * so new text joins what precedes it. At the start of the paragraph it is
-   * directly in front of `after`; in an empty paragraph, the end of the `w:p`.
+   * Where typed text belongs: `afterPrevious`, so it joins what precedes it,
+   * unless the position is where a field result or a hyperlink ends (or the
+   * paragraph starts); then `beforeNext`, so the text stays outside the field
+   * and the link.
    */
   readonly point: InsertionPoint;
 }
@@ -174,7 +179,8 @@ export function splitRunAt(index: DocxIndex, position: TextPosition): RunBoundar
     setAttr(atom.node, "xml:space", "preserve");
     insertAfter(run, tail);
     index.markDirty(record.element);
-    return { before: run, after: tail, point: { parent: elementParent(run), before: tail } };
+    const point: InsertionPoint = { parent: elementParent(run), before: tail };
+    return { before: run, after: tail, afterPrevious: point, beforeNext: point, point };
   }
   if (atom !== null && before !== null && atom.run !== null && atom.run === before.run) {
     // Between two nodes of the same run, for example text and a tab.
@@ -183,15 +189,30 @@ export function splitRunAt(index: DocxIndex, position: TextPosition): RunBoundar
     moveTail(atom.node, tail);
     insertAfter(run, tail);
     index.markDirty(record.element);
-    return { before: run, after: tail, point: { parent: elementParent(run), before: tail } };
+    const point: InsertionPoint = { parent: elementParent(run), before: tail };
+    return { before: run, after: tail, afterPrevious: point, beforeNext: point, point };
   }
   const beforeTop = before === null ? null : topOf(before);
   const afterTop = atom === null ? null : topOf(atom);
-  let point: InsertionPoint;
-  if (beforeTop !== null) point = { parent: elementParent(beforeTop), before: nextSibling(beforeTop) };
-  else if (afterTop !== null) point = { parent: elementParent(afterTop), before: afterTop };
-  else point = { parent: record.element, before: null };
-  return { before: beforeTop, after: afterTop, point };
+  const afterPrevious: InsertionPoint | null =
+    beforeTop === null ? null : { parent: elementParent(beforeTop), before: nextSibling(beforeTop) };
+  const beforeNext: InsertionPoint =
+    afterTop === null ? { parent: record.element, before: null } : { parent: elementParent(afterTop), before: afterTop };
+  let leaves = false;
+  if (before !== null) {
+    const next = atom?.context ?? null;
+    const link = before.context.hyperlink;
+    leaves =
+      (link !== null && link !== (next?.hyperlink ?? null)) ||
+      before.context.fields.some((frame) => !(next?.fields ?? []).some((other) => other.key === frame.key));
+  }
+  return {
+    before: beforeTop,
+    after: afterTop,
+    afterPrevious,
+    beforeNext,
+    point: afterPrevious === null || leaves ? beforeNext : afterPrevious,
+  };
 }
 
 /**

@@ -195,6 +195,29 @@ describe("internal index: positions and splitting", () => {
     expect(end.point.parent).toBe(index.requireBlock(block.id).element);
   });
 
+  it("keeps typed text out of a field result and a hyperlink that end at the position", async () => {
+    const { document, index } = await open("links-fields.docx");
+    const explained = blockStarting(document, "As explained in");
+    // "As explained in " + REF result "Definitions" (16..27) + " on page " + PAGEREF result "1" + ...
+    const end = splitRunAt(index, { blockId: explained.id, offset: 27 });
+    expect(serializeXml(end.before!)).toBe("<w:r><w:t>Definitions</w:t></w:r>");
+    expect(end.point).toBe(end.beforeNext);
+    expect(serializeXml(end.point.before as XmlElement)).toBe('<w:r><w:t xml:space="preserve"> on page </w:t></w:r>');
+    expect(serializeXml(end.afterPrevious!.before as XmlElement)).toBe('<w:r><w:fldChar w:fldCharType="end"/></w:r>');
+    // In front of the field, text joins the run before it.
+    const start = splitRunAt(index, { blockId: explained.id, offset: 16 });
+    expect(start.point).toBe(start.afterPrevious);
+    expect(serializeXml(start.point.before as XmlElement)).toBe('<w:r><w:fldChar w:fldCharType="begin"/></w:r>');
+
+    const read = blockStarting(document, "Read the full");
+    const afterLink = splitRunAt(index, { blockId: read.id, offset: 30 });
+    expect(afterLink.afterPrevious?.parent.name).toBe("w:hyperlink");
+    expect(afterLink.point.parent.name).toBe("w:p");
+    const inLink = splitRunAt(index, { blockId: read.id, offset: 20 });
+    expect(inLink.point.parent.name).toBe("w:hyperlink");
+    expect(document.getPlainText()).toBe((await openFixture("links-fields.docx")).getPlainText());
+  });
+
   it("refuses to split a surrogate pair", async () => {
     const { document, index } = await open("unicode.docx");
     const block = blockStarting(document, "Launch");
