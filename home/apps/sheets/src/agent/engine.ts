@@ -28,6 +28,7 @@ export type {
   CellRange,
   CellStylePatch,
   CellValue,
+  ProposalOptions,
   RejectedEdit,
   ResolvedSheetEdit,
   SheetCellRef,
