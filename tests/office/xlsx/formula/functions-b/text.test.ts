@@ -20,6 +20,8 @@ describe("text functions", () => {
     ['LEFT("hello")', "h"],
     ['LEFT("hi",10)', "hi"],
     ['LEFT("hello",0)', ""],
+    ['LEFT("hello",)', ""],
+    ['RIGHT("hello",D7)', ""],
     ['RIGHT("hello",3)', "llo"],
     ['RIGHT("hello")', "o"],
     ['RIGHT("hello",0)', ""],

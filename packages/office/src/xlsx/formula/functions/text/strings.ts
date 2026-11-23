@@ -3,7 +3,7 @@
  * Positions are one-based and count UTF-16 code units, as the cell does.
  */
 
-import type { FormulaArg, FormulaValue, FunctionRegistry } from "../../../../api/formula.js";
+import type { FormulaArg, FormulaError, FormulaValue, FunctionRegistry } from "../../../../api/formula.js";
 import { ERR, flattenValues, isError, toText } from "../../coerce.js";
 import { registerFunction } from "../../registry.js";
 import { boolArg, boundedText, intArg, MAX_TEXT_LENGTH, textArg } from "./args.js";
@@ -64,14 +64,19 @@ function textJoin(args: readonly FormulaArg[]): FormulaValue {
   return out;
 }
 
+/** An omitted count is 1; a count left empty (`LEFT(A1,)`) or blank is 0. */
+function countArg(value: FormulaArg | undefined): number | FormulaError {
+  return value === undefined ? 1 : intArg(value);
+}
+
 function left([text]: string[], args: readonly FormulaArg[]): FormulaValue {
-  const n = intArg(args[1], 1);
+  const n = countArg(args[1]);
   if (isError(n)) return n;
   return n < 0 ? ERR.VALUE : (text as string).slice(0, n);
 }
 
 function right([text]: string[], args: readonly FormulaArg[]): FormulaValue {
-  const n = intArg(args[1], 1);
+  const n = countArg(args[1]);
   if (isError(n)) return n;
   if (n < 0) return ERR.VALUE;
   const value = text as string;

@@ -4,10 +4,10 @@
  */
 
 import type { FormulaArg, FormulaArray, FormulaError, FormulaScalar, FormulaValue, FunctionRegistry } from "../../../../api/formula.js";
-import { ERR, asArray, isError, makeError, toScalar } from "../../coerce.js";
+import { ERR, asArray, isError, makeError, toBoolean, toScalar } from "../../coerce.js";
 import { valueAt } from "../../eval/reference.js";
 import { registerFunction } from "../../registry.js";
-import { boolArg, intArg, isMissing } from "../text/args.js";
+import { intArg, isMissing } from "../text/args.js";
 import {
   type MatchMode,
   type SearchMode,
@@ -40,7 +40,8 @@ function tableLookup(horizontal: boolean): (args: readonly FormulaArg[]) => Form
     if (isError(table)) return table;
     const index = intArg(args[2]);
     if (isError(index)) return index;
-    const approximate = boolArg(args[3], true);
+    // Omitted is approximate; left empty (`VLOOKUP(x,t,2,)`) is FALSE, an exact match.
+    const approximate = args[3] === undefined ? true : toBoolean(args[3]);
     if (isError(approximate)) return approximate;
     const shape = shapeOf(table);
     if (index < 1) return ERR.VALUE;
@@ -82,7 +83,8 @@ function match(args: readonly FormulaArg[]): FormulaValue {
   if (isError(value)) return value;
   const table = tableArg(args[1]);
   if (isError(table)) return table;
-  const type = intArg(args[2], 1);
+  // Omitted is 1; left empty (`MATCH(x,r,)`) is 0, an exact match.
+  const type = args[2] === undefined ? 1 : intArg(args[2]);
   if (isError(type)) return type;
   const view = vectorOf(table);
   if (view === null) return ERR.NA;
