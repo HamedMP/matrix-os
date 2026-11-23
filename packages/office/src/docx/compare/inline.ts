@@ -83,8 +83,9 @@ function locate(paragraphs: readonly ParaNode[], starts: readonly number[], offs
 
 function comparePropertiesOfParagraph(element: XmlElement, revised: ParaNode, context: BuildContext, scope: ImportContext): void {
   if (!context.compareFormatting) return;
-  const properties = context.importer.paragraphProperties(revised.element, scope);
-  if (canonicalParagraphProperties(firstChild(element, "w:pPr")) === canonicalParagraphProperties(properties)) return;
+  const own = firstChild(element, "w:pPr");
+  const properties = context.importer.paragraphProperties(revised.element, scope, own);
+  if (canonicalParagraphProperties(own) === canonicalParagraphProperties(properties)) return;
   applyParagraphFormat(element, properties, context.stamp);
 }
 
@@ -130,7 +131,8 @@ function compareEqualText(
         const other = attr(atomB.node, "w:id");
         if (other !== null && !context.notePairs.has(key)) context.notePairs.set(key, other);
       }
-      if (context.compareFormatting && atomA.run !== null && atomB.run !== null && atomA.run.name === "w:r") {
+      const comparable = atomA.run !== null && atomB.run !== null && atomA.run.name === "w:r" && !context.importer.hasForeignRunStyle(atomB.run);
+      if (context.compareFormatting && comparable && atomA.run !== null) {
         const properties = context.importer.runProperties(atomB.run);
         if (canonicalRunProperties(firstChild(atomA.run, "w:rPr")) !== canonicalRunProperties(properties)) {
           const last = changes[changes.length - 1];
@@ -147,9 +149,10 @@ function compareEqualText(
   }
 }
 
-function newParagraphLike(revised: ParaNode, context: BuildContext, scope: ImportContext): XmlElement {
+/** A new, empty paragraph with the properties of `revised` and an inserted mark, for the first part of a split of `split`. */
+function newParagraphLike(revised: ParaNode, split: XmlElement, context: BuildContext, scope: ImportContext): XmlElement {
   const paragraph = createElement("w:p");
-  const properties = context.importer.paragraphProperties(revised.element, scope);
+  const properties = context.importer.paragraphProperties(revised.element, scope, firstChild(split, "w:pPr"));
   if (properties !== null) appendChild(paragraph, properties);
   setParagraphMark(paragraph, "ins", context.stamp);
   return paragraph;
@@ -208,12 +211,12 @@ export function mergeParagraphs(entry: ParagraphEntry, context: BuildContext, sc
         continue;
       }
       // The text before the insertion moves into a new paragraph whose mark is inserted.
-      const head = newParagraphLike(b[marks[0] as number] as ParaNode, context, scope);
+      const head = newParagraphLike(b[marks[0] as number] as ParaNode, target.element, context, scope);
       splitParagraphInto(target, where.offset, head, context.stamp);
       insertAtPoint({ parent: head, before: null }, nodesOf(0));
       let previous = head;
       for (let at = 1; at < marks.length; at++) {
-        const middle = newParagraphLike(b[marks[at] as number] as ParaNode, context, scope);
+        const middle = newParagraphLike(b[marks[at] as number] as ParaNode, target.element, context, scope);
         insertAtPoint({ parent: middle, before: null }, nodesOf(at));
         insertAfter(previous, middle);
         previous = middle;

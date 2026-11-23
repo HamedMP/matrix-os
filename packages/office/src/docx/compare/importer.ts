@@ -9,7 +9,18 @@
 import type { PartName } from "../../api/opc.js";
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { partNameKey, relativeTargetFor } from "../../opc/index.js";
-import { appendChild, cloneNode, createElement, lookupNamespace, prefixOf, remove, removeAttr, setAttr } from "../../xml/index.js";
+import {
+  appendChild,
+  cloneNode,
+  createElement,
+  insertBefore,
+  lookupNamespace,
+  prefixOf,
+  prependChild,
+  remove,
+  removeAttr,
+  setAttr,
+} from "../../xml/index.js";
 import { type DocxIndex, attr, childVal, firstChild } from "../internal.js";
 import { revisionElement, wrapParagraphContent } from "./markup.js";
 import { type MediaTable, mediaKey } from "./media.js";
@@ -41,6 +52,8 @@ const STYLE_REFERENCES: ReadonlySet<string> = new Set(["w:pStyle", "w:rStyle", "
 const OBJECT_ROOTS: ReadonlySet<string> = new Set(["w:drawing", "w:pict", "w:object", "mc:AlternateContent"]);
 const FIELD_PARTS: ReadonlySet<string> = new Set(["w:fldChar", "w:instrText"]);
 const LOCAL_IDS: ReadonlySet<string> = new Set(["w14:paraId", "w14:textId"]);
+/** Children of `w:pPr` that come before `w:numPr` in the schema order. */
+const BEFORE_NUMBERING: ReadonlySet<string> = new Set(["w:pStyle", "w:keepNext", "w:keepLines", "w:pageBreakBefore", "w:framePr", "w:widowControl"]);
 
 function collectValues(root: XmlElement | null, element: string, attribute: string): Set<string> {
   const found = new Set<string>();
@@ -350,12 +363,35 @@ export class Importer {
     return copy;
   }
 
-  /** The paragraph properties of a paragraph of the revised document as the result would hold them: a detached copy, or null. */
-  paragraphProperties(paragraph: XmlElement, context: ImportContext): XmlElement | null {
+  /** True when the run uses a character style the result does not define. */
+  hasForeignRunStyle(run: XmlElement | null): boolean {
+    const rPr = run === null ? null : firstChild(run, "w:rPr");
+    const style = rPr === null ? null : childVal(rPr, "w:rStyle");
+    return style !== null && !this.styleIds.has(style);
+  }
+
+  /**
+   * The paragraph properties of a paragraph of the revised document as the
+   * result would hold them: a detached copy, or null. Where the revised
+   * paragraph uses a style or a list the result does not define, the one of
+   * `fallback` (the `w:pPr` of its counterpart in the original) is kept.
+   */
+  paragraphProperties(paragraph: XmlElement, context: ImportContext, fallback: XmlElement | null = null): XmlElement | null {
     const pPr = firstChild(paragraph, "w:pPr");
     if (pPr === null) return null;
     const copy = cloneNode(pPr);
     this.adopt(copy, pPr, context);
+    if (fallback === null) return copy;
+    const style = firstChild(fallback, "w:pStyle");
+    if (style !== null && firstChild(pPr, "w:pStyle") !== null && firstChild(copy, "w:pStyle") === null) {
+      prependChild(copy, cloneNode(style));
+    }
+    const numbering = firstChild(fallback, "w:numPr");
+    if (numbering !== null && firstChild(pPr, "w:numPr") !== null && firstChild(copy, "w:numPr") === null) {
+      const after = copy.children.find((node) => node.kind === "element" && !BEFORE_NUMBERING.has(node.name));
+      if (after !== undefined) insertBefore(after, cloneNode(numbering));
+      else appendChild(copy, cloneNode(numbering));
+    }
     return copy;
   }
 

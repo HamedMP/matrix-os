@@ -104,6 +104,25 @@ describe("content carried over from the revised document", () => {
     await expectResolves(document, original, revised);
   });
 
+  it("keeps the style of the original where the revised paragraph and run use styles it does not define", async () => {
+    const style = (type: string, id: string): string => `<w:style w:type="${type}" w:styleId="${id}"><w:name w:val="${id}"/></w:style>`;
+    const original = await buildDocx({
+      body: p(r("A clause in the house style, ") + r("emphasised", `<w:rStyle w:val="Strong"/>`) + r(" as usual."), `<w:pStyle w:val="Clause"/>`),
+      styles: style("paragraph", "Clause") + style("character", "Strong"),
+    });
+    const revised = await buildDocx({
+      body: p(r("A clause in the house style, ") + r("emphasised", `<w:rStyle w:val="Emphatic"/>`) + r(" as always."), `<w:pStyle w:val="Imported"/>`),
+      styles: style("paragraph", "Imported") + style("character", "Emphatic"),
+    });
+    const document = await reopen(await compareDocx(original, revised, OPTIONS));
+    expect(describeRevisions(document)).toEqual([
+      ["delete", "text", "usual"],
+      ["insert", "text", "always"],
+    ]);
+    expect((document.getView().body.blocks[0] as ParagraphBlock).style.styleId).toBe("Clause");
+    expect(await document.package.getPartText("/word/document.xml")).toContain(`<w:rStyle w:val="Strong"/>`);
+  });
+
   it("gives a carried bookmark a free id and drops one whose name is taken", async () => {
     const bookmark = (id: number, name: string, content: string): string => `<w:bookmarkStart w:id="${id}" w:name="${name}"/>${content}<w:bookmarkEnd w:id="${id}"/>`;
     const original = await buildDocx({ body: p(bookmark(1, "Intro", r("Opening words stay the same."))) + p(r("Closing words stay the same.")) });
