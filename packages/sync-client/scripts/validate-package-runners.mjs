@@ -108,7 +108,9 @@ try {
 
   // `npm install -g` nests every dependency under the CLI, the layout in which
   // npm skips dependencies it believes are bundled. Run outside the workspace
-  // so nothing resolves from the repo's own node_modules.
+  // so nothing resolves from the repo's own node_modules. On macOS this is
+  // also the step that fails if fsevents stops being an optional dependency
+  // of the CLI, so the release workflows run it there too.
   const globalPrefix = join(tempRoot, "npm-global-prefix");
   await run("npm", ["install", "--global", "--prefix", globalPrefix, tarball], {
     cwd: tempRoot,

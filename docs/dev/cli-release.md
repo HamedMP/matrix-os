@@ -11,7 +11,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 - delegates Homebrew and recognized pnpm global installations to their package manager; and
 - preserves existing profiles, settings and sign-ins.
 
-The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. `0.3.22` and earlier crash after `npm install -g` (ENG-300); the packaging fix described under Preflight reaches users with the next published version.
+The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. `0.3.22` and earlier crash after `npm install -g`, and on macOS the install itself fails (ENG-300); the packaging fixes described under Preflight reach users with the next published version.
 
 ## Versioning
 
@@ -38,6 +38,18 @@ missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
 package-runner check; it verifies bundled contract files and runs the
 tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
+
+Keep `fsevents` in the CLI's `optionalDependencies`, at the range `tsx`
+declares. During `npm install -g`, npm reloads a package that has bundled
+dependencies and makes every package beside it a hard dependency. The
+`fsevents` install script always fails on macOS (its registry manifest runs
+`node-gyp rebuild`, its tarball has no `binding.gyp`), which is harmless
+while it is optional and aborts the whole install once it is not. Declaring
+it optional in the CLI keeps that failure non-fatal. Linux never installs
+`fsevents`, so both release workflows run a `macos-install-smoke` job that
+must pass before npm publish: `cli-release.yml` installs the exact release
+tarball into a clean prefix and runs `matrix --version`; `release.yml` runs
+the package-runner check on macOS.
 
 Run these from the repo root before dispatching the release workflow:
 

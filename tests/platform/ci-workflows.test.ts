@@ -753,7 +753,9 @@ describe('CI workflows', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
 
-    expect(workflow).toContain('publish-npm:\n    name: Publish npm\n    needs: [test, build-macos, build-binaries]');
+    expect(workflow).toContain(
+      'publish-npm:\n    name: Publish npm\n    needs: [test, macos-install-smoke, build-macos, build-binaries]',
+    );
     expect(workflow).toContain('build-binaries:\n    name: Build standalone binaries\n    needs: test');
     expect(workflow).not.toContain('build-binaries:\n    name: Build standalone binaries\n    needs: publish-npm');
   });

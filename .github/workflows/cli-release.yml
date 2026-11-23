@@ -145,9 +145,54 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  macos-install-smoke:
+    name: Verify npm global install on macOS
+    needs: package
+    # Linux never installs fsevents, so only a macOS runner catches an
+    # `npm install -g` that aborts on its install script (ENG-300).
+    runs-on: macos-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Download npm package
+        uses: actions/download-artifact@v7
+        with:
+          name: cli-npm-package
+          path: dist/npm-package
+
+      - name: Install the release tarball globally and run the CLI
+        env:
+          EXPECTED_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          TARBALLS=("$PWD"/dist/npm-package/*.tgz)
+          if [ "${#TARBALLS[@]}" -ne 1 ] || [ ! -f "${TARBALLS[0]}" ]; then
+            echo "expected exactly one npm tarball in dist/npm-package" >&2
+            exit 1
+          fi
+          TARBALL="${TARBALLS[0]}"
+          PREFIX="$RUNNER_TEMP/npm-global-prefix"
+          # Install from outside the checkout into a prefix nothing else has written to.
+          cd "$RUNNER_TEMP"
+          npm install --global --prefix "$PREFIX" "$TARBALL"
+          ACTUAL="$("$PREFIX/bin/matrix" --version)"
+          case "$ACTUAL" in
+            *"$EXPECTED_VERSION"*) echo "matrix --version: $ACTUAL" ;;
+            *)
+              echo "matrix --version printed '$ACTUAL', expected $EXPECTED_VERSION" >&2
+              exit 1
+              ;;
+          esac
+
   publish:
     name: Publish CLI to npm
-    needs: package
+    needs: [package, macos-install-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

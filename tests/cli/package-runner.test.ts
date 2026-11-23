@@ -50,6 +50,33 @@ describe("published CLI package runners", () => {
     expect(collaboration).toContain('from "@matrix-os/contracts/collaboration"');
   });
 
+  // `npm install -g` reloads a package that has bundled dependencies and makes
+  // every package beside it a hard dependency. tsx's optional fsevents always
+  // fails its install script on macOS, so that failure aborted the whole
+  // install. Declaring it optional in the CLI keeps the failure non-fatal (ENG-300).
+  it("declares tsx's optional dependencies so npm install -g survives their failure on macOS", async () => {
+    const pkg = JSON.parse(await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"));
+    const tsxPkg = JSON.parse(
+      await readFile(resolve(repoRoot, "packages/sync-client/node_modules/tsx/package.json"), "utf8"),
+    );
+
+    expect(pkg.optionalDependencies ?? {}).toMatchObject(tsxPkg.optionalDependencies ?? {});
+  });
+
+  it("blocks both npm publish paths on a macOS global install", async () => {
+    const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
+    expect(cliRelease).toMatch(/\n {2}macos-install-smoke:\n(?: {4}.*\n|\n)*? {4}runs-on: macos-latest\n/);
+    expect(cliRelease).toContain('npm install --global --prefix "$PREFIX" "$TARBALL"');
+    expect(cliRelease).toContain('"$PREFIX/bin/matrix" --version');
+    expect(cliRelease).toMatch(/\n {2}publish:\n(?: {4}.*\n|\n)*? {4}needs: \[package, macos-install-smoke\]\n/);
+
+    const manualRelease = await readFile(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+    expect(manualRelease).toMatch(
+      /\n {2}macos-install-smoke:\n(?: {4}.*\n|\n)*? {4}runs-on: macos-latest\n(?: {4}.*\n|\n)*? {8}run: pnpm --filter @finnaai\/matrix exec node \.\/scripts\/validate-package-runners\.mjs\n/,
+    );
+    expect(manualRelease).toMatch(/\n {2}publish-npm:\n(?: {4}.*\n|\n)*? {4}if: .*needs\.macos-install-smoke\.result == 'success'/);
+  });
+
   it("keeps package metadata compatible with npx and pnpm dlx", async () => {
     const packageJson = JSON.parse(
       await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"),
