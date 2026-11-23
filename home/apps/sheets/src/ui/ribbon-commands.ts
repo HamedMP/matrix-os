@@ -86,6 +86,11 @@ export function applyBorders(controller: SheetGridController, preset: BorderPres
   });
 }
 
+/** Sorts the selection, or the block of data around the active cell, by the active column. */
+export function sortRows(controller: SheetGridController, descending: boolean): void {
+  controller.sort(descending);
+}
+
 export type FreezePreset = "selection" | "row" | "column" | "none";
 
 export function applyFreeze(controller: SheetGridController, preset: FreezePreset): EditResult {

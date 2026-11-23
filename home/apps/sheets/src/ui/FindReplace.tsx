@@ -97,8 +97,7 @@ export function FindReplace({ session, controller, selection, revision, showRepl
   const count = query === "" ? "" : matches.length === 0 ? "No matches" : `${current >= 0 ? current + 1 : "-"} of ${matches.length}${found.truncated ? "+" : ""}`;
 
   return (
-    <div
-      role="search"
+    <search
       className="sheets-find"
       aria-label="Find and replace"
       onKeyDown={(event) => {
@@ -181,6 +180,6 @@ export function FindReplace({ session, controller, selection, revision, showRepl
           </button>
         </div>
       )}
-    </div>
+    </search>
   );
 }

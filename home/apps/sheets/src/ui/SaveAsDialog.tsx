@@ -25,9 +25,11 @@ export function SaveAsDialog({ open, initialName, onCancel, onSave }: SaveAsDial
       return;
     }
     setBusy(true);
-    const failure = await onSave(built.path);
-    setBusy(false);
-    setError(failure);
+    try {
+      setError(await onSave(built.path));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

@@ -57,7 +57,10 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
   const toast = useToast();
   const state = useSessionState(session);
   const controller = useMemo(() => createSheetGridController(session), [session]);
-  useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    controller.attach();
+    return () => controller.dispose();
+  }, [controller]);
   const reported = useGridSelection(controller);
   const { revision } = state;
   // Right after the active sheet changes (one was removed), the last reported selection may name the old sheet.
@@ -120,8 +123,9 @@ export function Workbench({ session, tabLooks, onNew, onOpen, onClose }: Workben
         setFind((current) => ({ replace: key === "h" || (current?.replace ?? false) }));
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture, so the shortcuts work while the cell editor has the focus.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [save]);
 
   const togglePanel = (id: PanelId): void => setPanel((current) => (current === id ? null : id));

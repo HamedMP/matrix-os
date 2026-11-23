@@ -169,14 +169,14 @@ describe("Sheets find and replace", () => {
     fireEvent.keyDown(window, { key: "f", ctrlKey: true });
     const find = screen.getByRole("searchbox", { name: "Find" });
     fireEvent.change(find, { target: { value: "apple" } });
-    expect(screen.getByRole("search").textContent).toContain("1 of 3");
+    expect(app.container.querySelector("search")!.textContent).toContain("1 of 3");
     expect(app.container.querySelectorAll("[data-row]").length).toBeGreaterThan(0);
     fireEvent.keyDown(find, { key: "Enter" });
-    expect(screen.getByRole("search").textContent).toContain("2 of 3");
+    expect(app.container.querySelector("search")!.textContent).toContain("2 of 3");
     expect((screen.getByLabelText(/^Name box/) as HTMLInputElement).value).toBe("A2");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Match case" }));
-    expect(screen.getByRole("search").textContent).toContain("of 2");
+    expect(app.container.querySelector("search")!.textContent).toContain("of 2");
     fireEvent.click(screen.getByRole("checkbox", { name: "Match case" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Replace" }));
@@ -186,7 +186,7 @@ describe("Sheets find and replace", () => {
     const session = app.session();
     const sheet = session.getState().activeSheetId;
     expect([session.cell(sheet, 0, 0).value, session.cell(sheet, 1, 0).value, session.cell(sheet, 2, 1).value]).toEqual(["cherry", "cherry pie", "cherry"]);
-    expect(screen.getByRole("search").textContent).toContain("No matches");
+    expect(app.container.querySelector("search")!.textContent).toContain("No matches");
     fireEvent.click(screen.getByRole("button", { name: /^Undo/ }));
     expect(session.cell(sheet, 1, 0).value).toBe("Apple pie");
   });

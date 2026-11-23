@@ -36,7 +36,7 @@ import type { SheetGridController } from "../grid";
 import type { CellStyle } from "../session/engine";
 import type { EditResult, SessionState } from "../session/types";
 import { NUMBER_FORMAT_PRESETS, changeDecimals, presetOf } from "./number-format";
-import { BORDER_PRESETS, FILL_COLORS, FONT_FAMILIES, FONT_SIZES, TEXT_COLORS, type BorderPreset, type FreezePreset, applyBorders, applyFreeze } from "./ribbon-commands";
+import { BORDER_PRESETS, FILL_COLORS, FONT_FAMILIES, FONT_SIZES, TEXT_COLORS, type BorderPreset, type FreezePreset, applyBorders, applyFreeze, sortRows } from "./ribbon-commands";
 
 export interface RibbonProps {
   controller: SheetGridController;
@@ -175,8 +175,8 @@ export function Ribbon({ controller, state, style, onFailure, onFind, readOnly =
       </ToolbarGroup>
       <ToolbarSeparator />
       <ToolbarGroup label="Data">
-        <ToolbarButton label="Sort A to Z" icon={<ArrowUpNarrowWide size={16} />} disabled={disabled} onClick={() => run(() => controller.sort(false))} />
-        <ToolbarButton label="Sort Z to A" icon={<ArrowDownWideNarrow size={16} />} disabled={disabled} onClick={() => run(() => controller.sort(true))} />
+        <ToolbarButton label="Sort A to Z" icon={<ArrowUpNarrowWide size={16} />} disabled={disabled} onClick={() => run(() => sortRows(controller, false))} />
+        <ToolbarButton label="Sort Z to A" icon={<ArrowDownWideNarrow size={16} />} disabled={disabled} onClick={() => run(() => sortRows(controller, true))} />
         <Dropdown
           label={<IconLabel icon={<Filter size={16} />} text="Filter" />}
           ariaLabel={controller.isFiltered ? "Filter, on" : "Filter"}
