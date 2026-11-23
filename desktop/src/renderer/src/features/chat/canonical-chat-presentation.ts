@@ -15,6 +15,8 @@ export function canonicalChatPresentation(input: {
   runs: CanonicalChatRun[];
   activities: CanonicalChatRunActivity[];
   streamedMessageIds?: readonly string[];
+  /** Names the harness in a failed Run's notice title. */
+  harnessLabel?: (run: CanonicalChatRun) => string | undefined;
 }): ConversationTurnPresentation[] {
   input = { ...input, messages: canonicalAssistantOutputMessages(input.messages) };
   const streamedMessageIds = new Set(
@@ -59,6 +61,7 @@ export function canonicalChatPresentation(input: {
       Boolean(finalMessage),
       turn.id,
       turn.id === latestTurnId,
+      run && input.harnessLabel?.(run),
     );
     const modelStatus = activeModelStatus(run);
     const promotedArtifacts = finalMessage

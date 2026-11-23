@@ -7,7 +7,7 @@ import type {
 import { ChevronDown, Settings02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import * as Popover from "@radix-ui/react-popover";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { CanonicalProviderChoice } from "../../canonical-provider-choice.js";
 import { ChatProviderLoadingIndicator } from "../../chat-provider-loading-indicator.js";
@@ -38,6 +38,7 @@ export function ChatModelPicker({
   onSetupAction,
   onNewChat,
   onOpenSettings,
+  openRequest = 0,
 }: {
   catalog?: CanonicalProviderCatalog;
   choices: CanonicalProviderChoice[];
@@ -58,12 +59,15 @@ export function ChatModelPicker({
   onSetupAction?: (instance: CanonicalProviderInstanceDescriptor, action: CanonicalProviderSetupAction) => void;
   onNewChat?: () => void;
   onOpenSettings: () => void;
+  /** Bumping this opens the picker when its trigger is visible. */
+  openRequest?: number;
 }) {
   const [open, setOpen] = useState(false);
   const content = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Escape returns focus to the trigger; a pointer dismissal leaves focus where the owner clicked.
   const escaped = useRef(false);
+  useEffect(() => { if (openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest]);
   const title = statusLabel ? `${label} · ${statusLabel}` : label;
   return <><Popover.Root open={open && !disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild>

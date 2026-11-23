@@ -96,6 +96,7 @@ function SuggestionMenu({
 
 export function SharedChatComposer({
   permissionModeRequest = 0,
+  modelPickerRequest = 0,
   value,
   onChange,
   draftScopeKey,
@@ -137,6 +138,8 @@ export function SharedChatComposer({
   speech,
 }: {
   permissionModeRequest?: number;
+  /** Bumping this opens the model and provider picker. */
+  modelPickerRequest?: number;
   value: string;
   onChange: (value: string) => void;
   draftScopeKey?: string;
@@ -520,6 +523,7 @@ export function SharedChatComposer({
               menuSide={menuSide}
               onSetupAction={onProviderSetup}
               onNewChat={onNewChat}
+              openRequest={modelPickerRequest}
               onChange={onSelectionChange}
             />}
             <ChatComposerOptionControls controls={optionControls} openRequest={permissionModeRequest} menuSide={menuSide} />

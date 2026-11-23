@@ -10,7 +10,7 @@ import { openProviderSettings } from "../settings/open-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false, loading = false,
-  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange,
+  unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, openRequest, onChange,
 }: {
   catalog: CanonicalProviderCatalog;
   selection: CanonicalComposerSelection | null;
@@ -21,6 +21,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
   menuSide?: "top" | "bottom";
   onSetupAction?: (instance: CanonicalProviderInstanceDescriptor, action: CanonicalProviderSetupAction) => void;
   onNewChat?: () => void;
+  openRequest?: number;
   onChange: (selection: CanonicalComposerSelection) => void;
 }) {
   const selectedInstance = catalog.instances.find((instance) => instance.id === selection?.instanceId);
@@ -35,7 +36,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
     instanceId={selectedInstance?.id ?? selection?.instanceId} modelId={selectedModel?.id ?? selection?.model}
     triggerIcon={selectedInstance ? <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isChatgptPlanChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isMatrixAnthropicChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) ? "kernel" : selectedInstance.driverKind} /> : <Cpu size={15} />}
     lockedInstanceId={instanceLocked ? selection?.instanceId : undefined}
-    disabled={disabled} loading={loading} menuSide={menuSide} menuZIndex={DESKTOP_Z_INDEX.popover}
+    disabled={disabled} loading={loading} menuSide={menuSide} openRequest={openRequest} menuZIndex={DESKTOP_Z_INDEX.popover}
     renderDriverIcon={(kind) => <ProviderDriverGlyph kind={kind} size={17} />}
     renderIcon={(choice) => <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: choice.instanceId, driverKind: choice.driverKind }) || (isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? "kernel" : choice.driverKind} size={13} />}
     onSetupAction={onSetupAction} onNewChat={onNewChat} onOpenSettings={openProviderSettings}

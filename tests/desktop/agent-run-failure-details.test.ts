@@ -20,8 +20,8 @@ describe("actionable agent failure details", () => {
       type: "run.error" as const, error, occurredAt: run.updatedAt }];
     const detail = { ...snapshot, activities };
     const [presented] = canonicalChatPresentation(detail);
-    expect(presented?.final).toMatchObject({ label: "Agent work failed", markdown: copy });
-    expect(presented?.final).not.toHaveProperty("actions");
+    expect(presented?.final).toMatchObject({ label: "Agent work failed", markdown: copy,
+      actions: expect.arrayContaining([{ kind: "recovery", recovery: "select_provider", label: "Choose model" }]) });
     expect(canonicalChatTerminalNotices(detail as never)[0]?.text).toBe(copy);
     expect(canonicalChatTerminalNotices(JSON.parse(JSON.stringify(detail)))[0]?.text).toBe(copy);
   });
@@ -47,8 +47,11 @@ describe("short failure copy and persisted compatibility", () => {
       type: "run.error", occurredAt: run.updatedAt,
       error: { code, safeMessage: oldCopy, retryable, recoveryActions: retryable ? ["retry"] : ["open_setup_terminal"] },
     }] }));
-    expect(canonicalChatPresentation(detail)[0]?.final).toMatchObject({ markdown: copy });
-    expect(canonicalChatPresentation(detail)[0]?.final).not.toHaveProperty("actions");
+    const final = canonicalChatPresentation(detail)[0]?.final;
+    expect(final).toMatchObject({ markdown: copy });
+    // Reviewed recovery is restored for legacy rows, but never an immediate Retry.
+    expect(final?.actions?.map((action) => action.kind === "recovery" ? action.recovery : action.kind) ?? [])
+      .toEqual(code === "authorization_failed" ? ["open_setup_terminal", "select_provider"] : []);
     expect(canonicalChatTerminalNotices(detail)[0]?.text).toBe(copy);
     expect(canonicalChatSafeFailureReason(code, `${oldCopy} secret=private`)).not.toBe(copy);
     expect(canonicalChatSafeFailureReason("run_failed", oldCopy)).toBe("The agent could not finish. Try again.");
@@ -128,7 +131,11 @@ describe("distinct concise terminal recovery", () => {
     expect(canonicalChatTerminalNotices(JSON.parse(JSON.stringify(detail)))[0]?.text).toBe(copy);
     expect(canonicalChatSafeFailureReason("provider_unavailable", copy + " secret=private"))
       .toBe("Connection unavailable. Check Agents & providers.");
-    if (retryable) expect(canonicalChatPresentation(detail)[0]?.final?.actions).toContainEqual(expect.objectContaining({ kind: "retry" }));
-    else expect(canonicalChatPresentation(detail)[0]?.final).not.toHaveProperty("actions");
+    const actions = canonicalChatPresentation(detail)[0]?.final?.actions ?? [];
+    if (retryable) expect(actions).toContainEqual(expect.objectContaining({ kind: "retry" }));
+    else expect(actions).not.toContainEqual(expect.objectContaining({ kind: "retry" }));
+    // Regression: a renderer that reads only `retryable` drops these recovery actions.
+    expect(actions.flatMap((action) => action.kind === "recovery" ? [action.recovery] : []))
+      .toEqual(error!.recoveryActions!.filter((action) => action !== "retry"));
   });
 });

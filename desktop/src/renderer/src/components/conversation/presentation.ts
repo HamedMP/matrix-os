@@ -35,6 +35,7 @@ export interface ConversationMessagePresentation {
 
 export type ConversationActionPresentation =
   | { kind: "retry"; turnId: string; label: string }
+  | { kind: "recovery"; recovery: Exclude<import("@matrix-os/contracts").CanonicalChatFailureActionKind, "retry">; label: string }
   | { kind: "approval"; browserChoice?: BrowserPermissionChoice; requestId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel"; label: string }
   | { kind: "input"; requestId: string; label: string };
 
