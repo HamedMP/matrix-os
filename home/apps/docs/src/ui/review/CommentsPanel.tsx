@@ -101,13 +101,16 @@ export interface CommentsPanelProps {
   controller: ReviewController;
   busy?: boolean;
   className?: string;
+  /** Moves focus to the comment box (for example after the comment shortcut opened this panel); `onComposerFocused` is called once it has. */
+  focusComposer?: boolean;
+  onComposerFocused?: () => void;
 }
 
 /**
  * Comment threads anchored to the document: add one on the editor
  * selection, reply, resolve or reopen, and click a thread to show its text.
  */
-export function CommentsPanel({ controller, busy = false, className }: CommentsPanelProps) {
+export function CommentsPanel({ controller, busy = false, className, focusComposer = false, onComposerFocused }: CommentsPanelProps) {
   const snapshot = useReviewSnapshot(controller);
   const [draft, setDraft] = useState("");
   const composer = useRef<HTMLDivElement>(null);
@@ -118,6 +121,12 @@ export function CommentsPanel({ controller, busy = false, className }: CommentsP
     lastRequest.current = snapshot.composeRequest;
     composer.current?.querySelector("textarea")?.focus();
   }, [snapshot.composeRequest]);
+
+  useEffect(() => {
+    if (!focusComposer) return;
+    composer.current?.querySelector("textarea")?.focus();
+    onComposerFocused?.();
+  }, [focusComposer, onComposerFocused]);
 
   const send = () => {
     if (controller.addComment(draft).ok) setDraft("");

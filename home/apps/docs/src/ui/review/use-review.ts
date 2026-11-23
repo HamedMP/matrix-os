@@ -57,6 +57,23 @@ export function useReviewShortcuts(controller: ReviewController | null, target?:
   }, [controller, target]);
 }
 
+/**
+ * The element that hosts the editor's DOM (`.doc-editor-host`), found from a
+ * rendered block, for listeners that watch pointer events over the document.
+ * Null while no document is shown.
+ */
+export function useEditorSurface(editor: DocumentEditorController | null, session: DocumentSession): HTMLElement | null {
+  const documentKey = useSyncExternalStore(session.subscribe, () => session.getState().documentKey);
+  const [surface, setSurface] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const first = session.document?.getView().body.blocks[0]?.id;
+    const block = editor === null || first === undefined ? null : editor.getBlockElement(first);
+    const host = block === null ? null : (block.closest<HTMLElement>(".doc-editor-host") ?? block.parentElement);
+    setSurface(host);
+  }, [editor, session, documentKey]);
+  return surface;
+}
+
 /** Clicking commented text in the document makes its thread active. */
 export function useCommentClicks(controller: ReviewController | null, container: HTMLElement | null): void {
   useEffect(() => {

@@ -115,10 +115,27 @@ describe("<ReviewPanel>", () => {
       document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA", key: "A", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
     });
     expect(revisionIds(session)).toHaveLength(13);
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM", key: "M", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(document.activeElement).toBe(screen.getByLabelText("New comment"));
   });
 });
 
 describe("<CommentsPanel>", () => {
+  it("focuses the comment box when asked by its parent and reports it", async () => {
+    const session = await plainSession(["Hello"]);
+    const focused = vi.fn();
+    function Parent() {
+      const review = useReviewController(session, null);
+      return review === null ? null : <CommentsPanel controller={review} focusComposer onComposerFocused={focused} />;
+    }
+    render(<Parent />);
+    await act(async () => undefined);
+    expect(document.activeElement).toBe(screen.getByLabelText("New comment"));
+    expect(focused).toHaveBeenCalledTimes(1);
+  });
+
   it("adds a comment on the editor selection, replies and resolves it", async () => {
     const session = await plainSession(["The fee is due on signing."]);
     const { comments } = await renderHarness(session);
