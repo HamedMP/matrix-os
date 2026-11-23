@@ -144,7 +144,11 @@ export class MessageBoardService {
     return rows.map((row) => parseActor(row.author_actor));
   }
 
-  async listThreads(caller: BoardCaller, boardName: string | undefined, query: Omit<ThreadsQuery, "board">): Promise<BoardThreadSummary[]> {
+  async listThreads(
+    caller: BoardCaller,
+    boardName: string | undefined,
+    query: Omit<ThreadsQuery, "board" | "channel" | "limit"> & { channel?: string; limit?: number; tasksOnly?: boolean },
+  ): Promise<BoardThreadSummary[]> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
     let builder = this.db.selectFrom("board_messages as m").selectAll("m")
       .where("m.board_id", "=", board.id).where("m.root_id", "is", null)
@@ -167,6 +171,7 @@ export class MessageBoardService {
       ]));
     }
     if (query.taskState) builder = this.tasks ? this.tasks.filterByState(builder, query.taskState) : builder.where(sql<boolean>`false`);
+    if (query.tasksOnly) builder = builder.where(sql<boolean>`EXISTS (SELECT 1 FROM board_tasks t WHERE t.root_id = m.id)`);
     const roots = await builder.orderBy("m.last_activity_at", "desc").orderBy("m.seq", "desc").limit(query.limit ?? 50).execute();
     return this.summarize(caller, roots);
   }
@@ -259,9 +264,14 @@ export class MessageBoardService {
   /* ---------------- writes ---------------- */
 
   /** One write transaction on a board; events reach subscribers after commit. */
-  async write<T>(caller: BoardCaller, boardName: string | undefined, work: (ctx: WriteContext) => Promise<T>): Promise<T> {
-    if (!this.rateLimiter.take(caller.actor.id, this.now().getTime())) boardFail("rate_limited");
-    const target = await this.resolveBoard(caller.ownerId, boardName);
+  async write<T>(
+    caller: BoardCaller,
+    boardRef: string | undefined | { id: string },
+    work: (ctx: WriteContext) => Promise<T>,
+    options: { internal?: boolean } = {},
+  ): Promise<T> {
+    if (!options.internal && !this.rateLimiter.take(caller.actor.id, this.now().getTime())) boardFail("rate_limited");
+    const target = typeof boardRef === "object" ? boardRef : await this.resolveBoard(caller.ownerId, boardRef);
     const pending: PendingBoardEvent[] = [];
     const { result, events } = await this.db.transaction().execute(async (trx) => {
       const board = await lockBoard(trx, target.id);
@@ -289,8 +299,14 @@ export class MessageBoardService {
   }
 
   async post(caller: BoardCaller, boardName: string | undefined, input: PostMessageRequest): Promise<BoardMessage> {
+    return this.write(caller, boardName, (ctx) => this.postInTransaction(ctx, input));
+  }
+
+  /** Posts inside an open write, so callers can add task rows in the same transaction. */
+  async postInTransaction(ctx: WriteContext, input: PostMessageRequest): Promise<BoardMessage> {
     if (Object.keys(input.labels ?? {}).some(isReservedBoardLabelKey)) boardFail("reserved_label");
-    return this.write(caller, boardName, async (ctx) => {
+    const { caller } = ctx;
+    {
       const { trx, board, now } = ctx;
       if (input.idempotencyKey) {
         const existing = await trx.selectFrom("board_messages").selectAll().where("board_id", "=", board.id)
@@ -338,7 +354,7 @@ export class MessageBoardService {
       }
       ctx.emit({ type: "message.posted", actor: caller.actor, channel: input.channel, messageId: id, threadId: rootId ?? id });
       return (await hydrateMessages(trx, [row]))[0]!;
-    });
+    }
   }
 
   async edit(caller: BoardCaller, boardName: string | undefined, messageId: string, input: { text: string; ifRevision?: number }): Promise<BoardMessage> {
