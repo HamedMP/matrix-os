@@ -4,10 +4,12 @@ import { createCodexNativeAccountMetadataReader, type CodexNativeAccountMetadata
 /**
  * Admission-time native identity reuse window (owner review: ENG-540). One
  * file-backed private identity proof serves Chat catalog and execution
- * admission for this long when the credential file proof and executable are
- * unchanged. Runner thread/turn account proofs remain the execution authority.
+ * admission for up to 10 minutes while the auth.json digest, executable, and
+ * Codex config are unchanged (rechecked on every reuse). Login, logout, remove,
+ * and revocation drop it. Runner thread/turn account proofs re-prove the live
+ * account before turn/start and remain the execution authority.
  */
-const ADMISSION_IDENTITY_REUSE_MS = 30_000;
+const ADMISSION_IDENTITY_REUSE_MS = 10 * 60_000;
 import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 import type { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
 import { createCodexExecutionAdmission } from "../coding-agents/codex-execution-admission.js";
@@ -41,6 +43,8 @@ export function createNativeCodexRuntime(options: {
       return null;
     }
   };
+  // Settings login/logout/remove/revocation drop the reused admission identity.
+  readAccount.invalidateIdentity = () => { reader?.invalidateIdentity?.(); };
   const admission = createCodexExecutionAdmission({
     homePath: options.homePath,
     isOwner: userId => options.ownerIds.includes(userId),

@@ -37,10 +37,21 @@ describe("native Codex runtime wiring", () => {
     expect(await runtime.readAccount()).toBe(observation);
     expect(mocks.createReader).toHaveBeenCalledTimes(1);
     expect(mocks.createReader).toHaveBeenCalledWith({ executable: "/fixture/codex", cwd: "/fixture/home",
-      environment: { HOME: "/fixture/home", CODEX_HOME: "/fixture/home/.codex" }, identityReuseMs: 30_000 });
+      environment: { HOME: "/fixture/home", CODEX_HOME: "/fixture/home/.codex" }, identityReuseMs: 10 * 60_000 });
     expect(guard.assertReadable).toHaveBeenCalledTimes(4);
     expect(guard.assertReadable.mock.invocationCallOrder[0]).toBeLessThan(mocks.reader.mock.invocationCallOrder[0]!);
     expect(guard.assertReadable.mock.invocationCallOrder[1]).toBeGreaterThan(mocks.reader.mock.invocationCallOrder[0]!);
+  });
+  it("lets the Settings store drop the reused identity through the shared reader", async () => {
+    const { runtime } = fixture();
+    const invalidate = vi.fn();
+    Object.assign(mocks.reader, { invalidateIdentity: invalidate });
+    runtime.readAccount.invalidateIdentity!(); // before the reader exists: nothing to drop
+    expect(invalidate).not.toHaveBeenCalled();
+    mocks.reader.mockResolvedValue(null);
+    await runtime.readAccount();
+    runtime.readAccount.invalidateIdentity!();
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
   it("forwards forced-fresh completion reads without changing ordinary observation", async () => {
     const { runtime, guard } = fixture();
