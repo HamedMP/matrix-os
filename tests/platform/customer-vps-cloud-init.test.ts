@@ -35,6 +35,19 @@ describe('platform/customer-vps-cloud-init', () => {
     expect(rendered).not.toContain('PRIVATE KEY');
   });
 
+  it('creates the sshd privilege separation directory before the support installer validates sshd', async () => {
+    // Older host bundles ship a helper without its own guard, and socket-activated
+    // sshd leaves /run/sshd absent until the first connection.
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), {
+      ...input, supportPublicKey,
+    });
+    const commands = (parseDocument(rendered).toJS() as { runcmd: string[] }).runcmd.join('\n');
+    const privsep = commands.indexOf('install -d -o root -g root -m 0755 /run/sshd');
+    const installer = commands.indexOf('/usr/local/libexec/matrix-support-access install');
+    expect(privsep).toBeGreaterThanOrEqual(0);
+    expect(installer).toBeGreaterThan(privsep);
+  });
+
   it('renders a publishing location the nginx helper accepts, and gains the speech upload location from it', async () => {
     const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
     const document = parseDocument(rendered).toJS() as { write_files: { path: string; content: string }[] };

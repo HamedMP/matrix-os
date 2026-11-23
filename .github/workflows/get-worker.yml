@@ -1,0 +1,105 @@
+name: Installer Worker
+
+# Serves scripts/install.sh at https://get.matrix-os.com. The script is bundled
+# into the Worker, so every change to it on main must redeploy the Worker.
+on:
+  pull_request:
+    paths:
+      - "packages/get-worker/**"
+      - "tests/get-worker/**"
+      - "scripts/install.sh"
+      - ".github/workflows/get-worker.yml"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/get-worker/**"
+      - "scripts/install.sh"
+      - ".github/workflows/get-worker.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the Worker to get.matrix-os.com"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: get-worker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test installer worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @matrix-os/get-worker typecheck
+
+      - name: Test
+        run: pnpm --filter @matrix-os/get-worker test
+
+      - name: Wrangler dry run
+        run: pnpm --filter @matrix-os/get-worker exec wrangler deploy --dry-run
+
+  deploy:
+    name: Deploy installer worker
+    needs: test
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Production
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: pnpm --filter @matrix-os/get-worker exec wrangler deploy
+
+      - name: Verify the live installer matches this commit
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if curl -fsSL --max-time 20 "https://get.matrix-os.com/?commit=${GITHUB_SHA}" -o "$RUNNER_TEMP/install.sh" \
+              && cmp -s "$RUNNER_TEMP/install.sh" scripts/install.sh; then
+              echo "get.matrix-os.com serves scripts/install.sh from ${GITHUB_SHA}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "get.matrix-os.com does not serve this commit's scripts/install.sh" >&2
+          exit 1

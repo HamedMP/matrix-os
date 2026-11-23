@@ -666,15 +666,16 @@ runcmd:
     for required_bin in matrixctl matrix-r2-broker.mjs matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
+    install -d -o root -g root -m 0755 /usr/local/libexec
     for helper in matrix-support-access:0755 matrix-browser-runtime.py:0644; do
       name="${helper%:*}" mode="${helper#*:}"
       if [ -f "/opt/matrix/bin/$name" ] && [ ! -L "/opt/matrix/bin/$name" ]; then
-        install -d -o root -g root -m 0755 /usr/local/libexec
         install -o root -g root -m "$mode" "/opt/matrix/bin/$name" "/usr/local/libexec/$name"
         chmod 0644 "/opt/matrix/bin/$name"
       fi
     done
     chmod 700 /etc/matrix/support
+    install -d -o root -g root -m 0755 /run/sshd
     /usr/local/libexec/matrix-support-access install
     for optional_bin in matrix-register-vps matrix-integrations matrix-integrations-mcp matrix-register-integrations-mcp matrix-hermes-dashboard matrix-install-openclaw matrix-openclaw-gateway matrix-agent-runtime-control matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
@@ -698,7 +699,6 @@ runcmd:
 
     if [ -f /opt/matrix/bin/matrix-postgres-start ] && [ ! -L /opt/matrix/bin/matrix-postgres-start ] && [ -f /etc/systemd/system/matrix-postgres.service ]; then
       chmod 0750 /opt/matrix/bin/matrix-postgres-start
-      install -d -o root -g root -m 0755 /usr/local/libexec
       install -o root -g root -m 0755 /opt/matrix/bin/matrix-postgres-start /usr/local/libexec/matrix-postgres-start
       systemctl daemon-reload
       systemctl start matrix-postgres.service

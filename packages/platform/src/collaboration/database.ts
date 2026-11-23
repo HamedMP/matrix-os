@@ -1,4 +1,5 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { migrateLegacyAppIcons } from "./legacy-app-icon-migration.js";
 import { runPlatformMigration } from "../migration-runner.js";
 import type { CutoverCounts, CutoverPhase } from "./cutover.js";
 import type { CollaborativeAppLaunchIdentity } from "./app-launch-sessions.js";
@@ -26,6 +27,12 @@ export interface CollaborationDirectoryTable {
   app_build_id: string | null;
   app_share_revision: number | null;
   app_state: "active" | "needs_recheck" | "stopped" | null;
+  /** Owner manifest display name captured at share time (bounded, display only). */
+  app_name: ColumnType<string | null, string | null | undefined, string | null>;
+  /** Bounded owner thumbnail stored atomically with this scope's routing metadata. */
+  app_icon_sha256: ColumnType<string | null, string | null | undefined, string | null>;
+  app_icon_bytes: ColumnType<Uint8Array | null, Uint8Array | null | undefined, Uint8Array | null>;
+  app_icon_content_type: ColumnType<"image/png" | null, "image/png" | null | undefined, "image/png" | null>;
   /** A shared project's Chat: routed to the same home, admitted from the parent project's membership. */
   parent_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
@@ -193,6 +200,16 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
     CHECK (app_share_revision IS NULL OR app_share_revision > 0)`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_state TEXT
     CHECK (app_state IS NULL OR app_state IN ('active', 'needs_recheck', 'stopped'))`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_name TEXT
+    CHECK (app_name IS NULL OR char_length(app_name) BETWEEN 1 AND 120)`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_sha256 TEXT
+    CHECK (app_icon_sha256 IS NULL OR app_icon_sha256 ~ '^[a-f0-9]{64}$')`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_bytes BYTEA
+    CHECK (app_icon_bytes IS NULL OR octet_length(app_icon_bytes) BETWEEN 12 AND 49152)`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS app_icon_content_type TEXT
+    CHECK (app_icon_content_type IS NULL OR app_icon_content_type = 'image/png')`.execute(trx);
+  await migrateLegacyAppIcons(trx);
+  await sql`DROP INDEX IF EXISTS idx_collaboration_directory_app_icon`.execute(trx);
   // A project's Chats are routed beside their project and removed with it.
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS parent_scope_id UUID
     REFERENCES collaboration_directory(scope_id) ON DELETE CASCADE`.execute(trx);

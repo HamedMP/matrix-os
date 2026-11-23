@@ -4,8 +4,8 @@ export function sharedAppWindowPath(target: Pick<CollaborativeAppDirectoryItem, 
   return `__shared-app__:${target.scopeId}`;
 }
 
-export function sharedAppWindowTitle(target: Pick<CollaborativeAppDirectoryItem, "appId" | "owner">): string {
-  const app = target.appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
+export function sharedAppWindowTitle(target: Pick<CollaborativeAppDirectoryItem, "appId" | "owner" | "name">): string {
+  const app = target.name ?? target.appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
   return `${app} shared by ${target.owner.displayName}`;
 }
 
