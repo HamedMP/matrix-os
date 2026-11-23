@@ -7,7 +7,7 @@ export function boardTask(id: string, overrides: Partial<ProjectTask> = {}): Pro
   return {
     id, projectId: "proj_1", number, key: `MOS-${number}`, title: `Task ${id}`, description: "",
     status: "todo", priority: "none", rank: "a", assignee: null, labels: [], parentTaskId: null, blockedBy: [],
-    dueAt: null, worktreeId: null, branch: null, pullRequest: null, externalLink: null, sessions: [], commentCount: 0,
+    dueAt: null, worktreeId: null, branch: null, pullRequest: null, externalLink: null, chatId: `chat_${id}`, chatStatus: "idle", sessions: [], commentCount: 0,
     createdBy: "user:owner", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
     archivedAt: null, revision: 1, ...overrides,
   };
@@ -26,6 +26,7 @@ export function fakeBoardClient(tasks: () => readonly ProjectTask[]) {
   const client = {
     listTasks: vi.fn(async () => tasks()),
     getTask: vi.fn(async (id: string) => tasks().find((task) => task.id === id)!),
+    findTaskByChat: vi.fn(async (chatId: string) => tasks().find((task) => task.chatId === chatId) ?? null),
     createTask: vi.fn(),
     updateTask: vi.fn(),
     moveTask: vi.fn(),
@@ -34,7 +35,7 @@ export function fakeBoardClient(tasks: () => readonly ProjectTask[]) {
     listComments: vi.fn(async () => []),
     addComment: vi.fn(),
     listActivity: vi.fn(async () => []),
-    startSession: vi.fn(),
+    startWork: vi.fn(),
     listAttachableSessions: vi.fn(async () => []),
     attachSession: vi.fn(),
     detachSession: vi.fn(),

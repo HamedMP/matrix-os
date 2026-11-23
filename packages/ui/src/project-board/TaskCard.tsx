@@ -34,7 +34,7 @@ export interface TaskCardProps {
 export function TaskCard({
   task, members, nowMs, subtaskCount = 0, openBlockerCount = 0, onOpen, onKeyDown, overlay, placeholder, cardRef, style, dragHandleProps, describedBy,
 }: TaskCardProps) {
-  const agent = rollUpTaskAgentStatus(task.sessions);
+  const agent = rollUpTaskAgentStatus(task);
   const key = task.key;
   const labels = task.labels.slice(0, MAX_CARD_LABELS);
   const hiddenLabels = task.labels.length - labels.length;

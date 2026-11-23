@@ -199,12 +199,22 @@ describe("TaskDetail review fixes, round 4", () => {
     expect(title.readOnly).toBe(false);
   });
 
-  it("shows a session that no longer exists as unavailable and does not offer to open it", () => {
-    const task = boardTask("t1", { sessions: [{ ref: "chat_gone", kind: "chat", title: "Old chat", role: "main", agentStatus: "idle", unavailable: true }] });
+  it("shows a terminal that no longer exists as unavailable and does not offer to open it", () => {
+    const task = boardTask("t1", { sessions: [{ ref: "term.main.tab_gone", kind: "terminal", title: "Old tab", role: "main", agentStatus: "idle", unavailable: true }] });
     const onOpenSession = vi.fn();
     render(<TaskDetail {...detailProps(task, { onOpenSession })} />);
-    fireEvent.click(screen.getByRole("tab", { name: /Old chat/ }));
-    expect(screen.getByText("This chat no longer exists.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Open in Chat/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("tab", { name: /Old tab/ }));
+    expect(screen.getByText("This terminal no longer exists.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Open in Terminal/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("offers the task's own chat instead of starting or attaching chats", () => {
+    const task = boardTask("t1");
+    const onOpenChat = vi.fn();
+    render(<TaskDetail {...detailProps(task, { onOpenChat })} />);
+    expect(screen.queryByRole("button", { name: "Start chat" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Start terminal" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Open chat/ }));
+    expect(onOpenChat).toHaveBeenCalledWith(task);
   });
 });

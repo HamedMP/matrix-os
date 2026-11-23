@@ -7,4 +7,6 @@ export { ProjectBoard, type ProjectBoardProps } from "./ProjectBoard.js";
 export { ProjectViewSwitch, type ProjectHomeView } from "./ProjectViewSwitch.js";
 export { TaskCard } from "./TaskCard.js";
 export { TaskDetail } from "./TaskDetail.js";
+export { TicketHeader, type TicketHeaderProps } from "./TicketHeader.js";
+export { useChatTicket, type ChatTicketState } from "./use-chat-ticket.js";
 export type { MoveResult, UpdateResult } from "./use-project-board.js";

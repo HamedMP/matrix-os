@@ -107,7 +107,7 @@ export function CloseWhileWorkingDialog({ open, taskLabel, statusLabel, onCancel
   return <Dialog open={open} onClose={onCancel} aria-label="Agent still working" style={{ ...boardDialogStyle, maxWidth: 440 }}>
     <h2 className="text-[17px] font-semibold leading-[25px]">An agent is still working</h2>
     <p className="mt-2 text-[14px] leading-5" style={tone.secondary}>
-      {taskLabel} has an agent mid-reply. Moving it to {statusLabel} keeps its chats, terminals and worktree; the agent keeps running.
+      {taskLabel} has an agent mid-reply. Moving it to {statusLabel} keeps its chat, terminals and worktree; the agent keeps running.
     </p>
     <div className="mt-5 flex justify-end gap-2">
       <button type="button" className={secondaryButtonClass} onClick={onCancel}>Keep it open</button>
@@ -127,7 +127,7 @@ export function BoardEmptyState({ onNewTask, onImportLinear, hasArchived = false
     <p className="max-w-sm text-[13px] leading-[18px]" style={tone.secondary}>
       {hasArchived
         ? "Every task here is archived. Choose Show, then Archived tasks, to see them again."
-        : "A task is one piece of work. Its chats, terminals, branch and pull request all open from its card."}
+        : "Every task is a chat. Open a card to work in its chat; its terminals, branch and pull request stay with it."}
     </p>
     <div className="mt-4 flex gap-2">
       <button type="button" className={primaryButtonClass} onClick={onNewTask}><Plus size={14} aria-hidden />New task</button>

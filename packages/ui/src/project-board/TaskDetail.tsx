@@ -1,7 +1,7 @@
 "use client";
 
 import { FocusScope } from "@radix-ui/react-focus-scope";
-import { Archive, ArchiveRestore, Link2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Link2, MessageSquare, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { chipButtonClass, focusRing, tone } from "./board-style.js";
 import type { ProjectBoardClient, UpdateTaskInput } from "./client.js";
@@ -27,6 +27,8 @@ export interface TaskDetailProps {
   onStatusChange(task: ProjectTask, status: TaskStatus): void;
   run<T>(action: () => Promise<T>, failure: string): Promise<T | null>;
   onOpenSession?: (session: TaskSession) => void;
+  /** Opens the task's chat; the sheet's header offers it when given. */
+  onOpenChat?: (task: ProjectTask) => void;
 }
 
 /**
@@ -35,7 +37,7 @@ export interface TaskDetailProps {
  * stays in the sheet while it is open and goes back to the opener on close; the
  * sheet's portalled pickers run their own Radix focus scopes, which pause this one.
  */
-export function TaskDetail({ client, task, allTasks, members, settings, boardLabels, nowMs, onClose, onOpenTask, onUpdate, onStatusChange, run, onOpenSession }: TaskDetailProps) {
+export function TaskDetail({ client, task, allTasks, members, settings, boardLabels, nowMs, onClose, onOpenTask, onUpdate, onStatusChange, run, onOpenSession, onOpenChat }: TaskDetailProps) {
   const sheet = useRef<HTMLDivElement>(null);
   const focusedTaskId = useRef(task.id);
   const [tab, setTab] = useState<TaskDetailTab>("details");
@@ -67,9 +69,9 @@ export function TaskDetail({ client, task, allTasks, members, settings, boardLab
       setBusy(false);
     }
   };
-  const start = async (kind: "chat" | "terminal") => {
-    const started = await withBusy(() => client.startSession(task.id, { kind }), `Couldn't start the ${kind}. Try again.`);
-    if (started) setTab(started.ref);
+  const startTerminal = async () => {
+    const started = await withBusy(() => client.startWork(task.id, { kind: "terminal" }), "Couldn't start the terminal. Try again.");
+    if (started?.session) setTab(started.session.ref);
   };
   const attach = async (attachable: AttachableSession) => {
     const attached = await withBusy(() => client.attachSession(task.id, attachable), "Couldn't attach it. Try again.");
@@ -101,6 +103,9 @@ export function TaskDetail({ client, task, allTasks, members, settings, boardLab
         </a> : null}
         {task.archivedAt ? <span className="rounded-md px-1.5 text-[11px]" style={{ background: "var(--bg-sunken, var(--muted))", ...tone.secondary }}>Archived</span> : null}
         <div className="ml-auto flex items-center gap-1">
+          {onOpenChat && task.chatId ? <button type="button" className={chipButtonClass} style={tone.secondary} onClick={() => onOpenChat(task)}>
+            <MessageSquare size={13} aria-hidden />Open chat
+          </button> : null}
           <button type="button" className={chipButtonClass} style={tone.secondary} disabled={busy}
             onClick={() => void withBusy(() => client.archiveTask(task.id, task.archivedAt === null), "Couldn't archive the task. Try again.")}>
             {task.archivedAt ? <><ArchiveRestore size={13} aria-hidden />Restore</> : <><Archive size={13} aria-hidden />Archive</>}
@@ -111,7 +116,7 @@ export function TaskDetail({ client, task, allTasks, members, settings, boardLab
         </div>
       </header>
       <TitleEditor key={task.id} task={task} onSave={(title, base) => onUpdate(base, { title }, { resolvesConflict: true })} />
-      <TaskSessionTabs task={task} tab={session ? tab : "details"} onTabChange={setTab} onStart={(kind) => void start(kind)}
+      <TaskSessionTabs task={task} tab={session ? tab : "details"} onTabChange={setTab} onStartTerminal={() => void startTerminal()}
         loadAttachable={loadAttachable} onAttach={(attachable) => void attach(attachable)} busy={busy} />
       {session ? <TaskSessionPane session={session} onOpen={onOpenSession} /> : <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_280px] overflow-hidden max-[720px]:grid-cols-1 max-[720px]:overflow-y-auto">
         <div className="min-h-0 overflow-y-auto px-5 py-4">

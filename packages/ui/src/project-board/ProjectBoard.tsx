@@ -26,19 +26,32 @@ export interface ProjectBoardProps {
   accessory?: ReactNode;
   /** Shown in the empty state when the owner has a Linear connection. */
   onImportLinear?: () => void;
-  /** Opens a task's chat or terminal in the surface's own Chat or Terminal; omitted, the open buttons are disabled. */
+  /** Opens a task's terminal in the surface's own Terminal; omitted, the open buttons are disabled. */
   onOpenSession?: (session: TaskSession) => void;
+  /** Opens a task's chat (every task is a chat). Cards open it; omitted, cards open the task's details. */
+  onOpenChat?: (task: ProjectTask) => void;
+  /** A task whose details to show, for example from a chat's ticket header; a new id reopens them. */
+  detailsTaskId?: string | null;
   active?: boolean;
 }
 
 interface PendingClose { taskId: string; status: TaskStatus; index: number }
 
 /** A project's task board: kanban or list, filters, quick create, and the task detail sheet. */
-export function ProjectBoard({ client, preferencesKey, storage, accessory, onImportLinear, onOpenSession, active = true }: ProjectBoardProps) {
+export function ProjectBoard({ client, preferencesKey, storage, accessory, onImportLinear, onOpenSession, onOpenChat, detailsTaskId = null, active = true }: ProjectBoardProps) {
   const board = useProjectBoard(client, { includeArchived: true });
   const nowMs = useMinuteClock(active);
   const [preferences, setPreferences] = useState<BoardPreferences>(() => readBoardPreferences(preferencesKey ? storage : undefined, preferencesKey ?? ""));
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(detailsTaskId);
+  const [requestedDetails, setRequestedDetails] = useState(detailsTaskId);
+  if (detailsTaskId !== requestedDetails) {
+    setRequestedDetails(detailsTaskId);
+    if (detailsTaskId) setOpenTaskId(detailsTaskId);
+  }
+  const openCard = (task: ProjectTask) => {
+    if (onOpenChat && task.chatId) onOpenChat(task);
+    else setOpenTaskId(task.id);
+  };
   const [newTask, setNewTask] = useState<{ status: TaskStatus } | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
 
@@ -72,7 +85,7 @@ export function ProjectBoard({ client, preferencesKey, storage, accessory, onImp
   const requestMove = async (taskId: string, status: TaskStatus, index: number) => {
     const task = board.tasks.find((candidate) => candidate.id === taskId);
     const closing = (status === "done" || status === "canceled") && task?.status !== status;
-    if (closing && task?.sessions.some((session) => session.agentStatus === "working")) {
+    if (closing && (task?.chatStatus === "working" || task?.sessions.some((session) => session.agentStatus === "working"))) {
       setPendingClose({ taskId, status, index });
       return;
     }
@@ -107,14 +120,14 @@ export function ProjectBoard({ client, preferencesKey, storage, accessory, onImp
       {boardFilterIsActive(filter) && visible.length === 0 ? <p className="px-5 pb-2 text-[12.5px]" style={tone.muted}>No tasks match these filters.</p> : null}
       {preferences.layout === "board"
         ? <BoardColumns columns={columns} statuses={statuses} members={board.members} nowMs={nowMs} allTasks={board.tasks}
-          onOpenTask={(task) => setOpenTaskId(task.id)} onMoveTask={(taskId, status, index) => void requestMove(taskId, status, index)}
+          onOpenTask={openCard} onMoveTask={(taskId, status, index) => void requestMove(taskId, status, index)}
           onQuickCreate={async (status, title) => Boolean(await board.createTask({ title, status }))} />
-        : <BoardList tasks={visible} members={board.members} nowMs={nowMs} onOpenTask={(task) => setOpenTaskId(task.id)} />}
+        : <BoardList tasks={visible} members={board.members} nowMs={nowMs} onOpenTask={openCard} />}
     </>}
 
     {openTask ? <TaskDetail client={client} task={openTask} allTasks={board.tasks} members={board.members} settings={board.settings}
       boardLabels={labels} nowMs={nowMs} onClose={() => setOpenTaskId(null)} onOpenTask={(task: ProjectTask) => setOpenTaskId(task.id)}
-      onUpdate={board.updateTask} onStatusChange={(task, status) => void requestMove(task.id, status, 0)} run={board.run} onOpenSession={onOpenSession} /> : null}
+      onUpdate={board.updateTask} onStatusChange={(task, status) => void requestMove(task.id, status, 0)} run={board.run} onOpenSession={onOpenSession} onOpenChat={onOpenChat} /> : null}
 
     {notice ? <div role="alert" className="absolute bottom-4 left-1/2 flex max-w-[min(480px,calc(100%-32px))] -translate-x-1/2 items-center gap-3 rounded-[14px] border px-3.5 py-2.5 text-[13px] shadow-lg"
       style={{ zIndex: 2, borderColor: "var(--border-default, var(--border))", background: "var(--bg-overlay, var(--popover, var(--card)))", ...tone.primary }}>

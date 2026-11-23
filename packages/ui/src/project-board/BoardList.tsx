@@ -47,7 +47,7 @@ export function BoardList({ tasks, members, nowMs, onOpenTask }: {
       </thead>
       <tbody>
         {rows.map((task) => {
-          const agent = rollUpTaskAgentStatus(task.sessions);
+          const agent = rollUpTaskAgentStatus(task);
           const key = task.key;
           return <tr key={task.id} className="group hover:bg-[var(--bg-hover)]" data-task-id={task.id}>
             <td className="border-b px-2 py-2 font-mono text-[12px]" style={{ ...tone.border, ...tone.muted }}>{key}</td>

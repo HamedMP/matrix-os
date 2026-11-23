@@ -52,6 +52,8 @@ export class ProjectBoardRequestError extends Error {
 export interface ProjectBoardClient {
   listTasks(options?: ListTasksOptions): Promise<readonly ProjectTask[]>;
   getTask(taskId: string): Promise<ProjectTask>;
+  /** The ticket of a chat (every task is a chat), archived or not; null when the chat has none. */
+  findTaskByChat(chatId: string): Promise<ProjectTask | null>;
   createTask(input: CreateTaskInput): Promise<ProjectTask>;
   /** Rejects with `TaskConflictError` when `baseRevision` is stale. */
   updateTask(taskId: string, baseRevision: number, input: UpdateTaskInput): Promise<ProjectTask>;
