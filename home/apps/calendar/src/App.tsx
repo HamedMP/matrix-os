@@ -1,15 +1,10 @@
-import { CalendarDays } from "lucide-react";
-import { AppFrame, EmptyState } from "../../_shared/office-ui";
+import { useEffect, useState } from "react";
+import { CalendarApp } from "./ui/CalendarApp";
+import { createAppStore, startAppStore } from "./ui/connect";
 
-// Placeholder shell; the Calendar app replaces this with its real views.
+/** Calendar app entry: one store per window, loaded once, watching agent proposals. */
 export default function App() {
-  return (
-    <AppFrame title="Calendar" titleIcon={<CalendarDays size={18} />}>
-      <EmptyState
-        icon={<CalendarDays />}
-        headline="Calendar is getting ready"
-        description="Connect Google or Outlook to see your schedule. Invites go out only after you confirm."
-      />
-    </AppFrame>
-  );
+  const [store] = useState(createAppStore);
+  useEffect(() => startAppStore(store), [store]);
+  return <CalendarApp store={store} />;
 }
