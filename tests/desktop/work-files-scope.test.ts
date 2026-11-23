@@ -196,3 +196,9 @@ describe("files from a moved Chat", () => {
     expect(resolveChatInspectorTargetForRun("../secret", scope, root, [project])).toBeNull();
   });
 });
+
+it("does not resolve a Bot workspace relative path through a Project Chat", () => {
+  expect(resolveChatInspectorTargetForRun("private.png", {
+    kind: "project", chatId: "chat_project", projectId: "matrix-os", label: "Matrix OS",
+  }, { kind: "bot_workspace", botId: "bot_12345678" }, [project])).toBeNull();
+});

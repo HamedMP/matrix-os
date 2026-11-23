@@ -70,5 +70,6 @@ export function resolveChatInspectorTargetForRun(
       ...(runRoot.kind === "worktree" ? { worktreeId: runRoot.worktreeId } : {}),
     });
   }
+  if (runRoot?.kind === "bot_workspace" && scope.kind !== "home") return null;
   return resolveChatInspectorTarget(rawPath, scope);
 }
