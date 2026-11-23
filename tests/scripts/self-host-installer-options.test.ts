@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -382,7 +382,7 @@ prepare_scope_runtime_roots "${home}" alice`,
     // and prove the loopback listener refuses one.
     const identityCheck = source.split("\nwait_private_identity_ok() {")[1]!.split("\n}\n")[0]!;
     expect(identityCheck).toContain('--unix-socket "$TAILNET_SOCKET"');
-    const verify = source.split("\nverify_services() {")[1]!.split("\n}\n")[0]!;
+    const verify = source.split("\nverify_private_access() {")[1]!.split("\n}\n")[0]!;
     expect(verify).toContain("only Tailscale Serve may present one");
   });
 
@@ -834,4 +834,131 @@ capture_install_telemetry matrix_manual_install_started started 0`,
     expect(payload.herdr).toBe("off");
     expect(JSON.stringify(payload)).not.toMatch(/login|authkey|tskey|alice/i);
   });
+
+  // Review P1 (#3531 at 632a3f6f), fixed in this layer for size: four installer findings.
+  describe("browser account network isolation", () => {
+    // matrix-browser shared loopback with code-server (owner, --auth none) and the
+    // shell proxy (adds the gateway bearer); it must reach neither, nor the
+    // machine's own tailnet name, while Chrome keeps the internet and its own ports.
+    it("renders an owner-matched nftables table that refuses loopback and tailnet except the browser's own ports and DNS", () => {
+      const rules = run(`render_browser_isolation matrix-browser`).stdout;
+      expect(rules).toContain("table inet matrix_browser_isolation {");
+      expect(rules).toContain('meta skuid != "matrix-browser" accept');
+      expect(rules).toContain("ct state established,related accept");
+      expect(rules).toContain("ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 accept");
+      expect(rules).toContain("ip daddr 127.0.0.1 tcp dport { 6901, 8730, 9222 } accept");
+      expect(rules).toContain("ip daddr 127.0.0.0/8 reject");
+      expect(rules).toContain("ip6 daddr ::1 reject");
+      expect(rules).toContain("ip daddr 100.64.0.0/10 reject");
+      expect(rules).toContain("ip6 daddr fd7a:115c:a1e0::/48 reject");
+      expect(rules.indexOf("established")).toBeLessThan(rules.indexOf("127.0.0.0/8 reject"));
+    });
+
+    it("installs the table durably and refuses to start browser use when it cannot apply it", () => {
+      const unit = run(`render_browser_isolation_unit`).stdout;
+      expect(unit).toContain("ExecStart=/usr/sbin/nft -f /etc/matrix/browser-isolation.nft");
+      expect(unit).toContain("Before=matrix-browser-runtime.service matrix-browser-lab-vnc.service");
+      expect(unit).toContain("WantedBy=multi-user.target");
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("install_browser_isolation")).toBeGreaterThan(-1);
+      expect(body.indexOf("install_browser_isolation")).toBeLessThan(body.indexOf("systemctl enable matrix-browser-runtime"));
+      expect(body).toMatch(/install_browser_isolation \|\| \{[^}]*browser use stays off/);
+      expect(readFileSync(script, "utf8")).toMatch(/apt-get install -y [^\n]*nftables/);
+    });
+  });
+
+  describe("unattended reruns keep a working access mode", () => {
+    function saved(mode: string, extra = "") {
+      const env = join(dir, "host.env");
+      writeFileSync(env, `MATRIX_ACCESS_MODE=${mode}\n${extra}`);
+      return env;
+    }
+
+    it("keeps the saved access mode when no access flag is given, and an explicit flag still wins", () => {
+      const env = saved("public");
+      const kept = run(`parse_args\nMATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode >/dev/null\nprintf '%s\\n' "$OPT_ACCESS"`);
+      expect(kept.stdout.trim()).toBe("public");
+      const explicit = run(`parse_args --access tailscale\nMATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode\nprintf '%s\\n' "$OPT_ACCESS"`);
+      expect(explicit.stdout.trim()).toBe("tailscale");
+      const headscale = saved("headscale", "MATRIX_TAILSCALE_LOGIN_SERVER=https://hs.example.com\n");
+      const hs = run(`parse_args\nMATRIX_HOST_ENV_FILE="${headscale}" restore_saved_access_mode >/dev/null\nprintf '%s|%s\\n' "$OPT_ACCESS" "$OPT_LOGIN_SERVER"`);
+      expect(hs.stdout.trim()).toBe("headscale|https://hs.example.com");
+      const body = readFileSync(script, "utf8").split("\nask_install_choices() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("restore_saved_access_mode")).toBeLessThan(body.indexOf("ask_access_mode"));
+    });
+
+    it("keeps the public listener and fails loudly when private access is not ready", () => {
+      const calls = join(dir, "switch-calls");
+      const result = run(`tailscale_status_line() { printf 'NeedsLogin\\t\\t\\n'; }
+write_env() { printf 'write_env %s\\n' "$OPT_ACCESS" >>"${calls}"; }
+PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= MATRIX_TAILNET_URL= require_private_access_ready`);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/keeping your public/i);
+      expect(readFileSync(calls, "utf8")).toContain("write_env public");
+      const ready = run(`tailscale_status_line() { printf 'Running\\tbox.ts.net\\talice@example.com\\n'; }
+PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net require_private_access_ready`);
+      expect(ready.status, ready.stderr).toBe(0);
+      const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
+      expect(main.indexOf("require_private_access_ready")).toBeGreaterThan(main.indexOf("configure_tailscale_serve"));
+      expect(main.indexOf("require_private_access_ready")).toBeLessThan(main.indexOf("configure_nginx"));
+    });
+
+    it("never reports private access verified without an authenticated request", () => {
+      const result = run(`curl() { printf '403'; }
+ss() { :; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE= OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= verify_private_access`);
+      expect(result.stdout + result.stderr).not.toMatch(/is reachable|only through Tailscale Serve/);
+      expect(result.stdout + result.stderr).toMatch(/not verified/i);
+      const switching = run(`curl() { printf '403'; }
+restore_previous_listener() { echo restored; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= verify_private_access`);
+      expect(switching.status).not.toBe(0);
+      expect(switching.stdout).toContain("restored");
+    });
+  });
+
+  it("records the public address the summary prints as the gateway's browser origin", () => {
+    // Review P1: a public install with MATRIX_DOMAIN left SHELL_ORIGIN unset, so the
+    // Browser viewer and retry refused the printed address.
+    const origin = (args: string) => run(`self_host_shell_origin ${args}`).stdout.trim();
+    expect(origin("public '' '' http://matrix.example.com")).toBe("http://matrix.example.com");
+    expect(origin("public '' https://saved.example.com http://matrix.example.com")).toBe("https://saved.example.com");
+    expect(origin("tailscale https://box.ts.net '' http://matrix.example.com")).toBe("https://box.ts.net");
+    expect(run(`MATRIX_DOMAIN=matrix.example.com public_ui_origin`).stdout.trim()).toBe("http://matrix.example.com");
+    expect(run(`hostname() { echo '203.0.113.7 10.0.0.2'; }\nMATRIX_DOMAIN=_ public_ui_origin`).stdout.trim()).toBe("http://203.0.113.7");
+    const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+    expect(writeEnv).toContain('"$(public_ui_origin)"');
+  });
+
+  describe("browser profile move and the lifecycle", () => {
+    it("finishes the move before the browser lifecycle is enabled, with the lifecycle stopped during it", () => {
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("systemctl disable --now matrix-browser-runtime")).toBeGreaterThan(-1);
+      expect(body.indexOf("systemctl disable --now matrix-browser-runtime")).toBeLessThan(body.indexOf("prepare_browser_account"));
+      expect(body.indexOf("prepare_browser_account")).toBeLessThan(body.indexOf("systemctl enable matrix-browser-runtime"));
+    });
+
+    it("places a staged profile even when a fresh one was created, keeping the fresh one aside", () => {
+      const home = join(dir, "browser-home");
+      const stage = join(dir, "stage");
+      const fresh = join(home, ".local/share/matrix-browser-lab/chrome");
+      spawnSync("mkdir", ["-p", join(stage, "matrix-browser/chrome/Default"), join(fresh, "Default")]);
+      writeFileSync(join(stage, "matrix-browser/chrome/Default/Cookies"), "saved session");
+      writeFileSync(join(fresh, "Default/Cookies"), "fresh");
+      const result = run(`systemctl() { :; }
+chown() { :; }
+runuser() { shift 3; "$@"; }
+id() { case "$*" in "-gn matrix-browser") echo matrix-browser ;; *) command id "$@" ;; esac; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${join(dir, "legacy")}" MATRIX_BROWSER_PROFILE_STAGE="${stage}" migrate_browser_profile matrix-browser "${home}"`);
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(fresh, "Default/Cookies"), "utf8")).toBe("saved session");
+      const parent = join(home, ".local/share/matrix-browser-lab");
+      const asides = readdirSync(parent).filter((name) => name.startsWith("chrome.replaced-"));
+      expect(asides).toHaveLength(1);
+      const aside = join(parent, asides[0]!);
+      expect(readFileSync(join(aside, "Default/Cookies"), "utf8")).toBe("fresh");
+      expect(existsSync(stage)).toBe(false);
+    });
+  });
+
 });
