@@ -69,7 +69,7 @@ export function replaceWords(
   text: string,
   format: Partial<RunFormat> | undefined,
 ): TextPosition {
-  const { index, tracker } = context;
+  const { tracker } = context;
   if (!range.single) {
     throw new OfficeError("invalid_argument", "a word-by-word replacement needs a range inside one paragraph");
   }

@@ -1,6 +1,5 @@
 /** Deleting text and paragraph marks, directly or as tracked deletions. */
 
-import type { TextPosition } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import { appendChild, createElement, insertBefore, prependChild, remove } from "../../xml/index.js";
 import type { BlockRecord, InlineAtom } from "../internal.js";
@@ -138,7 +137,7 @@ export function deleteInParagraph(context: EditContext, paragraph: XmlElement, f
 /**
  * Deletes the mark of a paragraph as a tracked change. A mark that is a
  * pending insertion of the same author is taken back: the paragraph joins
- * the next one. Returns the paragraph that holds the content afterwards.
+ * the next one. A mark that is already deleted stays as it is.
  */
 export function deleteMarkTracked(context: EditContext, record: BlockRecord): void {
   const { index } = context;
@@ -210,9 +209,4 @@ export function deleteRange(context: EditContext, range: ResolvedRange): void {
   deleteInParagraph(context, firstElement, range.start.offset, index.scan(firstElement).text.length);
   const current = index.blockOf(firstElement);
   if (current !== null) deleteMarkTracked(context, current);
-}
-
-/** The position a caret takes after a deletion that started at `start`. */
-export function pinStart(context: EditContext, start: TextPosition): number {
-  return context.tracker.pin(start);
 }

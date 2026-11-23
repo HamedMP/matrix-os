@@ -4,7 +4,7 @@ import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { appendChild, cloneNode, createElement, remove, setAttr, setTextContent } from "../../xml/index.js";
 import type { DocxIndex } from "../internal.js";
-import { firstChild } from "../internal.js";
+import { closest, firstChild } from "../internal.js";
 import { renameElement } from "./xml-util.js";
 
 /** Longest text one operation may insert: far above any real edit, and a bound on the work. */
@@ -79,6 +79,12 @@ export function copyRunProps(source: XmlElement | null, dropStyle = false): XmlE
     if (MARK_ONLY.has(node.name) || (dropStyle && node.name === "w:rStyle")) remove(node);
   }
   return copy.children.some((node) => node.kind === "element") ? copy : null;
+}
+
+/** The properties of a run for new text elsewhere: without the character style when the run is part of a link. */
+export function runPropsOf(run: XmlElement | null): XmlElement | null {
+  if (run === null || run.name !== "w:r") return null;
+  return copyRunProps(firstChild(run, "w:rPr"), closest(run, "w:hyperlink") !== null);
 }
 
 /** The properties of a paragraph mark as run properties for new text in that paragraph. */

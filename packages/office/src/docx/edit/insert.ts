@@ -4,7 +4,7 @@ import type { RunFormat, TextPosition } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import { appendChild, createElement, prependChild } from "../../xml/index.js";
 import type { InsertionPoint, ResolvedPosition, RunBoundary } from "../internal.js";
-import { firstChild, splitContainerAt, splitRunAt } from "../internal.js";
+import { closest, firstChild, splitContainerAt, splitRunAt } from "../internal.js";
 import { type EditContext, isOwn, noteRevision, revisionAttrs, touch } from "./context.js";
 import { applyRunFormat, runResolverFor } from "./run-format.js";
 import { copyRunProps, makeRun, markRunProps } from "./text.js";
@@ -30,18 +30,12 @@ function paragraphStart(paragraph: XmlElement): InsertionPoint {
 }
 
 /** The run properties typed text takes over at a boundary. */
-function inheritedProps(paragraph: XmlElement, boundary: RunBoundary): XmlElement | null {
-  let source: XmlElement | null;
-  let dropStyle = false;
-  if (boundary.before === null) {
-    source = boundary.after;
-  } else {
-    source = boundary.before;
-    // Text that lands behind a link or a field result keeps the look of the text but not the link style.
-    dropStyle = boundary.point !== boundary.afterPrevious;
-  }
+function inheritedProps(paragraph: XmlElement, boundary: RunBoundary, point: InsertionPoint): XmlElement | null {
+  const source = boundary.before ?? boundary.after;
   if (source === null) return markRunProps(paragraph);
   if (source.name !== "w:r") return null;
+  // Text that lands outside the link its neighbour is in keeps the look of that text but not the link style.
+  const dropStyle = closest(source, "w:hyperlink") !== closest(point.parent, "w:hyperlink");
   return copyRunProps(firstChild(source, "w:rPr"), dropStyle);
 }
 
@@ -105,14 +99,14 @@ function placeDirect(context: EditContext, point: InsertionPoint, nodes: readonl
 export function insertNodesAt(
   context: EditContext,
   resolved: ResolvedPosition,
-  build: (boundary: RunBoundary, paragraph: XmlElement) => XmlElement[],
+  build: (boundary: RunBoundary, paragraph: XmlElement, point: InsertionPoint) => XmlElement[],
   length: number,
 ): TextPosition {
   const paragraph = resolved.record.element;
   const position: TextPosition = { blockId: resolved.record.id, offset: resolved.offset };
   const boundary = splitRunAt(context.index, position);
   const point = boundary.before === null ? paragraphStart(paragraph) : boundary.point;
-  const nodes = build(boundary, paragraph);
+  const nodes = build(boundary, paragraph, point);
   if (context.track) placeTracked(context, point, nodes);
   else placeDirect(context, point, nodes);
   touch(context, paragraph);
@@ -131,8 +125,8 @@ export function insertTextAt(
   return insertNodesAt(
     context,
     resolved,
-    (boundary, paragraph) => {
-      let properties = options.baseProps !== undefined ? options.baseProps : inheritedProps(paragraph, boundary);
+    (boundary, paragraph, point) => {
+      let properties = options.baseProps !== undefined ? options.baseProps : inheritedProps(paragraph, boundary, point);
       if (options.format !== undefined) {
         properties ??= createElement("w:rPr");
         applyRunFormat(properties, options.format, runResolverFor(context.index, resolved.record));

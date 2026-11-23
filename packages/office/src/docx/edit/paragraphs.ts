@@ -21,7 +21,7 @@ import {
 } from "./marks.js";
 import { applyParagraphPatch } from "./paragraph-style.js";
 import { PPR_ORDER } from "./schema-order.js";
-import { copyRunProps, makeRun, paragraphAttrs } from "./text.js";
+import { copyRunProps, makeRun, paragraphAttrs, runPropsOf } from "./text.js";
 import { hasElementChildren, insertOrdered, removeChildren, renumberRevisions } from "./xml-util.js";
 
 const NOT_COPIED: ReadonlySet<string> = new Set(["w:sectPr", "w:pPrChange"]);
@@ -47,8 +47,7 @@ function textPropsNear(context: EditContext, reference: BlockRecord, paragraph: 
   const markProps = pPr === null ? null : copyRunProps(firstChild(pPr, "w:rPr"));
   if (markProps !== null || reference.type !== "paragraph") return markProps;
   const atoms = context.index.scan(reference.element).atoms;
-  const run = (after ? atoms[atoms.length - 1] : atoms[0])?.run ?? null;
-  return run === null ? null : copyRunProps(firstChild(run, "w:rPr"));
+  return runPropsOf((after ? atoms[atoms.length - 1] : atoms[0])?.run ?? null);
 }
 
 /** Implements `insertParagraphAfter` and `insertParagraphBefore`. Returns the new paragraph. */

@@ -42,6 +42,20 @@ describe("randomised tracked edit sequences", () => {
     expect(rejected.listRevisions()).toEqual([]);
     expect(text(rejected, "markup")).toBe(original);
     expect(documentXml(rejected)).not.toMatch(/<w:(ins|del|delText|rPrChange|pPrChange)\b/);
+
+    // Resolving the revisions one at a time, in any order, ends in the same place.
+    for (const accept of [true, false]) {
+      const stepwise = await open(bytes);
+      for (let guard = 0; guard < 500; guard++) {
+        const pending = stepwise.listRevisions();
+        if (pending.length === 0) break;
+        const pick = [(pending[Math.floor(random() * pending.length)] as { id: string }).id];
+        if (accept) stepwise.acceptRevisions(pick);
+        else stepwise.rejectRevisions(pick);
+      }
+      expect(stepwise.listRevisions()).toEqual([]);
+      expect(text(stepwise, "markup")).toBe(accept ? expected(reference) : original);
+    }
   });
 });
 
@@ -88,5 +102,33 @@ describe("randomised edits by two authors", () => {
     rejected.rejectRevisions("all");
     expect(rejected.listRevisions()).toEqual([]);
     expect(text(rejected, "markup")).toBe(original);
+  });
+});
+
+describe("randomised sequences that mix direct and tracked edits", () => {
+  it.each(SEEDS.slice(0, 30))("seed %i: the visible text follows the reference at every step", async (seed) => {
+    const random = prng(seed + 5);
+    const doc = newDocument();
+    const reference = text(doc).split("\n").slice(0, -1);
+    const history: string[] = [];
+    for (let count = 0; count < 40; count++) {
+      const options: ApplyOptions = { track: random() < 0.6, author: RAE, date: DATE };
+      const op = step(doc, reference, random, options);
+      if (op === null) continue;
+      history.push(`${options.track ? "tracked" : "direct"} ${JSON.stringify(op)}`);
+      expect(text(doc, "final"), history.join("\n")).toBe(expected(reference));
+    }
+    const ids = revisionXmlIds(doc);
+    expect(new Set(ids).size).toBe(ids.length);
+    const bytes = await doc.save();
+    const accepted = await open(bytes);
+    accepted.acceptRevisions("all");
+    expect(accepted.listRevisions()).toEqual([]);
+    expect(text(accepted, "markup")).toBe(expected(reference));
+    expect(documentXml(accepted)).not.toMatch(/<w:(ins|del|delText|rPrChange|pPrChange)\b/);
+    const rejected = await open(bytes);
+    rejected.rejectRevisions("all");
+    expect(rejected.listRevisions()).toEqual([]);
+    expect(documentXml(rejected)).not.toMatch(/<w:(ins|del|delText|rPrChange|pPrChange)\b/);
   });
 });

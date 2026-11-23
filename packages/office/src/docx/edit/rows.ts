@@ -9,7 +9,7 @@ import { type EditContext, isOwn, noteRevision, revisionAttrs, touch } from "./c
 import { deleteInParagraph } from "./delete.js";
 import { addMarkRevision, fallbackPosition, firstPositionIn, lastPositionIn, markRevisions, removeBlock } from "./marks.js";
 import { PPR_ORDER, TRPR_ORDER } from "./schema-order.js";
-import { copyRunProps, makeRun, paragraphAttrs } from "./text.js";
+import { copyRunProps, makeRun, paragraphAttrs, runPropsOf } from "./text.js";
 import { elementParent, ensureFirst, insertOrdered, removeChildren, renumberRevisions } from "./xml-util.js";
 
 function blockIdsIn(index: DocxIndex, row: XmlElement): BlockId[] {
@@ -194,8 +194,7 @@ export function buildRow(
       if (properties.children.some((node) => node.kind === "element")) appendChild(paragraph, properties);
     }
     if (runProps === null && sourceParagraph !== null) {
-      const firstRun = index.scan(sourceParagraph).atoms[0]?.run ?? null;
-      runProps = firstRun === null ? null : copyRunProps(firstChild(firstRun, "w:rPr"));
+      runProps = runPropsOf(index.scan(sourceParagraph).atoms[0]?.run ?? null);
     }
     const text = texts[at] ?? "";
     if (context.track) {
