@@ -4,7 +4,7 @@ import { copySelection, pasteClipboard } from "./actions-clipboard";
 import { editorKey, updateEditText } from "./actions-edit";
 import { runGridCommand } from "./commands";
 import type { GridContext } from "./context";
-import { type GridCommand, gridKeyCommand, keyInputOf } from "./keymap";
+import { type GridCommand, gridKeyCommand, isCompositionKey, keyInputOf } from "./keymap";
 
 /** Commands that change the workbook, refused when the grid is read-only. */
 const CHANGING: ReadonlySet<GridCommand["type"]> = new Set(["edit", "clear", "undo", "redo", "fill", "format"]);
@@ -15,6 +15,15 @@ interface KeyLike {
   metaKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
+  /** 229 while an input method handles the key. */
+  keyCode?: number;
+  /** True between the start and the end of a composition. */
+  isComposing?: boolean;
+}
+
+/** A key that belongs to an input method conversion in progress: it must reach the text input untouched. */
+function composing(event: KeyLike): boolean {
+  return event.isComposing === true || event.keyCode === 229;
 }
 
 interface ClipboardLike {
@@ -27,7 +36,7 @@ interface ClipboardLike {
 /** A key in the in-cell editor or the formula bar. True when it was handled. */
 export function handleEditorKey(ctx: GridContext, event: KeyLike): boolean {
   const edit = ctx.store.getState().edit;
-  if (edit === null) return false;
+  if (edit === null || composing(event)) return false;
   if (event.key === "Enter" && event.altKey) {
     // Alt+Enter: a line break inside the cell.
     const text = `${edit.text.slice(0, edit.selectionStart)}\n${edit.text.slice(edit.selectionEnd)}`;
@@ -40,7 +49,12 @@ export function handleEditorKey(ctx: GridContext, event: KeyLike): boolean {
 /** A key on the grid itself. True when it was handled and the default action must not run. */
 export function handleGridKey(ctx: GridContext, event: KeyLike, readOnly: boolean): boolean {
   // The focus is on the grid while a formula points at cells: the key still belongs to the editor.
-  if (ctx.store.getState().edit !== null) return editorKey(ctx, keyInputOf(event));
+  if (ctx.store.getState().edit !== null) return composing(event) ? false : editorKey(ctx, keyInputOf(event));
+  if (isCompositionKey(event.key, event.keyCode) || event.isComposing === true) {
+    // A dead key or an input method: open an empty editor and leave the key to the browser, which composes the character into it.
+    if (!readOnly) runGridCommand(ctx, { type: "edit", initial: "" });
+    return false;
+  }
   const command = gridKeyCommand(keyInputOf(event));
   if (command === null) return false;
   if (!(readOnly && CHANGING.has(command.type))) runGridCommand(ctx, command);

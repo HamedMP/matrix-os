@@ -48,10 +48,30 @@ const ARROWS: Record<string, Direction> = {
   ArrowRight: "right",
 };
 
+/** One character a key types: a single code point, not a named key such as `Enter`. */
+function isPrintable(key: string): boolean {
+  return key.length === 1 || (key.length === 2 && key.codePointAt(0)! > 0xffff);
+}
+
+/**
+ * True when Alt (Option on a Mac) or AltGr (Ctrl+Alt on Windows) typed a
+ * character: `€`, `@`, `{`, `å`. A plain letter or digit with these keys is a
+ * shortcut, not typing.
+ */
+function isAltCharacter(key: string, alt: boolean): boolean {
+  return alt && isPrintable(key) && !/^[a-z0-9]$/i.test(key);
+}
+
+/** Keys that begin a composed character: a dead key (accents) or an input method. */
+export function isCompositionKey(key: string, keyCode?: number): boolean {
+  return key === "Dead" || key === "Process" || keyCode === 229;
+}
+
 export function gridKeyCommand(input: KeyInput): GridCommand | null {
   const { key, ctrl, shift, alt } = input;
   const arrow = ARROWS[key];
   if (arrow !== undefined) return alt ? null : { type: "move", direction: arrow, extend: shift, jump: ctrl };
+  if (isAltCharacter(key, alt)) return { type: "edit", initial: key };
   if (alt) return null;
   switch (key) {
     case "Tab":
@@ -102,7 +122,7 @@ export function gridKeyCommand(input: KeyInput): GridCommand | null {
   }
   if (key === " " && shift) return { type: "selectRow" };
   // A printable character starts editing and replaces the content.
-  if (key.length === 1) return { type: "edit", initial: key };
+  if (isPrintable(key)) return { type: "edit", initial: key };
   return null;
 }
 

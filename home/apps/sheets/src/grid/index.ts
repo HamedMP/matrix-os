@@ -72,8 +72,12 @@
  *   new value to the tooltip and to what a screen reader hears. Decorated
  *   cells carry `data-change-id`, `data-row` and `data-col`.
  *
- * Limits of this version: touch input and input methods that compose text are
- * not handled; a double click on a row edge resets the row to the default
+ * Typing on the grid: AltGr and Option characters start editing; a dead key
+ * or an input method key opens an empty editor and the browser composes the
+ * character into it, and the Enter that confirms a conversion does not commit
+ * the cell.
+ *
+ * Limits of this version: touch input is not handled; a double click on a row edge resets the row to the default
  * height instead of measuring wrapped text; whole-row and whole-column
  * formats reach the used area plus a margin, not the end of the sheet.
  */
