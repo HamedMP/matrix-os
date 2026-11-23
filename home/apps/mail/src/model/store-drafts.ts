@@ -15,6 +15,7 @@
 import {
   draftIssues,
   emptyDraft,
+  partiallySavedDraft,
   type Draft,
 } from "../../../_shared/office-accounts/types/mail";
 import { composeDraft, buildDraftFromThread } from "./drafts";
@@ -66,6 +67,24 @@ function removeDraft(state: MailState, id: string): MailState {
 function withStoredIds(local: Draft["attachments"], stored: Draft["attachments"] | undefined): Draft["attachments"] {
   if (!stored || stored.length !== local.length) return local;
   return local.map((attachment, i) => (stored[i]?.id && !attachment.id ? { ...attachment, id: stored[i].id } : attachment));
+}
+
+/**
+ * After a save that failed partway: the provider's new draft id, and the
+ * attachment ids it stored when the attachment list has not changed since.
+ * Attachments it did not store keep their local content.
+ */
+function keepPartial(local: Draft, partial: Draft & { id: string }, unchanged: boolean): Draft {
+  const attachments = unchanged && partial.attachments.length === local.attachments.length
+    ? local.attachments.map((attachment, i) => {
+      const stored = partial.attachments[i];
+      if (stored?.id) return { ...attachment, id: stored.id };
+      const rest = { ...attachment };
+      delete rest.id;
+      return rest;
+    })
+    : local.attachments;
+  return { ...local, id: partial.id, attachments };
 }
 
 /** Drops the oldest closed drafts beyond the cap. */
@@ -151,7 +170,21 @@ export function createDraftActions(ctx: StoreContext, lists: ListActions): Draft
       } catch (error: unknown) {
         ctx.log("draft.save.failed", error);
         const mailError = toMailError(error);
-        ctx.set((s) => patchDraft(s, id, { saving: false, error: mailError }));
+        const partial = partiallySavedDraft(error);
+        const current = ctx.get().drafts[id];
+        if (partial && !current && !draft.draft.id && entry.provider.deleteDraft) {
+          try {
+            await entry.provider.deleteDraft(partial.id);
+          } catch (deleteError: unknown) {
+            ctx.log("draft.discard.failed", deleteError);
+          }
+          return;
+        }
+        ctx.set((s) => patchDraft(s, id, {
+          saving: false,
+          error: mailError,
+          ...(partial && current ? { draft: keepPartial(current.draft, partial, current.revision === revision) } : {}),
+        }));
         delete resave[id];
       }
     })().finally(() => {
@@ -287,7 +320,14 @@ export function createDraftActions(ctx: StoreContext, lists: ListActions): Draft
       try {
         let providerId = snapshot.draft.id;
         if (!providerId || snapshot.revision > snapshot.savedRevision) {
-          const stored = await entry.provider.saveDraft(composeDraft(snapshot));
+          let stored: Draft;
+          try {
+            stored = await entry.provider.saveDraft(composeDraft(snapshot));
+          } catch (error: unknown) {
+            const partial = partiallySavedDraft(error);
+            if (partial) ctx.set((s) => patchDraft(s, id, { draft: keepPartial(snapshot.draft, partial, true) }));
+            throw error;
+          }
           providerId = stored.id;
           ctx.set((s) => patchDraft(s, id, { draft: { ...snapshot.draft, id: providerId }, savedRevision: snapshot.revision }));
         }

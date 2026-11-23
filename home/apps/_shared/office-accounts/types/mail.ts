@@ -9,7 +9,7 @@
  * addresses, bodies and attachment names. Render text as text, and pass HTML
  * through the sanitiser before it reaches the document.
  */
-import { ProviderError } from "./errors.js";
+import { ProviderError, type ProviderErrorCode } from "./errors.js";
 import type { IsoInstant } from "./time.js";
 
 export * from "./errors.js";
@@ -345,6 +345,28 @@ export function base64DecodedBytes(base64: string): number {
 
 export function emptyDraft(): Draft {
   return { to: [], cc: [], bcc: [], subject: "", bodyHtml: "", bodyText: "", attachments: [] };
+}
+
+/**
+ * A save that needs several provider calls failed after the provider had
+ * already stored the draft. `draft` is what the provider now holds: its id,
+ * and attachments with an `id` where they were stored (the rest keep their
+ * content). The caller must keep that id so the next save updates this draft
+ * instead of creating another copy.
+ */
+export class DraftPartiallySavedError extends ProviderError {
+  readonly draft: Draft & { id: string };
+
+  constructor(code: ProviderErrorCode, draft: Draft & { id: string }) {
+    super(code);
+    this.name = "DraftPartiallySavedError";
+    this.draft = draft;
+  }
+}
+
+/** The draft a failed save left at the provider, or undefined when the failure stored nothing. */
+export function partiallySavedDraft(error: unknown): (Draft & { id: string }) | undefined {
+  return error instanceof DraftPartiallySavedError ? error.draft : undefined;
 }
 
 export type DraftIssue =
