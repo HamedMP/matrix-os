@@ -42,3 +42,28 @@ export const compareDocx: DocxModule["compareDocx"] = (original, revised, option
   }
   return compare(original, revised, options, openDocx);
 };
+
+import { compareDocuments, compareDocumentsDetailed } from "./compare/index.js";
+import type { CompareDetailedOptions, CompareResult } from "./compare/index.js";
+
+FACTORIES.compareDocx = compareDocuments;
+
+/**
+ * `compareDocx` with a summary of the revisions it wrote (counts by kind and
+ * a substantive or formatting-only classification of every change) and the
+ * texts its self-check held the result to.
+ */
+export const compareDocxDetailed = (
+  original: Parameters<DocxModule["compareDocx"]>[0],
+  revised: Parameters<DocxModule["compareDocx"]>[1],
+  options: CompareDetailedOptions,
+): Promise<CompareResult> => compareDocumentsDetailed(original, revised, options, openDocx);
+
+export type {
+  ChangeClassification,
+  CompareChange,
+  CompareDetailedOptions,
+  CompareExpectation,
+  CompareResult,
+  CompareSummary,
+} from "./compare/index.js";
