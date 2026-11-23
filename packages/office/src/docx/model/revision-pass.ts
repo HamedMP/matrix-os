@@ -153,7 +153,7 @@ export class StoryPass {
   }
 
   /** Adds an element to the revision of its stream that it touches, or starts a new revision. */
-  private join(
+  private extend(
     stream: RevisionScope,
     member: RevisionMember,
     info: RevisionInfo,
@@ -196,7 +196,7 @@ export class StoryPass {
       this.addMember(row, member);
       return;
     }
-    const draft = this.join("text", member, info, start, end, text, from, to);
+    const draft = this.extend("text", member, info, start, end, text, from, to);
     if (draft.moveName === null) {
       draft.moveName = info.kind === "moveFrom" ? this.moveFrom : info.kind === "moveTo" ? this.moveTo : null;
     }
@@ -272,7 +272,7 @@ export class StoryPass {
       );
     }
     for (const span of scan.formatSpans) {
-      const draft = this.join(
+      const draft = this.extend(
         "runFormat",
         { element: span.element, role: "runFormat", owner: span.run ?? paragraph, blockId },
         infoOf(span.element),
@@ -294,7 +294,7 @@ export class StoryPass {
     const markProps = pPr === null ? null : firstChild(pPr, "w:rPr");
     const markChange = markProps === null ? null : firstChild(markProps, "w:rPrChange");
     if (markChange !== null && pPr !== null) {
-      const draft = this.join(
+      const draft = this.extend(
         "runFormat",
         { element: markChange, role: "runFormat", owner: pPr, blockId },
         infoOf(markChange),
@@ -312,7 +312,7 @@ export class StoryPass {
       const info = infoOf(scan.propertiesChange);
       // Paragraphs are one position apart in this stream; a revision over several joins their texts.
       const continues = this.open.get(`paragraphFormat\u0000${info.key}`)?.end === this.ordinal;
-      const draft = this.join(
+      const draft = this.extend(
         "paragraphFormat",
         { element: scan.propertiesChange, role: "paragraphFormat", owner: paragraph, blockId },
         info,

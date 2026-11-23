@@ -16,8 +16,9 @@ const DEFINING =
 /** Double quotation marks, curly or straight, or curly single ones; an apostrophe inside double quotes is kept. */
 const QUOTED = /[\u201C"]([^\u201C\u201D"\n]{1,80})[\u201D"]|\u2018([^\u2018\u2019\n]{1,80})\u2019(?![A-Za-z])/g;
 const AFTER_TERM = new RegExp(`^[\\s,:\\u2013\\u2014-]*${DEFINING}`, "i");
-const BEFORE_PARENTHETICAL =
-  /\((?:(?:each|together|collectively|individually|hereinafter)[\s,]+)?(?:referred\s+to\s+as\s+)?(?:(?:the|an?|each\s+an?)\s+)?$/i;
+/** `(the “Customer”)`, `(together with its affiliates, the “Group”)`, `(“Seller” or “Vendor”)`. */
+const BEFORE_PARENTHETICAL = /\((?:[^()\n]{0,80}[\s,])?(?:the|an?|as|or|and|each|together)\s+$|\(\s*$/i;
+const AFTER_PARENTHETICAL = /^(?:\s*(?:,|or|and|\/)\s*[\u201C"][^\u201C\u201D"\n]{1,80}[\u201D"])*\s*\)/;
 
 /** Longest paragraph searched for definitions. */
 const MAX_PARAGRAPH = 20_000;
@@ -80,7 +81,7 @@ function findInParagraph(index: DocxIndex, record: BlockRecord, scan: ParagraphS
         marker: "quoted",
         definitionStart: match.index,
       });
-    } else if (after.startsWith(")") && BEFORE_PARENTHETICAL.test(text.slice(0, match.index))) {
+    } else if (AFTER_PARENTHETICAL.test(after) && BEFORE_PARENTHETICAL.test(text.slice(0, match.index))) {
       const open = text.lastIndexOf("(", match.index);
       found.push({
         start,
