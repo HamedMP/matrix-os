@@ -12,6 +12,7 @@ import type { BoardCaller, MessageBoardService } from "./service.js";
 import { EventsQuerySchema } from "@matrix-os/contracts/message-board";
 import { pollBoardEvents, type BoardEventHub } from "./events.js";
 import { mountTaskRoutes } from "./task-routes.js";
+import { permissionForRoute, requireBoardPermission } from "./caller.js";
 import type { BoardTaskService } from "./tasks.js";
 
 /** Text is capped at 10,000 characters; 64 KiB leaves room for labels and JSON escaping. */
@@ -64,7 +65,9 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
 
   const handle = (fn: (c: Context, caller: BoardCaller) => Promise<Response>) => async (c: Context) => {
     try {
-      return await fn(c, await deps.resolveCaller(c));
+      const caller = await deps.resolveCaller(c);
+      requireBoardPermission(caller, permissionForRoute(c.req.method, c.req.path));
+      return await fn(c, caller);
     } catch (error: unknown) {
       return boardErrorResponse(c, error);
     }
@@ -74,7 +77,6 @@ export function createMessageBoardRoutes(deps: MessageBoardRouteDeps): Hono {
 
   app.get("/boards", handle(async (c, caller) => c.json({ boards: await service.listBoards(caller.ownerId) })));
   app.post("/boards", limit, handle(async (c, caller) => {
-    if (caller.actor.kind !== "user") return c.json(boardErrorBody("forbidden"), 403);
     const body = CreateBoardRequestSchema.parse(await readBody(c));
     return c.json({ board: await service.createBoard(caller.ownerId, body.name) }, 201);
   }));

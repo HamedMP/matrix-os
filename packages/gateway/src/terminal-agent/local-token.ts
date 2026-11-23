@@ -22,6 +22,8 @@ const LOCAL_ROUTES: Array<{ methods: readonly string[]; path: RegExp }> = [
   { methods: ["PATCH"], path: new RegExp(`^/api/terminal/workspaces/${ID}/tabs/${ID}/labels$`) },
   { methods: ["POST"], path: /^\/api\/terminal\/agents\/(?:run|report|resolve|wait-children)$/ },
   { methods: ["GET"], path: /^\/api\/terminal\/templates$/ },
+  // `matrix board` (spec 2700) from inside a terminal; owner-level like the routes above.
+  { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/board\/[a-z]+(?:\/[A-Za-z0-9_]{1,64}(?:\/[a-z]{1,16})?)?$/ },
 ];
 
 export function isLocalTerminalAgentRoute(method: string, path: string): boolean {

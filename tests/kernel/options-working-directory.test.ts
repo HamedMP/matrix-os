@@ -78,7 +78,7 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined, undefined);
   });
 
   it("registers owner audio transcription only from an injected managed dependency", async () => {
@@ -91,6 +91,7 @@ describe("kernel working directory", () => {
       "/home/matrix/home",
       undefined,
       ownerAudioTranscriber,
+      undefined,
       undefined,
     );
   });
@@ -106,6 +107,19 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_wait");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools, undefined);
+  });
+
+  // Fault detected: the kernel is offered board tools it cannot call, or never gets them.
+  it("registers message board tools only when the gateway injects them", async () => {
+    const boardTools = {
+      read: vi.fn(), post: vi.fn(), reply: vi.fn(), label: vi.fn(), wait: vi.fn(),
+      taskCreate: vi.fn(), taskClaim: vi.fn(), taskRenew: vi.fn(), taskSettle: vi.fn(),
+    };
+    const withoutTools = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    const withTools = await kernelOptions({ db, homePath: "/home/matrix/home", boardTools: boardTools as never });
+    expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__board_post");
+    expect(withTools.allowedTools).toEqual(expect.arrayContaining(["mcp__matrix-os-ipc__board_post", "mcp__matrix-os-ipc__board_task_claim"]));
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, undefined, boardTools);
   });
 });
