@@ -11,7 +11,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 - delegates Homebrew and recognized pnpm global installations to their package manager; and
 - preserves existing profiles, settings and sign-ins.
 
-The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. Existing npm-global packaging limitations remain tracked in ENG-300; this release does not claim to fix them.
+The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. `0.3.22` and earlier crash after `npm install -g` (ENG-300); the packaging fix described under Preflight reaches users with the next published version.
 
 ## Versioning
 
@@ -23,12 +23,21 @@ The updater changes only the invoking CLI. It does not update a Matrix computer 
 ## Preflight
 
 The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
-with `pnpm --config.node-linker=hoisted`, as the release workflows do: plain
-`npm pack` preserves `workspace:*`, and a registry-only dependency cannot
-resolve this private package. The dedicated CLI workflow publishes that exact
+with `node ./scripts/pack-cli.mjs --pack-destination <dir>` from
+`packages/sync-client`, as the release workflows do. It runs
+`pnpm pack --config.node-linker=hoisted` (plain `npm pack` preserves
+`workspace:*`, and a registry-only dependency cannot resolve this private
+package), then removes the dependency lists from the bundled contracts
+manifest. npm treats a bundled package's dependencies as already bundled when
+they sit beside it, which is the layout of `npm install -g` and Homebrew, and
+installs empty `zod` and `micromark` directories. The CLI declares the same
+packages at the same ranges, so npm installs them for the CLI and contracts
+resolves them from there; `pack-cli.mjs` fails if a contracts dependency is
+missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
+`pnpm publish` of this package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
-package-runner check; it verifies bundled contract files and installs the
-tarball outside the repo.
+package-runner check; it verifies bundled contract files and runs the
+tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
 
 Run these from the repo root before dispatching the release workflow:
 
