@@ -5,6 +5,7 @@
  * that arrives after another document was opened is ignored.
  */
 
+import { replyText } from "../../../_shared/office-ui/ai-access";
 import { MAX_PROMPT_CHARS, MAX_REPLY_CHARS, MESSAGES } from "./constants";
 import type { DocumentSession } from "../session/index";
 import type { AssistantDeps, AssistantFailure } from "./types";
@@ -35,15 +36,16 @@ export function documentToken(session: DocumentSession): number {
 export async function callModel(deps: AssistantDeps, prompt: string, token: number, signal?: AbortSignal): Promise<ModelReply> {
   if (signal?.aborted) return { ok: false, status: "cancelled" };
   if (prompt.length < 1 || prompt.length > promptBudget(deps)) return failure("instruction_too_long");
-  let text: string;
+  let text: string | null;
   try {
-    const reply = await deps.generate({ prompt });
-    text = typeof reply?.text === "string" ? reply.text : "";
+    // A refused call (no AI access for the app) resolves an error body without `text`: the assistant is unavailable.
+    text = replyText(await deps.generate({ prompt }));
   } catch (error) {
     (deps.log ?? defaultLog)("docs assistant: the model call failed", error);
     return failure("unavailable");
   }
   if (signal?.aborted) return { ok: false, status: "cancelled" };
+  if (text === null) return failure("unavailable");
   if (documentToken(deps.session) !== token || deps.session.document === null) return failure("document_changed");
   return { ok: true, text: text.length > MAX_REPLY_CHARS ? text.slice(0, MAX_REPLY_CHARS) : text };
 }

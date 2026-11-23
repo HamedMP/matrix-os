@@ -90,13 +90,15 @@ export interface AgentPanelSlotProps {
   assistant: SheetsAssistant;
   grid: SheetGridController;
   aiAvailable: boolean;
+  /** Why the assistant is off, shown when `aiAvailable` is false. */
+  unavailableMessage?: string;
   onClose: () => void;
 }
 
-export function AgentPanelSlot({ assistant, grid, aiAvailable, onClose }: AgentPanelSlotProps) {
+export function AgentPanelSlot({ assistant, grid, aiAvailable, unavailableMessage, onClose }: AgentPanelSlotProps) {
   return (
     <PanelBoundary name="SheetsAgentPanel" onClose={onClose}>
-      <SheetsAgentPanel assistant={assistant} getSelection={() => selectionFromGrid(grid)} beforeAction={() => grid.commitEdit()} onClose={onClose} aiAvailable={aiAvailable} />
+      <SheetsAgentPanel assistant={assistant} getSelection={() => selectionFromGrid(grid)} beforeAction={() => grid.commitEdit()} onClose={onClose} aiAvailable={aiAvailable} unavailableMessage={unavailableMessage} />
     </PanelBoundary>
   );
 }

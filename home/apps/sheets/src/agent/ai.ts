@@ -4,6 +4,7 @@
  * client-safe error.
  */
 
+import { replyText } from "../../../_shared/office-ui/ai-access";
 import { AI_TIMEOUT_MS, MAX_PROMPT_CHARS, MAX_REPLY_CHARS } from "./limits";
 
 /** A text model. `generate` resolves the reply text. */
@@ -43,8 +44,10 @@ export function bridgeSheetsAi(target: unknown = typeof window === "undefined" ?
   if (ai === undefined || ai === null || typeof ai.generate !== "function") return null;
   return {
     async generate(prompt) {
-      const reply = await ai.generate({ prompt });
-      return typeof reply?.text === "string" ? reply.text : "";
+      // A refused call (no AI access for Sheets) resolves an error body without `text`.
+      const text = replyText(await ai.generate({ prompt }));
+      if (text === null) throw new SheetsAgentError("unavailable");
+      return text;
     },
   };
 }

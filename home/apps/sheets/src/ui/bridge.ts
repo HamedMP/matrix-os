@@ -14,6 +14,8 @@ export interface SheetsBridge {
   writeData?: (key: string, value: unknown) => Promise<void>;
   /** The model behind the assistant; without it the assistant's model actions are off. */
   ai?: Pick<MatrixOSAi, "generate"> | null;
+  /** What the host lets this app do; `ai` is false until the owner allows AI for Sheets. */
+  capabilities?: () => Promise<{ ai?: unknown }>;
 }
 
 /** The injected bridge, or null when this window has no file access. */

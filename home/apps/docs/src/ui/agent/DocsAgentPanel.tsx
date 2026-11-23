@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { AgentPanel, ReviewBar } from "../../../../_shared/office-ui";
+import { AgentPanel, ReviewBar, aiAccessMessage, useAiAccess } from "../../../../_shared/office-ui";
+import type { AiAccessBridge } from "../../../../_shared/office-ui";
 import type { AgentResult } from "../../../../_shared/office-ui";
 import { MAX_INSTRUCTION_CHARS, QUICK_ACTIONS } from "../../agent/index";
 import type { AgentGenerate } from "../../agent/index";
@@ -41,6 +42,14 @@ const MODES: ReadonlyArray<{ id: AssistantMode; label: string; placeholder: stri
   { id: "review", label: "Review", placeholder: "Paste the instructions the draft must follow…" },
 ];
 
+function bridge(): AiAccessBridge | undefined {
+  return typeof window === "undefined" ? undefined : (window.MatrixOS as AiAccessBridge | undefined);
+}
+
+function logCheck(message: string, error: unknown): void {
+  console.warn(message, error instanceof Error ? error.name : error);
+}
+
 function bridgeGenerate(): AgentGenerate | null {
   const ai = typeof window === "undefined" ? undefined : window.MatrixOS?.ai;
   if (ai === undefined || typeof ai.generate !== "function") return null;
@@ -58,6 +67,8 @@ const noSelection = () => null;
 
 export function DocsAgentPanel({ session, editor, readOnly = false, generate }: DocsAgentPanelProps) {
   const model = useMemo(() => generate ?? bridgeGenerate(), [generate]);
+  // The host answers only apps the owner allowed: ask before offering the assistant.
+  const access = useAiAccess(bridge(), generate !== undefined ? "available" : undefined, logCheck);
   const editorRef = useRef(editor);
   const modelRef = useRef(model);
   useEffect(() => {
@@ -87,7 +98,7 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate }: 
   };
 
   const mode = MODES.find((entry) => entry.id === state.mode) ?? MODES[0]!;
-  const unavailable = model === null;
+  const unavailable = model === null || access !== "available";
   const results: AgentResult[] = state.cards.map((card) => toResult(card, store, jump, readOnly, state.busy));
   const review = state.review;
   const reviewChanges = review !== null ? store.pendingChanges(review.cardId) : [];
@@ -146,7 +157,7 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate }: 
         emptyHint={
           <p>
             {unavailable
-              ? "The assistant needs AI access, which is not available here."
+              ? aiAccessMessage(model === null ? "unavailable" : access, "Docs", "docs")
               : "Ask for a change and it arrives as tracked changes you accept or reject. Switch to Ask for questions about the document."}
           </p>
         }

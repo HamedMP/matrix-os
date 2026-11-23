@@ -4,7 +4,7 @@
  */
 import { FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AppFrame, useToast } from "../../../_shared/office-ui";
+import { type AiAccess, AppFrame, aiAccessMessage, useToast } from "../../../_shared/office-ui";
 import { SheetGrid, createSheetGridController } from "../grid";
 import type { SheetsAi } from "../agent";
 import type { SheetSession } from "../session/session";
@@ -27,6 +27,8 @@ export interface WorkbenchProps {
   tabLooks: TabLookStore;
   /** The model behind the assistant, or null when this host has none. */
   ai: SheetsAi | null;
+  /** Whether the owner allowed AI for Sheets. Default `available`. */
+  aiAccess?: AiAccess;
   onNew: () => void;
   onOpen: () => void;
   onClose: () => void;
@@ -56,7 +58,7 @@ function useTabLook(store: TabLookStore, path: string | null): [TabLook, (look: 
   return [look, change];
 }
 
-export function Workbench({ session, tabLooks, ai, onNew, onOpen, onClose }: WorkbenchProps) {
+export function Workbench({ session, tabLooks, ai, aiAccess = "available", onNew, onOpen, onClose }: WorkbenchProps) {
   const toast = useToast();
   const state = useSessionState(session);
   const controller = useMemo(() => createSheetGridController(session), [session]);
@@ -150,7 +152,13 @@ export function Workbench({ session, tabLooks, ai, onNew, onOpen, onClose }: Wor
         panel === null ? undefined : panel === "review" ? (
           <ReviewPanelSlot review={review} onClose={closePanel} />
         ) : (
-          <AgentPanelSlot assistant={assistant} grid={controller} aiAvailable={ai !== null} onClose={closePanel} />
+          <AgentPanelSlot
+            assistant={assistant}
+            grid={controller}
+            aiAvailable={ai !== null && aiAccess === "available"}
+            unavailableMessage={aiAccessMessage(ai === null ? "unavailable" : aiAccess, "Sheets", "sheets")}
+            onClose={closePanel}
+          />
         )
       }
       rightPanelLabel={panel === "review" ? "Review changes" : "Assistant"}

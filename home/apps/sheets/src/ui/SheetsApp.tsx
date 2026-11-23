@@ -5,7 +5,7 @@
  */
 import { Table } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AppFrame, Dialog, Spinner, useToast } from "../../../_shared/office-ui";
+import { AppFrame, Dialog, Spinner, useAiAccess, useToast } from "../../../_shared/office-ui";
 import type { OpenRequest } from "../../../_shared/matrix-os";
 import { bridgeSheetsAi } from "../agent";
 import { SessionHost, createRecentFiles, fileName, type SessionDeps } from "../session";
@@ -62,6 +62,8 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost }: SheetsAppPro
   const recents = useMemo(() => createRecentFiles(bridge.db ?? null, { log: logFailure }), [bridge]);
   const tabLooks = useMemo(() => new TabLookStore(bridge, logFailure), [bridge]);
   const ai = useMemo(() => bridgeSheetsAi({ MatrixOS: bridge }), [bridge]);
+  // The host answers only apps the owner allowed: ask before offering the assistant.
+  const aiAccess = useAiAccess(bridge, undefined, logFailure);
   const hostState = useHostState(host);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -171,6 +173,7 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost }: SheetsAppPro
           session={session}
           tabLooks={tabLooks}
           ai={ai}
+          aiAccess={aiAccess}
           onNew={() => void run({ kind: "new" })}
           onOpen={() => setPickerOpen(true)}
           onClose={() => void run({ kind: "close" })}

@@ -34,13 +34,15 @@ export interface SheetsAgentPanelProps {
   onClose?: () => void;
   /** False when this host has no model: AI actions are off, the checks and formatting still work. */
   aiAvailable?: boolean;
+  /** Why the assistant is off, shown in the panel when `aiAvailable` is false. */
+  unavailableMessage?: string;
   className?: string;
 }
 
 const SUGGESTIONS = ["Clean and normalise the selected column", "Build a table of monthly costs here", "Make the total revenue a formula"];
 
 /** The assistant side panel: quick actions, the conversation and result cards. */
-export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClose, aiAvailable = true, className }: SheetsAgentPanelProps) {
+export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClose, aiAvailable = true, unavailableMessage, className }: SheetsAgentPanelProps) {
   const state = useAssistantState(assistant);
   const [hint, setHint] = useState<string | null>(null);
   const results = useMemo(() => state.results.map((result) => toAgentResult(result, assistant)), [state.results, assistant]);
@@ -90,7 +92,13 @@ export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClos
         suggestions={aiAvailable ? SUGGESTIONS : []}
         disabled={!aiAvailable}
         placeholder={aiAvailable ? "Ask for a change, a table, or an explanation…" : "The assistant is not available here."}
-        emptyHint={<p>Changes the assistant makes are proposals: they appear in review with old and new values until you accept or reject them.</p>}
+        emptyHint={
+          <p>
+            {aiAvailable
+              ? "Changes the assistant makes are proposals: they appear in review with old and new values until you accept or reject them."
+              : (unavailableMessage ?? "The assistant is not available here. The checks and formatting above still work.")}
+          </p>
+        }
         onSubmit={(prompt) => withSelection((selection) => void assistant.ask(prompt, selection))()}
       />
     </div>
