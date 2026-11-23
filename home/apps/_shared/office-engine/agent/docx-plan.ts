@@ -227,6 +227,17 @@ function trial(document: DocxDocument, ordered: readonly Planned[], rejected: Re
   const accepted: Planned[] = [];
   const snapshot = document.snapshot();
   try {
+    try {
+      // The usual case: everything applies. One call is all or nothing, so a failure leaves the document as it was.
+      document.applyOps(
+        ordered.map((item) => item.op),
+        TRIAL,
+      );
+      return [...ordered];
+    } catch (error) {
+      if (!isOfficeError(error)) throw error;
+    }
+    // Something was refused: find out which operations by applying them one at a time.
     for (const item of ordered) {
       try {
         document.applyOps([item.op], TRIAL);

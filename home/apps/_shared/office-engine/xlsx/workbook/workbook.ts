@@ -366,7 +366,7 @@ export class WorkbookHandle implements Workbook {
   #resolve(ids: readonly string[] | "all", accept: boolean): ResolveChangesResult {
     const journal = this.#state.journal;
     if (journal !== null) return accept ? journal.acceptChanges(ids) : journal.rejectChanges(ids);
-    if (ids === "all" || ids.length === 0) return { resolvedIds: [], restored: [] };
+    if (ids === "all" || ids.length === 0) return { resolvedIds: [], restored: [], stale: [] };
     throw new OfficeError("stale_reference", "no such change");
   }
 

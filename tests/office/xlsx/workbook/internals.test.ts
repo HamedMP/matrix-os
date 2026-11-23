@@ -15,7 +15,7 @@ import { at, codeOf, err, loadFixture, sheetId, valueAt } from "./helpers.js";
 /** A journal that records calls, with one pending change on Data!B2. */
 function fakeJournal(sheet: string, calls: string[]): WorkbookJournal {
   const change = { id: "c1", sheet, row: 1, col: 1 } as CellChange;
-  const resolved = (ids: readonly string[] | "all"): ResolveChangesResult => ({ resolvedIds: ids === "all" ? ["c1"] : [...ids], restored: [] });
+  const resolved = (ids: readonly string[] | "all"): ResolveChangesResult => ({ resolvedIds: ids === "all" ? ["c1"] : [...ids], restored: [], stale: [] });
   return {
     beginProposal: (options) => (calls.push(`begin:${options.label}`), "p1"),
     endProposal: () => void calls.push("end"),
@@ -40,8 +40,8 @@ describe("a workbook without a journal", () => {
     workbook.endProposal();
     expect(workbook.listProposals()).toEqual([]);
     expect(workbook.listChanges()).toEqual([]);
-    expect(workbook.acceptChanges("all")).toEqual({ resolvedIds: [], restored: [] });
-    expect(workbook.rejectChanges([])).toEqual({ resolvedIds: [], restored: [] });
+    expect(workbook.acceptChanges("all")).toEqual({ resolvedIds: [], restored: [], stale: [] });
+    expect(workbook.rejectChanges([])).toEqual({ resolvedIds: [], restored: [], stale: [] });
     expect(codeOf(() => workbook.acceptChanges(["c9"]))).toBe("stale_reference");
     expect(codeOf(() => workbook.rejectChanges(["c9"]))).toBe("stale_reference");
   });

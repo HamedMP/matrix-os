@@ -60,11 +60,8 @@ export interface JournalChange extends CellChange {
   stale: boolean;
 }
 
-/** What `acceptChanges` and `rejectChanges` return. */
-export interface JournalResolveResult extends ResolveChangesResult {
-  /** Changes that were asked for but left pending because they are stale. Always empty for `acceptChanges`. */
-  stale: string[];
-}
+/** What `acceptChanges` and `rejectChanges` return: the contract's result, whose `stale` list the journal fills. */
+export type JournalResolveResult = ResolveChangesResult;
 
 export type JournalWarningCode =
   /** The journal part is not JSON, has the wrong shape or breaks the journal's rules. It is ignored. */

@@ -16,7 +16,7 @@ export function loadExpected<T>(name: string): T {
 }
 
 /** Stored ZIP records by entry name, with the compressed bytes as base64 for readable diffs. */
-export function storedRecords(bytes: Uint8Array): Map<string, ZipRecord & { compressed: unknown }> {
+export function storedRecords(bytes: Uint8Array): Map<string, Omit<ZipRecord, "compressed"> & { compressed: string }> {
   return new Map(
     parseZip(bytes).records.map((record) => [
       record.name,

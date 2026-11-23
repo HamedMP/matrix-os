@@ -169,7 +169,7 @@ describe("unreadable and stale journals", () => {
     getWorkbookInternals(workbook).writeRawCell(sheet, a1("A1"), { value: 77, formula: null, styleId: 0 });
     const list = changes(workbook);
     expect(list.map((change) => change.stale)).toEqual([true, false]);
-    const result = workbook.rejectChanges("all") as { resolvedIds: string[]; stale: string[] };
+    const result = workbook.rejectChanges("all");
     expect(result.resolvedIds).toEqual([list[1]!.id]);
     expect(result.stale).toEqual([list[0]!.id]);
     expect(valueAt(workbook, "Data", "A1")).toBe(77);
@@ -186,7 +186,7 @@ describe("unreadable and stale journals", () => {
     getWorkbookInternals(workbook).writeRawCell(sheet, a1("B1"), { value: "typed", formula: null, styleId: 0 });
     const [change] = changes(workbook);
     expect(change!.stale).toBe(true);
-    const result = workbook.rejectChanges("all") as { resolvedIds: string[]; stale: string[] };
+    const result = workbook.rejectChanges("all");
     expect(result.stale).toEqual([change!.id]);
     expect(valueAt(workbook, "Data", "B1")).toBe("typed");
   });

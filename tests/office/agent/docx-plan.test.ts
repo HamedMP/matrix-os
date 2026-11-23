@@ -238,6 +238,19 @@ describe("paragraphs and comments", () => {
     expect(finalText(doc)).toBe("The Provider shall use reasonable endeavours.\nSecond paragraph.\n\n");
   });
 
+  it("drops only the operation the document refuses and keeps the rest of the plan", () => {
+    const { doc, ids } = make("First paragraph.", "Second paragraph.", "Third paragraph.");
+    // Not from the parser, which rejects control characters: the document itself refuses this text.
+    const plan = planAndApply(doc, [
+      { op: "replaceText", blockId: ids[2] as string, find: "Third", replace: "Last" },
+      { op: "insertParagraph", blockId: ids[1] as string, text: "bell \u0007 character" },
+      { op: "replaceText", blockId: ids[0] as string, find: "First", replace: "Opening" },
+    ]);
+    expect(plan.rejected.map((entry) => [entry.index, entry.code])).toEqual([[1, "invalid_operation"]]);
+    expect(plan.opEditIndexes).toEqual([0, 2]);
+    expect(finalText(doc)).toBe("Opening paragraph.\nSecond paragraph.\nLast paragraph.\n");
+  });
+
   it("edits text inside a table cell", () => {
     const doc = createDocxFromMarkdown("| Item | Price |\n| --- | --- |\n| Tea | 3 pounds |\n");
     const line = describeDocx(doc, { maxChars: 10_000 }).text.split("\n").find((entry) => entry.endsWith("3 pounds")) ?? "";

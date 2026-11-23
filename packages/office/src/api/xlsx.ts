@@ -177,7 +177,11 @@ export interface Workbook {
   listChanges(): CellChange[];
   /** Keeps the new content and removes the changes from the journal. An unknown id throws `stale_reference`. */
   acceptChanges(ids: readonly string[] | "all"): ResolveChangesResult;
-  /** Restores the old value, formula and style and removes the changes from the journal. */
+  /**
+   * Restores the old value, formula and style and removes the changes from
+   * the journal. A change that went stale is left pending and named in
+   * `ResolveChangesResult.stale`.
+   */
   rejectChanges(ids: readonly string[] | "all"): ResolveChangesResult;
 
   /** Serialises the workbook, with its change journal. The handle stays usable. */

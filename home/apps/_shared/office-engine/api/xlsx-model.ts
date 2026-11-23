@@ -233,6 +233,13 @@ export interface ResolveChangesResult {
   resolvedIds: string[];
   /** Cells whose content was restored by a rejection. Call `recalc` afterwards. */
   restored: SheetCellRef[];
+  /**
+   * Changes that were asked for but stay pending because the workbook no
+   * longer holds their recorded new content (it was changed without the
+   * journal seeing it), so a rejection cannot safely restore the old one.
+   * Accepting such a change forgets it. Always empty for `acceptChanges`.
+   */
+  stale: string[];
 }
 
 export interface CsvParseOptions {

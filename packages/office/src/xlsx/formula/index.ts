@@ -23,6 +23,14 @@
  *   {@link registerB}) that {@link createFunctionRegistry} loads.
  * - `coerce.ts`: conversion between value types, comparison, broadcasting.
  *
+ * The workbook (`../workbook/`) calculates with {@link evaluate} and the
+ * registry of {@link createFunctionRegistry}. It keeps a dependency graph of
+ * its own over its cell records (`../workbook/calc-graph.ts`) and rewrites
+ * references on formula text (`../workbook/refs-*.ts`), so that a formula it
+ * cannot parse still follows its rows and columns. {@link DependencyGraph}
+ * and the tree rewriting helpers here serve callers that hold parsed
+ * formulas outside a workbook.
+ *
  * Beyond the contract, {@link parseFormulaExtended} accepts the reference
  * operators (range between any references, intersection, union) and
  * references across a span of sheets, and every helper here accepts the
