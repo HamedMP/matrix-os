@@ -66,12 +66,12 @@ interface Piece {
   href: string | null;
 }
 
-function pieceOf(run: InlineRun, context: MarkdownContext): Piece | string {
+function pieceOf(run: InlineRun, context: MarkdownContext, plainWeight: boolean): Piece | string {
   if (run.footnoteRef !== null) return `[^${noteLabel(run.footnoteRef.label, run.footnoteRef.storyId, context)}]`;
   const removal = run.revision !== null && (run.revision.kind === "delete" || run.revision.kind === "moveFrom");
   return {
     text: run.text.replace(new RegExp(OBJECT_CHAR, "g"), ""),
-    bold: run.bold,
+    bold: run.bold && !plainWeight,
     italic: run.italic,
     strike: run.strike || (context.view === "markup" && removal),
     code: isMonospace(run.fontFamily),
@@ -108,8 +108,8 @@ function sameFormat(a: Piece, b: Piece): boolean {
   return a.bold === b.bold && a.italic === b.italic && a.strike === b.strike && a.code === b.code && a.href === b.href;
 }
 
-/** The inline Markdown of runs. */
-function inlineMarkdown(runs: readonly InlineRun[], context: MarkdownContext): string {
+/** The inline Markdown of runs; `plainWeight` drops bold, which a heading style implies. */
+function inlineMarkdown(runs: readonly InlineRun[], context: MarkdownContext, plainWeight = false): string {
   let out = "";
   let current: Piece | null = null;
   const flush = (): void => {
@@ -117,7 +117,7 @@ function inlineMarkdown(runs: readonly InlineRun[], context: MarkdownContext): s
     current = null;
   };
   for (const run of runs) {
-    const piece = pieceOf(run, context);
+    const piece = pieceOf(run, context, plainWeight);
     if (typeof piece === "string") {
       flush();
       out += piece;
@@ -141,7 +141,9 @@ function codeBlock(paragraph: FlatParagraph): string {
 
 function tableMarkdown(table: FlatTable, context: MarkdownContext): string {
   const rows = table.rows.map((row) =>
-    row.cells.flatMap(({ cell, blocks }) => {
+    row.row.cells.flatMap((cell) => {
+      // A cell hidden by a vertical merge keeps its column, empty.
+      const blocks = row.cells.find((entry) => entry.cell === cell)?.blocks ?? [];
       const text = blocks
         .map((block) => (block.type === "paragraph" ? inlineMarkdown(block.runs, context) : ""))
         .filter((part) => part !== "")
@@ -153,8 +155,7 @@ function tableMarkdown(table: FlatTable, context: MarkdownContext): string {
   const columns = Math.max(1, ...rows.map((row) => row.length));
   const firstRow = table.rows[0];
   const alignOf = (column: number): ParagraphAlignment | null => {
-    const cell = firstRow?.cells[column];
-    const first = cell?.blocks[0];
+    const first = firstRow?.cells[column]?.blocks[0];
     return first !== undefined && first.type === "paragraph" ? first.block.style.alignment : null;
   };
   const delimiter = Array.from({ length: columns }, (_, column) => {
@@ -184,10 +185,12 @@ function blocksMarkdown(blocks: readonly FlatBlock[], context: MarkdownContext):
     } else {
       const style = block.block.style;
       const numbering = block.block.numbering;
-      const inline = inlineMarkdown(block.runs, context);
+      const heading = style.headingLevel > 0 || style.styleId === "Title";
+      // Markdown cannot show leading or trailing spaces of a paragraph, and four would start a code block.
+      const inline = inlineMarkdown(block.runs, context, heading).replace(/^ +/, "").replace(/ +$/, "");
       if (style.styleId === "CodeBlock") {
         text = codeBlock(block);
-      } else if (style.headingLevel > 0 || style.styleId === "Title") {
+      } else if (heading) {
         text = `${"#".repeat(Math.min(Math.max(style.headingLevel, 1), 6))} ${inline.replace(/\\\n/g, " ")}`.trimEnd();
       } else if (numbering !== null) {
         isList = true;
