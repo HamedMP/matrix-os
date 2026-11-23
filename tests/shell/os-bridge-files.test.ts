@@ -40,6 +40,8 @@ type Reply = (data: unknown) => void;
 function mountBridge(appName: string, gateway: (bound: { url: string; init: RequestInit }) => { status: number; body: unknown } | null) {
   const frames: Frame[] = [];
   const sentToGateway: Array<{ url: string; init: RequestInit }> = [];
+  /** What the parent rejected, as AppViewer does: the app only sees a generic error. */
+  const hostErrors: unknown[] = [];
   const kv = new Map<string, string>();
   const listeners: Array<(event: { data: unknown; source?: unknown }) => void> = [];
   class Channel {
@@ -66,7 +68,8 @@ function mountBridge(appName: string, gateway: (bound: { url: string; init: Requ
             const response = new Response(JSON.stringify(answer.body), { status: answer.status });
             const body = await readAppBridgeResponse(response, bound);
             port.reply({ ok: response.ok, status: response.status, body: response.ok ? body : null });
-          } catch {
+          } catch (error: unknown) {
+            hostErrors.push(error);
             port.reply({ ok: false, error: "App request unavailable" });
           }
         })();
@@ -78,7 +81,7 @@ function mountBridge(appName: string, gateway: (bound: { url: string; init: Requ
     MessageChannel: Channel, setTimeout, clearTimeout, console, Uint8Array, atob, btoa, Date, Error, Object, JSON, Promise,
   });
   const dataChange = (key: string, app: string) => listeners.forEach((listener) => listener({ data: { type: "os:data-change", payload: { key, app } } }));
-  return { files: window.MatrixOS!.files, frames, sentToGateway, kv, dataChange };
+  return { files: window.MatrixOS!.files, frames, sentToGateway, hostErrors, kv, dataChange };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<FileError> {

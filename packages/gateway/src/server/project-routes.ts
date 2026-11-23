@@ -40,6 +40,8 @@ interface ProjectFileOptions {
   executionRoots: ChatExecutionRootResolver | null;
   projects: Pick<ProjectManager, "listManagedProjects">;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  /** The document service the kernel tools use; mounted as-is so both share one per-path lock. */
+  officeDocumentRoutes?: Hono;
 }
 
 export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFileOptions): void {
@@ -68,7 +70,7 @@ export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFile
     } : {}),
   });
   registerProjectAgentContextRoute(app, { executionRoots });
-  registerOfficeDocumentRoutes(app, { homePath });
+  registerOfficeDocumentRoutes(app, options.officeDocumentRoutes ?? { homePath });
 }
 
 export async function registerGatewayProjectDriveRoutes(

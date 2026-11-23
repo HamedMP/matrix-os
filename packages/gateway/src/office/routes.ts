@@ -93,7 +93,12 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
   return routes;
 }
 
-/** Mounts the document service at `/api/office`. The service is built here, once, at registration. */
-export function registerOfficeDocumentRoutes(app: Hono, options: OfficeDocumentRouteOptions): void {
-  app.route(OFFICE_DOCUMENTS_BASE_PATH, createOfficeDocumentRoutes(options));
+/**
+ * Mounts the document service at `/api/office`. Pass the instance the kernel
+ * document tools already use, so HTTP callers and agent tools share one
+ * service (one per-path lock, one in-flight cap); with options, a service is
+ * built here, once, at registration.
+ */
+export function registerOfficeDocumentRoutes(app: Hono, routesOrOptions: Hono | OfficeDocumentRouteOptions): void {
+  app.route(OFFICE_DOCUMENTS_BASE_PATH, routesOrOptions instanceof Hono ? routesOrOptions : createOfficeDocumentRoutes(routesOrOptions));
 }

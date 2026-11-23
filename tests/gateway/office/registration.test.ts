@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { DocumentDescribeReplySchema } from "../../../packages/contracts/src/office-documents";
-import { registerOfficeDocumentRoutes } from "../../../packages/gateway/src/office/routes";
+import { createOfficeDocumentRoutes, registerOfficeDocumentRoutes } from "../../../packages/gateway/src/office/routes";
 import { FIXTURES } from "./helpers";
 
 let home: string | null = null;
@@ -22,6 +22,23 @@ describe("registerOfficeDocumentRoutes", () => {
     });
     expect(response.status).toBe(200);
     expect(DocumentDescribeReplySchema.parse(await response.json()).blockIds).toContain("b1");
+  });
+
+  it("mounts a given service instance, so agent tools and HTTP callers share one per-path lock", async () => {
+    home = await mkdtemp(join(tmpdir(), "office-register-shared-"));
+    await mkdir(join(home, "docs"));
+    await copyFile(join(FIXTURES, "basic.docx"), join(home, "docs", "basic.docx"));
+    const shared = createOfficeDocumentRoutes({ homePath: home });
+    const app = new Hono();
+    registerOfficeDocumentRoutes(app, shared);
+    const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: "docs/basic.docx" }) };
+    const viaHttp = await app.request("/api/office/documents/describe", init);
+    const viaTools = await shared.request("/documents/describe", init);
+    expect(viaHttp.status).toBe(200);
+    expect(viaTools.status).toBe(200);
+    const sharedHandlers = new Set(shared.routes.map((route) => route.handler));
+    expect(app.routes.length).toBeGreaterThan(0);
+    expect(app.routes.every((route) => sharedHandlers.has(route.handler))).toBe(true);
   });
 
   it("does not answer GET", async () => {

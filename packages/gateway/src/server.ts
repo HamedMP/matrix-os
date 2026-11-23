@@ -247,7 +247,7 @@ import type { ChatRepository } from "./chat/repository.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 import type { MessagingKyselyRepository } from "./messages/repository.js";
 import { wsConnectionsActive } from "./metrics.js";
-import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
+import { createTrustedOsViewAgentTools } from "./os-view-state/trusted-agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
@@ -910,21 +910,11 @@ export async function createGateway(config: GatewayConfig) {
   }
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
-  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
-  const osViewTools = osViewStateRepository
-    && trustedOsViewOwnerId
-    && trustedOsViewOwnerId.length <= 160
-    ? createOsViewAgentTools({
-        repository: osViewStateRepository,
-        ownerId: trustedOsViewOwnerId,
-        homePath,
-        onChanged: (state) => broadcastToOwner(trustedOsViewOwnerId, {
-          type: "os-view:changed",
-          revision: state.revision,
-          updatedAt: state.updatedAt,
-        }),
-      })
-    : undefined;
+  const osViewTools = createTrustedOsViewAgentTools({
+    repository: osViewStateRepository, ownerId: process.env.MATRIX_USER_ID, homePath, broadcastToOwner,
+  });
+  // One document service for the kernel tools and the `/api/office` routes: one per-path lock.
+  const officeDocumentRoutes = createOfficeDocumentRoutes({ homePath });
   const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -937,7 +927,7 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
     terminalTools: terminalAgents.kernelTools,
-    documentTools: createOfficeDocumentRoutes({ homePath }),
+    documentTools: officeDocumentRoutes,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1382,6 +1372,7 @@ export async function createGateway(config: GatewayConfig) {
   registerGatewayProjectFileRoutes(app, {
     homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
     projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
+    officeDocumentRoutes,
   });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });

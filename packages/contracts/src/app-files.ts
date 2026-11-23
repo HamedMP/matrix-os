@@ -74,8 +74,10 @@ export const AppFileDirSchema = z.union([z.literal(APP_FILE_HOME_DIR), AppFilePa
  */
 export const AppFileVersionSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/);
 export function appFileVersion(size: number | bigint, mtimeNs: bigint): string {
-  const bytes = typeof size === "bigint" ? size : Number.isSafeInteger(size) ? BigInt(size) : -1n;
-  if (bytes < 0n || mtimeNs < 0n) throw new RangeError("Invalid file version input");
+  // BigInt() calls, not `0n` literals: the shell compiles this module for ES2017.
+  const zero = BigInt(0);
+  const bytes = typeof size === "bigint" ? size : Number.isSafeInteger(size) ? BigInt(size) : BigInt(-1);
+  if (bytes < zero || mtimeNs < zero) throw new RangeError("Invalid file version input");
   return `v1.${bytes.toString(36)}.${mtimeNs.toString(36)}`;
 }
 
