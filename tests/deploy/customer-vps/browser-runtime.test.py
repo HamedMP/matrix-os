@@ -927,6 +927,11 @@ class BrowserRuntimeTest(unittest.TestCase):
             self.assertNotIn('User=matrix\n', files[name], name)
             self.assertNotIn('/home/matrix', files[name], name)
         self.assertIn('--user-data-dir=/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome', files['matrix-browser-lab-chrome.service'])
+        # The supervisor's native helpers accept that profile and open that home.
+        supervisor = files['matrix-browser-lab.service']
+        self.assertIn('Environment=MATRIX_BROWSER_CHROME_PROFILE=/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_HOME=/var/lib/matrix-browser\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_WORKDIR=/var/lib/matrix-browser\n', supervisor)
 
     def test_browser_account_with_matrix_or_docker_access_is_refused(self):
         self.runtime.prepare()
@@ -973,6 +978,34 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertEqual(by_path[self.runtime.prefix / 'viewer.passwd'], (0o640, 4242))
         # host.env keeps the matrix group, which the browser account is not in.
         self.assertEqual(by_path[self.env], (0o640, self.runtime.gid))
+
+    def test_existing_viewer_password_moves_to_the_browser_account_group_unchanged(self):
+        # Found in review: an existing install keeps its credential pair, so the
+        # saved viewer.passwd stayed root:matrix and the dedicated account's Xvnc
+        # could not read it.
+        self.runtime.prepare()
+        owner, getgrnam, group = self.dedicated_account()
+        password_file = self.runtime.prefix / 'viewer.passwd'
+        password_file.write_bytes(b'saved-hash')
+        password_file.chmod(0o640)
+        self.env.write_text(self.env.read_text() + 'MATRIX_BROWSER_LAB_VIEWER_AUTH="Basic c2F2ZWQ="\n')
+        before = self.env.read_text()
+        with patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), patch.object(module.os, 'getuid', return_value=0), \
+             patch.object(module.os, 'fchown') as fchown, patch.object(self.runtime, 'run') as run:
+            self.runtime.credentials()
+        run.assert_not_called()
+        self.assertEqual(fchown.call_args.args[1:], (-1, 4242))
+        self.assertEqual(password_file.read_bytes(), b'saved-hash')
+        self.assertEqual(self.env.read_text(), before)
+        password_file.unlink()
+        password_file.symlink_to(self.root / 'opt/matrix/env/host.env')
+        with patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), patch.object(module.os, 'getuid', return_value=0), \
+             patch.object(module.os, 'fchown') as fchown:
+            with self.assertRaises((ValueError, OSError)):
+                self.runtime.credentials()
+        fchown.assert_not_called()
 
 
 if __name__ == '__main__':

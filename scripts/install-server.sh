@@ -657,6 +657,29 @@ map "$http_upgrade|$http_origin|$http_host" $matrix_ws_origin_ok {
 EOF
 }
 
+# Private modes: Tailscale Serve reaches nginx over a unix socket in a root-only
+# directory (tailscaled runs as root), so only it can present a tailnet identity.
+# Any other local process can still reach the loopback listener, so a request
+# there that carries Tailscale-User-Login is forged and refused before auth.
+TAILNET_SOCKET=/run/matrix-nginx/tailnet.sock
+nginx_private_identity_map() {
+  cat <<'EOF'
+map "$remote_addr|$http_tailscale_user_login" $matrix_forged_identity {
+  default 0;
+  "~^unix:\|" 0;
+  "~\|.+$" 1;
+}
+
+EOF
+}
+
+# prepare_tailnet_socket_dir: the root-only directory holding nginx's Tailscale
+# Serve socket, recreated on every boot.
+prepare_tailnet_socket_dir() {
+  install -d -o root -g root -m 0700 /run/matrix-nginx
+  printf 'd /run/matrix-nginx 0700 root root -\n' >/etc/tmpfiles.d/matrix-nginx.conf
+}
+
 # render_nginx_site <access> <server_name> <htpasswd_file> <browser on|off>
 render_nginx_site() {
   local access server_name htpasswd_file browser listen auth_lines exempt
@@ -671,11 +694,13 @@ render_nginx_site() {
   if (\$matrix_ws_origin_ok = 0) { return 403; }"
     exempt="auth_basic off;"
   else
-    listen="listen 127.0.0.1:80 default_server;"
-    auth_lines="  auth_request /_matrix_private_network_identity;"
+    listen="listen 127.0.0.1:80 default_server;
+  listen unix:${TAILNET_SOCKET};"
+    auth_lines="  if (\$matrix_forged_identity) { return 403; }
+  auth_request /_matrix_private_network_identity;"
     exempt="auth_request off;"
   fi
-  [ "$access" != "public" ] || nginx_public_origin_map
+  if [ "$access" = "public" ]; then nginx_public_origin_map; else nginx_private_identity_map; fi
   cat <<EOF
 server {
   ${listen}
@@ -1019,16 +1044,16 @@ record_tailscale_owner() {
 
 configure_tailscale_serve() {
   if [ "$OPT_ACCESS" = "headscale" ]; then
-    timeout 60 tailscale serve --bg --yes --http=80 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1 \
-      || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 http://127.0.0.1:80"; return 0; }
+    timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
   else
-    if ! timeout 60 tailscale serve --bg --yes --https=443 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    if ! timeout 60 tailscale serve --bg --yes --https=443 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1; then
       # Certificates are off for this tailnet. Tailnet traffic is already
       # encrypted end to end, so serve plain HTTP there instead of nothing.
-      timeout 60 tailscale serve --bg --yes --http=80 http://127.0.0.1:80 >>"$MATRIX_INSTALL_LOG" 2>&1 \
-        || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 http://127.0.0.1:80"; return 0; }
+      timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
+        || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
       MATRIX_TAILNET_URL="${MATRIX_TAILNET_URL/#https:/http:}"
-      warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 http://127.0.0.1:80"
+      warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 unix:${TAILNET_SOCKET}"
     fi
   fi
   ok "Matrix is served on your private network only"
@@ -1078,6 +1103,28 @@ stop_browser_use() {
 # the docker group (root), so a compromised browser reaches no owner secret. It
 # gets its own lingering user manager (the desktop's Files/Terminal buttons need
 # its user bus) and a private home; it never gains access to the owner's home.
+# migrate_browser_profile <account> <home>: an install whose browser ran as matrix
+# keeps its saved logins and tabs. The profile moves (never copies) into the
+# account's home once; links are never followed when giving it to the account.
+migrate_browser_profile() {
+  local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}" old new group
+  new="${home}/.local/share/matrix-browser-lab/chrome"
+  old="${root}/.local/share/matrix-browser-lab/chrome"
+  [ ! -e "$new" ] && [ ! -L "$new" ] && [ -d "$old" ] || return 0
+  old="$(readlink -f "$old")"
+  case "$old" in
+    "$root"/*) ;;
+    *) warn "the saved browser profile is outside ${root}; starting a new one"; return 0 ;;
+  esac
+  [ "$(stat -c %U "$old")" = "$user" ] || { warn "the saved browser profile is not owned by ${user}; starting a new one"; return 0; }
+  group="$(id -gn "$account")"
+  systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+  install -d -o "$account" -g "$group" -m 0700 "${home}/.local" "${home}/.local/share" "${home}/.local/share/matrix-browser-lab"
+  run_required "moving the saved browser profile" mv -T "$old" "$new"
+  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "$new"
+  ok "Kept your saved browser sessions"
+}
+
 prepare_browser_account() {
   local home="${MATRIX_BROWSER_ACCOUNT_HOME:-/var/lib/matrix-browser}" account="$MATRIX_BROWSER_ACCOUNT" group primary
   if ! id "$account" >/dev/null 2>&1; then
@@ -1093,6 +1140,7 @@ prepare_browser_account() {
     matrix | docker) fail "the browser account ${account} has primary group ${primary}; give it its own group" ;;
   esac
   [ -d "$home" ] || install -d -o "$account" -g "$primary" -m 0700 "$home"
+  migrate_browser_profile "$account" "$home"
   run_required "keeping the browser account's session" loginctl enable-linger "$account"
   run_required "starting the browser account's session" systemctl start "user@$(id -u "$account").service"
 }
@@ -1587,6 +1635,7 @@ configure_nginx() {
     chmod 0640 "$htpasswd_file"
     chown root:www-data "$htpasswd_file"
   fi
+  [ "$OPT_ACCESS" = "public" ] || prepare_tailnet_socket_dir
   printf 'proxy_set_header Authorization "Bearer %s";\n' "$auth_token" >/opt/matrix/env/gateway-auth-token.conf
   chmod 0600 /opt/matrix/env/gateway-auth-token.conf
   chown root:root /opt/matrix/env/gateway-auth-token.conf
@@ -1643,7 +1692,8 @@ wait_private_identity_ok() {
   login="$3"
   log_hint="$4"
   for _ in $(seq 1 30); do
-    code="$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 5 -H "Tailscale-User-Login: ${login}" "$url" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    # Through the Tailscale Serve socket, the only place nginx accepts an identity.
+    code="$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 5 --unix-socket "$TAILNET_SOCKET" -H "Tailscale-User-Login: ${login}" "$url" 2>>"$MATRIX_INSTALL_LOG" || true)"
     if [ "$code" = "200" ]; then
       ok "${description} is reachable"
       return 0
@@ -1685,6 +1735,9 @@ verify_services() {
     status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1/" || true)"
     [ "$status" = "403" ] || fail "nginx private-network identity check returned HTTP ${status}, expected 403 without an owner identity"
     ok "nginx refuses requests without your private-network identity"
+    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -H "Tailscale-User-Login: ${MATRIX_TAILSCALE_OWNER_LOGIN:-owner@example.com}" "http://127.0.0.1/" || true)"
+    [ "$status" = "403" ] || fail "nginx accepted a private-network identity on its loopback listener (HTTP ${status}); only Tailscale Serve may present one"
+    ok "nginx accepts your private-network identity only through Tailscale Serve"
     if [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ]; then
       wait_private_identity_ok "nginx shell" "http://127.0.0.1/" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
       wait_private_identity_ok "nginx gateway API" "http://127.0.0.1/api/identity" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"

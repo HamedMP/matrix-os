@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createNativeWindows, launchNativeApp, parseWindowProperties } from '../../scripts/spikes/browser-vps/native-windows.mjs';
+import { createNativeWindows, launchNativeApp, nativePaths, parseWindowProperties } from '../../scripts/spikes/browser-vps/native-windows.mjs';
 
 const props = 'WM_CLASS(STRING) = "google-chrome", "Google-chrome"\n_NET_WM_PID(CARDINAL) = 123\n_NET_WM_STATE(ATOM) = _NET_WM_STATE_HIDDEN\n_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_NORMAL';
 function rig(overrides: any = {}) {
@@ -183,5 +183,24 @@ describe('owner-only native browser windows', () => {
     await service.control({ action: 'open-files' });
     expect(launch.mock.calls[0][2].env).toEqual({ HOME: '/home/matrix', PATH: '/usr/local/bin:/usr/bin:/bin', DISPLAY: ':7', LANG: 'C.UTF-8', XDG_RUNTIME_DIR: '/run/user/996', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/996/bus' });
     expect(() => createNativeWindows({ ownerUid: 0 })).toThrow();
+  });
+});
+
+// Found in review: with a dedicated Browser account (self-host), Chrome runs
+// with that account's profile and the desktop's Files/Terminal open its home,
+// but the helper still accepted only the matrix account's fixed paths.
+describe('native paths for the Browser account', () => {
+  it('keeps the matrix account paths by default', () => {
+    expect(nativePaths({})).toEqual({
+      chromeProfile: '/home/matrix/.local/share/matrix-browser-lab/chrome', accountHome: '/home/matrix', workdir: '/home/matrix/home',
+    });
+  });
+
+  it('takes the dedicated account paths its unit sets, and refuses unsafe ones', () => {
+    const env = { MATRIX_BROWSER_CHROME_PROFILE: '/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome', MATRIX_BROWSER_HOME: '/var/lib/matrix-browser', MATRIX_BROWSER_WORKDIR: '/var/lib/matrix-browser' };
+    expect(nativePaths(env)).toEqual({ chromeProfile: env.MATRIX_BROWSER_CHROME_PROFILE, accountHome: '/var/lib/matrix-browser', workdir: '/var/lib/matrix-browser' });
+    for (const bad of ['relative/path', '/var/lib/../etc', '/tmp/a b', '/x\n/y', '']) {
+      expect(() => nativePaths({ ...env, MATRIX_BROWSER_HOME: bad })).toThrow('Invalid Browser path');
+    }
   });
 });

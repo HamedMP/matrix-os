@@ -360,6 +360,35 @@ prepare_scope_runtime_roots "${home}" alice`,
     expect(site).toContain("location = /apps/browser-lab/viewer/websockify {");
   });
 
+  // Found in review (security): any local account could connect to nginx on
+  // 127.0.0.1:80, send the owner's Tailscale-User-Login itself, and get the
+  // runtime bearer nginx adds, including the browser account kept away from
+  // owner credentials. Tailscale Serve now reaches nginx over a unix socket only
+  // root can open, and the loopback listener refuses any identity header.
+  it("accepts a tailnet identity only over the root-only Tailscale Serve socket", () => {
+    const site = run(`render_nginx_site tailscale _ /etc/nginx/matrix-self-host.htpasswd off`).stdout;
+    expect(site).toContain("listen 127.0.0.1:80 default_server;");
+    expect(site).toContain("listen unix:/run/matrix-nginx/tailnet.sock;");
+    expect(site).toContain(`map "$remote_addr|$http_tailscale_user_login" $matrix_forged_identity {`);
+    expect(site).toContain("if ($matrix_forged_identity) { return 403; }");
+    const publicSite = run(`render_nginx_site public _ /etc/nginx/matrix-self-host.htpasswd off`).stdout;
+    expect(publicSite).not.toContain("matrix_forged_identity");
+    expect(publicSite).not.toContain("listen unix:");
+    const source = readFileSync(script, "utf8");
+    expect(source).not.toMatch(/tailscale serve[^\n]*127\.0\.0\.1:80/);
+    const socketDir = source.split("\nprepare_tailnet_socket_dir() {")[1]!.split("\n}\n")[0]!;
+    expect(socketDir).toContain("install -d -o root -g root -m 0700 /run/matrix-nginx");
+    expect(socketDir).toContain("d /run/matrix-nginx 0700 root root -");
+    const nginx = source.split("\nconfigure_nginx() {")[1]!.split("\n}\n")[0]!;
+    expect(nginx).toContain("prepare_tailnet_socket_dir");
+    // The installer's own checks present the identity only through that socket,
+    // and prove the loopback listener refuses one.
+    const identityCheck = source.split("\nwait_private_identity_ok() {")[1]!.split("\n}\n")[0]!;
+    expect(identityCheck).toContain('--unix-socket "$TAILNET_SOCKET"');
+    const verify = source.split("\nverify_services() {")[1]!.split("\n}\n")[0]!;
+    expect(verify).toContain("only Tailscale Serve may present one");
+  });
+
   it("keeps Basic Auth on the public interface only for --access public", () => {
     const site = run(`render_nginx_site public _ /etc/nginx/matrix-self-host.htpasswd off`).stdout;
     expect(site).toContain("listen 80 default_server;");
@@ -558,7 +587,7 @@ exit 0
     chmodSync(join(bin, "tailscale"), 0o755);
     const result = run(`MATRIX_INSTALL_LOG=/dev/null; OPT_ACCESS=tailscale; MATRIX_TAILNET_URL=https://box.tail1.ts.net; configure_tailscale_serve; echo "url=$MATRIX_TAILNET_URL"`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
     expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(dir, "calls"), "utf8")).toContain("serve --bg --yes --http=80 http://127.0.0.1:80");
+    expect(readFileSync(join(dir, "calls"), "utf8")).toContain("serve --bg --yes --http=80 unix:/run/matrix-nginx/tailnet.sock");
     expect(result.stdout).toContain("url=http://box.tail1.ts.net");
     expect(result.stdout + result.stderr).toMatch(/HTTPS/);
   });
@@ -694,6 +723,49 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_RUN_USER=alice MATRIX_BROWSER_ACCOUNT_HOME="
       expect(writeEnv).toContain("chown root:matrix /opt/matrix/env/host.env");
       expect(writeEnv).toContain("chmod 0640 /opt/matrix/env/postgres.env");
       expect(writeEnv).toContain("chown root:matrix /opt/matrix/env/postgres.env");
+    });
+
+    // Found in review: an install whose browser ran as matrix lost its saved
+    // logins and tabs when the browser moved to the dedicated account.
+    function migrate(options: { newExists?: boolean; outside?: boolean } = {}) {
+      const legacyRoot = join(dir, "legacy");
+      const home = join(dir, "browser-home");
+      const old = join(legacyRoot, ".local/share/matrix-browser-lab/chrome");
+      spawnSync("mkdir", ["-p", join(old, "Default")]);
+      writeFileSync(join(old, "Default/Cookies"), "saved session");
+      if (options.outside) {
+        spawnSync("rm", ["-rf", old]);
+        spawnSync("mkdir", ["-p", join(dir, "elsewhere")]);
+        spawnSync("ln", ["-s", join(dir, "elsewhere"), old]);
+      }
+      if (options.newExists) spawnSync("mkdir", ["-p", join(home, ".local/share/matrix-browser-lab/chrome")]);
+      const calls = join(dir, "migrate-calls");
+      const result = run(`systemctl() { printf 'systemctl %s\\n' "$*" >>"${calls}"; }
+chown() { printf 'chown %s\\n' "$*" >>"${calls}"; }
+install() { printf 'install %s\\n' "$*" >>"${calls}"; command install -d "\${@: -1}"; }
+id() { case "$*" in "-gn matrix-browser") echo matrix-browser ;; *) command id "$@" ;; esac; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${legacyRoot}" MATRIX_LEGACY_BROWSER_USER="$(command id -un)" migrate_browser_profile matrix-browser "${home}"`);
+      const lines = existsSync(calls) ? readFileSync(calls, "utf8").trim().split("\n") : [];
+      return { result, old, moved: join(home, ".local/share/matrix-browser-lab/chrome"), calls: lines };
+    }
+
+    it("moves an existing saved browser profile into the browser account's home", () => {
+      const { result, old, moved, calls } = migrate();
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(moved, "Default/Cookies"), "utf8")).toBe("saved session");
+      expect(existsSync(old)).toBe(false);
+      expect(calls).toContain("systemctl stop matrix-browser-lab-chrome.service");
+      expect(calls).toContain(`chown -R --no-dereference matrix-browser:matrix-browser ${moved}`);
+    });
+
+    it("leaves profiles alone when the account already has one or the old one points elsewhere", () => {
+      for (const options of [{ newExists: true }, { outside: true }]) {
+        const { result, moved, calls } = migrate(options);
+        expect(result.status, result.stderr).toBe(0);
+        expect(calls.filter((call) => call.startsWith("chown"))).toEqual([]);
+        expect(existsSync(join(moved, "Default/Cookies"))).toBe(false);
+        spawnSync("rm", ["-rf", join(dir, "legacy"), join(dir, "browser-home"), join(dir, "elsewhere"), join(dir, "migrate-calls")]);
+      }
     });
 
     it("prepares the account before installing the browser desktop", () => {

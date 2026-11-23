@@ -276,7 +276,7 @@ class Runtime:
         if name == 'matrix':
             return name, None
         owner = pwd.getpwnam(name)
-        if owner.pw_uid == 0 or not owner.pw_dir.startswith('/') or '..' in Path(owner.pw_dir).parts:
+        if owner.pw_uid == 0 or not re.fullmatch(r'/[A-Za-z0-9._/-]{1,200}', owner.pw_dir) or '..' in Path(owner.pw_dir).parts:
             raise ValueError('Unsafe Browser account')
         for group in ('matrix', 'docker'):
             try:
@@ -286,6 +286,20 @@ class Runtime:
             if owner.pw_gid == entry.gr_gid or name in entry.gr_mem:
                 raise ValueError('Browser account must not hold Matrix or Docker access')
         return name, owner
+
+    def regroup(self, path, gid):
+        """Give a root-owned 0640 file to a group, never following a link or touching contents."""
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or info.st_nlink != 1:
+                raise ValueError('Unsafe Browser credential file')
+            if info.st_gid != gid and os.getuid() == 0:
+                os.fchown(descriptor, -1, gid)
+            if stat.S_IMODE(info.st_mode) != 0o640:
+                os.fchmod(descriptor, 0o640)
+        finally:
+            os.close(descriptor)
 
     def account_units(self, files, name, owner, profile):
         """Payload units name the matrix account; a dedicated account replaces it exactly."""
@@ -299,7 +313,13 @@ class Runtime:
             content = result[unit]
             if content.count('User=matrix\nGroup=matrix\n') != 1:
                 raise ValueError('Unexpected Browser unit account')
-            content = content.replace('User=matrix\nGroup=matrix\n', f'User={name}\nGroup={group}\n')
+            account = f'User={name}\nGroup={group}\n'
+            if unit == 'matrix-browser-lab.service':
+                # The supervisor's native helpers accept this profile and open this home.
+                home = owner.pw_dir.rstrip('/')
+                account += (f'Environment=MATRIX_BROWSER_CHROME_PROFILE={profile}\n'
+                            f'Environment=MATRIX_BROWSER_HOME={home}\nEnvironment=MATRIX_BROWSER_WORKDIR={home}\n')
+            content = content.replace('User=matrix\nGroup=matrix\n', account)
             content = content.replace('/home/matrix/.local/share/matrix-browser-lab/chrome', profile)
             if '/home/matrix' in content:
                 raise ValueError('Unexpected Browser unit path')
@@ -343,6 +363,8 @@ class Runtime:
             self.read(password_file, 16384)
             if not re.fullmatch(r'Basic [A-Za-z0-9+/]+={0,2}', values['MATRIX_BROWSER_LAB_VIEWER_AUTH']):
                 raise ValueError('Invalid Browser credential')
+            # The saved pair stays as it is; only its group follows the Browser account.
+            self.regroup(password_file, password_gid)
             return
         password = secrets.token_hex(32)
         temporary = self.prefix / ('.viewer.' + secrets.token_hex(12))
