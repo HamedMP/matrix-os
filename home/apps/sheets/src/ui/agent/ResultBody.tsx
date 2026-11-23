@@ -26,13 +26,19 @@ function ProposalActions({ result, assistant }: { result: ProposalResult; assist
 }
 
 function Answer({ result, assistant }: { result: AnswerResult; assistant: SheetsAssistant }) {
-  const paragraphs = result.text.split(/\n{1,}/).filter((line) => line.trim() !== "");
+  const seen = new Map<string, number>();
+  const paragraphs = result.text
+    .split(/\n+/)
+    .filter((line) => line.trim() !== "")
+    .map((text) => {
+      const count = (seen.get(text) ?? 0) + 1;
+      seen.set(text, count);
+      return { text, key: `${count}:${text}` };
+    });
   return (
     <div className="sheets-agent__answer">
-      {paragraphs.map((paragraph, index) => (
-        // Paragraphs of one fixed answer: their order never changes.
-        // eslint-disable-next-line react/no-array-index-key
-        <p key={index}>{paragraph}</p>
+      {paragraphs.map((paragraph) => (
+        <p key={paragraph.key}>{paragraph.text}</p>
       ))}
       <button type="button" className="oui-button oui-button--ghost" onClick={() => assistant.clearHighlights()}>
         Clear highlights
