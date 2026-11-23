@@ -57,13 +57,61 @@ class FakeWebSocket {
   close() { this.readyState = 3; }
 }
 
+const computer = (handle: string, slot: string, label: "Main Computer" | "Preview Computer" | "Additional Computer") => ({
+  handle, runtimeSlot: slot, label, availability: "available", kind: label === "Preview Computer" ? "preview" : "customer",
+  gatewayPath: slot === "primary" ? `/vm/${handle}` : `/vm/${handle}?runtime=${slot}`, capabilities: [],
+});
+const manyComputers = {
+  items: [
+    computer("operator", "primary", "Main Computer"),
+    computer("operator-two", "two", "Additional Computer"),
+    ...Array.from({ length: 4 }, (_, index) => computer(`pr-${index}`, `pr${index}`, "Preview Computer")),
+  ],
+  selectedSlot: "primary", hasMore: false, limit: 20,
+};
+
 describe("Terminal window", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    window.localStorage.clear();
     FakeWebSocket.opened = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  // ENG-521: many Preview Computers drowned out this device, the Main Computer and the Additional computers.
+  it("filters Spaces by name and kind, with Preview Computers under a fold that is remembered", async () => {
+    window.localStorage.clear();
+    installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => manyComputers });
+    const shown = () => Array.from(document.querySelectorAll('ul[aria-label="Machines"] > li[data-space]')).map((item) => item.getAttribute("data-space"));
+    const previews = () => Array.from(document.querySelectorAll('ul[aria-label="Preview Computers"] > li[data-space]')).map((item) => item.getAttribute("data-space"));
+    const { unmount } = render(<TerminalWindowApp />);
+    expect(await screen.findByText("operator-two")).toBeTruthy();
+    expect(shown()).toEqual(["local", "computer:primary", "computer:two"]);
+    expect(previews()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Previews (4)" }));
+    expect(previews()).toHaveLength(4);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter spaces" }), { target: { value: "pr-2" } });
+    expect(shown()).toEqual([]);
+    expect(previews()).toEqual(["computer:pr2"]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter spaces" }), { target: { value: "" } });
+
+    const kinds = screen.getByRole("group", { name: "Kinds of spaces" });
+    fireEvent.click(within(kinds).getByRole("button", { name: "Additional" }));
+    expect(within(kinds).getByRole("button", { name: "Additional" }).getAttribute("aria-pressed")).toBe("false");
+    expect(shown()).toEqual(["local", "computer:primary"]);
+    fireEvent.click(within(kinds).getByRole("button", { name: "Previews" }));
+    expect(screen.queryByRole("button", { name: /^Previews \(/ })).toBeNull();
+
+    // The kinds switched off and the fold are kept for the next time the window opens.
+    unmount();
+    render(<TerminalWindowApp />);
+    expect(await screen.findByText("operator")).toBeTruthy();
+    expect(shown()).toEqual(["local", "computer:primary"]);
+    fireEvent.click(within(screen.getByRole("group", { name: "Kinds of spaces" })).getByRole("button", { name: "Previews" }));
+    expect(previews()).toHaveLength(4);
+  });
 
   it("lists this device first, then every Matrix computer with its availability, streaming status only from available ones", async () => {
     installOperator({ ...base, "auth:status": () => signedIn, "runtime:list-computers": () => computers });
@@ -71,9 +119,12 @@ describe("Terminal window", () => {
     expect(await screen.findByText("operator")).toBeTruthy();
     // Each machine is a space of its own (no home or main rows under it).
     const machines = Array.from(document.querySelectorAll('ul[aria-label="Machines"] > li[data-space]'));
-    expect(machines.map((item) => item.getAttribute("data-space"))).toEqual(["local", "computer:primary", "computer:review"]);
+    expect(machines.map((item) => item.getAttribute("data-space"))).toEqual(["local", "computer:primary"]);
     expect(FakeWebSocket.opened).toEqual(["wss://app.matrix-os.com/ws/terminal/events"]);
-    // Each computer leads with its own name; unavailable ones wait under one fold.
+    // ENG-521: Preview Computers wait under their own fold; each computer leads with its own name.
+    fireEvent.click(screen.getByRole("button", { name: "Previews (1)" }));
+    const previews = Array.from(document.querySelectorAll('ul[aria-label="Preview Computers"] > li[data-space]'));
+    expect(previews.map((item) => item.getAttribute("data-space"))).toEqual(["computer:review"]);
     expect(screen.getByText("Preview Computer · Starting")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Unavailable (1)" }));
     expect(screen.getByText("operator-old · Additional Computer · Unavailable")).toBeTruthy();
@@ -127,6 +178,8 @@ describe("Terminal window", () => {
     render(<TerminalWindowApp />);
     await waitFor(() => expect(calls).toBe(1));
     act(() => operator.emit("auth:changed", { signedIn: true, handle: "operator" }));
+    // The only computer now is a Preview Computer, under its fold.
+    fireEvent.click(await screen.findByRole("button", { name: "Previews (1)" }));
     expect(await screen.findByText("operator-review")).toBeTruthy();
     await act(async () => { resolveFirst(computers); });
     expect(screen.queryByText("operator")).toBeNull();

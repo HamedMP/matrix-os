@@ -3,6 +3,7 @@
 // every read and write survives storage being unavailable.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
+import { SPACE_GROUPS, type SpaceGroup } from "./spaces-filter";
 import type { TerminalSidebarView } from "@matrix-os/ui/terminal-status-sidebar";
 
 const STORAGE_KEY = "matrix.terminal-window.sidebar.v1";
@@ -41,9 +42,12 @@ const PrefsSchema = z.object({
   machineOrder: z.array(z.string().max(128)).max(MAX_FOLDS).catch([]),
   // Spaces whose terminals the person listed inline under them.
   expandedSpaces: z.array(z.string().max(512)).max(MAX_SPACES).catch([]),
+  // The Spaces filter: kinds switched off, and whether the Preview Computers fold is open.
+  hiddenSpaceGroups: z.array(z.enum(SPACE_GROUPS)).max(SPACE_GROUPS.length).catch([]),
+  previewsOpen: z.boolean().catch(false),
 });
 export type SidebarPrefs = z.infer<typeof PrefsSchema>;
-const DEFAULTS: SidebarPrefs = { folded: [], view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {}, machineOrder: [], expandedSpaces: [] };
+const DEFAULTS: SidebarPrefs = { folded: [], view: "priority", width: DEFAULT_WIDTH, rail: false, filter: null, pinned: [], spaceStyles: {}, spaceOrder: {}, machineOrder: [], expandedSpaces: [], hiddenSpaceGroups: [], previewsOpen: false };
 
 function read(): SidebarPrefs {
   try {
@@ -123,6 +127,10 @@ export function useSidebarPrefs() {
         ? current.expandedSpaces.filter((entry) => entry !== id)
         : [...current.expandedSpaces, id].slice(-MAX_SPACES),
     })), [update]),
+    toggleSpaceGroup: useCallback((group: SpaceGroup) => update((current) => ({
+      ...current, hiddenSpaceGroups: toggled(current.hiddenSpaceGroups, group) as SpaceGroup[],
+    })), [update]),
+    togglePreviews: useCallback(() => update((current) => ({ ...current, previewsOpen: !current.previewsOpen })), [update]),
     togglePin: useCallback((key: string) => update((current) => ({
       ...current,
       pinned: current.pinned.includes(key) ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key].slice(-MAX_PINNED),

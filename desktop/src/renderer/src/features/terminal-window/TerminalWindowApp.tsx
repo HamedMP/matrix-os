@@ -139,7 +139,7 @@ function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: Term
 
 function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => void): SidebarMachine[] {
   const local: SidebarMachine = {
-    id: view.here.id, name: view.here.name, kind: "local", detail: "Terminals on this device",
+    id: view.here.id, name: view.here.name, kind: "local", group: "this", detail: "Terminals on this device",
     available: view.local.state.status === "ready" || view.local.state.status === "loading",
     status: <LocalStatus state={view.local.state} onRetry={view.local.retry} />,
   };
@@ -148,6 +148,7 @@ function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => v
     // Led by its own name; the kind (Main, Preview, Additional) is the detail.
     name: computer.handle,
     kind: "computer",
+    group: computer.kind === "preview" ? "preview" : computer.label === "Main Computer" ? "main" : "additional",
     // An available computer whose stream has not connected says so, instead of looking empty.
     detail: `${computer.label} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
       ? "Connecting…" : AVAILABILITY_LABEL[computer.availability]}`,
@@ -167,6 +168,7 @@ function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => v
     id: sshMachineId(machine.name),
     name: machine.name,
     kind: "ssh",
+    group: "additional",
     detail: `${machine.target} · ${SSH_STATE_LABEL[machine.state]}`,
     dotColor: SSH_STATE_COLOR[machine.state],
     available: true,
@@ -380,6 +382,8 @@ export default function TerminalWindowApp() {
           onResize={view.sidebar.setWidth}
           notices={notice}
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
+          hiddenSpaceGroups={prefs.hiddenSpaceGroups} onToggleSpaceGroup={view.sidebar.toggleSpaceGroup}
+          previewsOpen={prefs.previewsOpen} onTogglePreviews={view.sidebar.togglePreviews}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
