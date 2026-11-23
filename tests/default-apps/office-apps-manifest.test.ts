@@ -12,7 +12,8 @@ const REPO_ROOT = join(__dirname, "..", "..");
 const APPS_DIR = join(REPO_ROOT, "home", "apps");
 const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
 const OFFICE_APPS = ["mail", "calendar", "docs", "sheets"] as const;
-const FILE_EDITORS = new Set(["docs", "sheets"]);
+/** Docs and Sheets edit owner files; Mail attaches owner files to drafts. */
+const FILE_APPS = new Set(["docs", "sheets", "mail"]);
 
 interface Manifest {
   name?: string;
@@ -67,9 +68,9 @@ describe.each(OFFICE_APPS)("office app %s", (app) => {
     expect(manifest.listingTrust).toBe("first_party");
   });
 
-  it("requests the files permission only when it edits owner files", () => {
+  it("requests the files permission only when it reads or writes owner files", () => {
     const permissions = manifest.permissions ?? [];
-    if (FILE_EDITORS.has(app)) expect(permissions).toEqual(["files"]);
+    if (FILE_APPS.has(app)) expect(permissions).toEqual(["files"]);
     else expect(permissions).not.toContain("files");
   });
 
