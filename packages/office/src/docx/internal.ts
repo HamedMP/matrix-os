@@ -157,16 +157,23 @@
  *
  * ## Plugging into the handle
  *
- * `applyOps`, `acceptRevisions` and `rejectRevisions` are `DocxEngines`
- * functions of the index; `../docx/index.ts` passes them to `openDocxWith`.
- * A test can do the same: `openDocxWith({ applyOps }, bytes)`, or call an
- * engine directly with `getDocxIndex(await openDocx(bytes))`.
- * `documentFromPackage(pkg, texts, engines)` builds a handle synchronously on
- * a package assembled in memory (`createDocx`).
+ * - `applyOps`, `acceptRevisions` and `rejectRevisions` are `DocxEngines`:
+ *   functions that take the `DocxIndex` first and then the arguments of the
+ *   handle method. `./index.ts` lists them in `ENGINES`.
+ * - `createDocx` and `compareDocx` are `DocxFactories`. `createDocx` builds
+ *   an `OpcPackage` (`createPackage`, `setPart`, `addRelationship`) and
+ *   returns `finish(pkg, texts)`, where `texts` maps the part name of every
+ *   XML part it wrote that the model reads (document, styles, numbering,
+ *   settings, core properties, …) to its text; no await is involved.
+ *   `compareDocx` gets `open`, the `openDocx` of the build.
+ * - Until `./index.ts` lists a function, test it directly: an engine with
+ *   `getDocxIndex(await openDocx(bytes))` or through
+ *   `openDocxWith({ applyOps }, bytes)`; a factory by calling it with
+ *   `documentFromPackage` or `openDocx` as its last argument.
  */
 
 export { DocxIndex, type CreatablePartKind } from "./model/doc-index.js";
-export { type DocxEngines, createDocumentHandle, getDocxIndex } from "./model/document.js";
+export { type DocxEngines, type DocxFactories, createDocumentHandle, getDocxIndex } from "./model/document.js";
 export { documentFromPackage, openDocxWith, readPartTexts } from "./model/open.js";
 export { type ElementTags, type PartSlot, PartStore, containerOf, discoverParts } from "./model/parts.js";
 export {

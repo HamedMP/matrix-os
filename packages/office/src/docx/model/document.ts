@@ -4,7 +4,14 @@
  * `DocxEngines`); they work on the same `DocxIndex`.
  */
 
-import type { DocxDocument, DocxSnapshot, PlainTextOptions } from "../../api/docx.js";
+import type {
+  CompareOptions,
+  CreateDocxOptions,
+  DocxDocument,
+  DocxSnapshot,
+  OpenDocx,
+  PlainTextOptions,
+} from "../../api/docx.js";
 import type {
   BlockId,
   CrossReference,
@@ -45,6 +52,30 @@ export interface DocxEngines {
   acceptRevisions?: (index: DocxIndex, ids: readonly RevisionId[] | "all") => ResolveRevisionsResult;
   /** Implements `DocxDocument.rejectRevisions`. */
   rejectRevisions?: (index: DocxIndex, ids: readonly RevisionId[] | "all") => ResolveRevisionsResult;
+}
+
+/**
+ * The module-level functions that other modules of `src/docx/` implement.
+ * `index.ts` calls them and hands each what it needs to make handles that
+ * carry the engines of the build, so they never import `index.ts` themselves.
+ */
+export interface DocxFactories {
+  /**
+   * Implements `createDocx`: assembles a package in memory and calls
+   * `finish(pkg, texts)` with the XML text of every model part it wrote
+   * (keyed by part name) to get the handle.
+   */
+  createDocx?: (
+    options: CreateDocxOptions | undefined,
+    finish: (pkg: OpcPackage, texts: ReadonlyMap<string, string>) => DocxDocument,
+  ) => DocxDocument;
+  /** Implements `compareDocx`. `open` is `openDocx` of the build. */
+  compareDocx?: (
+    original: Uint8Array | DocxDocument,
+    revised: Uint8Array | DocxDocument,
+    options: CompareOptions,
+    open: OpenDocx,
+  ) => Promise<DocxDocument>;
 }
 
 /** Elements of `w:settings` that come before `w:trackRevisions` in the schema order. */

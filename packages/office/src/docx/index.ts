@@ -2,40 +2,43 @@
  * `.docx` documents: the handle described in `../api/docx.ts`.
  *
  * This file only wires the module together. The document model (opening, the
- * view model, structure helpers, saving, snapshots) lives in `./model/`; the
- * other parts of the contract plug in through {@link ENGINES} and the two
- * factories below. Everything they build on is exported from `./internal.ts`.
+ * view model, structure helpers, saving, snapshots) lives in `./model/`. The
+ * rest of the contract plugs in below: add the function to {@link ENGINES} or
+ * {@link FACTORIES} and import it from the module that implements it.
+ * Everything those modules build on is exported from `./internal.ts`.
  */
 
-import type { DocxDocument, DocxModule } from "../api/docx.js";
+import type { DocxModule } from "../api/docx.js";
 import { OfficeError } from "../errors.js";
-import type { DocxEngines } from "./model/document.js";
-import { openDocxWith } from "./model/open.js";
+import type { DocxEngines, DocxFactories } from "./model/document.js";
+import { documentFromPackage, openDocxWith } from "./model/open.js";
 
 export type * from "../api/docx.js";
 
 /**
- * The engines behind `applyOps`, `acceptRevisions` and `rejectRevisions`.
- * Each is a function of the document's `DocxIndex`; see `DocxEngines` in
- * `./internal.ts`. A method whose engine is absent throws `invalid_operation`.
+ * The engines behind `applyOps`, `acceptRevisions` and `rejectRevisions`:
+ * functions of the document's `DocxIndex` (see `DocxEngines`). A method whose
+ * engine is absent throws `invalid_operation`.
  */
 const ENGINES: DocxEngines = {};
 
-/** `createDocx` and `compareDocx`, supplied by the modules that implement them. */
-const FACTORIES: { createDocx?: DocxModule["createDocx"]; compareDocx?: DocxModule["compareDocx"] } = {};
+/** The implementations of `createDocx` and `compareDocx` (see `DocxFactories`). */
+const FACTORIES: DocxFactories = {};
 
 export const openDocx: DocxModule["openDocx"] = (bytes, limits) => openDocxWith(ENGINES, bytes, limits);
 
-export const createDocx: DocxModule["createDocx"] = (options): DocxDocument => {
-  if (FACTORIES.createDocx === undefined) {
+export const createDocx: DocxModule["createDocx"] = (options) => {
+  const create = FACTORIES.createDocx;
+  if (create === undefined) {
     throw new OfficeError("invalid_operation", "document creation is not part of this build");
   }
-  return FACTORIES.createDocx(options);
+  return create(options, (pkg, texts) => documentFromPackage(pkg, texts, ENGINES));
 };
 
 export const compareDocx: DocxModule["compareDocx"] = (original, revised, options) => {
-  if (FACTORIES.compareDocx === undefined) {
+  const compare = FACTORIES.compareDocx;
+  if (compare === undefined) {
     return Promise.reject(new OfficeError("invalid_operation", "document comparison is not part of this build"));
   }
-  return FACTORIES.compareDocx(original, revised, options);
+  return compare(original, revised, options, openDocx);
 };
