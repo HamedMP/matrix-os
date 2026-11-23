@@ -497,7 +497,7 @@ describe("SharedChatComposer", () => {
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
 
     fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
-    expect(screen.getByRole("menuitemradio", { name: "Supervised" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Ask for approval" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
     expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
