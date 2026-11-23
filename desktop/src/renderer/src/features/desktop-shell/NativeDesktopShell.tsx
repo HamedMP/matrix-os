@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  topmostVisibleDesktopSurfaceId,
   useDesktopSurfaces,
+  type DesktopSurfaceBounds,
   type DesktopViewport,
 } from "../../stores/desktop-surfaces";
-import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
+import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
@@ -39,9 +39,19 @@ import {
 } from "./native-os-view-layout-memory";
 import { useNativeChatStartup, useNativeStartupNavigation } from "./use-native-chat-startup";
 import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
-import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
+import { FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
 import { reconcileNativeProductSurfaces } from "./browser-product-surfaces";
-import { nativeBrowserProduct } from "../../../../shared/browser-products";
+import {
+  closeApp,
+  focusApp,
+  maximizeApp,
+  minimizeApp,
+  openFilesApp,
+  registerDesktopShellEffects,
+  toggleAppLauncher,
+  toggleShowDesktop,
+} from "./app-switching";
+import { moveAppWindow } from "./window-tiling";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -66,10 +76,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
   const reconcileTabs = reconcileNativeProductSurfaces;
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
-  const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const maximizeToTab = useDesktopSurfaces((state) => state.maximizeToTab);
-  const restoreAsWindow = useDesktopSurfaces((state) => state.restoreAsWindow);
-  const closeSurface = useDesktopSurfaces((state) => state.closeSurface);
   const setSurfaceBounds = useDesktopSurfaces((state) => state.setSurfaceBounds);
   const workspaceView = useDesktopSurfaces((state) => state.workspaceView);
   const desktopTransition = useDesktopSurfaces((state) => state.desktopTransition);
@@ -77,7 +84,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const finishDesktopTransition = useDesktopSurfaces((state) => state.finishDesktopTransition);
   const launcherOpen = useUi((state) => state.appLauncherOpen);
   const setLauncherOpen = useUi((state) => state.setAppLauncherOpen);
-  const requestBackgroundRefresh = useUi((state) => state.requestDesktopBackgroundRefresh);
   const desktopMode = useNativeDesktopMode((state) => state.mode);
   const desktopModeHydrated = useNativeDesktopMode((state) => state.hydrated);
   const canvasZoom = useNativeDesktopMode((state) => state.zoom);
@@ -198,14 +204,6 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     // updates must not recursively focus the same surface while it is dragged.
   }, [activateSurface, activeSurfaceAvailable, activeTabId]);
 
-  const activate = useCallback((tabId: string) => {
-    focusTab(tabId);
-    activateSurface(tabId);
-    const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
-    trackDesktopEvent({ name: "desktop_app_focused", appKind: analyticsKindForTab(tab) });
-    scheduleDurablePersist();
-  }, [activateSurface, focusTab, scheduleDurablePersist]);
-
   const reconcileAndActivateCurrent = useCallback(() => {
     const state = useTabs.getState();
     reconcileTabs(state.tabs.map((tab) => tab.id), viewport, desktopMode !== "canvas");
@@ -220,21 +218,22 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     open();
     reconcileAndActivateCurrent();
   }, [reconcileAndActivateCurrent]);
+  // The end of a drag and a keyboard tile both save window bounds through here.
+  const applyWindowBounds = useCallback((tabId: string, bounds: DesktopSurfaceBounds) => {
+    const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    recordCanonicalBounds(tab, desktopMode, bounds);
+    setSurfaceBounds(tabId, bounds, viewport, desktopMode !== "canvas");
+    scheduleDurablePersist();
+  }, [desktopMode, recordCanonicalBounds, scheduleDurablePersist, setSurfaceBounds, viewport]);
+  useEffect(() => registerDesktopShellEffects({
+    schedulePersist: () => scheduleDurablePersist(),
+    openRoot,
+    viewport: () => viewport,
+    applyWindowBounds,
+  }), [applyWindowBounds, openRoot, scheduleDurablePersist, viewport]);
 
   const closeApps = useCallback(() => setLauncherOpen(false), [setLauncherOpen]);
-  const showDesktopWithRefresh = useCallback(() => {
-    useDesktopSurfaces.getState().showDesktop();
-    requestBackgroundRefresh();
-    trackDesktopEvent({ name: "desktop_shown" });
-  }, [requestBackgroundRefresh]);
-  const toggleApps = useCallback(
-    () => {
-      const open = !useUi.getState().appLauncherOpen;
-      setLauncherOpen(open);
-      trackDesktopEvent({ name: "desktop_launcher_toggled", open });
-    },
-    [setLauncherOpen],
-  );
   const launchApp = useCallback((tabId: string) => {
     const tabbedWorkspaceOpen = desktopMode === "desktop"
       && workspaceView === "tabs"
@@ -354,45 +353,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     return await addDesktopIcon(path, api, bounds ?? viewport);
   }, [addDesktopIcon, api, viewport]);
 
-  const focusFallback = useCallback((excludedTabId: string) => {
-    const tabIds = useTabs.getState().tabs.map((tab) => tab.id);
-    const fallbackId = topmostVisibleDesktopSurfaceId(
-      tabIds,
-      useDesktopSurfaces.getState(),
-      excludedTabId,
-    );
-    if (fallbackId) activate(fallbackId);
-  }, [activate]);
-
-  const minimize = useCallback((tabId: string) => {
-    const minimizedTab = useTabs.getState().tabs.find((tab) => tab.id === tabId);
-    minimizeSurface(tabId);
-    if (useTabs.getState().activeTabId === tabId) focusFallback(tabId);
-    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser" || nativeBrowserProduct(minimizedTab?.appIdentity ?? "", minimizedTab?.slug ?? "")) {
-      requestBackgroundRefresh();
-    }
-    trackDesktopEvent({ name: "desktop_app_minimized", appKind: analyticsKindForTab(minimizedTab) });
-    scheduleDurablePersist();
-  }, [focusFallback, minimizeSurface, requestBackgroundRefresh, scheduleDurablePersist]);
-
-  const close = useCallback((tab: Tab) => {
-    const wasActive = useTabs.getState().activeTabId === tab.id;
-    if (tab.closable) closeTab(tab.id);
-    else closeSurface(tab.id);
-    if (wasActive) focusFallback(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
-    trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
-    scheduleDurablePersist();
-  }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh, scheduleDurablePersist]);
-
   const activateFromDrawer = useCallback((tabId: string) => {
-    activate(tabId);
+    focusApp(tabId);
     setDrawerOpen(false);
-  }, [activate, setDrawerOpen]);
-
-  const closeFromDrawer = useCallback((tab: Tab) => {
-    close(tab);
-  }, [close]);
+  }, [setDrawerOpen]);
 
   const tabWorkspaceActive = desktopMode === "desktop"
     && workspaceView === "tabs"
@@ -411,7 +375,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         surfaces={surfaces}
         onClose={() => setDrawerOpen(false)}
         onActivate={activateFromDrawer}
-        onCloseTab={closeFromDrawer}
+        onCloseTab={closeApp}
       />
       {desktopModeHydrated ? (
         <>
@@ -419,7 +383,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         <DesktopIconGrid destinations={destinations} placements={effectiveDesktopIcons} onMove={moveIcon} onRemove={removeIcon} />
       ) : null}
       <DesktopBackgroundMenu>
-        <DesktopWorkspacePlane mode={desktopMode} onBackgroundClick={showDesktopWithRefresh}>
+        <DesktopWorkspacePlane mode={desktopMode} onBackgroundClick={toggleShowDesktop}>
           {desktopMode === "canvas" ? <DesktopIconGrid destinations={destinations} placements={effectiveDesktopIcons} onMove={moveIcon} onRemove={removeIcon} /> : null}
           {displayTabs.map((tab) => {
           const surface = surfaces[tab.id];
@@ -438,19 +402,11 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
               workspaceRevision={desktopMode === "canvas" ? `${canvasPanX}:${canvasPanY}:${canvasZoom}` : "desktop"}
               desktopTransition={desktopTransition}
               desktopHiddenSurfaceIds={desktopHiddenSurfaceIds}
-              onFocus={() => activate(tab.id)}
-              onClose={() => close(tab)}
-              onMinimize={() => minimize(tab.id)}
-              onMaximize={() => {
-                maximizeToTab(tab.id);
-                focusTab(tab.id);
-                if (desktopMode === "canvas") setDesktopMode("desktop");
-              }}
-              onBoundsChange={(bounds) => {
-                recordCanonicalBounds(tab, desktopMode, bounds);
-                setSurfaceBounds(tab.id, bounds, viewport, desktopMode !== "canvas");
-                scheduleDurablePersist();
-              }}
+              onFocus={() => focusApp(tab.id)}
+              onClose={() => closeApp(tab)}
+              onMinimize={() => minimizeApp(tab.id)}
+              onMaximize={() => maximizeApp(tab.id)}
+              onBoundsChange={(bounds) => moveAppWindow(tab.id, bounds)}
             />
           );
           })}
@@ -473,10 +429,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
           tabs={displayTabs}
           surfaces={surfaces}
           activeTabId={activeTabId}
-          onOpenApps={toggleApps}
-          onOpenFiles={() => openRoot(() => openTab(FILES_WORKSPACE_TAB_SPEC))}
+          onOpenApps={toggleAppLauncher}
+          onOpenFiles={openFilesApp}
           launcherOpen={launcherOpen}
-          onActivate={activate}
+          onActivate={focusApp}
         />
       ) : null}
         </>

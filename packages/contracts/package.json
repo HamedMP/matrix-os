@@ -33,7 +33,8 @@
     "./routine-destination": "./src/routine-destination.ts",
     "./app-files": "./src/app-files.ts",
     "./office-open-with": "./src/office-open-with.ts",
-    "./office-documents": "./src/office-documents.ts"
+    "./office-documents": "./src/office-documents.ts",
+    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",

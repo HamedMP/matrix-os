@@ -72,7 +72,8 @@ import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
-import { installAppMenu } from "./platform/menu";
+import { installShortcuts } from "./shortcuts/install-shortcuts";
+import { installAppMenu, runShortcut } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
 import {
@@ -146,6 +147,7 @@ let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWin
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
+let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -358,6 +360,9 @@ if (!gotLock) {
 
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
+      const shortcuts = await installShortcuts({ app, store, platform: process.platform, run: runShortcut,
+        mainWindow: () => mainWindow, terminalWindow: () => terminalWindows?.current() ?? null });
+      shortcutWiring = shortcuts;
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
@@ -722,6 +727,7 @@ if (!gotLock) {
         cancelOrganizationDriveTransfer: () => { driveTransfers.cancelAll(); return { ok: true }; },
         auth,
         store,
+        shortcuts: shortcuts.service,
         embeds,
         openExternal: openExternalHttpUrl,
         setBadgeCount: (count) => {
@@ -885,7 +891,7 @@ if (!gotLock) {
       installAppMenu({
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
-        thirdPartyNoticesPath: localRuntime.noticesPath,
+        thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,
         focusMain: focusMainWindow,
         restoreMain: () => {
           void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
@@ -974,6 +980,8 @@ if (!gotLock) {
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
     terminalWindows = null;
+    shortcutWiring?.dispose();
+    shortcutWiring = null;
     computerCredentials?.clear();
     computerCredentials = null;
     // Detach only: the local core and its terminals outlive the app.
