@@ -120,9 +120,11 @@ export function shiftBoundaries(al: Alignment, table: TokenTable): void {
 
 /**
  * Turns small equalities between two edits into edits. An equality goes
- * when it is no longer (in characters) than the larger edit on each side and
- * has at most `maxWords` non-whitespace tokens. Moved tokens do not count as
- * edits here. Returns true when anything changed.
+ * when it is no longer (in characters) than the larger edit on each side,
+ * has at most `maxWords` non-whitespace tokens and holds no line break: an
+ * unchanged paragraph boundary always stays, so two rewritten paragraphs
+ * remain two changes. Moved tokens do not count as edits here. Returns true
+ * when anything changed.
  */
 export function absorbEqualities(al: Alignment, table: TokenTable, maxWords: number): boolean {
   let changedAny = false;
@@ -163,10 +165,12 @@ function absorbPass(al: Alignment, table: TokenTable, maxWords: number): boolean
     const eqStartB = j;
     let chars = 0;
     let words = 0;
+    let lineBreak = false;
     while (i < n && j < m && aMatch[i] === j) {
       const id = aTok[i] as number;
       chars += table.length[id] as number;
       if (table.space[id] === 0) words += 1;
+      if ((table.cls[id] as number) & CLS_NEWLINE) lineBreak = true;
       i += 1;
       j += 1;
     }
@@ -174,7 +178,7 @@ function absorbPass(al: Alignment, table: TokenTable, maxWords: number): boolean
     measureGap();
     const leftSize = Math.max(leftDel, leftIns);
     const rightSize = Math.max(del, ins);
-    if (leftSize > 0 && rightSize > 0 && chars <= leftSize && chars <= rightSize && words <= maxWords) {
+    if (!lineBreak && leftSize > 0 && rightSize > 0 && chars <= leftSize && chars <= rightSize && words <= maxWords) {
       for (let x = eqStartA, y = eqStartB; x < eqEndA; x += 1, y += 1) {
         aMatch[x] = -1;
         bMatch[y] = -1;

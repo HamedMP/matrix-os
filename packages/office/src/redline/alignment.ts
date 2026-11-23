@@ -51,13 +51,14 @@ export function createAlignment(aTok: Int32Array, bTok: Int32Array, aMatch: Int3
 
 const SENTENCE_END = /^[.!?。！？]$/;
 const WORD_START = /^[\p{L}\p{N}\p{M}]/u;
-const BLANK_LINE = /\n\r?\n|\r\r/;
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
+const BLANK_LINE = /[\n\u2028\u2029]\r?[\n\u2028\u2029]|\r\r/;
 
 /** Boundary class of one token text. */
 export function classify(token: string): number {
   if (/^\s/.test(token)) {
     let cls = CLS_SPACE;
-    if (token.includes("\n") || token.includes("\r")) cls |= CLS_NEWLINE;
+    if (LINE_BREAK.test(token)) cls |= CLS_NEWLINE;
     if (BLANK_LINE.test(token)) cls |= CLS_BLANK_LINE;
     return cls;
   }

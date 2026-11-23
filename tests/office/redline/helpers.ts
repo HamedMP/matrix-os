@@ -131,3 +131,44 @@ export function brief(ops: readonly DiffOp[]): string[] {
   const sign = { equal: "=", delete: "-", insert: "+", moveFrom: "<", moveTo: ">" } as const;
   return ops.map((op) => sign[op.type] + op.text);
 }
+
+const ALLOWED = new Set([
+  "p", "div", "br", "ul", "ol", "li", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "b", "strong", "i", "em",
+  "u", "s", "span", "a", "table", "thead", "tbody", "tr", "th", "td", "ins", "del",
+]);
+
+/** Fails unless the markup holds only allowed elements, allowed attributes, balanced tags and escaped text. */
+export function expectAllowedMarkup(html: string): void {
+  const stack: string[] = [];
+  const tag = /<(\/?)([a-z0-9]+)((?: [a-z-]+="[^"<>]*")*)>/y;
+  const badText = />|&(?!(amp|lt|gt|quot|#39);)/;
+  let at = 0;
+  while (at < html.length) {
+    if (html[at] !== "<") {
+      const next = html.indexOf("<", at);
+      const text = html.slice(at, next === -1 ? html.length : next);
+      if (badText.test(text)) throw new Error(`unescaped text ${JSON.stringify(text.slice(0, 60))}`);
+      at += text.length;
+      continue;
+    }
+    tag.lastIndex = at;
+    const match = tag.exec(html);
+    if (!match) throw new Error(`unexpected markup at: ${html.slice(at, at + 60)}`);
+    const [whole, closing, name, attrs] = match as unknown as [string, string, string, string];
+    if (!ALLOWED.has(name)) throw new Error(`element ${name} is not allowed`);
+    if (closing) {
+      if (attrs !== "" || stack.pop() !== name) throw new Error(`unbalanced </${name}> at ${at}`);
+    } else {
+      const ok =
+        name === "a"
+          ? /^(?: href="(?:https?:|mailto:)[^"]*")?$/i.test(attrs)
+          : name === "ins" || name === "del"
+            ? /^ class="redline-[a-z -]+" data-change-id="c[0-9]+" data-author="[^"]*" data-date="[^"]*"$/.test(attrs)
+            : attrs === "";
+      if (!ok) throw new Error(`attributes not allowed on <${name}>: ${attrs}`);
+      if (name !== "br") stack.push(name);
+    }
+    at += whole.length;
+  }
+  expect(stack, "unclosed elements").toEqual([]);
+}

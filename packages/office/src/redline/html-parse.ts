@@ -34,7 +34,7 @@ const BREAKING = new Set([
 ]);
 /** Deepest nesting of kept elements. Deeper elements are read as unknown ones. */
 const MAX_DEPTH = 64;
-const REMOVED_CHARS = /[\u0000-\u0008\u000B\u000E-\u001F\u007F\uE000\uFFFE\uFFFF]/g;
+const REMOVED_CHARS = /[\u0000-\u0008\u000B\u000E-\u001F\u007F\uFFFE\uFFFF]/g;
 
 interface Open {
   tag: string;
@@ -115,14 +115,14 @@ class Builder {
     if (this.preDepth > 0) {
       if (this.preJustOpened) text = text.replace(/^\r?\n/, "");
       this.preJustOpened = false;
-      const lines = text.split(/\r\n|\r|\n/);
+      const lines = text.split(/\r\n|[\r\n\u2028\u2029]/);
       lines.forEach((line, index) => {
         if (index > 0) this.lineBreak();
         this.pushText(line);
       });
       return;
     }
-    text = text.replace(/[ \t\n\r\f]+/g, " ");
+    text = text.replace(/[ \t\n\r\f\u2028\u2029]+/g, " ");
     if ((this.lastSpace || !this.blockOpen) && text.startsWith(" ")) text = text.slice(1);
     if (text === "") return;
     this.pushText(text);
@@ -137,10 +137,10 @@ class Builder {
 
   /** Closes the element at `index` and everything opened inside it. */
   private closeAt(index: number): void {
-    this.endBlock();
     while (this.stack.length > index) {
       const entry = this.stack[this.stack.length - 1] as Open;
       if (entry.block) {
+        this.endBlock();
         if (!entry.filled) {
           // An empty element is kept as an empty block: a blank paragraph, an empty cell.
           this.startBlock();
@@ -222,6 +222,7 @@ class Builder {
 
   finish(): SideItem[] {
     this.closeAt(0);
+    this.endBlock();
     return this.items;
   }
 }

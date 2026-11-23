@@ -32,8 +32,12 @@ export const KIND_BREAK = 1;
 export const KIND_BLOCK = 2;
 export type ItemKind = typeof KIND_TEXT | typeof KIND_BREAK | typeof KIND_BLOCK;
 
-/** Stands for a `<br>` in the text that is compared. A private-use character: input that contains it loses it. */
-export const BREAK_CHAR = "\uE000";
+/**
+ * Stands for a `<br>` in the text that is compared: U+2028 LINE SEPARATOR,
+ * which the diff reads as a line break. Input text that contains it gets a
+ * space instead.
+ */
+export const BREAK_CHAR = "\u2028";
 /** Stands for a block boundary in the text that is compared. */
 export const BLOCK_CHAR = "\n";
 
@@ -88,12 +92,16 @@ export const MAX_REDLINE_LENGTH = 4 * 1024 * 1024;
 const SAFE_HREF = /^(?:https?:|mailto:)/i;
 
 /**
- * The link target if it is safe to emit, else null. Control characters and
- * whitespace are removed first, as a browser does before reading the scheme,
- * so `java\tscript:` cannot pass as a relative link.
+ * The link target if it is safe to emit, else null. Control characters are
+ * removed first, as a browser does before reading the scheme, so
+ * `java\tscript:` cannot pass as a relative link; spaces inside are
+ * percent-encoded. The result is stable: `safeHref(safeHref(x)) === safeHref(x)`.
  */
 export function safeHref(raw: string): string | null {
-  const href = raw.replace(/[\u0000-\u0020\u007F-\u009F\u200B-\u200F\u2028\u2029\uFEFF]/g, "");
+  const href = raw
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\uFEFF]/g, "")
+    .trim()
+    .replace(/ /g, "%20");
   return href.length > 0 && href.length <= 2048 && SAFE_HREF.test(href) ? href : null;
 }
 
