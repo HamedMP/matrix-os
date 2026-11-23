@@ -6,6 +6,7 @@ import {
 } from "@matrix-os/contracts/app-files";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { appFilesAllowed } from "./access.js";
+import { APP_FILE_ADMISSION_DEFAULTS, createAppFileAdmission } from "./admission.js";
 import { AppFileError, appFileErrorCodeFor, logAppFileFailure } from "./errors.js";
 import { createProjectWriteGuard, unguardedProjectWrite, type ProjectWriteGuard } from "./project-write-fence.js";
 import { listAppFiles, readAppFile, statAppFile } from "./read-ops.js";
@@ -25,10 +26,9 @@ export interface AppFileRouteOptions {
   projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
-/** Same admission budget as the app capability route. */
-export const APP_FILE_RATE_LIMIT_PER_MINUTE = 120;
-export const APP_FILE_MAX_IN_FLIGHT = 8;
-const RATE_WINDOW_MS = 60_000;
+/** Per app identity, the same budget as the app capability route; a global ceiling bounds all apps. */
+export const APP_FILE_RATE_LIMIT_PER_MINUTE = APP_FILE_ADMISSION_DEFAULTS.perAppRatePerMinute;
+export const APP_FILE_MAX_IN_FLIGHT = APP_FILE_ADMISSION_DEFAULTS.perAppMaxInFlight;
 
 function fail(context: Context, code: AppFileErrorCode): Response {
   return context.json(appFileErrorBody(code), APP_FILE_ERROR_STATUS[code]);
@@ -55,14 +55,13 @@ async function runOperation(homePath: string, input: AppFileInput, guard: Projec
 
 /**
  * `POST /` of the app file bridge, mounted at `APP_FILES_BRIDGE_PATH`. Order:
- * configuration, owner, rate and in-flight limits, body limit, schema, app
+ * configuration, owner, global in-flight limit, body limit, schema, the
+ * app's own rate and in-flight budget plus the global rate ceiling, app
  * access, then path resolution inside the operation.
  */
 export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
   const routes = new Hono();
-  let inFlight = 0;
-  let windowStart = 0;
-  let requests = 0;
+  const budget = createAppFileAdmission();
   // The admitted owner of each in-flight request; entries die with their context.
   const owners = new WeakMap<Context, string>();
 
@@ -79,13 +78,10 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
     }
     if (!owner || !options.ownerIds.includes(owner)) return fail(context, "forbidden");
     owners.set(context, owner);
-    const now = Date.now();
-    if (now - windowStart >= RATE_WINDOW_MS) { windowStart = now; requests = 0; }
-    if (requests >= APP_FILE_RATE_LIMIT_PER_MINUTE || inFlight >= APP_FILE_MAX_IN_FLIGHT) return fail(context, "unavailable");
-    requests++;
-    inFlight++;
+    const release = budget.enter();
+    if (!release) return fail(context, "unavailable");
     try { await next(); }
-    finally { inFlight--; }
+    finally { release(); }
   };
 
   routes.post(
@@ -105,6 +101,8 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       const parsed = AppFileRequestSchema.safeParse(body);
       if (!parsed.success) return fail(context, "invalid_request");
       const { app, input } = parsed.data;
+      const releaseApp = budget.admitApp(app);
+      if (!releaseApp) return fail(context, "unavailable");
       try {
         if (!await appFilesAllowed(homePath, app)) throw new AppFileError("forbidden");
         const owner = owners.get(context);
@@ -115,7 +113,7 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       } catch (error: unknown) {
         logAppFileFailure(input.kind, error);
         return fail(context, appFileErrorCodeFor(error));
-      }
+      } finally { releaseApp(); }
     },
   );
   return routes;
