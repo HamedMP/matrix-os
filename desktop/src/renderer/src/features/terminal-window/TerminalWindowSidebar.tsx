@@ -12,6 +12,8 @@ import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
 import { AllSpacesRow, SpaceList, inOrder, orderedSpaces, spaceId, type SpaceEntry } from "./SidebarSpaces";
+import { filterActive, filterSpaces, type SpaceGroup } from "./spaces-filter";
+import { SpacesFilterBar } from "./SpacesFilterBar";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
 const iconButton = "no-drag flex size-6 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
@@ -20,6 +22,8 @@ export interface SidebarMachine {
   id: string;
   name: string;
   kind: "local" | "ssh" | "computer";
+  /** Its kind for the Spaces filter: this device, the Main Computer, an additional machine or a Preview Computer. */
+  group: SpaceGroup;
   detail: string;
   dotColor?: string;
   /** Terminals can be listed and started there now. */
@@ -84,6 +88,14 @@ export interface TerminalWindowSidebarProps {
   onCloseTerminal(key: string): void;
   /** Opens Add machine… (an ssh machine for this device's core). */
   onAddMachine?(): void;
+  /** The Spaces filter's kinds switched off, and whether the Preview Computers fold is open (kept per person). */
+  hiddenSpaceGroups: readonly SpaceGroup[];
+  onToggleSpaceGroup(group: SpaceGroup): void;
+  previewsOpen: boolean;
+  onTogglePreviews(): void;
+  /** The typed Spaces filter; it lasts while the window is open. */
+  spacesQuery: string;
+  onSpacesQuery(query: string): void;
 }
 
 /** A machine's projects (spaces under it) with how many terminals each has, the most used first. */
@@ -107,9 +119,13 @@ export function filterRows(rows: readonly TerminalSidebarRow[], filter: SidebarF
 }
 
 /** A machine as a space: its row, and its projects (if it has any) behind its chevron. */
-function machineEntry(machine: SidebarMachine, props: TerminalWindowSidebarProps, local?: ReactNode): SpaceEntry {
+function machineEntry(
+  machine: SidebarMachine, props: TerminalWindowSidebarProps, local?: ReactNode, onlyProjects?: ((space: string) => boolean) | null,
+): SpaceEntry {
   const { filter, onFilter } = props;
-  const projects = machine.available ? orderedSpaces(machineSpaces(props.rows, machine.id), machine.id, props.spaceOrder[machine.id]) : [];
+  const all = machine.available ? orderedSpaces(machineSpaces(props.rows, machine.id), machine.id, props.spaceOrder[machine.id]) : [];
+  // A machine listed only for some of its projects (the Spaces filter) shows just those.
+  const projects = onlyProjects ? all.filter((item) => onlyProjects(item.space)) : all;
   const remove = machine.onRemove ? (
     <button type="button" aria-label={`Remove ${machine.name}`} title="Remove machine" onClick={machine.onRemove}
       className="no-drag flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100"
@@ -219,21 +235,50 @@ function UnavailableMachines({ machines }: { machines: readonly SidebarMachine[]
 }
 
 function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
-  const [local, ...others] = props.machines;
-  const usable = [
-    ...(local ? [machineEntry(local, props, local.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : null)] : []),
-    ...others.filter((machine) => !machine.dormant).map((machine) => machineEntry(machine, props)),
-  ];
-  const entries = inOrder(usable, (entry) => entry.id, props.machineOrder);
+  const query = props.spacesQuery;
+  const usableMachines = props.machines.filter((machine) => !machine.dormant);
+  // The same derivation as Ctrl+1…9 (use-terminal-window): shown names, kinds switched off.
+  const filtered = filterSpaces(usableMachines, query, props.hiddenSpaceGroups,
+    (machineId) => machineSpaces(props.rows, machineId).map((item) => item.space),
+    (machineId, space) => props.spaceStyles[space === undefined ? machineId : spaceId(machineId, space)]?.name);
+  const entryFor = (machine: SidebarMachine) => machineEntry(machine, props,
+    machine.kind === "local" && machine.available ? <NewLocalTerminalMenu compact creating={props.localCreating} onCreate={props.onCreateLocal} /> : undefined,
+    filtered.projectsOf(machine.id));
+  const entries = inOrder(filtered.shown.map(entryFor), (entry) => entry.id, props.machineOrder);
+  const previews = inOrder(filtered.previews.map(entryFor), (entry) => entry.id, props.machineOrder);
+  const groups = new Set(usableMachines.map((machine) => machine.group));
+  // A typed filter that matches a Preview Computer opens the fold, so the match is in view.
+  const previewsOpen = props.previewsOpen || (query.trim() !== "" && previews.length > 0);
+  const reorder = (ids: readonly string[]) => props.onMachineOrder(ids);
   return (
     // Its own scroll past 40% of the window, so the terminals below stay in view.
     <div className="flex max-h-[40vh] shrink-0 flex-col overflow-y-auto">
+      {/* Shown with many machines, and whenever it narrows anything, so it can always be undone. */}
+      {usableMachines.length > 3 || filterActive(query, props.hiddenSpaceGroups) ? (
+        <SpacesFilterBar query={query} onQuery={props.onSpacesQuery} hidden={props.hiddenSpaceGroups} onToggle={props.onToggleSpaceGroup} groups={groups}
+          thisName={usableMachines.find((machine) => machine.group === "this")?.name} />
+      ) : null}
       <AllSpacesRow chosen={props.filter === null} count={props.rows.length} onChoose={() => props.onFilter(null)} />
       <SpaceList label="Machines" entries={entries} styles={props.spaceStyles}
         expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
-        onStyle={props.onSpaceStyle} onReorder={props.onMachineOrder} />
+        onStyle={props.onSpaceStyle} onReorder={reorder} />
+      {previews.length > 0 ? (
+        <div>
+          <button type="button" aria-expanded={previewsOpen} onClick={props.onTogglePreviews}
+            className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
+            style={secondaryText}>
+            {previewsOpen ? <ChevronDown size={12} aria-hidden="true" /> : <ChevronRight size={12} aria-hidden="true" />}
+            Previews ({previews.length})
+          </button>
+          {previewsOpen ? (
+            <SpaceList label="Preview Computers" entries={previews} styles={props.spaceStyles} indent
+              expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
+              onStyle={props.onSpaceStyle} onReorder={reorder} />
+          ) : null}
+        </div>
+      ) : null}
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
-      <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
+      <ul aria-label="Unavailable machines list"><UnavailableMachines machines={props.machines.filter((machine) => machine.dormant)} /></ul>
       {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
     </div>
   );
