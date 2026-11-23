@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MenuItemConstructorOptions } from "electron";
 import { resolveShortcuts, type EffectiveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isTerminalWindowShortcut } from "@desktop/shared/terminal-window";
 import { createAppMenuTemplate } from "../../desktop/src/main/platform/menu-template";
+import { terminalWindowMenuItems } from "../../desktop/src/main/platform/terminal-menu-items";
 import { isShortcutActionAvailable } from "../../desktop/src/main/shortcuts/shortcut-availability";
 
 type Platform = "darwin" | "linux" | "win32";
@@ -338,5 +340,80 @@ describe("createAppMenuTemplate", () => {
     expect(withNotices.map((item) => item.label)).toEqual(["Matrix OS Documentation", "Third-Party Notices"]);
     withNotices[1]!.click!();
     expect(openThirdPartyNotices).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Spec 2706: Herdr's shortcuts exist only in the Terminal window's menu, and
+// reach that window as commands; the main window keeps its own keys.
+describe("Terminal window menu", () => {
+  type Item = { label?: string; accelerator?: string; click?: () => void; submenu?: Item[]; visible?: boolean };
+  const flat = (items: Item[]): Item[] => items.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? flat(item.submenu) : [])]);
+  const build = (platform: NodeJS.Platform, terminal: boolean) => {
+    const command = vi.fn();
+    const close = vi.fn();
+    const send = vi.fn();
+    const template = createAppMenuTemplate({
+      appName: "Matrix OS", isPackaged: true, platform, openExternal: vi.fn(), send, adjustZoom: vi.fn(),
+      checkForUpdates: vi.fn(), quitApp: vi.fn(),
+      shortcuts: resolveShortcuts(null, platform === "darwin" ? "mac" : "other"), runShortcut: vi.fn(),
+      ...(terminal ? { terminalWindow: { command, close } } : {}),
+    });
+    return { items: flat(template as Item[]), command, close, send };
+  };
+
+  it("maps Herdr's keys to Terminal window commands", () => {
+    const { items, command, close } = build("darwin", true);
+    const byKey = (accelerator: string) => items.filter((item) => item.accelerator === accelerator);
+    const expected: Array<[string, unknown]> = [
+      ["Cmd+N", { command: "new-terminal" }], ["Cmd+T", { command: "new-terminal" }], ["Cmd+W", { command: "close-terminal" }],
+      ["Cmd+Shift+P", { command: "picker" }], ["F2", { command: "rename" }],
+      ["Cmd+F", { command: "find" }], ["Cmd+P", { command: "picker" }], ["Cmd+]", { command: "next" }],
+      ["Cmd+[", { command: "previous" }], ["Ctrl+Tab", { command: "next-tab" }], ["Ctrl+Shift+Tab", { command: "previous-tab" }],
+      ["Cmd+B", { command: "toggle-sidebar" }], ["Cmd+1", { command: "select", index: 1 }], ["Cmd+9", { command: "select", index: 9 }],
+      ["Cmd+D", { command: "split-right" }], ["Cmd+Shift+D", { command: "split-down" }], ["Cmd+Shift+W", { command: "close-pane" }],
+      ["Cmd+Shift+Enter", { command: "zoom-pane" }], ["Cmd+Alt+Left", { command: "focus-pane", direction: "left" }],
+      ["Cmd+Alt+Down", { command: "focus-pane", direction: "down" }], ["Cmd+Alt+Shift+Right", { command: "swap-pane", direction: "right" }],
+      ["Cmd+Alt+Shift+Up", { command: "swap-pane", direction: "up" }],
+    ];
+    for (const [accelerator, sent] of expected) {
+      const matches = byKey(accelerator);
+      expect(matches, accelerator).toHaveLength(1);
+      matches[0]!.click!();
+      expect(command, accelerator).toHaveBeenLastCalledWith(sent);
+    }
+    byKey("Cmd+Alt+W")[0]!.click!();
+    expect(close).toHaveBeenCalled();
+    // Main-window shortcuts that would collide are not in this menu, the Apps menu included.
+    expect(items.some((item) => item.label === "Go to File" || item.label === "Command Palette" || item.label === "Next App")).toBe(false);
+  });
+
+  // Fault detected (Hamed, 2026-11-22): a focused terminal kept some of these keys, so the shortcut did nothing.
+  it("reserves every menu shortcut from a focused terminal", () => {
+    const items = flat(terminalWindowMenuItems(vi.fn(), vi.fn(), true) as Item[]);
+    const arrows: Record<string, string> = { Left: "ArrowLeft", Right: "ArrowRight", Up: "ArrowUp", Down: "ArrowDown" };
+    const accelerators = items.flatMap((item) => (item.accelerator ? [item.accelerator] : []));
+    expect(accelerators.length).toBeGreaterThan(20);
+    for (const accelerator of accelerators) {
+      const parts = accelerator.split("+");
+      const last = parts.at(-1)!;
+      const event = {
+        key: arrows[last] ?? last, metaKey: parts.includes("Cmd"), ctrlKey: parts.includes("Ctrl"),
+        altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
+      };
+      expect(isTerminalWindowShortcut(event), accelerator).toBe(true);
+    }
+  });
+
+  it("keeps the main window's menu free of Terminal window shortcuts", () => {
+    const { items } = build("darwin", false);
+    expect(items.some((item) => item.accelerator === "Cmd+B" || item.accelerator === "F2")).toBe(false);
+    expect(items.find((item) => item.accelerator === "Cmd+P")?.label).toBe("Go to File");
+    expect(items.find((item) => item.accelerator === "Ctrl+Tab")?.label).toBe("Next App");
+  });
+
+  it("leaves Ctrl to the shell on Linux by using the Super key", () => {
+    const { items } = build("linux", true);
+    expect(items.find((item) => item.label === "New Terminal")?.accelerator).toBe("Super+N");
+    expect(items.some((item) => item.accelerator?.startsWith("Cmd+"))).toBe(false);
   });
 });
