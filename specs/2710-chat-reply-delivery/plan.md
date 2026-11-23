@@ -45,6 +45,10 @@ thread-store entrypoint without extracting its queue/persistence orchestration.
   assistant fragment, native identity and terminal usage exactly once.
 - Partial UTF-8/JSONL records never advance the durable byte checkpoint.
 - Ownership and observation generation remain checked by the production store.
+- PR-size qualification compares the PR head with its immediate review base;
+  upstream-only changes in the synthetic CI merge must not count toward the
+  layer's size. A real Git-history regression exercises the workflow checkout
+  choice and production size scanner. Build/runtime lanes retain the merge ref.
 - There are no new endpoints or authority grants. Existing owner checks and
   provider boundaries remain authoritative. Existing legacy JSON is retained;
   no new persistence store is introduced.
