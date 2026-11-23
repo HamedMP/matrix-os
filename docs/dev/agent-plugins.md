@@ -51,7 +51,8 @@ Claude Code's `marketplace add` command cannot point at a marketplace in a subdi
       "source": {
         "source": "github",
         "repo": "HamedMP/matrix-os",
-        "path": "dev/.claude-plugin/marketplace.json"
+        "path": "dev/.claude-plugin/marketplace.json",
+        "sparsePaths": ["dev"]
       },
       "autoUpdate": true
     }

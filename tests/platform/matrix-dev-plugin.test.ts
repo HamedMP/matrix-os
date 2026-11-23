@@ -64,6 +64,8 @@ describe("matrix-dev plugin", () => {
         source: "github",
         repo: "HamedMP/matrix-os",
         path: "dev/.claude-plugin/marketplace.json",
+        // Without this, every engineer clones the whole monorepo to read one folder.
+        sparsePaths: ["dev"],
       },
       autoUpdate: true,
     });
