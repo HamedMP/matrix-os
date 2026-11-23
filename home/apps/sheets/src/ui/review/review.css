@@ -64,6 +64,7 @@
 
 .sheets-review__group-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding-bottom: 4px;
@@ -74,7 +75,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1;
+  /* The title takes its own line in a narrow panel; the count and actions wrap below it. */
+  flex: 1 1 100%;
 }
 
 .sheets-review__group-meta {
