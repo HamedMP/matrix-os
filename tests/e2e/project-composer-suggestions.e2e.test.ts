@@ -206,6 +206,9 @@ it.each([
     const target = await remove.boundingBox();
     expect(target!.width).toBeGreaterThanOrEqual(touch ? 44 : 24);
     expect(target!.height).toBeGreaterThanOrEqual(touch ? 44 : 24);
+    const sendTarget = await card.getByRole("button", { name: "Send", exact: true }).boundingBox();
+    expect(sendTarget!.width).toBe(touch ? 44 : 32);
+    expect(sendTarget!.height).toBe(touch ? 44 : 28);
     expect(await remove.locator("svg").count()).toBe(1);
     await remove.focus();
     expect(await remove.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe("none");
