@@ -229,3 +229,16 @@ termination followed by the real recovery dialog and explicit successful reload.
 Native main-frame recovery adds no API, file write, credential, or transaction.
 Keep startup imports narrow so the recovery screen does not require the Chat
 component barrel. Existing current-head surface qualification remains required.
+
+
+### CI review-size boundary
+
+The db2a08b CI PR Size job checked out a merge of the PR head into c5632e2, but
+compared it against the older d3201bc review base. It counted 624 files / 36,941
+additions instead of the actual PR's 48 files / 1,405 additions. Keep execution
+lanes on their merge candidate, but pin the size-only lane to the exact PR head.
+Its existing diff enforcer, review base, fresh-head check, 50-file/3,000-addition
+limits and required aggregate gate remain unchanged. No new authority or secret.
+The workflow wiring regression must fail on candidate checkout and pass on head
+checkout; retain actual added-pattern consumer tests and confirm the live CI job
+checks the intended commit and passes without excluding any PR files.
