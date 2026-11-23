@@ -76,19 +76,20 @@ function WorkSearchField({ query, disabled, listboxId, selectedOptionId, searchI
               }
             }}
           />
-          <button
+          <Button variant="ghost" size="icon"
             type="button"
             aria-label="Clear Chat search"
             disabled={disabled}
             title="Clear Chat search"
             className="flex size-7 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)]"
+            style={{ width: 28, height: 28, padding: 0 }}
             onClick={() => {
               onChange("");
               searchInputRef.current?.focus();
             }}
           >
             <X size={14} aria-hidden />
-          </button>
+          </Button>
         </div>
   );
 }
@@ -381,16 +382,16 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
                   </span>
                 </button>
                 {activeFilter === "Archived" && result.kind === "chat" ? <div className="chat-search-row-actions">
-                  <button type="button" aria-label={`Restore ${result.label}`} title="Restore ⌘R" disabled={archiveActionBusy} onClick={() => { void applyArchivedAction("restore", result.record); }}><ArchiveRestore size={14} aria-hidden/></button>
-                  <button type="button" aria-label={`Delete ${result.label}`} title="Delete" disabled={archiveActionBusy} style={{color:"var(--chat-danger)"}} onClick={() => { setDeletion({ scope: actionScope, record: result.record }); }}><Trash2 size={14} aria-hidden/></button>
+                  <Button variant="ghost" size="icon" aria-label={`Restore ${result.label}`} title="Restore ⌘R" disabled={archiveActionBusy} style={{ width: 28, height: 28, padding: 0 }} onClick={() => { void applyArchivedAction("restore", result.record); }}><ArchiveRestore size={14} aria-hidden/></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Delete ${result.label}`} title="Delete" disabled={archiveActionBusy} style={{ width: 28, height: 28, padding: 0, color: "var(--chat-danger)" }} onClick={() => { setDeletion({ scope: actionScope, record: result.record }); }}><Trash2 size={14} aria-hidden/></Button>
                 </div> : null}
                 </div>
               ))}
             </div>
           ) : null}
-          {serverCursor ? <button type="button" className="w-full px-3 py-2 text-center text-xs hover:bg-[var(--bg-hover)]" disabled={searchLoading} onClick={() => { void loadMore(); }}>Show more results</button> : null}
+          {serverCursor ? <Button variant="ghost" size="sm" className="w-full text-center hover:bg-[var(--bg-hover)]" style={{ width: "100%", padding: "8px 12px", font: "inherit", fontSize: 12 }} disabled={searchLoading} onClick={() => { void loadMore(); }}>Show more results</Button> : null}
         </div>
-        {activeFilter === "Archived" ? <button type="button" className="chat-search-open-archive" disabled={archiveActionBusy} onClick={() => { onOpenArchivedList?.(); close(); }}><Archive size={15} aria-hidden/><span>Open the archived list</span><ChevronRight size={14} aria-hidden/></button> : null}
+        {activeFilter === "Archived" ? <Button variant="ghost" className="chat-search-open-archive" style={{ font: "inherit", width: "100%", padding: "14px 18px", gap: 10, borderRadius: 0, borderTop: "1px solid var(--chat-line)", justifyContent: "flex-start" }} disabled={archiveActionBusy} onClick={() => { onOpenArchivedList?.(); close(); }}><Archive size={15} aria-hidden/><span>Open the archived list</span><ChevronRight size={14} aria-hidden/></Button> : null}
         <footer className="chat-search-footer">↑↓ Move <span>↵ Open</span>{activeFilter === "Archived" ? <span>⌘R Restore</span> : null}<span>esc Close</span></footer>
       </div>
     </Dialog>
