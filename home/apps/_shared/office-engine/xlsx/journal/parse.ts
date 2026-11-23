@@ -10,6 +10,8 @@ import type { FormulaErrorCode } from "../../api/formula.js";
 import type { CellRange, CellValue } from "../../api/xlsx.js";
 import { MAX_COLS, MAX_ROWS } from "../workbook/a1.js";
 import type { RawCell } from "../workbook/internals.js";
+import { features } from "./parse-features.js";
+import { FormatError, fail, int, list, obj, text } from "./parse-util.js";
 import {
   type AxisEntry,
   type BandSnapshot,
@@ -26,39 +28,12 @@ import {
   type RewriteRecord,
 } from "./types.js";
 
-/** Thrown inside this module only; {@link parseJournal} turns it into a result. */
-class FormatError extends Error {}
-
 const ERROR_CODES: ReadonlySet<string> = new Set<FormulaErrorCode>(["#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#N/A", "#NUM!", "#NULL!"]);
 const MAX_COUNTER = 1_000_000_000;
 const MAX_CELL_TEXT = 32_767;
 const MAX_FORMULA_TEXT = 8_192;
 const MAX_LIST = 10_000;
 const AXIS_KINDS = new Set(["insertRows", "deleteRows", "insertColumns", "deleteColumns"]);
-
-function fail(): never {
-  throw new FormatError("journal format");
-}
-
-function obj(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) fail();
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, max: number): unknown[] {
-  if (!Array.isArray(value) || value.length > max) fail();
-  return value;
-}
-
-function int(value: unknown, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) fail();
-  return value;
-}
-
-function text(value: unknown, max: number, min = 0): string {
-  if (typeof value !== "string" || value.length < min || value.length > max) fail();
-  return value;
-}
 
 function id(value: unknown, prefix: "p" | "c"): string {
   const s = text(value, 12, 2);
@@ -153,7 +128,7 @@ function names(value: unknown): NameRewrite[] {
   });
 }
 
-function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "index" | "count" | "snapshot" | "rewrites" | "names" | "merges">, kind: AxisEntry["kind"]): AxisEntry {
+function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "index" | "count" | "snapshot" | "rewrites" | "names" | "merges" | "features">, kind: AxisEntry["kind"]): AxisEntry {
   const limit = kind === "insertRows" || kind === "deleteRows" ? MAX_ROWS : MAX_COLS;
   const index = int(o.index, 0, limit - 1);
   const count = int(o.count, 1, limit - index);
@@ -165,7 +140,9 @@ function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "i
     const m = obj(o.merges);
     merges = { before: list(m.before, MAX_LIST).map(range), after: list(m.after, MAX_LIST).map(range) };
   }
-  return { ...base, kind, index, count, snapshot: shot, rewrites: rewrites(o.rewrites), names: names(o.names), merges };
+  // A journal written before deletions kept the features of the sheet has no such field.
+  const kept = o.features === undefined || !isDelete ? null : features(o.features);
+  return { ...base, kind, index, count, snapshot: shot, rewrites: rewrites(o.rewrites), names: names(o.names), merges, features: kept };
 }
 
 function entry(value: unknown): JournalEntry {

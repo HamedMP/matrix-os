@@ -17,12 +17,25 @@ import { type Axis, captureBand, sameRanges } from "./band.js";
 import { type JournalContext, type OriginalMethods, isActive } from "./context.js";
 import type { AxisKind, NameRewrite, RenameSheetEntry } from "./types.js";
 
-/** Rewrites the old formula of every pending cell change. */
+/**
+ * Rewrites the formulas the journal keeps to put back: the old formula of
+ * every pending cell change, and the cells and feature formulas a pending
+ * deletion took.
+ */
 function rewriteOldFormulas(ctx: JournalContext, rewrite: (text: string, sheet: SheetId) => string): void {
   for (const entry of ctx.store.entries.values()) {
-    if (entry.kind !== "cell" || entry.old.formula === null) continue;
-    const text = rewrite(entry.old.formula, entry.sheet);
-    if (text !== entry.old.formula) entry.old = { ...entry.old, formula: text };
+    if (entry.kind === "cell") {
+      if (entry.old.formula === null) continue;
+      const text = rewrite(entry.old.formula, entry.sheet);
+      if (text !== entry.old.formula) entry.old = { ...entry.old, formula: text };
+    } else if (entry.kind === "deleteRows" || entry.kind === "deleteColumns") {
+      for (const cell of entry.snapshot?.cells ?? []) {
+        if (cell.raw.formula === null) continue;
+        const text = rewrite(cell.raw.formula, entry.sheet);
+        if (text !== cell.raw.formula) cell.raw = { ...cell.raw, formula: text };
+      }
+      if (entry.features !== null) entry.features = ctx.internals.rewriteSheetFeatures(entry.features, (text) => rewrite(text, entry.sheet));
+    }
   }
 }
 
@@ -85,6 +98,7 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
   }
   ctx.store.requireRoom();
   const snapshot = sign < 0 ? captureBand(ctx, info, axis, index, count) : null;
+  const features = sign < 0 ? ctx.internals.captureSheetFeatures(sheet, axis, index, count) : null;
   const namesBefore = workbook.listDefinedNames();
   ctx.capture = [];
   ctx.captureOverflow = false;
@@ -109,6 +123,7 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
     rewrites,
     names: nameRewrites(namesBefore, workbook.listDefinedNames()),
     merges: sameRanges(info.mergedRanges, mergesAfter) ? null : { before: info.mergedRanges, after: mergesAfter },
+    features,
   });
 }
 

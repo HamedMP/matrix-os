@@ -118,6 +118,9 @@ function revertAxis(ctx: JournalContext, entry: AxisEntry, restored: SheetCellRe
     currentNames.some((c) => c.name.toLowerCase() === n.name.toLowerCase() && c.scope === n.scope && c.refersTo === n.after),
   );
   const merges = entry.merges !== null && sameRanges(workbook.getSheet(entry.sheet).mergedRanges, entry.merges.after) ? entry.merges : null;
+  // A state that came from a damaged file cannot be put back; the deletion then stays pending.
+  const features = entry.features;
+  if (features !== null && !internals.readableSheetFeatures(features)) return false;
   const ok = attempt(ctx, entry, () => applyAxis(ctx, entry.sheet, axis, entry.index, insert ? -entry.count : entry.count));
   if (!ok) return false;
   if (merges !== null) {
@@ -141,6 +144,8 @@ function revertAxis(ctx: JournalContext, entry: AxisEntry, restored: SheetCellRe
   for (const n of names) {
     if (n.scope === null || internals.hasSheet(n.scope)) workbook.setDefinedName({ name: n.name, scope: n.scope, refersTo: n.before });
   }
+  // Last, so that array formulas find their cells and rows their restored content.
+  if (features !== null) internals.restoreSheetFeatures(entry.sheet, features);
   return true;
 }
 

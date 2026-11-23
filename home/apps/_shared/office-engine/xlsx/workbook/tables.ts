@@ -123,19 +123,43 @@ function moveRef(element: XmlElement, op: StructuralOp): boolean {
   return true;
 }
 
+/** The elements of a table part that carry a `ref`: the table, its filter, their sort states and conditions. */
+function refElements(root: XmlElement): XmlElement[] {
+  const found: XmlElement[] = [root];
+  const filter = kid(root, "autoFilter");
+  for (const element of [filter, kid(root, "sortState"), filter === null ? null : kid(filter, "sortState")]) {
+    if (element === null) continue;
+    found.push(element, ...kids(element, "sortCondition"));
+  }
+  return found;
+}
+
 /** Moves the ranges of the tables of a sheet with its rows and columns. Call after {@link checkTablesForStructure}. */
 export function moveTables(sheet: SheetModel, op: StructuralOp): void {
   for (const part of sheet.tables) {
-    const root = part.doc.root;
-    let changed = moveRef(root, op);
-    const filter = kid(root, "autoFilter");
-    const sorts = [kid(root, "sortState"), filter === null ? null : kid(filter, "sortState")];
-    for (const element of [filter, ...sorts]) {
-      if (element === null) continue;
-      if (moveRef(element, op)) changed = true;
-      for (const condition of kids(element, "sortCondition")) if (moveRef(condition, op)) changed = true;
-    }
+    let changed = false;
+    for (const element of refElements(part.doc.root)) if (moveRef(element, op)) changed = true;
     if (changed) part.dirty = true;
+  }
+}
+
+/** The `ref` attributes of every table of the sheet, for a snapshot. */
+export function tableRefs(sheet: SheetModel): Array<{ part: string; refs: Array<string | null> }> {
+  return sheet.tables.map((part) => ({ part: part.name, refs: refElements(part.doc.root).map((element) => getAttr(element, "ref")) }));
+}
+
+/** Puts back ranges taken with {@link tableRefs}. A table whose elements no longer match is left alone. */
+export function restoreTableRefs(sheet: SheetModel, saved: ReadonlyArray<{ part: string; refs: ReadonlyArray<string | null> }>): void {
+  for (const part of sheet.tables) {
+    const entry = saved.find((item) => item.part === part.name);
+    const elements = refElements(part.doc.root);
+    if (entry === undefined || entry.refs.length !== elements.length) continue;
+    elements.forEach((element, at) => {
+      const ref = entry.refs[at];
+      if (ref === null || ref === undefined || tryParseA1Range(ref) === null || getAttr(element, "ref") === ref) return;
+      setAttr(element, "ref", ref);
+      part.dirty = true;
+    });
   }
 }
 

@@ -43,7 +43,8 @@ import {
   writeCell,
 } from "./cells.js";
 import { parseCellInput } from "./input.js";
-import { type CellMutationListener, type RawCell, type WorkbookInternals, type WorkbookJournal, registerInternals } from "./internals.js";
+import { makeInternals } from "./handle-internals.js";
+import { registerInternals } from "./internals.js";
 import { setColumnWidth, setMerge, unmerge } from "./layout.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { flushNames, listNames, removeName, setName } from "./names.js";
@@ -55,7 +56,6 @@ import { CONTENT_TYPE_STYLES, REL_STYLES, addSharedString, sheetOf } from "./sta
 import { applyStructuralOp } from "./structure.js";
 import { applyStylePatch } from "./style-write.js";
 
-const MAX_LISTENERS = 16;
 /** Calculation runs one save makes at most: each takes 200 000 formulas, a workbook holds 2 000 000 cells. */
 const MAX_SAVE_RUNS = 64;
 
@@ -402,70 +402,6 @@ export class WorkbookHandle implements Workbook {
     syncParts(state);
     return state.pkg.save();
   }
-}
-
-function makeInternals(workbook: Workbook, state: WorkbookState): WorkbookInternals {
-  const sheetByPart = (name: PartName): SheetModel | undefined =>
-    state.sheets.find((sheet) => partNamesEqual(sheet.partName, name));
-  return {
-    workbook,
-    get package(): OpcPackage {
-      return state.pkg;
-    },
-    get workbookPartName(): PartName {
-      return state.workbookPart.name;
-    },
-    sheetPartName: (sheet) => sheetOf(state, sheet).partName,
-    hasSheet: (sheet) => state.sheetsById.has(sheet),
-    readRawCell(sheet, address): RawCell {
-      const model = sheetOf(state, sheet);
-      requireAddress(address);
-      return readRaw(model, address.row, address.col);
-    },
-    writeRawCell(sheet, address, cell): void {
-      const model = sheetOf(state, sheet);
-      requireAddress(address);
-      const next: RawCell = { value: checkValue(cell.value), formula: cell.formula, styleId: state.styles.clamp(cell.styleId) };
-      writeCell(state, model, address.row, address.col, next, null);
-    },
-    onCellMutation(listener: CellMutationListener): () => void {
-      if (typeof listener !== "function") throw new OfficeError("invalid_argument", "a listener is a function");
-      if (state.listeners.length >= MAX_LISTENERS) throw new OfficeError("limit_exceeded", "too many mutation listeners");
-      state.listeners.push(listener);
-      return () => {
-        const at = state.listeners.indexOf(listener);
-        if (at >= 0) state.listeners.splice(at, 1);
-      };
-    },
-    getPartXml(name): XmlDocument | null {
-      if (partNamesEqual(name, state.workbookPart.name)) {
-        flushNames(state);
-        return state.workbookPart.doc;
-      }
-      const sheet = sheetByPart(name);
-      if (sheet !== undefined) {
-        flushSheet(sheet, (text) => addSharedString(state, text));
-        return attachSheet(sheet).doc;
-      }
-      if (state.stringsPartName !== null && partNamesEqual(name, state.stringsPartName)) return state.strings.doc;
-      if (partNamesEqual(name, state.stylesPart.name)) return state.stylesPart.doc;
-      return null;
-    },
-    markPartDirty(name): void {
-      const sheet = sheetByPart(name);
-      if (sheet !== undefined) sheet.partDirty = true;
-      else if (partNamesEqual(name, state.workbookPart.name)) state.workbookPart.dirty = true;
-      else if (state.stringsPartName !== null && partNamesEqual(name, state.stringsPartName)) state.strings.dirty = true;
-      else if (partNamesEqual(name, state.stylesPart.name)) state.styles.dirty = true;
-    },
-    async readPartText(name): Promise<string | null> {
-      return state.pkg.hasPart(name) ? state.pkg.getPartText(name) : null;
-    },
-    setJournal(journal: WorkbookJournal | null): void {
-      state.journal = journal;
-    },
-    getJournal: () => state.journal,
-  };
 }
 
 /** The state behind a handle, for the modules of this folder (CSV import, tests of internals). */

@@ -129,7 +129,7 @@ function syncAttr(element: XmlElement, name: string, value: string | null): void
   else setAttr(element, name, value);
 }
 
-const ROW_MODEL_ATTRS: ReadonlySet<string> = new Set(["r", "spans", "ht", "customHeight", "hidden"]);
+export const ROW_MODEL_ATTRS: ReadonlySet<string> = new Set(["r", "spans", "ht", "customHeight", "hidden"]);
 
 /** True when a row element carries nothing beyond what the model holds (number, height, visibility). */
 function isBareRow(element: XmlElement): boolean {
@@ -139,12 +139,13 @@ function isBareRow(element: XmlElement): boolean {
 
 /** Writes one row. Returns false when the row is empty and should leave the sheet. */
 function flushRow(sheet: AttachedSheet, row: RowRec, strings: StringSink): boolean {
-  if (row.cells.size === 0 && row.height === null && !row.hidden && (row.el === null || isBareRow(row.el))) return false;
+  if (row.cells.size === 0 && row.height === null && !row.hidden && row.attrs === undefined && (row.el === null || isBareRow(row.el))) return false;
   const data = sheet.sheetData;
   let element = row.el;
   if (element === null) {
-    element = createElement(qualify(data, "row"), { r: String(row.index + 1) });
+    element = createElement(qualify(data, "row"), [["r", String(row.index + 1)], ...(row.attrs ?? [])]);
     row.el = element;
+    row.attrs = undefined;
     sheet.rowSetDirty = true;
   }
   syncAttr(element, "r", String(row.index + 1));

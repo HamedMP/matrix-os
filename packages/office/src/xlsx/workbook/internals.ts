@@ -22,6 +22,7 @@ import type {
 } from "../../api/xlsx.js";
 import type { XmlDocument } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
+import type { SheetFeatureState } from "./features.js";
 
 /** The content of a cell that an edit can change. */
 export interface RawCell {
@@ -116,6 +117,21 @@ export interface WorkbookInternals {
   markPartDirty(name: PartName): void;
   /** Text of any part of the package, or null when it does not exist. */
   readPartText(name: PartName): Promise<string | null>;
+
+  /**
+   * What rows or columns about to be deleted take from the sheet besides
+   * the content and sizes of their cells (the ranges of formats,
+   * validations, links and tables, notes, array formulas, row and column
+   * attributes), or null when the sheet has none of it. Plain data that can
+   * be saved. Throws `limit_exceeded` when there is too much to keep.
+   */
+  captureSheetFeatures(sheet: SheetId, axis: "row" | "col", index: number, count: number): SheetFeatureState | null;
+  /** False when a state read from a file cannot be used. */
+  readableSheetFeatures(features: SheetFeatureState): boolean;
+  /** Puts a sheet back into a captured state, once the deleted rows or columns are inserted again. */
+  restoreSheetFeatures(sheet: SheetId, features: SheetFeatureState): void;
+  /** Applies a formula rewrite (a rename, a removed sheet, moved rows) to the formulas inside a captured state. */
+  rewriteSheetFeatures(features: SheetFeatureState, rewrite: (text: string) => string): SheetFeatureState;
 
   /** Attaches the journal that serves the proposal methods of the workbook. */
   setJournal(journal: WorkbookJournal | null): void;

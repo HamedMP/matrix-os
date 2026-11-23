@@ -66,6 +66,8 @@ export interface RowRec {
   hidden: boolean;
   /** A cell of the row, its position or its height changed since the element was written. */
   dirty: boolean;
+  /** Attributes a row that is not in the XML yet takes when it is first written (a row format, an outline level). */
+  attrs?: ReadonlyArray<readonly [string, string]>;
 }
 
 /** A run of columns that share width and visibility, as a `<col>` element stores them. */

@@ -47,6 +47,7 @@ function entryJson(entry: JournalEntry): Record<string, unknown> {
         rewrites: entry.rewrites,
         names: entry.names,
         merges: entry.merges,
+        features: entry.features,
       };
   }
 }

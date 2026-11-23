@@ -8,6 +8,7 @@
  */
 
 import type { CellChange, CellRange, ResolveChangesResult, SheetId } from "../../api/xlsx.js";
+import type { SheetFeatureState } from "../workbook/features.js";
 import type { RawCell } from "../workbook/internals.js";
 
 /** Where the journal is stored in the package. */
@@ -141,6 +142,13 @@ export interface AxisEntry extends EntryBase {
   names: NameRewrite[];
   /** Merged ranges of the sheet before and after, or null when the edit left them unchanged. */
   merges: { before: CellRange[]; after: CellRange[] } | null;
+  /**
+   * For a deletion: what the sheet held besides cell content before it (the
+   * ranges of formats, validations, links and tables, notes, array formulas,
+   * row and column attributes). Null for an insertion and for a sheet with
+   * none of it.
+   */
+  features: SheetFeatureState | null;
 }
 
 export interface AddSheetEntry extends EntryBase {
