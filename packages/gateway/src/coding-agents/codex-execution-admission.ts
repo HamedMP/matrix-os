@@ -114,8 +114,10 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     return value;
   }
   // Receipt facts stay private to this instance; the WeakMap is bounded by live receipts.
-  const receipts = new WeakMap<object, { userId: string; sessionId: string | undefined; binding: string; principal: string; revision: number;
-    configurationFingerprint: string; consentRevision: number; harnessInstanceId: string; accountId: string; issuedAt: number }>();
+  type ReceiptFacts = { userId: string; sessionId: string | undefined; binding: string; principal: string; revision: number;
+    configurationFingerprint: string; consentRevision: number; harnessInstanceId: string; accountId: string; issuedAt: number };
+  type ConfirmOutcome = { kind: "confirmed"; facts: ReceiptFacts } | { kind: "full"; value: Awaited<ReturnType<typeof validate>> };
+  const receipts = new WeakMap<object, ReceiptFacts>();
   // Latest receipt per session so launch admission in the same send can confirm
   // instead of re-projecting. Bounded: oldest evicted past 64; facts expire in 30 s.
   const sessionReceipts = new Map<string, CodexAdmissionReceipt>();
@@ -144,10 +146,10 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
    * any Settings write since). Only the full check's binding comparison decides
    * those; owner, revocation gate, and principal mismatches reject outright.
    */
-  async function confirmOrValidate(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
+  async function confirmOrValidate(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string): Promise<ConfirmOutcome> {
     const facts = freshFacts(userId, receipt);
-    if (!facts || facts.sessionId !== sessionId) return { full: await validate(userId, receipt?.binding, sessionId) };
-    return timeChatSendStage("codex_execution_confirm", async () => {
+    if (!facts || facts.sessionId !== sessionId) return { kind: "full", value: await validate(userId, receipt?.binding, sessionId) };
+    return timeChatSendStage("codex_execution_confirm", async (): Promise<ConfirmOutcome> => {
       if (!await options.isOwner(userId)) reject();
       await sessions.assertOpen();
       const config = await readSavedProviderSettingsConfiguration(path);
@@ -157,7 +159,7 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       // re-derive everything with the full check rather than failing the send.
       if (!config || config.revision !== facts.revision || rows.length !== 1 || !row!.enabled
         || nativeCodexConfigurationFingerprint(row!) !== facts.configurationFingerprint
-        || row!.nativeAccountGeneration !== facts.principal) return { full: await validate(userId, facts.binding, sessionId) };
+        || row!.nativeAccountGeneration !== facts.principal) return { kind: "full", value: await validate(userId, facts.binding, sessionId) };
       await options.assertProfileAvailable?.();
       const metadata = await verifyNativeAccountMetadata(await options.readNativeAccount());
       if (!metadata || metadata.authMethod !== "terminal"
@@ -166,9 +168,9 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       await options.assertProfileAvailable?.();
       await sessions.assertOpen();
       const latest = await readSavedProviderSettingsConfiguration(path);
-      if (!latest || latest.revision !== facts.revision) return { full: await validate(userId, facts.binding, sessionId) };
+      if (!latest || latest.revision !== facts.revision) return { kind: "full", value: await validate(userId, facts.binding, sessionId) };
       await sessions.register(userId, sessionId, facts.binding);
-      return { full: undefined, confirmed: facts };
+      return { kind: "confirmed", facts };
     });
   }
   async function confirm(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string) {
@@ -235,9 +237,7 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       if (receipt && facts && prior?.binding === facts.binding) {
         const outcome = await confirmOrValidate(userId, receipt, sessionId);
         // Intent comes from the confirmed facts, or from the full check when it ran.
-        const value = outcome.full ?? (outcome.confirmed ? { principal: outcome.confirmed.principal, consentRevision: outcome.confirmed.consentRevision,
-          harnessInstanceId: outcome.confirmed.harnessInstanceId, accountId: outcome.confirmed.accountId,
-          configurationFingerprint: outcome.confirmed.configurationFingerprint } : undefined);
+        const value = outcome.kind === "confirmed" ? outcome.facts : outcome.value;
         return value ? { expectedPrincipalFingerprint: value.principal, expectedConsentRevision: value.consentRevision,
           expectedHarnessInstanceId: value.harnessInstanceId, expectedAccountId: value.accountId,
           expectedConfigurationFingerprint: value.configurationFingerprint } : undefined;
