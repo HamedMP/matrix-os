@@ -37,10 +37,21 @@ export function useLatest<T>(value: T): RefObject<T> {
   return ref;
 }
 
+/** Active focus traps, innermost last. Only the innermost one handles keys whose focus was lost. */
+const activeTraps: HTMLElement[] = [];
+
+/** True when no element has focus, as after the focused element was removed from the page. */
+function focusIsLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body || active === document.documentElement;
+}
+
 /**
  * Modal focus management: on activation remember the focused element, move focus
  * inside the container, keep Tab cycling inside it, call onEscape for Escape and
- * restore focus to the remembered element when deactivated or unmounted.
+ * restore focus to the remembered element when deactivated or unmounted. When
+ * the focused control inside is removed (focus falls back to the page), the
+ * innermost trap still answers Escape and Tab.
  */
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
@@ -84,9 +95,18 @@ export function useFocusTrap(
         first.focus();
       }
     };
+    const onLostFocusKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !focusIsLost() || activeTraps[activeTraps.length - 1] !== container) return;
+      onKeyDown(event);
+    };
+    activeTraps.push(container);
     container.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onLostFocusKeyDown);
     return () => {
       container.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onLostFocusKeyDown);
+      const at = activeTraps.lastIndexOf(container);
+      if (at !== -1) activeTraps.splice(at, 1);
       if (previous && previous.isConnected) previous.focus();
     };
   }, [active, containerRef, initialFocusRef, onEscape]);

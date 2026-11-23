@@ -20,6 +20,29 @@ function DialogHarness({ onClose }: { onClose?: () => void }) {
 }
 
 describe("Dialog", () => {
+  it("still closes on Escape and keeps Tab inside after the focused control is removed", () => {
+    const onClose = vi.fn();
+    function Shrinking() {
+      const [step, setStep] = useState(0);
+      return (
+        <Dialog open onClose={onClose} title="Pick a folder">
+          {step === 0 ? <button key="folder" type="button" onClick={() => setStep(1)}>Folder Documents</button> : <button key="file" type="button">Document contract.docx</button>}
+        </Dialog>
+      );
+    }
+    render(<Shrinking />);
+    const folder = screen.getByRole("button", { name: "Folder Documents" });
+    folder.focus();
+    fireEvent.click(folder);
+    // The focused button is gone, so focus has fallen back to the page.
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    expect(screen.getByRole("dialog", { name: "Pick a folder" }).contains(document.activeElement)).toBe(true);
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("moves focus inside, traps Tab, closes on Escape and returns focus to the opener", () => {
     const onClose = vi.fn();
     render(<DialogHarness onClose={onClose} />);
