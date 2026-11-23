@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   attachmentToDataUrl,
   createCidResolver,
+  inlineImageRefs,
   sanitizeEmailHtml,
   sanitizeForQuote,
 } from "../../../../home/apps/mail/src/html";
@@ -175,6 +176,22 @@ describe("remote images", () => {
     expect(result.blockedImages).toBe(0);
   });
 
+  it("never fetches an image from the reader's own network", () => {
+    const local = [
+      "http://192.168.1.1/admin/reboot.png", "http://127.0.0.1:8080/x.png", "http://localhost/x.png", "http://router/x.png",
+      "http://[::1]/x.png", "http://0x7f.0.0.1/x.png", "http://2130706433/x.png", "http://printer.local/x.png",
+      "https://wiki.corp/x.png", "https://nas.home.arpa/x.png", "//10.0.0.5/x.png", "http://service.internal./x.png",
+    ].map((src) => `<img src="${src}" width="100" height="100" alt="local">`).join("");
+    for (const remoteImages of ["block", "allow"] as const) {
+      const result = sanitizeEmailHtml(`<p>Hi</p>${local}<img src="https://cdn.example/a.png">`, { remoteImages });
+      const body = expectInert(result.html);
+      expect(body.querySelectorAll("img, .mx-image-blocked").length).toBe(1);
+      expect(result.html).not.toMatch(/192\.168|127\.0|localhost|router|::1|printer|corp|arpa|10\.0|internal/);
+    }
+    const viaResolver = sanitizeEmailHtml('<img src="https://cdn.example/a.png">', { remoteImages: "allow", resolveRemoteImage: () => "http://192.168.1.1/x.png" });
+    expect(viaResolver.html).not.toContain("<img");
+  });
+
   it("strips remote backgrounds from styles but keeps the colour next to them", () => {
     const result = sanitizeEmailHtml('<p style="background:#fafafa url(https://cdn.example/bg.png) no-repeat;color:#111">x</p><div style="background-image:url(\'https://cdn.example/x.png\');padding:4px">y</div>');
     expect(result.html).toContain('style="background:#fafafa no-repeat;color:#111"');
@@ -200,6 +217,14 @@ describe("inline images", () => {
     const capped = sanitizeEmailHtml(`<img src="${big}" alt="chart">`, { maxInlineImageBytes: 1000 });
     expect(capped.html).not.toContain("<img");
     expect(expectInert(capped.html).querySelector(".mx-image-missing")?.textContent).toBe("chart");
+  });
+
+  it("limits how much inline image data one message can carry", () => {
+    const image = `<img src="data:image/png;base64,${"A".repeat(4000)}" alt="big">`;
+    const result = sanitizeEmailHtml(image.repeat(6), { maxInlineImageBytes: 3000 });
+    const body = expectInert(result.html);
+    expect(body.querySelectorAll("img").length).toBe(3);
+    expect(body.querySelectorAll(".mx-image-missing").length).toBe(3);
   });
 
   it("resolves cid images from attachments and reports the ones it could not", () => {
@@ -240,6 +265,14 @@ describe("inline images", () => {
     expect(attachmentToDataUrl({ mimeType: "image/png", contentBase64: PNG_BASE64 }, 10)).toBeNull();
     const urlSafe = PNG_BASE64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     expect(attachmentToDataUrl({ mimeType: "image/png", contentBase64: urlSafe })).toBe(PNG_DATA_URL);
+  });
+
+  it("lists the content ids a mail refers to without rendering it", () => {
+    const html = '<img src="cid:a@x"><img src=" CID:b%20c "><img src="cid:a@x"><img src="https://cdn.example/x.png"><img src="cid:"><script>document.write(\'<img src="cid:no">\')</script>';
+    expect(inlineImageRefs(html)).toEqual(["a@x", "b c"]);
+    expect(inlineImageRefs("<p>no images</p>")).toEqual([]);
+    expect(inlineImageRefs(null)).toEqual([]);
+    expect(inlineImageRefs('<img src="cid:x">'.repeat(3) + Array.from({ length: 300 }, (_, index) => `<img src="cid:i${index}">`).join("")).length).toBe(200);
   });
 
   it("matches cid references by content id first, then by file name", () => {

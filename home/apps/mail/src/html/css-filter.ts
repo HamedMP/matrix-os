@@ -28,6 +28,7 @@ const MAX_VALUE_CHARS = 400;
 const MAX_SHEET_CHARS = 500_000;
 const MAX_SHEET_OUTPUT_CHARS = 100_000;
 const MAX_SHEET_RULES = 2000;
+const MAX_SHEET_EXAMINED = 20_000;
 const MAX_MEDIA_DEPTH = 3;
 
 const SIDES = ["top", "right", "bottom", "left"];
@@ -186,7 +187,10 @@ function filterMediaQuery(prelude: string): string | null {
 }
 
 interface SheetBudget {
+  /** Rules kept. */
   rules: number;
+  /** Rules looked at, kept or not; bounds the work a sheet of empty rules can cause. */
+  examined: number;
   chars: number;
   hasColor: boolean;
 }
@@ -194,19 +198,24 @@ interface SheetBudget {
 function filterRules(text: string, depth: number, budget: SheetBudget): string {
   let out = "";
   let at = 0;
-  while (at < text.length && budget.rules < MAX_SHEET_RULES && budget.chars < MAX_SHEET_OUTPUT_CHARS) {
+  // Position of the next `;` at or after `at`, searched only when the cached one is behind us.
+  let semicolon = -2;
+  while (at < text.length && budget.rules < MAX_SHEET_RULES && budget.examined < MAX_SHEET_EXAMINED && budget.chars < MAX_SHEET_OUTPUT_CHARS) {
     const char = text[at];
-    if (char === "}" || char === ";" || /\s/.test(char)) {
+    if (char === "}" || char === ";" || char === " ") {
       at += 1;
       continue;
     }
-    const semicolon = text.indexOf(";", at);
+    budget.examined += 1;
     const open = text.indexOf("{", at);
     if (open < 0) break;
-    if (text[at] === "@" && semicolon >= 0 && semicolon < open) {
-      // A statement at-rule such as @import or @charset: never kept.
-      at = semicolon + 1;
-      continue;
+    if (char === "@") {
+      if (semicolon !== -1 && semicolon < at) semicolon = text.indexOf(";", at);
+      if (semicolon >= 0 && semicolon < open) {
+        // A statement at-rule such as @import or @charset: never kept.
+        at = semicolon + 1;
+        continue;
+      }
     }
     const close = matchingBrace(text, open);
     if (close < 0) break;
@@ -244,7 +253,7 @@ function filterRules(text: string, depth: number, budget: SheetBudget): string {
 export function filterStylesheet(text: unknown): FilteredCss {
   if (typeof text !== "string" || !text) return { css: "", hasColor: false };
   const clean = stripComments(text.slice(0, MAX_SHEET_CHARS)).replace(/<!--|-->/g, " ").replace(/\s/g, " ");
-  const budget: SheetBudget = { rules: 0, chars: 0, hasColor: false };
+  const budget: SheetBudget = { rules: 0, examined: 0, chars: 0, hasColor: false };
   const css = filterRules(clean, 0, budget);
   return css.includes("<") ? { css: "", hasColor: false } : { css, hasColor: budget.hasColor };
 }

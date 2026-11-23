@@ -76,6 +76,11 @@ describe("htmlToText", () => {
     expect(htmlToText(html, { quotes: "omit" })).toBe("Agreed.");
   });
 
+  it("stops prefixing at a fixed quote depth", () => {
+    const text = htmlToText(`${"<blockquote>".repeat(30)}deep${"</blockquote>".repeat(30)}`);
+    expect(text).toBe(`${"> ".repeat(8)}deep`);
+  });
+
   it("keeps preformatted text and bounds its output", () => {
     expect(htmlToText("<pre>a\n  b\n\tc</pre>")).toBe("a\n  b\n\tc");
     const cut = htmlToText(`<p>${"word ".repeat(1000)}</p>`, { maxLength: 50 });

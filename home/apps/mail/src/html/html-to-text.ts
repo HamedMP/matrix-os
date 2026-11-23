@@ -21,6 +21,7 @@ export interface HtmlToTextOptions {
 }
 
 const MAX_DEPTH = 200;
+const MAX_QUOTE_DEPTH = 8;
 
 const SKIPPED: ReadonlySet<string> = new Set([
   "script", "style", "head", "title", "template", "noscript", "noembed", "noframes", "svg", "math", "canvas", "audio", "video",
@@ -93,6 +94,8 @@ class TextBuilder {
 }
 
 interface WalkState {
+  /** Blockquotes currently open; prefixing stops at MAX_QUOTE_DEPTH so deep nesting cannot multiply the work. */
+  quoteDepth: number;
   options: HtmlToTextOptions;
   quote: QuoteMatch | null;
   stopped: boolean;
@@ -121,9 +124,11 @@ function walkChildren(parent: Node, out: TextBuilder, state: WalkState, depth: n
       const alt = state.options.images && !isTrackingPixel(child) ? cleanLabel(child.getAttribute("alt"), 200) : "";
       if (alt) out.text(` [${alt}] `);
     } else if (depth >= MAX_DEPTH) out.text(textOutside(child, SKIPPED));
-    else if (tag === "blockquote") {
+    else if (tag === "blockquote" && state.quoteDepth < MAX_QUOTE_DEPTH) {
       const inner = new TextBuilder();
+      state.quoteDepth += 1;
       walkChildren(child, inner, state, depth + 1, false);
+      state.quoteDepth -= 1;
       const quoted = inner.toString();
       out.break(2);
       if (quoted) out.raw(quoted.split("\n").map((line) => (line === "" ? ">" : `> ${line}`)).join("\n"));
@@ -156,7 +161,7 @@ export function htmlToText(html: string, options: HtmlToTextOptions = {}): strin
   const body = source.body && source.body.localName === "body" ? source.body : null;
   if (!body) return "";
   const out = new TextBuilder();
-  walkChildren(body, out, { options, quote: options.quotes === "omit" ? findQuote(body) : null, stopped: false }, 0, false);
+  walkChildren(body, out, { quoteDepth: 0, options, quote: options.quotes === "omit" ? findQuote(body) : null, stopped: false }, 0, false);
   const text = out.toString();
   const max = options.maxLength;
   if (max === undefined || text.length <= max) return text;

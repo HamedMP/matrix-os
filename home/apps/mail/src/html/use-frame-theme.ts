@@ -48,40 +48,50 @@ function sameTheme(a: FrameTheme, b: FrameTheme): boolean {
     && a.border === b.border && a.link === b.link && a.fontFamily === b.fontFamily;
 }
 
+/**
+ * Calls `onChange` whenever the app's theme may have changed: the shell posts
+ * a theme update, the root element's attributes change, or the system colour
+ * scheme flips. Returns the function that stops listening.
+ */
+export function watchThemeChanges(probe: Element, onChange: () => void): () => void {
+  const view = probe.ownerDocument.defaultView;
+  if (!view) return () => undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // The shell rewrites the theme stylesheet after it posts the update, so read on the next task.
+  const schedule = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(onChange, 0);
+  };
+  const onMessage = (event: MessageEvent) => {
+    const data: unknown = event.data;
+    if (typeof data === "object" && data !== null && (data as { type?: unknown }).type === "os:theme-update") schedule();
+  };
+  view.addEventListener("message", onMessage);
+  const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
+  observer?.observe(probe.ownerDocument.documentElement, { attributes: true });
+  const media = typeof view.matchMedia === "function" ? view.matchMedia("(prefers-color-scheme: dark)") : null;
+  media?.addEventListener?.("change", schedule);
+  return () => {
+    if (timer !== undefined) clearTimeout(timer);
+    view.removeEventListener("message", onMessage);
+    observer?.disconnect();
+    media?.removeEventListener?.("change", schedule);
+  };
+}
+
 /** The frame theme for the app's current colours; follows theme changes. */
 export function useFrameTheme(probeRef: RefObject<Element | null>): FrameTheme {
   const [theme, setTheme] = useState<FrameTheme>(DEFAULT_FRAME_THEME);
 
   useEffect(() => {
     const probe = probeRef.current;
-    const view = probe?.ownerDocument.defaultView;
-    if (!probe || !view) return undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (!probe) return undefined;
     const update = () => {
       const next = readFrameTheme(probe);
       setTheme((current) => (sameTheme(current, next) ? current : next));
     };
-    // The shell rewrites the theme stylesheet after it posts the update, so read on the next task.
-    const schedule = () => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(update, 0);
-    };
-    const onMessage = (event: MessageEvent) => {
-      const data: unknown = event.data;
-      if (typeof data === "object" && data !== null && (data as { type?: unknown }).type === "os:theme-update") schedule();
-    };
     update();
-    view.addEventListener("message", onMessage);
-    const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
-    observer?.observe(probe.ownerDocument.documentElement, { attributes: true });
-    const media = typeof view.matchMedia === "function" ? view.matchMedia("(prefers-color-scheme: dark)") : null;
-    media?.addEventListener?.("change", schedule);
-    return () => {
-      if (timer !== undefined) clearTimeout(timer);
-      view.removeEventListener("message", onMessage);
-      observer?.disconnect();
-      media?.removeEventListener?.("change", schedule);
-    };
+    return watchThemeChanges(probe, update);
   }, [probeRef]);
 
   return theme;

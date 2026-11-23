@@ -110,6 +110,16 @@ describe("filterStylesheet", () => {
     expect(sheet("}{}{ p{color:red}")).toBe("");
   });
 
+  it("stays fast on sheets built to waste time", () => {
+    const started = Date.now();
+    expect(sheet("a{}".repeat(160_000))).toBe("");
+    expect(sheet("@a{}".repeat(120_000))).toBe("");
+    expect(sheet(`${"@media screen{".repeat(5000)}p{color:red}${"}".repeat(5000)}`)).toBe("");
+    expect(sheet(`p{color:red}${"/*".repeat(100_000)}`)).toBe("p{color:red}");
+    expect(style(`color:red;${"(".repeat(4000)}`)).toBe("color:red");
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it("reports colours and bounds its output", () => {
     expect(filterStylesheet("p{margin:0}").hasColor).toBe(false);
     expect(filterStylesheet("@media screen{p{color:red}}").hasColor).toBe(true);

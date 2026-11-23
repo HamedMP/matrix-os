@@ -16,7 +16,10 @@ import { cleanLabel, createInertDocument, ELEMENT_NODE, isHtmlElement, parseBody
 import { blockedImagePlaceholder, isTrackingPixel, missingImagePlaceholder } from "./images";
 import { ALLOWED_ELEMENTS, DROPPED_ELEMENTS, filterAttribute, isColorAttribute, VOID_ELEMENTS } from "./policy";
 import { findQuote, type QuoteMatch } from "./quotes";
-import { classifyImageSource, DEFAULT_MAX_INLINE_IMAGE_BYTES, safeDataImageUrl, safeLinkUrl, safeRemoteImageUrl } from "./url-policy";
+import {
+  classifyImageSource, DEFAULT_MAX_INLINE_IMAGE_BYTES, MAX_CONTENT_IDS, MAX_TOTAL_INLINE_IMAGE_BYTES,
+  safeDataImageUrl, safeLinkUrl, safeRemoteImageUrl,
+} from "./url-policy";
 import { isSafeOutput } from "./verify";
 
 export type RemoteImagePolicy = "block" | "allow" | "remove";
@@ -94,6 +97,8 @@ interface Context {
   classes: boolean;
   strict: boolean;
   nodes: number;
+  /** Characters of inline image data written so far. */
+  inlineChars: number;
   /** The quote to leave out, when collapsing. */
   quote: QuoteMatch | null;
   /** Set once the walk must stop: the node budget ran out or a trailing quote began. */
@@ -147,13 +152,26 @@ function resolveSafely<T>(what: string, resolve: () => T): T | null {
   }
 }
 
-function appendImage(source: Element, target: Element, context: Context, url: string, remote: boolean): void {
+/** Records a Content-ID in a bounded list, without duplicates. */
+function remember(list: string[], id: string): void {
+  if (list.length < MAX_CONTENT_IDS && !list.includes(id)) list.push(id);
+}
+
+/** Adds an image. Returns false when the message's inline image budget is used up. */
+function appendImage(source: Element, target: Element, context: Context, url: string, remote: boolean): boolean {
+  if (!remote) {
+    // The whole message may hold four images of the largest size. Four base64 characters carry three bytes.
+    const budget = Math.min(MAX_TOTAL_INLINE_IMAGE_BYTES, 4 * context.maxInlineImageBytes);
+    if (context.inlineChars + url.length > Math.ceil((budget * 4) / 3)) return false;
+    context.inlineChars += url.length;
+  }
   const image = context.out.createElement("img");
   copyAttributes(source, image, "img", context);
   image.setAttribute("src", url);
   if (remote) image.setAttribute("referrerpolicy", "no-referrer");
   image.setAttribute("decoding", "async");
   target.appendChild(image);
+  return true;
 }
 
 function appendDescription(source: Element, target: Element, context: Context): void {
@@ -168,7 +186,7 @@ function cleanImage(source: Element, target: Element, context: Context): void {
     result.trackersRemoved += 1;
     return;
   }
-  if (kind.kind === "cid" && !result.cidRefs.includes(kind.id)) result.cidRefs.push(kind.id);
+  if (kind.kind === "cid") remember(result.cidRefs, kind.id);
   if (kind.kind === "invalid" && !kind.local) return;
   if (context.remoteImages === "remove") {
     appendDescription(source, target, context);
@@ -177,14 +195,13 @@ function cleanImage(source: Element, target: Element, context: Context): void {
   if (kind.kind === "invalid") {
     target.appendChild(missingImagePlaceholder(context.out, source));
   } else if (kind.kind === "data") {
-    appendImage(source, target, context, kind.url, false);
+    if (!appendImage(source, target, context, kind.url, false)) target.appendChild(missingImagePlaceholder(context.out, source));
   } else if (kind.kind === "cid") {
     const { resolveCid } = context.options;
     const resolved = resolveCid ? resolveSafely("cid", () => resolveCid(kind.id)) : null;
     const url = safeDataImageUrl(resolved, context.maxInlineImageBytes);
-    if (url) appendImage(source, target, context, url, false);
-    else {
-      if (!result.missingCids.includes(kind.id)) result.missingCids.push(kind.id);
+    if (!url || !appendImage(source, target, context, url, false)) {
+      remember(result.missingCids, kind.id);
       target.appendChild(missingImagePlaceholder(context.out, source));
     }
   } else {
@@ -194,8 +211,7 @@ function cleanImage(source: Element, target: Element, context: Context): void {
       const resolved = resolveSafely("remote image", () => resolveRemoteImage(kind.url));
       url = safeDataImageUrl(resolved, context.maxInlineImageBytes) ?? safeRemoteImageUrl(resolved);
     }
-    if (url) appendImage(source, target, context, url, !url.startsWith("data:"));
-    else {
+    if (!url || !appendImage(source, target, context, url, !url.startsWith("data:"))) {
       result.blockedImages += 1;
       target.appendChild(blockedImagePlaceholder(context.out, source));
     }
@@ -343,6 +359,7 @@ export function sanitizeEmailHtml(html: string, options: SanitizeEmailOptions = 
     classes: options.classes ?? true,
     strict: options.strictStyles ?? false,
     nodes: 0,
+    inlineChars: 0,
     quote: null,
     stopped: false,
   };

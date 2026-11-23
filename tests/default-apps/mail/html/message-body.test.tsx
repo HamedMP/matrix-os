@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MessageBody } from "../../../../home/apps/mail/src/html";
+import { inlineImageRefs, MessageBody } from "../../../../home/apps/mail/src/html";
 import { buildFrameDocument, DEFAULT_FRAME_THEME, FRAME_SANDBOX, frameContentSecurityPolicy } from "../../../../home/apps/mail/src/html/frame-document";
 import { buildLayoutProjection } from "../../../../home/apps/mail/src/html/layout-projection";
 import { FORBIDDEN_SELECTOR, PNG_DATA_URL } from "./helpers";
@@ -109,18 +109,18 @@ describe("MessageBody", () => {
     expect(doc.querySelector("b")).toBeNull();
   });
 
-  it("shows inline images from attachments and reports the ones still missing", () => {
-    const onMissing = vi.fn();
+  it("shows inline images from attachments and a placeholder for the ones not fetched yet", () => {
     const html = '<img src="cid:logo" alt="Logo"><img src="cid:chart" alt="Chart">';
-    const { rerender } = render(<MessageBody html={html} text="" inlineImages={[{ contentId: "logo", dataUrl: PNG_DATA_URL }]} onMissingInlineImages={onMissing} />);
+    expect(inlineImageRefs(html)).toEqual(["logo", "chart"]);
+    const { rerender } = render(<MessageBody html={html} text="" inlineImages={[{ contentId: "logo", dataUrl: PNG_DATA_URL }]} />);
     expect(frameDocument().querySelector("img")?.getAttribute("src")).toBe(PNG_DATA_URL);
-    expect(onMissing).toHaveBeenLastCalledWith(["chart"]);
+    expect(frameDocument().querySelector(".mx-image-missing")?.textContent).toBe("Chart");
     expect(screen.queryByRole("status")).toBeNull();
 
     const both = [{ contentId: "logo", dataUrl: PNG_DATA_URL }, { contentId: "chart", dataUrl: PNG_DATA_URL }];
-    rerender(<MessageBody html={html} text="" inlineImages={both} onMissingInlineImages={onMissing} />);
+    rerender(<MessageBody html={html} text="" inlineImages={both} />);
     expect(frameDocument().querySelectorAll("img").length).toBe(2);
-    expect(onMissing).toHaveBeenCalledTimes(1);
+    expect(frameDocument().querySelector(".mx-image-missing")).toBeNull();
   });
 
   it("shows an empty state instead of an empty frame", () => {

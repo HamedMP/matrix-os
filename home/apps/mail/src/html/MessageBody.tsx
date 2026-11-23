@@ -4,12 +4,13 @@
  * remote until the owner asks for it. Nothing from the mail is ever placed in
  * the app's document as a link, a control or a script.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { buildFrameDocument, contentCss, DEFAULT_FRAME_THEME, FRAME_SANDBOX, type FrameTheme } from "./frame-document";
 import { createCidResolver, type InlineImageSource } from "./inline-images";
 import { buildLayoutProjection } from "./layout-projection";
 import "./message-body.css";
 import { isEmptyBody, renderMailBody } from "./render";
+import type { SanitizedEmail } from "./sanitize";
 import { useFrameTheme } from "./use-frame-theme";
 
 export interface MessageBodyProps {
@@ -19,7 +20,10 @@ export interface MessageBodyProps {
   text: string;
   /** Identifies the message. When it changes, the owner's choices (images, quotes) start over. */
   messageKey?: string;
-  /** Fetched inline attachments for `cid:` images. Pass a stable array (state or `useMemo`). */
+  /**
+   * Fetched inline attachments for `cid:` images. `inlineImageRefs(html)` lists
+   * the ones the mail needs. Pass a stable array (state or `useMemo`).
+   */
   inlineImages?: readonly InlineImageSource[];
   /** Maps an allowed remote image to the address to load, for example through an image proxy. Must be stable. */
   resolveRemoteImage?: (url: string) => string | null | undefined;
@@ -27,8 +31,6 @@ export interface MessageBodyProps {
   defaultLoadImages?: boolean;
   /** Called when the owner chooses "Load images". */
   onLoadImages?: () => void;
-  /** Called with the Content-IDs of inline images that are referenced but not in `inlineImages`. */
-  onMissingInlineImages?: (contentIds: string[]) => void;
   /** Accessible name of the frame. */
   title?: string;
   /** Frame height in pixels while the content cannot be measured; the frame then scrolls. */
@@ -70,6 +72,38 @@ function useMeasuredHeight(hostRef: RefObject<HTMLDivElement | null>, html: stri
   return height;
 }
 
+interface NoticesProps {
+  body: SanitizedEmail;
+  imagesLoaded: boolean;
+  onLoadImages: () => void;
+}
+
+function plural(count: number, one: string, many: string): string {
+  return count === 1 ? `1 ${one}` : `${count} ${many}`;
+}
+
+/** What the owner should know about how the message is shown: hidden images, shortened or plain-text fallback. */
+function MessageNotices({ body, imagesLoaded, onLoadImages }: NoticesProps) {
+  const blocked = body.blockedImages;
+  return (
+    <>
+      {blocked > 0 && imagesLoaded && (
+        <div className="mx-message-body__notice" role="status">
+          <span>{plural(blocked, "remote image", "remote images")} could not be loaded.</span>
+        </div>
+      )}
+      {blocked > 0 && !imagesLoaded && (
+        <div className="mx-message-body__notice" role="status">
+          <span>{plural(blocked, "remote image", "remote images")} hidden to protect your privacy.</span>
+          <button type="button" className="oui-button" onClick={onLoadImages}>Load images</button>
+        </div>
+      )}
+      {body.fallback && <p className="mx-message-body__note" role="note">This message is shown as plain text because its formatting could not be displayed safely.</p>}
+      {body.truncated && <p className="mx-message-body__note" role="note">This message is very long. Only the first part is shown.</p>}
+    </>
+  );
+}
+
 function MessageBodyView({
   html,
   text,
@@ -77,7 +111,6 @@ function MessageBodyView({
   resolveRemoteImage,
   defaultLoadImages = false,
   onLoadImages,
-  onMissingInlineImages,
   title = "Message content",
   minHeight = 160,
   className,
@@ -108,46 +141,17 @@ function MessageBodyView({
     [body, theme, loadImages],
   );
   const measured = useMeasuredHeight(measureRef, empty ? "" : body.html, body.css, theme);
+  const loadRemoteImages = () => {
+    setLoadImages(true);
+    onLoadImages?.();
+  };
 
-  const missingRef = useRef(onMissingInlineImages);
-  useEffect(() => {
-    missingRef.current = onMissingInlineImages;
-  });
-  const missing = body.missingCids.join("\n");
-  useEffect(() => {
-    if (missing) missingRef.current?.(missing.split("\n"));
-  }, [missing]);
-
-  const blocked = body.blockedImages;
   return (
-    <div className={className ? `mx-message-body ${className}` : "mx-message-body"} data-paper={paper ? "true" : undefined}>
+    <div className={["mx-message-body", className].filter(Boolean).join(" ")} data-paper={paper || undefined}>
       <span ref={probeRef} className="mx-message-body__probe" aria-hidden="true" />
-      {blocked > 0 && (
-        <div className="mx-message-body__notice" role="status">
-          {loadImages ? (
-            <span>{blocked === 1 ? "1 remote image could not be loaded." : `${blocked} remote images could not be loaded.`}</span>
-          ) : (
-            <>
-              <span>{blocked === 1 ? "1 remote image hidden" : `${blocked} remote images hidden`} to protect your privacy.</span>
-              <button
-                type="button"
-                className="oui-button"
-                onClick={() => {
-                  setLoadImages(true);
-                  onLoadImages?.();
-                }}
-              >
-                Load images
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {body.fallback && <p className="mx-message-body__note" role="note">This message is shown as plain text because its formatting could not be displayed safely.</p>}
-      {body.truncated && <p className="mx-message-body__note" role="note">This message is very long. Only the first part is shown.</p>}
-      {empty ? (
-        <p className="mx-message-body__empty">This message has no content.</p>
-      ) : (
+      <MessageNotices body={body} imagesLoaded={loadImages} onLoadImages={loadRemoteImages} />
+      {empty && <p className="mx-message-body__empty">This message has no content.</p>}
+      {!empty && (
         <iframe
           className="mx-message-body__frame"
           title={title}

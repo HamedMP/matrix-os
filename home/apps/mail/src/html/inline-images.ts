@@ -4,7 +4,9 @@
  * Data URLs are used rather than blob URLs because the mail renders in a frame
  * with its own origin, which cannot read the app's blob URLs.
  */
-import { base64ByteLength, DEFAULT_MAX_INLINE_IMAGE_BYTES, normalizeContentId, rasterSubtype } from "./url-policy";
+import { parseDocument } from "./dom";
+import { MAX_HTML_CHARS } from "./sanitize";
+import { base64ByteLength, classifyImageSource, DEFAULT_MAX_INLINE_IMAGE_BYTES, MAX_CONTENT_IDS, normalizeContentId, rasterSubtype } from "./url-policy";
 
 export interface InlineImageSource {
   /** The attachment's Content-ID, with or without angle brackets. */
@@ -48,6 +50,7 @@ function key(value: string): string {
  * is tried as a file name too.
  */
 export function createCidResolver(sources: readonly InlineImageSource[]): CidResolver {
+  // Both maps hold at most one entry per source and live only as long as the resolver.
   const byId = new Map<string, string>();
   const byName = new Map<string, string>();
   for (const source of sources) {
@@ -60,4 +63,22 @@ export function createCidResolver(sources: readonly InlineImageSource[]): CidRes
     const at = wanted.indexOf("@");
     return byId.get(wanted) ?? byName.get(wanted) ?? (at > 0 ? byName.get(wanted.slice(0, at)) : undefined) ?? null;
   };
+}
+
+/**
+ * The Content-IDs a mail's HTML refers to, in order and without duplicates.
+ * The app uses this to decide which inline attachments to fetch before it
+ * passes them to `MessageBody` as `inlineImages`. The mail is only parsed,
+ * never inserted anywhere.
+ */
+export function inlineImageRefs(html: string | null | undefined): string[] {
+  if (typeof html !== "string" || !/cid:/i.test(html)) return [];
+  // Insertion-ordered and capped at MAX_CONTENT_IDS entries.
+  const refs = new Set<string>();
+  for (const image of Array.from(parseDocument(html.slice(0, MAX_HTML_CHARS)).querySelectorAll("img[src]"))) {
+    if (refs.size >= MAX_CONTENT_IDS) break;
+    const source = classifyImageSource(image.getAttribute("src"));
+    if (source.kind === "cid") refs.add(source.id);
+  }
+  return Array.from(refs);
 }

@@ -7,6 +7,10 @@
 export const MAX_URL_LENGTH = 8192;
 export const MAX_CONTENT_ID_LENGTH = 512;
 export const DEFAULT_MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
+/** All inline images of one message together. */
+export const MAX_TOTAL_INLINE_IMAGE_BYTES = 8 * 1024 * 1024;
+/** Content-IDs tracked per message. */
+export const MAX_CONTENT_IDS = 200;
 
 /** Raster formats a browser decodes without running anything. SVG is not one of them. */
 const RASTER_SUBTYPES: ReadonlyMap<string, string> = new Map([
@@ -75,13 +79,31 @@ export function safeLinkUrl(raw: unknown): string | null {
   return url.href;
 }
 
-/** A remote image address (http or https), in canonical form, or null. */
+const LOCAL_HOST_SUFFIX = /(?:^|\.)(?:localhost|local|localdomain|internal|intranet|lan|home|corp|home\.arpa)$/;
+
+/**
+ * True for a host an image may be fetched from. A mail must not be able to
+ * make the reader's browser call a device on their own network just by being
+ * opened, so literal IP addresses, single-label names and local-only suffixes
+ * are refused. (A public name that resolves to a private address is not caught
+ * here; the browser's own private-network rules apply to it.)
+ */
+export function isPublicImageHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (!host.includes(".") || host.includes(":") || host.startsWith("[")) return false;
+  if (/^[0-9.]+$/.test(host) || /^0x/.test(host)) return false;
+  return !LOCAL_HOST_SUFFIX.test(host);
+}
+
+/** A remote image address (http or https) on a public host, in canonical form, or null. */
 export function safeRemoteImageUrl(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > MAX_URL_LENGTH) return null;
   let value = normalizeUrlInput(raw);
   if (value.startsWith("//")) value = `https:${value}`;
   const scheme = schemeOf(value);
-  return scheme === "http" || scheme === "https" ? safeWebUrl(value) : null;
+  if (scheme !== "http" && scheme !== "https") return null;
+  const href = safeWebUrl(value);
+  return href && isPublicImageHost(new URL(href).hostname) ? href : null;
 }
 
 /** Decoded size of a base64 payload that has no whitespace. */

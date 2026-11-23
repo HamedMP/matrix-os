@@ -18,5 +18,12 @@ export {
 export { isEmptyBody, renderMailBody, type MailBodyParts } from "./render";
 export { quoteText, textToHtml, type TextToHtmlOptions } from "./text-to-html";
 export { htmlToText, snippetFromHtml, type HtmlToTextOptions } from "./html-to-text";
-export { attachmentToDataUrl, createCidResolver, type AttachmentBytes, type CidResolver, type InlineImageSource } from "./inline-images";
+export {
+  attachmentToDataUrl,
+  createCidResolver,
+  inlineImageRefs,
+  type AttachmentBytes,
+  type CidResolver,
+  type InlineImageSource,
+} from "./inline-images";
 export { DEFAULT_MAX_INLINE_IMAGE_BYTES, safeLinkUrl } from "./url-policy";
