@@ -63,6 +63,8 @@ export interface FindSlotsOptions {
   notBefore?: number;
   /** Tentative time blocks a slot. Default true. */
   tentativeIsBusy?: boolean;
+  /** Results never overlap each other (distinct choices to offer); the next start stays on the step grid. Default false. */
+  distinct?: boolean;
 }
 
 export const MAX_SLOT_RESULTS = 100;
@@ -172,6 +174,7 @@ export function findSlots(options: FindSlotsOptions): TimeSlot[] {
       }
       slots.push({ start: zonedInstant(startMs, timeZone), end: zonedInstant(endMs, timeZone) });
       if (slots.length >= maxResults) return slots;
+      if (options.distinct) startMs += Math.ceil(durationMs / stepMs) * stepMs - stepMs;
     }
   }
   return slots;

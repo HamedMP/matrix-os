@@ -133,6 +133,7 @@ export async function searchAvailability(
     workingHours: context.workingHours,
     maxResults: request.count,
     notBefore: context.now,
+    distinct: true,
   }).map((slot) => slotRef(slot.start, slot.end));
   return { slots, events, notes, failed: false };
 }

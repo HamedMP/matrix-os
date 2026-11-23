@@ -295,6 +295,7 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
         timeZone: state.timeZone,
         workingHours: state.preferences.workingHours,
         notBefore: ctx.now(),
+        distinct: true,
       });
       const attendees = state.assistant.attendees.map((address) => ({ address }));
       const proposals = proposalsFromSlots(slots, { title: request.title ?? state.draft?.draft.title, attendees });

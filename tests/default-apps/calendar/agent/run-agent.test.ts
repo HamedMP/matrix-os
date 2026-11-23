@@ -101,7 +101,8 @@ describe("calendar agent: read requests", () => {
     }));
     const answer = await runCalendarAgent("find a two-hour window before Friday", context, deps);
     expect(answer.kind).toBe("slots");
-    expect(answer.slots.map((slot) => slot.start)).toEqual(["2026-11-23T10:00:00-05:00", "2026-11-23T10:30:00-05:00", "2026-11-23T11:00:00-05:00"]);
+    // Distinct choices: each two-hour window starts where the previous one ends.
+    expect(answer.slots.map((slot) => slot.start)).toEqual(["2026-11-23T10:00:00-05:00", "2026-11-23T12:00:00-05:00", "2026-11-23T14:00:00-05:00"]);
     expectFreeOf(answer, provider.events);
     expect(provider.callsTo("getFreeBusy")).toHaveLength(0);
   });

@@ -34,6 +34,20 @@ describe("findSlots", () => {
     ]);
   });
 
+  it("offers slots that do not overlap each other when asked for distinct choices", () => {
+    const slots = findSlots(options({
+      maxResults: 3,
+      distinct: true,
+      busy: [{ address: "b@example.com", start: "2026-11-23T11:30:00-05:00", end: "2026-11-23T12:30:00-05:00" }],
+    }));
+    expect(slots).toEqual([
+      { start: "2026-11-23T09:00:00-05:00", end: "2026-11-23T10:00:00-05:00" },
+      { start: "2026-11-23T10:00:00-05:00", end: "2026-11-23T11:00:00-05:00" },
+      // 11:00 would overlap the busy block; the next free start on the 30-minute grid is 12:30.
+      { start: "2026-11-23T12:30:00-05:00", end: "2026-11-23T13:30:00-05:00" },
+    ]);
+  });
+
   it("never treats unknown availability as free time", () => {
     const slots = findSlots(options({
       busy: [{ address: "x@example.com", start: "2026-11-23T00:00:00-05:00", end: "2026-11-28T00:00:00-05:00", status: "unknown" }],
