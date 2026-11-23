@@ -50,6 +50,17 @@ describe("sanitiseHtml keeps the allowed structure", () => {
     );
   });
 
+  it("reads a line or paragraph separator character in text as a space", () => {
+    expect(sanitiseHtml("<p>one\u2028two\u2029three</p>")).toBe("<p>one two three</p>");
+    const doc = createRedline("<p>one\u2028two</p>", "<p>one<br>two</p>", ANN);
+    expect(doc.toHtml("original")).toBe("<p>one two</p>");
+    expect(doc.toHtml("final")).toBe("<p>one<br>two</p>");
+  });
+
+  it("keeps line breaks and spacing inside pre", () => {
+    expect(sanitiseHtml("<pre>\nfirst line\n  second\tline\n</pre>")).toBe("<pre>first line<br>  second\tline<br></pre>");
+  });
+
   it("repairs unclosed and misnested markup", () => {
     expect(sanitiseHtml("<p>one<p>two")).toBe("<p>one</p><p>two</p>");
     expect(sanitiseHtml("<ul><li>a<li>b</ul>")).toBe("<ul><li>a</li><li>b</li></ul>");
@@ -78,6 +89,12 @@ describe("createRedline (html)", () => {
     expect(doc.toHtml("final")).toBe("<p>Hello <b>there</b></p>");
     expect(doc.toFinalHtml()).toBe("<p>Hello <b>there</b></p>");
     expect(doc.listChanges().map((c) => [c.kind, c.text])).toEqual([["delete", "world"], ["insert", "there"]]);
+  });
+
+  it("refuses an unknown view mode", () => {
+    const doc = createRedline("<p>a</p>", "<p>b</p>", ANN);
+    expect(() => doc.toHtml("print" as never)).toThrowError(/mode must be/);
+    expect(() => doc.toText("print" as never)).toThrowError(/mode must be/);
   });
 
   it("keeps the formatting of the side a change comes from", () => {
@@ -317,8 +334,7 @@ function randomHtml(random: () => number): string {
 
 /** Edits markup the way a person would: changes words, and adds, removes or relocates whole blocks. */
 function editHtml(random: () => number, html: string): string {
-  let blocks = html.match(/<(p|h2|ul|ol|blockquote|table)>.*?<\/\1>/g) ?? [];
-  blocks = [...blocks];
+  const blocks: string[] = [...(html.match(/<(p|h2|ul|ol|blockquote|table)>.*?<\/\1>/g) ?? [])];
   const edits = 1 + Math.floor(random() * 3);
   for (let i = 0; i < edits; i += 1) {
     const at = Math.floor(random() * Math.max(1, blocks.length));

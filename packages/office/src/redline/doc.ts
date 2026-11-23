@@ -3,7 +3,16 @@
  * additions around them (user edits, string serialisation, HTML clean-up).
  */
 
-import type { CreateRedline, LoadRedline, RedlineChange, RedlineDoc, RedlineFormat, RedlineMode, RedlineState } from "../api/redline.js";
+import type {
+  CreateRedline,
+  LoadRedline,
+  RedlineChange,
+  RedlineDoc,
+  RedlineFormat,
+  RedlineMode,
+  RedlineOptions,
+  RedlineState,
+} from "../api/redline.js";
 import { OfficeError } from "../errors.js";
 import { parseHtml, parseText, type IdSource } from "./html-parse.js";
 import { renderBlocks } from "./html-render.js";
@@ -117,7 +126,8 @@ class Tracked implements TrackedRedline {
   }
 }
 
-export const createRedline: CreateRedline = (original, revised, options): TrackedRedline => {
+/** Implements {@link CreateRedline}; the result also has the additions of {@link TrackedRedline}. */
+export function createRedline(original: string, revised: string, options: RedlineOptions): TrackedRedline {
   checkEditOptions(options as EditOptions);
   const format = options.format ?? "text";
   if (format !== "text" && format !== "html") throw new OfficeError("invalid_argument", "format must be text or html");
@@ -134,9 +144,16 @@ export const createRedline: CreateRedline = (original, revised, options): Tracke
   };
   applyEdit(data, after, { author: options.author, date: options.date, detectMoves: options.detectMoves });
   return new Tracked(data);
-};
+}
 
-export const loadRedline: LoadRedline = (state): TrackedRedline => new Tracked(loadState(state));
+/** Implements {@link LoadRedline}. */
+export function loadRedline(state: RedlineState): TrackedRedline {
+  return new Tracked(loadState(state));
+}
+
+// The compiler checks both functions against the contract here.
+const contract: { createRedline: CreateRedline; loadRedline: LoadRedline } = { createRedline, loadRedline };
+void contract;
 
 /**
  * Records a further edit by a person on any redline. A document made by
