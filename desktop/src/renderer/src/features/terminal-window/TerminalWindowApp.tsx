@@ -437,10 +437,19 @@ export default function TerminalWindowApp() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TerminalTabBar space={activeSpace} overview={{ open: view.overview.open, onToggle: view.overview.toggle }} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
             icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
-          {view.overview.open ? (
-            <TerminalOverview rows={overviewRows} previews={previews} selectedKey={view.selectedKey} now={view.now}
-              spaceLabel={activeSpace?.label ?? null} onOpen={view.overview.openTerminal} onRename={view.rename} />
-          ) : <ActivePane view={view} />}
+          {/* The overview covers the panes instead of replacing them: their terminals stay attached and
+              keep their output (a finished terminal cannot be attached again), but take no input. */}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={view.overview.open} data-covered={view.overview.open ? "" : undefined}>
+              <ActivePane view={view} />
+            </div>
+            {view.overview.open ? (
+              <div className="absolute inset-0 flex min-h-0 min-w-0">
+                <TerminalOverview rows={overviewRows} previews={previews} selectedKey={view.selectedKey} now={view.now}
+                  spaceLabel={activeSpace?.label ?? null} onOpen={view.overview.openTerminal} onRename={view.rename} />
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
       <StatusBar view={view} />

@@ -138,6 +138,25 @@ describe("Terminal window overview", () => {
     await waitFor(() => expect(seen()).toHaveLength(before + 1));
   });
 
+  // Fault detected (Greptile, #3586): the overview unmounted the panes, so output a terminal printed
+  // before exiting behind it never reached its pane.
+  it("covers the panes without unmounting them, and keeps input away from them", async () => {
+    const operator = installOperator({});
+    render(<TerminalWindowApp />);
+    await screen.findByRole("navigation", { name: "Terminals" });
+    operator.command({ command: "overview" });
+    fireEvent.click(within(await screen.findByRole("main", { name: "Overview" })).getByRole("button", { name: "Open build" }));
+    const view = await screen.findByTestId("terminal-view");
+    operator.command({ command: "overview" });
+    await screen.findByRole("main", { name: "Overview" });
+    expect(screen.getByTestId("terminal-view")).toBe(view);
+    expect(view.closest("[inert]")).not.toBeNull();
+    operator.command({ command: "overview" });
+    await waitFor(() => expect(screen.queryByRole("main", { name: "Overview" })).toBeNull());
+    expect(screen.getByTestId("terminal-view")).toBe(view);
+    expect(view.closest("[inert]")).toBeNull();
+  });
+
   it("keeps a preview's last lines that hold something, cut to width", () => {
     expect(previewLines(`a\n\n${"x".repeat(200)}\n  \n${Array.from({ length: 10 }, (_, index) => `line ${index}`).join("\n")}\n`))
       .toEqual(Array.from({ length: 8 }, (_, index) => `line ${index + 2}`));
@@ -163,8 +182,8 @@ describe("Terminal window overview previews", () => {
   });
   afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  function setup(failFirst = false) {
-    const get = vi.fn(async () => ({ screen: "computer screen" }));
+  function setup(failFirst = false, read: () => Promise<{ screen: string }> = async () => ({ screen: "computer screen" })) {
+    const get = vi.fn(read);
     if (failFirst) get.mockRejectedValueOnce(new Error("timed out"));
     const client = { get } as unknown as ApiClient;
     const hook = renderHook(
@@ -218,6 +237,21 @@ describe("Terminal window overview previews", () => {
     expect(hook.result.current[computerKey]).toEqual(["computer screen"]);
     await tick(30_000);
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  // Fault detected (Greptile, #3586): a computer read that finished after the list changed was dropped,
+  // and the terminal was not read again while idle, so its preview stayed blank.
+  it("keeps a computer preview that arrives after the list changed", async () => {
+    let finish: (value: { screen: string }) => void = () => undefined;
+    const { get, hook } = setup(false, () => new Promise((resolve) => { finish = resolve; }));
+    await tick(0);
+    expect(get).toHaveBeenCalledTimes(1);
+    hook.rerender({ rows: [row(computerKey, "1"), row("local|t2", "1")] });
+    await tick(0);
+    await act(async () => { finish({ screen: "late screen" }); await vi.advanceTimersByTimeAsync(0); });
+    await tick(3_000);
+    expect(hook.result.current[computerKey]).toEqual(["late screen"]);
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it("reads nothing while the window is hidden", async () => {

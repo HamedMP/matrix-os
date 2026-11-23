@@ -59,7 +59,7 @@ export function useTerminalPreviews(options: {
   // Kept while the overview stays open, across changes to the list; bounded by the list.
   const lastReadRef = useRef(new Map<string, { at: number; statusAt: string | undefined; ok: boolean }>());
 
-  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the round's timer is cleared and the loop cancelled in the returned cleanup; while disabled nothing is started
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup, react-doctor/no-set-state-after-await-in-effect -- the round's timer is cleared and the loop cancelled in the returned cleanup (nothing starts while disabled); a late read still lands for terminals listed now, so an idle one is not left blank
   useEffect(() => {
     const lastRead = lastReadRef.current;
     if (!enabled) { lastRead.clear(); return undefined; }
@@ -97,14 +97,17 @@ export function useTerminalPreviews(options: {
         if (lines === null && last?.at === now) lastRead.set(key, { ...last, ok: false });
         return [key, lines] as const;
       }));
-      if (cancelled) return;
+      // A read that finished after the list changed still counts for terminals listed now: its
+      // terminal is not read again until its status changes, so its result must not be dropped.
+      const stillListed = new Set(rowsRef.current.map((row) => row.key));
       setPreviews((current) => {
         // Only terminals still listed are kept, so the map stays as small as the list.
         const next: Record<string, string[]> = {};
-        for (const key of shown) if (current[key]) next[key] = current[key]!;
-        for (const [key, lines] of read) if (lines) next[key] = lines;
+        for (const key of stillListed) if (current[key]) next[key] = current[key]!;
+        for (const [key, lines] of read) if (lines && stillListed.has(key)) next[key] = lines;
         return next;
       });
+      if (cancelled) return;
       if (!cancelled) timer = setTimeout(() => { void round(); }, PREVIEW_INTERVAL_MS);
     };
     void round();
