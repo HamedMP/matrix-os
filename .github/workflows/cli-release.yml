@@ -304,13 +304,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # The formula in this repository is the source of truth, including its
-      # install steps; the tap receives a copy with this release's url and sha.
-      - uses: actions/checkout@v6
-        with:
-          path: source
-          sparse-checkout: homebrew-tap
-
       - uses: actions/checkout@v6
         with:
           repository: FinnaAI/homebrew-tap
@@ -342,7 +335,6 @@ jobs:
             echo "formula $FORMULA missing in tap repo; bootstrap it first." >&2
             exit 1
           fi
-          cp ../source/homebrew-tap/Formula/matrix.rb "$FORMULA"
 
           python3 - <<'PY'
           import os, re, pathlib
@@ -351,9 +343,9 @@ jobs:
           sha = os.environ["SHA256"]
           version = os.environ["VERSION"]
           text = path.read_text()
-          text = re.sub(r'url\s+"[^"]*"', f'url "{tarball}"', text, count=1)
-          text = re.sub(r'sha256\s+"[^"]*"', f'sha256 "{sha}"', text, count=1)
-          text = re.sub(r'version\s+"[^"]*"', f'version "{version}"', text, count=1)
+          text = re.sub(r'url\s+".*"', f'url "{tarball}"', text, count=1)
+          text = re.sub(r'sha256\s+".*"', f'sha256 "{sha}"', text, count=1)
+          text = re.sub(r'version\s+".*"', f'version "{version}"', text, count=1)
           path.write_text(text)
           PY
           git diff -- Formula/matrix.rb

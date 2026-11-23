@@ -1,7 +1,8 @@
 # Homebrew formula for the Matrix OS CLI.
 #
-# This is the source of truth. The CLI Release workflow copies it into the
-# FinnaAI/homebrew-tap repository and sets url/sha256/version on each release.
+# Lives here for version control during bootstrap; the CI release workflow
+# mirrors it into the FinnaAI/homebrew-tap repository and bumps url/sha256
+# on each tag push.
 #
 # Install: brew install finnaai/tap/matrix
 
@@ -9,13 +10,10 @@ class Matrix < Formula
   desc "Matrix OS command-line client (sync, login, peer management)"
   homepage "https://matrix-os.com"
 
-  # `url`, `sha256`, and `version` are rewritten by
-  # .github/workflows/cli-release.yml against the npm tarball after each
-  # publish. Until the first release job rewrites this staging copy, the
-  # placeholder sha256 is intentionally non-installable.
-  #
-  # `:nounzip` keeps the published tarball intact for `install` below.
-  url "https://registry.npmjs.org/@finnaai/matrix/-/matrix-0.2.0.tgz", using: :nounzip
+  # `url` and `sha256` are rewritten by .github/workflows/release.yml against
+  # the npm tarball after each publish. Until the first release job rewrites
+  # this staging copy, the placeholder sha256 is intentionally non-installable.
+  url "https://registry.npmjs.org/@finnaai/matrix/-/matrix-0.2.0.tgz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   version "0.2.0"
 
@@ -24,15 +22,8 @@ class Matrix < Formula
   depends_on "node@20"
 
   def install
-    # Install the published tarball itself. Homebrew's `std_npm_args` first
-    # repacks the unpacked sources with `npm pack`, and that drops the
-    # `@matrix-os/contracts` files the tarball ships under `node_modules`
-    # (they are deliberately not declared as bundled dependencies, because npm
-    # mishandles those on a global install). The CLI then fails to start.
-    tarball = buildpath.children.find { |path| path.extname == ".tgz" }
-    odie "published tarball not found in #{buildpath}" if tarball.nil?
-    (libexec/"lib").mkpath
-    system "npm", "install", "--global", "--ignore-scripts", "--prefix=#{libexec}", tarball
+    # Install the package into libexec, then symlink the bins into HOMEBREW_PREFIX/bin.
+    system "npm", "install", *std_npm_args
     bin.install_symlink Dir["#{libexec}/bin/*"]
   end
 

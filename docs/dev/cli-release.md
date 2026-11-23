@@ -27,32 +27,35 @@ with `node ./scripts/pack-cli.mjs --pack-destination <dir>` from
 `packages/sync-client`, as the release workflows do. It runs
 `pnpm pack --config.node-linker=hoisted` (plain `npm pack` preserves
 `workspace:*`, and a registry-only dependency cannot resolve this private
-package), then rewrites the published manifest: it removes
-`bundledDependencies` and the `@matrix-os/contracts` dependency entry, while
-the contracts files stay in the tarball at `node_modules/@matrix-os/contracts`.
-npm mishandles a globally installed package that declares bundled
-dependencies (`npm install -g`, Homebrew): on Linux it installed empty `zod`
-and `micromark` directories, and on macOS it made the optional `fsevents`
-build fatal. Without the declaration npm installs every dependency for the
-CLI, and contracts resolves its imports from there; `pack-cli.mjs` fails if a
-contracts dependency is missing from the CLI's own dependencies or declared at
-a different range. Never publish a bare `pnpm pack` or `pnpm publish` of this
-package. The dedicated CLI workflow publishes that exact
+package), then removes the dependency lists from the bundled contracts
+manifest. npm treats a bundled package's dependencies as already bundled when
+they sit beside it, which is the layout of `npm install -g` and Homebrew, and
+installs empty `zod` and `micromark` directories. The CLI declares the same
+packages at the same ranges, so npm installs them for the CLI and contracts
+resolves them from there; `pack-cli.mjs` fails if a contracts dependency is
+missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
+`pnpm publish` of this package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
 package-runner check; it verifies bundled contract files and runs the
-tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo. The
-`CLI Install Smoke` workflow installs the packed tarball globally into a clean
-prefix on macOS and Linux (Node 20 and 24), and through the Homebrew formula on
-macOS, then runs `matrix --version`. `CLI Release` calls it and will not
-publish unless it passes; pull requests that touch CLI packaging or the formula
-run it too.
+tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
 
-Homebrew needs its own install steps. Its stock `std_npm_args` repacks the
-unpacked sources with `npm pack`, which drops the contracts files because the
-published manifest no longer declares them bundled. `homebrew-tap/Formula/matrix.rb`
-therefore downloads the tarball with `using: :nounzip` and installs that file
-directly. That file is the source of truth: the release copies it into
-`FinnaAI/homebrew-tap` and sets `url`, `sha256`, and `version`.
+The CLI also declares `fsevents` under `optionalDependencies`. On
+`npm install -g`, npm gives a package that bundles dependencies a hard
+dependency on every package installed beside it. `tsx` pulls in `fsevents` as
+an optional dependency whose build always fails on macOS (it ships a prebuilt
+binary and no `binding.gyp`); normally npm ignores that failure, but the hard
+dependency made it fatal and the install aborted. Declaring `fsevents` optional
+in the CLI keeps the failure harmless. Do not remove the entry or the
+`bundledDependencies` declaration: without the declaration npm prunes the
+contracts files on the next `npm install` in a project, and Homebrew's repack
+drops them.
+
+The `CLI Install Smoke` workflow checks the packed tarball the way users
+install it: `npm install -g` into a clean prefix on macOS and Linux (Node 20
+and 24), a project install followed by a second install, and the Homebrew
+formula on macOS, each ending in `matrix --version`. `CLI Release` calls it and
+will not publish unless it passes; pull requests that touch CLI packaging or
+the formula run it too.
 
 Run these from the repo root before dispatching the release workflow:
 
