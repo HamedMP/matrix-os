@@ -14,7 +14,7 @@ export interface AllDayRowProps {
   bars: readonly BarPlacement[];
   rowCount: number;
   calendarsById: Readonly<Record<string, CalendarInfo>>;
-  pendingIds: readonly string[];
+  pendingIds: ReadonlySet<string>;
   timeZone: string;
   onCreate(dayKey: DayKey): void;
   onOpenEvent(eventId: string, anchor: HTMLElement): void;
@@ -42,7 +42,7 @@ export function AllDayRow({ dayKeys, bars, rowCount, calendarsById, pendingIds, 
         ))}
         {bars.map((bar) => {
           const calendar = calendarsById[bar.event.calendarId];
-          const pending = pendingIds.includes(bar.event.id);
+          const pending = pendingIds.has(bar.event.id);
           return (
             <button
               key={bar.event.id}

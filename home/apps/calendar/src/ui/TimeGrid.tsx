@@ -46,6 +46,7 @@ export function TimeGrid(props: TimeGridProps) {
   const days = useMemo(() => daySlices(state.range.days, timeZone), [state.range.days, timeZone]);
   const timed = useMemo(() => layoutTimedGrid(state.events, days, timeZone), [state.events, days, timeZone]);
   const bars = useMemo(() => layoutBars(state.events, state.range.days, timeZone), [state.events, state.range.days, timeZone]);
+  const pendingIds = useMemo(() => new Set(state.pendingEventIds), [state.pendingEventIds]);
   const proposals = useMemo(() => proposalSegments(state.proposals, days, timeZone), [state.proposals, days, timeZone]);
   const scroller = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState<{ dayIndex: number; minute: number } | null>(null);
@@ -140,7 +141,7 @@ export function TimeGrid(props: TimeGridProps) {
         bars={bars.bars}
         rowCount={bars.rowCount}
         calendarsById={calendarsById}
-        pendingIds={state.pendingEventIds}
+        pendingIds={pendingIds}
         timeZone={timeZone}
         onCreate={props.onCreateAllDay}
         onOpenEvent={props.onOpenEvent}
@@ -176,7 +177,7 @@ export function TimeGrid(props: TimeGridProps) {
                 attendees={state.assistant.attendees}
                 proposals={proposals[day.key] ?? []}
                 calendarsById={calendarsById}
-                pendingIds={state.pendingEventIds}
+                pendingIds={pendingIds}
                 draggingId={draggingId}
                 ghost={ghostFor(pointer.drag, index, defaultMinutes)}
                 cursorMinute={cursor?.dayIndex === index ? cursor.minute : null}

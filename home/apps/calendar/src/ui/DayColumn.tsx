@@ -27,7 +27,7 @@ export interface DayColumnProps {
   attendees: readonly string[];
   proposals: readonly ProposalSegment[];
   calendarsById: Readonly<Record<string, CalendarInfo>>;
-  pendingIds: readonly string[];
+  pendingIds: ReadonlySet<string>;
   /** Event hidden while its drag preview is shown. */
   draggingId: string | null;
   ghost: GhostBlock | null;
@@ -94,7 +94,7 @@ export function DayColumn(props: DayColumnProps) {
         const box = segmentBox(segment);
         const { event } = segment;
         const calendar = calendarsById[event.calendarId];
-        const pending = props.pendingIds.includes(event.id);
+        const pending = props.pendingIds.has(event.id);
         const classes = [
           "cal-event",
           pending && "is-pending",

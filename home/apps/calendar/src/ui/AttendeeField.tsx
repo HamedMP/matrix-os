@@ -23,18 +23,15 @@ const SEPARATORS = /[\s,;]+/;
 
 /** Splits typed or pasted text into addresses; `invalid` holds the pieces that are not addresses. */
 export function parseAddressInput(text: string): { valid: string[]; invalid: string[] } {
-  const valid: string[] = [];
+  const valid = new Set<string>();
   const invalid: string[] = [];
   for (const piece of text.split(SEPARATORS)) {
     const trimmed = piece.replace(/^<|>$/g, "").trim().toLowerCase();
     if (!trimmed) continue;
-    if (isValidMailAddress(trimmed)) {
-      if (!valid.includes(trimmed)) valid.push(trimmed);
-    } else {
-      invalid.push(piece.trim());
-    }
+    if (isValidMailAddress(trimmed)) valid.add(trimmed);
+    else invalid.push(piece.trim());
   }
-  return { valid, invalid };
+  return { valid: [...valid], invalid };
 }
 
 export function AttendeeField({ attendees, colorOrder, disabled, onAdd, onRemove, onToggleOptional }: AttendeeFieldProps) {

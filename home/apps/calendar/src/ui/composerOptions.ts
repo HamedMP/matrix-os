@@ -111,10 +111,9 @@ export function timeZoneOptions(include: readonly string[]): string[] {
       if (!(error instanceof RangeError)) throw error;
     }
   }
-  const result = [...zones];
-  for (const zone of include) if (zone && !result.includes(zone)) result.unshift(zone);
-  if (!result.includes("UTC")) result.unshift("UTC");
-  return result;
+  const known = new Set(zones);
+  const extra = ["UTC", ...include].filter((zone, index, all) => zone && !known.has(zone) && all.indexOf(zone) === index);
+  return [...extra, ...zones];
 }
 
 const ISSUE_TEXT: Record<EventDraftIssue, string> = {

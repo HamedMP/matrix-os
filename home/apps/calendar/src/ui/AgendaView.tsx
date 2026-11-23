@@ -18,6 +18,7 @@ export interface AgendaViewProps {
 }
 
 export function AgendaView({ state, calendarsById, onOpenEvent, onNewEvent }: AgendaViewProps) {
+  const pendingIds = useMemo(() => new Set(state.pendingEventIds), [state.pendingEventIds]);
   const groups = useMemo(() => groupAgenda(state.events, state.range.days, state.timeZone), [state.events, state.range.days, state.timeZone]);
 
   if (groups.length === 0 && state.eventsStatus === "ready") {
@@ -48,7 +49,7 @@ export function AgendaView({ state, calendarsById, onOpenEvent, onNewEvent }: Ag
                   <button
                     type="button"
                     data-event-id={event.id}
-                    className={`cal-agenda__item${state.pendingEventIds.includes(event.id) ? " is-pending" : ""}${event.myResponse === "declined" ? " is-declined" : ""}`}
+                    className={`cal-agenda__item${pendingIds.has(event.id) ? " is-pending" : ""}${event.myResponse === "declined" ? " is-declined" : ""}`}
                     style={calendarColorStyle(calendar)}
                     onClick={(click) => onOpenEvent(event.id, click.currentTarget)}
                   >

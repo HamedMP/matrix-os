@@ -14,13 +14,12 @@ export function ownerAddressFor(event: CalendarEvent, calendars: readonly Calend
 /** Everyone a change would notify: attendees other than the organiser and the owner. */
 export function guestAddresses(event: CalendarEvent, ownerAddress: string): string[] {
   const owner = ownerAddress.toLowerCase();
-  const result: string[] = [];
+  const result = new Set<string>();
   for (const attendee of event.attendees) {
     const address = attendee.address.toLowerCase();
-    if (attendee.organizer || address === owner || result.includes(address)) continue;
-    result.push(address);
+    if (!attendee.organizer && address !== owner) result.add(address);
   }
-  return result;
+  return [...result];
 }
 
 /** New start and end for a timed event, written in the event's own zone. */

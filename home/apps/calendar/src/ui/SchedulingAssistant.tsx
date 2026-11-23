@@ -15,12 +15,14 @@ export interface SchedulingAssistantProps {
   assistant: AssistantState;
   proposals: readonly Proposal[];
   timeZone: string;
+  /** Length of the meeting being searched for. */
+  durationMinutes: number;
   onApply(proposalId: string): void;
   onFind(): void;
   onRetry(): void;
 }
 
-export function SchedulingAssistant({ assistant, proposals, timeZone, onApply, onFind, onRetry }: SchedulingAssistantProps) {
+export function SchedulingAssistant({ assistant, proposals, timeZone, durationMinutes, onApply, onFind, onRetry }: SchedulingAssistantProps) {
   if (assistant.attendees.length === 0) return null;
   const suggestions = proposals.filter((proposal) => proposal.source === "assistant");
   return (
@@ -44,7 +46,7 @@ export function SchedulingAssistant({ assistant, proposals, timeZone, onApply, o
         </p>
       )}
       <div className="cal-assistant__head">
-        <h3>Suggested times ({durationLabel(assistant.durationMinutes)})</h3>
+        <h3>Suggested times ({durationLabel(durationMinutes)})</h3>
         <button type="button" className="oui-icon-button" aria-label="Find times again" onClick={onFind} disabled={assistant.status !== "ready"}>
           <RefreshCw size={14} />
         </button>

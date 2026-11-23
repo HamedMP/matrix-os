@@ -24,6 +24,7 @@ export function MonthView({ state, calendarsById, onCreateAllDay, onOpenEvent, o
     () => buildMonthGrid(state.range, state.events, { timeZone: state.timeZone, today: state.today, maxRows: MONTH_ROWS }),
     [state.range, state.events, state.timeZone, state.today],
   );
+  const pendingIds = useMemo(() => new Set(state.pendingEventIds), [state.pendingEventIds]);
   const moreAnchor = useRef<HTMLElement | null>(null);
   const [moreDay, setMoreDay] = useState<string | null>(null);
   const eventsById = useMemo(() => Object.fromEntries(state.events.map((event) => [event.id, event])), [state.events]);
@@ -72,7 +73,7 @@ export function MonthView({ state, calendarsById, onCreateAllDay, onOpenEvent, o
               key={bar.event.id}
               type="button"
               data-event-id={bar.event.id}
-              className={`cal-bar${bar.event.allDay || bar.endIndex - bar.startIndex > 1 ? "" : " cal-bar--timed"}${state.pendingEventIds.includes(bar.event.id) ? " is-pending" : ""}`}
+              className={`cal-bar${bar.event.allDay || bar.endIndex - bar.startIndex > 1 ? "" : " cal-bar--timed"}${pendingIds.has(bar.event.id) ? " is-pending" : ""}`}
               style={{ ...calendarColorStyle(calendarsById[bar.event.calendarId]), gridColumn: `${bar.startIndex + 1} / ${bar.endIndex + 1}`, gridRow: bar.row + 2 }}
               aria-label={`${bar.event.title || "(No title)"}, ${formatEventWhen(bar.event, state.timeZone)}`}
               onClick={(event) => onOpenEvent(bar.event.id, event.currentTarget)}
