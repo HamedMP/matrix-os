@@ -172,6 +172,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
   // The message being sent, shown from the moment it is sent.
   const [pendingSend, setPendingSend] = useState<PendingCanonicalSend | null>(null);
+  // Each New Chat starts a draft session; a draft send shows only in its own.
+  const [draftSession, setDraftSession] = useState(0);
+  const draftSessionRef = useRef(0);
   const [gatewayUrl] = useState(getGatewayUrl);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
@@ -525,8 +528,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSubmitting(true);
     setSafeError(null);
     const pendingToken = {};
+    const sendDraftSession = draftSessionRef.current;
     const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => setPendingSend(previous =>
-      nextPendingCanonicalSend(previous, { token: pendingToken, identity: navigationIdentity, sourceChatId }, turn));
+      sourceChatId === undefined && draftSessionRef.current !== sendDraftSession ? previous
+        : nextPendingCanonicalSend(previous, { token: pendingToken, identity: navigationIdentity, sourceChatId, draftSession: sendDraftSession }, turn));
     const optimisticParts = optimisticCanonicalSendParts(text, options.promptText, options.resources);
     const send = async () => {
       const uploadedReferences: string[] = [];
@@ -730,6 +735,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const newChat = useCallback(async (projectId?: string) => {
     if (!isCurrent()) return;
     draftSendAttempt.current = null;
+    draftSessionRef.current += 1;
+    setDraftSession(draftSessionRef.current);
+    setPendingSend(pending => pending?.sourceChatId === undefined ? null : pending);
     setDraftProjectId(projectId);
     activeChatIdRef.current = undefined;
     detailRef.current = null;
@@ -1092,7 +1100,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [client, setRecords, isCurrent, rememberReadState]);
 
   const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
-  const messages = canonicalTranscriptWithPendingSend({ detail: selectedDetail, activeChatId,
+  const messages = canonicalTranscriptWithPendingSend({ detail: selectedDetail, activeChatId, draftSession,
     pending: sameAuthority && pendingSend?.identity === navigationIdentity ? pendingSend : null,
     collaborationViewOpen: Boolean(selectedCollaborationView) });
   const selectedDetailError = detailError?.scope === navigationIdentity && detailError.chatId === activeChatId
