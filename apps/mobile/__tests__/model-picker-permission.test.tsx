@@ -52,7 +52,7 @@ describe("the permission mode in the model sheet", () => {
 
     expect(screen.getByRole("header", { name: "Permission mode" })).toBeTruthy();
     expect(modeChips()).toEqual([
-      ["Supervised", false], ["Auto Accept Edits", false], ["Auto", true], ["Full Access", false],
+      ["Ask for approval", false], ["Auto Accept Edits", false], ["Auto", true], ["Full Access", false],
     ]);
   });
 
@@ -73,7 +73,7 @@ describe("the permission mode in the model sheet", () => {
     renderPicker(catalog(), GPT, { permissionMode: "supervised", onPermissionModeChange: changeMode, catalogLoading: true });
     openSheet();
 
-    fireEvent.press(modes().getByRole("button", { name: "Supervised" }));
+    fireEvent.press(modes().getByRole("button", { name: "Ask for approval" }));
     fireEvent.press(modes().getByRole("button", { name: "Full Access" }));
 
     expect(changeMode).not.toHaveBeenCalled();

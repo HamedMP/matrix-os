@@ -26,6 +26,7 @@ import {
 import { useChatComposer } from "@/lib/use-chat-composer";
 
 import { activeChatRun } from "./chat-screen-state";
+import { providerComposerPreference } from "@/lib/provider-composer-preference";
 import { newChatSelection } from "./new-chat-selection";
 
 function savedChatExecutionControls(detail: CanonicalChatDetailResponse | null, chatId: string | null) {
@@ -114,18 +115,22 @@ function useActiveChatState() {
   });
   const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending);
   const providerCatalogLoading = !directBot && (catalogPending || rememberedPending);
-  const { remember } = remembered;
-  const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
-    setSelectionOverride(chosen);
-    remember({ selection: chosen });
-  }, [setSelectionOverride, remember]);
-  const choosePermissionMode = useCallback((mode: string) => {
-    setPermissionModeOverride(mode);
-    remember({ permissionMode: mode });
-  }, [setPermissionModeOverride, remember]);
+  const { remember, forProvider } = remembered;
   const savedControls = savedChatExecutionControls(detail, activeChatId);
   const turnModes = directBot ? AGENT_TURN_MODES : chosenTurnModes(catalog, selection, savedControls,
-    askedPermissionMode(activeChatId, permissionModeOverride, savedControls, remembered.choice));
+    askedPermissionMode(activeChatId, permissionModeOverride, savedControls, forProvider(selection?.instanceId)));
+  const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
+    const switching = selection?.instanceId !== chosen.instanceId;
+    const preference = providerComposerPreference(catalog, selection, chosen, forProvider(chosen.instanceId), turnModes?.permissionMode);
+    setSelectionOverride(preference.selection);
+    if (switching) setPermissionModeOverride(preference.permissionMode ?? null);
+    remember(preference);
+  }, [selection, forProvider, catalog, turnModes, setSelectionOverride, setPermissionModeOverride, remember]);
+  const choosePermissionMode = useCallback((mode: string) => {
+    if (!selection) return;
+    setPermissionModeOverride(mode);
+    remember({ selection, permissionMode: mode });
+  }, [selection, setPermissionModeOverride, remember]);
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 

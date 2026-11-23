@@ -8,7 +8,7 @@ import { CanonicalChatSessionProvider, useCanonicalChatSession } from "../lib/ca
 import { composerChoices } from "../lib/remembered-composer-choice";
 import { createCanonicalChatFixture } from "../../../tests/contracts/fixtures/canonical-chat";
 
-import { GPT, SONNET, catalogOf, codexInstance, matrixInstance, type Instance } from "./model-test-catalog";
+import { GPT, SONNET, catalogOf, codexInstance, matrixInstance, engineInstance, REASONING, type Instance } from "./model-test-catalog";
 
 const SCOPE = "user_fixture:fixture:primary";
 const mockSend = jest.fn();
@@ -226,4 +226,41 @@ describe("the permission mode of a new chat", () => {
     expect(markedMode()).toBe("Full Access");
     expect(composerChoices.choice(SCOPE)?.permissionMode).toBe("full_access");
   });
+});
+
+
+it("restores each provider's effort and access through the real picker and sends them after reload", () => {
+  const claude = { instanceId: "claude_native", model: "claude-opus-5", options: [{ id: "effort", value: "high" }] };
+  const gpt = { ...GPT, options: [{ id: "effort", value: "high" }] };
+  const codex = mockCatalog.instances[1]!;
+  const original = { options: codex.options, supports: codex.supports };
+  codex.options = [REASONING];
+  codex.supports = { ...codex.supports, permissionModes: ["supervised", "auto_review", "full_access"] };
+  const nativeClaude = engineInstance(claude.instanceId, "claude_code", "Claude Code", [[claude.model, "Opus 5"]], {
+    options: [REASONING], supports: { ...codex.supports, permissionModes: ["supervised", "auto_accept_edits", "auto", "dont_ask", "full_access"] },
+  });
+  mockCatalog.instances.push(nativeClaude);
+  try {
+    act(() => {
+      composerChoices.remember(SCOPE, { selection: claude, permissionMode: "auto" });
+      composerChoices.remember(SCOPE, { selection: gpt, permissionMode: "auto_review" });
+    });
+    renderChatScreen();
+    chooseModel("Claude Code", "Opus 5, Claude Code");
+    expect(markedMode()).toBe("Auto");
+    send("Use Claude's choices");
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ selection: claude, permissionMode: "auto" }), expect.anything());
+    chooseModel("Codex", "GPT-5.6 Mini, Codex");
+    expect(markedMode()).toBe("Approve for me");
+    const explicit = { ...gpt, model: "gpt-5.6-mini" };
+    send("Use Codex's choices");
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ selection: explicit, permissionMode: "auto_review" }), expect.anything());
+    cleanup();
+    renderChatScreen();
+    send("After remount");
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ selection: explicit, permissionMode: "auto_review" }), expect.anything());
+  } finally {
+    mockCatalog.instances.pop();
+    Object.assign(codex, original);
+  }
 });

@@ -15,7 +15,7 @@ export interface PermissionModeChoice {
 /**
  * The permission modes the selected engine runs a turn in, in the order it
  * lists them and named as Desktop's Permission mode menu names them
- * ("Auto Accept Edits"), with `current` marked. None when there is nothing to
+ * (for example, "Ask for approval" for Codex), with `current` marked. None when there is nothing to
  * choose, as on Desktop: the engine runs one mode only, or the selection
  * cannot run.
  */
@@ -25,7 +25,8 @@ export function permissionModeChoices(
   current: string | null | undefined,
 ): PermissionModeChoice[] {
   if (!catalog || !selection || !selectionCanRun(catalog, selection)) return [];
-  const modes = catalog.instances.find((candidate) => candidate.id === selection.instanceId)?.supports.permissionModes ?? [];
+  const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+  const modes = instance?.supports.permissionModes ?? [];
   if (modes.length < 2) return [];
-  return modes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode), selected: mode === current }));
+  return modes.map((mode) => ({ value: mode, label: chatPermissionModeLabel(mode, instance?.driverKind), selected: mode === current }));
 }
