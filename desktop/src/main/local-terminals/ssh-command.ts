@@ -24,7 +24,7 @@ export function sshVia(
     return `${quote(tailscaleBinary)} ssh ${quote(destination)}`;
   }
   const chosenPort = options?.port ? String(options.port) : port;
-  if (destination === target && !chosenPort && !options?.identity && !options?.jump) return null;
+  if (!chosenPort && !options?.identity && !options?.jump) return null;
   return [
     "ssh", "-o", "BatchMode=yes",
     ...(runtimeDir ? ["-T", "-o", "ConnectTimeout=10", "-S", quote(controlPath(runtimeDir, destination, chosenPort, options)), "-o", "ControlMaster=no"] : []),

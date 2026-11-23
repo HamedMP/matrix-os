@@ -126,6 +126,8 @@ interface TerminalViewProps {
    * keeps one live terminal at a time.
    */
   attachManager?: AttachManager;
+  /** Reports a successful live attachment to the pane that owns this view. */
+  onAttached?: () => void;
   /** Takes keyboard focus when it attaches or becomes focused. Defaults to `active`. */
   focused?: boolean;
   /**
@@ -178,6 +180,7 @@ export default function TerminalView({
   findRequest = 0,
   onPaneAction,
   attachManager: attachManagerProp,
+  onAttached,
   focused,
   reservedKeys,
 }: TerminalViewProps) {
@@ -612,7 +615,8 @@ export default function TerminalView({
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
-        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+        if (state === "attached") onAttached?.();
+        else nativeHistoryRef.current?.attach(false);
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
@@ -659,7 +663,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, sendSize]);
+  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, onAttached, sendSize]);
 
   // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
   const takesFocusRef = useRef(takesFocus);

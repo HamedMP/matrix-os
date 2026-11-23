@@ -6,9 +6,16 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 // Records each mount of a terminal view, for tests that care about remounting.
 let mountLog: string[] | null = null;
+let finishAttachment: (() => void) | null = null;
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
-  default: function TerminalViewStub({ sessionName, findRequest }: { sessionName: string; findRequest?: number }) {
+  default: function TerminalViewStub({ sessionName, findRequest, onAttached }: {
+    sessionName: string; findRequest?: number; onAttached?: () => void;
+  }) {
     React.useEffect(() => { mountLog?.push(sessionName); }, [sessionName]);
+    React.useEffect(() => {
+      finishAttachment = onAttached ?? null;
+      return () => { if (finishAttachment === onAttached) finishAttachment = null; };
+    }, [onAttached]);
     return <div data-testid="terminal-view" data-find={findRequest ?? 0}>{sessionName}</div>;
   },
 }));
@@ -214,18 +221,39 @@ describe("This Computer terminals", () => {
   });
 
   it("keeps the pane of a shell that exited, marked ended, until the user closes it", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
     const operator = installOperator({
       "local-terminal:watch": watching([fact("t1", "build")]),
       "local-terminal:history": () => ({ ok: true, text: "build result" }),
     });
     render(<TerminalWindowApp />);
     fireEvent.click(await findRow(/build/));
-    await screen.findByTestId("terminal-view");
+    const live = await screen.findByTestId("terminal-view");
+    act(() => finishAttachment?.());
+    operator.invoke.mockClear();
     operator.push([fact("t1", "build", { finished: true })]);
     expect(await screen.findByText("build ended")).toBeTruthy();
-    expect(await screen.findByText("build result")).toBeTruthy();
+    expect(screen.getByTestId("terminal-view")).toBe(live);
+    expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:history", { id: "t1" });
+    expect(operator.invoke).toHaveBeenCalledWith("local-terminal:seen", { id: "t1" });
     fireEvent.click(screen.getByRole("button", { name: "Close build" }));
-    expect(screen.queryByText("build result")).toBeNull();
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+    fireEvent.click(row(/build/));
+    expect(await screen.findByText("build result")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
+  });
+
+  it("loads saved output if the terminal exits before the pane attaches", async () => {
+    const operator = installOperator({
+      "local-terminal:watch": watching([fact("t1", "fast build")]),
+      "local-terminal:history": () => ({ ok: true, text: "finished before attaching" }),
+    });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await findRow(/fast build/));
+    await screen.findByTestId("terminal-view");
+    operator.push([fact("t1", "fast build", { finished: true })]);
+    expect(await screen.findByText("finished before attaching")).toBeTruthy();
+    expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 
   // Fault detected (Greptile, #3567): a running terminal on an added machine read as ended.

@@ -641,16 +641,18 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     expect(await host.list()).toEqual([]);
   }, 30_000);
 
-  it("loads output from the pinned core after a program finishes without an attached pane", async () => {
+  it("loads rendered text from the pinned core after a colored program finishes without an attached pane", async () => {
     await host.watch();
     const run = JSON.parse(execFileSync(binary!, [
-      "run", "--bg", "--", "/bin/sh", "-c", "printf 'saved-output-%s\\n' ready",
+      "run", "--bg", "--", "/bin/sh", "-c", "printf '\\033[31msaved-output-%s\\033[0m\\n' ready",
     ], { env: coreEnv, encoding: "utf8", timeout: 5_000 })) as { address: string };
     await vi.waitFor(() => expect(facts).toHaveBeenLastCalledWith(expect.arrayContaining([
       expect.objectContaining({ id: run.address, finished: true }),
     ])), { timeout: 10_000 });
     await expect(host.attach(run.address, { cols: 80, rows: 24 })).rejects.toMatchObject({ kind: "finished" });
-    await expect(host.history(run.address)).resolves.toContain("saved-output-ready");
+    const history = await host.history(run.address);
+    expect(history).toContain("saved-output-ready");
+    expect(history).not.toContain("\u001b");
   }, 30_000);
 
 });

@@ -15,7 +15,7 @@ const BYTE_STRING = /^[\u0000-\u00ff]*$/;
 export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
 export const LOCAL_TERMINAL_HISTORY_MAX_CHARS = 64_000;
 
-// Herdr encodes a u32 counter with a leading digit and a base-30 suffix.
+// Herdr 0.1.19 starts its u32 counter at 1 and encodes the suffix without vowels or l.
 const TERMINAL_ID = "t[1-9][0-9bcdfghjkmnpqrstvwxyz]{0,6}";
 export const LOCAL_TERMINAL_ID_PATTERN = new RegExp(`^${TERMINAL_ID}$`);
 export const LocalTerminalIdSchema = z.string().regex(LOCAL_TERMINAL_ID_PATTERN);
@@ -165,7 +165,7 @@ export const LOCAL_TERMINAL_INVOKE = {
   },
   // Terminals here (`t7`) and on machines this core added (`vps/t7`) take the same actions.
   "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
-  // Removes a finished terminal (herdr-core `terminal.rm`); a live one is refused by the core.
+  // Reads a bounded tail of rendered text for a finished terminal.
   "local-terminal:history": {
     request: z.strictObject({ id: LocalTerminalAddressSchema }),
     response: z.discriminatedUnion("ok", [

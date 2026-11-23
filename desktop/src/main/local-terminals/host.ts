@@ -5,7 +5,7 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
-import { sshLoginArgv, sshVia } from "./ssh-command";
+import { herdrMachineAddArgv, sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
@@ -17,9 +17,6 @@ import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
 } from "./hc-events";
-import { herdrMachineAddArgv } from "./ssh-command";
-
-const buildSshVia = sshVia;
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
 const LONGEST_SOCKET_NAME = `${SESSION}.holder.00000000.sock`;
@@ -198,8 +195,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   });
 
   // The install path uses the same command as Add and can reuse its login.
-  const sshVia = (target: string, ssh: SshOptions | undefined, tailscale: string | null) =>
-    buildSshVia(target, ssh, tailscale, options.runtimeDir);
+  const sharedSshVia = (target: string, ssh: SshOptions | undefined, tailscale: string | null) =>
+    sshVia(target, ssh, tailscale, options.runtimeDir);
 
   function runLogin(argv: string[], title: string, size: { cols: number; rows: number }) {
     return sessions.run({
@@ -299,7 +296,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
      * password, code, or new host key confirmation stays with OpenSSH.
      */
     async sshLogin(target: string, size: { cols: number; rows: number }, ssh?: SshOptions, name?: string): Promise<string | null> {
-      if (sshVia(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)) return openSshLogin(target, size, ssh, true);
+      if (sharedSshVia(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)) return openSshLogin(target, size, ssh, true);
       // The pinned CLI handles the interactive login for plain targets and
       // registers the machine on success. This uses the core's own socket.
       const binary = await prepare();
@@ -339,12 +336,12 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         return runLogin([binary, "machine", "login", "--", name], `ssh ${target}`, size);
       }
       const managed = saved !== undefined && !saved.ssh?.tailscaleSsh
-        && sshVia(target, saved.ssh, null)?.slice(0, 255) === current.target;
+        && sharedSshVia(target, saved.ssh, null)?.slice(0, 255) === current.target;
       return openSshLogin(target, size, saved?.ssh, managed);
     },
 
     async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
-      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+      const via = sharedSshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
       const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
       if (result.ok) {
         try {
