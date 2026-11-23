@@ -2,8 +2,12 @@
 // name, never a raw shell prompt title such as `me@host:~`.
 import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 
-/** A title the shell set from its prompt: `user@host: ~/dir`, `user@host:~$`, or ending in a prompt sign. */
-const PROMPT_TITLE = /^[\w.-]+@[\w.-]+(?::|\s|$)|[$#%>]\s*$/;
+/**
+ * A title a shell sets from its prompt: `user@host: ~/dir`, `user@host:~$`. Only
+ * that shape counts, so a name a person or agent chose ("C#", "Build 100%")
+ * is always kept.
+ */
+const PROMPT_TITLE = /^[\w.-]+@[\w.-]+:\s?(?:~|\/)[^\s]*\s?[$#%>]?\s*$/;
 
 export function friendlyTerminalName(row: Pick<TerminalSidebarRow, "name" | "space"> | undefined): string {
   const name = row?.name.trim() ?? "";
