@@ -11,7 +11,7 @@ function task(number: number, overrides: Partial<ProjectTask> = {}): ProjectTask
   return {
     id: `task_${number}`, projectId: "proj_1", number, key: `MOS-${number}`, title: `Task ${number}`, description: "",
     status: "todo", priority: "none", rank: "V", assignee: null, labels: [], parentTaskId: null, blockedBy: [], dueAt: null,
-    worktreeId: null, branch: null, pullRequest: null, externalLink: null, sessions: [], commentCount: 0,
+    worktreeId: null, branch: null, pullRequest: null, externalLink: null, chatId: `chat_${number}`, chatStatus: "idle", sessions: [], commentCount: 0,
     createdBy: "user:owner", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z",
     archivedAt: null, revision: 1, ...overrides,
   };
@@ -176,22 +176,31 @@ describe("createHttpProjectBoardClient requests", () => {
     expect(calls.map((call) => call.body)).toEqual([{}, {}, {}]);
   });
 
-  it("keeps the first message the server returns when it did not start a turn", async () => {
-    const session = { ref: "chat_new", kind: "chat", title: "Chat 1", role: "main", agentStatus: "idle" } as const;
-    const { fetch } = fakeFetch(() => json({ task: task(1, { sessions: [session] }), session, firstMessage: "MOS-1: Task 1" }, 201));
-    expect(await client(fetch).startSession("task_1", { kind: "chat" })).toEqual({ ...session, firstMessage: "MOS-1: Task 1" });
+  it("returns a chat start's task and first message, with no session", async () => {
+    const started = { task: task(1, { status: "in_progress" }), session: null, firstMessage: "MOS-1: Task 1" };
+    const { fetch, calls } = fakeFetch(() => json(started, 201));
+    expect(await client(fetch).startWork("task_1", { kind: "chat" })).toEqual(started);
+    expect(calls[0]!.body).toEqual({ kind: "chat" });
   });
 
-  it("starts and attaches sessions and returns the task's session", async () => {
-    const session = { ref: "chat_abc", kind: "chat", title: "Chat 1", role: "main", agentStatus: "working", harness: "claude" } as const;
+  it("finds a chat's ticket with the chatId filter", async () => {
+    const { fetch, calls } = fakeFetch(() => json({ tasks: [task(1)], nextCursor: null }), () => json({ tasks: [], nextCursor: null }));
+    const board = client(fetch);
+    expect((await board.findTaskByChat("chat_1"))?.id).toBe("task_1");
+    expect(calls[0]!.url.searchParams.get("chatId")).toBe("chat_1");
+    expect(await board.findTaskByChat("chat_none")).toBeNull();
+  });
+
+  it("starts and attaches terminals and returns the task's terminal", async () => {
+    const session = { ref: "term.ws_1.tab_0", kind: "terminal", title: "Terminal 1", role: "main", agentStatus: "idle", harness: "claude" } as const;
     const { fetch, calls } = fakeFetch(
       () => json({ task: task(1, { sessions: [session] }), session }),
-      () => json({ task: task(1, { sessions: [session, { ...session, ref: "term.ws_1.tab_1", kind: "terminal", title: "Tab", role: "extra" }] }) }),
+      () => json({ task: task(1, { sessions: [session, { ...session, ref: "term.ws_1.tab_1", title: "Tab", role: "extra" }] }) }),
       () => json({ task: task(1) }),
     );
     const board = client(fetch);
-    expect(await board.startSession("task_1", { kind: "chat" })).toEqual(session);
-    expect(calls[0]!.body).toEqual({ kind: "chat" });
+    expect((await board.startWork("task_1", { kind: "terminal" })).session).toEqual(session);
+    expect(calls[0]!.body).toEqual({ kind: "terminal" });
     const attached = await board.attachSession("task_1", { ref: "term.ws_1.tab_1", kind: "terminal", title: "Tab" });
     expect(attached.ref).toBe("term.ws_1.tab_1");
     expect(calls[1]!.url.pathname).toBe("/vm/ana/api/projects/my-proj/tasks/task_1/sessions");
@@ -205,7 +214,7 @@ describe("createHttpProjectBoardClient requests", () => {
     const { fetch, calls } = fakeFetch(
       () => json({ settings: { projectId: "proj_1", taskKey: "MOS", linearConnected: false, automation: { startMovesToInProgress: true, prOpenMovesToReview: true, prMergeMovesToDone: true } } }),
       () => json({ members: [{ actor: "user:owner", name: "Owner", handle: "owner" }] }),
-      () => json({ sessions: [{ ref: "chat_loose", kind: "chat", title: "Loose chat" }] }),
+      () => json({ sessions: [{ ref: "term.ws_1.tab_9", kind: "terminal", title: "Loose tab" }] }),
       () => json({ comments: [{ id: "tcm_1", taskId: "task_1", author: "user:owner", body: "Hi", createdAt: "2026-11-01T00:00:00.000Z", editedAt: null }], nextCursor: null }),
       () => json({ activity: [{ seq: 1, taskId: "task_1", actor: "user:owner", kind: "created", summary: "Created the task", at: "2026-11-01T00:00:00.000Z" }], nextCursor: null }),
       () => json({ git: { branch: null, dirty: false, ahead: 0, behind: 0, changedFiles: 0, pullRequest: null, prStatus: "unavailable" } }),

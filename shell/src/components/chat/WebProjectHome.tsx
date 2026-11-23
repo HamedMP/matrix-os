@@ -20,7 +20,7 @@ const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
  * Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat.
  * The Board view shows the project's task board from the gateway's task routes.
  */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, view = "overview", onViewChange, onProjectChatsChanged, onTaskChatStarted }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, view = "overview", onViewChange, onProjectChatsChanged, detailsTaskId = null }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -41,16 +41,16 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   active?: boolean;
   view?: ProjectHomeView;
   onViewChange?: (view: ProjectHomeView) => void;
-  /** The board created a chat in this project; the rail reloads its project chats. */
+  /** The board created or opened a task's chat; the rail reloads its project chats. */
   onProjectChatsChanged?: () => void;
-  /** A task started a chat that has not run yet: open it with the task text in the composer. */
-  onTaskChatStarted?: (chatId: string, firstMessage: string) => void;
+  /** A task whose details to open on the board, from a chat's ticket header. */
+  detailsTaskId?: string | null;
 }) {
   if (view === "board") {
     return <div className="flex min-h-0 flex-1 flex-col" data-slot="chat-project-board">
       <ProjectHomeHeader name={project.name} view={view} onViewChange={onViewChange} className="px-5 pb-3 pt-5" />
       <WebProjectBoard key={`${identity}/${project.id}`} gatewayUrl={gatewayUrl} project={project} onSelectChat={onSelectChat}
-        onProjectChatsChanged={onProjectChatsChanged} onTaskChatStarted={onTaskChatStarted} active={active} />
+        onProjectChatsChanged={onProjectChatsChanged} detailsTaskId={detailsTaskId} active={active} />
     </div>;
   }
   return <WebProjectOverview project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority}
@@ -58,27 +58,25 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
     knownChatIds={knownChatIds} botClient={botClient} onSelectChat={onSelectChat} active={active} onViewChange={onViewChange} />;
 }
 
-/** The project's board over the owner's gateway. Chats open in this Chats window; terminals in the durable Terminal window. */
-function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChanged, onTaskChatStarted, active }: {
+/** The project's board over the owner's gateway. Cards open their chat in this Chats window; terminals open in the durable Terminal window. */
+function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChanged, detailsTaskId, active }: {
   gatewayUrl: string; project: WebProject; onSelectChat?: (chatId: string) => void; onProjectChatsChanged?: () => void;
-  onTaskChatStarted?: (chatId: string, firstMessage: string) => void; active: boolean;
+  detailsTaskId: string | null; active: boolean;
 }) {
   const client = useMemo(() => isProjectBoardSlug(project.slug) ? createHttpProjectBoardClient({ gatewayUrl, projectSlug: project.slug }) : null,
     [gatewayUrl, project.slug]);
   const openSession = (session: TaskSession) => {
     const target = taskSessionTarget(session.ref);
-    if (target?.kind === "chat") onSelectChat?.(target.chatId);
-    else if (target?.kind === "terminal") openTerminalSession(`${target.workspaceId}:${target.tabId}`);
+    if (target) openTerminalSession(`${target.workspaceId}:${target.tabId}`);
   };
   if (!client) return <p role="alert" className="px-5 py-16 text-center text-[13px] text-muted-foreground">This project's board isn't available.</p>;
   return <ProjectBoard client={client} preferencesKey={boardPreferencesKey("web", project.id)} storage={projectBoardStorage()} active={active}
-    onOpenSession={openSession} onSessionStarted={(session) => {
-      if (session.kind !== "chat") return;
+    onOpenSession={openSession} detailsTaskId={detailsTaskId} onOpenChat={onSelectChat ? (task) => {
+      if (!task.chatId) return;
+      // A task created on the board made its chat server-side; the rail reloads so it lists it.
       onProjectChatsChanged?.();
-      // No model was chosen yet, so the server returned the task text: open the chat with it in the composer.
-      const target = taskSessionTarget(session.ref);
-      if (session.firstMessage && target?.kind === "chat") onTaskChatStarted?.(target.chatId, session.firstMessage);
-    }} />;
+      onSelectChat(task.chatId);
+    } : undefined} />;
 }
 
 function ProjectHomeHeader({ name, view, onViewChange, className }: { name: string; view: ProjectHomeView; onViewChange?: (view: ProjectHomeView) => void; className?: string }) {

@@ -266,6 +266,11 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
       return (await request(taskPath(tasks, taskId), { schema: TaskResponseSchema })).task;
     },
 
+    async findTaskByChat(chatId) {
+      const page = await request(`${tasks}?${new URLSearchParams({ chatId, limit: "1" })}`, { schema: ListTasksResponseSchema });
+      return page.tasks.find((task) => task.chatId === chatId) ?? null;
+    },
+
     async createTask(input) {
       return (await request(tasks, { method: "POST", body: input, schema: TaskResponseSchema })).task;
     },
@@ -307,9 +312,8 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
       }, MAX_DETAIL_PAGES);
     },
 
-    async startSession(taskId, input) {
-      const started = await request(taskPath(tasks, taskId, "/start"), { method: "POST", body: input, schema: StartTaskResponseSchema });
-      return started.firstMessage ? { ...started.session, firstMessage: started.firstMessage } : started.session;
+    async startWork(taskId, input) {
+      return request(taskPath(tasks, taskId, "/start"), { method: "POST", body: input, schema: StartTaskResponseSchema });
     },
 
     async listAttachableSessions() {
@@ -319,7 +323,7 @@ export function createHttpProjectBoardClient(options: HttpProjectBoardClientOpti
     async attachSession(taskId, session) {
       const { task } = await request(taskPath(tasks, taskId, "/sessions"), { method: "POST", body: { ref: session.ref }, schema: TaskResponseSchema });
       const attached = task.sessions.find((candidate) => candidate.ref === session.ref);
-      if (!attached) throw new ProjectBoardRequestError("That chat or terminal isn't available.", "task_session_unavailable");
+      if (!attached) throw new ProjectBoardRequestError("That terminal isn't available.", "task_session_unavailable");
       return attached;
     },
 

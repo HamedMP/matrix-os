@@ -54,16 +54,15 @@ describe("ProjectBoard", () => {
     expect(screen.queryByRole("dialog", { name: /MOS-31/ })).toBeNull();
   });
 
-  it("starts a chat from the task and offers to open it in Chat, without a fake transcript", async () => {
+  it("starts a terminal from the task and offers to open it in Terminal, without a fake transcript", async () => {
     const client = createFixtureProjectBoardClient({ latencyMs: 0 });
     const onOpenSession = vi.fn();
     render(<ProjectBoard client={client} onOpenSession={onOpenSession} />);
     fireEvent.click(await screen.findByRole("button", { name: /MOS-23: Clean up worktree/ }));
     const sheet = await screen.findByRole("dialog", { name: /MOS-23/ });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Start chat" }));
-    fireEvent.click(await within(sheet).findByRole("button", { name: "Open in Chat" }));
-    expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ kind: "chat", title: "Chat 1" }));
-    expect(within(sheet).getByText(/Agent working/)).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Start terminal" }));
+    fireEvent.click(await within(sheet).findByRole("button", { name: "Open in Terminal" }));
+    expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ kind: "terminal", title: "Terminal 1" }));
     expect(within(sheet).queryByText(/Prototype/)).toBeNull();
     expect((await client.getTask("task_fixture_23")).status).toBe("in_progress");
   });

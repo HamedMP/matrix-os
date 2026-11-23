@@ -32,17 +32,18 @@ export function writeProjectHomeView(storage: Pick<Storage, "setItem"> | undefin
 }
 
 /** The Overview | Board choice on a Web Desktop / Web Canvas project page, remembered per project. */
-export function useProjectHomeView(projectId: string | undefined): [ProjectHomeView, (view: ProjectHomeView) => void] {
+export function useProjectHomeView(projectId: string | undefined): [ProjectHomeView, (view: ProjectHomeView, forProjectId?: string) => void] {
   const [state, setState] = useState<{ projectId: string; view: ProjectHomeView } | null>(null);
   let current = state;
   if (projectId && state?.projectId !== projectId) {
     current = { projectId, view: readProjectHomeView(browserStorage(), projectId) };
     setState(current);
   }
-  const setView = (view: ProjectHomeView) => {
-    if (!projectId) return;
-    setState({ projectId, view });
-    writeProjectHomeView(browserStorage(), projectId, view);
+  // `forProjectId` sets the view of a project that is not shown yet, for example before opening it from a chat.
+  const setView = (view: ProjectHomeView, forProjectId = projectId) => {
+    if (!forProjectId) return;
+    setState({ projectId: forProjectId, view });
+    writeProjectHomeView(browserStorage(), forProjectId, view);
   };
   return [current?.view ?? "overview", setView];
 }

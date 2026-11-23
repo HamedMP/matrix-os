@@ -28,7 +28,8 @@ interface SeedTask {
   branch?: boolean;
   pullRequest?: Omit<NonNullable<ProjectTask["pullRequest"]>, "url">;
   linear?: string;
-  sessions?: Array<Pick<TaskSession, "kind" | "agentStatus" | "harness" | "title">>;
+  /** The task's chat (kind "chat", at most one) and its terminals. */
+  sessions?: Array<Pick<TaskSession, "agentStatus" | "harness" | "title"> & { kind: "chat" | "terminal" }>;
   description?: string;
   archived?: boolean;
   createdBy?: ActorRef;
@@ -123,9 +124,10 @@ export function buildFixtureSeed(nowMs: number): FixtureSeed {
       blockedBy: (seed.blockedBy ?? []).map(id), dueAt: seed.dueInDays === undefined ? null : at(-24 * seed.dueInDays),
       worktreeId: null, branch, externalLink: seed.linear ? { provider: "linear", key: seed.linear, url: `https://linear.app/example/issue/${seed.linear}` } : null,
       pullRequest: seed.pullRequest ? { ...seed.pullRequest, url: `https://github.com/example/project/pull/${seed.pullRequest.number}` } : null,
-      sessions: (seed.sessions ?? []).map((session, index) => ({
-        ...session, role: index === 0 ? "main" : "extra",
-        ref: session.kind === "chat" ? `chat_fixture_${seed.number}_${index}` : `term.tws_fixture.tt_${seed.number}_${index}`,
+      chatId: `chat_fixture_${seed.number}`,
+      chatStatus: seed.sessions?.find((session) => session.kind === "chat")?.agentStatus ?? "idle",
+      sessions: (seed.sessions ?? []).filter((session) => session.kind === "terminal").map((session, index) => ({
+        ...session, kind: "terminal" as const, role: index === 0 ? "main" as const : "extra" as const, ref: `term.tws_fixture.tt_${seed.number}_${index}`,
       })),
       commentCount: SEED_COMMENTS.filter((comment) => comment.task === seed.number).length,
       createdBy: seed.createdBy ?? FIXTURE_OWNER, createdAt: at(seed.ageHours), updatedAt: at(Math.max(1, seed.ageHours / 6)),

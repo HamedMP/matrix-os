@@ -31,6 +31,7 @@ import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
 import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { WebProjectHome } from "./chat/WebProjectHome";
+import { ChatTicketBar } from "./chat/ChatTicketBar";
 import { useProjectHomeView } from "./chat/project-home-view";
 import { readWebProjectAgentContext } from "./chat/WebProjectAgentContext";
 import { projectChats, useWebProjects, type WebProject } from "./chat/web-projects";
@@ -264,8 +265,9 @@ function ChatAppContent({
   const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
     && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
   const [projectHomeView, setProjectHomeView] = useProjectHomeView(projectHome?.id);
-  // Bumped when the board starts a chat server-side, so the focused rail reloads its project chats.
+  // Bumped when the board opens a task's server-created chat, so the focused rail reloads its project chats.
   const [projectChatsRevision, setProjectChatsRevision] = useState(0);
+  const [boardDetails, setBoardDetails] = useState<{ projectId: string; taskId: string } | null>(null);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -317,18 +319,9 @@ function ChatAppContent({
     setAgentDraftRequest({ id: agentDraftSequence.current, text, resources, ownerIdentity: draftIdentity });
     if (mobile) setSidebarOpen(false);
   };
-  // A chat started from a board task opens with the task text in its composer until it is sent or replaced.
-  const [taskChatDraft, setTaskChatDraft] = useState<(ChatAgentDraftRequest & { chatId: string; ownerIdentity: unknown }) | null>(null);
-  const openTaskChat = (chatId: string, text: string) => {
-    agentDraftSequence.current += 1;
-    setTaskChatDraft({ id: agentDraftSequence.current, text, chatId, ownerIdentity: draftIdentity });
-    onSwitchConversation(chatId);
-  };
-  const activeDraftRequest = sessionId && taskChatDraft?.chatId === sessionId && taskChatDraft.ownerIdentity === draftIdentity ? taskChatDraft
-    : !sessionId && agentDraftRequest?.ownerIdentity === draftIdentity ? agentDraftRequest : composerDraftRequest;
+  const activeDraftRequest = !sessionId && agentDraftRequest?.ownerIdentity === draftIdentity ? agentDraftRequest : composerDraftRequest;
   const consumeDraftRequest = (id: number) => {
-    if (taskChatDraft?.id === id) setTaskChatDraft(null);
-    else if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
+    if (agentDraftRequest?.id === id) setAgentDraftRequest(null);
     else onComposerDraftConsumed?.(id);
   };
   const [previewFile, setPreviewFile] = useState<{ chatId: string; path: string } | null>(null);
@@ -776,11 +769,15 @@ function ChatAppContent({
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
               onSelectChat={onSwitchConversation} active={active !== false} view={projectHomeView} onViewChange={setProjectHomeView}
-              onProjectChatsChanged={() => setProjectChatsRevision((revision) => revision + 1)} onTaskChatStarted={openTaskChat} /> : undefined}
+              onProjectChatsChanged={() => setProjectChatsRevision((revision) => revision + 1)}
+              detailsTaskId={boardDetails?.projectId === projectHome.id ? boardDetails.taskId : null} /> : undefined}
             projectHomeFullBleed={projectHome !== undefined && projectHomeView === "board"}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
+            {!mobile && chatProjectId && sessionId ? <ChatTicketBar gatewayUrl={projectGatewayUrl} chatId={sessionId}
+              project={webProjects.projects.find((project) => project.id === chatProjectId)}
+              onOpenDetails={(project, task) => { setProjectHomeView("board", project.id); setBoardDetails({ projectId: project.id, taskId: task.id }); openProjectHome(project); }} /> : null}
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
             <Conversation>

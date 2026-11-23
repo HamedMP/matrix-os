@@ -13,7 +13,7 @@ describe("createFixtureProjectBoardClient", () => {
     for (const status of ["backlog", "todo", "in_progress", "in_review", "done", "canceled"] as const) {
       expect(groups[status].length, status).toBeGreaterThan(0);
     }
-    const badges = new Set(tasks.map((task) => rollUpTaskAgentStatus(task.sessions)));
+    const badges = new Set(tasks.map((task) => rollUpTaskAgentStatus(task)));
     for (const badge of ["working", "blocked", "done", "idle", undefined]) expect(badges.has(badge as never), String(badge)).toBe(true);
     expect(tasks.some((task) => task.pullRequest?.checks === "failing")).toBe(true);
     expect(tasks.some((task) => task.pullRequest?.checks === "passing")).toBe(true);
@@ -82,16 +82,20 @@ describe("createFixtureProjectBoardClient", () => {
     expect((await client.listTasks({ includeArchived: true })).length).toBe(before.length + 1);
   });
 
-  it("counts comments and starts sessions that move the card forward", async () => {
+  it("gives every task its chat, counts comments, and starts work that moves the card forward", async () => {
     const client = createFixtureProjectBoardClient({ latencyMs: 0, empty: true });
     const created = await client.createTask({ title: "Do it", status: "todo", clientRequestId: "req-2" });
+    expect(created.chatId).toMatch(/^chat_/);
+    expect((await client.findTaskByChat(created.chatId!))?.id).toBe(created.id);
     await client.addComment(created.id, "On it @ana");
-    const session = await client.startSession(created.id, { kind: "chat" });
+    const started = await client.startWork(created.id, { kind: "chat" });
+    expect(started).toMatchObject({ session: null, firstMessage: `${created.key}: Do it` });
+    const terminal = await client.startWork(created.id, { kind: "terminal" });
     const task = await client.getTask(created.id);
     expect(task.commentCount).toBe(1);
     expect(task.status).toBe("in_progress");
-    expect(task.sessions).toEqual([session]);
-    expect(session.role).toBe("main");
+    expect(task.sessions).toEqual([terminal.session]);
+    expect(terminal.session?.role).toBe("main");
     expect(task.branch).toMatch(/^task\/mos-\d+-do-it$/);
   });
 });

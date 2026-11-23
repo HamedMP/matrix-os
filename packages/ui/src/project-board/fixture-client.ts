@@ -134,6 +134,12 @@ export function createFixtureProjectBoardClient(options: FixtureProjectBoardOpti
       return clone(find(taskId));
     },
 
+    async findTaskByChat(chatId) {
+      await wait();
+      const task = tasks.find((candidate) => candidate.chatId === chatId);
+      return task ? clone(task) : null;
+    },
+
     createTask(input: CreateTaskInput) {
       return mutation(() => {
         const existing = requestIds.find((entry) => entry.requestId === input.clientRequestId);
@@ -148,7 +154,7 @@ export function createFixtureProjectBoardClient(options: FixtureProjectBoardOpti
           id: nextId("task"), projectId: FIXTURE_PROJECT_ID, number, key: `${settings.taskKey}-${number}`, title, description: input.description ?? "", status,
           priority: input.priority ?? "none", rank: input.afterTaskId ? rankAfter(status, input.afterTaskId) : rankFor(status, undefined),
           assignee: input.assignee ?? null, labels: [...(input.labels ?? [])], parentTaskId: input.parentTaskId ?? null, blockedBy: [], dueAt: input.dueAt ?? null,
-          worktreeId: null, branch: null, pullRequest: null, externalLink: null, sessions: [], commentCount: 0, createdBy: actor,
+          worktreeId: null, branch: null, pullRequest: null, externalLink: null, chatId: nextId("chat"), chatStatus: "idle", sessions: [], commentCount: 0, createdBy: actor,
           createdAt: created, updatedAt: created, archivedAt: null, revision: 1,
         };
         tasks = [...tasks, task];
@@ -232,28 +238,29 @@ export function createFixtureProjectBoardClient(options: FixtureProjectBoardOpti
       return clone(activity.filter((entry) => entry.taskId === taskId));
     },
 
-    startSession(taskId, input: StartSessionInput) {
+    startWork(taskId, input: StartSessionInput) {
       return mutation(() => {
         let task = find(taskId);
-        if (task.sessions.length >= MAX_SESSIONS_PER_TASK) throw new ProjectBoardRequestError("A task can hold up to 16 chats and terminals.");
-        const index = task.sessions.length;
-        const harness = input.harness ?? (input.kind === "chat" ? "Claude Code" : "Shell");
-        const session: TaskSession = {
-          ref: input.kind === "chat" ? nextId("chat") : `term.tws_fixture.${nextId("tt")}`,
-          kind: input.kind, title: input.kind === "chat" ? `Chat ${index + 1}` : `Terminal ${index + 1}`,
-          role: index === 0 ? "main" : "extra", agentStatus: input.kind === "chat" ? "working" : "idle", harness,
-        };
+        let session: TaskSession | null = null;
+        if (input.kind === "terminal") {
+          if (task.sessions.length >= MAX_SESSIONS_PER_TASK) throw new ProjectBoardRequestError("A task can hold up to 16 terminals.");
+          const index = task.sessions.length;
+          session = {
+            ref: `term.tws_fixture.${nextId("tt")}`, kind: "terminal", title: `Terminal ${index + 1}`,
+            role: index === 0 ? "main" : "extra", agentStatus: "idle", harness: input.harness ?? "Shell",
+          };
+        }
         task = replace({
-          ...task, sessions: [...task.sessions, session], branch: task.branch ?? taskBranchName(FIXTURE_TASK_KEY, task.number, task.title),
-          updatedAt: stamp(), revision: task.revision + 1,
+          ...task, sessions: session ? [...task.sessions, session] : task.sessions,
+          branch: task.branch ?? taskBranchName(FIXTURE_TASK_KEY, task.number, task.title), updatedAt: stamp(), revision: task.revision + 1,
         });
-        log(taskId, "session_started", `Started ${session.title} (${harness})`);
+        if (session) log(taskId, "session_started", `Started ${session.title} (${session.harness})`);
         if (task.status === "backlog" || task.status === "todo") {
           setStatus(task, "in_progress", rankFor("in_progress", taskId), "system:automation");
         } else {
           emit({ type: "task.updated", taskId, revision: task.revision });
         }
-        return session;
+        return { task: clone(find(taskId)), session, ...(session ? {} : { firstMessage: `${task.key}: ${task.title}` }) };
       });
     },
 
