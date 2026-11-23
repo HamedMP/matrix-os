@@ -12,6 +12,7 @@ export const MAIL_AGENT_ERROR_MESSAGES = Object.freeze({
   prompt_too_large: "This request is too large for the assistant.",
   cancelled: "Stopped.",
   no_thread: "Open a conversation first.",
+  thread_unavailable: "That conversation is not available.",
   no_account: "Connect a mail account first.",
   no_recipient: "No email address was found for this row.",
   provider_failed: "Your mailbox could not be reached. Try again.",
