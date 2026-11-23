@@ -114,13 +114,20 @@ Canonical today: dispatch from `main` (version becomes
 `v<YYYY.MM.DD>-<run_number>`):
 
 ```bash
+git fetch origin && test "$(git rev-parse origin/main)" = "$SHA"   # main moved? redo steps 1-2
 gh workflow run host-bundle-release.yml --ref main \
   -f channel=canary -f severity=normal -f changelog="$(cat /tmp/changelog.txt)"
-gh run list --workflow host-bundle-release.yml --event workflow_dispatch --limit 1
+gh run list --workflow host-bundle-release.yml --event workflow_dispatch --limit 1 \
+  --json databaseId,headSha,url
 gh run watch <run-id> --exit-status
 gh run view <run-id> --log | grep 'Generated version'     # VERSION
 curl -fsS https://app.matrix-os.com/system-bundles/channels/canary.json | jq '{version, gitCommit, changelog}'
 ```
+
+`--ref main` builds whatever `main` is at dispatch time, and the CI gate
+checks that commit, not the one you approved. The run's `headSha` and the
+canary's `gitCommit` must equal `$SHA`. If they differ, stop: do not deploy or
+promote it. Regenerate the changelog for the new range and get fresh approval.
 
 Alternative: pushing a `v*` tag builds a bundle named after the tag and
 promotes `canary`, but registers **no changelog**. Recent tags

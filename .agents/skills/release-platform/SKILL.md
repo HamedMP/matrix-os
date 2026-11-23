@@ -94,20 +94,36 @@ route or page directly.
 
 ## 6. Rollback
 
-Previous revisions stay available. Move traffic back (ask first):
+A promoted deploy replaces two services: the serving service
+(`$CLOUD_RUN_SERVICE`) and the background worker (`$CLOUD_RUN_SERVICE-worker`,
+a private singleton). Before a production deploy, record the revision each one
+serves so you have rollback targets:
+
+```bash
+for svc in "$CLOUD_RUN_SERVICE" "$CLOUD_RUN_SERVICE-worker"; do
+  gcloud run services describe "$svc" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+    --format=json | jq -r --arg svc "$svc" '.status.traffic[] | select((.percent // 0) > 0) | "\($svc) \(.revisionName)"'
+done
+```
+
+Previous revisions stay available. Roll back both services together (ask
+first), so serving code and background jobs run the same build:
 
 ```bash
 gcloud run revisions list --service "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" \
   --region "$GCP_REGION" --limit 10
 gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" \
-  --region "$GCP_REGION" --to-revisions "<previous-revision>=100"
+  --region "$GCP_REGION" --to-revisions "<previous-serving-revision>=100"
+gcloud run services update-traffic "$CLOUD_RUN_SERVICE-worker" --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" --to-revisions "<previous-worker-revision>=100"
 ```
 
-This is the same command the workflow's `Promote revision` step uses. The
-next `main` push that matches the paths filter promotes a new revision again,
-so land the fix or revert through a PR. The worker service
-(`<service>-worker`) is deployed separately; check it if background
-reconciliation regressed.
+The first command is the one the workflow's `Promote revision` step uses. Only
+the `-worker` revision may run with `PLATFORM_BACKGROUND_WORKERS_ENABLED=true`;
+never point serving traffic at a worker revision or the reverse. Re-run the
+step 4 and step 5 checks on both services afterwards. The next `main` push that
+matches the paths filter promotes a new revision again, so land the fix or
+revert through a PR.
 
 ## Database migrations
 
@@ -131,4 +147,4 @@ it, tell the user to run the production dispatch.
 - [ ] Commit SHA deployed, and serving revision + `matrix-source-sha` if checked
 - [ ] Health and `/sign-in` checks result
 - [ ] Migrations included (yes/no) and backward-compatibility note
-- [ ] Rollback target revision (the one serving before this deploy)
+- [ ] Rollback targets: serving and worker revisions from before this deploy
