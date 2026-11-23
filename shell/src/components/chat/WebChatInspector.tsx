@@ -144,8 +144,9 @@ function InspectorContent({
               }}
             >
               <DropdownMenu.Trigger asChild>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className="desktop-chat-icon mb-1 shrink-0"
                   aria-label="Add inspector tab"
                   onClick={() => {
@@ -153,7 +154,7 @@ function InspectorContent({
                   }}
                 >
                   <Plus size={16} aria-hidden />
-                </button>
+                </Button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
@@ -190,14 +191,15 @@ function InspectorContent({
           }
           trailing={
             overlay ? (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
                 className="desktop-chat-icon mb-1 ml-auto"
                 aria-label="Close inspector"
                 onClick={onClose}
               >
-                <X size={14} />
-              </button>
+                <X size={14} className="size-3.5" />
+              </Button>
             ) : null
           }
         />
@@ -322,16 +324,18 @@ function InspectorContent({
               >
                 <header className="chat-inspector-terminal-header">
                   <span aria-label="Terminal working directory">{session?.cwd || "~"}</span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto"
                     disabled={pending}
                     onClick={() => {
                       void createTerminal();
                     }}
                   >
-                    <Plus size={14} aria-hidden />
+                    <Plus size={14} className="size-3.5" aria-hidden />
                     New terminal
-                  </button>
+                  </Button>
                 </header>
                 {session?.attachable ? (
                   <TerminalPane
