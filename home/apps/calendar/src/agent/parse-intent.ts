@@ -89,14 +89,14 @@ function wholeIn(value: unknown, minimum: number, maximum: number): number | nul
 
 function people(value: Record<string, unknown>, aliases: Readonly<Record<string, string>>): PeopleRef {
   const list = Array.isArray(value.attendees) ? value.attendees : [];
-  const attendees: string[] = [];
+  const attendees = new Set<string>();
   for (const item of list.slice(0, MAX_INTENT_ATTENDEES * 2)) {
     const raw = typeof item === "string" ? item : item && typeof item === "object" ? (item as { address?: unknown; name?: unknown }).address ?? (item as { name?: unknown }).name : null;
     const text = cleanText(raw, 254);
-    if (text && !attendees.includes(text)) attendees.push(text);
-    if (attendees.length >= MAX_INTENT_ATTENDEES) break;
+    if (text) attendees.add(text);
+    if (attendees.size >= MAX_INTENT_ATTENDEES) break;
   }
-  return { attendees, attendeesFromEvent: alias(value.attendeesFromEvent, aliases) };
+  return { attendees: [...attendees], attendeesFromEvent: alias(value.attendeesFromEvent, aliases) };
 }
 
 function alias(value: unknown, aliases: Readonly<Record<string, string>>): string | null {
