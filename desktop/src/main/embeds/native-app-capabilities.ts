@@ -20,7 +20,7 @@ export interface NativeAppRequesterOptions {
 }
 export interface CapabilitySender { id: number; readonly url: string }
 
-async function readBoundedResponse(response: Response, signal: AbortSignal, maxBytes: number): Promise<unknown> {
+export async function readBoundedResponse(response: Response, signal: AbortSignal, maxBytes: number): Promise<unknown> {
   if (signal.aborted) {
     await response.body?.cancel();
     throw new Error("Request cancelled");
