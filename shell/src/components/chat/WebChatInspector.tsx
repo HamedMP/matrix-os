@@ -229,7 +229,7 @@ function InspectorContent({
             id="work-inspector-panel-files"
             className="flex min-h-0 flex-1 flex-col"
           >
-            {!fileExpanded ? (
+            {!fileExpanded || !filePath ? (
               <div
                 className="flex min-h-0 shrink-0 flex-col overflow-hidden"
                 style={{

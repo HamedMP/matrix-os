@@ -94,3 +94,5 @@ The worktree integration test uses a real temporary owner home/project, real Gat
 ### Live Web Hide/Show parity correction
 
 The real local pass reproduced Web unmounting the inspector on Hide and dropping an unsent Side question. Keep a panel mounted after its first open only within the verified owner/computer/chat identity; hidden panels occupy no layout space and have inactive terminal/shortcut handling. The actual ChatApp → inspector → Side chat regression preserves the selected tab and draft through Hide/Show. Native already retains this state. No client or server transcript is changed by this correction.
+
+An expanded preview hides the file tree only while a file remains selected. Clearing that file during Hide/Show restores the tree, so Files remains usable without reopening a message link. The real inspector regression expands a preview, clears its file selection, then opens a file from the restored tree.

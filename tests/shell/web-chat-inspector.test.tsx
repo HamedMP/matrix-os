@@ -444,3 +444,17 @@ it('preserves the selected Side chat and unsent draft while the Web inspector is
  expect(screen.getByRole('tab',{name:'Side chat',exact:true}).getAttribute('aria-selected')).toBe('true');
  expect((await screen.findByRole('textbox',{name:'Ask side chat'})) as HTMLTextAreaElement).toHaveProperty('value','Keep my unsent review note');
 });
+
+it("restores the file tree when an expanded preview closes", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/metadata?")
+    ? Response.json({resource:{kind:"home",path:"note.txt"},name:"note.txt",mimeType:"text/plain",sizeBytes:4,kind:"text",version:"note",canDownload:true})
+    : url.includes("/content?") ? new Response("Note") : Response.json({entries:[{name:"note.txt",type:"file"}]})));
+  const props = inspectorProps({filePath:"note.txt"});
+  const view = render(<WebChatInspector {...props}/>);
+  await screen.findByRole("treeitem", {name:"note.txt"});
+  fireEvent.click(screen.getByRole("button", {name:"Expand file"}));
+  expect(screen.queryByRole("treeitem", {name:"note.txt"})).toBeNull();
+  view.rerender(<WebChatInspector {...props} filePath={null}/>);
+  fireEvent.click(await screen.findByRole("treeitem", {name:"note.txt"}));
+  expect(props.onFilePathChange).toHaveBeenCalledWith("note.txt");
+});
