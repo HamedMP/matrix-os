@@ -302,11 +302,13 @@ export function createCodexEventBridge(options: {
       }
       const consumedBytes = lastNewline + 1;
       if (closed || watchers.get(entry.sessionId) !== entry) return false;
-      const { terminal, ready } = await ingest(entry, data, consumedBytes);
+      // Mark when the first complete line is read; saving it can wait behind
+      // the shared store queue and must not look like slow runner output.
       if (entry.firstLineTiming) {
         entry.firstLineTiming.record("provider_event_file_first_line", entry.firstLineTiming.watchedAt);
         entry.firstLineTiming = undefined;
       }
+      const { terminal, ready } = await ingest(entry, data, consumedBytes);
       entry.offset += consumedBytes;
       entry.supervision.ready ||= ready;
       entry.supervision.terminal ||= terminal;

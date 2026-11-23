@@ -688,8 +688,15 @@ export function createCodingAgentThreadStore(
   const initialRunTimeoutMs = explicitCodingRunTimeout(options.turnDispatchTimeoutMs);
   let queue = Promise.resolve();
 
-  async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
+  async function mutate<T>(
+    fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>,
+    timing: { timeQueueWait?: boolean } = {},
+  ): Promise<T> {
+    // Queue wait ends when this task starts, before the state read, so slow
+    // storage is never reported as time spent behind other work.
+    const queuedAt = timing.timeQueueWait ? startChatSendStage() : undefined;
     const run = queue.then(async () => {
+      recordChatSendStage("thread_store_queue_wait", queuedAt);
       const current = await readState(options.homePath);
       const { state, result } = await fn(current);
       const persisted = trimState(state);
@@ -1138,9 +1145,7 @@ export function createCodingAgentThreadStore(
     request: CreateAgentThreadRequest,
     relationValidator?: CodingAgentThreadRelationValidator,
   ): Promise<ThreadCreateResult> {
-    const queuedAt = startChatSendStage();
     const result = await mutate(async (state) => {
-      recordChatSendStage("thread_store_queue_wait", queuedAt);
       const existing = state.threads.find((thread) =>
         thread.ownerId === principal.userId && thread.clientRequestId === request.clientRequestId
       );
@@ -1248,7 +1253,7 @@ export function createCodingAgentThreadStore(
         } : {}),
       };
       return { state: nextState, result };
-    });
+    }, { timeQueueWait: true });
     if (!result.existing) {
       publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
       if (result.backgroundDispatch) startInitialRun(result.backgroundDispatch);
@@ -1324,9 +1329,7 @@ export function createCodingAgentThreadStore(
         throw new CodingAgentTurnError("turn_unavailable");
       }
       try {
-        const queuedAt = startChatSendStage();
         const result = await mutate<TurnAcceptMutationResult>(async (state) => {
-          recordChatSendStage("thread_store_queue_wait", queuedAt);
           const thread = state.threads.find((candidate) =>
             candidate.ownerId === principal.userId && candidate.id === threadId
           );
@@ -1434,7 +1437,7 @@ export function createCodingAgentThreadStore(
               dispatch: { thread: nextThread, turn },
             },
           };
-        });
+        }, { timeQueueWait: true });
         publish(principal.userId, threadId, result.eventsToPublish);
         if (result.dispatch) {
           turnDispatcher.start(reservation, {
