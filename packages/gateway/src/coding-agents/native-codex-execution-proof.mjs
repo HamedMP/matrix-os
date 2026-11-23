@@ -74,7 +74,9 @@ export async function createNativeCodexExecutionProof(expected, environment, raw
     // `expected` is the saved consent, rechecked against the row above. A
     // same-account upgrade alias keeps legacy consent resumable (ENG-523).
     const alias = fingerprint === expected ? null : await readCodexConsentAlias(environment.HOME);
-    if (!savedCodexConsentMatches(expected, fingerprint, alias)
+    // The legacy token-bound generation of this same, unchanged credential.
+    const legacy = createHash("sha256").update(JSON.stringify({ principal, ...(evidence?.proof ? { credentialProof: evidence.proof } : {}) })).digest("hex");
+    if (!savedCodexConsentMatches(expected, fingerprint, alias, legacy)
       || (fileBackend && !sameCredential(evidence, await readEvidence()))) throw new Error("native_subscription_unavailable");
     await assertSavedConsent(expected, consent, environment);
   };

@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
 import { codexCatalogObservation } from "../ai-providers/codex-native-observation.js";
-import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata } from "../ai-providers/native-account-metadata-binding.js";
+import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata } from "../ai-providers/native-account-metadata-binding.js";
+import { upgradeCodexConsentAlias } from "../ai-providers/codex-consent-upgrade.js";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import type { CodexNativeAccountMetadata } from "../ai-providers/codex-native-account-metadata.js";
 export interface CodexExecutionAdmission {
@@ -114,8 +115,17 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     // Bind the saved consent identity, not the observed generation, so an
     // upgraded same-account alias keeps existing session bindings and runners.
     const alias = row.nativeAccountGeneration && current !== row.nativeAccountGeneration ? await readCodexConsentAlias(resolve(options.homePath)) : null;
-    if (!savedCodexConsentMatches(row.nativeAccountGeneration, current, alias) || row.nativeAccountConsentRevision === undefined) reject();
+    const legacy = nativeAccountLegacyPrincipalFingerprint(metadata!);
+    if (!savedCodexConsentMatches(row.nativeAccountGeneration, current, alias, legacy) || row.nativeAccountConsentRevision === undefined) reject();
     const principal = row.nativeAccountGeneration;
+    // Unchanged credentials under legacy consent: record the same-account alias
+    // here too, so every entry point upgrades without a Settings or Chat visit.
+    if (!savedCodexConsentMatches(principal, current, alias)) {
+      try { await upgradeCodexConsentAlias(resolve(options.homePath), principal, metadata!); }
+      catch (error: unknown) {
+        console.warn("[native-codex] Consent upgrade unavailable:", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
     const configurationFingerprint = nativeCodexConfigurationFingerprint(row);
     const binding = createHash("sha256").update(JSON.stringify({
       owner: userId, computer: resolve(options.homePath), configurationFingerprint, principal,

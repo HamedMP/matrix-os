@@ -11,7 +11,8 @@ import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from ".
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
 import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
-import { CODEX_CONSENT_ALIAS_PATH, readCodexConsentAlias, savedCodexConsentMatches, type CodexConsentAlias } from "../coding-agents/codex-consent-alias.mjs";
+import { readCodexConsentAlias, savedCodexConsentMatches, type CodexConsentAlias } from "../coding-agents/codex-consent-alias.mjs";
+import { upgradeCodexConsentAlias } from "./codex-consent-upgrade.js";
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { savedCollaborationRoute } from "./collaboration-provider-route.js";
@@ -383,7 +384,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           && row.nativeAccountConsentRevision !== undefined);
       const retainedAlias: CodexConsentAlias | null = canRetainCodex ? await this.#codexConsentAlias() : null;
       let metadata: CodexNativeAccountMetadata | null = canRetainCodex && config.harnesses.some(row => row.harness === "codex"
-        && savedCodexConsentMatches(row.nativeAccountGeneration, repairedPrincipal, retainedAlias)) ? await verifyNativeAccountMetadata(retryMetadata) as CodexNativeAccountMetadata | null : null;
+        && savedCodexConsentMatches(row.nativeAccountGeneration, repairedPrincipal, retainedAlias,
+          retryMetadata ? nativeAccountLegacyPrincipalFingerprint(retryMetadata) : null)) ? await verifyNativeAccountMetadata(retryMetadata) as CodexNativeAccountMetadata | null : null;
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
       let nativeObservationState: CodexNativeObservationState | undefined;
       if (options.includeNativeAccountMetadata && attempt === 0) {
@@ -715,14 +717,14 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (!row?.nativeAccountGeneration || row.nativeAccountConsentRevision === undefined) throw new ProviderSettingsStoreError("invalid_route", 400);
       const metadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.({ purpose: "native_completion" }));
       if (!metadata || metadata.authMethod !== "terminal" || !await input.verifyNativeAccount(metadata)) throw new ProviderSettingsStoreError("invalid_route", 400);
-      const durable = nativeAccountPrincipalFingerprint(metadata);
-      if (!durable || nativeAccountLegacyPrincipalFingerprint(metadata) !== row.nativeAccountGeneration) throw new ProviderSettingsStoreError("invalid_route", 400);
+      let alias: CodexConsentAlias | null;
       try {
-        await writeProviderJsonAtomic(join(this.#homePath, CODEX_CONSENT_ALIAS_PATH), { version: 1, saved: row.nativeAccountGeneration, durable } satisfies CodexConsentAlias);
+        alias = await upgradeCodexConsentAlias(this.#homePath, row.nativeAccountGeneration, metadata);
       } catch (error) {
         console.warn("[provider-settings] Codex consent alias unavailable:", error instanceof Error ? error.name : "UnknownError");
         throw new ProviderSettingsStoreError("configuration_unavailable", 503);
       }
+      if (!alias) throw new ProviderSettingsStoreError("invalid_route", 400);
       return { snapshot: await this.#project(canonical, config, false, enrichment, metadata) };
     });
   }

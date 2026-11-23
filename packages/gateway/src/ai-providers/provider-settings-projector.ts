@@ -1,6 +1,6 @@
 import { boundProviderSettingsModels, retainFailedCatalogRoutes } from "./provider-settings-model-catalog.js";
 import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
-import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
+import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
@@ -441,7 +441,8 @@ export async function projectProviderSettings(input: {
     const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
     const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
     const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
-    const changedPrincipal = fingerprint !== null && !savedCodexConsentMatches(saved?.nativeAccountGeneration, fingerprint, input.codexConsentAlias);
+    const changedPrincipal = fingerprint !== null && !savedCodexConsentMatches(saved?.nativeAccountGeneration, fingerprint, input.codexConsentAlias,
+      metadata ? nativeAccountLegacyPrincipalFingerprint(metadata) : null);
     if (missingConsent || changedPrincipal) {
       nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
     } else if (fingerprint !== null && nativeAuthenticatedAccountId) {

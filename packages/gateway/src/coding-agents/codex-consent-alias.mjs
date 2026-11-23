@@ -35,8 +35,11 @@ export async function readCodexConsentAlias(homePath) {
   } finally { await file.close(); }
 }
 
-/** Saved consent matches the current durable generation directly or through its recorded alias. */
-export function savedCodexConsentMatches(saved, current, alias) {
+/** Saved consent matches the current durable generation directly, through its
+ * recorded same-account alias, or (when `legacy` is supplied) because the saved
+ * value is the legacy token-bound generation of this same, unchanged credential. */
+export function savedCodexConsentMatches(saved, current, alias, legacy) {
   if (!saved || !current) return false;
-  return saved === current || Boolean(alias && alias.saved === saved && alias.durable === current);
+  return saved === current || Boolean(alias && alias.saved === saved && alias.durable === current)
+    || Boolean(legacy && saved === legacy);
 }
