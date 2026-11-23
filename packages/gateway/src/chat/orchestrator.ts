@@ -92,7 +92,6 @@ import {
 } from "./shared-execution-coordinator.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
-const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const STEER_FINALIZE_ATTEMPTS = 2;
 
 export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-errors.js";
@@ -236,7 +235,7 @@ export class CanonicalChatOrchestrator {
     const coordinatorOptions: SharedChatExecutionCoordinatorOptions = {
       repository: options.repository,
       isClosing: () => this.closing,
-      atCapacity: (owner) => this.atCapacity(owner),
+      atCapacity: () => this.atCapacity(),
       hasActiveRun: (owner, chatId) => [...this.active.values()].some((entry) => (
         entry.chatId === chatId && entry.owner.type === owner.type
         && entry.owner.ownerId === owner.ownerId
@@ -276,14 +275,9 @@ export class CanonicalChatOrchestrator {
     return this.pendingDispatch.size + this.queueDispatches.size + this.sharedExecution.pendingCount;
   }
 
-  private atCapacity(owner: ChatOwner): boolean {
+  private atCapacity(): boolean {
     if (this.options.executionAdmissionFence?.blocked) return true;
-    if (this.active.size >= MAX_ACTIVE_RUNS_GLOBAL) return true;
-    let ownerActive = 0;
-    for (const entry of this.active.values()) {
-      if (entry.owner.type === owner.type && entry.owner.ownerId === owner.ownerId) ownerActive += 1;
-    }
-    return ownerActive >= MAX_ACTIVE_RUNS_PER_OWNER;
+    return this.active.size >= MAX_ACTIVE_RUNS_GLOBAL;
   }
 
   private assertOpen(): void {
@@ -337,7 +331,7 @@ export class CanonicalChatOrchestrator {
       reconcileActiveRuns: (scope) => this.reconcileActiveRuns(scope),
       reservePendingDispatch: (id) => this.reservePendingDispatch(id),
       releasePendingDispatch: (id) => { this.pendingDispatch.delete(id); },
-      atCapacity: (scope) => this.atCapacity(scope),
+      atCapacity: () => this.atCapacity(),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, inputValue, provenance);
@@ -365,7 +359,7 @@ export class CanonicalChatOrchestrator {
       findTurnAdmission: repository.findTurnAdmission.bind(repository), finishRun: repository.finishRun.bind(repository),
     }, assertOpen: () => this.assertOpen(),
       assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
-      atCapacity: owner => this.atCapacity(owner),
+      atCapacity: () => this.atCapacity(),
       hasStoppingExecution: (owner, chatId) => hasStoppingChatExecution(this.active.values(), owner, chatId),
       reservePendingDispatch: runId => this.reservePendingDispatch(runId),
       releasePendingDispatch: runId => { this.pendingDispatch.delete(runId); },
@@ -419,7 +413,7 @@ export class CanonicalChatOrchestrator {
       reconcileActiveRuns: (owner) => this.reconcileActiveRuns(owner),
       reservePendingDispatch: (runId) => this.reservePendingDispatch(runId),
       releasePendingDispatch: (runId) => { this.pendingDispatch.delete(runId); },
-      atCapacity: (owner) => this.atCapacity(owner),
+      atCapacity: () => this.atCapacity(),
       hasStoppingExecution: (owner, chatId, admissionKey) => hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, turnId, inputValue);
@@ -484,7 +478,7 @@ export class CanonicalChatOrchestrator {
   }
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
-    if (this.closing || this.atCapacity(owner)) return;
+    if (this.closing || this.atCapacity()) return;
     try {
       await this.assertPersonalExecutionAllowed(owner, chatId);
     } catch (error: unknown) {
@@ -499,7 +493,7 @@ export class CanonicalChatOrchestrator {
     if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
     this.queueDispatches.add(key);
     try {
-      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(owner); offset += 1) {
+      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(); offset += 1) {
         try {
           await this.options.agentContext?.revalidate(owner, chatId);
         } catch (error: unknown) {
