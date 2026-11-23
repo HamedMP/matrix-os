@@ -56,6 +56,15 @@ function bridgeGenerate(): AgentGenerate | null {
   return (input) => ai.generate(input);
 }
 
+/** The model the panel uses, and why the assistant is off when it is. */
+function useAssistantModel(generate: AgentGenerate | undefined): { model: AgentGenerate | null; hint: string | null } {
+  const model = useMemo(() => generate ?? bridgeGenerate(), [generate]);
+  // The host answers only apps the owner allowed: ask before offering the assistant.
+  const access = useAiAccess(bridge(), generate !== undefined ? "available" : undefined, logCheck);
+  if (model === null) return { model, hint: aiAccessMessage("unavailable", "Docs", "docs") };
+  return { model, hint: access === "available" ? null : aiAccessMessage(access, "Docs", "docs") };
+}
+
 function selectionOf(editor: DocumentEditorController | null): TextRange | null {
   const selection = editor?.getSelection() ?? null;
   if (selection === null || selection.collapsed) return null;
@@ -66,9 +75,7 @@ const noSubscription = () => () => undefined;
 const noSelection = () => null;
 
 export function DocsAgentPanel({ session, editor, readOnly = false, generate }: DocsAgentPanelProps) {
-  const model = useMemo(() => generate ?? bridgeGenerate(), [generate]);
-  // The host answers only apps the owner allowed: ask before offering the assistant.
-  const access = useAiAccess(bridge(), generate !== undefined ? "available" : undefined, logCheck);
+  const { model, hint } = useAssistantModel(generate);
   const editorRef = useRef(editor);
   const modelRef = useRef(model);
   useEffect(() => {
@@ -98,7 +105,7 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate }: 
   };
 
   const mode = MODES.find((entry) => entry.id === state.mode) ?? MODES[0]!;
-  const unavailable = model === null || access !== "available";
+  const unavailable = hint !== null;
   const results: AgentResult[] = state.cards.map((card) => toResult(card, store, jump, readOnly, state.busy));
   const review = state.review;
   const reviewChanges = review !== null ? store.pendingChanges(review.cardId) : [];
@@ -156,9 +163,7 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate }: 
         maxLength={MAX_INSTRUCTION_CHARS}
         emptyHint={
           <p>
-            {unavailable
-              ? aiAccessMessage(model === null ? "unavailable" : access, "Docs", "docs")
-              : "Ask for a change and it arrives as tracked changes you accept or reject. Switch to Ask for questions about the document."}
+            {hint ?? "Ask for a change and it arrives as tracked changes you accept or reject. Switch to Ask for questions about the document."}
           </p>
         }
       />
