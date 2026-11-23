@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
-import { createAttachmentSlots } from "@desktop/main/local-terminals/hc-sessions";
+import { createAttachmentSlots, DEFAULT_MAX_ATTACHMENTS } from "@desktop/main/local-terminals/hc-sessions";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
@@ -178,6 +178,96 @@ describe("local terminal host against a scripted core", () => {
     if (call.method === "terminal.list") core.reply(call.id, { result: { terminals } });
   };
 
+  // Spec 2706 layer 4: status follows herdr-core's events, and "seen" is Herdr's own label.
+  function fakeEvents(facts: Array<Record<string, unknown>>) {
+    const state = { started: 0, stopped: 0, onChange: null as null | ((facts: unknown[]) => void) };
+    return {
+      state,
+      createEvents: (options: { onChange(facts: unknown[]): void }) => {
+        state.onChange = options.onChange;
+        return {
+          start: () => { state.started += 1; },
+          stop: () => { state.stopped += 1; },
+          facts: () => facts,
+          fact: (id: string) => facts.find((fact) => fact.id === id),
+        } as never;
+      },
+    };
+  }
+
+  it("follows status only once the core runs, and stops when told", async () => {
+    const events = fakeEvents([{ id: "t1", title: "zsh", status: null, statusAt: null, turn: 0, seenTurn: null, finished: false }]);
+    const { host, sink } = start(listing([]), { createEvents: events.createEvents as never });
+    const facts = vi.fn();
+    Object.assign(sink, { facts });
+    expect(await host.watch()).toEqual([expect.objectContaining({ id: "t1" })]);
+    expect(events.state.started).toBe(1);
+    events.state.onChange?.([]);
+    expect(facts).toHaveBeenCalledWith([]);
+    host.unwatch();
+    expect(events.state.stopped).toBe(1);
+  });
+
+  // Fault detected (Greptile, #3566): a window closed while the core was starting left the events client running.
+  it("does not start following when the window left while the core was starting", async () => {
+    const events = fakeEvents([]);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { host } = start(listing([]), {
+      createEvents: events.createEvents as never,
+      startCore: vi.fn(async () => { await gate; }),
+      openSocket: (() => { let dials = 0; const live = fakeCore(); return () => (dials++ === 0 ? deadSocket("ENOENT") : live.socket); })(),
+    });
+    const watching = host.watch();
+    host.unwatch();
+    release();
+    await expect(watching).rejects.toThrow("watch ended");
+    expect(events.state.started).toBe(0);
+  });
+
+  it("marks seen with Herdr's turn label, or the finished label once a terminal ended", async () => {
+    const events = fakeEvents([
+      { id: "t1", title: "claude", status: "done", statusAt: 1, turn: 7, seenTurn: 6, finished: false },
+      { id: "t2", title: "tests", status: null, statusAt: 1, turn: 2, seenTurn: null, finished: true, finishedSeen: false },
+    ]);
+    const labels: unknown[] = [];
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.label") { labels.push(call.params); core.reply(call.id, { result: {} }); }
+    }, { createEvents: events.createEvents as never });
+    await host.seen("t1");
+    await host.seen("t2");
+    expect(labels).toEqual([
+      { terminal: "t1", labels: { "herdr.seen": "7" } },
+      { terminal: "t2", labels: { "matrix.seen.finished": "1" } },
+    ]);
+    await expect(host.seen("t9")).rejects.toThrow("not listed");
+  });
+
+  // Spec 2706 layer 7.
+  it("starts a shell on an added machine and an ssh login terminal with a fixed argv", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    let next = 3;
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.run") { runs.push(call.params); core.reply(call.id, { result: { address: runs.length === 1 ? `t${next++}` : `t${next++}` } }); }
+    });
+    expect(await host.create({ cols: 80, rows: 24 }, { machine: "vps" })).toBe("vps/t3");
+    expect(runs[0]).toEqual({ on: "vps", size: { cols: 80, rows: 24 }, no_parent: true, no_notify: true, wait: false });
+    expect(await host.sshLogin("can@10.0.0.7:2222", { cols: 80, rows: 24 })).toBe("t4");
+    expect(runs[1]).toMatchObject({ labels: { "matrix.title": "ssh can@10.0.0.7:2222" } });
+    const argv = runs[1]!.argv as string[];
+    // Fault detected (Greptile, #3570): OpenSSH does not read a trailing :port.
+    expect(argv.slice(argv.indexOf("ssh"))).toEqual(["ssh", "-p", "2222", "--", "can@10.0.0.7"]);
+  });
+
+  it("removes a finished terminal with herdr-core's terminal.rm", async () => {
+    const calls: unknown[] = [];
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.rm") { calls.push(call.params); core.reply(call.id, { result: { removed: true } }); }
+    });
+    await host.remove("vps/t3");
+    expect(calls).toEqual([{ terminal: "vps/t3" }]);
+  });
+
   it("lists live terminals with safe titles, and one malformed entry does not hide the rest", async () => {
     const { host } = start(listing([
       { address: "t1", state: "live", title: "\u202Egnp.exe\u0007 build", status: { state: "blocked", message: "free text" } },
@@ -328,10 +418,12 @@ describe("local terminal host against a scripted core", () => {
 
   it("frees every attachment when the window goes away, so a new window can attach again", async () => {
     const { host, sink, cores } = attaching();
-    const first = await Promise.all(Array.from({ length: 8 }, () => host.attach("t1", { cols: 80, rows: 24 })));
+    // Fault detected (Greptile, #3569): the budget of 8 left panes 9-16 of a full tab unattached.
+    const first = await Promise.all(Array.from({ length: DEFAULT_MAX_ATTACHMENTS }, () => host.attach("t1", { cols: 80, rows: 24 })));
+    expect(DEFAULT_MAX_ATTACHMENTS).toBeGreaterThanOrEqual(16);
     await expect(host.attach("t1", { cols: 80, rows: 24 })).rejects.toThrow("too many");
     host.detachAll();
-    expect(cores[0]!.sent.frames.filter((frame) => frame.kind === HC_FRAME.CLOSE)).toHaveLength(8);
+    expect(cores[0]!.sent.frames.filter((frame) => frame.kind === HC_FRAME.CLOSE)).toHaveLength(DEFAULT_MAX_ATTACHMENTS);
     // The window is gone: nothing is announced to it, and its ids are dead.
     expect(sink.closed).not.toHaveBeenCalled();
     expect(host.input(first[0]!, "ls", false)).toBe(false);

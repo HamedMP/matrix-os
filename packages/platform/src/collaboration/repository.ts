@@ -1,3 +1,4 @@
+import { readDirectoryThumbnail } from "./app-thumbnail.js";
 import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -40,6 +41,9 @@ export interface DirectoryEventInput {
     buildId: string;
     shareRevision: number;
     state: "active" | "needs_recheck" | "stopped";
+    name?: string;
+    thumbnail?: { base64: string; contentType: "image/png"; sha256: string };
+    iconSha256?: string;
   };
   /** A shared project's Chat route: same home, owner and organization as the project, no recipients of its own. */
   parentScopeId?: string;
@@ -90,6 +94,8 @@ export interface CollaborationCurrentMembershipAppEntry {
   registrationIncarnation: string;
   buildId: string;
   shareRevision: number;
+  name?: string;
+  iconSha256?: string;
 }
 
 /**
@@ -127,6 +133,7 @@ export class PlatformCollaborationRepository {
 
   async applyDirectoryEvent(input: DirectoryEventInput): Promise<boolean> {
     const now = this.now().toISOString();
+    const thumbnail = input.app && input.app.state !== "stopped" ? await readDirectoryThumbnail(input.app.thumbnail) : null;
     return this.db.transaction().execute(async (trx) => {
       await this.admitRuntimeWrite?.(trx, input);
       // A person-to-person event is legacy ingestion: it must not commit inside
@@ -161,11 +168,13 @@ export class PlatformCollaborationRepository {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory parent changed without transition");
       }
       if (input.parentScopeId) await requireProjectChatParent(trx, input);
+      const appIconSha256 = thumbnail?.sha256 ?? null;
+      const appName = input.app?.name ?? null;
 
       // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
       // still absent, so two first-writers both pass the guard above and the loser's unconditional
       // DO UPDATE would replay its stale metadata over the winner's. The revision test belongs in
-      // the write statement itself.
+      // the write statement itself. Owner/runtime checks must fence that same first-writer race.
       const applied = await trx.insertInto("collaboration_directory").values({
         scope_id: input.scopeId,
         runtime_id: input.runtimeId,
@@ -181,6 +190,10 @@ export class PlatformCollaborationRepository {
         app_build_id: input.app?.buildId ?? null,
         app_share_revision: input.app?.shareRevision ?? null,
         app_state: input.app?.state ?? null,
+        app_name: appName,
+        app_icon_sha256: appIconSha256,
+        app_icon_bytes: thumbnail ? Buffer.from(thumbnail.bytes) : null,
+        app_icon_content_type: thumbnail?.contentType ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
@@ -198,15 +211,21 @@ export class PlatformCollaborationRepository {
         app_build_id: input.app?.buildId ?? null,
         app_share_revision: input.app?.shareRevision ?? null,
         app_state: input.app?.state ?? null,
+        app_name: appName,
+        app_icon_sha256: appIconSha256,
+        app_icon_bytes: thumbnail ? Buffer.from(thumbnail.bytes) : null,
+        app_icon_content_type: thumbnail?.contentType ?? null,
         parent_scope_id: input.parentScopeId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
         updated_at: now,
-      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision))
+      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision)
+        .where("collaboration_directory.runtime_id", "=", input.runtimeId)
+        .where("collaboration_directory.owner_id", "=", input.ownerId))
         .returning("collaboration_directory.scope_id")
         .executeTakeFirst();
-      // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
+      // A newer revision or different winning authority fences the whole event in the write itself.
       if (!applied) return false;
       // A project Chat has no recipients of its own; any left from a direct share no longer apply.
       if (input.parentScopeId) {
@@ -255,6 +274,8 @@ export class PlatformCollaborationRepository {
       buildId: string;
       shareRevision: number;
       state: "active" | "needs_recheck" | "stopped";
+      name?: string;
+      iconSha256?: string;
     } | null;
     /** Set for a shared project's Chat; its tickets follow the parent project's membership. */
     parentScopeId: string | null;
@@ -263,7 +284,7 @@ export class PlatformCollaborationRepository {
     const row = await this.db.selectFrom("collaboration_directory")
       .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id",
         "app_id", "app_catalog_id", "app_readiness_id", "app_registration_incarnation", "app_build_id",
-        "app_share_revision", "app_state", "parent_scope_id", "authority_generation"])
+        "app_share_revision", "app_state", "app_name", "app_icon_sha256", "parent_scope_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -283,10 +304,24 @@ export class PlatformCollaborationRepository {
           buildId: row.app_build_id,
           shareRevision: Number(row.app_share_revision),
           state: row.app_state,
+          ...(row.app_name ? { name: row.app_name } : {}),
+          ...(row.app_icon_sha256 ? { iconSha256: row.app_icon_sha256 } : {}),
         } : null,
       parentScopeId: row.parent_scope_id ?? null,
       authorityGeneration: Number(row.authority_generation),
     } : null;
+  }
+
+  /** Scope + runtime + version confinement, with no thumbnail bytes in directory listings. */
+  async getAppThumbnail(scopeId: string, runtimeId: string, sha256: string) {
+    const row = await this.db.selectFrom("collaboration_directory")
+      .select(["app_icon_bytes", "app_icon_content_type", "app_icon_sha256"])
+      .where("scope_id", "=", scopeId).where("runtime_id", "=", runtimeId)
+      .where("app_icon_sha256", "=", sha256).where("app_state", "=", "active")
+      .where("audience", "=", "current_membership").executeTakeFirst();
+    if (!row?.app_icon_bytes) return null;
+    return readDirectoryThumbnail({ base64: Buffer.from(row.app_icon_bytes).toString("base64"),
+      contentType: row.app_icon_content_type, sha256: row.app_icon_sha256 });
   }
 
   async getInvitationRoute(actorId: string, invitationId: string): Promise<{
@@ -565,7 +600,7 @@ export class PlatformCollaborationRepository {
         "directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.organization_id",
         "directory.authority_generation", "directory.app_id", "directory.app_catalog_id",
         "directory.app_readiness_id", "directory.app_registration_incarnation", "directory.app_build_id",
-        "directory.app_share_revision", "directory.updated_at",
+        "directory.app_share_revision", "directory.app_name", "directory.app_icon_sha256", "directory.updated_at",
       ])
       .where("directory.kind", "=", "app")
       .where("directory.audience", "=", "current_membership")
@@ -604,6 +639,8 @@ export class PlatformCollaborationRepository {
         registrationIncarnation: row.app_registration_incarnation!,
         buildId: row.app_build_id!,
         shareRevision: Number(row.app_share_revision),
+        ...(row.app_name ? { name: row.app_name } : {}),
+        ...(row.app_icon_sha256 ? { iconSha256: row.app_icon_sha256 } : {}),
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };
