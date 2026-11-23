@@ -44,7 +44,8 @@
 :is(.oui-button, .oui-icon-button, .oui-toolbar__button, .oui-chip, .oui-menu__item):disabled { opacity: .45; cursor: not-allowed; }
 
 /* App frame */
-.oui-frame { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; height: 100vh; height: 100dvh; background: var(--app-bg); }
+/* One column that never grows past the window: a wide ribbon row must fold its groups, not widen the app. */
+.oui-frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr) auto; height: 100vh; height: 100dvh; background: var(--app-bg); }
 /* Fixed rows, so the body keeps the stretching row when the toolbar or banner is absent. */
 .oui-frame__titlebar { grid-row: 1; }
 .oui-frame__toolbar { grid-row: 2; }
@@ -194,7 +195,7 @@
 .oui-field__label { font-size: 12px; font-weight: 600; color: var(--app-muted-fg); }
 .oui-field__hint { color: var(--app-muted-fg); font-size: 12px; }
 .oui-field__error { color: var(--app-danger); font-size: 12px; }
-.oui-input { width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid var(--oui-line); border-radius: var(--oui-radius-sm); background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 14px; }
+.oui-input { box-sizing: border-box; width: 100%; min-height: 32px; padding: 6px 10px; border: 1px solid var(--oui-line); border-radius: var(--oui-radius-sm); background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 14px; }
 textarea.oui-input { resize: vertical; line-height: 1.45; }
 .oui-input[aria-invalid="true"] { border-color: var(--app-danger); }
 .oui-input:disabled { opacity: .6; }
@@ -255,7 +256,7 @@ textarea.oui-input { resize: vertical; line-height: 1.45; }
 .oui-agent__result-body { max-height: 240px; overflow: auto; font-size: 13px; }
 .oui-agent__result-actions { display: flex; gap: 6px; }
 .oui-agent__composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--oui-line); }
-.oui-agent__input { width: 100%; resize: none; padding: 8px 10px; border: 1px solid var(--oui-line); border-radius: var(--oui-radius); background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; line-height: 1.45; }
+.oui-agent__input { box-sizing: border-box; width: 100%; resize: none; padding: 8px 10px; border: 1px solid var(--oui-line); border-radius: var(--oui-radius); background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; line-height: 1.45; }
 .oui-agent__input:focus-visible { outline: none; box-shadow: var(--oui-focus); }
 .oui-agent__composer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 

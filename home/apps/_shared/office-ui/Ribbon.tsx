@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { BackstageView, defaultBackstageItem } from "./Backstage";
 import { cx, useIsomorphicLayoutEffect } from "./internal";
 import { Popover } from "./Popover";
@@ -87,13 +87,23 @@ function ExpandedGroup({ group }: { group: RibbonGroup }) {
   );
 }
 
-/** A group squeezed out by a narrow window: one button that opens the whole group in a popover. */
+/**
+ * A group squeezed out by a narrow window: one button that opens the whole
+ * group in a popover. The popover closes once a command ran (a button, a menu
+ * entry, a colour, a style), so it never stays over what the command opened;
+ * it stays for a list being changed and for a button that opens a menu.
+ */
 function CollapsedGroup({ group }: { group: RibbonGroup }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const floatingRef = useRef<HTMLDivElement>(null);
   const labelId = useId();
   useRovingSync(floatingRef);
+  // Clicks in menus and palettes the group opened bubble to here through React, wherever they are drawn.
+  const closeAfterCommand = (event: ReactMouseEvent<HTMLElement>) => {
+    const command = (event.target as Element).closest("button");
+    if (command !== null && !command.hasAttribute("aria-haspopup")) setOpen(false);
+  };
   return (
     <div data-group-id={group.id} className="oui-ribbon__group is-collapsed" {...rovingHandlers()}>
       <button
@@ -110,7 +120,7 @@ function CollapsedGroup({ group }: { group: RibbonGroup }) {
         <Chevron />
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchorRef={buttonRef} label={group.label} className="oui-ribbon__group-popover">
-        <div ref={floatingRef} role="group" aria-labelledby={labelId} className="oui-ribbon__group oui-ribbon__group--floating" {...rovingHandlers()}>
+        <div ref={floatingRef} role="group" aria-labelledby={labelId} className="oui-ribbon__group oui-ribbon__group--floating" {...rovingHandlers()} onClick={closeAfterCommand}>
           <GroupBody group={group} labelId={labelId} />
         </div>
       </Popover>

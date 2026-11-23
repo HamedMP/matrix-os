@@ -134,6 +134,51 @@ describe("Ribbon overflow", () => {
     expect(document.activeElement).toBe(overflow);
   });
 
+  it("closes the group popover after a command, and keeps it open while a list or a menu is being used", () => {
+    const onRun = vi.fn();
+    const onSize = vi.fn();
+    const onMore = vi.fn();
+    const tools: RibbonTab[] = [
+      {
+        id: "home",
+        label: "Home",
+        groups: [
+          { id: "clipboard", label: "Clipboard", items: [{ kind: "button", id: "copy", label: "Copy", onClick: vi.fn() }] },
+          {
+            id: "tools",
+            label: "Tools",
+            items: [
+              { kind: "button", id: "run", label: "Run", onClick: onRun },
+              { kind: "select", id: "size", label: "Size", value: "1", options: [{ value: "1", label: "One" }, { value: "2", label: "Two" }], onChange: onSize },
+              { kind: "menu", id: "more", label: "More", menu: [{ id: "deep", label: "Deep" }], onMenuSelect: onMore },
+            ],
+          },
+        ],
+      },
+    ];
+    render(<Ribbon tabs={tools} activeTab="home" onTabChange={vi.fn()} />);
+    resize(250);
+    const overflow = screen.getByRole("button", { name: "Tools" });
+    const popover = () => screen.queryByRole("dialog", { name: "Tools" });
+
+    fireEvent.click(overflow);
+    fireEvent.change(within(popover()!).getByRole("combobox", { name: "Size" }), { target: { value: "2" } });
+    expect(onSize).toHaveBeenCalledWith("2");
+    expect(popover()).not.toBeNull();
+
+    fireEvent.click(within(popover()!).getByRole("button", { name: "More" }));
+    expect(popover()).not.toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Deep" }));
+    expect(onMore).toHaveBeenCalledWith("deep");
+    expect(popover()).toBeNull();
+
+    fireEvent.click(overflow);
+    fireEvent.click(within(popover()!).getByRole("button", { name: "Run" }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(popover()).toBeNull();
+    expect(document.activeElement).toBe(overflow);
+  });
+
   it("keeps one tab stop per collapsed group", () => {
     renderRibbon();
     resize(100);
