@@ -6,7 +6,7 @@ export function taskFixture(overrides: Partial<ProjectTask> = {}): ProjectTask {
     id: "task_42", projectId: "proj_alpha", number: 42, key: "MOS-42", title: "Ship the board",
     description: "", status: "in_progress", priority: "normal", rank: "U", assignee: null, labels: [],
     parentTaskId: null, blockedBy: [], dueAt: null, worktreeId: null, branch: null, pullRequest: null,
-    externalLink: null, sessions: [], commentCount: 0, createdBy: "user:owner",
+    externalLink: null, chatId: "chat_42", chatStatus: "idle", sessions: [], commentCount: 0, createdBy: "user:owner",
     createdAt: "2026-11-20T10:00:00.000Z", updatedAt: "2026-11-20T10:00:00.000Z", archivedAt: null, revision: 3,
     ...overrides,
   };

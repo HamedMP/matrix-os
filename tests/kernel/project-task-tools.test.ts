@@ -21,7 +21,7 @@ function fakeClient(overrides: Partial<ProjectTaskClient> = {}): ProjectTaskClie
     listComments: vi.fn(async () => ({ comments: [], nextCursor: null })),
     createComment: vi.fn(async () => ({ id: "tcm_1", taskId: "task_42", author: "agent:chat_1" as const, body: "PR is up", createdAt: "2026-11-20T10:00:00.000Z", editedAt: null })),
     listActivity: vi.fn(async () => ({ activity: [], nextCursor: null })),
-    startTask: vi.fn(async () => ({ task: taskFixture(), session: { ref: "chat_9", kind: "chat" as const, title: "MOS-42", role: "extra" as const, agentStatus: "working" as const } })),
+    startTask: vi.fn(async () => ({ task: taskFixture(), session: null })),
     ...overrides,
   };
 }
@@ -157,7 +157,7 @@ describe("project task agent tools", () => {
   it("returns the unsent first message and agentStarted false", async () => {
     const client = fakeClient({
       startTask: vi.fn(async () => ({
-        task: taskFixture(), session: { ref: "chat_9", kind: "chat" as const, title: "MOS-42", role: "main" as const, agentStatus: "idle" as const },
+        task: taskFixture(), session: null,
         firstMessage: "MOS-42 Fix login\n\nUse the new endpoint",
       })),
     });

@@ -40,7 +40,7 @@ describe("project task HTTP client", () => {
   it("sends create, update, move, comment and start bodies to the contract routes without an actor", async () => {
     const { client: tasks, fetcher } = client((url) => {
       if (url.endsWith("/comments")) return json({ comment: { id: "tcm_1", taskId: "task_42", author: "agent:chat_1", body: "PR is up", createdAt: "2026-11-20T10:00:00.000Z", editedAt: null } }, 201);
-      if (url.endsWith("/start")) return json({ task: taskFixture(), session: { ref: "chat_1", kind: "chat", title: "MOS-42", role: "main", agentStatus: "working" } }, 201);
+      if (url.endsWith("/start")) return json({ task: taskFixture(), session: null }, 201);
       return json({ task: taskFixture() }, url.endsWith("/tasks") ? 201 : 200);
     });
     await tasks.createTask("matrix-os", { title: "  New  ", clientRequestId: "req_abc" });

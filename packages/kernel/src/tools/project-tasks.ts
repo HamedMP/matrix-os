@@ -144,6 +144,8 @@ function compact(task: ProjectTask) {
   return {
     id: task.id, key: task.key, title: task.title, status: task.status, priority: task.priority,
     assignee: task.assignee, labels: task.labels, revision: task.revision,
+    // Every task is a chat: its chat and the terminals attached to it.
+    chatId: task.chatId, chatStatus: task.chatStatus,
     agents: task.sessions.map((session) => ({ ref: session.ref, kind: session.kind, agentStatus: session.agentStatus })),
   };
 }
@@ -293,7 +295,7 @@ export function projectTaskToolDefinitions(context: ProjectTaskToolContext, opti
     },
     {
       name: "project_task_start",
-      description: "Start work on a task: open a chat or terminal agent session in the task's worktree (new, existing or none). The session gets no first turn: the result has agentStarted false and the firstMessage for the user to send.",
+      description: "Start work on a task. Every task is a chat: kind chat prepares the task's own chat in the task's worktree (new, existing or none); kind terminal attaches a new terminal agent there. Nothing is sent: the result has agentStarted false and the firstMessage for the user to send.",
       schema: StartSchema,
       annotations: { readOnlyHint: false, destructiveHint: false },
       handler: (input: unknown) => safely(async () => {
