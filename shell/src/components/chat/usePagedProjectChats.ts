@@ -49,7 +49,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   const [retryCount, setRetryCount] = useState(0);
   const previousVersion = useRef({ refreshVersion, membershipVersion });
   const reloading = useRef(false);
-  const retainedCursors = useRef<{ id: Array<string | null>; slug: Array<string | null> }>({ id: [], slug: [] });
+  const retainedPages = useRef({ id: 0, slug: 0 });
   useEffect(() => {
     if (previousVersion.current.refreshVersion === refreshVersion && previousVersion.current.membershipVersion === membershipVersion) return;
     previousVersion.current = { refreshVersion, membershipVersion };
@@ -71,21 +71,21 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
     if (cursors.id !== undefined) sources.push({ key: "id", value: project.id, cursor: cursors.id });
     if (cursors.slug !== undefined) sources.push({ key: "slug", value: project.slug, cursor: cursors.slug });
     void Promise.all(sources.map(async source => {
-      const loaded = retainedCursors.current[source.key];
-      const pageWindow = reload && loaded.length ? [...loaded] : [source.cursor];
-      const pages = await Promise.all(pageWindow.map(async cursor => {
-        if (loadNavigationPage) {
-          const page = await loadNavigationPage({ group: "project", projectId: source.value, limit: cursor ? 20 : 5, ...(cursor ? { cursor } : {}) });
-          return { nextCursor: page.nextCursor, rows: page.items.filter(item => !unreadOnly || item.readState.unread).map(item => ({
-            id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0,
-            importSource: item.importSource, canonicalRecord: item,
-          })) satisfies FetchedProjectChat[] };
-        }
-        const page = await loadProjectChats(gatewayUrl, source.value, cursor, unreadOnly, controller.signal);
-        return { nextCursor: page.nextCursor, rows: page.items.map(item => ({ id: item.chat.id,
-          title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0, importSource: item.importSource })) satisfies FetchedProjectChat[] };
-      }));
-      return { key: source.key, cursors: pageWindow, nextCursor: pages.at(-1)?.nextCursor, rows: pages.flatMap(page => page.rows) };
+      const rows: FetchedProjectChat[] = [];
+      let cursor: string | null | undefined = source.cursor, count = 0;
+      do {
+        if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        const canonical: CanonicalChatNavigationPageResponse | undefined = loadNavigationPage
+          ? await loadNavigationPage({ group: "project", projectId: source.value, limit: cursor ? 20 : 5, ...(cursor ? { cursor } : {}) }) : undefined;
+        const page: CanonicalChatNavigationPageResponse | z.infer<typeof ProjectChatsResponseSchema> = canonical ?? await loadProjectChats(gatewayUrl, source.value, cursor ?? null, unreadOnly, controller.signal);
+        rows.push(...page.items.map((item, index) => ({
+          id: item.chat.id, title: item.chat.title, titleVersion: item.chat.titleVersion ?? 0, importSource: item.importSource,
+          canonicalRecord: canonical?.items[index],
+        })).filter(row => !unreadOnly || !row.canonicalRecord || row.canonicalRecord.readState.unread));
+        cursor = page.nextCursor;
+        count++;
+      } while (cursor && reload && count < retainedPages.current[source.key]);
+      return { key: source.key, count, nextCursor: cursor, rows };
     })).then(pages => {
       if (controller.signal.aborted) return;
       const rows: FetchedProjectChat[] = pages.flatMap(({ rows }) => rows);
@@ -103,10 +103,10 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
         return [...previous, ...additions].slice(-MAX_RETAINED_PROJECT_ROWS);
       });
       const next: PageCursors = {};
-      for (const { key, nextCursor, cursors } of pages) {
+      for (const { key, nextCursor, count } of pages) {
         next[key] = nextCursor ?? undefined;
         // At most 26 pages cover the bounded 500-row window, including its partial edge.
-        retainedCursors.current[key] = (reload || cursors[0] === null ? cursors : [...retainedCursors.current[key], ...cursors]).slice(-26);
+        retainedPages.current[key] = Math.min(26, reload || cursors[key] === null ? count : retainedPages.current[key] + count);
       }
       reloading.current = false;
       setNextCursors(next);
@@ -120,7 +120,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
 
   const toggleExpanded = () => {
     if (expanded) {
-      retainedCursors.current = { id: [], slug: [] };
+      retainedPages.current = { id: 0, slug: 0 };
       reloading.current = false;
       setExpanded(false);
       setFetched([]);
@@ -136,17 +136,15 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   };
   const retry = () => { setLoading(true); setError(false); setRetryCount(value => value + 1); };
   const loadMore = () => { setLoading(true); setError(false); setPageCursors(nextCursors); };
-  const capped = false;
   const visible = useMemo(() => fetched.map(row => row.canonicalRecord
     ? { ...row, canonicalRecord: withChatReadStateUpdates(row.canonicalRecord, readUpdates) } : row)
     .filter(row => !unreadOnly || !row.canonicalRecord || row.canonicalRecord.readState.unread), [fetched, readUpdates, unreadOnly]);
-  return { expanded, toggleExpanded, fetched: visible, loading, error, retry, loadMore, capped,
+  return { expanded, toggleExpanded, fetched: visible, loading, error, retry, loadMore, capped: false,
     hasMore: Boolean(nextCursors.id || nextCursors.slug) };
 }
 
 import type { RenameableConversation } from "./ChatTitleRename";
 type Group = "pinned" | "needsYou" | "working" | "done";
-type LoadPage = (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
 type PageState = { key: string; rows: RenameableConversation[]; count: number; cursor?: string; loading: boolean; error: boolean };
 const MAX_RETAINED_STATUS_ROWS = 500;
 
@@ -163,7 +161,7 @@ function conversation(item: CanonicalChatNavigationPageResponse["items"][number]
 }
 
 /** Each status group owns its cursor and retains visible rows while a page is in flight. */
-export function usePagedStatusGroup(group: Group, loadPage?: LoadPage, scopeKey?: string, version?: number) {
+export function usePagedStatusGroup(group: Group, loadPage?: LoadNavigationPage, scopeKey?: string, version?: number) {
   const key = `${scopeKey ?? ""}\0${group}`;
   const [state, setState] = useState<PageState>({ key: "", rows: [], count: 0, loading: false, error: false });
   const [retryCount, setRetryCount] = useState(0);

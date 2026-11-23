@@ -809,26 +809,35 @@ it("reorders adjacent older project chats across lifecycle states without moving
   expect(region.querySelectorAll("[data-rail-order-id]")).toHaveLength(3);
 });
 
-
-it("refreshes all loaded project run states while retaining rows and cursors", async () => {
+it.each([false, true])("refreshes loaded project run states across shifted pages (insert=%s)", async insert => {
   let completed = false;
-  const item = (id: string) => ({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
+  const order = Array.from({ length: 25 }, (_, index) => `chat_${index + 1}`);
+  const item = (id: string) => CanonicalChatNavigationItemSchema.parse({ chat: { id, title: id, revision: 1, lifecycle: "active", attention: "none", messageCount: 1,
     createdAt: "2026-11-12T00:00:00Z", updatedAt: "2026-11-12T00:00:00Z" },
+    classification: { kind: "ordinary" }, persistence: "personal", readState: { version: 0, readThroughSeq: 0, latestIncomingSeq: 0, markedUnread: false, unread: false },
     ...(completed ? {} : { activeRun: { runId: "run_old", turnId: "cturn_old", status: "running" } }) });
-  const load = vi.fn(async ({ cursor }: { cursor?: string }) => ({ items: [item(cursor ? "chat_older" : "chat_first")], totalCount: 3, nextCursor: cursor ? "navcur_third" : "navcur_second" }));
+  const load = vi.fn(async ({ cursor, limit }: { cursor?: string; limit: number }) => {
+    const start = cursor ? order.indexOf(cursor.slice("navcur_".length)) + 1 : 0;
+    const ids = order.slice(start, start + limit);
+    return { items: ids.map(item), totalCount: order.length, nextCursor: start + ids.length < order.length ? `navcur_${ids.at(-1)}` : undefined };
+  });
   const project = { id: "proj_one", slug: "proj_one", name: "One" };
   const hook = renderHook(({ version }) => usePagedProjectChats(project, "https://example.test", false, true, load as never, version), { initialProps: { version: 0 } });
-  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(1));
+  await waitFor(() => expect(hook.result.current.fetched.map(row => row.canonicalRecord?.activeRun?.status)).toEqual(Array(5).fill("running")));
   act(() => hook.result.current.loadMore());
-  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(2));
+  await waitFor(() => expect(hook.result.current.fetched).toHaveLength(25));
   completed = true;
+  if (insert) order.unshift("chat_new");
   hook.rerender({ version: 1 });
-  expect(hook.result.current.fetched).toHaveLength(2);
+  expect(hook.result.current.fetched).toHaveLength(25);
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   expect(hook.result.current.fetched.every(row => !row.canonicalRecord?.activeRun)).toBe(true);
-  expect(hook.result.current.fetched.map(row => row.id)).toEqual(["chat_first", "chat_older"]);
+  expect(hook.result.current.fetched.map(row => row.id)).toEqual(order.slice(0, 25));
+  expect(hook.result.current.hasMore).toBe(insert);
+  if (!insert) return;
   act(() => hook.result.current.loadMore());
-  await waitFor(() => expect(load).toHaveBeenCalledWith(expect.objectContaining({ cursor: "navcur_third" })));
+  await waitFor(() => expect(hook.result.current.fetched.map(row => row.id)).toEqual(order));
+  expect(hook.result.current.hasMore).toBe(false);
 });
 
 it.each(["navigation", "run", "selection"])("unblocks an older project chat after %s refresh", async trigger => {
