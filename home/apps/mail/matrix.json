@@ -25,5 +25,47 @@
       "vite.config.ts"
     ]
   },
-  "listingTrust": "first_party"
+  "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "mail_threads": {
+        "columns": {
+          "thread_key": "text",
+          "account_id": "text",
+          "last_at": "number",
+          "summary": "jsonb",
+          "reply_meta": "jsonb"
+        },
+        "indexes": [
+          "account_id",
+          "last_at"
+        ],
+        "uniqueIndexes": [
+          "thread_key"
+        ]
+      },
+      "mail_folders": {
+        "columns": {
+          "account_id": "text",
+          "folders": "jsonb"
+        },
+        "uniqueIndexes": [
+          "account_id"
+        ]
+      },
+      "mail_snoozes": {
+        "columns": {
+          "thread_key": "text",
+          "account_id": "text",
+          "wake_at": "text"
+        },
+        "indexes": [
+          "account_id"
+        ],
+        "uniqueIndexes": [
+          "thread_key"
+        ]
+      }
+    }
+  }
 }
