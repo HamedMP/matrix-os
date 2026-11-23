@@ -7,6 +7,7 @@
  */
 
 import type { FormulaAst, FunctionRegistry } from "../../api/formula.js";
+import type { CellRange } from "../../api/xlsx.js";
 import type { CellRec, SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { parseCached } from "./state.js";
@@ -27,6 +28,11 @@ export interface CalcNode {
   cell: CellRec;
   ast: FormulaAst;
   deps: Dep[];
+  /**
+   * For an array formula: the range it fills, with this cell at the top
+   * left. Null for an ordinary formula.
+   */
+  spill: CellRange | null;
   /** Calculated on every run: a volatile function, or one that picks its cells at run time. */
   always: boolean;
   /** Visit number of the ordering pass; -1 before the visit. */
@@ -42,6 +48,8 @@ export interface CalcGraph {
   nodes: CalcNode[];
   /** Formula nodes of each sheet by column, sorted by row. Bounded by the formula cell count. */
   columns: Map<SheetModel, Map<number, CalcNode[]>>;
+  /** Array formulas that fill more than their own cell: reading any cell of their range reads them. */
+  spills: CalcNode[];
   /** Nodes with their precedents first; null until computed. */
   order: CalcNode[] | null;
 }
@@ -50,6 +58,24 @@ export interface CalcGraph {
 const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
 /** How many defined names may be followed inside one another. */
 const MAX_NAME_DEPTH = 8;
+/** Largest range one array formula fills; a larger one keeps its stored values. */
+export const MAX_ARRAY_FORMULA_CELLS = 100_000;
+
+/**
+ * The range an array formula at `row`, `col` fills, or null when the cell
+ * holds no array formula the engine calculates: an ordinary formula, a data
+ * table, a formula that is not at the top left of its range, or a range
+ * larger than {@link MAX_ARRAY_FORMULA_CELLS}.
+ */
+export function arrayFormulaRange(cell: CellRec, row: number, col: number): CellRange | null {
+  const extra = cell.extra;
+  if (extra === null || extra.ref === null) return null;
+  if (!extra.attrs.some(([name, value]) => name === "t" && value === "array")) return null;
+  const { start, end } = extra.ref;
+  if (start.row !== row || start.col !== col) return null;
+  if ((end.row - start.row + 1) * (end.col - start.col + 1) > MAX_ARRAY_FORMULA_CELLS) return null;
+  return extra.ref;
+}
 
 /** True when some function call of the formula satisfies `test`. */
 function someCall(ast: FormulaAst, test: (name: string) => boolean): boolean {
@@ -139,13 +165,17 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
   const functions = functionsOf(state);
-  if (functions === null) return { nodes, columns: new Map(), order: null };
+  if (functions === null) return { nodes, columns: new Map(), spills: [], order: null };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
+  const spills: CalcNode[] = [];
   for (const sheet of state.sheets) {
     const byColumn = new Map<number, CalcNode[]>();
     for (const row of sheet.rows.values()) {
       for (const [col, cell] of row.cells) {
-        if (cell.formula === null || cell.extra !== null) continue;
+        if (cell.formula === null) continue;
+        const spill = arrayFormulaRange(cell, row.index, col);
+        // A data table, or an array formula the engine does not fill, keeps its stored values.
+        if (cell.extra !== null && spill === null) continue;
         const ast = parseCached(state, cell.formula);
         if (ast === null) continue;
         // A formula with a function the engine lacks keeps its stored value; a new one shows #NAME? once.
@@ -159,6 +189,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           cell,
           ast,
           deps,
+          spill,
           always: callsAlways(ast, functions),
           index: -1,
           low: -1,
@@ -166,6 +197,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           circular: false,
         };
         nodes.push(node);
+        if (spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col)) spills.push(node);
         const list = byColumn.get(col);
         if (list === undefined) byColumn.set(col, [node]);
         else list.push(node);
@@ -174,7 +206,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
     for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
     if (byColumn.size > 0) columns.set(sheet, byColumn);
   }
-  return { nodes, columns, order: null };
+  return { nodes, columns, spills, order: null };
 }
 
 function lowerBound(list: readonly CalcNode[], row: number): number {
@@ -196,6 +228,9 @@ class Precedents {
   private list: CalcNode[] | null = null;
   private position = 0;
   private lastRow = 0;
+  /** The rectangle whose array formulas are being listed, and how far the listing got. */
+  private spillDep: Dep | null = null;
+  private spillIndex = 0;
 
   constructor(
     private readonly graph: CalcGraph,
@@ -219,8 +254,31 @@ class Precedents {
         this.position = lowerBound(nextList, (this.deps[this.depIndex - 1] as Dep).r1);
         continue;
       }
+      const spillDep = this.spillDep;
+      if (spillDep !== null) {
+        // An array formula is read through every cell of the range it fills.
+        const spills = this.graph.spills;
+        while (this.spillIndex < spills.length) {
+          const node = spills[this.spillIndex++] as CalcNode;
+          const area = node.spill as CellRange;
+          if (
+            node.sheet === spillDep.sheet &&
+            area.start.row <= spillDep.r2 &&
+            area.end.row >= spillDep.r1 &&
+            area.start.col <= spillDep.c2 &&
+            area.end.col >= spillDep.c1
+          ) {
+            return node;
+          }
+        }
+        this.spillDep = null;
+      }
       const dep = this.deps[this.depIndex++];
       if (dep === undefined) return null;
+      if (this.graph.spills.length > 0) {
+        this.spillDep = dep;
+        this.spillIndex = 0;
+      }
       this.lists = [];
       this.listIndex = 0;
       this.lastRow = dep.r2;

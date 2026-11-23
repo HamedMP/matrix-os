@@ -173,7 +173,7 @@ describe("structural edits on real files", () => {
   it("keeps the array formula range in step and other sheets byte-identical when nothing refers to the sheet", async () => {
     const workbook = await openXlsx(loadFixture("formulas.xlsx"));
     workbook.insertRows(sheetId(workbook, "Calc"), 0, 3);
-    expect(at(workbook, "Calc", "D5")).toMatchObject({ formula: "Data!C2:C6*Data!D2:D6", formulaUnsupported: true, value: 500 });
+    expect(at(workbook, "Calc", "D5")).toMatchObject({ formula: "Data!C2:C6*Data!D2:D6", formulaUnsupported: false, value: 500 });
     expect(at(workbook, "Data", "F2").formula).toBe("E2*(1+Calc!$B$9)");
     expect(workbook.listDefinedNames()).toEqual([{ name: "TaxRate", refersTo: "Calc!$B$9", scope: null }]);
     const reopened = await openXlsx(await workbook.save());

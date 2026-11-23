@@ -48,7 +48,10 @@ export interface CellRec {
   dirty: number;
   /** Shared formula group of the cell in the XML, or -1. */
   shared: number;
-  /** Set for an array or data-table formula, which the engine keeps but does not calculate. */
+  /**
+   * Set for an array or data-table formula. An array formula is calculated
+   * and fills the range in `extra.ref`; a data table keeps its stored values.
+   */
   extra: FormulaExtra | null;
 }
 

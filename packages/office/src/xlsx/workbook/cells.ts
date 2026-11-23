@@ -3,7 +3,7 @@
 import type { Cell, CellRange, CellStylePatch, CellValue } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
-import { callsUnknownFunction } from "./calc-graph.js";
+import { arrayFormulaRange, callsUnknownFunction } from "./calc-graph.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
   type CellRec,
@@ -161,9 +161,9 @@ export function writeCell(
 }
 
 /** True when the engine keeps the stored value of the formula instead of calculating it. */
-export function isUnsupportedFormula(state: WorkbookState, cell: CellRec): boolean {
+export function isUnsupportedFormula(state: WorkbookState, cell: CellRec, row: number, col: number): boolean {
   if (cell.formula === null) return false;
-  if (cell.extra !== null) return true;
+  if (cell.extra !== null && arrayFormulaRange(cell, row, col) === null) return true;
   const ast = parseCached(state, cell.formula);
   return ast === null || callsUnknownFunction(state, ast);
 }
@@ -181,7 +181,7 @@ export function cellView(state: WorkbookState, sheet: SheetModel, row: number, c
     styleId,
     display:
       cell.value === null ? "" : formatValue(cell.value, state.styles.numberFormat(styleId), { date1904: state.date1904 }),
-    formulaUnsupported: isUnsupportedFormula(state, cell),
+    formulaUnsupported: isUnsupportedFormula(state, cell, row, col),
     pendingChangeId,
   };
 }

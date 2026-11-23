@@ -178,8 +178,8 @@ describe("formulas.xlsx values", () => {
     expect(at(workbook, "Calc", "B9")).toMatchObject({ value: true, formula: "B1>50", display: "TRUE" });
     expect(at(workbook, "Calc", "B10")).toMatchObject({ value: err("#N/A"), display: "#N/A" });
     expect(at(workbook, "Calc", "B6")).toMatchObject({ value: 0.2, formula: null });
-    // The array formula is kept, not calculated; the rest of its range holds cached literals.
-    expect(at(workbook, "Calc", "D2")).toMatchObject({ value: 500, formula: "Data!C2:C6*Data!D2:D6", formulaUnsupported: true });
+    // The array formula sits in the first cell of its range; the rest of the range holds its values without a formula.
+    expect(at(workbook, "Calc", "D2")).toMatchObject({ value: 500, formula: "Data!C2:C6*Data!D2:D6", formulaUnsupported: false });
     expect(at(workbook, "Calc", "D3")).toMatchObject({ value: 206.25, formula: null });
     expect(workbook.listDefinedNames()).toEqual([{ name: "TaxRate", refersTo: "Calc!$B$6", scope: null }]);
   });
