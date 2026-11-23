@@ -40,7 +40,7 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
   const terms = queryTermChips(text);
 
   return (
-    <search className="mail-search">
+    <div role="search" aria-label="Mail search" className="mail-search">
       <div className="mail-search__box">
         <Search size={15} className="mail-search__icon" aria-hidden="true" />
         <input
@@ -85,6 +85,6 @@ export const SearchBar = forwardRef<HTMLInputElement, SearchBarProps>(function S
           </button>
         ))}
       </div>
-    </search>
+    </div>
   );
 });

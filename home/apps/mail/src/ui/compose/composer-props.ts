@@ -3,7 +3,6 @@
  * rest default to the host bridge (`window.MatrixOS`) and can be injected.
  */
 import type { MailAi } from "../../agent/ai";
-import type { ProposalRegistry } from "../../agent/proposals";
 import type { PickerFiles } from "../../compose/attachments";
 import type { SignatureBridge } from "../../compose/signature";
 import type { ComposerSlotProps } from "../slots";
@@ -19,8 +18,6 @@ export interface ComposerProps extends ComposerSlotProps {
   bridge?: ComposeBridge;
   /** Defaults to `MatrixOS.ai`; null hides the assistant. */
   ai?: MailAi | null;
-  /** Agent draft proposals; an open proposal for this draft opens as a redline. */
-  proposals?: ProposalRegistry;
   now?: () => number;
 }
 

@@ -11,6 +11,8 @@
 import { Component, lazy, Suspense, type ComponentType, type ErrorInfo, type ReactNode } from "react";
 import { Bot } from "lucide-react";
 import { EmptyState, Spinner } from "../../../_shared/office-ui";
+import type { MailAgent } from "../agent/controller";
+import type { ProposalRegistry } from "../agent/proposals";
 import type { DraftState, MailAccountEntry, MailState, MailStore } from "../model";
 import { FallbackComposer } from "./FallbackComposer";
 
@@ -23,14 +25,20 @@ export interface ComposerSlotProps {
   entries: readonly MailAccountEntry[];
   /** Closes the composer (the store keeps the draft). */
   onClose: () => void;
+  /** The agent's draft proposals; an open proposal for this draft shows as a redline. */
+  proposals?: ProposalRegistry;
 }
 
 /** Props the workspace passes to `ui/agent/MailAgentPanel`. */
 export interface MailAgentPanelSlotProps {
+  /** Null when the host has no model; the panel then explains that. */
+  agent: MailAgent | null;
   store: MailStore;
   state: MailState;
   entries: readonly MailAccountEntry[];
   onClose: () => void;
+  /** Called after an agent draft opens, so the composer can be shown. */
+  onShowComposer?: () => void;
 }
 
 type SlotModule = Record<string, unknown>;

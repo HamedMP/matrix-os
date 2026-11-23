@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Bot, Keyboard, Mail, PenSquare, RefreshCw, X } from "lucide-react";
 import { AppFrame, SplitPane, useToast } from "../../../_shared/office-ui";
+import type { MailAi } from "../agent/ai";
 import {
   selectActiveDraft,
   selectActiveView,
@@ -25,6 +26,7 @@ import { ShortcutHelp } from "./ShortcutHelp";
 import { ComposerSlot, MailAgentPanelSlot } from "./slots";
 import { ThreadList } from "./ThreadList";
 import { UndoBar } from "./UndoBar";
+import { useMailAgent } from "./use-mail-agent";
 import { useMailKeyboard } from "./use-mail-keyboard";
 import { useMailState } from "./use-mail-store";
 
@@ -35,6 +37,8 @@ export interface MailWorkspaceProps {
   bridge?: MailBridge;
   now?: () => number;
   timeZone?: string;
+  /** Defaults to `MatrixOS.ai`; null turns the mail agent off. */
+  ai?: MailAi | null;
 }
 
 function runtimeZone(): string {
@@ -48,8 +52,9 @@ function runtimeZone(): string {
 
 const defaultNow = () => Date.now();
 
-export function MailWorkspace({ store, entries, bridge = hostBridge(), now = defaultNow, timeZone }: MailWorkspaceProps) {
+export function MailWorkspace({ store, entries, bridge = hostBridge(), now = defaultNow, timeZone, ai }: MailWorkspaceProps) {
   const state = useMailState(store);
+  const agent = useMailAgent(store, entries, ai);
   const toast = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
   const dragKeys = useRef<ThreadKey[]>([]);
@@ -148,8 +153,8 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
         toolbar={<SearchBar ref={searchRef} searching={view?.descriptor.kind === "search"} />}
         banner={banner}
         rightPanel={agentOpen ? (
-          <div className="mail-agent" data-mail-keys="off">
-            <MailAgentPanelSlot store={store} state={state} entries={entries} onClose={() => setAgentOpen(false)} />
+          <div className="mail-agent-dock" data-mail-keys="off">
+            <MailAgentPanelSlot agent={agent} store={store} state={state} entries={entries} onClose={() => setAgentOpen(false)} />
           </div>
         ) : undefined}
         rightPanelLabel="Mail agent"
@@ -183,7 +188,15 @@ export function MailWorkspace({ store, entries, bridge = hostBridge(), now = def
         />
         {composing && (
           <div className="mail-composer-dock" data-mail-keys="off">
-            <ComposerSlot store={store} state={state} draft={draft} entries={entries} onClose={() => store.closeDraft(draft.localId)} />
+            <ComposerSlot
+              key={draft.localId}
+              store={store}
+              state={state}
+              draft={draft}
+              entries={entries}
+              proposals={agent?.context.proposals}
+              onClose={() => store.closeDraft(draft.localId)}
+            />
           </div>
         )}
         <UndoBar undo={state.undo} />
