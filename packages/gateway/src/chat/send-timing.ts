@@ -88,6 +88,12 @@ export function recordCodexCatalogTiming(result: CodexCatalogTimingResult, durat
   if (active && "traceId" in active) emit({ traceId: active.traceId, stage: "codex_catalog", durationMs: Math.max(0, Math.round(durationMs)), result });
 }
 
+/** Whether admission served a fingerprint-validated reused Codex identity instead of spawning the app-server. */
+export function recordCodexIdentityReuse(result: "hit" | "miss"): void {
+  const active = chatSendTimingsEnabled() ? activeSend.getStore() : undefined;
+  if (active) emit({ ...active, stage: "codex_identity_reuse", result });
+}
+
 /** Start a sub-stage only inside a timed send or dispatch; returns undefined otherwise. */
 export function startChatSendStage(): number | undefined {
   return chatSendTimingsEnabled() && activeSend.getStore() ? performance.now() : undefined;

@@ -726,7 +726,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex";
       let releaseRevocation: (() => Promise<void>) | undefined;
       const prepareRevocation = async () => {
-        if (revokesCodex) releaseRevocation = await this.#prepareNativeCodexRevocation?.();
+        if (!revokesCodex) return;
+        // Revocation drops the reused admission identity; logout/remove drop it again after the CLI change.
+        this.#nativeAccountMetadata?.invalidateIdentity?.();
+        releaseRevocation = await this.#prepareNativeCodexRevocation?.();
       };
       try {
       this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
@@ -845,7 +848,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
-          if (mutation.accountId === "owner_codex") codexMetadata = null;
+          if (mutation.accountId === "owner_codex") { this.#nativeAccountMetadata?.invalidateIdentity?.(); codexMetadata = null; }
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical({ refresh: true });
           if (nativeClaudeLifecycle) {
@@ -878,7 +881,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
-          if (mutation.accountId === "owner_codex") codexMetadata = null;
+          if (mutation.accountId === "owner_codex") { this.#nativeAccountMetadata?.invalidateIdentity?.(); codexMetadata = null; }
           config.accountProfiles = config.accountProfiles.filter((profile) => profile.id !== mutation.accountId);
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical({ refresh: true });
