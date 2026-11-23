@@ -264,3 +264,18 @@ it("restores each provider's effort and access through the real picker and sends
     Object.assign(codex, original);
   }
 });
+
+it("waits for saved preferences before an existing chat can switch providers", () => {
+  const unread = jest.spyOn(composerChoices, "choice").mockReturnValue(undefined);
+  try {
+    renderChatScreen();
+    press("Open chat one");
+    expect(trigger().props.accessibilityState?.busy).toBe(true);
+    chooseModel("Matrix AI", "Sonnet 5, Matrix AI");
+    // Existing chat sends retain their known saved controls while the picker waits.
+    send("Keep the known chat controls");
+    expect(mockSend).toHaveBeenLastCalledWith(expect.objectContaining({ selection: GPT, permissionMode: "auto" }), expect.anything());
+  } finally {
+    unread.mockRestore();
+  }
+});

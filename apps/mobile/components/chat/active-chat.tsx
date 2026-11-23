@@ -113,24 +113,25 @@ function useActiveChatState() {
   const { selection, rememberedPending } = chatScreenSelection({
     directBot, activeChatId, selectionOverride, saved: detail?.record.chat.currentSelection, catalog, remembered,
   });
-  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending);
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching || rememberedPending || !remembered.ready);
   const providerCatalogLoading = !directBot && (catalogPending || rememberedPending);
   const { remember, forProvider } = remembered;
   const savedControls = savedChatExecutionControls(detail, activeChatId);
   const turnModes = directBot ? AGENT_TURN_MODES : chosenTurnModes(catalog, selection, savedControls,
     askedPermissionMode(activeChatId, permissionModeOverride, savedControls, forProvider(selection?.instanceId)));
   const chooseSelection = useCallback((chosen: CanonicalChatModelSelection) => {
+    if (!remembered.ready) return;
     const switching = selection?.instanceId !== chosen.instanceId;
     const preference = providerComposerPreference(catalog, selection, chosen, forProvider(chosen.instanceId), turnModes?.permissionMode);
     setSelectionOverride(preference.selection);
     if (switching) setPermissionModeOverride(preference.permissionMode ?? null);
     remember(preference);
-  }, [selection, forProvider, catalog, turnModes, setSelectionOverride, setPermissionModeOverride, remember]);
+  }, [selection, forProvider, catalog, turnModes, remembered.ready, setSelectionOverride, setPermissionModeOverride, remember]);
   const choosePermissionMode = useCallback((mode: string) => {
-    if (!selection) return;
+    if (!selection || !remembered.ready) return;
     setPermissionModeOverride(mode);
     remember({ selection, permissionMode: mode });
-  }, [selection, setPermissionModeOverride, remember]);
+  }, [selection, remembered.ready, setPermissionModeOverride, remember]);
 
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
 

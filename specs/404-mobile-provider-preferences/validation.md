@@ -21,18 +21,24 @@ Branch: fix/mobile-provider-native-chat-preferences. Ticket: ENG-404.
 
 - Locked dependency install: passed; no dependency or lockfile changes.
 - Initial focused run: 42/43 passed; remaining assertion updated for selected-instance
-  persistence in Project Chat. Final focused check passes: 4 suites / 62 tests, including both real picker/send
+  persistence in Project Chat. Final focused check passes: 7 suites / 92 tests, including both real picker/send
   and Project Chat request boundaries, reload, first use, hydration and bounds.
-  Full native Jest remains running; its earlier model-only assertion was corrected
-  and passes in this final focused run.
+  Full native Jest was stopped after existing status-bar failures and open handles;
+  the unchanged parent reproduces 17/18 failures in status-bar-theme.test.tsx.
+  Its earlier model-only assertion was corrected and passes in the focused run.
 - React Doctor changed-project audit: no issues.
 - Diff pattern scan: no violations or warnings. git diff --check passes.
-- Native TypeScript: default 512 MB heap OOM; larger-heap check and comparison
-  against unchanged parent are pending. Existing native React/Image typings are
+- Native TypeScript: default 512 MB heap OOM; the larger-heap check reports 53 errors, byte-for-byte identical to the
+  unchanged parent. Existing native React/Image typings are
   documented in docs/dev/mobile-shell.md; no blanket typecheck pass is claimed.
-- Required shell/gateway parity checks are running. Full workspace typecheck has
+- Initial shell/gateway parity attempt: 70/73 assertions passed; shell timeout and
+  duplicate-node failures pass on isolated rerun (24/24). Gateway terminal tests
+  could not collect because @matrix-os/observability has no built entry in this
+  checkout. After building that prerequisite, the gateway terminal suite passes
+  all 35 tests. Full workspace typecheck has
   the same missing kernel/dist prerequisite as #3596; no repeat full-workspace run.
-- Native iOS/Android bundle dry run will be checked by the mobile PR workflow.
+- Hosted mobile CI passes on cd73c9ef2, including full native Jest and the
+  iOS/Android bundle dry run; the review-correction head must pass it again.
 
 ## Qualification gaps
 
@@ -44,3 +50,11 @@ No model inference, production deployment, owner-runtime restart or merge.
 Logs and temporary tooling artifacts stay under /tmp and can be removed after
 review; fake storage lives only in tests. Temporary regression source replay was
 restored in a finally block.
+
+## Review correction
+
+Greptile found that an existing chat could overwrite destination defaults before
+preference hydration completed. The original picker reports not-busy while storage
+is unread; the regression detects this and confirms existing sends retain saved
+controls. Both routes now show picker loading and guard mutations until hydration.
+The corrected seven-suite run passes 92 tests. React audit and patterns pass.

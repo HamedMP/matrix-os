@@ -209,9 +209,10 @@ export default function ProjectRoute() {
           modelControl: (
             <ModelPicker
               catalog={catalog}
-              catalogLoading={catalogPending || catalogFetching || (chosenModel === null && choiceUnknown)}
+              catalogLoading={catalogPending || catalogFetching || !remembered.ready || (chosenModel === null && choiceUnknown)}
               selection={selection}
               onSelectionChange={(chosen) => {
+                if (!remembered.ready) return;
                 const switching = selection?.instanceId !== chosen.instanceId;
                 const preference = providerComposerPreference(catalog, selection, chosen, remembered.forProvider(chosen.instanceId), turnModes?.permissionMode);
                 setChosenModel(preference.selection);
@@ -220,6 +221,7 @@ export default function ProjectRoute() {
               }}
               permissionMode={turnModes?.permissionMode ?? null}
               onPermissionModeChange={(mode) => {
+                if (!remembered.ready) return;
                 setChosenPermissionMode(mode);
                 if (selection) remembered.remember({ selection, permissionMode: mode });
               }}

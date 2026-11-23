@@ -21,6 +21,8 @@ Access; Claude Manual / Accept edits / Auto / Don't ask / Full Access. Effort co
 from the provider catalog, including Claude Extra high and Max when supported.
 No copied capability lists or additional provider API calls.
 
+Picker mutations wait for preference hydration on both routes. Existing open Chats
+can still send using their known saved controls while preferences load.
 Existing open Chats retain their saved controls until the user changes them.
 Changing a default never mutates a running turn. Explicit provider switches reset
 local permission overrides to the destination's supported saved mode or default.
