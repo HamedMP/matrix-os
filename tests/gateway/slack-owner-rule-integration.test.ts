@@ -43,7 +43,8 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     cleanup.push(bridge.close);
     const push = async (eventId: string, ts: string, text: string) => { const body = JSON.stringify({ type: "event_callback", api_app_id: appId, team_id: teamId, event_id: eventId, event: { type: "message", channel_type: "channel", channel: channelId, user: "U456", thread_ts: root, ts, text } }); const timestamp = String(Math.floor(date.getTime() / 1000)); const signature = createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex"); return platform.routes.request("/webhooks/slack/events", { method: "POST", body, headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } }); };
     expect(Number((await sql<{count:string}>`SELECT count(*) AS count FROM slack_private_thread_context`.execute(fixture.db)).rows[0]!.count)).toBe(0);
-    const harness = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId, runtimeId, grantId }, appId, teamId, channel: { id: channelId, name: "tech" } }, context, now: () => new Date(date.getTime() - 1000) });
+    let policyTime = date.getTime() - 1_000;
+    const harness = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId, runtimeId, grantId }, appId, teamId, channel: { id: channelId, name: "tech" } }, context, now: () => new Date(policyTime) });
     const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, focus on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
     const binding = await harness.turn(instruction);
     const receipt = await harness.call(binding, { operation: "create", sourceId: harness.sourceId, ownerInstruction: instruction, definition: { trigger, cadence: { kind: "immediate" }, focus: "release risks", language: "English" } });
@@ -64,7 +65,38 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     expect((await push("EvSameTimestamp", triggerTs, text)).status).toBe(200);
     await summaries.drain();
     await expect.poll(() => runtime.modelRequests.length).toBe(1);
-    await expect.poll(async () => { const rows = await fixture.db.selectFrom("chat_messages").select("search_text").where("role", "=", "assistant").execute(); return rows.some(row => row.search_text === reply); }).toBe(true);
+    const delivery = () => sql<{ chat_id: string; event_id: string; rule_id: string; result: string }>`
+        SELECT message.chat_id, job.sources->0->>'eventId' AS event_id,
+               job.policy->>'ruleId' AS rule_id, message.search_text AS result
+        FROM slack_mention_summary_jobs job
+        JOIN chat_runs run ON run.chat_id = job.chat_id AND run.client_request_id = job.request_id
+        JOIN chat_messages message ON message.run_id = run.id AND message.chat_id = run.chat_id
+        WHERE run.status = 'completed' AND message.role = 'assistant' AND message.state = 'committed'
+    `.execute(fixture.db).then(result => result.rows);
+    const expectedDelivery = [{ chat_id: chatId, event_id: "EvTrigger", rule_id: receipt.receipt.ruleId, result: reply }];
+    await expect.poll(delivery).toEqual(expectedDelivery);
+    if (trigger === "new_message") {
+        const change = async (operation: "pause" | "resume", baseRevision: number) => {
+            const ownerInstruction = `Please ${operation} my Slack summary rule.`;
+            const binding = await harness.turn(ownerInstruction);
+            const result = await harness.call(binding, { operation, ownerInstruction, baseRevision, ruleId: receipt.receipt.ruleId });
+            expect(result).toMatchObject({ saved: true, receipt: { revision: baseRevision + 1 } });
+            await harness.finish();
+        };
+        policyTime = date.getTime() + 1_000;
+        await change("pause", 1);
+        const pausedTs = `${Math.floor(date.getTime() / 1000) + 2}.000003`;
+        expect((await push("EvPaused", pausedTs, "Update while paused")).status).toBe(200);
+        await summaries.drain();
+        policyTime += 3_000;
+        await change("resume", 2);
+        expect((await push("EvDelayed", `${Math.floor(date.getTime() / 1000) + 2}.000004`, "Delayed delivery from the paused interval")).status).toBe(200);
+        await summaries.drain();
+        const jobs = await sql<{ event_id: string }>`SELECT sources->0->>'eventId' AS event_id FROM slack_mention_summary_jobs`.execute(fixture.db);
+        expect(jobs.rows).toEqual([{ event_id: "EvTrigger" }]);
+        expect(await delivery()).toEqual(expectedDelivery);
+        expect(runtime.modelRequests).toHaveLength(1);
+    }
     const actual = JSON.stringify(runtime.modelRequests);
     expect(actual).toContain("Output language: \\\"English\\\"");
     expect(actual).toContain("release risks");
