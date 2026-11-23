@@ -36,3 +36,26 @@ it.each(["codex_fixture", "codex:fixture"])("keeps separate defaults across swit
   expect(reloaded.result.current.selected).toMatchObject({ permissionMode: "supervised",
     selectedOptions: [{ id: "effort", value: "low" }] });
 });
+
+it("merges stale tab writes and synchronizes mounted composers", async () => {
+  const { rememberProviderPreference, readSavedProviderPreferences } = await import("../../shell/src/components/chat-provider-preferences");
+  const catalog = createCanonicalProviderCatalogFixture();
+  const codex = catalog.instances[0]!;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(catalog))));
+  const hook = renderHook(() => useChatProviderState());
+  await waitFor(() => expect(hook.result.current.selected?.instanceId).toBe(codex.id));
+  act(() => {
+    rememberProviderPreference({}, codex.id, { key: `${codex.id}:${codex.models[0]!.id}`, permissionMode: "full_access" });
+  });
+  await waitFor(() => expect(hook.result.current.selected?.permissionMode).toBe("full_access"));
+  rememberProviderPreference({}, "claude_other", { key: "claude_other:model", permissionMode: "auto" });
+  expect(readSavedProviderPreferences()[codex.id]?.permissionMode).toBe("full_access");
+  // The browser's storage event supplies updates from another tab.
+  act(() => {
+    localStorage.setItem("matrix:canonical-chat-provider-preferences", JSON.stringify({
+      [codex.id]: { key: `${codex.id}:${codex.models[0]!.id}`, permissionMode: "supervised" },
+    }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "matrix:canonical-chat-provider-preferences" }));
+  });
+  await waitFor(() => expect(hook.result.current.selected?.permissionMode).toBe("supervised"));
+});

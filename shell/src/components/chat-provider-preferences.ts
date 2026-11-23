@@ -72,7 +72,8 @@ export function applySavedSelection(
 }
 
 
-const PER_PROVIDER_KEY = "matrix:canonical-chat-provider-preferences";
+export const PROVIDER_PREFERENCES_CHANGED_EVENT = "matrix:chat-provider-preferences-changed";
+export const PER_PROVIDER_KEY = "matrix:canonical-chat-provider-preferences";
 const SavedSelectionSchema = z.object({
   key: z.string().max(320), instanceId: CanonicalProviderInstanceIdSchema.optional(), interactionMode: z.string().max(80).optional(),
   permissionMode: z.string().max(80).optional(),
@@ -104,11 +105,15 @@ export function readSavedProviderPreferences(): SavedProviderPreferences {
 
 export function rememberProviderPreference(preferences: SavedProviderPreferences, id: string, selection: SavedProviderSelection): SavedProviderPreferences {
   if (!CanonicalProviderInstanceIdSchema.safeParse(id).success) return preferences;
-  const next = { ...preferences };
+  // Storage wins over stale non-target rows held by another mounted composer.
+  const next = { ...preferences, ...readSavedProviderPreferences() };
   delete next[id];
   next[id] = { ...selection, instanceId: id };
   for (const key of Object.keys(next).slice(0, Math.max(0, Object.keys(next).length - 20))) delete next[key];
-  try { window.localStorage.setItem(PER_PROVIDER_KEY, JSON.stringify(next)); }
+  try {
+    window.localStorage.setItem(PER_PROVIDER_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event(PROVIDER_PREFERENCES_CHANGED_EVENT));
+  }
   catch (error: unknown) {
     console.warn("[chat] Failed to save Provider preferences:", error instanceof Error ? error.name : "UnknownError");
   }

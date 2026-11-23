@@ -1,6 +1,6 @@
 # Local validation
 
-Base: origin/main 68ad9d637. Branch: fix/provider-native-chat-preferences.
+Base: origin/main 8ec4e6b4f (merged without conflicts). Branch: fix/provider-native-chat-preferences.
 Ticket: ENG-404. Prepared for draft PR publication; no merge, deployment or owner runtime restart.
 
 ## Passed
@@ -38,7 +38,7 @@ model/account availability or actual reviewer decisions.
 - Authenticated, changed-build visual evidence on Web Desktop, Web Canvas and
   Electron Desktop, at desktop and narrow widths. No surface is visually qualified.
 - Native Mobile consumes the shared catalog; its runtime/device check is pending.
-- Production build, CI and Greptile review. Existing #2956 remains a related
+- Current-head CI and Greptile review. Existing #2956 remains a related
   Electron-only fix; this draft is self-contained and does not modify that PR.
 - Separate public documentation PR in FinnaAI/matrix-os-site; no site files edited.
 - PR evidence upload and any separately authorized Slack #tech update.
@@ -52,10 +52,24 @@ No dependencies or lockfile entries changed.
 The full workspace typecheck stops in integrations-mcp because kernel/dist is
 not built in this isolated checkout. Focused changed-project checks pass. Bun is
 unavailable, so equivalent pnpm/node commands are used. The first restricted
-production build failed to parse a TypeScript subprocess result; an unrestricted
-build is being checked separately. The full repository test suite is deferred
+production build failed to parse a TypeScript subprocess result; the unrestricted
+build passes with NODE_OPTIONS=--max-old-space-size=3072. Post-merge focused tests: 4 suites / 16 tests pass. Web callback audit fix: 25 tests pass.
+The full repository test suite is deferred
 to CI; local validation targets the changed producer/consumer boundaries.
 
 Logs live outside the repository under /tmp/matrix-provider-*.log and may be
 removed once this draft has been reviewed. The isolated worktree preserves all
 source work; temporary fake-provider homes are explicitly removed by their tests.
+
+## First review corrections
+
+Greptile identified stale-tab preference overwrites and historical Codex retry
+rejection. Production-boundary regressions reproduced both before correction.
+Web saves now merge current storage and notify mounted composers; historical
+Codex aliases retry with supervised human approval, retaining the old audit record.
+Truly simultaneous browser storage writes remain last-writer-wins; this change
+protects sequential stale-tab writes and does not introduce transactional storage.
+The required feature spec is linked from the plan, PR and ticket.
+
+Review correction validation: 3 suites / 28 tests pass; Web and Gateway typechecks,
+React Doctor and diff pattern scan pass (0 violations).

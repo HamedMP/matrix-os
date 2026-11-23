@@ -27,7 +27,7 @@ import {
   canonicalProviderChoiceCanBeDefault,
   canonicalComposerSelectionIsAvailable,
 } from "@matrix-os/ui";
-import { choiceKey, readSavedChoice, applySavedSelection, readSavedProviderPreferences, rememberProviderPreference, saveLastProviderSelection, type SavedProviderSelection } from "./chat-provider-preferences";
+import { PER_PROVIDER_KEY, PROVIDER_PREFERENCES_CHANGED_EVENT, choiceKey, readSavedChoice, applySavedSelection, readSavedProviderPreferences, rememberProviderPreference, saveLastProviderSelection, type SavedProviderSelection } from "./chat-provider-preferences";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 
@@ -51,6 +51,19 @@ export function useChatProviderState(
   const [hasTrustedCatalog, setHasTrustedCatalog] = useState(false);
   const refreshRef = useRef<() => void>(() => undefined);
   const requestRefresh = useCallback(() => refreshRef.current(), []);
+
+  useEffect(() => {
+    const refreshPreferences = () => setProviderPreferences(readSavedProviderPreferences());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === PER_PROVIDER_KEY || event.key === null) refreshPreferences();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(PROVIDER_PREFERENCES_CHANGED_EVENT, refreshPreferences);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(PROVIDER_PREFERENCES_CHANGED_EVENT, refreshPreferences);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -165,6 +178,15 @@ export function useChatProviderState(
 
   const choices = catalog ? deriveCanonicalProviderChoices(catalog, { allowUnavailableManagedModels: true }).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
     && (!unavailable || !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)))) : [];
+  const defaultChoice = choices.find((choice) => {
+      if (!canonicalProviderChoiceCanBeDefault(choice)) return false;
+      const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
+      return instance?.defaultSelection?.model === choice.modelId;
+    })
+    ?? choices.find(choice => canonicalProviderChoiceCanBeDefault(choice)
+      && catalog?.instances.some(instance => instance.id === choice.instanceId && instance.availability === "available"
+        && instance.models.some(model => model.id === choice.modelId && model.availability === "available")))
+    ?? null;
   const bindingKey = currentSelection
     ? JSON.stringify([context?.scopeKey ?? "", context?.chatId ?? "", currentSelection, context?.executionControls?.runId ?? ""])
     : "";
@@ -175,7 +197,8 @@ export function useChatProviderState(
       ? boundDraft.selection
       : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [], ...restoredModes }
     : providerPreferences[Object.keys(providerPreferences).sort((a, b) => b.length - a.length)
-      .find(id => savedChoice.instanceId ? id === savedChoice.instanceId : savedChoice.key.startsWith(`${id}:`)) ?? ""] ?? savedChoice;
+      .find(id => savedChoice.instanceId ? id === savedChoice.instanceId : savedChoice.key.startsWith(`${id}:`))
+      ?? (!savedChoice.key ? defaultChoice?.instanceId : undefined) ?? ""] ?? savedChoice;
   const retainedInstanceId = ["matrix_pi_default", MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
     .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));
   const checkingInstance = catalog?.instances.find(instance => instance.observationState === "checking" && effectiveSaved.key.startsWith(`${instance.id}:`));
@@ -193,15 +216,7 @@ export function useChatProviderState(
     : currentSelection
     ? chatChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
-    ?? choices.find((choice) => {
-      if (!canonicalProviderChoiceCanBeDefault(choice)) return false;
-      const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
-      return instance?.defaultSelection?.model === choice.modelId;
-    })
-    ?? choices.find(choice => canonicalProviderChoiceCanBeDefault(choice)
-      && catalog?.instances.some(instance => instance.id === choice.instanceId && instance.availability === "available"
-        && instance.models.some(model => model.id === choice.modelId && model.availability === "available")))
-    ?? null;
+    ?? defaultChoice;
   const selectedInstance = catalog?.instances.find(instance => instance.id === selectedBase?.instanceId);
   const selected = selectedBase && canonicalChatSubscriptionSelectionMatches(selectedInstance, effectiveSaved.options)
     ? applySavedSelection(selectedBase, effectiveSaved)

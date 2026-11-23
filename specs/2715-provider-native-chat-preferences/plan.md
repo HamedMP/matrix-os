@@ -2,6 +2,8 @@
 
 Ticket: [ENG-404](https://linear.app/matrix-os/issue/ENG-404/preserve-chat-effort-and-permission-when-switching-providers).
 
+Feature requirements: [spec.md](spec.md).
+
 ## Behavior
 
 The existing Chat permission drawer shows Codex Ask for approval, Approve for me,
