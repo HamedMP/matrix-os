@@ -1,3 +1,4 @@
+import { CODEX_CHAT_SPEED_OPTION } from "./codex-chat-speed.mjs";
 import { CodexBrowserLeaseSchema } from "./codex-browser-bootstrap.mjs";
 import { z } from "zod/v4";
 import { isAbsolute } from "node:path";
@@ -9,6 +10,8 @@ const ProviderModelReferenceSchema = z.string()
   .max(160)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
   .refine((value) => !value.includes(".."));
+const ServiceTierValueSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional();
+
 export const RunnerConfigSchema = z.object({
   routinePrivate: z.literal(true).optional(),
   nativeSubscription: z.literal(true).optional(),
@@ -25,7 +28,8 @@ export const RunnerConfigSchema = z.object({
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
   model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
-  serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  serviceTier: ServiceTierValueSchema,
+  chatSpeed: ServiceTierValueSchema,
 }).strict();
 export const ModelOptionSchema = z.object({
   id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
@@ -42,3 +46,15 @@ export const PendingTurnSchema = z.object({
 }).strict();
 export const EffortSchema = RunnerConfigSchema.shape.effort;
 export const ServiceTierSchema = RunnerConfigSchema.shape.serviceTier;
+
+export function codexInitialTurn(config) {
+  return PendingTurnSchema.parse({
+    prompt: config.prompt,
+    model: config.model,
+    modelOptions: [
+      ...(config.effort ? [{ id: "effort", value: config.effort }] : []),
+      ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
+      ...(config.chatSpeed ? [{ id: CODEX_CHAT_SPEED_OPTION, value: config.chatSpeed }] : []),
+    ],
+  });
+}

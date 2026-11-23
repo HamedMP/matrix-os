@@ -1,3 +1,4 @@
+import { CODEX_CHAT_SPEED_OPTION } from "./coding-agents/codex-chat-speed.mjs";
 import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,6 +128,7 @@ const CodexAppServerConfigSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
+  chatSpeed: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
 }).strict();
 
 function modelOption(input: AgentLaunchInput, id: string): string | undefined {
@@ -471,7 +473,8 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
     ...(input.model ? { model: input.model } : {}),
     ...(modelOption(input, "effort") ? { effort: modelOption(input, "effort") } : {}),
-    ...(modelOption(input, "service_tier") ? { serviceTier: modelOption(input, "service_tier") } : {}),
+    serviceTier: modelOption(input, "service_tier"),
+    chatSpeed: modelOption(input, CODEX_CHAT_SPEED_OPTION),
   });
 }
 

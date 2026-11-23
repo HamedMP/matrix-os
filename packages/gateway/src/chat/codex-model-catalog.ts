@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { performance } from "node:perf_hooks";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
+import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED } from "../coding-agents/codex-chat-speed.mjs";
 import { recordCodexCatalogTiming, type CodexCatalogTimingResult } from "./send-timing.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -60,7 +61,6 @@ const RawModelSchema = z.object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(280),
   }).passthrough()).max(MAX_OPTIONS).default([]),
-  defaultServiceTier: ReferenceIdSchema.nullable().default(null),
 }).passthrough();
 const RawCatalogSchema = z.object({
   data: z.array(RawModelSchema).max(MAX_MODELS),
@@ -80,10 +80,10 @@ export function normalizeCodexModelCatalog(raw: unknown): CodingModelCatalogProj
   const effortValues = [...new Set(visible.flatMap((model) => (
     model.supportedReasoningEfforts.map((option) => option.reasoningEffort)
   )))].slice(0, MAX_OPTIONS);
-  const serviceTiers = new Map<string, string>();
+  const serviceTiers = new Map<string, string>([[CODEX_CHAT_STANDARD_SPEED, "Standard"]]);
   for (const tier of visible.flatMap((model) => model.serviceTiers)) {
     if (serviceTiers.size >= MAX_OPTIONS) break;
-    if (!serviceTiers.has(tier.id)) serviceTiers.set(tier.id, tier.name);
+    if (tier.id !== "default" && !serviceTiers.has(tier.id)) serviceTiers.set(tier.id, tier.name);
   }
   const defaultModel = visible.find((model) => model.isDefault) ?? visible[0]!;
 
@@ -114,18 +114,20 @@ export function normalizeCodexModelCatalog(raw: unknown): CodingModelCatalogProj
           : effortValues[0],
         placement: "composer" as const,
       }] : []),
-      ...(serviceTiers.size > 0 ? [{
-        id: "service_tier",
-        label: "Service tier",
+      ...(serviceTiers.size > 1 ? [{
+        id: CODEX_CHAT_SPEED_OPTION,
+        label: "Speed",
         kind: "enum" as const,
         values: [...serviceTiers].map(([value, label]) => ({ value, label })),
-        defaultValue: defaultModel.defaultServiceTier && serviceTiers.has(defaultModel.defaultServiceTier)
-          ? defaultModel.defaultServiceTier
-          : serviceTiers.keys().next().value,
-        placement: "advanced" as const,
+        defaultValue: CODEX_CHAT_STANDARD_SPEED,
+        placement: "composer" as const,
       }] : []),
     ],
     defaultModel: defaultModel.id,
+    codexSpeedTiersByModel: visible.map((model) => ({
+      modelId: model.id,
+      tiers: model.serviceTiers.map((tier) => tier.id),
+    })),
   };
 }
 

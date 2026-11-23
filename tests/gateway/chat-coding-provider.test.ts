@@ -76,7 +76,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
       projectId: "matrix-os",
       worktreeId: "wt_feature",
       model: "gpt-5.6-sol",
-      modelOptions: [],
+      modelOptions: [{ id: "codex_speed", value: "standard" }],
       mode: "default",
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",
@@ -676,7 +676,9 @@ describe("canonical coding Chat Provider adapter", () => {
 
     const events = [];
     for await (const candidate of adapter.resume!({
-      ...input(),
+      ...input({ selection: { instanceId: "codex_default", model: "gpt-5.6-sol", options: [
+        { id: "effort", value: "low" }, { id: "service_tier", value: "priority" },
+      ] } }),
       resumeState: { conversationId: "thread_native" },
     })) events.push(candidate);
     expect(events).toEqual([
@@ -686,7 +688,9 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.acceptTurn).toHaveBeenCalledWith(
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
-      expect.objectContaining({ message: "ship it" }),
+      expect.objectContaining({ message: "ship it", modelOptions: [
+        { id: "effort", value: "low" }, { id: "codex_speed", value: "standard" },
+      ] }),
     );
 
     await adapter.cancel!({
