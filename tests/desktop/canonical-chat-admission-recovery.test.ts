@@ -20,7 +20,7 @@ const input = { clientRequestId: "req_fixture_running", baseRevision: 0,
   interactionMode: "default", permissionMode: "supervised" };
 
 describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface) => {
-  function setup(readResult: unknown = detail, status?: number, readFails = false, detailFails = false, transcriptResult: unknown = readResult) {
+  function setup(readResult: unknown = detail, status?: number, readFails = false, detailFails = false, transcriptResult: unknown = readResult, readTranscript?: () => Promise<unknown>) {
     const post = vi.fn(async () => {
       if (surface === "Electron") throw new AppError(status ? "server" : "timeout", { httpStatus: status });
       if (status) return new Response("{}", { status });
@@ -38,6 +38,7 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
         return { record: saved.record, message: saved.messages[0], turn: saved.turns[0], run: saved.runs[0], admission: "already_accepted" };
       }
       if (detailFails) throw new TypeError("Detail offline");
+      if (readTranscript) return readTranscript();
       return transcriptResult;
     });
     const client = surface === "Electron" ? createCanonicalChatClient({
@@ -98,6 +99,32 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
     const accepted = await client.admitTurn(chatId, input);
     expect(accepted.admission).toBe("already_accepted");
     expect(accepted).not.toHaveProperty("recoveredDetail");
+    expect(post).toHaveBeenCalledOnce();
+  });
+
+  it("acknowledges a proven admission while optional transcript hydration remains pending", async () => {
+    vi.useFakeTimers();
+    let finishTranscript!: (value: unknown) => void;
+    const transcript = new Promise<unknown>(resolve => { finishTranscript = resolve; });
+    const readTranscript = vi.fn(() => transcript);
+    const { client, post, get } = setup(detail, undefined, false, false, detail, readTranscript);
+    let acknowledged: Awaited<ReturnType<typeof client.admitTurn>> | undefined;
+    const sending = client.admitTurn(chatId, input).then(result => { acknowledged = result; });
+    try {
+      await vi.waitFor(() => expect(get.mock.calls.some(([path]) => path.includes("/turn-admissions/"))).toBe(true));
+      // Leave the optional full transcript unresolved: its transport deadline
+      // must not keep an already attested submission in the sending state.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(acknowledged).toMatchObject({ admission: "already_accepted", turn: { clientRequestId: input.clientRequestId } });
+      expect(acknowledged).not.toHaveProperty("recoveredDetail");
+      expect(post).toHaveBeenCalledOnce();
+      expect(readTranscript).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledOnce();
+    } finally {
+      finishTranscript(detail);
+      await sending;
+      vi.useRealTimers();
+    }
     expect(post).toHaveBeenCalledOnce();
   });
 
