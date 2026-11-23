@@ -1,0 +1,75 @@
+/* Message body. The mail itself renders inside the frame; these rules style only what surrounds it. */
+.mx-message-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  color: var(--app-fg);
+}
+
+/* Carries the app tokens on ordinary properties so their computed values can be read for the frame. */
+.mx-message-body__probe {
+  display: none;
+  color: var(--app-fg);
+  background-color: var(--mx-message-bg, var(--app-bg));
+  border-top: 0 solid var(--app-border);
+  outline: 0 solid var(--identity-accent, var(--app-primary));
+  text-decoration-color: var(--app-muted-fg);
+  font-family: var(--app-font, system-ui, sans-serif);
+}
+
+.mx-message-body__notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-muted);
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+.mx-message-body__notice > span { flex: 1 1 200px; min-width: 0; }
+
+.mx-message-body__note {
+  margin: 0;
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+.mx-message-body__frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* A mail that brings its own colours is shown on light paper in a dark theme. */
+.mx-message-body[data-paper="true"] .mx-message-body__frame {
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mx-message-body__quote-toggle { align-self: flex-start; }
+
+.mx-message-body__empty {
+  margin: 0;
+  color: var(--app-muted-fg);
+  font-size: 13px;
+}
+
+/* The measuring copy: same width as the frame, never visible, never interactive. */
+.mx-message-body__measure {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout paint style;
+}
