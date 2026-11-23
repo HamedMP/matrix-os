@@ -1092,6 +1092,16 @@ configure_tailscale_serve() {
   ok "Matrix is served on your private network only"
 }
 
+# stop_matrix_tailscale_serve: after a private install, Tailscale Serve holds port 80
+# (and 443) on the tailnet address, so public nginx cannot bind 0.0.0.0:80. Only
+# a Serve config that points at Matrix's socket is turned off.
+stop_matrix_tailscale_serve() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  timeout 30 tailscale serve status 2>>"$MATRIX_INSTALL_LOG" | grep -qF "$TAILNET_SOCKET" || return 0
+  timeout 30 tailscale serve --http=80 off >>"$MATRIX_INSTALL_LOG" 2>&1 || log "no Tailscale Serve handler on port 80"
+  timeout 30 tailscale serve --https=443 off >>"$MATRIX_INSTALL_LOG" 2>&1 || log "no Tailscale Serve handler on port 443"
+}
+
 configure_private_network() {
   [ "$OPT_ACCESS" != "public" ] || return 0
   section "Connecting your private network (${OPT_ACCESS})"
@@ -1879,6 +1889,7 @@ private_access_failed() {
 # only once a WebSocket through public nginx upgrades (HTTP 101).
 restore_previous_listener() {
   local site=/etc/nginx/sites-available/matrix-self-host backup=/etc/nginx/matrix-self-host.previous-site
+  stop_matrix_tailscale_serve
   if [ -f "$backup" ]; then
     cp -f "$backup" "$site"
     nginx -t >>"$MATRIX_INSTALL_LOG" 2>&1 && systemctl reload nginx >>"$MATRIX_INSTALL_LOG" 2>&1 \
@@ -2161,6 +2172,7 @@ main() {
   require_private_access_ready
   write_env
   INSTALL_PHASE="nginx"
+  [ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve
   configure_nginx
   grant_run_user_access "$MATRIX_RUN_USER"
   INSTALL_PHASE="services"

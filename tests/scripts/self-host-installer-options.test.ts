@@ -972,6 +972,24 @@ MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale restore_previous_listener`;
       expect(refused.status).not.toBe(0);
     });
 
+    // Found live: Tailscale Serve kept port 80 on the tailnet address, so public nginx could not bind.
+    it("turns off Matrix's Tailscale Serve handlers before public nginx binds port 80", () => {
+      const calls = join(dir, "serve-calls");
+      const serve = (status: string) => run(`tailscale() { [ "$*" = "serve status" ] && { printf '%s\\n' "${status}"; return 0; }; echo "tailscale $*" >>"${calls}"; }
+timeout() { shift; "$@"; }
+MATRIX_INSTALL_LOG=/dev/null stop_matrix_tailscale_serve`);
+      expect(serve("|-- / proxy http://127.0.0.1:9000").status).toBe(0);
+      expect(existsSync(calls)).toBe(false);
+      const result = serve("|-- / proxy unix:/run/matrix-nginx/tailnet.sock");
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --http=80 off\ntailscale serve --https=443 off\n");
+      const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
+      expect(main).toContain('[ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve');
+      expect(main.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(main.indexOf("configure_nginx"));
+      const restore = readFileSync(script, "utf8").split("\nrestore_previous_listener() {")[1]!.split("\n}\n")[0]!;
+      expect(restore.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(restore.indexOf("systemctl reload nginx"));
+    });
+
     it("never keeps a stale tailnet origin for a public install", () => {
       const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
       expect(writeEnv).toContain('saved_origin="${PREVIOUS_SHELL_ORIGIN:-$saved_origin}"');
