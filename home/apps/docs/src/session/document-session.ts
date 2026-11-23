@@ -8,17 +8,21 @@
 import type { ApplyResult, DocxDocument, DocxOp, ResolveRevisionsResult, RevisionId } from "../../../_shared/office-engine/index";
 // The Word module alone: the root index would pull the workbook and formula engine into Docs.
 import { createDocx, openDocx } from "../../../_shared/office-engine/docx/index";
+// Plain browser download helper; the module has no React or bridge dependency.
+import { DOCX_MIME, downloadBytes } from "../../../_shared/office-ui/local-files";
 import { emptyChange } from "./changes";
 import { EditController } from "./edit-controller";
 import { sessionError, toSessionError } from "./errors";
 import { DEFAULT_UNDO_LIMIT, History } from "./history";
-import { fileName, isBridgePath } from "./paths";
+import { fileName, isBridgePath, localFileName } from "./paths";
 import type { RecentFilesStore } from "./recent-files";
 import { SaveController } from "./save-controller";
 import { EMPTY_STATE, SessionStore } from "./session-store";
 import type {
   AdoptOptions,
   DocumentChange,
+  DocumentSource,
+  LocalFileInput,
   MutationEffect,
   OpenOptions,
   OpenResult,
@@ -41,7 +45,9 @@ export interface DocumentSessionOptions {
   author: string;
   /** Recent documents list to keep up to date, if any. */
   recents?: RecentFilesStore | null;
-  /** Save edits after a pause. Default true. */
+  /** Downloads a document to the computer (a local document's Save, Download a copy). Default: a browser download. */
+  download?: (name: string, bytes: Uint8Array) => void;
+  /** Save edits after a pause. Default true. Local documents never autosave. */
   autosave?: boolean;
   autosaveDelayMs?: number;
   /** Most undo steps kept. Default 200. */
@@ -91,6 +97,7 @@ export class DocumentSession {
     );
     this.saver = new SaveController({
       files: this.files,
+      download: options.download ?? ((name, bytes) => downloadBytes(name, bytes, DOCX_MIME)),
       delayMs: Math.max(0, options.autosaveDelayMs ?? DEFAULT_AUTOSAVE_DELAY_MS),
       now,
       log: this.log,
@@ -156,14 +163,25 @@ export class DocumentSession {
     if (!isBridgePath(path)) return this.openFailed(sessionError("invalid_request"));
     const blocked = await this.leaveCurrent(options);
     if (blocked !== null) return blocked;
-    return this.load(path, options);
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, options);
+  }
+
+  /**
+   * Opens a file from the owner's computer as a local document: no path, no
+   * autosave, no recent entry; Save downloads it under its name. Unsaved
+   * changes of the current document are saved first, as for `open`.
+   */
+  async openLocal(file: LocalFileInput, options: OpenOptions = {}): Promise<OpenResult> {
+    const blocked = await this.leaveCurrent(options);
+    if (blocked !== null) return blocked;
+    return this.load(async () => ({ bytes: file.bytes, version: null }), { path: null, name: localFileName(file.name), source: "local" }, options);
   }
 
   /** Reads the file again and replaces the local document with it. Unsaved changes are dropped. */
   async reload(): Promise<OpenResult> {
     const path = this.store.state.path;
     if (path === null) return { status: "error", error: sessionError("not_found") };
-    return this.load(path, { discardChanges: true });
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, { discardChanges: true });
   }
 
   /** Starts an empty, unsaved document. */
@@ -181,7 +199,7 @@ export class DocumentSession {
     const blocked = await this.leaveCurrent(options);
     if (blocked !== null) return blocked;
     this.loadToken++;
-    this.activate(doc, { path: null, name: options.name, version: null, dirty: options.dirty ?? true });
+    this.activate(doc, { path: null, name: options.name, version: null, dirty: options.dirty ?? true, source: "matrix" });
     return { status: "opened", path: null };
   }
 
@@ -275,12 +293,22 @@ export class DocumentSession {
 
   // ---------------------------------------------------------------- saving
 
-  /** Writes the document to its path if it has unsaved changes. Also the way to save now instead of waiting for autosave. */
+  /**
+   * Writes the document to its path if it has unsaved changes. Also the way
+   * to save now instead of waiting for autosave. A local document is
+   * downloaded instead (`downloaded`) and is then clean.
+   */
   save(): Promise<SaveResult> {
+    if (this.store.state.source === "local" && this.doc !== null) return this.saver.download(true);
     return this.saver.save();
   }
 
-  /** Same as `save`. */
+  /** Downloads the document as it is now, under its name. Changes nothing in the session or the home. */
+  downloadCopy(): Promise<SaveResult> {
+    return this.saver.download(false);
+  }
+
+  /** Writes pending changes of a Matrix document (leaving the window, closing the app). Never downloads. */
   flush(): Promise<SaveResult> {
     return this.saver.save();
   }
@@ -313,13 +341,17 @@ export class DocumentSession {
 
   // ---------------------------------------------------------------- internals
 
-  private async load(path: string, options: OpenOptions): Promise<OpenResult> {
+  private async load(
+    read: () => Promise<{ bytes: Uint8Array; version: string | null }>,
+    file: { path: string | null; name: string; source: DocumentSource },
+    options: OpenOptions,
+  ): Promise<OpenResult> {
     const token = ++this.loadToken;
     this.store.patch({ status: "loading" });
     let doc: DocxDocument;
-    let version: string;
+    let version: string | null;
     try {
-      const content = await this.files.read(path);
+      const content = await read();
       doc = await openDocx(content.bytes);
       version = content.version;
     } catch (error) {
@@ -335,8 +367,8 @@ export class DocumentSession {
       this.store.patch({ status: "ready" });
       return { status: "blocked", reason: "unsaved_changes" };
     }
-    this.activate(doc, { path, name: fileName(path), version, dirty: false });
-    return { status: "opened", path };
+    this.activate(doc, { ...file, version, dirty: false });
+    return { status: "opened", path: file.path };
   }
 
   private openFailed(error: SessionError): OpenResult {
@@ -358,7 +390,7 @@ export class DocumentSession {
     return this.isDirty() ? { status: "blocked", reason: "unsaved_changes" } : null;
   }
 
-  private activate(doc: DocxDocument, file: { path: string | null; name: string; version: string | null; dirty: boolean }): void {
+  private activate(doc: DocxDocument, file: { path: string | null; name: string; version: string | null; dirty: boolean; source: DocumentSource }): void {
     this.saver.cancel();
     this.documentToken++;
     this.doc = doc;
@@ -369,6 +401,7 @@ export class DocumentSession {
     this.savedTracking = tracking;
     this.store.patch({
       status: "ready",
+      source: file.source,
       path: file.path,
       name: file.name,
       version: file.version,

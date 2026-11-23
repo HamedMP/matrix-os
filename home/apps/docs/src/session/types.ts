@@ -60,10 +60,26 @@ export interface SessionSelection {
   focus: TextPosition;
 }
 
+/**
+ * Where the active document lives and where Save sends it.
+ * - `matrix`: a file in the owner's home (or a new document that will be saved there).
+ * - `local`: a file opened from the owner's computer. It has no path, never
+ *   autosaves, and Save downloads it under its own name. Saving it to the
+ *   home (`saveAs`) makes it a `matrix` document.
+ */
+export type DocumentSource = "matrix" | "local";
+
+/** A file read from the owner's computer. */
+export interface LocalFileInput {
+  name: string;
+  bytes: Uint8Array;
+}
+
 /** Immutable. A new object is published on every change, so it works with `useSyncExternalStore`. */
 export interface SessionState {
   status: SessionStatus;
-  /** Home-relative path, or null for a document that was never saved. */
+  source: DocumentSource;
+  /** Home-relative path, or null for a document that was never saved or came from the computer. */
   path: string | null;
   /** File name, or the working name of an unsaved document. */
   name: string;
@@ -161,6 +177,8 @@ export type OpenResult =
 
 export type SaveResult =
   | { status: "saved"; path: string; version: string }
+  /** The document was handed to the browser as a download (a local document's Save, or Download a copy). */
+  | { status: "downloaded"; name: string }
   | { status: "conflict"; path: string }
   | { status: "error"; error: SessionError }
   | { status: "skipped"; reason: "no_document" | "no_path" | "clean" | "not_active" };

@@ -38,6 +38,11 @@
  *   `{ discardChanges: true }` to drop the changes.
  * - A file that cannot be read or parsed is never written.
  *
+ * Documents from the owner's computer (`openLocal`) have `source: "local"`:
+ * no path, no autosave and no recent entry; `save()` downloads them under
+ * their name (`{ status: "downloaded" }`) and `saveAs(path)` turns them into
+ * Matrix documents. `downloadCopy()` downloads any document as it is now.
+ *
  * `session.document` is the engine handle for reading (view, revisions,
  * comments, outline). `session.onChange` reports content changes with the
  * block ids to refresh.
@@ -46,7 +51,7 @@
 export { DEFAULT_AUTOSAVE_DELAY_MS, DocumentSession } from "./document-session";
 export type { DocumentSessionOptions } from "./document-session";
 export { DEFAULT_UNDO_LIMIT, MERGE_WINDOW_MS } from "./history";
-export { DOCX_EXTENSION, copyPath, directoryOf, fileName, isBridgePath } from "./paths";
+export { DOCX_EXTENSION, copyPath, directoryOf, downloadName, fileName, isBridgePath, localFileName } from "./paths";
 export { DEFAULT_RECENT_LIMIT, RECENT_FILES_TABLE, RecentFilesStore } from "./recent-files";
 export type { RecentFile, RecentFilesDb, RecentFilesOptions } from "./recent-files";
 export { isBridgeFileError, sessionError, toSessionError } from "./errors";
@@ -54,6 +59,8 @@ export type {
   AdoptOptions,
   DocumentChange,
   DocumentChangeKind,
+  DocumentSource,
+  LocalFileInput,
   MutationEffect,
   OpenOptions,
   OpenResult,

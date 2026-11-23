@@ -7,6 +7,8 @@
  *   file changed by someone else is never overwritten silently.
  * - On `version_conflict` the local document stays as it is; the session shows
  *   a conflict until the owner reloads or saves a copy.
+ * - A local document (opened from the computer) has no path: autosave skips
+ *   it, and its Save is `download(true)`, which hands the bytes to the browser.
  * - Saves run one at a time. Each one belongs to the document that was active
  *   when it was requested and does nothing to the session once another
  *   document has taken its place.
@@ -15,7 +17,7 @@
 import type { BridgeFileWriteResult } from "../../../_shared/matrix-os";
 import type { DocxDocument } from "../../../_shared/office-engine/index";
 import { isBridgeFileError, sessionError, toSessionError } from "./errors";
-import { copyPath, fileName, isBridgePath } from "./paths";
+import { copyPath, downloadName, fileName, isBridgePath } from "./paths";
 import type { SaveAsOptions, SaveResult, SessionError, SessionFiles, SessionState } from "./types";
 
 const MAX_COPY_ATTEMPTS = 50;
@@ -41,6 +43,8 @@ export interface SaveHost {
 
 export interface SaveControllerOptions {
   files: SessionFiles;
+  /** Hands a serialised document to the browser as a download. May throw when the browser refuses. */
+  download: (name: string, bytes: Uint8Array) => void;
   host: SaveHost;
   delayMs: number;
   now: () => Date;
@@ -64,6 +68,7 @@ interface Snapshot {
 
 export class SaveController {
   private readonly files: SessionFiles;
+  private readonly sendDownload: (name: string, bytes: Uint8Array) => void;
   private readonly host: SaveHost;
   private readonly delayMs: number;
   private readonly now: () => Date;
@@ -73,6 +78,7 @@ export class SaveController {
 
   constructor(options: SaveControllerOptions) {
     this.files = options.files;
+    this.sendDownload = options.download;
     this.host = options.host;
     this.delayMs = options.delayMs;
     this.now = options.now;
@@ -177,9 +183,41 @@ export class SaveController {
     });
   }
 
-  private async serialise(doc: DocxDocument, token: number): Promise<Snapshot | { error: SessionError } | null> {
-    this.cancel();
-    this.host.patch({ saveStatus: "saving", saveError: null });
+  /**
+   * Serialises the document and downloads it under its name. With `asSave`
+   * (the Save of a local document) the document is then clean; otherwise
+   * (Download a copy) the save state is left as it is.
+   */
+  download(asSave: boolean): Promise<SaveResult> {
+    const token = this.host.getToken();
+    return this.enqueue(async () => {
+      const doc = this.host.getDocument();
+      if (doc === null) return { status: "skipped", reason: "no_document" };
+      if (token !== this.host.getToken()) return { status: "skipped", reason: "not_active" };
+      const name = downloadName(this.host.getState().name);
+      const snapshot = await this.serialise(doc, token, !asSave);
+      if (snapshot === null) return { status: "skipped", reason: "not_active" };
+      if ("error" in snapshot) return asSave ? this.failed(snapshot.error) : { status: "error", error: snapshot.error };
+      try {
+        this.sendDownload(name, snapshot.bytes);
+      } catch (error) {
+        this.log("docs: the download could not start", error);
+        return asSave ? this.failed(sessionError("unknown")) : { status: "error", error: sessionError("unknown") };
+      }
+      if (asSave) {
+        this.host.markSaved(snapshot.stateId, snapshot.tracking);
+        this.host.patch({ saveStatus: "saved", saveError: null, lastSavedAt: this.now().toISOString(), dirty: this.host.isDirty() });
+      }
+      return { status: "downloaded", name };
+    });
+  }
+
+  /** The document as bytes. `quiet` (a copy) leaves the save state and the autosave timer alone. */
+  private async serialise(doc: DocxDocument, token: number, quiet = false): Promise<Snapshot | { error: SessionError } | null> {
+    if (!quiet) {
+      this.cancel();
+      this.host.patch({ saveStatus: "saving", saveError: null });
+    }
     this.host.syncTracking();
     const stateId = this.host.currentStateId();
     const tracking = this.host.getState().tracking;
@@ -217,6 +255,8 @@ export class SaveController {
     const previousPath = this.host.getState().path;
     this.host.markSaved(snapshot.stateId, snapshot.tracking);
     this.host.patch({
+      // A document written to the home is a Matrix document from now on, wherever it came from.
+      source: "matrix",
       path,
       name: fileName(path),
       version: result.version,

@@ -9,6 +9,7 @@ const MAX_LISTENERS = 64;
 
 export const EMPTY_STATE: SessionState = Object.freeze({
   status: "empty",
+  source: "matrix",
   path: null,
   name: "",
   version: null,

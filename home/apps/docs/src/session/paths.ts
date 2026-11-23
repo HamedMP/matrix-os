@@ -42,3 +42,19 @@ export function isBridgePath(path: unknown): path is string {
   if (path.includes("\u0000") || path.includes("\\")) return false;
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
+
+const MAX_NAME_LENGTH = 255;
+
+/** A plain file name for a file from the computer: no folders or control characters, at most 255 characters. */
+export function localFileName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_NAME_LENGTH);
+  return clean === "" || clean === "." || clean === ".." ? `Document${DOCX_EXTENSION}` : clean;
+}
+
+/** The name a download gets: the document name, with `.docx` added when it has another or no extension. */
+export function downloadName(name: string): string {
+  const plain = localFileName(name);
+  return plain.toLowerCase().endsWith(DOCX_EXTENSION) ? plain : `${plain}${DOCX_EXTENSION}`;
+}
