@@ -1,13 +1,15 @@
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence";
+import { createGatewayOfficeDocuments } from "../../../packages/gateway/src/office/gateway-wiring";
 import { officeFenceOwnerIds } from "../../../packages/gateway/src/office/routes";
 import { createGatewayProjectPathAdmission } from "../../../packages/gateway/src/server/project-routes";
 import { createTestProjectAdmission, type TestProject } from "../app-files/project-fence-helpers";
 import { createOfficeHarness, json, type OfficeHarness } from "./helpers";
 
 let harness: OfficeHarness | null = null;
-afterEach(async () => { await harness?.cleanup(); harness = null; });
+afterEach(async () => { vi.unstubAllEnvs(); await harness?.cleanup(); harness = null; });
 
 const PROJECTS: readonly TestProject[] = [
   { id: "proj_shared", localPath: "projects/acme", ownerId: "owner", refusal: "scope_required" },
@@ -134,8 +136,32 @@ describe("gateway wiring of the project fence", () => {
 
   it("hands the same fence to the document service and the app file bridge at startup", async () => {
     const server = await readFile("packages/gateway/src/server.ts", "utf8");
-    expect(server).toContain("const ownerProjectPathAdmission = createGatewayProjectPathAdmission({");
-    expect(server).toContain("{ projectPathAdmission: ownerProjectPathAdmission, ownerIds: officeFenceOwnerIds() }");
-    expect(server).toContain("...(ownerProjectPathAdmission ? { projectPathAdmission: ownerProjectPathAdmission } : {}),");
+    expect(server).toContain("const officeDocuments = createGatewayOfficeDocuments({ homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission });");
+    expect(server).toContain("documentTools: officeDocuments.routes,");
+    expect(server).toContain("officeDocumentRoutes: officeDocuments.routes,");
+    expect(server).toContain("projectPathAdmission: officeDocuments.projectPathAdmission,");
+    expect(server).toContain("officeDocuments.close()");
+  });
+
+  it("builds the gateway document service inside the fence when a collaboration database exists", async () => {
+    harness = await createOfficeHarness();
+    const home = harness.home;
+    await mkdir(join(home, "projects/acme"), { recursive: true });
+    const projects = { listManagedProjects: async () => ({ projects: [{ id: "proj_shared", localPath: "projects/acme" }] }) };
+    vi.stubEnv("MATRIX_USER_ID", "owner");
+    const fenced = createGatewayOfficeDocuments({
+      homePath: home, projects: projects as never,
+      projectOperationAdmission: { withLegacyAdmission: async () => { throw new ProjectFenceError("scope_required"); } },
+    });
+    expect(fenced.projectPathAdmission).toBeDefined();
+    const create = (documents: typeof fenced, path: string) => documents.routes.request("/documents/create", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, paragraphs: ["One"] }),
+    });
+    expect((await create(fenced, "projects/acme/a.docx")).status).toBe(403);
+    expect((await create(fenced, "docs/a.docx")).status).toBe(200);
+    const open = createGatewayOfficeDocuments({ homePath: home, projects: projects as never });
+    expect(open.projectPathAdmission).toBeUndefined();
+    expect((await create(open, "projects/acme/b.docx")).status).toBe(200);
+    expect(await readdir(join(home, "projects/acme"))).toEqual(["b.docx"]);
   });
 });

@@ -22,8 +22,8 @@ export interface BridgeDataRouteOptions {
   queryBodyLimit: MiddlewareHandler;
   dataBodyLimit: MiddlewareHandler;
   logUnexpectedJsonParseFailure(context: string, error: unknown): void;
-  /** The owner file routes' collaboration fence, applied to app file writes. */
-  projectPathAdmission?: LegacyProjectPathAdmission;
+  /** The owner file routes' collaboration fence, applied to app file writes; undefined without a collaboration database. */
+  projectPathAdmission?: LegacyProjectPathAdmission | undefined;
 }
 
 /**

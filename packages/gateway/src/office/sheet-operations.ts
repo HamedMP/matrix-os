@@ -7,7 +7,7 @@ import {
   OFFICE_MAX_LISTED_CHANGES, OFFICE_MAX_RANGE_CELLS,
   type OfficeCell, type OfficeCellChange, type OfficeCellValue, type OfficeSheetEdit, type OfficeSheetInfo,
 } from "@matrix-os/contracts/office-documents";
-import { OfficeDocumentError } from "./errors.js";
+import { OfficeDocumentError } from "./document-error.js";
 
 /** Pure operations on an opened workbook. No file I/O; the service loads and saves. */
 

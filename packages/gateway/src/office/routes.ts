@@ -12,6 +12,7 @@ import {
 import { createProjectWriteGuard } from "../app-files/project-write-fence.js";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { readPrincipalRuntimeConfig } from "../request-principal.js";
+import type { OfficeEngine } from "./engine-pool.js";
 import { logOfficeFailure, officeErrorCodeFor } from "./errors.js";
 import { OfficeDocumentService } from "./service.js";
 
@@ -24,6 +25,8 @@ export interface OfficeDocumentRouteOptions {
   maxInFlight?: number;
   /** Test seam: runs right before a save's version check. */
   beforeCommit?: (absolutePath: string) => Promise<void>;
+  /** Where the engine runs. Defaults to the gateway's shared pool of engine threads. */
+  engine?: OfficeEngine;
   /**
    * The collaboration fence of the owner file routes. With it, a save into a
    * shared or mid-transition project is refused; without it (no collaboration
@@ -72,6 +75,7 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
         ...(options.clock ? { clock: options.clock } : {}),
         ...(options.maxFileBytes ? { maxFileBytes: options.maxFileBytes } : {}),
         ...(options.beforeCommit ? { beforeCommit: options.beforeCommit } : {}),
+        ...(options.engine ? { engine: options.engine } : {}),
         ...(options.projectPathAdmission
           ? { writeGuard: createProjectWriteGuard(options.projectPathAdmission, options.ownerIds ?? []) }
           : {}),

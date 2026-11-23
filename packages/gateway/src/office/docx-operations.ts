@@ -4,7 +4,7 @@ import {
   OFFICE_MAX_LISTED_REVISIONS,
   type OfficeDocxEdit, type OfficeRevision,
 } from "@matrix-os/contracts/office-documents";
-import { OfficeDocumentError } from "./errors.js";
+import { OfficeDocumentError } from "./document-error.js";
 
 /** Pure operations on an opened document. No file I/O; the service loads and saves. */
 

@@ -257,7 +257,7 @@ import { registerCollaborationChatRoutes } from "./server/collaboration-chat-rou
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
-import { createGatewayProjectPathAdmission, registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
+import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -283,7 +283,7 @@ import {
 } from "./shell/index.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
-import { createOfficeDocumentRoutes, officeFenceOwnerIds } from "./office/routes.js";
+import { createGatewayOfficeDocuments } from "./office/gateway-wiring.js";
 
 export {
   buildAllowedOrigins,
@@ -914,14 +914,7 @@ export async function createGateway(config: GatewayConfig) {
     repository: osViewStateRepository, ownerId: process.env.MATRIX_USER_ID, homePath, broadcastToOwner,
   });
   // One document service for the kernel tools and the `/api/office` routes: one per-path lock.
-  // The owner file routes' project fence also guards document saves and app file writes.
-  const ownerProjectPathAdmission = createGatewayProjectPathAdmission({
-    homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
-  });
-  const officeDocumentRoutes = createOfficeDocumentRoutes({
-    homePath,
-    ...(ownerProjectPathAdmission ? { projectPathAdmission: ownerProjectPathAdmission, ownerIds: officeFenceOwnerIds() } : {}),
-  });
+  const officeDocuments = createGatewayOfficeDocuments({ homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission });
   const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -934,7 +927,7 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
     terminalTools: terminalAgents.kernelTools,
-    documentTools: officeDocumentRoutes,
+    documentTools: officeDocuments.routes,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1379,7 +1372,7 @@ export async function createGateway(config: GatewayConfig) {
   registerGatewayProjectFileRoutes(app, {
     homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
     projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
-    officeDocumentRoutes,
+    officeDocumentRoutes: officeDocuments.routes,
   });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -1392,8 +1385,7 @@ export async function createGateway(config: GatewayConfig) {
   registerBridgeDataRoutes(app, {
     homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
     broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
-    logUnexpectedJsonParseFailure,
-    ...(ownerProjectPathAdmission ? { projectPathAdmission: ownerProjectPathAdmission } : {}),
+    logUnexpectedJsonParseFailure, projectPathAdmission: officeDocuments.projectPathAdmission,
   });
 
   registerAppIntegrationCapabilities(app, {
@@ -1937,7 +1929,7 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
-      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close())]);
+      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close()), officeDocuments.close()]);
       nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();
