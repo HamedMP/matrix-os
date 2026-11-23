@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { loadCustomerVpsConfig, resolvePreviewServerType } from '../../packages/platform/src/customer-vps-config.js';
 import { ProvisionRequestSchema } from '../../packages/platform/src/customer-vps-schema.js';
 import { isPreviewMachine } from '../../packages/platform/src/customer-vps-preview.js';
 import { validateDbLatestPointer } from '../../packages/platform/src/customer-vps-r2.js';
@@ -147,5 +147,21 @@ describe('platform/customer-vps', () => {
     expect(quickstart).toContain('Rollback');
     expect(quickstart).toContain('Non-production smoke commands');
   });
-
+  it('creates preview machines on cx23 unless a valid preview server type is configured', () => {
+    expect(loadCustomerVpsConfig({}).previewServerType).toBe('cx23');
+    expect(loadCustomerVpsConfig({}).serverType).toBe('cpx22');
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_SERVER_TYPE: 'cpx32' }).previewServerType).toBe('cpx32');
+    for (const invalid of ['', 'CX23', 'cx23 ', 'cx23;reboot', '../cx23', 'cx', 'x'.repeat(65)]) {
+      expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_SERVER_TYPE: invalid }).previewServerType).toBe('cx23');
+    }
+  });
+  it('falls back to the customer server type where the preview type is not offered', () => {
+    const config = loadCustomerVpsConfig({ HETZNER_SERVER_TYPE: 'cpx21' });
+    for (const location of ['fsn1', 'hel1', 'nbg1']) {
+      expect(resolvePreviewServerType(config, location)).toBe('cx23');
+    }
+    for (const location of ['ash', 'hil', 'sin']) {
+      expect(resolvePreviewServerType(config, location)).toBe('cpx21');
+    }
+  });
 });
