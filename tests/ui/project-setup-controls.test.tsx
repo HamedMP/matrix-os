@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectSetupControls, ProjectSetupEntry, ProjectSetupIntroduction } from "../../packages/ui/src/chat/ProjectSetupControls";
 import {
@@ -92,6 +92,25 @@ it("says the skill description is accepted without claiming that a skill file ex
   render(<ProjectSetupAcceptedNote draft={current} />);
   expect(screen.getByText("Skill description added")).toBeTruthy();
   expect(screen.queryByText(/skill ready/i)).toBeNull();
+});
+
+it("can recover a generation that completes after polling stops without starting another run", () => {
+  vi.useFakeTimers();
+  try {
+    const dispatch = vi.fn(async () => true);
+    const running = { ...draft, generation: { runId: "run_draft", status: "running" as const } };
+    const { rerender } = render(<ProjectSetupControls setup={controller(dispatch, running)} transport={null} />);
+    act(() => vi.advanceTimersByTime(125_000));
+    expect(dispatch).toHaveBeenCalledTimes(60);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Check draft status" }));
+    expect(dispatch).toHaveBeenCalledTimes(61);
+    expect(dispatch).toHaveBeenLastCalledWith({ type: "sync_generation" });
+    rerender(<ProjectSetupControls setup={controller(dispatch)} transport={null} />);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps an edited Markdown draft and blocks Save until its update is accepted", async () => {

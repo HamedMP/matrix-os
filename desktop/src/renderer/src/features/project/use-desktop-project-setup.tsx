@@ -8,7 +8,7 @@ import {
   ProjectSetupAcceptedNote,
   projectSetupAnswerPlaceholder,
   type ProjectSetupTransport,
-  type ProjectSetupMarkdownState,
+  useProjectSetupMarkdownEdits,
 } from "@matrix-os/ui";
 import { PROJECT_SKILL_FILE_MAX_BYTES, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import {
@@ -50,14 +50,6 @@ export function useDesktopProjectSetup({
   const launch = useProjectSetupLaunch();
   const scope = JSON.stringify([api?.baseUrl, runtimeSlot, authGeneration]);
   const editorScope = JSON.stringify([scope, projectId, chatId]);
-  // Tabs stay mounted during Settings. Keep only this checkout/Chat's three review editors.
-  const [editors, setEditors] = useState<{
-    scope: string;
-    files: Record<string, ProjectSetupMarkdownState>;
-  }>({ scope: editorScope, files: {} });
-  useLayoutEffect(() => {
-    setEditors({ scope: editorScope, files: {} });
-  }, [editorScope]);
   const project = useBoard((state) => state.projects.find((item) => item.id === projectId));
   const mcpSettingsOpen = useTabs(state => state.tabs.some(tab => tab.id === state.activeTabId && tab.kind === "settings"));
   const [mcpHandoff, setMcpHandoff] = useState<string | null>(null);
@@ -129,17 +121,7 @@ export function useDesktopProjectSetup({
     },
     onChanged: refresh,
   });
-  const markdownEdits = {
-    files: editors.scope === editorScope ? editors.files : {},
-    onChange: (path: string, state: ProjectSetupMarkdownState) => setEditors(previous => {
-      const paths = setup.draft?.proposals.map(file => file.path) ?? [];
-      if (previous.scope !== editorScope || !paths.includes(path)) return previous;
-      // A regenerated skill may replace its old path; retain only this review's bounded files.
-      const files = Object.fromEntries(Object.entries(previous.files).filter(([key]) => paths.includes(key)));
-      if (!files[path] && Object.keys(files).length >= 3) return previous;
-      return { scope: editorScope, files: { ...files, [path]: state } };
-    }),
-  };
+  const markdownEdits = useProjectSetupMarkdownEdits(editorScope, setup.draft?.proposals);
   const seenRequest = useRef(0);
   const startSetup = useEffectEvent(() => setup.start());
   useEffect(() => {

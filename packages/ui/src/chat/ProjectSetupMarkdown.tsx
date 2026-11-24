@@ -1,4 +1,5 @@
 import { useEffectEvent, useLayoutEffect, useState } from "react";
+import type { ProjectSetupDraft } from "@matrix-os/contracts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
@@ -7,6 +8,25 @@ export interface ProjectSetupMarkdownState {
   value: string;
   baseline: string;
   mode: "preview" | "edit";
+}
+
+// The transcript can move the review to another message after an individual file is applied.
+export function useProjectSetupMarkdownEdits(scope: string, proposals?: ProjectSetupDraft["proposals"]) {
+  const [editors, setEditors] = useState<{ scope: string; files: Record<string, ProjectSetupMarkdownState> }>({
+    scope, files: {},
+  });
+  useLayoutEffect(() => {
+    setEditors({ scope, files: {} });
+  }, [scope]);
+  return {
+    files: editors.scope === scope ? editors.files : {},
+    onChange: (path: string, state: ProjectSetupMarkdownState) => setEditors(previous => {
+      const paths = proposals?.map(file => file.path) ?? [];
+      if (previous.scope !== scope || !paths.includes(path)) return previous;
+      const files = Object.fromEntries(Object.entries(previous.files).filter(([key]) => paths.includes(key)));
+      return { scope, files: { ...files, [path]: state } };
+    }),
+  };
 }
 
 export function ProjectSetupMarkdown({
@@ -32,7 +52,7 @@ export function ProjectSetupMarkdown({
 }) {
   const [value, setValue] = useState(initialState?.value ?? content);
   const [mode, setMode] = useState<"preview" | "edit">(initialState?.mode ?? "preview");
-  const [baseline, setBaseline] = useState(initialState?.baseline ?? content);
+  const [baseline, setBaseline] = useState(initialState?.value === content ? content : initialState?.baseline ?? content);
   const dirty = value !== baseline;
   const tooLong = maximumCharacters !== undefined && value.length > maximumCharacters;
   if (content !== baseline && !dirty) {

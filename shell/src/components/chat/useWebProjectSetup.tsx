@@ -2,6 +2,7 @@
 import { useContext, useLayoutEffect, useMemo, useRef } from "react";
 import {
   useProjectSetup,
+  useProjectSetupMarkdownEdits,
   ProjectSetupControls,
   ProjectSetupIntroduction,
   ProjectSetupProgress,
@@ -89,6 +90,7 @@ export function useWebProjectSetup({
     selection,
     onOpenChat: openChat,
   });
+  const markdownEdits = useProjectSetupMarkdownEdits(setup.identity, setup.draft?.proposals);
   const sources = {
     loadInstalledSkills: async (signal: AbortSignal) =>
       parseProjectInstalledSkills(await transport.get(PROJECT_INSTALLED_SKILLS_PATH, signal)),
@@ -156,6 +158,7 @@ export function useWebProjectSetup({
             setup={setup}
             transport={transport}
             selection={selection}
+            markdownEdits={markdownEdits}
             onOpenMcpSettings={navigation?.openMcpSettings}
             mcpSettingsOpen={navigation?.mcpSettingsOpen}
             onOpenFile={(path) => openFile(path, authority)}

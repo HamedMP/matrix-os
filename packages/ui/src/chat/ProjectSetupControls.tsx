@@ -62,7 +62,8 @@ function ProjectSetupControlsScoped({
   const showReview = draft.step === "review" && !showConnectionCard;
   const [dirtyFiles, setDirtyFiles] = useState<string[]>(() =>
     Object.entries(markdownEdits?.files ?? {})
-      .filter(([path, edit]) => draft.proposals.some(file => file.path === path) && edit.value !== edit.baseline)
+      .filter(([path, edit]) => edit.value !== edit.baseline &&
+        draft.proposals.some(file => file.path === path && file.content !== edit.value))
       .map(([path]) => path),
   );
   const sourceRequest = useRef<AbortController | null>(null);
@@ -332,7 +333,12 @@ function ProjectSetupControlsScoped({
         <>
           <ProjectSetupReviewSummary draft={draft} connected={connected} />
           {draft.generation?.status === "running" ? (
-            <p role="status">Drafting your project files…</p>
+            <>
+              <p role="status">Drafting your project files…</p>
+              <Action disabled={busy} onClick={() => dispatch({ type: "sync_generation" })}>
+                Check draft status
+              </Action>
+            </>
           ) : (
             <Action
               disabled={busy || !selection}

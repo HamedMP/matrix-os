@@ -430,4 +430,4 @@ export { ProjectSetupProgress, ProjectSetupAcceptedNote, projectSetupAnswerPlace
 export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/ProjectSetupLaunch.js";
 export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupControlsMessageId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";
 
-export type { ProjectSetupMarkdownState } from "./chat/ProjectSetupMarkdown.js";
+export { useProjectSetupMarkdownEdits, type ProjectSetupMarkdownState } from "./chat/ProjectSetupMarkdown.js";
