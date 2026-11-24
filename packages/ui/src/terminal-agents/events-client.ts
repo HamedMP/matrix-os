@@ -1,3 +1,4 @@
+import { terminalFactsKey, type TerminalRefLike } from "./attention.js";
 import { EMPTY_TERMINAL_EVENTS_STATE, reduceTerminalEvents, type TerminalEventsState } from "./events-state.js";
 
 const PING_MS = 20_000;
@@ -9,6 +10,7 @@ const STALE_MS = PING_MS * 2.5;
 const MAX_FRAME_CHARS = 16 * 1024 * 1024;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+const OPEN = 1;
 
 export interface TerminalEventsSocket {
   readonly readyState: number;
@@ -46,6 +48,8 @@ export function createTerminalEventsClient(options: {
   let backoff = RECONNECT_MIN_MS;
   let stopped = false;
   let lastFrameAt = 0;
+  // The socket that sent an attention frame: only that gateway accepts seen marks.
+  let attentionFrom: TerminalEventsSocket | null = null;
 
   const publish = (next: TerminalEventsState) => {
     if (next === state) return;
@@ -123,7 +127,9 @@ export function createTerminalEventsClient(options: {
         if (!(error instanceof SyntaxError)) throw error;
         return;
       }
-      publish(reduceTerminalEvents(state, frame));
+      const next = reduceTerminalEvents(state, frame);
+      if (next.attention !== state.attention && next.attention) attentionFrom = opened;
+      publish(next);
     };
     opened.onclose = drop;
     opened.onerror = () => {
@@ -144,6 +150,26 @@ export function createTerminalEventsClient(options: {
       ping = null;
       socket?.close(1000, "client stopped");
       socket = null;
+    },
+    /**
+     * The person opened this tab. Sent only to a gateway that sent an attention
+     * frame (an older one closes the socket on unknown frames); the tab shows as
+     * seen at once. False when the mark could not be sent.
+     */
+    markSeen(ref: TerminalRefLike): boolean {
+      const key = terminalFactsKey(ref);
+      const current = state.attention;
+      if (!current || !socket || attentionFrom !== socket || socket.readyState !== OPEN) return false;
+      const entry = current[key];
+      if (entry?.seen) return true;
+      try {
+        socket.send(JSON.stringify({ type: "seen", ref: { workspaceId: ref.workspaceId, tabId: ref.tabId } }));
+      } catch (error: unknown) {
+        console.warn("[terminal-events] seen failed", error instanceof Error ? error.name : "unknown_error");
+        return false;
+      }
+      if (entry) publish({ ...state, attention: { ...current, [key]: { ...entry, seen: true } } });
+      return true;
     },
     getState: () => state,
   };
