@@ -99,6 +99,19 @@ it("tracks the adaptive focus without marking untouched phases complete", () => 
   expect(states()).toEqual(["complete", "incomplete", "skipped"]);
 });
 
+it("keeps a skipped legacy Skill marked skipped after advancing to MCP and review", () => {
+  const { rerender } = render(<ProjectSetupProgress projectName="Portfolio" draft={{
+    ...draft, step: "mcp", mcp: { state: "not_requested" }, proposals: [],
+  }} />);
+  const skill = () => screen.getByText("Skills").closest("li");
+  expect(skill()?.dataset.state).toBe("skipped");
+  expect(skill()?.textContent).toContain("skipped");
+  expect(skill()?.querySelector("svg.lucide-minus[aria-hidden='true']")).toBeTruthy();
+
+  rerender(<ProjectSetupProgress projectName="Portfolio" draft={draft} />);
+  expect(skill()?.dataset.state).toBe("skipped");
+});
+
 it("renders only the Agent's suggestions through the same answer action", () => {
   const setup = controller(undefined, {
     ...draft, step: "guidance", proposals: [],

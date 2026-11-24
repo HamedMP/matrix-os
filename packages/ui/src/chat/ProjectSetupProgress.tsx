@@ -1,4 +1,4 @@
-import { Check, ChevronRight } from "lucide-react";
+import { Check, ChevronRight, Minus } from "lucide-react";
 import { PROJECT_SETUP_COMPACT_ANSWER_LENGTH, PROJECT_SETUP_PRIMARY_REPLY_LENGTH, type ProjectSetupDraft } from "@matrix-os/contracts";
 import ReactMarkdown from "react-markdown";
 import { ProjectSetupActionButton as Action, borderStyle } from "./ProjectSetupAction.js";
@@ -23,8 +23,10 @@ function projectSetupProgress(draft: ProjectSetupDraft | null): ProgressState[] 
   const focus = draft.interview?.focus;
   const guidance = (focus === "intent" || focus === "guidance" || (!focus && draft.step === "guidance"))
     ? "current" : draft.answers.purpose && draft.answers.guidance ? "complete" : "incomplete";
+  const legacyAfterSkills = !draft.interview && ["mcp", "review", "saved"].includes(draft.step);
   const skills = focus === "skill" || (!focus && ["skill", "skill_instructions"].includes(draft.step))
-    ? "current" : draft.skill ? "complete" : draft.answers.skillInstructions ? "described" : "incomplete";
+    ? "current" : draft.skill ? "complete" : draft.answers.skillInstructions ? "described"
+      : legacyAfterSkills ? "skipped" : "incomplete";
   const mcp = focus === "mcp" || (!focus && draft.step === "mcp")
     ? "current" : draft.mcp.state === "not_requested" ? "incomplete" : draft.mcp.state;
   return [guidance, skills, mcp];
@@ -63,7 +65,8 @@ export function ProjectSetupProgress({ projectName, draft = null, onLeaveSetup }
                   : "bg-[var(--bg-surface,var(--muted))] text-[var(--text-secondary,var(--muted-foreground))]")}
             >
               {state === "complete" ? <Check aria-hidden size={12} className="shrink-0 text-[var(--success-text,var(--success))]" />
-                : <span className="shrink-0 tabular-nums" aria-hidden>{index + 1}</span>}
+                : state === "skipped" ? <Minus aria-hidden size={12} className="shrink-0" />
+                  : <span className="shrink-0 tabular-nums" aria-hidden>{index + 1}</span>}
               <span>{progressLabels[index]}</span>
               {state !== "current" && state !== "incomplete" ? <span className="sr-only">{progressStatusLabel[state]}</span> : null}
             </li>

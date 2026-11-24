@@ -96,7 +96,7 @@ export function useWebProjectSetup({
     onOpenChat: openChat,
   });
   const markdownEdits = useProjectSetupMarkdownEdits(setup.identity, setup.draft?.proposals);
-  const sources = {
+  const sources = rootPending ? {} : {
     loadInstalledSkills: async (signal: AbortSignal) =>
       parseProjectInstalledSkills(await transport.get(PROJECT_INSTALLED_SKILLS_PATH, signal)),
     readInstalledSkill: async (file: string, signal: AbortSignal) => {

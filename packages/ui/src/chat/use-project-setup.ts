@@ -141,12 +141,13 @@ export function useProjectSetup(options: Options) {
   );
 
   const reload = useCallback(() => {
-    if (!client || !chatId) return Promise.resolve(false);
+    if (!actionsAllowed.current || !client || !chatId) return Promise.resolve(false);
     return run((signal) => client.get(`/api/chats/${encodeURIComponent(chatId)}/project-setup`, signal));
   }, [chatId, client, run]);
   useEffect(() => {
-    if (chatId && eligible) void reload();
-  }, [chatId, eligible, reload]);
+    const { draft, pending } = stateRef.current;
+    if (chatId && eligible && allowActions && (!draft || pending)) void reload();
+  }, [chatId, eligible, allowActions, reload]);
 
   const requestId = (key: string) => {
     if (attempt.current?.identity !== identity || attempt.current.key !== key) {

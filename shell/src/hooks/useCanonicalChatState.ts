@@ -119,7 +119,7 @@ function projectSkillRootAvailability(detail: CanonicalChatDetailResponse | null
     if (root.kind !== "project" || root.projectId !== detail.record.projectId) return false;
   }
   const latestRoot = detail.runs.at(-1)?.executionRoot;
-  return !latestRoot || latestRoot.kind === "project";
+  return !latestRoot || (latestRoot.kind === "project" && latestRoot.projectId === detail.record.projectId);
 }
 
 function collaborationViewFromLocation(pathname: string, search = ""): ChatCollaborationView | null {
@@ -1129,6 +1129,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ? selectedDetail.record
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
+  // A newly opened setup Chat can be absent from navigation until its first detail arrives.
+  const checkoutPending = sameAuthority && detailLoading && !selectedDetailError
+    && (!activeRecord || (Boolean(activeRecord.projectId) && activeRecord.chat.collaboration?.mode !== "shared"));
   const projectedSharedChat = sharedChatMembershipFromProjection(selectedDetail?.record.chat.collaboration);
   const collaborationView = (sameAuthority ? selectedCollaborationView : null)
     ?? (projectedSharedChat && activeRecord
@@ -1170,7 +1173,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     chatProjectId: activeChatId ? activeRecord?.projectId : draftProjectId,
     chatFileScope: activeChatId ? canonicalChatFileScope(selectedDetail) : draftProjectId
       ? { kind: "project" as const, projectId: draftProjectId } : { kind: "home" as const },
-    projectSkillRootAvailable: activeChatId ? projectSkillRootAvailability(selectedDetail) : Boolean(draftProjectId),
+    projectSkillRootAvailable: activeChatId
+      ? checkoutPending ? "pending" : projectSkillRootAvailability(selectedDetail)
+      : Boolean(draftProjectId),
     setChatProject,
     canSteerQueuedTurns: selectedDetail?.runs.find((run) => run.id === selectedDetail.record.activeRun?.runId)?.capabilitySnapshot.steering === "same_run",
     providerSelection: selectedDetail?.record.chat.currentSelection,

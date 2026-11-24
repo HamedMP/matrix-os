@@ -6,7 +6,8 @@ import { compile } from "@tailwindcss/node";
 import { Scanner } from "@tailwindcss/oxide";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { Browser } from "playwright";
-import type { ProjectSetupDraft } from "@matrix-os/contracts";
+import { CanonicalChatDetailResponseSchema, type ProjectSetupDraft } from "@matrix-os/contracts";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 const root = resolve(import.meta.dirname, "../..");
 const desktopRequire = createRequire(join(root, "desktop/package.json"));
@@ -134,8 +135,26 @@ it("keeps the small Web setup shell in place from the first click through Chat a
   };
   const postArrived = Promise.withResolvers<void>();
   const postResponse = Promise.withResolvers<void>();
-  const readArrived = Promise.withResolvers<void>();
-  const readResponse = Promise.withResolvers<void>();
+  const detailArrived = Promise.withResolvers<void>();
+  const detailResponse = Promise.withResolvers<void>();
+  const draftReadArrived = Promise.withResolvers<void>();
+  const draftResponse = Promise.withResolvers<void>();
+  let draftReads = 0;
+  const { project: _project, ...chat } = createCanonicalChatFixture("idle").snapshot.chat;
+  const acceptedDetail = CanonicalChatDetailResponseSchema.parse({
+    record: {
+      chat: { ...chat, id: opening.chatId, title: "Project setup", messageCount: 2 },
+      projectId: opening.projectId,
+    },
+    messages: [
+      { id: "msg_setup_start", role: "user", text: "Set up this project with Chat." },
+      { id: opening.currentQuestionMessageId, role: "assistant", text: "Who should see the harbor schedule?" },
+    ].map(({ id, role, text }, index) => ({
+      id, role, chatId: opening.chatId, seq: index + 1, state: "committed",
+      createdAt: opening.updatedAt, parts: [{ type: "text", text }],
+    })),
+    turns: [], runs: [], activities: [],
+  });
   await page.route("**/*", async route => {
     switch (new URL(route.request().url()).pathname) {
       case "/":
@@ -146,9 +165,16 @@ it("keeps the small Web setup shell in place from the first click through Chat a
         postArrived.resolve();
         await postResponse.promise;
         return route.fulfill({ json: { draft: opening } });
+      case "/api/chats":
+        return route.fulfill({ json: { items: [] } });
+      case "/api/chats/chat_setup":
+        detailArrived.resolve();
+        await detailResponse.promise;
+        return route.fulfill({ json: acceptedDetail });
       case "/api/chats/chat_setup/project-setup":
-        readArrived.resolve();
-        await readResponse.promise;
+        draftReads++;
+        draftReadArrived.resolve();
+        await draftResponse.promise;
         return route.fulfill({ json: { draft: opening } });
       default:
         return route.fulfill({ status: 404, json: {} });
@@ -184,18 +210,21 @@ it("keeps the small Web setup shell in place from the first click through Chat a
     expect(await composerInput.isVisible()).toBe(true);
     const before = await setupComposition();
     postResponse.resolve();
-    await expect.poll(() => readArrived.promise.then(() => true), { message: "setup Chat GET received" }).toBe(true);
+    await expect.poll(() => detailArrived.promise.then(() => true), { message: "canonical Chat detail GET received" }).toBe(true);
     expect(await page.getByRole("button", { name: "Send", exact: true }).isDisabled()).toBe(true);
     compare(before, await setupComposition());
-    readResponse.resolve();
-    await page.getByRole("button", { name: "Load accepted Chat transcript" }).click();
+    expect(draftReads).toBe(0);
+    detailResponse.resolve();
+    await expect.poll(() => draftReadArrived.promise.then(() => true), { message: "confirmed setup draft GET received" }).toBe(true);
+    draftResponse.resolve();
     await page.getByText("Who should see the harbor schedule?", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Volunteer leads", exact: true }).waitFor();
     compare(before, await setupComposition());
     expect(await page.getByText("Set up this project with Chat.", { exact: true }).count()).toBe(1);
   } finally {
     postResponse.resolve();
-    readResponse.resolve();
+    detailResponse.resolve();
+    draftResponse.resolve();
     await page.close();
   }
 }, 25_000);

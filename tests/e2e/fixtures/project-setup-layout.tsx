@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { ChatMessage } from "../../../shell/src/lib/chat";
 import { ChatApp } from "../../../shell/src/components/ChatApp";
+import { useCanonicalChatState } from "../../../shell/src/hooks/useCanonicalChatState";
 
 const firstQuestion: ChatMessage = { id: "msg_setup_question", role: "assistant", content: "Who should see the harbor schedule?", timestamp: 2 };
 const initialMessages = [
@@ -41,18 +42,16 @@ function SetupWindow() {
 }
 
 function StartingSetupWindow() {
-  const [sessionId, setSessionId] = useState<string>();
-  const [hasTranscript, setHasTranscript] = useState(false);
-  return <>
-    <button type="button" onClick={() => setHasTranscript(true)}>Load accepted Chat transcript</button>
+  const chat = useCanonicalChatState();
+  return (
     <div data-test-window style={{ width: 624, height: 540 }}>
-      <ChatApp messages={hasTranscript ? initialMessages : []} sessionId={sessionId}
-        activeConversationTitle={hasTranscript ? "Project setup" : undefined}
-        chatProjectId="proj_harbor" projectSkillRootAvailable={true} conversations={[]}
-        connected busy={false} onSubmit={() => {}} onSwitchConversation={setSessionId}
-        onNewChat={() => setSessionId(undefined)} />
+      <ChatApp messages={chat.messages} sessionId={chat.sessionId} activeConversationTitle={chat.activeConversationTitle}
+        chatProjectId={chat.chatProjectId} chatFileScope={chat.chatFileScope} projectSkillRootAvailable={chat.projectSkillRootAvailable}
+        authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} isCurrentAuthority={chat.isCurrentAuthority}
+        conversations={chat.conversations} connected busy={chat.busy} onSubmit={chat.submitMessage}
+        onSwitchConversation={chat.switchConversation} onNewChat={chat.newChat} onSetChatProject={chat.setChatProject} />
     </div>
-  </>;
+  );
 }
 
 createRoot(document.getElementById("root")!).render(
