@@ -145,6 +145,9 @@ export const BotToolResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(false), code: BotToolErrorCodeSchema }).strict(),
 ]);
 
+/** Gateway-authored receipt for a proposal handled by the interactive setup client. */
+export const BOT_DRAFT_REVIEW_RECEIPT = { proposed: true, awaitOwnerReview: true } as const;
+
 /** Pi agent events projected for canonical Chat; model reasoning deltas are never forwarded. */
 export const BotEventSchema = z.object({
   seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

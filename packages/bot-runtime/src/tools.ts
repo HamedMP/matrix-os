@@ -1,4 +1,4 @@
-import { BotSetupQuestionInputSchema, BotCreationDraftPatchSchema } from "@matrix-os/contracts";
+import { BOT_DRAFT_REVIEW_RECEIPT, BotSetupQuestionInputSchema, BotCreationDraftPatchSchema } from "@matrix-os/contracts";
 import { SLACK_RULE_TOOL_PARAMETERS, SLACK_RULE_ARGUMENT_GUIDANCE } from "./slack-rule-tool.js";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
@@ -298,7 +298,10 @@ export function createBotTools(input: {
         const result = await untilCancelled(input.broker.tool(request, signal), signal, input.state);
         if (!result.ok) throw new Error(REFUSAL_GUIDANCE[result.code]);
         if (terminate) input.state.waitingForPerson = true;
-        return { content: result.content, details: undefined, ...(terminate || spec.completesTurn ? { terminate: true } : {}) };
+        // Only the gateway's interactive proposal receipt completes the turn.
+        const proposalReady = spec.name === "propose_bot_draft" && result.content.length === 1
+          && result.content[0]?.text === JSON.stringify(BOT_DRAFT_REVIEW_RECEIPT);
+        return { content: result.content, details: undefined, ...(terminate || spec.completesTurn || proposalReady ? { terminate: true } : {}) };
       } catch (error: unknown) {
         if (error instanceof ToolCancelledError) throw error;
         if (error instanceof BotBrokerError) throw new Error(REFUSAL_GUIDANCE[error.code]);

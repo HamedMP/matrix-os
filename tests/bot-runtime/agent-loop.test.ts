@@ -217,6 +217,20 @@ describe("bot agent loop", () => {
     expect(JSON.stringify(saves[0]?.messages)).toContain(args.question);
   });
 
+  it("lets the model recover after the gateway refuses a draft proposal", async () => {
+    const { handle, route } = scripted([
+      fauxAssistantMessage(fauxToolCall("propose_bot_draft", { patch: { name: "Daily planner" } }, { id: "setup_draft" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Please clarify which setup changes you want.")),
+    ]);
+    const { broker, events } = memoryBroker({ tool: () => ({ ok: false, code: "denied" }) });
+    const result = await run({ broker, route, command: command({ capabilities: ["bot.creation.propose"] }) });
+    expect(result).toMatchObject({ status: "completed", toolActions: 1 });
+    expect(handle.getPendingResponseCount()).toBe(0);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: { type: "assistant_delta", text: "Please clarify which setup changes you want." } }),
+    ]));
+  });
+
   it("ends the turn waiting for the person after a blocking question", async () => {
     const { handle, route } = scripted([
       fauxAssistantMessage(fauxToolCall("ask_person", { header: "Competitor", question: "Which company?", options: ["Acme", "Globex"], blocking: true }, { id: "call_ask" }), { stopReason: "toolUse" }),

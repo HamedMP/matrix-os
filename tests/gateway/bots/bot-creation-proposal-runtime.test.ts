@@ -31,9 +31,10 @@ import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runti
 import type { BotBrokerClient } from "../../../packages/bot-runtime/src/broker-client.js";
 
 it.each([
-  { activity: "bot.draft.proposed", tool: "propose_bot_draft", args: { patch: { name: "Planner", instructions: "Help plan the day." } } },
-  { activity: "bot.setup.question", tool: "ask_bot_setup_question", args: { question: "Which days should the brief cover?", suggestedReplies: ["Weekdays", "Every day"] } },
-] as const)("carries an admitted $activity through the runtime, canonical persistence and owner wire readback", async fixture => {
+  { flow: "interactive draft", intent: "reply", activity: "bot.draft.proposed", tool: "propose_bot_draft", args: { patch: { name: "Planner", instructions: "Help plan the day." } } },
+  { flow: "legacy draft", intent: undefined, activity: "bot.draft.proposed", tool: "propose_bot_draft", args: { patch: { name: "Planner", instructions: "Help plan the day." } } },
+  { flow: "interactive question", intent: "reply", activity: "bot.setup.question", tool: "ask_bot_setup_question", args: { question: "Which days should the brief cover?", suggestedReplies: ["Weekdays", "Every day"] } },
+] as const)("carries an admitted $flow through the runtime, canonical persistence and owner wire readback", async fixture => {
   // Deterministic tool fixture exercises the production bridge; it is not model/live acceptance.
   const { db, destroy } = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   const home = await mkdtemp(join(tmpdir(), "bot-creation-proposal-"));
@@ -43,7 +44,9 @@ it.each([
   const contexts: string[] = [];
   model.setResponses([
     fauxAssistantMessage(fauxToolCall(fixture.tool, fixture.args, { id: "setup_event" }), { stopReason: "toolUse" }),
-    fauxAssistantMessage(fauxText("I have the details.")),
+    fixture.flow === "interactive draft"
+      ? fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider unavailable during redundant follow-up" })
+      : fauxAssistantMessage(fauxText("I have the details.")),
   ].map(response => context => { contexts.push(JSON.stringify(context)); return response; }));
   let generation = 0;
   const createRuntime = vi.fn(async (input: unknown) => { void input; return { runtimeHandle: `runtime_${(++generation).toString(16).padStart(32, "0")}`, executionGeneration: "1", state: "running" }; });
@@ -90,13 +93,14 @@ it.each([
   const owner = { type: "personal" as const, ownerId: OWNER };
   try {
     await repository.create(owner, { id: "chat_creation_runtime", clientRequestId: "req_creation_chat", title: "Create Bot" });
-    const botCreation = BotCreationSnapshotSchema.parse({ sessionId: "creation_runtime", draftRevision: 7, intent: "reply", seed: { kind: "scratch" }, draft: { name: "", description: "", instructions: "", selection: null } });
+    const botCreation = BotCreationSnapshotSchema.parse({ sessionId: "creation_runtime", draftRevision: 7, intent: fixture.intent, seed: { kind: "scratch" }, draft: { name: "", description: "", instructions: "", selection: null } });
     const accepted = await orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, "chat_creation_runtime", { clientRequestId: "req_creation_turn", baseRevision: 0, parts: [{ type: "text", text: "Create a daily planner draft" }], selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" }, interactionMode: "default", permissionMode: "supervised", botCreation });
     expect(accepted.run.context?.botCreation).toEqual(botCreation);
     await vi.waitFor(async () => expect((await repository.get(owner, accepted.run.chatId))?.activeRun).toBeUndefined(), { timeout: 10_000 });
     const detail = await repository.getDetailPage(owner, accepted.run.chatId, { limit: 100 });
-    expect(detail!.runs[0]?.status).toBe("completed");
     expect(detail!.activities.filter(activity => activity.type === fixture.activity)).toEqual([expect.objectContaining({ sessionId: "creation_runtime", baseDraftRevision: 7, ...fixture.args })]);
+    expect(detail!.runs[0]?.status).toBe("completed");
+    expect(contexts).toHaveLength(fixture.intent ? 1 : 2);
     CanonicalChatDetailResponseSchema.parse(projectChatBotCreationResponse(detail, "1"));
     const legacy = projectChatBotCreationResponse(detail, "0");
     expect(legacy!.activities.some(activity => activity.type === fixture.activity)).toBe(false);

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { BotToolRequestSchema, botDraftPatchMatchesChoices } from "@matrix-os/contracts";
+import { BOT_DRAFT_REVIEW_RECEIPT, BotToolRequestSchema, botDraftPatchMatchesChoices } from "@matrix-os/contracts";
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
@@ -263,7 +263,8 @@ export function createManagedPiOwnerTools(deps: {
         // No await between the one-proposal claim and emission; concurrent tool calls cannot both win.
         run.proposed = true;
         run.emit(proposal);
-        return text("patch" in args ? { proposed: true } : { questionDisplayed: true, awaitOwnerReply: true });
+        if ("patch" in args) return text(snapshot.intent ? BOT_DRAFT_REVIEW_RECEIPT : { proposed: true });
+        return text({ questionDisplayed: true, awaitOwnerReply: true });
       }
       if (request.capability === "integration.inventory") {
         const rows = await deps.integrations!.inventory(binding.ownerId, signal);
