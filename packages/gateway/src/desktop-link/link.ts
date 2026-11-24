@@ -35,6 +35,8 @@ export interface DesktopLink {
 
 class LinkStream extends EventEmitter implements HcSocket {
   ended = false;
+  /** The desktop said `opened`: its bytes from here on are this stream's. */
+  confirmed = false;
   constructor(readonly id: number, private readonly link: { write(id: number, bytes: Buffer): void; end(id: number): void }) {
     super();
   }
@@ -110,14 +112,16 @@ export function createDesktopLink(options: {
     receiveControl(frame) {
       seen = now();
       if (frame.t === "ping") { sendFrame({ t: "pong" }); return; }
+      if (frame.t === "opened") { if (stream?.id === frame.stream) stream.confirmed = true; return; }
       if (frame.t === "end") { if (stream?.id === frame.stream) endStream(); return; }
       if (frame.t === "bye") link.close(DESKTOP_LINK_CLOSE.going);
     },
     receiveBinary(bytes) {
       seen = now();
-      // Bytes for a stream that already ended here are dropped: the desktop sends its
-      // `end` after them, and a new stream starts only after `open`.
-      if (stream && !stream.ended) stream.emit("data", bytes);
+      // The two directions are ordered apart: desktop bytes count for the current
+      // stream only after the desktop's `opened` for it. Earlier bytes are late
+      // traffic from a stream that already ended here, and are dropped.
+      if (stream && !stream.ended && stream.confirmed) stream.emit("data", bytes);
     },
     send: sendFrame,
     closedBy() {

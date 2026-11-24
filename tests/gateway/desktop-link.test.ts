@@ -116,6 +116,7 @@ async function enrol(http: Awaited<ReturnType<typeof gateway>>["http"], mac: Ret
 /** A desktop stand-in: dials out, proves itself, and pipes core streams to `core` when given one. */
 function dialMac(base: string, mac: ReturnType<typeof testMac>, options: {
   revision: number; headers?: Record<string, string>; core?: ReturnType<typeof createFakeHerdrCore>; proof?: (nonce: string) => unknown;
+  staleBytes?: boolean;
 }) {
   const socket = new WebSocket(`ws://${base}/ws/desktop-link`, { headers: options.headers ?? ownerHeaders() });
   const control: Array<Record<string, unknown>> = [];
@@ -140,6 +141,9 @@ function dialMac(base: string, mac: ReturnType<typeof testMac>, options: {
       const pipe = options.core.connect();
       pipe.on("data", (chunk: Buffer) => { if (stream?.id === id) socket.send(chunk); });
       pipe.on("close", () => { if (stream?.id === id) { stream = null; socket.send(JSON.stringify({ t: "end", stream: id })); } });
+      // Late bytes from an older stream, as a slow reply would arrive: the gateway must drop them.
+      if (options.staleBytes) socket.send(Buffer.from("stale reply from an older stream\n"));
+      socket.send(JSON.stringify({ t: "opened", stream: id }));
       stream = { id, pipe };
     } else if (frame.t === "close" && stream?.id === frame.stream) {
       const ending = stream;
@@ -339,6 +343,20 @@ describe("Desktop link admission", () => {
 });
 
 describe("Herdr over the Desktop link", () => {
+  it("drops desktop bytes that arrive before the desktop acknowledges the new stream", async () => {
+    const registry = createDesktopLinkRegistry({ createAdapter: (open) => createHerdrAdapter({ open }) });
+    const { http, base } = await gateway({ registry });
+    const core = createFakeHerdrCore();
+    core.add("t1", { title: "shell" });
+    const mac = testMac();
+    await enrol(http, mac);
+    const link = dialMac(base, mac, { revision: 1, core, staleBytes: true });
+    await link.ready();
+    const listed = await registry.adapter(mac.deviceId)!.list();
+    expect(listed.status).toBe("ready");
+    expect(listed.sessions.map((session) => session.id)).toEqual(["t1"]);
+  });
+
   it("lists and attaches the desktop's terminals through the link, and reports the desktop gone when it drops", async () => {
     const registry = createDesktopLinkRegistry({
       createAdapter: (open) => createHerdrAdapter({ open, captureQuietMs: 5, captureMaxMs: 100 }),

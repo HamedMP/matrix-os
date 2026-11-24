@@ -116,6 +116,11 @@ export const DesktopLinkServerFrameSchema = z.discriminatedUnion("t", [
 export const DesktopLinkClientFrameSchema = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("ping") }),
   z.strictObject({ t: z.literal("pong") }),
+  /**
+   * The desktop stopped piping every earlier stream and now pipes `stream`: desktop
+   * bytes after this frame belong to it. Bytes before it are from older streams.
+   */
+  z.strictObject({ t: z.literal("opened"), stream: DesktopLinkStreamSchema }),
   /** Core stream `stream` ended on the desktop (its core went away, or a refused frame). */
   z.strictObject({ t: z.literal("end"), stream: DesktopLinkStreamSchema }),
   z.strictObject({ t: z.literal("bye"), reason: z.enum(["disabled", "signed-out", "quit"]) }),
