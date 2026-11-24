@@ -30,6 +30,12 @@ function dateLabel(date: Date) {
   if (date.getTime() >= today - 86400_000) return "Yesterday";
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+/** Search sub-line for an archived chat, shared by both desktop search popovers. */
+export function archivedChatContextLabel(record: { chat: { archivedAt?: string | null; updatedAt: string } }, projectName?: string) {
+  const label = dateLabel(new Date(record.chat.archivedAt ?? record.chat.updatedAt));
+  const day = label === "Today" || label === "Yesterday" ? label.toLowerCase() : label;
+  return `${projectName ? `${projectName} · ` : ""}Archived ${day}`;
+}
 
 interface ArchiveRowsState { rows: Row[]; cursor?: string; status: "loading" | "ready" | "error"; error: string | null }
 interface PendingArchivePage { generation: number; removed: Record<string, true>; removedCount: number }

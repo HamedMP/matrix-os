@@ -413,4 +413,4 @@ export { routineOriginChatEligible } from "./chat/routine-origin.js";
 export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
-export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
+export { archiveRestoreLocation, archivedChatContextLabel } from "./chat/ArchivedChatsPage.js";

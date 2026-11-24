@@ -1,7 +1,7 @@
 import { Archive, ArchiveRestore, Check, ChevronRight, Trash2 } from "lucide-react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
-import { Badge, Button, filterChatsByImportSource, isAcceptedProjectOwnedByRail, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import { archivedChatContextLabel, Badge, Button, filterChatsByImportSource, isAcceptedProjectOwnedByRail, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { Folder, MessageSquare, Search, UsersIcon, X } from "@renderer/lib/hugeicons";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Dialog } from "../../design/primitives";
@@ -12,25 +12,14 @@ import { buildWorkRailSearchResults } from "./work-rail-model";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 
-function archivedDateLabel(record: ChatNavigationRecord): string {
-  const date = new Date(record.chat.archivedAt ?? record.chat.updatedAt);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (date >= today) return "today";
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (date >= yesterday) return "yesterday";
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 function WorkSearchField({ query, disabled, listboxId, selectedOptionId, searchInputRef, onChange, onMove, onSelect, onClose, onRestore }: {
   query: string; disabled: boolean; listboxId: string; selectedOptionId?: string;
   searchInputRef: RefObject<HTMLInputElement | null>;
   onChange(value: string): void; onMove(offset: number): void; onSelect(): void; onClose(): void; onRestore?(): void;
 }) {
   return (
-        <div className="chat-search-field flex h-12 items-center gap-2 border-b px-4" style={{ borderColor: "var(--border-default)" }}>
-          <Search size={16} aria-hidden style={{ color: "var(--text-tertiary)" }} />
+        <div className="chat-search-field flex h-12 items-center gap-2.5 border-b px-4" style={{ borderColor: "var(--border-xsoft)" }}>
+          <Search size={16} aria-hidden style={{ color: "var(--text-secondary)" }} />
           <input
             ref={searchInputRef}
             type="text"
@@ -327,13 +316,13 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
         <div role="tablist" aria-label="Search scope" className="chat-search-filters">
           {(["All", "Chats", "Projects", "Archived", "Shared"] as const).filter(scope => organizationStatus !== "none" || scope !== "Shared").map(scope => <button key={scope} type="button" role="tab" aria-selected={activeFilter === scope} disabled={archiveActionBusy || scope === "Shared" && !shared.available || scope === "Projects" && !onSelectProject}
             className="chat-search-filter"
-            onClick={() => { setFilter(scope); setSelectedIndex(0); setDeletion(null); }}><Badge style={{ background: activeFilter === scope ? "var(--chat-fill)" : "transparent", color: "inherit", border: "1px solid var(--chat-line)", borderRadius: 6, padding: "0 6px", height: 24, fontSize: 13, lineHeight: "18px", fontWeight: 500, gap: 6 }}>{activeFilter === scope ? <Check size={12} aria-hidden/> : null}{scope}</Badge></button>)}
+            onClick={() => { setFilter(scope); setSelectedIndex(0); setDeletion(null); }}><Badge style={{ background: activeFilter === scope ? "var(--chat-fill)" : "transparent", color: "inherit", border: "1px solid var(--chat-divider)", borderRadius: 6, padding: "0 6px", height: 24, fontSize: 13, lineHeight: "18px", fontWeight: 500, gap: 6 }}>{activeFilter === scope ? <Check size={12} aria-hidden/> : null}{scope}</Badge></button>)}
         </div>
         {archiveActionError && !deleteTarget ? <p role="alert" className="mt-2 px-1 text-xs" style={{ color: "var(--danger-text)" }}>{archiveActionError}</p> : null}
         <SearchArchiveDeleteDialog target={deleteTarget} busy={archiveActionBusy} error={archiveActionError}
           onCancel={() => setDeletion(null)} onConfirm={() => { if (deleteTarget) void applyArchivedAction("delete", deleteTarget); }}/>
         <div className="chat-search-results max-h-[min(480px,60vh)] overflow-y-auto" style={{ borderColor: "var(--border-subtle)" }}>
-          {activeFilter === "Archived" && !query.trim() ? <p className="px-2 pb-1 text-xs" style={{ color: "var(--chat-muted)" }}>Recently archived</p> : null}
+          {activeFilter === "Archived" && !query.trim() ? <p className="chat-search-section-label">Recently archived</p> : null}
           {activeFilter === "Archived" && !searchLoading && !searchError && results.length === 0 ? <p className="px-2 py-4 text-sm" style={{ color: "var(--chat-muted)" }}>{query.trim() ? "No archived chats match your search." : "No archived chats."}</p> : null}
           {searchLoading ? <p role="status" className="px-3 py-2 text-xs">Searching all chats…</p> : null}
           {searchError ? <p role="alert" className="px-3 py-2 text-xs">{searchError}</p> : null}
@@ -370,20 +359,19 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
                   tabIndex={-1}
                   aria-label={`${result.label}, ${result.contextLabel}`}
                   aria-selected={index === selectedIndex}
-                  className="flex w-full min-w-0 items-center gap-3 border-b px-3 py-2.5 text-left outline-none last:border-b-0 hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
-                  style={{ borderColor: "var(--border-subtle)" }}
+                  className="flex w-full min-w-0 items-center rounded-lg text-left outline-none hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
                   onMouseEnter={() => setSelectedIndex(index)}
                   onClick={() => select(index)}
                 >
-                  {result.kind === "project" ? <Folder size={15} aria-hidden className="shrink-0" /> : result.kind === "shared" ? <UsersIcon size={15} aria-hidden className="shrink-0" /> : <MessageSquare size={15} aria-hidden className="shrink-0" />}
+                  {result.kind === "project" ? <Folder size={16} aria-hidden className="shrink-0" /> : result.kind === "shared" ? <UsersIcon size={16} aria-hidden className="shrink-0" /> : <MessageSquare size={16} aria-hidden className="shrink-0" />}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm" style={{ color: "var(--text-primary)" }}>{result.label}</span>
-                    <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{activeFilter === "Archived" && result.kind === "chat" ? `${result.project?.name ? result.project.name + " · " : ""}Archived ${archivedDateLabel(result.record)}` : result.contextLabel}</span>
+                    <span className="block truncate text-xs" style={{ color: "var(--text-secondary)" }}>{activeFilter === "Archived" && result.kind === "chat" ? archivedChatContextLabel(result.record, result.project?.name) : result.contextLabel}</span>
                   </span>
                 </button>
                 {activeFilter === "Archived" && result.kind === "chat" ? <div className="chat-search-row-actions">
-                  <Button variant="ghost" size="icon" aria-label={`Restore ${result.label}`} title="Restore ⌘R" disabled={archiveActionBusy} style={{ width: 28, height: 28, padding: 0 }} onClick={() => { void applyArchivedAction("restore", result.record); }}><ArchiveRestore size={14} aria-hidden/></Button>
-                  <Button variant="ghost" size="icon" aria-label={`Delete ${result.label}`} title="Delete" disabled={archiveActionBusy} style={{ width: 28, height: 28, padding: 0, color: "var(--chat-danger)" }} onClick={() => { setDeletion({ scope: actionScope, record: result.record }); }}><Trash2 size={14} aria-hidden/></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Restore ${result.label}`} title="Restore ⌘R" disabled={archiveActionBusy} style={{ width: 32, height: 32, padding: 0 }} onClick={() => { void applyArchivedAction("restore", result.record); }}><ArchiveRestore size={16} aria-hidden/></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Delete ${result.label}`} title="Delete" data-danger disabled={archiveActionBusy} style={{ width: 32, height: 32, padding: 0, color: "var(--chat-danger)" }} onClick={() => { setDeletion({ scope: actionScope, record: result.record }); }}><Trash2 size={16} aria-hidden/></Button>
                 </div> : null}
                 </div>
               ))}
@@ -391,7 +379,7 @@ ${sharedItemContext(item)}`.toLocaleLowerCase().includes(normalized)).map(item =
           ) : null}
           {serverCursor ? <Button variant="ghost" size="sm" className="w-full text-center hover:bg-[var(--bg-hover)]" style={{ width: "100%", padding: "8px 12px", font: "inherit", fontSize: 12 }} disabled={searchLoading} onClick={() => { void loadMore(); }}>Show more results</Button> : null}
         </div>
-        {activeFilter === "Archived" ? <Button variant="ghost" className="chat-search-open-archive" style={{ font: "inherit", width: "100%", padding: "14px 18px", gap: 10, borderRadius: 0, borderTop: "1px solid var(--chat-line)", justifyContent: "flex-start" }} disabled={archiveActionBusy} onClick={() => { onOpenArchivedList?.(); close(); }}><Archive size={15} aria-hidden/><span>Open the archived list</span><ChevronRight size={14} aria-hidden/></Button> : null}
+        {activeFilter === "Archived" ? <Button variant="ghost" className="chat-search-open-archive" style={{ font: "inherit", width: "100%", height: 52, padding: "0 16px 0 18px", gap: 10, borderRadius: 0, borderTop: "1px solid var(--chat-divider)", justifyContent: "flex-start" }} disabled={archiveActionBusy} onClick={() => { onOpenArchivedList?.(); close(); }}><Archive size={16} aria-hidden/><span>Open the archived list</span><ChevronRight size={14} aria-hidden/></Button> : null}
         <footer className="chat-search-footer">↑↓ Move <span>↵ Open</span>{activeFilter === "Archived" ? <span>⌘R Restore</span> : null}<span>esc Close</span></footer>
       </div>
     </Dialog>
