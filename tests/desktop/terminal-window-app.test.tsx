@@ -100,6 +100,9 @@ describe("Terminal window", () => {
     // A filter that matches nothing says so and offers to clear it (ux-guide: empty states).
     fireEvent.change(screen.getByRole("textbox", { name: "Filter spaces" }), { target: { value: "nothing-here" } });
     expect(screen.getByText("No spaces match “nothing-here”")).toBeTruthy();
+    // ux-guide: an empty state has an icon, a headline, a description and an action.
+    expect(screen.getByText("Try another name, or turn on more kinds above.")).toBeTruthy();
+    expect(screen.getByRole("status", { name: "No matching spaces" }).querySelector("svg")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
     expect((screen.getByRole("textbox", { name: "Filter spaces" }) as HTMLInputElement).value).toBe("");
     expect(screen.queryByText(/No spaces match/)).toBeNull();

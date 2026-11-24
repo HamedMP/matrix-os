@@ -4,7 +4,7 @@
 // of its spaces opens it as its own tab: Agents shows only its terminals.
 // Below the rail width it is a numbered rail.
 import { useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ListTree, PanelLeftOpen, Plus, Rows3, Settings, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ListTree, PanelLeftOpen, Plus, Rows3, SearchX, Settings, X } from "lucide-react";
 import {
   TerminalSidebarList, TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
 } from "@matrix-os/ui/terminal-status-sidebar";
@@ -265,13 +265,18 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
         onStyle={props.onSpaceStyle} onReorder={reorder} />
       {query.trim() !== "" && entries.length === 0 && previews.length === 0 ? (
         // An empty result says so and offers the way back (ux-guide: empty states).
-        <div role="status" className="flex flex-wrap items-center gap-x-2 px-3 py-1 text-[12px]" style={secondaryText}>
-          {/* Wraps rather than cut, so the whole query stays readable in a narrow sidebar. */}
-          <span className="min-w-0 break-all">{spacesEmptyMessage(query)}</span>
-          <Button variant="ghost" onClick={() => props.onSpacesQuery("")} className="shrink-0"
-            style={{ height: 20, padding: "0 6px", fontSize: 12 }}>
-            Clear filter
-          </Button>
+        // ux-guide: icon, headline, description and action, compact for the sidebar. Text wraps
+        // rather than cut, so the whole query stays readable.
+        <div role="status" aria-label="No matching spaces" className="flex gap-2 px-3 py-1.5 text-[12px]" style={secondaryText}>
+          <SearchX size={14} aria-hidden="true" className="mt-px shrink-0" />
+          <div className="flex min-w-0 flex-col items-start gap-0.5">
+            <span className="break-all font-medium" style={{ color: "var(--text-primary)" }}>{spacesEmptyMessage(query)}</span>
+            <span>Try another name, or turn on more kinds above.</span>
+            <Button variant="ghost" onClick={() => props.onSpacesQuery("")}
+              style={{ height: 20, padding: "0 6px", marginLeft: -6, fontSize: 12 }}>
+              Clear filter
+            </Button>
+          </div>
         </div>
       ) : null}
       {previews.length > 0 ? (
