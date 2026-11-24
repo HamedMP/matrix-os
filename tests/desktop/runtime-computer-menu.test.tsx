@@ -82,6 +82,22 @@ describe("sidebar computer menu", () => {
     expect(screen.getByRole("menuitemradio", { name: /Preview Computer.*Starting/i }).hasAttribute("data-disabled")).toBe(true);
   });
 
+  it("labels owned computers Offline and Connecting, like Settings and Web Desktop", async () => {
+    const owned = (runtimeSlot: string, availability: string) => ({
+      handle: "operator", runtimeSlot, label: "Own Computer", availability, kind: "owned",
+      gatewayPath: `/vm/operator?runtime=${runtimeSlot}`, capabilities: [],
+    });
+    const withOwned = { ...computers, items: [...computers.items, owned("owned-0a1b2c3d", "unavailable"), owned("owned-1b2c3d4e", "starting")] };
+    window.operator.invoke = vi.fn(async (channel: string) => (channel === "runtime:list-computers" ? withOwned : { ok: true }));
+    render(<RuntimeComputerMenu collapsed={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change computer, currently Main Computer" })).not.toBeNull());
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Change computer, currently Main Computer" }), { button: 0, ctrlKey: false });
+    const rows = screen.getAllByRole("menuitemradio", { name: /Own Computer/ }).map((row) => row.textContent ?? "");
+    expect(rows.some((text) => text.includes("Offline"))).toBe(true);
+    expect(rows.some((text) => text.includes("Connecting"))).toBe(true);
+    expect(rows.some((text) => text.includes("Unavailable") || text.includes("Starting"))).toBe(false);
+  });
+
   it("keeps native embeds detached while the computer menu crosses the sidebar edge", async () => {
     render(<RuntimeComputerMenu collapsed={false} />);
 
