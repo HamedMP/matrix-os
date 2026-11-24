@@ -6,7 +6,7 @@ import { prepareSteerableBotInputs, type SteerableBotInputs } from "./steerable-
 import { deliverAcknowledgedSteer } from "../chat/steering-delivery.js";
 import { sql } from "kysely";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
-import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
+import { resolveRuntimeProcedure, sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 import { isRoutineDirectChatId } from "./routine-direct-chat-identity.js";
 /**
@@ -328,7 +328,7 @@ export function createBotTaskOrchestrator(deps: {
     let recipe;
     try {
       if (isManagedCustomBot(agent) && (!deps.resolveProcedure || !sameCustomCoordinatorSelection(input.selection, agent.selection))) return { status: "failed" };
-      recipe = deps.resolveProcedure ? await setup(() => deps.resolveProcedure!(input.ownerId, agent)) : deps.recipes.resolve(agent.recipeRef);
+      recipe = await setup(async () => resolveRuntimeProcedure(deps, input.ownerId, agent, !group && !input.readonlySummary));
     } catch (error: unknown) {
       if (interrupted(error)) return { status: interruptedStatus() };
       if (error instanceof BotRecipeCatalogError || error instanceof BotRouteError) return { status: "failed" };
@@ -459,9 +459,11 @@ export function createBotTaskOrchestrator(deps: {
         }
         ownerSoul = await setup(() => readOwnerSoul(deps.personality!.homePath));
       }
+      const instructions = group || isManagedCustomBot(agent) || agent.recipe && deps.resolveProcedure
+        ? recipe.instructions : agent.instructions;
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: input.readonlySummary ? SLACK_SUMMARY_SYSTEM : buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: input.readonlySummary ? SLACK_SUMMARY_SYSTEM : buildBotSystemPrompt({ botName: agent.name, instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: isolatedModel || input.readonlySummary ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },

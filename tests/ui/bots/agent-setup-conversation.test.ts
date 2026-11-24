@@ -96,3 +96,66 @@ it("clears prior setup transcript and stops polling when the Chat becomes shared
   expect(conversation.state()).toMatchObject({ detail: null, activeRunId: null, busy: false });
   expect(onProposal).not.toHaveBeenCalled();
 });
+
+it("admits a single opening Run and accepts suggested replies only for the completed Run and current draft", async () => {
+  const { conversation, client, detail } = fixture();
+  await Promise.all([conversation.open(snapshot, selection), conversation.open(snapshot, selection)]);
+  expect(client.admitTurn).toHaveBeenCalledTimes(1);
+  expect(client.admitTurn.mock.calls[0]![1].botCreation?.intent).toBe("open");
+  const question = {
+    id: "activity_question", chatId: detail.record.chat.id, runId: "run_creation", occurredAt: now,
+    type: "bot.setup.question" as const, proposalId: "proposal_question", sessionId: snapshot.sessionId, baseDraftRevision: 3,
+    question: "Which inbox should I help you organize?", suggestedReplies: ["My support inbox", "My own inbox"]
+  };
+  detail.activities.push(question);
+  await conversation.refresh();
+  expect(conversation.state().question).toBeNull();
+  detail.runs.push({ id: "run_creation", status: "completed" } as typeof detail.runs[number]);
+  detail.activities = [{ ...question, runId: "run_other" }, { ...question, sessionId: "other_session" }, { ...question, baseDraftRevision: 2 }];
+  await conversation.refresh();
+  expect(conversation.state().question).toBeNull();
+  detail.activities.push(question);
+  await conversation.refresh();
+  expect(conversation.state().question).toMatchObject(question);
+  expect(await conversation.replyToQuestion("My own inbox", { ...snapshot, draftRevision: 4 }, selection)).toBe(false);
+  expect(await conversation.replyToQuestion("Invented answer", snapshot, selection)).toBe(false);
+  expect(await conversation.replyToQuestion("My own inbox", snapshot, selection)).toBe(true);
+  expect(client.admitTurn.mock.calls.at(-1)![1]).toMatchObject({ parts: [{ type: "text", text: "My own inbox" }], botCreation: { intent: "reply" } });
+  expect(conversation.state().question).toBeNull();
+});
+
+it("keeps a failed opener visible to explicit retry without readmission on remount effects", async () => {
+  const { conversation, client } = fixture();
+  client.admitTurn.mockRejectedValueOnce(new Error("unavailable"));
+  expect(await conversation.open(snapshot, selection)).toBe(false);
+  await conversation.open(snapshot, selection);
+  expect(client.admitTurn).toHaveBeenCalledTimes(1);
+  expect(conversation.state().retryIntent).toBe("open");
+  expect(await conversation.retry()).toBe(true);
+  expect(client.admitTurn.mock.calls[0]![1]).toEqual(client.admitTurn.mock.calls[1]![1]);
+});
+
+it("lets the owner retry a failed suggested answer with the same request id", async () => {
+  const { conversation, client, detail } = fixture();
+  await conversation.open(snapshot, selection);
+  detail.runs.push({ id: "run_creation", status: "completed" } as typeof detail.runs[number]);
+  detail.activities.push({ id: "activity_retry", chatId: detail.record.chat.id, runId: "run_creation", occurredAt: now,
+    type: "bot.setup.question", proposalId: "proposal_retry", sessionId: snapshot.sessionId, baseDraftRevision: 3,
+    question: "Where should this appear?", suggestedReplies: ["In my private chat", "In a file"] });
+  await conversation.refresh();
+  client.admitTurn.mockRejectedValueOnce(new Error("interrupted"));
+  expect(await conversation.replyToQuestion("In my private chat", snapshot, selection)).toBe(false);
+  expect(conversation.state().retryIntent).toBe("reply");
+  expect(await conversation.retry()).toBe(true);
+  expect(client.admitTurn.mock.calls[1]![1]).toEqual(client.admitTurn.mock.calls[2]![1]);
+});
+
+it("clears an existing private transcript on a rejected owner admission", async () => {
+  const { conversation, client, detail } = fixture();
+  await conversation.send("First", snapshot, selection);
+  detail.runs.push({ id: "run_creation", status: "completed" } as typeof detail.runs[number]);
+  await conversation.refresh();
+  client.admitTurn.mockRejectedValueOnce(Object.assign(new Error("forbidden"), { status: 403 }));
+  await conversation.send("Change the instructions", snapshot, selection);
+  expect(conversation.state()).toMatchObject({ accessLost: true, detail: null, questions: [], question: null });
+});

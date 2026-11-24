@@ -344,11 +344,8 @@ export function createCanonicalChatClient(
     async getDetail(chatId, input = {}, includeSetupProposals) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsed = CanonicalChatDetailInputSchema.parse(input);
-      const response = await api.get(chatMessageVersionUrl(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
-        limit: parsed.limit,
-        cursor: parsed.cursor,
-        botCreationVersion: includeSetupProposals ? 1 : undefined,
-      }), true));
+      const path = withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, { limit: parsed.limit, cursor: parsed.cursor });
+      const response = await api.get(chatMessageVersionUrl(includeSetupProposals ? chatBotCreationVersionUrl(path) : path, true));
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 

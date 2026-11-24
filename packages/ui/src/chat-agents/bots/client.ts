@@ -6,11 +6,11 @@ import {createBotConnectionClient, type BotConnectionClient} from "./provider-co
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
   BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
-  BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema,
+  BotRecipeRefSchema, BotRecipeSetupContextSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema,
   InstantiateBotRequestSchema, InstantiateBotResponseSchema, ResolveBotInteractionRequestSchema,
   ResolveBotInteractionResponseSchema, RevokeBotGrantResponseSchema,
   type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
-  type BotRecipeSummary, type BotTaskSummary, type InstantiateBotRequest, type InstantiateBotResponse,
+  type BotRecipeRef, type BotRecipeSetupContext, type BotRecipeSummary, type BotTaskSummary, type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -54,6 +54,7 @@ export interface BotClient extends Partial<BotConnectionClient> {
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
+  recipeSetupContext?(ref: BotRecipeRef): Promise<BotRecipeSetupContext>;
   createCustom?(input: CreateManagedCustomBotRequest): Promise<InstantiateBotResponse>;
   recoverManagedCustom?(agentId: string, input: { baseRevision: number }): Promise<InstantiateBotResponse>;
   instantiate(input: InstantiateBotRequest): Promise<InstantiateBotResponse>;
@@ -89,6 +90,12 @@ export function createBotClient(request: BotRequest): BotClient {
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
+    recipeSetupContext: async (ref) => {
+      const { recipeId, version } = BotRecipeRefSchema.parse(ref);
+      const context = await call(`/api/chat-agents/bot-recipes/${encodeURIComponent(recipeId)}/${encodeURIComponent(version)}/setup-context`, "GET", BotRecipeSetupContextSchema);
+      if (context.recipeId !== recipeId || context.version !== version) throw new BotClientError(null, fallbackMessage);
+      return context;
+    },
     createCustom: (input) => call("/api/chat-agents/managed-custom", "POST", InstantiateBotResponseSchema, CreateManagedCustomBotRequestSchema.parse(input)),
     recoverManagedCustom: (agentId, input) => call(`${agentPath(agentId)}/recover-managed-custom`, "POST", InstantiateBotResponseSchema, RecoverManagedCustomBotRequestSchema.parse(input)),
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),

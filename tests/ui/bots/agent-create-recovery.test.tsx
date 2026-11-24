@@ -164,8 +164,8 @@ it("offers model retry from a failed chooser and coalesces its pending requests"
 
 it("retries failed model discovery without losing a draft or reusing stale model authority", async () => {
   const x = fixture(); await draft(x);
-  const dialog = screen.getByRole("dialog", { name: "New Agent" });
-  expect(dialog).toHaveAttribute("open");
+  const dialog = screen.getByRole("region", { name: "New Agent" });
+  expect(dialog).toBeVisible();
   const editor = within(dialog);
   fireEvent.click(editor.getByRole("button", { name: "Add recipe" }));
   fireEvent.click(editor.getByRole("checkbox", { name: "Personal Daily Brief" }));

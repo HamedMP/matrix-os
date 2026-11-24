@@ -405,7 +405,7 @@ describe("shared Agents entry", () => {
     expect(screen.queryByText("Build your team")).toBeNull();
     expect(screen.getByRole("button", { name: "Edit Meeting helper" }).textContent).toContain("@Meeting helper");
     fireEvent.click(screen.getByRole("button", { name: "Edit Meeting helper" }));
-    expect(screen.getByRole("dialog", { name: "Edit Agent" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Edit Agent" })).toBeTruthy();
   });
 
 

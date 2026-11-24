@@ -9,7 +9,7 @@ export type OpenAgents = {
   onStartChat?: StartAgentChat;
   view?: "library" | "recipes" | "schedules";
   title?: "Your AI team" | "New agent" | "Edit agent" | "Schedules";
-  requestedRecipeId?: string;
+  requestedAgentId?: string; requestedRecipeId?: string;
   onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
 };
 type BotDetailsRequest = {client: ChatAgentClient; chatId: string; agentId: string; sequence: number};

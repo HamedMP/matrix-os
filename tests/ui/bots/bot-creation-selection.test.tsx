@@ -43,7 +43,7 @@ it.each([companyBrain, recipe])("opens the requested live-catalog $name setup wi
   render(<AgentRecipesPanel requestedRecipeId={requested.recipeId} onRequestedRecipeResult={selected}
     botRecipeStatus="ready" botRecipes={[companyBrain, recipe]} matrixModels={models} catalog={ready}
     onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
-  expect((await screen.findByRole("dialog")).textContent).toContain(requested.name);
+  expect((await screen.findByRole("region", { name: /^Set up / })).textContent).toContain(requested.name);
   expect(selected).toHaveBeenCalledWith({ ok: true });
   expect(create).not.toHaveBeenCalled();
 });

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
 import { BotChatPanel } from "../../../packages/ui/src/chat-agents/bots/BotChatPanel.js";
 import { BotEditorApps } from "../../../packages/ui/src/chat-agents/bots/BotEditorApps.js";
@@ -12,20 +12,20 @@ afterEach(cleanup);
 HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
 HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 
-it("keeps the saved Agents list behind a dismissible settings dialog and preserves edits after a failed save", async () => {
+it("opens saved Agent settings within the workspace and preserves edits after a failed save", async () => {
   const client = clientFixture();
   client.list.mockResolvedValue({ enabled: true, agents: [saved] });
   client.update.mockRejectedValue(new Error("private failure"));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
-  const dialog = screen.getByRole("dialog", { name: "Edit Agent" });
+  const dialog = screen.getByRole("region", { name: "Edit Agent" });
   const fields = within(dialog);
   fireEvent.change(fields.getByRole("textbox", { name: "Instructions" }), { target: { value: "Keep these changes" } });
   fireEvent.click(fields.getByRole("button", { name: "Save changes" }));
   expect((await fields.findByRole("alert")).textContent).toContain("Agent could not be saved");
   expect((fields.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe("Keep these changes");
   fireEvent.click(fields.getByRole("button", { name: "Cancel" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Edit Agent" })).toBeNull();
   expect(screen.getByRole("button", { name: `Edit ${saved.name}` })).toBeTruthy();
   expect(screen.queryByText("Build your team")).toBeNull();
 });
@@ -176,4 +176,35 @@ it("keeps duplicate-label account rows attached to their identity across reorder
   expect(screen.getByText("second@example.test").parentElement?.parentElement).toBe(secondRow);
   view.rerender(<BotEditorApps agentId="bot_research1" authority={authority([accounts[1]!])} />);
   expect(screen.getByText("second@example.test").parentElement?.parentElement).toBe(secondRow);
+});
+
+it("opens Edit bot from its private Chat in the same full-page setup and returns on cancel", async () => {
+  const { ChatAgentsWorkspace } = await import("../../../packages/ui/src/chat-agents/ChatAgentsNavigation.js");
+  const { ChatAgentsContent } = await import("../../../packages/ui/src/chat-agents/ChatAgentsContent.js");
+  const base = clientFixture({ matrix: true });
+  const ref = { recipeId: "writing-bot", version: "1" };
+  const agent = { ...saved, recipeRef: ref };
+  base.list.mockResolvedValue({ enabled: true, agents: [agent] });
+  const context = { ...ref, name: "Writing Bot", description: "Writes drafts.", instructions: "Use the approved sources.", output: "A draft",
+    skills: [], integrations: [], capabilities: [], mcpServers: [] };
+  const record = { chat: { id: "chat_setup01", ownerScope: { type: "personal", ownerId: "owner" }, revision: 0 } };
+  const admitTurn = vi.fn(() => new Promise(() => {}));
+  const client = { ...base, bots: { recipes: vi.fn(async () => []), interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
+      authority: vi.fn(async () => ({ grants: [], connections: [], memory: { items: [] }, routines: [], pendingInteractions: [] })),
+      recipeSetupContext: vi.fn(async () => context) } as never,
+    setupChat: { create: vi.fn(async () => record), detail: vi.fn(async () => ({ record, runs: [], turns: [], activities: [], messages: [] })), admitTurn, cancelRun: vi.fn() } as never };
+  render(<ChatAgentsWorkspace><ChatAgentsContent client={client} scopeKey="owner/chat_writing">
+    <BotChatPanel chatId="chat_writing" directBotId={agent.id} client={client} />
+  </ChatAgentsContent></ChatAgentsWorkspace>);
+  await screen.findByText(agent.name);
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit bot" }));
+  await screen.findByRole("region", { name: "Agent setup conversation" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await waitFor(() => expect(admitTurn).toHaveBeenCalledWith("chat_setup01", expect.objectContaining({
+    botCreation: expect.objectContaining({ seed: { kind: "recipe", ...ref }, draft: expect.objectContaining({ instructions: agent.instructions }) }),
+  })));
+  fireEvent.click(screen.getByRole("button", { name: "Close agent settings" }));
+  expect(await screen.findByRole("button", { name: "Details" })).toBeTruthy();
+  expect(client.update).not.toHaveBeenCalled();
 });

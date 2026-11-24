@@ -13,7 +13,7 @@ it.each(["Web", "Electron"])("%s negotiates proposal readback only for setup Cha
   const id = "chat_setup001";
   await expect(client.agents.setupChat!.detail(id)).rejects.toThrow();
   const url = () => new URL(String(fetchFn.mock.lastCall![0]));
-  expect(url().searchParams.get("botCreationVersion")).toBe("1");
+  expect(url().searchParams.get("botCreationVersion")).toBe("2");
   await expect(host === "Web" ? shell.detail(id) : desktop.getDetail(id)).rejects.toThrow();
   expect(url().searchParams.has("botCreationVersion")).toBe(false);
 
@@ -26,6 +26,6 @@ it.each(["Web", "Electron"])("%s negotiates proposal readback only for setup Cha
     },
   };
   await expect(client.agents.setupChat!.admitTurn(id, input)).rejects.toThrow();
-  expect(url().searchParams.get("botCreationVersion")).toBe("1");
+  expect(url().searchParams.get("botCreationVersion")).toBe("2");
   expect(JSON.parse(String(fetchFn.mock.lastCall![1]?.body))).toMatchObject(input);
 });
