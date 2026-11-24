@@ -4,7 +4,7 @@
  *
  * This file exports the error type, every contract type, each implementation
  * module as a namespace (`opc.openPackage`, `xml.parseXml`) and the main
- * entry points by name (`openDocx`, `createRedline`).
+ * entry points by name (`openDocx`, `openXlsx`, `parseAgentEdits`).
  * A module can also be imported on its own by path:
  *
  * | Module  | Path                         | Contract             |
@@ -12,10 +12,14 @@
  * | opc     | `./opc/index.js`             | `OpcModule`          |
  * | xml     | `./xml/index.js`             | `XmlModule`          |
  * | docx    | `./docx/index.js`            | `DocxModule`         |
+ * | xlsx    | `./xlsx/index.js`            | `XlsxModule`         |
+ * | formula | `./xlsx/formula/index.js`    | `FormulaModule`      |
  * | redline | `./redline/index.js`         | `RedlineModule`      |
+ * | agent   | `./agent/index.js`           | `AgentModule`        |
  *
  * Inside the workspace they are also reachable as `@matrix-os/office/docx`
- * and so on (see `package.json`).
+ * and so on (see `package.json`). Default apps import the generated,
+ * git-ignored copy under `home/apps/_shared/office-engine/` by relative path.
  */
 
 export { OFFICE_ERROR_CODES, OfficeError, isOfficeError } from "./errors.js";
@@ -34,8 +38,39 @@ export type * from "./api/agent.js";
 export * as opc from "./opc/index.js";
 export * as xml from "./xml/index.js";
 export * as docx from "./docx/index.js";
+export * as xlsx from "./xlsx/index.js";
+export * as formula from "./xlsx/formula/index.js";
 export * as redline from "./redline/index.js";
+export * as agent from "./agent/index.js";
 
 // The entry points an app needs most, by name.
 export { compareDocx, compareDocxDetailed, createDocx, createDocxFromMarkdown, openDocx, toHtml, toMarkdown, toPlainText } from "./docx/index.js";
+export {
+  MAX_COLS,
+  MAX_ROWS,
+  columnIndex,
+  columnLabel,
+  createXlsx,
+  formatA1,
+  formatA1Range,
+  formatValue,
+  getJournalWarnings,
+  listJournalChanges,
+  openXlsx,
+  parseA1,
+  parseA1Range,
+  parseCsv,
+  parseSheetRange,
+  toCsv,
+} from "./xlsx/index.js";
+export { createFunctionRegistry, evaluate, parseFormula, serializeFormula } from "./xlsx/formula/index.js";
 export { createRedline, diffSequences, diffWords, loadRedline } from "./redline/index.js";
+export {
+  agentEditInstructions,
+  applySheetEdits,
+  describeDocx,
+  describeSheet,
+  parseAgentEdits,
+  toDocxOps,
+  toSheetEdits,
+} from "./agent/index.js";
