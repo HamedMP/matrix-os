@@ -153,6 +153,26 @@ describe("CollaborationTerminalEventRegistry", () => {
     fixture.registry.shutdown();
   });
 
+  it("re-authorizes presence recipients and drops slow ones (Greptile on #3676)", async () => {
+    const fixture = setup();
+    const revoked = socket();
+    const slow = socket();
+    const current = socket();
+    await fixture.registry.open(connection(scopeA, "user_revoked", "revoked", revoked));
+    await fixture.registry.open(connection(scopeA, "user_slow", "slow", slow));
+    slow.bufferedAmount = 2 * 1024 * 1024;
+    await fixture.registry.open(connection(scopeA, "user_current", "current", current));
+    for (const id of ["revoked", "slow", "current"]) fixture.registry.subscribePresence(id);
+    fixture.revoked.add("user_revoked");
+    await fixture.registry.sendPresence(scopeA, JSON.stringify({ type: "terminal.presence" }));
+    expect(revoked.close).toHaveBeenCalledWith(1008, "Revoked");
+    expect(slow.close).toHaveBeenCalledWith(1011, "Unavailable");
+    expect(current.send).toHaveBeenCalledWith(JSON.stringify({ type: "terminal.presence" }));
+    expect(fixture.registry.hasConnection("current")).toBe(true);
+    expect(fixture.registry.hasConnection("slow")).toBe(false);
+    fixture.registry.shutdown();
+  });
+
   it("reauthorizes after terminal lookup before admitting a connection", async () => {
     let revoked = false;
     let releaseLookup!: () => void;
