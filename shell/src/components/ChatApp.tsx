@@ -100,6 +100,7 @@ import {
   PanelLeftIcon,
   PanelLeftOpenIcon,
   PanelLeftCloseIcon,
+  PanelRightOpenIcon,
   SearchIcon,
   MessageSquareIcon,
   Settings2Icon,
@@ -762,7 +763,7 @@ function ChatAppContent({
         providerCatalog={agentProviderCatalog} headerLeading={<>{windowControls}{sidebarToggle}</>}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0" style={{ display: archivesOpen && !mobile ? "none" : undefined }}>
         {/* Top bar */}
-        {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-12"}`}>
+        {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-[52px]"}`}>
           {windowControls}{sidebarToggle}
           {!sidebarOpen && (
             <>
@@ -780,7 +781,7 @@ function ChatAppContent({
           {/* Electron Desktop's pane title: the Chat name on the left; the model lives in the composer. */}
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center">
-              <div className="min-w-0 flex-1 text-left text-[15px] font-medium text-foreground">
+              <div className="min-w-0 flex-1 text-left text-sm font-medium text-foreground">
                 {collaborationView ? (
                   <span className="block truncate px-1.5">
                     {activeSharedMetadata?.title ?? "Chat"}
@@ -806,7 +807,7 @@ function ChatAppContent({
                     aria-label={`Rename ${activeConversationTitle}`}
                     title={activeConversationTitle}
                     disabled={!onRenameConversation || renamePending}
-                    className={`max-w-full truncate rounded px-1.5 py-0.5 text-left text-[15px] font-medium text-foreground outline-none enabled:hover:bg-[var(--bg-hover)] enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
+                    className={`max-w-full truncate rounded px-1.5 py-0.5 text-left text-sm font-medium text-foreground outline-none enabled:hover:bg-[var(--bg-hover)] enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
                   >
                     {activeConversationTitle}
@@ -821,7 +822,7 @@ function ChatAppContent({
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
-          {!mobile && !collaborationView && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelLeftCloseIcon className="size-4 rotate-180"/></Button> : null}
+          {!mobile && !collaborationView && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelRightOpenIcon className={`size-4 ${inspectorOpen ? "text-foreground" : "text-muted-foreground"}`}/></Button> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
@@ -841,7 +842,7 @@ function ChatAppContent({
           </>}
           headerActions={<>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
-            {!mobile && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelLeftCloseIcon className="size-4 rotate-180"/></Button> : null}
+            {!mobile && sessionId && sideChatClient ? <Button type="button" variant="ghost" size="sm" aria-label="Toggle chat inspector" aria-expanded={inspectorOpen} onClick={() => setInspectorOpen(value => !value)}><PanelRightOpenIcon className={`size-4 ${inspectorOpen ? "text-foreground" : "text-muted-foreground"}`}/></Button> : null}
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => openProviderSettings()}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
           </>}
