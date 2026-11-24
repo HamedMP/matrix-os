@@ -102,7 +102,9 @@ describe("Terminal window computers", () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  const requests = () => fetchMock.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(url)}`);
+  // Terminal requests only: the Team section's discovery (spec 2710) is its own traffic.
+  const requests = () => fetchMock.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(url)}`)
+    .filter((request) => !request.includes("/api/collaboration/"));
   const sidebar = () => screen.getByRole("navigation", { name: "Terminals" });
 
   it("streams each available computer's terminals into the status sections, with no listing requests", async () => {
@@ -112,7 +114,7 @@ describe("Terminal window computers", () => {
     const needsYou = await screen.findByRole("region", { name: "Needs you" });
     expect(within(needsYou).getByRole("button", { name: /deploy/ }).textContent).toContain("neo-extra");
     expect(within(screen.getByRole("region", { name: "Working" })).getByRole("button", { name: /build/ })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(requests()).toEqual([]);
   });
 
   // Hamed, 2026-11-22: a computer opened as its own tab, and its spaces, filter the agents list.
@@ -430,7 +432,7 @@ describe("Terminal window computers", () => {
     fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
     act(() => emit("terminal-window:command", { command: "close-terminal" }));
     const dialog = await screen.findByRole("dialog", { name: "End terminal" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(requests()).toEqual([]);
     fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(requests()).toEqual([`DELETE ${HOST}/api/terminal/workspaces/${WS}/tabs/${TAB_1}`]));
     await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());

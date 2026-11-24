@@ -211,11 +211,13 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         registry: terminalBridge.registry,
         runtime: terminalBridge.runtime,
         connectOutput: terminalBridge.connectOutput,
-        terminalName: async (terminalId) => {
+        terminalInfo: async (terminalId) => {
           const [workspaceId, tabId] = terminalId.split(":");
           const workspaces = await terminalWorkspaceRuntime.listWorkspaces();
-          const name = workspaces.find((workspace) => workspace.id === workspaceId)?.tabs.find((tab) => tab.id === tabId)?.name;
-          return name ? name.slice(0, 256) : null;
+          const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+          const name = workspace?.tabs.find((tab) => tab.id === tabId)?.name;
+          if (!name) return null;
+          return { name: name.slice(0, 256), ...(workspace?.canonicalSize ? { size: workspace.canonicalSize } : {}) };
         },
         executionEligibility: {
           profileId: "scope-runtime-terminal-v1",

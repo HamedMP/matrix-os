@@ -149,5 +149,7 @@ export const TeamTerminalProjectionSchema = z.object({
   role: CollaborationRoleSchema,
   status: z.enum(["active", "exited"]),
   inputMode: CollaborationTeamTerminalInputModeSchema,
+  /** The terminal's own grid; collaborators render at this size because only the owner resizes. */
+  size: z.object({ cols: z.number().int().min(1).max(1_000), rows: z.number().int().min(1).max(1_000) }).strict().optional(),
 }).strict();
 export type TeamTerminalProjection = z.infer<typeof TeamTerminalProjectionSchema>;

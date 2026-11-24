@@ -84,9 +84,10 @@ socket requests.
 
 **J3 Type and prompt an agent together (P1).** Nima and Yuhan (editor) both type
 into a running `claude` session. Each person's keystrokes reach the PTY in arrival
-order. Avatars show who is typing. Each Enter leaves a gutter mark ("Yuhan ↵") on
-the line where it was pressed. *Check:* both prompts reach the agent; both clients
-show the same marks.
+order. Avatars show who is typing. The pane header names who pressed Enter last
+("Yuhan pressed Enter · 5s ago"); the content-free marks carry the output
+position so a later change can draw them as gutter decorations.
+*Check:* both prompts reach the agent; both clients show the same marks.
 
 **J4 Viewer is read-only (P1).** Sam (viewer) watches. Sam's input UI is disabled.
 A crafted input, paste, resize or stop frame is rejected by the gateway. The
@@ -419,7 +420,7 @@ connection store (2706 rule).
 | 2 | Gateway authority | `packages/contracts/src/collaboration.ts`, `packages/gateway/src/collaboration/{scope-routes,terminal-adapter,terminal-dispatcher,canonical-terminal-bridge,direct-websocket}.ts`, new `team-terminal-audience.ts` | Exception, audience/roles, input modes, per-frame auth, rate limits, revocation |
 | 3 | Gateway presence and attribution | new `terminal-presence.ts`, `terminal-events.ts`, terminal events publisher | Presence/attribution frames, owner feed, caps, shutdown drain |
 | 4 | Desktop owner | `desktop/.../terminal-window/` (new `share/` folder), main-process IPC | Share dialog, shared badge, presence strip, take control, audience management |
-| 5 | Desktop member + docs | `desktop/.../terminal-window/` (new `team/` folder), `packages/ui` decorations helper, `docs/` | Team section, shared pane, read-only UX, gutter marks; user docs |
+| 5 | Desktop member + docs | `desktop/.../terminal-window/` (new `team/` folder), `packages/ui` direct stream, `docs/platform/user/team-terminals.md` | Team section, shared pane, read-only UX, who-typed-what in the pane header; user docs |
 | 6 | Share a whole computer | gateway computer scope + desktop | Members see every tab on the computer and editors can open tabs; same roles, revocation and caps |
 
 Public documentation ships as a separate `FinnaAI/matrix-os-site` PR under
