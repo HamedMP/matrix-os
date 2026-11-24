@@ -1,5 +1,9 @@
 import { z } from "zod/v4";
-export type TerminalManagerCommand = (command: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
+export type TerminalManagerCommand = (
+  command: string,
+  args: string[],
+  options?: { timeoutMs?: number },
+) => Promise<{ stdout: string; stderr: string }>;
 const UnitSchema = z.string().regex(/^matrix-terminal-native-[a-f0-9]{32}\.service$/);
 const StateSchema = z.object({ Id: UnitSchema, LoadState: z.enum(["loaded", "not-found"]), ActiveState: z.enum(["active", "activating", "deactivating", "reloading", "inactive", "failed"]),
   SubState: z.string().min(1).max(64), MainPID: z.string().regex(/^(0|[1-9][0-9]{0,9})$/), InvocationID: z.string().regex(/^([a-f0-9]{32})?$/) }).strict();
