@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { installVia, sshLoginArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
+import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
+import { probeLiveCoreId } from "@desktop/main/local-terminals/machine-core";
 import { findTailscale, parseTailscaleStatus } from "@desktop/main/local-terminals/tailscale";
 import { SshOptionsSchema } from "@desktop/shared/local-terminals";
 
@@ -69,5 +70,20 @@ describe("tailnet peers", () => {
     expect(parseTailscaleStatus("not json")).toEqual({ status: "unavailable" });
     expect(findTailscale(() => false)).toBeNull();
     expect(findTailscale((path) => path === "/usr/bin/tailscale")).toBe("/usr/bin/tailscale");
+  });
+
+  // Nima, #3579: the update first reads the live core's id over the same route herdr-core dials.
+  it("probes the live core over the same ssh route, port, identity and jump host included", () => {
+    const argv = sshProbeArgv("me@box:2222", { identity: "~/.ssh/id_box", jump: "me@bastion" }, null);
+    expect(argv.slice(0, -1)).toEqual(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", "2222", "-i", "~/.ssh/id_box", "-J", "me@bastion", "--", "me@box"]);
+    expect(argv.at(-1)).toContain("hc server status --json");
+    expect(sshProbeArgv("ts-box", { tailscaleSsh: true }, "/usr/bin/tailscale").slice(0, 3)).toEqual(["/usr/bin/tailscale", "ssh", "ts-box"]);
+  });
+
+  it("reads the core id from the probe's output and refuses anything else", async () => {
+    const print = (text: string) => [process.execPath, "-e", `process.stdout.write(${JSON.stringify(text)})`];
+    await expect(probeLiveCoreId(print(JSON.stringify({ core: { id: "ab52e4c4061e4875f94cfa9b0150cbf3", name: "vps" } })))).resolves.toBe("ab52e4c4061e4875f94cfa9b0150cbf3");
+    await expect(probeLiveCoreId(print("hc: command not found"))).rejects.toThrow();
+    await expect(probeLiveCoreId(print(JSON.stringify({ core: { id: "../x" } })))).rejects.toThrow();
   });
 });

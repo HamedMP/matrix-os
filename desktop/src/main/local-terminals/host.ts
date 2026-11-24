@@ -5,10 +5,10 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
-import { installVia, sshLoginArgv, sshVia } from "./ssh-command";
+import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
-import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
+import { createMachineCore, probeLiveCoreId, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
@@ -85,6 +85,8 @@ export interface LocalTerminalHostOptions {
   createEvents?: (options: LocalTerminalEventsOptions) => LocalTerminalEvents;
   /** Runs the bundled core's CLI (machine install and update); replaced in tests. */
   runCoreCli?: MachineCoreRunner;
+  /** Reads the live core's id over an ssh argv (tests replace it). */
+  probeCoreId?: (argv: readonly string[]) => Promise<string>;
 }
 
 export class LocalTerminalUnknownError extends Error {
@@ -213,6 +215,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
   const machineSsh = createMachineSshStore(options.dataDir);
   // The app's own core on added machines, through the bundled core's CLI.
+  const probeCoreId = options.probeCoreId ?? probeLiveCoreId;
   const machineCore = createMachineCore({
     cli: async () => {
       try {
@@ -462,6 +465,19 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         // Re-read right before running: the machine under the name must still be the one picked.
         const current = (await shownMachines()).find((machine) => machine.name === input.name);
         if (!current || !sameMachine(current, input)) return { ok: false, reason: "changed" };
+        // herdr-core's update dials the name again, so the registry's id is not enough: read the live
+        // core's id over the same ssh route right before, and send nothing to a different core.
+        // (A repoint in the moment between this probe and herdr's own dial is not covered.)
+        if (current.coreId) {
+          let live: string;
+          try {
+            live = await probeCoreId(sshProbeArgv(current.target, current.ssh, current.ssh?.tailscaleSsh ? findTailscale() : null));
+          } catch (error: unknown) {
+            console.warn("[local-terminals] live core id unreadable before update:", describeError(error));
+            return { ok: false, reason: "failed" };
+          }
+          if (live !== current.coreId) return { ok: false, reason: "changed" };
+        }
         return machineCore.update(input.name);
       }).catch((error: unknown) => {
         if (error instanceof MachineQueueFullError) return { ok: false, reason: "busy" } as const;

@@ -6,6 +6,7 @@
 // bundled core's CLI against its private core, so the version on every
 // machine is the one the app ships. One install or update runs per machine.
 import { execFile } from "node:child_process";
+import { z } from "zod/v4";
 import { describeError } from "./describe-error";
 
 /** An install downloads (on the core's side) and copies the binary over ssh. */
@@ -70,3 +71,20 @@ export function createMachineCore(options: {
     running: (name: string) => running.has(name),
   };
 }
+
+const PROBE_TIMEOUT_MS = 20_000;
+const ProbeStatusSchema = z.object({ core: z.object({ id: z.string().regex(/^[0-9a-f]{8,64}$/) }) });
+
+/** Runs the probe argv and returns the live core's id; throws when it cannot tell. */
+export const probeLiveCoreId = (argv: readonly string[]): Promise<string> => new Promise((resolve, reject) => {
+  const [binary, ...args] = argv;
+  if (!binary) { reject(new Error("empty probe")); return; }
+  execFile(binary, args, { timeout: PROBE_TIMEOUT_MS, maxBuffer: 64 * 1024, windowsHide: true }, (error, stdout) => {
+    if (error) { reject(error); return; }
+    try {
+      resolve(ProbeStatusSchema.parse(JSON.parse(stdout)).core.id);
+    } catch (parseError: unknown) {
+      reject(parseError);
+    }
+  });
+});

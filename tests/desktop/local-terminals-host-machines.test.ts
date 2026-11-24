@@ -140,7 +140,7 @@ describe("added machines over ssh", () => {
       if (call.method === "machine.list") core.reply(call.id, { result: { machines: listed } });
       if (call.method === "machine.rm") { listed = []; core.reply(call.id, { result: {} }); }
       if (call.method === "machine.add") { listed = [machine("box", "me@box")]; core.reply(call.id, { result: machine("box", "me@box") }); }
-    }, { runCoreCli });
+    }, { runCoreCli, probeCoreId: async () => "a".repeat(32) });
     await host.addMachine({ target: "me@box", name: "box", ssh: { port: 2222 } });
     const picked = (await host.machines()).find((entry) => entry.name === "box")!;
     expect(picked.ssh).toEqual({ port: 2222 });
@@ -173,6 +173,31 @@ describe("added machines over ssh", () => {
     expect(calls.filter((call) => call.method === "machine.rm").map((call) => call.params)).toEqual([{ machine: "box" }]);
     // A plain target needs no saved settings: its install stands.
     expect(await host.installMachine({ target: "me@plain", name: "plain" })).toEqual({ ok: true });
+  });
+
+  // Fault detected (Nima, #3579): the id check read only this app's registry, and herdr-core's update then
+  // dialed the name again; an ssh alias repointed at another trusted machine would get its core overwritten.
+  it("reads the live core's id over the same ssh route and never sends the update to a different core", async () => {
+    const runCoreCli = vi.fn(async () => undefined);
+    let live = "b".repeat(32);
+    const probeCoreId = vi.fn(async () => live);
+    const listed = [{ ...machine("box", "me@box"), id: "a".repeat(32) }];
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: listed } });
+    }, { runCoreCli, probeCoreId });
+    const picked = (await host.machines()).find((entry) => entry.name === "box")!;
+    expect(await host.updateMachine(picked)).toEqual({ ok: false, reason: "changed" });
+    expect(probeCoreId).toHaveBeenCalledWith(expect.arrayContaining(["ssh", "-o", "BatchMode=yes", "--", "me@box"]));
+    expect(runCoreCli).not.toHaveBeenCalled();
+
+    // A probe that fails refuses too: the update is never sent blind.
+    probeCoreId.mockRejectedValueOnce(new Error("timed out"));
+    expect(await host.updateMachine(picked)).toEqual({ ok: false, reason: "failed" });
+    expect(runCoreCli).not.toHaveBeenCalled();
+
+    live = "a".repeat(32);
+    expect(await host.updateMachine(picked)).toEqual({ ok: true });
+    expect(runCoreCli).toHaveBeenCalledTimes(1);
   });
 
   // Fault detected (Nima, #3579): "Install core there" on user@host:2222 handed the raw address to
