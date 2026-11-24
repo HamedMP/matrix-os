@@ -1,6 +1,6 @@
 import { Check, Minus } from "lucide-react";
 import type { ComponentProps, KeyboardEvent, MouseEvent } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 import { Icon } from "./Icon";
 
 export type CheckedState = boolean | "indeterminate";

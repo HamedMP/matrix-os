@@ -1,5 +1,5 @@
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 
 /** Moves focus between sibling items with arrow keys, Home and End. Returns the new index. */
 export function rovingIndex(key: string, index: number, count: number, orientation: "horizontal" | "vertical" = "horizontal"): number | null {

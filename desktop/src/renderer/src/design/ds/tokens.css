@@ -180,3 +180,10 @@
   outline-offset: -2px;
   border-radius: revert-layer;
 }
+
+/* Menus take focus when they open; the desktop's global focus ring must not outline them. */
+.ds-menu-surface:focus-visible {
+  outline: none;
+  box-shadow: var(--ds-elevation-lg);
+  border-radius: revert-layer;
+}

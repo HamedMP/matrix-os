@@ -1,6 +1,6 @@
 import * as RadixSwitch from "@radix-ui/react-switch";
 import type { ComponentProps } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 
 // Design-library Switch (md: 20 × 36): fully rounded, on uses --primary.
 export function Switch({ className, ...props }: ComponentProps<typeof RadixSwitch.Root>) {

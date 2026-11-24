@@ -1,7 +1,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type { ComponentProps, ReactNode } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 import { tooltipContentClass, tooltipLayerStyle } from "./Tooltip";
 
 // Design-library Button: primary is neutral, destructive is coral, sizes 28 · 32 · 36px,

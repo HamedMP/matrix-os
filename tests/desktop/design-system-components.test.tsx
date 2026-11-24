@@ -22,6 +22,7 @@ import {
   type MenuEntry,
 } from "../../desktop/src/renderer/src/design/ds";
 import { DESKTOP_Z_INDEX } from "../../desktop/src/renderer/src/design/layering";
+import { dsCn } from "../../desktop/src/renderer/src/design/ds/cn";
 
 afterEach(cleanup);
 
@@ -48,11 +49,26 @@ describe("design-system Button", () => {
     expect(screen.getByRole("button", { name: "Move to Trash" })).toBeTruthy();
   });
 
+  it("keeps its label colour and text size together", () => {
+    render(<Button variant="primary" size="sm">New</Button>);
+    const classes = screen.getByRole("button", { name: "New" }).className.split(" ");
+    expect(classes).toContain("text-ds-primary-foreground");
+    expect(classes).toContain("text-ds-ui");
+  });
+
   it("does not fire when disabled", () => {
     const onClick = vi.fn();
     render(<Button disabled onClick={onClick}>Delete</Button>);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(onClick).not.toHaveBeenCalled();
+  });
+});
+
+describe("design-system class merging", () => {
+  it("treats ds text sizes and ds text colours as different groups", () => {
+    expect(dsCn("text-ds-foreground text-ds-ui")).toBe("text-ds-foreground text-ds-ui");
+    expect(dsCn("text-ds-ui text-ds-ui-sm")).toBe("text-ds-ui-sm");
+    expect(dsCn("text-ds-foreground text-ds-muted-foreground")).toBe("text-ds-muted-foreground");
   });
 });
 
@@ -185,6 +201,7 @@ describe("design-system popover layering", () => {
     render(<DropdownMenu trigger={<button type="button">Open</button>} entries={[{ kind: "item", id: "a", label: "A", onSelect: vi.fn() }]} />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Open" }), { button: 0, ctrlKey: false });
     expect(screen.getByRole("menu").style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
+    expect(screen.getByRole("menu").className).toContain("ds-menu-surface");
   });
 });
 

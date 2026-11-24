@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 
 // Design-library Input: sizes line up with Button (sm 32 · md 36), 8px radius, gold focus ring.
 export function Input({ className, inputSize = "md", ...props }: ComponentProps<"input"> & { inputSize?: "sm" | "md" }) {

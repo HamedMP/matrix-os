@@ -1,6 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 
 // Design-library Badge: a tinted, informational label (never a button).
 export const badgeVariants = cva(

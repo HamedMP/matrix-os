@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 
 const SIZE_PX = { xs: 20, sm: 24, md: 32 } as const;
 export type AvatarSize = keyof typeof SIZE_PX;

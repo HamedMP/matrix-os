@@ -3,7 +3,7 @@
 
 // Stacking comes from DESKTOP_Z_INDEX.popover, applied as a style by Menu.tsx.
 export const menuSurface =
-  "min-w-45 overflow-x-hidden overflow-y-auto rounded-lg border border-ds-border bg-ds-popover p-1 font-ds-sans text-ds-foreground shadow-ds-lg fade-in";
+  "ds-menu-surface min-w-45 overflow-x-hidden overflow-y-auto rounded-lg border border-ds-border bg-ds-popover p-1 font-ds-sans text-ds-foreground shadow-ds-lg fade-in";
 
 /** Highlight follows hover and keyboard; inner radius 12 − 4 padding = 8. */
 export const menuItem = [

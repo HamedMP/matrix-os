@@ -2,7 +2,7 @@ import * as RadixContextMenu from "@radix-ui/react-context-menu";
 import * as RadixDropdown from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight } from "lucide-react";
 import type { ElementType, ReactElement, ReactNode } from "react";
-import { cn } from "../../lib/cn";
+import { dsCn as cn } from "./cn";
 import { DESKTOP_Z_INDEX } from "../layering";
 import { Icon } from "./Icon";
 import { menuCheck, menuItem, menuItemDestructive, menuItemWithCheck, menuLabel, menuSeparator, menuShortcut, menuSurface } from "./menu-styles";
