@@ -128,6 +128,10 @@ export function PrivateNetworkPanel({ client }: { client: PrivateNetworkClient }
   const model = usePrivateNetworkStatus(client);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const { phase, status } = model;
+  // A brief status failure must not unmount pairing and lose a valid join code.
+  const [pairingMounted, setPairingMounted] = useState(false);
+  const keepPairing = status?.state === "connected" || (pairingMounted && status?.state === "unavailable");
+  if (keepPairing !== pairingMounted) setPairingMounted(keepPairing);
   if (phase === "hidden" || phase === "loading") return null;
   const visibleState = status && status.state !== "unsupported" ? status.state : null;
   const copy = visibleState ? stateCopy(visibleState) : null;
@@ -155,7 +159,7 @@ export function PrivateNetworkPanel({ client }: { client: PrivateNetworkClient }
           </>
         )}
         <FeedbackLine message={model.error} />
-        {status?.state === "connected" && <PairedMachinesSection client={client} />}
+        {keepPairing && <PairedMachinesSection client={client} />}
       </CardContent>
       <ConfirmDialog
         open={confirmingDisconnect}

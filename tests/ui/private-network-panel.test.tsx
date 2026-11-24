@@ -281,6 +281,29 @@ describe("PrivateNetworkPanel", () => {
     expect(screen.getByText("second-command")).toBeTruthy();
   });
 
+  // Review P2: a status poll that briefly failed unmounted pairing and lost the join code.
+  it("keeps a valid join code through a brief status failure", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-11-21T10:00:00Z"));
+    const statusFn = vi
+      .fn<PrivateNetworkClient["status"]>()
+      .mockResolvedValueOnce(connected)
+      .mockResolvedValueOnce(status({ state: "unavailable" }))
+      .mockResolvedValue(connected);
+    const createJoinCode = vi.fn(async () => ({ code: "ABCD-1234", command: "join-command", expiresAt: "2026-11-21T10:20:00Z" }));
+    render(<PrivateNetworkPanel client={fakeClient({ status: statusFn, createJoinCode })} />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Add a machine" }));
+    await flush();
+    expect(screen.getByText("join-command")).toBeTruthy();
+    await flush(STATUS_IDLE_POLL_MS);
+    expect(statusFn).toHaveBeenCalledTimes(2);
+    await flush(STATUS_IDLE_POLL_MS);
+    expect(statusFn.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText("join-command")).toBeTruthy();
+    expect(createJoinCode).toHaveBeenCalledTimes(1);
+  });
+
   it("reloads the list after a removal conflict so a retry sends the current revision", async () => {
     const machines = vi
       .fn<PrivateNetworkClient["machines"]>()
