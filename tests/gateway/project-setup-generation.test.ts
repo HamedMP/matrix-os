@@ -11,6 +11,7 @@ import { adapter, catalog, owner, principal } from "./chat-orchestrator-test-sup
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/project-setup-transcript.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
@@ -335,7 +336,7 @@ describe("admitted project setup generation", () => {
       initialProjectSetup("chat_setup", "project_a", "Portfolio", "msg_question"), selection, "req_generate", executionRootFingerprint);
     expect(generation.status).toBe("unavailable"); expect(admitTurn).not.toHaveBeenCalled();
   });
-  it("keeps interview wire text out of Chat preview, search, unread state and streamed message chunks", async () => {
+  it("keeps interview wire text out of the visible Chat and Side Chat context", async () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const chatId = snapshot.chat.id;
     await repository.create(owner, { id: chatId, title: "Release notes", clientRequestId: "req_setup_preview_test" });
@@ -389,6 +390,15 @@ describe("admitted project setup generation", () => {
     expect(incoming?.readState).toMatchObject({ unread: true, latestIncomingSeq: 4 });
     const read = await repository.updateReadState(owner, chatId, { type: "mark_read", throughSeq: 4, baseVersion: 0 });
     expect(read.readState).toMatchObject({ unread: false, latestIncomingSeq: 4 });
+
+    const sideChats = new SideChatRepository(repository.kysely);
+    await sideChats.create(owner, chatId);
+    const generate = vi.fn(async (_prompt: string) => ({ text: "Review the changelog before release." }));
+    await sideChats.ask(owner, chatId, { clientRequestId: "req_setup_side", text: "What should I review?" }, generate);
+    const prompt = generate.mock.calls[0]![0];
+    expect(prompt).toContain(`user: ${ownerText}`);
+    expect(prompt).toContain("assistant: Who reviews the changelog?");
+    expect(prompt).not.toMatch(/internalsetup(?:instruction|payload)/);
   });
 });
 
