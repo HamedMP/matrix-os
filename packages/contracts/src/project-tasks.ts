@@ -222,6 +222,8 @@ export const ListTasksQuerySchema = z.object({
   assignee: z.union([z.literal("unassigned"), ActorRefSchema]).optional(),
   label: TaskLabelSchema.optional(),
   q: z.string().max(TASK_LIMITS.search).optional(),
+  /** The task whose chat this is (every task is a chat); archived tasks match too. */
+  chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/).optional(),
   cursor: z.string().regex(/^[A-Za-z0-9_-]{1,200}$/).optional(),
   limit: z.coerce.number().int().min(1).max(TASK_LIMITS.listMax).default(TASK_LIMITS.listDefault),
   includeArchived: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),

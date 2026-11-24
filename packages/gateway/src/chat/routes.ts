@@ -129,7 +129,7 @@ const ChatDetailQuerySchema = z.object({
 export interface CanonicalChatRouteService {
   navigation?(owner: ChatOwner, input: CanonicalChatNavigationQuery): Promise<CanonicalChatNavigationResponse>;
   /** `server` is gateway-only (the board's task worktree); the HTTP route never passes it. */
-  create(owner: ChatOwner, input: CanonicalCreateChatRequest, server?: { defaultWorktreeId?: string }): Promise<CanonicalChatRecord>;
+  create(owner: ChatOwner, input: CanonicalCreateChatRequest, server?: { defaultWorktreeId?: string; ticket?: unknown }): Promise<CanonicalChatRecord>;
   updateProject(
     owner: ChatOwner,
     chatId: string,

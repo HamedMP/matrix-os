@@ -114,7 +114,8 @@ export interface ProjectTaskDatabase {
 }
 
 export type ProjectTaskDb = Kysely<ProjectTaskDatabase>;
-export type ProjectTaskTrx = Transaction<ProjectTaskDatabase>;
+/** A transaction, or a connection already inside one (a chat transaction the board joins). */
+export type ProjectTaskTrx = Transaction<ProjectTaskDatabase> | Kysely<ProjectTaskDatabase>;
 
 const OWNER = "owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128)";
 const TASK_ID = (column: string) => `${column} TEXT NOT NULL CHECK (${column} ~ '^task_[A-Za-z0-9_-]{1,128}$')`;

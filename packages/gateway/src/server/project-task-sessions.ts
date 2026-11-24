@@ -13,6 +13,7 @@ import type { CanonicalOwnerScope, TerminalWorkspace } from "@matrix-os/contract
 import { ProjectIdSchema, TaskIdSchema, type TaskAgentStatus, type TaskPullRequest } from "@matrix-os/contracts/project-tasks";
 import { writeChatExecutionDefault } from "../chat/execution-defaults.js";
 import type { ChatRepository } from "../chat/repository.js";
+import type { ProjectTaskTrx } from "../project-tasks/database.js";
 import type { CanonicalChatRouteService } from "../chat/routes.js";
 import { githubOwnerEnvironment } from "../github-owner-environment.js";
 import type { createProjectManager } from "../project-manager.js";
@@ -122,7 +123,7 @@ export interface TaskSessionPortOptions {
   projectManager: Pick<ReturnType<typeof createProjectManager>, "resolveProjectWorkingDirectory" | "getCodeMetadata">;
   worktreeManager: Pick<ReturnType<typeof createWorktreeManager>, "createWorktree" | "getWorktree">;
   /** The canonical chat service and the owner chat repository; null without the owner database. */
-  chats: { service: Pick<CanonicalChatRouteService, "admitTurn">; repository: ChatRepository } | null;
+  chats: { service: Pick<CanonicalChatRouteService, "create" | "admitTurn">; repository: ChatRepository } | null;
   terminalRuntime: TerminalRuntime;
   runCommand?: TaskCommandRunner;
 }
@@ -225,6 +226,40 @@ export function createTaskSessionPorts(options: TaskSessionPortOptions): TaskSes
     return options.chats;
   };
   const chats: ChatPort = {
+    async create(ownerScope, input) {
+      const { ticket, ...request } = input;
+      const record = await requireChats().service.create(chatOwner(ownerScope), request, { ticket });
+      return { id: record.chat.id, revision: record.chat.revision };
+    },
+    async transaction(run) {
+      return requireChats().repository.withTransaction(async (scoped) => {
+        const trx = scoped.kysely;
+        const current = async (ownerScope: OwnerScope, chatId: string) => {
+          const row = await trx.selectFrom("chats").select(["revision", "title_version", "lifecycle", "title"])
+            .where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", chatOwner(ownerScope).ownerId)
+            .forUpdate().executeTakeFirst();
+          if (!row) throw new TaskPortUnavailableError("chats", "chat_not_found");
+          return row;
+        };
+        return run({
+          board: trx as unknown as ProjectTaskTrx,
+          async rename(ownerScope, chatId, title) {
+            const row = await current(ownerScope, chatId);
+            if (row.title === title) return;
+            await scoped.rename(chatOwner(ownerScope), chatId, { title, expectedTitleVersion: Number(row.title_version) });
+          },
+          async setArchived(ownerScope, chatId, archived) {
+            const row = await current(ownerScope, chatId);
+            const lifecycle = archived ? "archived" : "active";
+            if (row.lifecycle === lifecycle) return;
+            await scoped.update(chatOwner(ownerScope), chatId, { baseRevision: Number(row.revision), lifecycle });
+          },
+          async remove(ownerScope, chatId, clientRequestId) {
+            await scoped.hardDelete(chatOwner(ownerScope), { chatId, clientRequestId });
+          },
+        });
+      });
+    },
     async bindWorktree(ownerScope, chatId, input) {
       await writeChatExecutionDefault(requireChats().repository.kysely, chatOwner(ownerScope), chatId, input);
     },
