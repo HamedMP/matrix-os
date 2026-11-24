@@ -37,24 +37,41 @@ describe("Discussion synchronization", () => {
     expect(result.current.messages.map(message => message.id)).toContain("note-8");
   });
 
-  it("refetches after an event arrives while the initial page is in flight", async () => {
+  it.each(["success", "failure"])("waits for the trailing read's %s before acknowledging a concurrent event", async (outcome) => {
     let resolvePage!: (page: unknown) => void;
+    let resolveTrailing!: (page: unknown) => void;
+    let rejectTrailing!: (failure: Error) => void;
     let notify!: () => void | Promise<void>;
     const api = { baseUrl: "https://app.matrix-os.com",
       get: vi.fn().mockImplementationOnce(() => new Promise(resolve => { resolvePage = resolve; }))
-        .mockResolvedValue({ messages: [note(8)], latestSequence: "8" }),
+        .mockImplementationOnce(() => new Promise((resolve, reject) => { resolveTrailing = resolve; rejectTrailing = reject; })),
       post: vi.fn(), delete: vi.fn(),
       subscribe: (_id: string, onEvent: () => void | Promise<void>) => { notify = onEvent; return () => {}; },
     };
     const { result } = renderHook(() => useDiscussion(api));
+    let settled = false;
+    const refresh = Promise.resolve(notify());
+    void refresh.then(() => { settled = true; }, () => { settled = true; });
     await act(async () => {
-      const refresh = notify();
       resolvePage({ messages: [], latestSequence: "0" });
-      await refresh;
     });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(api.get).toHaveBeenCalledTimes(2);
-    expect(result.current.messages).toEqual([note(8)]);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    expect(result.current.loading).toBe(true);
+    await act(async () => {
+      if (outcome === "success") {
+        resolveTrailing({ messages: [note(8)], latestSequence: "8" });
+        await expect(refresh).resolves.toBeUndefined();
+      } else {
+        const failure = new Error("trailing read failed");
+        rejectTrailing(failure);
+        await expect(refresh).rejects.toBe(failure);
+      }
+    });
+    expect(settled).toBe(true);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.messages).toEqual(outcome === "success" ? [note(8)] : []);
+    expect(result.current.error).toBe(outcome === "failure");
   });
 
   it("backfills unseen pages after a local post without skipping to that post's sequence", async () => {
