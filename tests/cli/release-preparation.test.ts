@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = join(import.meta.dirname, "../..");
-const releaseVersion = "0.3.22";
+const releaseVersion = "0.3.23";
 
 function readSection(markdown: string, heading: string): string {
   const marker = `## ${heading}\n`;
@@ -33,6 +33,9 @@ describe("Matrix CLI release preparation", () => {
     );
     expect(release).toContain(`with \`version=${releaseVersion}\``);
     expect(verificationLines).toContain(`MATRIX_VERSION=${releaseVersion} sh scripts/install.sh`);
+    // The npm install must be checked through its own binary; `matrix` on PATH is the standalone one.
+    expect(verificationLines).toContain(`npm install -g @finnaai/matrix@${releaseVersion} --prefix "$NPM_PREFIX"`);
+    expect(verificationLines).toContain(`test "$("$NPM_PREFIX/bin/matrix" --version)" = "${releaseVersion}"`);
     expect(verificationLines).toContain("matrix update --help");
     expect(verificationLines).toContain("matrix update --check --json");
     for (const target of ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"]) {
