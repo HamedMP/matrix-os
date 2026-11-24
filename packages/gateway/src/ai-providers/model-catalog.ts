@@ -1,4 +1,7 @@
-import { MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS, type AiModelDescriptorView } from "@matrix-os/contracts";
+import {
+  MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS, retiredManagedWorkersAiModel,
+  type AiModelDescriptorView,
+} from "@matrix-os/contracts";
 import {
   KERNEL_EFFORTS,
   KERNEL_MODELS,
@@ -64,7 +67,8 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
   return [
     ...MANAGED_WORKERS_AI_MODELS.map((model): AiModelDescriptorView => ({
       id: model.id, vendor: "cloudflare", displayName: model.displayName,
-      status: "current", capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []),
+      status: retiredManagedWorkersAiModel(model.id) ? "retired" : "current",
+      capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []),
         ...(model.vision ? ["vision" as const] : []), "long_context"],
       // Managed harnesses do not expose per-model effort controls yet.
       effortControls: [], eligibleAccessSourceIds: ["matrix_cloudflare"],
@@ -95,5 +99,5 @@ export function eligibleModelsForSource(
   sourceId: string,
   catalog: readonly AiModelDescriptorView[],
 ): AiModelDescriptorView[] {
-  return catalog.filter((model) => model.eligibleAccessSourceIds.includes(sourceId));
+  return catalog.filter((model) => model.status !== "retired" && model.eligibleAccessSourceIds.includes(sourceId));
 }

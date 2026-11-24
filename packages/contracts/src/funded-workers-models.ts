@@ -18,6 +18,14 @@ export const MANAGED_WORKERS_AI_MODEL_IDS = [
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
 ] as const;
 export type ManagedWorkersAiModelId = typeof MANAGED_WORKERS_AI_MODEL_IDS[number];
+// Cloudflare stopped serving these managed routes on November 20, 2026.
+const RETIRED_MANAGED_WORKERS_AI_MODEL_IDS: readonly ManagedWorkersAiModelId[] = [
+  "@cf/zai-org/glm-5.3-flash",
+  "@cf/deepseek-ai/deepseek-v4-flash-0731",
+  "@cf/deepseek-ai/deepseek-v4-pro-0813",
+  "@cf/moonshotai/kimi-k2.7-code",
+];
+
 export interface ManagedWorkersAiModel {
   readonly id: ManagedWorkersAiModelId;
   readonly displayName: string;
@@ -51,6 +59,13 @@ export function isManagedWorkersAiModel(id: string): id is ManagedWorkersAiModel
 }
 export function managedWorkersAiModel(id: string): Readonly<ManagedWorkersAiModel> | undefined {
   return MANAGED_WORKERS_AI_MODELS.find(model => model.id === id);
+}
+
+/** Resolve a retired model's metadata for the catalog and previously saved selections. */
+export function retiredManagedWorkersAiModel(reference: string): Readonly<ManagedWorkersAiModel> | undefined {
+  // Older Chat and Bot selections included the Cloudflare provider prefix.
+  const model = managedWorkersAiModel(reference.replace(/^cloudflare:/, ""));
+  return model && RETIRED_MANAGED_WORKERS_AI_MODEL_IDS.includes(model.id) ? model : undefined;
 }
 
 /** Cloudflare currently emits this one internal Gemma ID on its model-in-path

@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { IsolatedChatEnvelopeSchema, isPortableGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import { buildBundledModelCatalog, MATRIX_DEFAULT_MODEL_ID } from "../../packages/gateway/src/ai-providers/model-catalog.js";
+import { projectMatrixModelInventory } from "../../packages/gateway/src/ai-providers/provider-matrix-model-inventory.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { resolveBotRoute, resolveManagedPiRoute } from "../../packages/gateway/src/bots/route-resolver.js";
 import { buildOpenCodeRunConfiguration, preparePiRunEnvironment } from "../../packages/gateway/src/coding-agents/managed-harness-process-config.js";
 import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-provider-choice.js";
 import { deriveChatPickerModelRows } from "../../packages/ui/src/chat-picker-entries.js";
-import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
+import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 
 const IDS = [
   "@cf/zai-org/glm-5.3-flash", "@cf/deepseek-ai/deepseek-v4-flash-0731", "@cf/zai-org/glm-5.3",
@@ -18,12 +19,17 @@ const IDS = [
   "@cf/deepseek-ai/deepseek-v4-pro-0813", "@cf/qwen/qwen3.8-27b", "@cf/openai/gpt-oss-20b",
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
 ];
-const DEEPSEEK_V41 = IDS.at(-1)!;
-const NOW = new Date("2026-10-15T10:00:00.000Z");
+const FULL_GLM = "@cf/zai-org/glm-5.3";
+const DEEPSEEK_V41 = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+const OFFERED = [
+  FULL_GLM, "@cf/openai/gpt-oss-120b", "@cf/google/gemma-4-26b-a4b-it",
+  "@cf/qwen/qwen3.8-27b", "@cf/openai/gpt-oss-20b", DEEPSEEK_V41,
+];
+const NOW = new Date("2026-11-25T10:00:00.000Z");
 const credentials = { OPENAI_API_KEY: "private-lease", OPENAI_BASE_URL: "https://relay.example.test/v1" };
 
 describe("managed Workers AI model consumers", () => {
-  it("shares exactly ten managed models while preserving Flash first and as default", () => {
+  it("keeps all ten original descriptors and the legacy fallback seed", () => {
     const models = buildBundledModelCatalog().filter(model => model.eligibleAccessSourceIds.includes("matrix_cloudflare"));
     expect(models.map(model => model.id)).toEqual(IDS);
     expect(MATRIX_DEFAULT_MODEL_ID).toBe(IDS[0]);
@@ -57,47 +63,58 @@ describe("managed Workers AI model consumers", () => {
     }
     const envelope = { phaseId: "phase_models", ownerId: "owner", machineId: "machine", runtimeSlot: "primary",
       runtimeTokenEpoch: 1, runtimeCredentialSha256: "a".repeat(64), chatId: "chat_models", modelId,
-      sourceSha: "b".repeat(40), startsAt: NOW.toISOString(), expiresAt: "2026-10-15T10:05:00.000Z" };
+      sourceSha: "b".repeat(40), startsAt: NOW.toISOString(), expiresAt: "2026-11-25T10:05:00.000Z" };
     expect(IsolatedChatEnvelopeSchema.safeParse(envelope).success).toBe(true);
     expect(IsolatedChatEnvelopeSchema.safeParse({ ...envelope, modelId: "@cf/unreviewed/model" }).success).toBe(false);
     expect(isPortableGenericHarnessCredentialRoute({ harness: "pi", accessSourceId: source.id,
       route: { kind: "configurable", providerId: "cloudflare", modelId: "@cf/unreviewed/model" } }, source)).toBe(false);
   });
 
-  it("keeps the policy inventory stable while shared Workers health changes", async () => {
+  it("hides retired Workers choices across Chat and Settings while keeping active unavailable models visible", async () => {
     const home = await mkdtemp(join(tmpdir(), "managed-workers-readiness-"));
-    let healthy = IDS[1]!;
+    let healthy = [FULL_GLM, DEEPSEEK_V41, IDS[0]!];
     const service = new AiProviderService({ homePath: home, env: {}, now: () => NOW,
       fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
         getCredential: async () => { throw new Error("Catalog reads must not acquire credentials"); },
         invalidate: () => {}, close: () => {} },
       fundedReadinessReader: { read: async () => ({ readiness: { state: "ready", checkedAt: NOW.toISOString(),
-        staleAfter: "2026-10-15T10:00:30.000Z", action: "none", safeReason: null },
-        allowedModelIds: [healthy], discoverableModelIds: IDS }) } });
+        staleAfter: "2026-11-25T10:00:30.000Z", action: "none", safeReason: null },
+        allowedModelIds: healthy, discoverableModelIds: IDS }) } });
     try {
       const snapshot = await service.getSnapshot();
       expect(snapshot.accessSources.find(source => source.id === "matrix_cloudflare"))
-        .toMatchObject({ state: "ready", eligibleModelIds: [healthy] });
+        .toMatchObject({ state: "ready", eligibleModelIds: [FULL_GLM, DEEPSEEK_V41], discoverableModelIds: OFFERED });
       expect(snapshot.accessSources.find(source => source.id === "matrix_included")?.state).toBe("unavailable");
+      expect(snapshot.models.find(model => model.id === IDS[0])).toMatchObject({ displayName: "GLM 5.3 Flash", status: "retired" });
+      const inventory = projectMatrixModelInventory(snapshot, { enabled: true, globalRevision: 1,
+        runtimeRevision: 1, allowedModelIds: IDS, monthlyBudgetMicrousd: 1_000_000,
+        checkedAt: NOW.toISOString(), staleAfter: "2026-11-25T10:00:30.000Z" });
+      expect(inventory.map(model => model.id)).toEqual(OFFERED);
       const instance = managedPiChatInstances(snapshot, +NOW)[0]!;
-      expect(instance.models.map(model => model.id)).toEqual(IDS);
-      expect(instance.models.filter(model => model.availability === "available").map(model => model.id)).toEqual([healthy]);
-      expect(instance.defaultSelection?.model).toBe(healthy);
-      expect(resolveBotRoute(snapshot, +NOW).route.modelId).toBe(healthy);
-      expect(resolveManagedPiRoute(snapshot, { instanceId: "matrix_pi_default", model: healthy }, +NOW).route.modelId).toBe(healthy);
-      expect(() => resolveManagedPiRoute(snapshot, { instanceId: "matrix_pi_default", model: IDS[0]! }, +NOW)).toThrow("model_unavailable");
+      expect(instance.models.map(model => model.id)).toEqual(OFFERED);
+      expect(instance.models.filter(model => model.availability === "available").map(model => model.id)).toEqual([FULL_GLM, DEEPSEEK_V41]);
+      expect(instance.defaultSelection?.model).toBe(DEEPSEEK_V41);
+      expect(resolveBotRoute(snapshot, +NOW).route.modelId).toBe(FULL_GLM);
+      expect(resolveManagedPiRoute(snapshot, { instanceId: "matrix_pi_default", model: FULL_GLM }, +NOW).route.modelId).toBe(FULL_GLM);
+      const retiredSelection = { instanceId: "matrix_pi_default", model: IDS[0]! };
+      expect(() => resolveManagedPiRoute(snapshot, retiredSelection, +NOW)).toThrow("model_unavailable");
       const catalogs = createChatProviderCatalogService({ aiProviderSource: service, now: () => NOW,
         codingProviders: { listProviders: async () => { throw new Error("Unrequested CLI discovery"); }, invalidate: () => {} },
         agentRuntimeSource: async () => { throw new Error("Unrequested runtime discovery"); } });
-      const catalog = await catalogs.getCatalog({ userId: "owner_1", source: "jwt" }, { instanceId: instance.id, model: healthy });
+      const catalog = await catalogs.getCatalog({ userId: "owner_1", source: "jwt" }, retiredSelection);
       const rows = deriveChatPickerModelRows(catalog, deriveCanonicalProviderChoices(catalog));
-      expect(rows.map(row => row.modelId)).toEqual(IDS);
-      expect(rows.filter(row => row.choice).map(row => row.modelId)).toEqual([healthy]);
+      expect(rows.map(row => row.modelId)).toEqual(OFFERED);
+      expect(rows.filter(row => row.choice).map(row => row.modelId)).toEqual([FULL_GLM, DEEPSEEK_V41]);
+      expect(validateChatProviderSelection({ catalog, selection: retiredSelection, boundInstanceId: instance.id }))
+        .toMatchObject({ ok: false, error: { code: "model_unavailable", recoveryActions: ["select_provider"] } });
+      const replacement = { instanceId: instance.id, model: FULL_GLM };
+      expect(validateChatProviderSelection({ catalog, selection: replacement, boundInstanceId: instance.id }))
+        .toMatchObject({ ok: true, selection: replacement });
 
-      healthy = IDS[8]!;
+      healthy = ["@cf/openai/gpt-oss-20b"];
       const next = managedPiChatInstances(await service.getSnapshot(), +NOW)[0]!;
-      expect(next.models.map(model => model.id)).toEqual(IDS);
-      expect(next.models.filter(model => model.availability === "available").map(model => model.id)).toEqual([healthy]);
+      expect(next.models.map(model => model.id)).toEqual(OFFERED);
+      expect(next.models.filter(model => model.availability === "available").map(model => model.id)).toEqual(healthy);
       expect(managedPiChatInstances(snapshot, +NOW + 30_001)[0]!.models).toEqual([]);
     } finally { service.close(); await rm(home, { recursive: true, force: true }); }
   });
