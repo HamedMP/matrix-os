@@ -63,6 +63,30 @@ it("keeps the selected Skill manifest intact and lets the user remove a Skill fr
   expect(applyProjectSetupInterview(partiallySaved, dropSkill, context).draft.proposals).toEqual(partiallySaved.proposals);
 });
 
+it("keeps edited project guidance when the owner revises only the Skill", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_guidance", "project_ops", "Store operations", "msg_setup"));
+  const base = { reply: "Review the project setup.", focus: "review", suggestions: [] };
+  const first = applyProjectSetupInterview(draft, JSON.stringify({
+    ...base, answers: { guidance: "Ask before publishing." }, review: { guidance: "# Initial guidance" },
+  }), context).draft;
+  const edited = transitionProjectSetupInterview(first, {
+    type: "review_file", path: "AGENTS.md", content: "# Keep the handoff notes private.",
+  }).draft;
+  const revised = applyProjectSetupInterview(edited, JSON.stringify({
+    ...base, review: { skill: { name: "shift-handoff", description: "Store handoff", instructions: "Confirm break coverage." } },
+  }), context).draft;
+  expect(revised.proposals).toEqual([
+    ...edited.proposals,
+    expect.objectContaining({ path: ".agents/skills/shift-handoff/SKILL.md", status: "pending" }),
+  ]);
+
+  const dropped = applyProjectSetupInterview(revised, JSON.stringify({
+    ...base, reply: "I’ll keep only the Skill.", review: { guidance: null },
+  }), context).draft;
+  expect(dropped.proposals.map(file => file.path)).toEqual([".agents/skills/shift-handoff/SKILL.md"]);
+});
+
 it("clears a previously generated Skill when the owner corrects the proposal", () => {
   const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_skills", "project_ops", "Store operations", "msg_setup"));
@@ -101,7 +125,7 @@ describe("admitted project setup generation", () => {
     const accepted = "Draft updates for beta customers from Linear. Ask before publishing.";
     const review = { reply: "I’ll draft for beta customers and ask before publishing.", focus: "review", suggestions: [], recommendedService: "Linear",
       answers: { purpose: "Draft beta release notes", guidance: "Ask before publishing" }, review: { guidance: "# Project guidance\n\nAsk before publishing." } };
-    const reviewWithoutMcp = { ...review, reply: "I’ll keep the release checklist and continue without an MCP connection.", recommendedService: undefined };
+    const reviewWithoutMcp = { ...review, reply: "I’ll keep the project guidance and continue without an MCP connection.", recommendedService: undefined, review: {} };
     const storeOpening = { reply: "What part of a store shift would you like to make easier?", focus: "intent", suggestions: ["Shift handoff"] };
     const start = vi.fn(async function* () {
       const output = [opening, review, reviewWithoutMcp, storeOpening][start.mock.calls.length - 1];
@@ -170,10 +194,10 @@ describe("admitted project setup generation", () => {
       expect(page?.runs).toEqual([]);
       expect(start.mock.calls.map(call => JSON.stringify(call))).toEqual([expect.stringContaining("test-org/release-notes"), expect.stringContaining(accepted)]);
       expect(start.mock.calls.every(call => !JSON.stringify(call).includes(existingInstructions))).toBe(true);
-      const connect = await service.update(principal, owner, chatId, { baseRevision: result.draft!.revision,
-        clientRequestId: "req_mcp_connect", action: { type: "choose_mcp", choice: "connect", service: "Linear" } });
-      expect(connect.draft?.mcp).toEqual({ state: "pending", service: "Linear" });
-      const skip = await service.update(principal, owner, chatId, { baseRevision: connect.draft!.revision,
+      const connect = transitionProjectSetupInterview(result.draft!, { type: "choose_mcp", choice: "connect", service: "Linear" });
+      expect(connect.draft.mcp).toEqual({ state: "pending", service: "Linear" });
+      expect(transitionProjectSetupInterview(connect.draft, { type: "choose_mcp", choice: "skip" }).draft.mcp).toEqual({ state: "skipped" });
+      const skip = await service.update(principal, owner, chatId, { baseRevision: result.draft!.revision,
         clientRequestId: "req_mcp_skip", action: { type: "choose_mcp", choice: "skip", selection } });
       expect(skip.draft?.mcp).toEqual({ state: "skipped" });
       await orchestrator.drain();
