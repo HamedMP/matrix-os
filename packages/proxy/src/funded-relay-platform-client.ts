@@ -22,16 +22,39 @@ import {
   type FundedRelayConfig,
 } from "./funded-relay-config.js";
 
+/** The platform's funded busy refusal: when to come back, as both a header value and a timestamp. */
+export interface FundedBusyRetry {
+  retryAfterSeconds: number;
+  retryAt: string;
+}
+
 export class FundedControlPlaneError extends Error {
   constructor(readonly status: number, readonly priorityReason?: FundedAiPriorityReason,
-    readonly fundingReason?: "insufficient_credit" | "budget_exceeded", readonly identityDenied = false) {
+    readonly fundingReason?: "insufficient_credit" | "budget_exceeded", readonly identityDenied = false,
+    readonly busy?: FundedBusyRetry) {
     super("Funded AI control-plane request failed");
     this.name = "FundedControlPlaneError";
   }
 }
 
+/** The relay's answer to a platform busy refusal: the validated retry time, as a header and in the body. */
+export function fundedBusyResponse(busy: FundedBusyRetry): Response {
+  return Response.json({
+    type: "error", error: { type: "api_error", code: "busy", message: "Matrix AI is busy; try again later", retryAt: busy.retryAt },
+  }, { status: 503, headers: { "retry-after": String(busy.retryAfterSeconds) } });
+}
+
+const MAX_RETRY_AFTER_SECONDS = 2 * 24 * 60 * 60;
+
+/** Only a 503 with a bounded integer Retry-After counts as busy (ENG-520 P7, from PR #3437). */
+function busyRetryAfter(status: number, retryAfter: string | null): number | undefined {
+  if (status !== 503 || retryAfter === null || !/^[0-9]{1,6}$/.test(retryAfter)) return undefined;
+  const seconds = Number(retryAfter);
+  return seconds > MAX_RETRY_AFTER_SECONDS ? undefined : seconds;
+}
+
 /** Only allowlisted Platform contract errors affect Relay retry and quota handling. */
-function controlErrorFrom(status: number, text: string): FundedControlPlaneError {
+function controlErrorFrom(status: number, text: string, retryAfter: string | null = null): FundedControlPlaneError {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -54,6 +77,12 @@ function controlErrorFrom(status: number, text: string): FundedControlPlaneError
     case "access_disabled":
     case "model_not_allowed":
       return new FundedControlPlaneError(status, undefined, undefined, status === 403);
+    case "busy": {
+      // A busy refusal passes through only with a contract-valid body and a bounded Retry-After.
+      const retryAfterSeconds = busyRetryAfter(status, retryAfter);
+      return retryAfterSeconds === undefined ? new FundedControlPlaneError(status)
+        : new FundedControlPlaneError(status, undefined, undefined, false, { retryAfterSeconds, retryAt: detail.retryAt });
+    }
     default:
       return new FundedControlPlaneError(status);
   }
@@ -143,7 +172,7 @@ export function createFundedPlatformClient(options: Pick<
     lifetimeSignal: AbortSignal): Promise<T> {
     const response = await request(action, body, lifetimeSignal);
     const text = await readBoundedText(response, maxControlResponseBytes);
-    if (!response.ok) throw controlErrorFrom(response.status, text);
+    if (!response.ok) throw controlErrorFrom(response.status, text, response.headers.get("retry-after"));
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;

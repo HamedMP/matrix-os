@@ -94,6 +94,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'account-deletion',
       'free-tier',
       'metal-sleep',
+      'free-funding',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });

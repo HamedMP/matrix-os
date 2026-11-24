@@ -275,6 +275,8 @@ export const FundedAiPolicyCheckRequestSchema = z.object({
 export const FundedAiPolicyCheckResponseSchema = z.object({
   contractVersion: z.literal(1),
   authorized: z.literal(true),
+  /** Set for runtimes that pay from a prepaid usage hold (free); absent means postpaid. */
+  customerBilling: z.literal("prepaid").optional(),
   identity: FundedAiIdentitySchema.extend({
     tokenId: TokenIdSchema,
     audience: z.literal(FUNDED_AI_AUDIENCE),
@@ -585,6 +587,11 @@ const SafeErrorSchema = z.discriminatedUnion("code", [
     code: z.literal("rate_limited"),
     message: z.literal("Try again later"),
     reason: FundedAiPriorityReasonSchema.optional(),
+  }).strict(),
+  z.object({
+    code: z.literal("busy"),
+    message: z.literal("Matrix AI is busy; try again later"),
+    retryAt: IsoTimestampSchema,
   }).strict(),
   z.object({ code: z.literal("revision_conflict"), message: z.literal("Policy changed; refresh and try again") }).strict(),
   z.object({ code: z.literal("insufficient_credit"), message: z.literal("Not enough Matrix AI credit") }).strict(),
