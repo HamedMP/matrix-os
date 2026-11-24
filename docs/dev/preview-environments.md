@@ -13,12 +13,18 @@ the central Loki on the ops VPS, queryable through one script.
 | Feature type | Surface | Latency per change | Cost |
 |---|---|---|---|
 | Shell/gateway UI iteration | Staging slot (HMR) | seconds | none (ops VPS) |
-| Shell/gateway/kernel verification | Preview VPS | ~20 min (bundle build + deploy) | 1 small Hetzner VPS until PR close |
+| Shell/gateway/kernel verification | Preview VPS | ~20 min (bundle build + deploy) | 1 Hetzner `cx23` VPS until PR close |
 | Onboarding flows | Preview VPS (virgin by construction) | ~20 min | same |
 | Platform changes | Cloud Run preview revision | ~10 min | Cloud Run free-tier-ish |
-| Personal Integrations / Custom MCP against a PR | Private Preview | ~20 min | 1 small Hetzner VPS for at most 72h |
+| Personal Integrations / Custom MCP against a PR | Private Preview | ~20 min | 1 Hetzner `cx23` VPS for at most 72h |
 | macOS app | CI artifact + preview VPS runtime | n/a | none extra |
 | CLI beta x shell | npm dist-tag + preview VPS profile | minutes | none extra |
+
+New preview machines (shared `pr-<N>`, collaboration pairs, and Private
+Previews) use Hetzner `cx23` (2 vCPU, 4 GB RAM, 40 GB disk), set by
+`CUSTOMER_VPS_PREVIEW_SERVER_TYPE`. Outside `fsn1`, `hel1`, and `nbg1` they
+use the customer type (`HETZNER_SERVER_TYPE`). Existing previews keep their
+type until they are destroyed.
 
 ## Staging slots — the inner loop
 
@@ -258,6 +264,8 @@ that only you can reach, under your own Matrix account. Because nobody else can
 reach it, it can use your personal Integrations and Custom MCP from Settings,
 Chat agents, and Terminal agent CLIs. Spec:
 [537](../../specs/537-private-preview/spec.md).
+It runs on the preview server type (`cx23` by default) with all four Terminal
+agent CLIs preinstalled.
 
 When bounded Preview runtime access is enabled in production Platform, a newly
 registered Private Preview also receives the independent funded Chat and
@@ -336,8 +344,10 @@ running the branch locally with your own credentials. Only start it for PRs
 whose code you would run that way. Its shell is served on the production origin
 until spec 530 isolates Preview origins (#1951).
 
-Limits: two active Private Previews per person by default
-(`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most four) and one per PR. Starting the same
+Limits: eight active Private Previews per person by default
+(`MATRIX_PRIVATE_PREVIEW_LIMIT`, at most 16) and one per PR. Shared `pr-<N>`
+previews are capped at 24 per owning account
+(`CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT`, at most 48). Starting the same
 PR again shows the existing machine, and points to `matrix preview update` when
 it is on an older bundle; a failed one must be destroyed first. Private Previews
 cannot be recovered; destroy and start again.

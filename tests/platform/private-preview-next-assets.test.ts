@@ -81,27 +81,27 @@ it.each([
 
 async function compileLazyChunkFixture(configureWebpack: NonNullable<NextConfig["webpack"]>) {
   const dir = await mkdtemp(join(tmpdir(), "matrix-shell-public-path-"));
-  await writeFile(join(dir, "entry.js"), "import(/* webpackChunkName: \"lazy\" */ \"./lazy.js\");\n");
-  await writeFile(join(dir, "lazy.js"), "export const value = 1;\n");
-  const webpackConfig = configureWebpack({
-    mode: "production",
-    target: "web",
-    context: dir,
-    entry: { main: "./entry.js" },
-    resolve: {},
-    module: { rules: [] },
-    output: {
-      path: join(dir, "out"),
-      publicPath: "/_next/",
-      filename: "static/chunks/[name].js",
-      chunkFilename: "static/chunks/[name].js",
-    },
-    optimization: { minimize: false, runtimeChunk: { name: "webpack" } },
-  } as Parameters<NonNullable<NextConfig["webpack"]>>[0], { dev: false, isServer: false, webpack: nextWebpack } as Parameters<NonNullable<NextConfig["webpack"]>>[1]);
-  const stats = await new Promise<import("webpack").Stats>((resolvePromise, reject) => {
-    nextWebpack(webpackConfig, (error, result) => error || !result ? reject(error) : resolvePromise(result));
-  });
   try {
+    await writeFile(join(dir, "entry.js"), "import(/* webpackChunkName: \"lazy\" */ \"./lazy.js\");\n");
+    await writeFile(join(dir, "lazy.js"), "export const value = 1;\n");
+    const webpackConfig = configureWebpack({
+      mode: "production",
+      target: "web",
+      context: dir,
+      entry: { main: "./entry.js" },
+      resolve: {},
+      module: { rules: [] },
+      output: {
+        path: join(dir, "out"),
+        publicPath: "/_next/",
+        filename: "static/chunks/[name].js",
+        chunkFilename: "static/chunks/[name].js",
+      },
+      optimization: { minimize: false, runtimeChunk: { name: "webpack" } },
+    } as Parameters<NonNullable<NextConfig["webpack"]>>[0], { dev: false, isServer: false, webpack: nextWebpack } as Parameters<NonNullable<NextConfig["webpack"]>>[1]);
+    const stats = await new Promise<import("webpack").Stats>((resolvePromise, reject) => {
+      nextWebpack(webpackConfig, (error, result) => error || !result ? reject(error) : resolvePromise(result));
+    });
     expect(stats.hasErrors()).toBe(false);
     return {
       publicPath: stats.compilation.outputOptions.publicPath,

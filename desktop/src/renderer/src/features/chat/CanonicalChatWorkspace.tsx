@@ -1072,7 +1072,7 @@ function CanonicalChatWorkspaceContent({
                 if (!fileNavigation || !controller.detail) return false;
                 const scope = resolveWorkFilesScope(controller.detail, projects);
                 const target = resolveChatInspectorTargetForRun(
-                  rawPath, scope, executionRoot, controller.detail.record.projectId,
+                  rawPath, scope, executionRoot, projects,
                 );
                 if (!target) return false;
                 fileNavigation.open({ chatId: scope.chatId, target });

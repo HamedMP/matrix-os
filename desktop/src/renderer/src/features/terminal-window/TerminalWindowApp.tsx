@@ -1,19 +1,34 @@
-// The Electron Desktop Terminal window (specs/651-desktop-terminal-window).
-// Machines on the left, one attached terminal on the right. Every Matrix
-// computer is reached with its own credential, held by the trusted core.
-import { useEffect, useRef, useState } from "react";
+// The Electron Desktop Terminal window (specs/651-desktop-terminal-window,
+// specs/2706-terminal-window-herdr). Herdr's layout: machines and every
+// terminal by status on the left, the terminal on screen on the right.
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
-import { ChevronDown, ChevronRight, Cloud, Laptop, Pencil, Plus, SquareTerminal, X } from "lucide-react";
+import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
-import { useTerminalMachines, type TerminalMachinesState } from "./use-terminal-machines";
-import { useComputerTerminals, type ActiveTerminal, type ComputerTerminalsState } from "./use-computer-terminals";
-import { localSessionName, useLocalTerminals, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
-import type { LocalTerminal, LocalTerminalAgent } from "../../../../shared/local-terminals";
+import { createPaneAttachManager } from "../terminal/terminal-runtime";
+import type { AttachManager } from "../terminal/attach-manager";
+import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
+import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "../terminal/terminal-agent-options";
+import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
+import type { TerminalMachinesState } from "./use-terminal-machines";
+import { localSessionName, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import { LocalTerminalAttention } from "./LocalTerminalAttention";
-import { LocalTerminalRenameInput, NewLocalTerminalMenu } from "./LocalTerminalActions";
+import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
+import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
+import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
+import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
+import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
+import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
+import type { LocalMachine } from "../../../../shared/local-terminals";
+import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
+import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
+import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
+import { terminalRefKey } from "../../lib/terminal-workspaces";
+import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
+import type { TerminalPaneAction } from "@matrix-os/contracts";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -25,90 +40,6 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
   starting: "var(--color-warning)",
   unavailable: "var(--text-tertiary, var(--color-muted-foreground))",
 };
-
-// Status is whatever the program in the terminal reported about itself.
-const LOCAL_STATUS_LABEL = { working: "Working", done: "Finished", blocked: "Needs you", error: "Needs you" } as const;
-const LOCAL_STATUS_COLOR = {
-  working: "var(--text-secondary, var(--color-muted-foreground))",
-  done: "var(--success-text, var(--color-success))",
-  blocked: "var(--warning-text, var(--color-warning))",
-  error: "var(--danger-text, var(--color-danger))",
-} as const;
-
-const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
-const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
-const rowClass = "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current";
-const outlined = { borderColor: "var(--border-default)" };
-
-function MachineLabel({ icon, label, detail, dotColor }: {
-  icon: React.ReactNode; label: string; detail: string; dotColor?: string;
-}) {
-  return (
-    <>
-      <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center" style={secondaryText}>{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium">{label}</span>
-        <span className="flex items-center gap-1.5 text-[11px]" style={secondaryText}>
-          {dotColor ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full" style={{ background: dotColor }} /> : null}
-          <span className="truncate">{detail}</span>
-        </span>
-      </span>
-    </>
-  );
-}
-
-function ComputerTabs({ computer, state, active, creating, busy, createFailed, onOpen, onCreate, onRetry }: {
-  computer: MatrixComputer; state: ComputerTerminalsState | undefined; active: ActiveTerminal | null;
-  /** This computer is starting a terminal; `busy` is true while any computer is. */
-  creating: boolean; busy: boolean; createFailed: boolean;
-  onOpen(refKey: string): void; onCreate(): void; onRetry(): void;
-}) {
-  if (!state || state.status === "loading") {
-    return <p role="status" className="py-1.5 pl-10 text-[12px]" style={secondaryText}>Loading terminals…</p>;
-  }
-  if (state.status === "failed") {
-    return (
-      <div role="alert" className="flex flex-col items-start gap-1.5 py-1.5 pl-10 pr-2">
-        <p className="text-[12px]">
-          {state.reason === "reconnect" ? "This computer needs you to reconnect." : "Couldn't reach this computer."}
-        </p>
-        <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>
-          {state.reason === "reconnect" ? "Reconnect" : "Retry"}
-        </button>
-      </div>
-    );
-  }
-  return (
-    <ul aria-label={`${computer.label} terminals`} className="flex flex-col gap-0.5 pb-1 pl-8">
-      {state.tabs.length === 0
-        ? <li className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet.</li>
-        : state.tabs.map((tab) => {
-          const current = active?.slot === computer.runtimeSlot && active.refKey === tab.refKey;
-          return (
-            <li key={tab.refKey}>
-              <button type="button" aria-current={current ? "true" : undefined} onClick={() => onOpen(tab.refKey)}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current"
-                style={current ? { background: "var(--bg-selected)" } : undefined}>
-                <SquareTerminal size={12} aria-hidden="true" className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{tab.name}</span>
-                <span className="shrink-0 text-[10px]" style={secondaryText}>{tab.ended ? "ended" : tab.group}</span>
-              </button>
-            </li>
-          );
-        })}
-      {createFailed ? <li role="alert" className="px-2 py-1 text-[12px]">Couldn't start a terminal. Try again.</li> : null}
-      <li>
-        <button type="button" disabled={busy} onClick={onCreate}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
-          style={secondaryText}>
-          <Plus size={12} aria-hidden="true" className="shrink-0" />
-          {creating ? "Starting…" : "New terminal"}
-        </button>
-      </li>
-    </ul>
-  );
-}
-
 const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "create-failed": "Couldn't start a terminal. Try again.",
   "create-rate-limited": "Too many terminals started at once. Try again in a moment.",
@@ -116,334 +47,296 @@ const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "end-failed": "Couldn't end that terminal. Try again.",
 };
 
-function LocalTabs({ state, activeId, ended, creating, notice, onOpen, onCreate, onRename, onEnd, onDismissEnded, onRetry }: {
-  state: LocalTerminalsState; activeId: string | null; creating: boolean; notice: LocalTerminalsNotice;
-  /** The open terminal, when its program has exited: its pane stays until dismissed. */
-  ended: { id: string; title: string } | null;
-  onOpen(id: string): void; onCreate(launch: { agent?: LocalTerminalAgent }): void; onRename(id: string, name: string): void;
-  onEnd(id: string): void; onDismissEnded(): void; onRetry(): void;
-}) {
-  const [renaming, setRenaming] = useState<string | null>(null);
-  if (state.status === "loading") {
-    return <p role="status" className="py-1.5 pl-10 text-[12px]" style={secondaryText}>Loading terminals…</p>;
-  }
-  if (state.status === "not-installed") {
-    return <p className="py-1.5 pl-10 pr-2 text-[12px]" style={secondaryText}>Local terminals are not included in this build.</p>;
-  }
+const PANE_NOTICE = {
+  "split-limit": "A tab holds at most 16 panes.",
+  "split-failed": "Couldn't start a terminal for the new pane. Try again.",
+} as const;
+
+const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
+const buttonClass = "no-drag rounded-md border px-2.5 py-1 text-[12px] font-medium outline-none transition-colors hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
+const outlined = { borderColor: "var(--border-default)" };
+
+function focusMainWindow(to?: "settings"): void {
+  void invoke("terminal-window:focus-main", to ? { to } : {}).catch((error: unknown) => {
+    console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
+  });
+}
+
+/** Why this device's terminals cannot be listed, or nothing when they can. */
+function LocalStatus({ state, onRetry }: { state: LocalTerminalsState; onRetry(): void }) {
+  if (state.status === "ready") return null;
   if (state.status === "unavailable") {
     return (
-      <div role="alert" className="flex flex-col items-start gap-1.5 py-1.5 pl-10 pr-2">
+      <div role="alert" className="flex flex-col items-start gap-1.5 px-3 pb-1.5">
         <p className="text-[12px]">Local terminals couldn't start.</p>
         <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>Retry</button>
       </div>
     );
   }
-  if (state.status === "version-mismatch") {
-    return (
-      <p role="alert" className="py-1.5 pl-10 pr-2 text-[12px]">
-        Local terminals were started by a different version of Matrix OS. They keep running, but this version cannot show them or start new ones.
-      </p>
-    );
-  }
-  return (
-    <ul aria-label="This Computer terminals" className="flex flex-col gap-0.5 pb-1 pl-8">
-      {state.terminals.length === 0 && !ended
-        ? <li className="px-2 py-1 text-[12px]" style={secondaryText}>No terminals yet.</li>
-        : state.terminals.map((terminal) => {
-          const current = activeId === terminal.id;
-          if (renaming === terminal.id) {
-            return (
-              <li key={terminal.id} className="flex items-center rounded-md" style={current ? { background: "var(--bg-selected)" } : undefined}>
-                <LocalTerminalRenameInput title={terminal.title} onDone={(name) => {
-                  setRenaming(null);
-                  if (name) onRename(terminal.id, name);
-                }} />
-              </li>
-            );
-          }
-          return (
-            <li key={terminal.id} className="group flex items-center rounded-md hover:bg-black/5"
-              style={current ? { background: "var(--bg-selected)" } : undefined}>
-              <button type="button" aria-current={current ? "true" : undefined} onClick={() => onOpen(terminal.id)}
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-current">
-                <SquareTerminal size={12} aria-hidden="true" className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate">{terminal.title}</span>
-                {terminal.status && terminal.status !== "idle" ? (
-                  <span className="shrink-0 text-[10px]" style={{ color: LOCAL_STATUS_COLOR[terminal.status] }}>{LOCAL_STATUS_LABEL[terminal.status]}</span>
-                ) : null}
-              </button>
-              <button type="button" aria-label={`Rename ${terminal.title}`} title="Rename" onClick={() => setRenaming(terminal.id)}
-                className="flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100">
-                <Pencil size={11} aria-hidden="true" />
-              </button>
-              <button type="button" aria-label={`End ${terminal.title}`} title="End terminal" onClick={() => onEnd(terminal.id)}
-                className="mr-1 flex size-5 shrink-0 items-center justify-center rounded opacity-0 outline-none hover:bg-black/10 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-current group-hover:opacity-100">
-                <X size={11} aria-hidden="true" />
-              </button>
-            </li>
-          );
-        })}
-      {ended ? (
-        <li className="group flex items-center rounded-md" style={{ background: "var(--bg-selected)" }}>
-          <span aria-current="true" className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-[12px]">
-            <SquareTerminal size={12} aria-hidden="true" className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{ended.title}</span>
-            <span className="shrink-0 text-[10px]" style={secondaryText}>ended</span>
-          </span>
-          <button type="button" aria-label={`Close ${ended.title}`} title="Close" onClick={onDismissEnded}
-            className="mr-1 flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
-            <X size={11} aria-hidden="true" />
-          </button>
-        </li>
-      ) : null}
-      {notice ? <li role="alert" className="px-2 py-1 text-[12px]">{LOCAL_NOTICE[notice]}</li> : null}
-      <li>
-        <NewLocalTerminalMenu creating={creating} onCreate={onCreate} />
-      </li>
-    </ul>
-  );
+  const text = state.status === "loading" ? "Loading terminals…"
+    : state.status === "not-installed" ? "Local terminals are not included in this build."
+      : "Local terminals were started by a different version of Matrix OS. They keep running, but this version cannot show them or start new ones.";
+  return <p role={state.status === "loading" ? "status" : "alert"} className="px-3 pb-1 text-[12px]" style={secondaryText}>{text}</p>;
 }
 
-function MatrixSection({ state, onRetry, onSignIn }: {
-  state: Exclude<TerminalMachinesState, { status: "ready" }>; onRetry: () => void; onSignIn: () => void;
-}) {
+function MatrixStatus({ state, onRetry }: { state: TerminalMachinesState; onRetry(): void }) {
+  if (state.status === "ready") {
+    return state.computers.length === 0 ? <li className="px-3 py-1 text-[12px]" style={secondaryText}>No Matrix computers yet.</li> : null;
+  }
   if (state.status === "loading") {
-    return <li className="px-2.5 py-2 text-[12px]" style={secondaryText}><span role="status">Loading your computers…</span></li>;
+    return <li className="px-3 py-1 text-[12px]" style={secondaryText}><span role="status">Loading your computers…</span></li>;
   }
   if (state.status === "signed-out") {
     return (
-      <li className="flex flex-col items-start gap-2 px-2.5 py-2">
+      <li className="flex flex-col items-start gap-2 px-3 py-2">
         <p className="text-[13px] font-medium">Sign in to see your Matrix computers</p>
         <p className="text-[12px]" style={secondaryText}>Your cloud terminals appear here once you sign in from the main window.</p>
-        <button type="button" className={buttonClass} style={outlined} onClick={onSignIn}>Sign in</button>
+        <button type="button" className={buttonClass} style={outlined} onClick={() => focusMainWindow()}>Sign in</button>
       </li>
     );
   }
   return (
-    <li role="alert" className="flex flex-col items-start gap-2 px-2.5 py-2">
+    <li role="alert" className="flex flex-col items-start gap-2 px-3 py-2">
       <p className="text-[12px]">Couldn't load your computers.</p>
       <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>Retry</button>
     </li>
   );
 }
 
-function NeedsAttention({ terminals, onOpen }: { terminals: LocalTerminal[]; onOpen(id: string): void }) {
-  if (terminals.length === 0) return null;
+function ComputerFailure({ reason, onRetry }: { reason: "reconnect" | "unavailable"; onRetry(): void }) {
   return (
-    <section aria-label="Needs attention" className="mb-2 rounded-md border p-1.5" style={outlined}>
-      <h2 className="px-1 pb-1 text-[11px] font-medium" style={secondaryText}>Needs attention</h2>
-      <ul className="flex flex-col gap-0.5">
-        {terminals.map((terminal) => (
-          <li key={terminal.id}>
-            <button type="button" onClick={() => onOpen(terminal.id)}
-              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current">
-              <span className="min-w-0 flex-1 truncate">{terminal.title}</span>
-              <span className="shrink-0 text-[10px]" style={secondaryText}>This Computer</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <div role="alert" className="flex flex-col items-start gap-1.5 px-3 pb-1.5 pl-9">
+      <p className="text-[12px]">{reason === "reconnect" ? "This computer needs you to reconnect." : "Couldn't reach this computer."}</p>
+      <button type="button" className={buttonClass} style={outlined} onClick={onRetry}>{reason === "reconnect" ? "Reconnect" : "Retry"}</button>
+    </div>
   );
 }
 
-function Disclosure({ open }: { open: boolean }) {
-  return open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />;
-}
+const SSH_STATE_LABEL: Record<LocalMachine["state"], string> = {
+  connecting: "Connecting…",
+  connected: "Connected",
+  needs_login: "Needs login",
+  unreachable: "Unreachable",
+};
+const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
+  connecting: "var(--color-warning)",
+  connected: "var(--color-success)",
+  needs_login: "var(--color-warning)",
+  unreachable: "var(--text-tertiary, var(--color-muted-foreground))",
+};
 
-function ComputerMachine({ computer, open, onToggle, children }: {
-  computer: MatrixComputer; open: boolean; onToggle(): void; children: React.ReactNode;
-}) {
-  const detail = `${computer.handle} · ${AVAILABILITY_LABEL[computer.availability]}`;
-  const label = <MachineLabel icon={<Cloud size={15} />} label={computer.label} detail={detail} dotColor={AVAILABILITY_COLOR[computer.availability]} />;
-  if (computer.availability !== "available") {
-    return <li data-machine={computer.runtimeSlot} className="flex items-center gap-2.5 rounded-md px-2.5 py-2 opacity-70">{label}</li>;
-  }
+/** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
+function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
+  if (machine.state === "connected" || machine.state === "connecting") return null;
   return (
-    <li data-machine={computer.runtimeSlot}>
-      <button type="button" aria-expanded={open} className={rowClass} onClick={onToggle}>
-        {label}
-        <Disclosure open={open} />
-      </button>
-      {open ? children : null}
-    </li>
+    <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9">
+      <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.openMachineLogin(machine.name); }}>Open in terminal</button>
+      {view.sshLoginFailed === machine.name ? <span role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</span> : null}
+      <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.connect(machine.name); }}>Retry</button>
+    </div>
   );
 }
 
-function EmptyPane({ signedIn, onFocusMain }: { signedIn: boolean; onFocusMain(): void }) {
+function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => void): SidebarMachine[] {
+  const local: SidebarMachine = {
+    id: view.here.id, name: view.here.name, kind: "local", detail: "Terminals on this device",
+    available: view.local.state.status === "ready" || view.local.state.status === "loading",
+    status: <LocalStatus state={view.local.state} onRetry={view.local.retry} />,
+  };
+  const computers = (view.ready?.computers ?? []).map((computer): SidebarMachine => ({
+    id: computerMachineId(computer.runtimeSlot),
+    // Led by its own name; the kind (Main, Preview, Additional) is the detail.
+    name: computer.handle,
+    kind: "computer",
+    // An available computer whose stream has not connected says so, instead of looking empty.
+    detail: `${computer.label} · ${computer.availability === "available" && !view.status.states[computer.runtimeSlot]?.connected
+      ? "Connecting…" : AVAILABILITY_LABEL[computer.availability]}`,
+    dotColor: AVAILABILITY_COLOR[computer.availability],
+    available: computer.availability === "available",
+    dormant: computer.availability === "unavailable",
+    creating: view.cloud.creating === computer.runtimeSlot,
+    onCreate: () => view.createCloud(computer.runtimeSlot),
+    ...(view.cloud.terminals[computer.runtimeSlot]?.status === "failed"
+      // A refused credential or an unreachable computer, from starting a terminal there.
+      ? { status: <ComputerFailure reason={(view.cloud.terminals[computer.runtimeSlot] as { reason: "reconnect" | "unavailable" }).reason}
+          onRetry={() => { void view.cloud.load(computer.runtimeSlot); }} /> }
+      : view.cloud.createFailed === computer.runtimeSlot
+        ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">Couldn't start a terminal. Try again.</p> } : {}),
+  }));
+  const ssh = (view.ssh.state.status === "ready" ? view.ssh.state.machines : []).map((machine): SidebarMachine => ({
+    id: sshMachineId(machine.name),
+    name: machine.name,
+    kind: "ssh",
+    detail: `${machine.target} · ${SSH_STATE_LABEL[machine.state]}`,
+    dotColor: SSH_STATE_COLOR[machine.state],
+    available: true,
+    onCreate: () => view.createLocal({ machine: machine.name }),
+    onRemove: () => onRemove(machine.name),
+    status: <SshMachineStatus machine={machine} view={view} />,
+  }));
+  return [local, ...ssh, ...computers];
+}
+
+function EmptyPane({ signedIn }: { signedIn: boolean }) {
   return (
     <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
       <SquareTerminal size={28} aria-hidden="true" style={secondaryText} />
       <h1 className="text-[15px] font-semibold">Terminals across your computers</h1>
       <p className="max-w-sm text-[13px]" style={secondaryText}>
-        Open a computer on the left to see its terminals, or start a new one. Each terminal keeps running on its computer when you close this window.
+        Pick a terminal on the left, or start one with + next to a machine. Each terminal keeps running on its computer when you close this window.
       </p>
-      {signedIn ? null : <button type="button" className={buttonClass} style={outlined} onClick={onFocusMain}>Go to main window</button>}
+      {signedIn ? null : <button type="button" className={buttonClass} style={outlined} onClick={() => focusMainWindow()}>Go to main window</button>}
     </main>
   );
 }
 
-function TerminalPane({ sessionName }: { sessionName: string }) {
+/**
+ * A pane's terminal, with an attachment of its own so every visible pane
+ * streams live, not only the focused one. Disposed with its pane.
+ */
+// Memoized: the window redraws on every status event, and a terminal must not redraw with it.
+const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+  sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+}) {
+  const [manager, setManager] = useState<AttachManager | null>(null);
+  useEffect(() => {
+    const created = createPaneAttachManager();
+    // react-doctor-disable-next-line react-doctor/no-derived-state-effect -- an external resource made and disposed with the pane
+    setManager(created);
+    return () => created.dispose();
+  }, []);
+  if (!manager) return null;
+  return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
+    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
+    controlsHost={null} />;
+});
+
+function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
   return (
-    <main aria-label="Terminal" className="flex min-h-0 min-w-0 flex-1 overflow-hidden" style={{ background: "var(--bg-surface)" }}>
-      <TerminalView key={sessionName} sessionName={sessionName} active />
-    </main>
+    <div role="status" className="absolute right-3 top-3 flex items-center gap-2 rounded-md border px-2.5 py-1 text-[12px]"
+      style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
+      <span>{title} ended</span>
+      <button type="button" aria-label={`Close ${title}`} onClick={onClose}
+        className="flex size-5 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current">
+        <X size={11} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
-function focusMainWindow(): void {
-  void invoke("terminal-window:focus-main", {}).catch((error: unknown) => {
-    console.warn("[terminal-window] main window handoff failed:", error instanceof Error ? error.name : "UnknownError");
-  });
+/** The terminal a pane shows, by its sidebar row key. */
+function paneSessionName(key: string): string | null {
+  const target = terminalRowTarget(key);
+  if (!target) return null;
+  return target.kind === "local" ? localSessionName(target.id) : terminalRefKey(target.ref);
 }
 
-function tabName(state: ComputerTerminalsState | undefined, refKey: string): string | undefined {
-  return state?.status === "ready" ? state.tabs.find((tab) => tab.refKey === refKey)?.name : undefined;
+function isAgentId(agent: string | undefined): agent is TerminalAgentId {
+  return TERMINAL_AGENT_OPTIONS.some((option) => option.id === agent);
 }
 
-const EMPTY_SLOTS: Record<string, boolean> = {};
-
-/** Everything the window shows: both inventories, and the one attached terminal. */
-function useTerminalWindow() {
-  const machines = useTerminalMachines();
-  const ready = machines.state.status === "ready" ? machines.state : null;
-  const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
-  const local = useLocalTerminals();
-  // A local terminal and a cloud terminal are never attached at once.
-  // The title is kept so the pane can stay, labelled, after its program exits
-  // and the terminal leaves the listing.
-  const [localOpen, setLocalOpen] = useState<{ id: string; title: string } | null>(null);
-  const localActive = localOpen?.id ?? null;
-  // Which computers are open, for one signed-in session: a new session starts
-  // collapsed, because its listings are fetched only when a computer is opened.
-  const sessionKey = ready?.sessionKey ?? "";
-  const [expansion, setExpansion] = useState<{ sessionKey: string; slots: Record<string, boolean> }>({ sessionKey, slots: {} });
-  const expanded = expansion.sessionKey === sessionKey ? expansion.slots : EMPTY_SLOTS;
-
-  const localTerminals = local.state.status === "ready" ? local.state.terminals : [];
-  // Counts the user's choices of a local terminal or of closing one. A local
-  // terminal that finishes starting is opened only if nothing was chosen since.
-  const localChoice = useRef(0);
-  const listedLocal = localTerminals.find((terminal) => terminal.id === localActive);
-  // Still open, but no longer running: shown as ended until the user closes it.
-  const endedLocal = localOpen && !listedLocal && local.state.status === "ready" ? localOpen : null;
-  const localTerminal = listedLocal ?? localOpen ?? undefined;
-  const { clearActive, open, create, load } = cloud;
-  // The cloud selection as of the latest render, for work that finishes later.
-  const cloudActive = useRef(cloud.active);
-  useEffect(() => { cloudActive.current = cloud.active; }, [cloud.active]);
-
+/** A pane header: the agent's icon, the terminal's name, and where it runs. */
+export function paneInfoFor(row: TerminalSidebarRow | undefined, fallback: string): PaneInfo {
+  if (!row) return { title: fallback, icon: <SquareTerminal size={13} aria-hidden="true" style={secondaryText} /> };
+  const where = [row.machine.name, row.space ?? row.detail].filter(Boolean).join(" · ");
   return {
-    machines, ready, cloud, local, localActive, localTerminal, endedLocal, expanded,
-    dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },
-    createLocal: (launch: { agent?: LocalTerminalAgent } = {}) => {
-      const chosen = localChoice.current;
-      const cloudChosen = cloud.active;
-      void local.create(launch).then((id) => {
-        // Opened only if the user did not pick another terminal meanwhile.
-        if (!id || localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
-        localChoice.current += 1;
-        clearActive();
-        setLocalOpen({ id, title: "Terminal" });
-      });
-    },
-    needsAttention: localTerminals.filter((terminal) => terminal.status === "blocked" || terminal.status === "error"),
-    openLocal: (id: string) => {
-      localChoice.current += 1;
-      clearActive();
-      setLocalOpen({ id, title: localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
-    },
-    // The open pane keeps the new name too, including once its program exits.
-    renameLocal: (id: string, name: string) => {
-      void local.rename(id, name).then((renamed) => {
-        if (renamed) setLocalOpen((current) => (current?.id === id ? { ...current, title: name } : current));
-      });
-    },
-    // The pane stays until the trusted core confirms the terminal ended.
-    endLocal: (id: string) => {
-      void local.end(id).then((ended) => { if (ended) setLocalOpen((current) => (current?.id === id ? null : current)); });
-    },
-    openCloud: (slot: string, refKey: string) => { localChoice.current += 1; setLocalOpen(null); open(slot, refKey); },
-    createCloud: (slot: string) => { localChoice.current += 1; setLocalOpen(null); void create(slot); },
-    toggle: (slot: string) => {
-      const next = !expanded[slot];
-      setExpansion({ sessionKey, slots: { ...expanded, [slot]: next } });
-      // Credentials and listings are fetched only for computers the user opens.
-      if (next) void load(slot);
-    },
+    title: row.name,
+    detail: where,
+    working: row.status === "working",
+    icon: isAgentId(row.agent) ? <DesktopTerminalAgentLogo agent={row.agent} compact /> : <SquareTerminal size={13} aria-hidden="true" style={secondaryText} />,
   };
 }
 
-type TerminalWindow = ReturnType<typeof useTerminalWindow>;
-
-function windowTitle(view: TerminalWindow): string {
-  if (view.localTerminal) return `${view.localTerminal.title} — This Computer`;
-  const active = view.cloud.active;
-  if (!active) return "Terminal";
-  const computer = view.ready?.computers.find((candidate) => candidate.runtimeSlot === active.slot);
-  const name = tabName(view.cloud.terminals[active.slot], active.refKey);
-  return computer && name ? `${name} — ${computer.label}` : "Terminal";
-}
-
-function LocalMachine({ view }: { view: TerminalWindow }) {
-  const [open, setOpen] = useState(true);
-  const { local } = view;
+function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
+  const rows = new Map(view.status.rows.map((row) => [row.key, row]));
+  // One callback for every pane's terminal that always runs the latest handler, so status updates leave panes alone.
+  const latestPaneAction = useRef(view.panes.paneAction);
+  useEffect(() => { latestPaneAction.current = view.panes.paneAction; }, [view.panes.paneAction]);
+  const paneAction = useCallback((action: TerminalPaneAction) => latestPaneAction.current(action), []);
+  const ended = view.endedLocal;
   return (
-    <li data-machine="local">
-      <button type="button" aria-expanded={open} className={rowClass} onClick={() => setOpen((shown) => !shown)}>
-        <MachineLabel icon={<Laptop size={15} />} label="This Computer" detail="Terminals on this device" />
-        <Disclosure open={open} />
-      </button>
-      {open ? (
-        <LocalTabs state={local.state} activeId={view.localActive} ended={view.endedLocal} onDismissEnded={view.dismissEndedLocal} creating={local.creating} notice={local.notice} onOpen={view.openLocal}
-          onCreate={view.createLocal} onRename={view.renameLocal}
-          onEnd={view.endLocal} onRetry={() => { void local.refresh(); }} />
-      ) : null}
-    </li>
+    <TerminalPaneTree tab={tab}
+      paneInfo={(leaf) => paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal")}
+      onPaneButton={view.paneButton}
+      onFocus={view.panes.focusLeaf} onResize={view.panes.resize} onMove={view.panes.move}
+      renderPane={(leaf, focused) => {
+        const sessionName = paneSessionName(leaf.terminal);
+        if (!sessionName) return null;
+        // A session change remounts each pane so it attaches again with the new credentials.
+        return (
+          <>
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
+            {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
+          </>
+        );
+      }} />
   );
 }
 
-function MatrixMachines({ view }: { view: TerminalWindow }) {
-  const { ready, cloud } = view;
-  if (!ready) {
-    return <MatrixSection state={view.machines.state as Exclude<TerminalMachinesState, { status: "ready" }>} onRetry={view.machines.retry} onSignIn={focusMainWindow} />;
-  }
-  if (ready.computers.length === 0) {
-    return <li className="px-2.5 py-2 text-[12px]" style={secondaryText}>No Matrix computers yet.</li>;
-  }
-  return <>{ready.computers.map((computer) => {
-    const slot = computer.runtimeSlot;
-    return (
-      <ComputerMachine key={slot} computer={computer} open={view.expanded[slot] === true} onToggle={() => view.toggle(slot)}>
-        <ComputerTabs computer={computer} state={cloud.terminals[slot]} active={cloud.active} creating={cloud.creating === slot}
-          busy={cloud.creating !== null} createFailed={cloud.createFailed === slot}
-          onOpen={(refKey) => view.openCloud(slot, refKey)} onCreate={() => view.createCloud(slot)} onRetry={() => { void cloud.load(slot); }} />
-      </ComputerMachine>
-    );
-  })}</>;
+function ActivePane({ view }: { view: TerminalWindowView }) {
+  // A terminal on its own is a one-pane tab, so every terminal has a header and buttons.
+  if (view.panes.tab) return <Panes view={view} tab={view.panes.tab} />;
+  return <EmptyPane signedIn={view.ready !== null} />;
 }
 
-function ActivePane({ view }: { view: TerminalWindow }) {
-  // A session change resets the shared attach manager; the epoch remounts the
-  // local pane so it attaches again instead of staying on a disposed attachment.
-  if (view.localTerminal) {
-    return <TerminalPane key={`local|${view.localTerminal.id}|${view.cloud.attachEpoch}`} sessionName={localSessionName(view.localTerminal.id)} />;
-  }
-  const active = view.cloud.active;
-  if (active) return <TerminalPane key={`${active.slot}|${active.refKey}`} sessionName={active.refKey} />;
-  return <EmptyPane signedIn={view.ready !== null} onFocusMain={focusMainWindow} />;
+/** Herdr's status bar: the machine on screen, how many agents work or need you, and the command picker. */
+function StatusBar({ view }: { view: TerminalWindowView }) {
+  const row = view.selectedRow;
+  const working = view.status.rows.filter((entry) => entry.status === "working").length;
+  const waiting = view.status.rows.filter((entry) => entry.status === "blocked" || entry.status === "error").length;
+  return (
+    <footer className="flex h-6 shrink-0 items-center gap-3 border-t px-3 text-[11px]"
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)", ...secondaryText }}>
+      <span className="truncate">{row ? row.machine.name : view.here.name}</span>
+      {row?.space ? <span className="truncate">{row.space}</span> : null}
+      {row?.detail ? <span className="min-w-0 truncate">{row.detail}</span> : null}
+      <span className="ml-auto tabular-nums">{view.status.rows.length} agents · {working} working{waiting ? ` · ${waiting} need you` : ""}</span>
+      <span aria-hidden="true">⌘⇧P commands</span>
+    </footer>
+  );
+}
+
+function windowTitle(view: TerminalWindowView): string {
+  const row = view.selectedRow;
+  if (row) return `${row.name} — ${row.machine.name}`;
+  if (view.localTerminal) return `${view.localTerminal.title} — ${view.here.name}`;
+  return "Terminal";
 }
 
 export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const view = useTerminalWindow();
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
+  const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
+  const { prefs } = view.sidebar;
+  const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
+    const filter = prefs.filter;
+    if (!filter) return null;
+    // A machine is a space itself; a project is a space under it.
+    const machineName = prefs.spaceStyles[filter.machineId]?.name ?? machines.find((machine) => machine.id === filter.machineId)?.name ?? "";
+    const style = prefs.spaceStyles[filter.space ? spaceId(filter.machineId, filter.space) : filter.machineId];
+    const label = style?.name ?? filter.space ?? machineName;
+    return {
+      label,
+      machine: machineName,
+      color: style?.color ?? defaultSpaceColor(label),
+      ...(style?.icon ? { icon: style.icon } : {}),
+    };
+  }, [machines, prefs.filter, prefs.spaceStyles]);
 
   useEffect(() => { void loadAppearance(); }, [loadAppearance]);
   useEffect(() => { document.title = "Terminal"; }, []);
 
+  const failed = view.local.notice ?? view.computerNotice;
+  const noticeText = failed ? LOCAL_NOTICE[failed] : view.panes.notice ? PANE_NOTICE[view.panes.notice] : null;
+  const notice = noticeText ? <p role="alert" className="px-2 py-1 text-[12px]">{noticeText}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>
-      <LocalTerminalAttention state={view.local.state} activeId={view.localActive} onOpen={view.openLocal} />
+      <LocalTerminalAttention state={view.local.state} activeId={view.localTerminal?.id ?? null} onOpen={(id) => view.select(localRowKey(id))} />
       {/* This window's one toast host, configured like the main window's. */}
       <Toaster position="bottom-right" toastOptions={{ style: {
         background: "var(--bg-overlay)", color: "var(--text-primary)", border: "1px solid var(--border-default)",
@@ -453,17 +346,54 @@ export default function TerminalWindowApp() {
         {windowTitle(view)}
       </header>
       <div className="flex min-h-0 flex-1">
-        <nav aria-label="Machines" className="flex w-64 shrink-0 flex-col overflow-y-auto border-r p-2"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}>
-          <NeedsAttention terminals={view.needsAttention} onOpen={view.openLocal} />
-          <ul className="flex flex-col gap-0.5">
-            <LocalMachine view={view} />
-            <li aria-hidden="true" role="presentation" className="mx-2.5 my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-            <MatrixMachines view={view} />
-          </ul>
-        </nav>
-        <ActivePane view={view} />
+        <TerminalWindowSidebar
+          machines={machines}
+          machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
+          expandedSpaces={prefs.expandedSpaces}
+          onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
+          onOpenInTab={view.openInTab}
+          filter={prefs.filter}
+          onFilter={view.chooseSpace}
+          onSettings={() => focusMainWindow("settings")}
+          machineOrder={prefs.machineOrder}
+          onMachineOrder={view.sidebar.setMachineOrder}
+          spaceStyles={prefs.spaceStyles}
+          spaceOrder={prefs.spaceOrder}
+          onSpaceStyle={view.sidebar.setSpaceStyle}
+          onSpaceOrder={view.sidebar.setSpaceOrder}
+          pinned={prefs.pinned}
+          onTogglePin={view.sidebar.togglePin}
+          onCloseTerminal={view.requestClose}
+          localCreating={view.local.creating}
+          onCreateLocal={view.createLocal}
+          rows={view.status.rows}
+          selectedKey={view.selectedKey}
+          onSelect={view.select}
+          view={prefs.view}
+          onSetView={view.sidebar.setView}
+          folded={prefs.folded}
+          onToggleFold={view.sidebar.toggleFold}
+          now={view.now}
+          rail={prefs.rail}
+          onToggleRail={view.sidebar.toggleRail}
+          width={prefs.width}
+          onResize={view.sidebar.setWidth}
+          notices={notice}
+          onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+            icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
+          <ActivePane view={view} />
+        </div>
       </div>
+      <StatusBar view={view} />
+      <TerminalPicker open={view.picker.open} entries={view.order} onClose={view.picker.close}
+        onPick={(key) => { view.picker.close(); view.select(key); }} />
+      <RenameTerminalDialog target={view.renaming} onRename={view.rename} onClose={() => view.setRenaming(null)} />
+      <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
+      <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers} onClose={() => setAdding(false)} />
+      <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
     </div>
   );
 }

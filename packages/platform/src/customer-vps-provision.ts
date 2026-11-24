@@ -20,6 +20,7 @@ import {
 import { type PreviewProvisionRequest, type ProvisionRequest } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
 import { resolveHostBundleRef } from './customer-vps-host-bundle.js';
+import { resolvePreviewServerType } from './customer-vps-config.js';
 import {
   DEFAULT_DEVELOPER_TOOLS,
   canonicalizeDeveloperTools,
@@ -303,9 +304,12 @@ export function createCustomerVpsProvisioner(
           throw billingUpgradeRequired();
         }
       }
-      const serverType = transactionPrebillingIntent?.serverType
-        ?? transactionBillingContext?.serverType
-        ?? deps.config.serverType;
+      const location = ('location' in request ? request.location : undefined) ?? deps.config.location;
+      const serverType = provisioningClass === 'preview'
+        ? resolvePreviewServerType(deps.config, location)
+        : transactionPrebillingIntent?.serverType
+          ?? transactionBillingContext?.serverType
+          ?? deps.config.serverType;
       const developerTools = provisioningClass === 'customer' && !hasExplicitDeveloperTools
         ? defaultDeveloperToolsForServerType(serverType)
         : request.developerTools;
@@ -325,7 +329,7 @@ export function createCustomerVpsProvisioner(
         status: 'provisioning',
         imageVersion: bundleRef.imageVersion,
         serverType,
-        location: ('location' in request ? request.location : undefined) ?? deps.config.location,
+        location,
         developerTools,
         registrationTokenHash: registration.hash,
         registrationTokenExpiresAt: registration.expiresAt,

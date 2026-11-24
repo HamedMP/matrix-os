@@ -43,6 +43,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED, CODEX_SERVICE_TIER_OPTION } from "./codex-chat-speed.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -82,6 +83,8 @@ export interface CodingModelCatalogProjection {
   defaultModel: string;
   /** Trusted native inventory only. Omitted from every client catalog/last-seen fallback. */
   executionModels?: Record<string, string>;
+  /** Server-side support from model/list. Never included in client model descriptors. */
+  codexSpeedTiersByModel?: readonly { modelId: string; tiers: readonly string[] }[];
 }
 
 export interface ChatProviderCatalogReadOptions {
@@ -215,6 +218,7 @@ function codingInstance(
   provider: AgentProviderSummary,
   skills: CanonicalChatSkillDescriptor[],
   projectedCatalog?: CodingModelCatalogProjection | null,
+  selectedModel?: string,
 ): InstanceDraft | null {
   const driverKind = codingDriverKind(provider);
   if (driverKind === null) return null;
@@ -229,6 +233,10 @@ function codingInstance(
     ?? codingModels(provider);
   const defaultModel = projectedCatalog?.defaultModel;
   const visibleModels = availability === "available" ? models : [];
+  const options = projectedCatalog?.options ?? codingOptions(provider);
+  const modelSpeedTiers = driverKind === "codex" && selectedModel
+    ? projectedCatalog?.codexSpeedTiersByModel?.find((model) => model.modelId === selectedModel)?.tiers ?? []
+    : undefined;
   const terminalSetupActions = provider.setupActions.filter((action) => (
     action.kind === "foreground_terminal"
   ));
@@ -240,9 +248,11 @@ function codingInstance(
     availability,
     workspaceRequirement: "project_optional",
     models: visibleModels,
-    options: availability === "available"
-      ? projectedCatalog?.options ?? codingOptions(provider)
-      : [],
+    options: availability !== "available" ? [] : options.map((option) => (
+      modelSpeedTiers && option.id === CODEX_CHAT_SPEED_OPTION
+        ? { ...option, values: option.values?.filter(({ value }) => value === CODEX_CHAT_STANDARD_SPEED || modelSpeedTiers.includes(value)) }
+        : option
+    )),
     skills,
     commands: [],
     setupActions: terminalSetupActions.length > 0 || availability === "available"
@@ -568,7 +578,7 @@ export function createChatProviderCatalogService(options: {
           console.warn("[chat-providers] Coding model catalog unavailable");
         }
       }
-      return codingInstance(provider, skills, projectedCatalog);
+      return codingInstance(provider, skills, projectedCatalog, selection?.model);
     }));
     for (const instance of projectedInstances) {
       if (instance === null) continue;
@@ -763,6 +773,8 @@ function optionsMatch(
   instance: CanonicalProviderInstanceDescriptor,
 ): boolean {
   return (selection.options ?? []).every((selected) => {
+    if (instance.driverKind === "codex" && selected.id === CODEX_CHAT_SPEED_OPTION
+      && selected.value === CODEX_CHAT_STANDARD_SPEED) return true;
     const option = instance.options.find((candidate) => candidate.id === selected.id);
     if (option === undefined) return false;
     if (option.kind === "boolean") return typeof selected.value === "boolean";
@@ -836,9 +848,12 @@ export function validateChatProviderSelection(input: {
   if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
     return selectionError("capability_mismatch", "The selected model does not support images.");
   }
-  if (!optionsMatch(selection.data, instance)
+  const effectiveSelection = instance.driverKind === "codex" && selection.data.options?.some(({ id }) => id === CODEX_SERVICE_TIER_OPTION)
+    ? { ...selection.data, options: selection.data.options.filter(({ id }) => id !== CODEX_SERVICE_TIER_OPTION) }
+    : selection.data;
+  if (!optionsMatch(effectiveSelection, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {
     return selectionError("capability_mismatch", "The selected Provider does not support this request.");
   }
-  return { ok: true, instance, selection: selection.data };
+  return { ok: true, instance, selection: effectiveSelection };
 }

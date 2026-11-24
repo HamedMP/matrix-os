@@ -1,8 +1,8 @@
 import { Code2, Eye, FileCode2, X } from "@renderer/lib/hugeicons";
-import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
+import { useShortcutLabel } from "../../stores/shortcuts";
 import { useEditorTabs } from "./editor-tabs-store";
 
 const CodeMirrorHost = lazy(() => import("./CodeMirrorHost"));
@@ -24,13 +24,16 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
   const dirtyPaths = useEditorTabs((s) => s.dirtyPathsByTask[taskId] ?? EMPTY_DIRTY_PATHS);
   // Per-path "edit this markdown as code" overrides; markdown previews by default.
   const [editPaths, setEditPaths] = useState<Record<string, boolean>>({});
+  const quickOpenLabel = useShortcutLabel("nav.quick-open");
 
   if (tabs.length === 0) {
     return (
       <EmptyState
         icon={<FileCode2 size={24} />}
         headline="No file open"
-        description={`Open a file from the file browser or press ${desktopShortcutLabel("P")} to quick-open.`}
+        description={quickOpenLabel
+          ? `Open a file from the file browser or press ${quickOpenLabel} to quick-open.`
+          : "Open a file from the file browser."}
       />
     );
   }

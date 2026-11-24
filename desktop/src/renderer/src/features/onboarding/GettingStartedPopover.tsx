@@ -1,4 +1,4 @@
-import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
+import { getStartedAppGalleryLabel, gettingStartedRows, withKeyboardShortcutsStep, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, useGetStartedAnswers, useGetStartedEnded,
   GettingStartedPill, gettingStartedNextStep, shouldShowGettingStartedPill, usePublishGettingStartedProgress,
@@ -9,7 +9,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
-import { Bot, CreditCard, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "../../lib/hugeicons";
+import { Bot, CreditCard, Folder, Github, KeyboardIcon, KeyRound, MailIcon, Plug, Sparkles } from "../../lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { seedNewChatDraft } from "../chat/use-chat-composer-drafts";
@@ -21,6 +21,8 @@ import {
   loadGettingStartedSnapshot,
   type GettingStartedStepId,
 } from "./getting-started";
+import { useShortcutsStep } from "./shortcuts-step";
+import { ShortcutsStepHint } from "./ShortcutsStepHint";
 
 const BRAND_COLORS = onboardingChecklist.colors;
 /** Same cadence as the web checklist, so a connection made elsewhere shows up while it stays open. */
@@ -31,6 +33,7 @@ function RowIconGlyph({ row }: { row: GettingStartedRow }) {
   const props = { size: 16, className: "shrink-0", "aria-hidden": true, style: { color: BRAND_COLORS.subtleText } } as const;
   if (row.kind === "tool") return <Plug {...props} />;
   if (row.kind === "bot") return <Bot {...props} />;
+  if (row.kind === "shortcuts") return <KeyboardIcon {...props} />;
   switch (row.id) {
     case "github": return <Github {...props} />;
     case "email-calendar": return <MailIcon {...props} />;
@@ -88,6 +91,7 @@ function ChecklistRow({ row, view, onActivate }: { row: GettingStartedRow; view:
         {view.detail ? (
           <span className="mt-0.5 block truncate" style={{ color: BRAND_COLORS.subtleText, fontSize: 10 }}>{view.detail}</span>
         ) : null}
+        {row.kind === "shortcuts" ? <ShortcutsStepHint /> : null}
       </span>
       {view.trailing === "icon" ? (
         <RowIconGlyph row={row} />
@@ -153,9 +157,11 @@ function GettingStartedPopoverContent() {
     api ? (path, method, body) => (method === "GET" ? api.get(path) : api.post(path, body ?? {})) : null
   ), [api]);
   const bots = useGettingStartedBots(botRequest, getStartedAnswers?.bots, refreshRequest);
+  // Electron Desktop only (specs/653): a last step for the keyboard shortcuts.
+  const shortcutsSeen = useShortcutsStep((state) => state.seen);
   const { rows, completedCount, total } = useMemo(
-    () => gettingStartedRows(snapshot, getStartedAnswers, bots.statuses),
-    [getStartedAnswers, snapshot, bots.statuses],
+    () => withKeyboardShortcutsStep(gettingStartedRows(snapshot, getStartedAnswers, bots.statuses), { seen: shortcutsSeen }),
+    [getStartedAnswers, snapshot, bots.statuses, shortcutsSeen],
   );
   // After Get started, the checklist reopens on every load until done, but only once per load.
   const getStartedEnded = useGetStartedEnded();
@@ -221,7 +227,7 @@ function GettingStartedPopoverContent() {
     setOpen(true);
   }, [autoOpenKey, connectionStatus, getStartedEnded, completedCount, total, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
-  const openSettings = useCallback((section: "services" | "providers" | "billing") => {
+  const openSettings = useCallback((section: "services" | "providers" | "billing" | "shortcuts") => {
     requestSettingsSection(section);
     showTab({ kind: "settings", title: "Settings" });
   }, [requestSettingsSection]);
@@ -267,6 +273,9 @@ function GettingStartedPopoverContent() {
         return;
       case "settings":
         openSettings("services");
+        return;
+      case "shortcuts":
+        openSettings("shortcuts");
         return;
       case "create-bots":
         // A bot that failed to create: create the saved choices again, then reload the rows.

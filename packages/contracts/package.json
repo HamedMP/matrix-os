@@ -32,7 +32,8 @@
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
     "./runtime-lifecycle": "./src/runtime-lifecycle.ts",
-    "./runtime-wake": "./src/runtime-wake.ts"
+    "./runtime-wake": "./src/runtime-wake.ts",
+    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
   },
   "imports": {
     "#messaging-origin": "./src/messaging-origin.ts",

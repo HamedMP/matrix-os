@@ -492,7 +492,9 @@ export function SharedChatComposer({
         )}
         attachments={attachments || projectSkillDraft.paths.length ? (
           <>
-            <ProjectSkillDraftChips paths={projectSkillDraft.paths} onRemove={projectSkillDraft.remove} />
+            {projectSkillDraft.paths.length ? <div className="px-4 pt-3">
+              <ProjectSkillDraftChips paths={projectSkillDraft.paths} onRemove={projectSkillDraft.remove} />
+            </div> : null}
             {attachments ? <ComposerReferenceTokenRow tokens={[]} attachments={attachments} /> : null}
           </>
         ) : null}

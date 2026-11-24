@@ -1,3 +1,4 @@
+import { codexChatRunnerModelOptions } from "./codex-chat-speed.js";
 import { createCodexRoutineSources } from "./codex-routine-source.js";
 import { createPiRoutineSources } from "./pi-routine-source.js";
 import { createOpenCodeRoutineSources } from "./opencode-routine-source.js";
@@ -60,6 +61,11 @@ function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | 
   if (providerId === "opencode") return "opencode";
   if (providerId === "pi") return "pi";
   throw new Error("Unsupported canonical coding Provider");
+}
+
+function chatModelOptions(input: CanonicalProviderRunInput, providerId: string) {
+  const options = input.selection.options ?? [];
+  return providerId === "codex" ? codexChatRunnerModelOptions(options) : options;
 }
 
 function legacyRequestId(runId: string): string {
@@ -565,7 +571,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ...(input.worktreeId ? { worktreeId: input.worktreeId } : {}),
           mode,
           model: input.selection.model,
-          modelOptions: input.selection.options ?? [],
+          modelOptions: chatModelOptions(input, options.providerId),
           ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
           clientRequestId: requestId,
@@ -631,7 +637,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           message: input.prompt,
           attachments: attachments(input),
           model: input.selection.model,
-          modelOptions: input.selection.options ?? [],
+          modelOptions: chatModelOptions(input, options.providerId),
           ...permissions(input.permissionMode, options.providerId),
           clientRequestId: requestId,
         }));

@@ -1,0 +1,17 @@
+{
+  "name": "@matrix-os/get-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --root ../.. tests/get-worker",
+    "typecheck": "tsc --noEmit",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "4.1.12",
+    "wrangler": "^4.49.1"
+  }
+}

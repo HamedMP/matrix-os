@@ -77,11 +77,19 @@ export interface CodexNativeAccountMetadataReader {
 export const CODEX_IDENTITY_REUSE_MAX_MS = 10 * 60_000;
 const OBSERVATION_FRESHNESS_MS = 30_000;
 
-/** Stat identity of the Codex config (credential store backend lives there); absent is its own state. */
+const statIdentity = (info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }) =>
+  `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+
+/**
+ * Stat identity of the Codex config (credential store backend lives there);
+ * absent is its own state. A symlinked config also fingerprints its target, so
+ * editing the target is noticed even though the link itself is unchanged.
+ */
 async function defaultConfigFingerprint(path: string): Promise<string | null> {
   try {
-    const info = await lstat(path);
-    return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+    const link = await lstat(path);
+    if (!link.isSymbolicLink()) return statIdentity(link);
+    return `${statIdentity(link)}>${statIdentity(await stat(path))}`;
   } catch (error: unknown) {
     if (!(error instanceof Error && "code" in error)) throw error;
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
@@ -147,7 +155,8 @@ export function createCodexNativeAccountMetadataReader(input: {
   const clock = () => (input.now ?? (() => new Date()))().getTime();
   // Single entry (size cap 1): at most one reusable identity per reader, and
   // one reader per runtime owner. Replaced by each new proof, dropped on any
-  // mismatch, expiry, or invalidation. Failed reads never record an entry.
+  // mismatch, expiry, invalidation, or failed fresh account read. Failed reads
+  // never record an entry.
   let recentIdentity: { value: CodexNativeAccountMetadata; proof: string; credentialProof: string; executable: string; provenAt: number } | null = null;
   let identityEpoch = 0;
   const withinReuse = (provenAt: number, time: number) => time >= provenAt && time - provenAt < reuseMs;
@@ -263,6 +272,18 @@ export function createCodexNativeAccountMetadataReader(input: {
     const waitMs = Math.max(0, 5000 - (startedAt - lastStartedAt));
     if (!identityOnly && waitMs > 0) return null;
     if (!identityOnly) lastStartedAt = (input.now ?? (() => new Date()))().getTime();
+    // A fresh account read that fails or finds no account must not leave an
+    // earlier proof reusable; a newer proof recorded meanwhile is kept.
+    const entryAtStart = recentIdentity;
+    let proven: CodexNativeAccountMetadata | null = null;
+    try {
+      proven = await proveAccount(identityOnly, observation);
+      return proven;
+    } finally {
+      if (!proven && entryAtStart && recentIdentity === entryAtStart) recentIdentity = null;
+    }
+  };
+  const proveAccount = async (identityOnly: boolean, observation?: { state: CodexNativeObservationState }): Promise<CodexNativeAccountMetadata | null> => {
     const readEpoch = identityEpoch;
     const executableAtStart = reuseMs > 0 ? await readRuntimeFingerprint() : null;
     // Tentative evidence precedes process startup: the app-server can cache
