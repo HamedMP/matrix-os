@@ -191,6 +191,16 @@ describe("metal host scripts", () => {
     expect(rules).toMatch(/ip saddr 10\.78\.0\.0\/22 oifname "eno1" masquerade/);
   });
 
+  it("keeps new outbound traffic of VM networks on other bridges working", async () => {
+    const forward = chain(await renderNft(), "forward");
+    // A host that already runs VMs on another bridge (virbr0, the S7 spike host):
+    // their new connections to the internet pass; they still cannot reach brmx.
+    const others = 'iifname != { "eno1", "brmx", "tailscale0" } oifname "eno1" accept';
+    expect(forward).toContain(others);
+    expect(forward.indexOf(others)).toBeGreaterThan(forward.indexOf('iifname "brmx" accept'));
+    expect(forward.filter((l) => l.includes('oifname "brmx"'))).toEqual(['iifname "tailscale0" oifname "brmx" accept']);
+  });
+
   it("shapes each VM tap to 50 Mbit/s and keeps the VMM unprivileged", async () => {
     for (const unit of ["matrix-vm@.service", "matrix-vm-restore@.service"]) {
       const text = await readFile(`${DIR}/systemd/${unit}`, "utf8");
@@ -374,7 +384,12 @@ case "$verb" in
     for u in "\${args[@]:1}"; do rm -f "$FAKE_STATE/enabled-$u"; [ "$now" = 1 ] && rm -f "$FAKE_STATE/active-$u"; done ;;
   enable) for u in "\${args[@]:1}"; do : >"$FAKE_STATE/enabled-$u"; done ;;
   stop) for u in "\${args[@]:1}"; do rm -f "$FAKE_STATE/active-$u"; done ;;
-  start|restart) for u in "\${args[@]:1}"; do : >"$FAKE_STATE/active-$u"; done ;;
+  start|restart) for u in "\${args[@]:1}"; do
+    # The firewall unit runs ExecStartPre=guard, then ExecStart=apply.
+    if [ "$u" = matrix-hostd-nft.service ]; then
+      bash "$FAKE_HELPER" guard && bash "$FAKE_HELPER" apply || { rm -f "$FAKE_STATE/active-$u"; exit 1; }
+    fi
+    : >"$FAKE_STATE/active-$u"; done ;;
 esac
 exit 0
 `;
@@ -418,6 +433,8 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
       FAKE_STATE: state,
       MATRIX_HOSTD_FIREWALL_MARKER: marker,
       MATRIX_HOSTD_FIREWALL_CONFIRMED: join(state, "firewall-confirmed.sha256"),
+      MATRIX_HOSTD_FIREWALL_LOADED: join(state, "firewall-loaded.sha256"),
+      FAKE_HELPER: join(process.cwd(), NFT),
       MATRIX_HOSTD_NFT_TEMPLATE: template,
       MATRIX_HOSTD_NFT_ENV: join(state, "nft.env"),
       MATRIX_HOSTD_NFT_RENDERED: join(state, "nftables.nft"),
@@ -498,9 +515,10 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     expect((await nft("changed")).code).not.toBe(0);
     expect((await readFile(join(state, "firewall-confirmed.sha256"), "utf8")).trim()).toMatch(/^[a-f0-9]{64}$/);
     // The confirmed ruleset reloads fine with no window open.
+    const before = await loads();
     const result = await nft("apply");
     expect(result.code, result.out).toBe(0);
-    expect(await loads()).toBe(1);
+    expect(await loads()).toBe(before + 1);
   });
 
   it("a run that died after installing new rules never loads them unconfirmed", async () => {
@@ -508,18 +526,37 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     // The failed run: the new template is on disk, nothing was armed.
     await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41641 accept", "udp dport 41642 accept"));
     // A reboot (the unit is enabled) or a reload refuses the unconfirmed rules.
+    const before = await loads();
     const reboot = await nft("apply");
     expect(reboot.code).not.toBe(0);
     expect(reboot.out).toMatch(/not confirmed/i);
-    expect(await loads()).toBe(0);
+    expect(await loads()).toBe(before);
     // The retry sees the change and arms instead of reloading.
     expect((await nft("changed")).code).toBe(0);
     await nft("arm");
     expect(existsSync(marker)).toBe(true);
     expect(has(`active-${TIMER}`)).toBe(true);
     expect(has(`enabled-${FW}`)).toBe(false);
-    expect((await nft("apply")).code).toBe(0);
-    expect(await loads()).toBe(1);
+    // arm's restart loaded the new rules.
+    expect(await loads()).toBe(before + 1);
+  });
+
+  it("confirm refuses rules on disk that differ from the ones loaded", async () => {
+    await confirmed();
+    // A new window: arm loads rules A.
+    await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41641 accept", "udp dport 41642 accept"));
+    expect((await nft("arm")).code).toBe(0);
+    // A re-run with other settings installs rules B, then dies before arming.
+    await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41642 accept", "udp dport 41643 accept"));
+    const result = await nft("confirm");
+    expect(result.code).not.toBe(0);
+    expect(result.out).toMatch(/not the ones loaded/i);
+    expect(has(`enabled-${FW}`)).toBe(false);
+    expect(existsSync(marker)).toBe(true);
+    // Confirming what is actually loaded still works once the files match it again.
+    await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41643 accept", "udp dport 41642 accept"));
+    expect((await nft("confirm")).code).toBe(0);
+    expect(has(`enabled-${FW}`)).toBe(true);
   });
 
   it("parameter changes and a missing confirmation record also count as changed", async () => {

@@ -23,7 +23,8 @@
 # the unit after the window can never bring back an unconfirmed firewall.
 #
 # Confirmation records a fingerprint (sha256 of the rendered ruleset and of
-# this helper). Outside an open window, apply loads only rules matching it, and
+# this helper), and only for the rules apply actually loaded: files changed
+# on disk since the load are refused. Outside an open window, apply loads only rules matching it, and
 # provisioning treats any difference as a change to arm. So rules installed by
 # a run that died before arming are neither reloaded nor loaded at boot.
 set -euo pipefail
@@ -34,6 +35,9 @@ readonly RENDERED="${MATRIX_HOSTD_NFT_RENDERED:-/etc/matrix-hostd/nftables.nft}"
 # sha256 of the last confirmed rendered ruleset plus this helper.
 readonly CONFIRMED="${MATRIX_HOSTD_FIREWALL_CONFIRMED:-/var/lib/matrix-hostd/firewall-confirmed.sha256}"
 readonly MARKER="${MATRIX_HOSTD_FIREWALL_MARKER:-/var/lib/matrix-hostd/firewall-unconfirmed}"
+# sha256 of the rules apply last loaded (same form as CONFIRMED): confirm only
+# approves rules on disk that are the ones actually running.
+readonly LOADED="${MATRIX_HOSTD_FIREWALL_LOADED:-/var/lib/matrix-hostd/firewall-loaded.sha256}"
 readonly WINDOW_S=600
 readonly UNIT=matrix-hostd-nft.service
 readonly REVERT=matrix-hostd-nft-revert
@@ -95,6 +99,11 @@ fingerprint() {
   { render "$TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT"; sha256sum <"${BASH_SOURCE[0]}"; } | sha256sum | awk '{print $1}'
 }
 
+# The same fingerprint for an already rendered file.
+fingerprint_file() {
+  { cat "$1"; sha256sum <"${BASH_SOURCE[0]}"; } | sha256sum | awk '{print $1}'
+}
+
 # Exit 0 when the current rules/helper are not the confirmed ones (or nothing
 # was ever confirmed); 1 when they match.
 changed() {
@@ -129,8 +138,16 @@ confirm() {
   systemctl stop "$REVERT.timer"
   # The timer could have fired between the checks and the stop.
   systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
+  # The rules on disk must be the ones loaded: a re-run that installed other
+  # files and died before arming would otherwise get its untested rules
+  # approved, and loaded at the next reload or boot with no revert.
+  local current loaded=""
+  current="$(fingerprint)"
+  if [ -f "$LOADED" ]; then loaded="$(head -c 64 "$LOADED")"; fi
+  [ -n "$loaded" ] && [ "$current" = "$loaded" ] ||
+    die "the rules on disk are not the ones loaded (an interrupted provisioning run?); the firewall is NOT confirmed; re-run provision-host.sh and confirm"
   install -d -m 0755 "$(dirname "$CONFIRMED")"
-  fingerprint >"$CONFIRMED.tmp"
+  printf '%s\n' "$loaded" >"$CONFIRMED.tmp"
   mv -f "$CONFIRMED.tmp" "$CONFIRMED"
   rm -f "$MARKER"
   systemctl enable --quiet "$UNIT"
@@ -179,6 +196,9 @@ case "$cmd" in
     nft -c -f "$RENDERED.tmp"
     mv -f "$RENDERED.tmp" "$RENDERED"
     nft -f "$RENDERED"
+    install -d -m 0755 "$(dirname "$LOADED")"
+    fingerprint_file "$RENDERED" >"$LOADED.tmp"
+    mv -f "$LOADED.tmp" "$LOADED"
     ;;
   guard) guard ;;
   arm) arm ;;
@@ -187,6 +207,7 @@ case "$cmd" in
   remove)
     if nft list table inet matrix_hostd >/dev/null 2>&1; then nft delete table inet matrix_hostd; fi
     if nft list table ip matrix_hostd_nat >/dev/null 2>&1; then nft delete table ip matrix_hostd_nat; fi
+    rm -f "$LOADED"
     ;;
   *) die "usage: matrix-hostd-nft render|check|apply|remove|arm|guard|confirm|changed" ;;
 esac

@@ -60,7 +60,10 @@ The firewall (`nftables.conf`) owns the host: input default deny except
 established traffic, SSH on the public interface (key-only sshd, never
 removed), anything on `tailscale0`, Headscale (443/tcp, 3478/udp), Tailscale
 direct (41641/udp), the ingress and API ports. Forwarding: `brmx` to the
-internet (NAT, no SMTP, no private ranges) and `tailscale0` to `brmx`.
+internet (NAT, no SMTP, no private ranges) and `tailscale0` to `brmx`. VMs
+on other bridges of the host keep their new outbound connections to the
+internet; inbound port forwards into them are dropped, and only `tailscale0`
+reaches `brmx`.
 `provision-host.sh` dry-runs the rendered ruleset first (`matrix-hostd-nft
 check` requires SSH on the public interface to be accepted before any drop,
 then `nft -c`), and `matrix-hostd-nft apply` repeats the check before loading.
@@ -78,7 +81,10 @@ never pulls it in. Open a **new** SSH session and run
 change: it cancels the timer, removes the marker and enables the unit. It
 exits non-zero if the revert already happened; then re-run provisioning. Confirmation records a
 fingerprint of the rendered ruleset and the helper
-(`/var/lib/matrix-hostd/firewall-confirmed.sha256`). Outside an open window
+(`/var/lib/matrix-hostd/firewall-confirmed.sha256`), and only for the rules
+that are loaded: every load records its own fingerprint
+(`firewall-loaded.sha256`), and confirm refuses rules on disk that differ from
+it (a re-run that installed new files and died before arming). Outside an open window
 the unit loads only rules matching it, and provisioning treats any difference
 as a change to arm, so rules installed by a run that died before arming are
 never reloaded or loaded at boot.
