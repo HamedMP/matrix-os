@@ -411,10 +411,9 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     expect(state.draft?.chatId).toBe(chatId);
     await page.getByRole("button", { name: "Publish an illustration archive", exact: true }).waitFor();
     expect(await page.getByRole("button", { name: longOpeningChoice, exact: true }).count()).toBe(0);
-    await page.getByText("More answers", { exact: true }).click();
-    await page.getByRole("button", { name: longOpeningChoice, exact: true }).waitFor();
-    await page.getByText("More answers", { exact: true }).click();
-    expect(await page.getByText(openingDetail, { exact: true }).isVisible()).toBe(false);
+    expect(await page.getByText("More answers", { exact: true }).count()).toBe(0);
+    expect(await page.getByText("More details", { exact: true }).count()).toBe(0);
+    expect(await page.getByText(openingDetail, { exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-custom-answer.png") });
     const composer = page.locator('[contenteditable="true"]').last();
     const messages = page.getByRole("region", { name: "Messages", exact: true });

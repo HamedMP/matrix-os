@@ -103,12 +103,14 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   expect(revised.proposals).toEqual([]);
 });
 
-it("requests one short adaptive question and preserves separate explanation and full answers", () => {
+it("asks for a short actionable reply and accepts complete legacy answers and details", () => {
   const context = { project: { name: "Illustration archive" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
   const prompt = projectSetupInterviewPrompt(draft, context, []);
   expect(prompt).toContain("one short primary question");
   expect(prompt).toContain("32 characters");
+  expect(prompt).toContain("Save longer explanations for Review");
+  expect(prompt).not.toContain('"details":');
   const reply = "What will readers find in the archive?";
   const details = "Start with the public collection. Permissions and metadata can be discussed later.";
   const longAnswer = "The public collection plus an internal catalog for managing clearance.";

@@ -13,7 +13,7 @@ import type { ProjectSetupController, ProjectSetupTransport } from "./use-projec
 import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
 import { ProjectSetupMarkdown, type ProjectSetupMarkdownState } from "./ProjectSetupMarkdown.js";
 import { ProjectSetupReviewSummary } from "./ProjectSetupReviewSummary.js";
-import { ProjectSetupReplyDetails, projectSetupReplyContent, isCompactSetupAnswer, disclosureStyle } from "./ProjectSetupProgress.js";
+import { ProjectSetupReplyContext, projectSetupReplyContent, isCompactSetupAnswer, disclosureStyle } from "./ProjectSetupProgress.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction } from "./ProjectSetupEntry.js";
 
 interface Props extends ProjectSkillSourceActions {
@@ -92,27 +92,27 @@ function ProjectSetupControlsScoped({
     transport, showConnectionCard || showReview ? pendingService : undefined, mcpSettingsOpen,
   );
   const busy = setup.pending || reading;
-  const reply = interview && replyText ? projectSetupReplyContent(replyText, draft.step === "review") : null;
+  const reviewing = draft.step === "review";
+  const reply = interview && replyText ? projectSetupReplyContent(replyText, reviewing) : null;
   const replyPrompt = reply?.prompt ? <p className="leading-relaxed">{reply.prompt}</p> : null;
-  const replyDetails = reply?.detail ? <ProjectSetupReplyDetails detail={reply.detail} label={
-    reply.prompt ? "More details" : draft.step === "review" ? "Read the agent’s reply" : "Read the agent’s question"
-  } /> : null;
+  const replyContext = reply?.detail && (reviewing || !reply.prompt)
+    ? <ProjectSetupReplyContext detail={reply.detail} review={reviewing} />
+    : null;
   const suggestions = interview && draft.step !== "saved" && !showConnectionCard ? interview.suggestions : [];
   const connectLabel = recommendedService ? `Connect ${recommendedService}` : "Open MCP Settings";
   const longConnection = Boolean(interview && !isCompactSetupAnswer(connectLabel));
   const reservedActions = Number(offerSkill) + (longConnection ? 1 : 2) * Number(offerConnection) + Number(showReview);
   const shortAnswers = suggestions.filter(isCompactSetupAnswer)
     .slice(0, Math.max(0, 3 - reservedActions));
-  const moreAnswers = suggestions.filter(text => !shortAnswers.includes(text));
-  const answerChoices = (choices: string[]) => (
+  const answerChoices = shortAnswers.length ? (
     <div className="flex flex-wrap gap-2" aria-label="Suggested answers" role="group">
-      {choices.map((text) => (
+      {shortAnswers.map((text) => (
         <Action key={text} disabled={busy} onClick={() => { void setup.answer(text); }}>
           <span className="min-w-0 whitespace-normal break-words">{text}</span>
         </Action>
       ))}
     </div>
-  );
+  ) : null;
   const needsSkillDraft = Boolean(draft.answers.skillInstructions && !draft.skill);
   const revisionFields: Array<"purpose" | "guidance" | "skillInstructions"> = draft.answers.skillInstructions
     ? ["purpose", "guidance", "skillInstructions"]
@@ -174,7 +174,7 @@ function ProjectSetupControlsScoped({
   if (interview && draft.step !== "saved" && (awaitingReply || replyFailed)) {
     return (
       <div className="space-y-2 text-sm" data-slot="project-setup-controls">
-        {replyPrompt}{replyDetails}
+        {replyPrompt}{replyContext}
         {awaitingReply ? (
           <>
             <p role="status" style={mutedStyle}>Preparing the next reply…</p>
@@ -204,8 +204,8 @@ function ProjectSetupControlsScoped({
   return (
     <div className="min-w-0 space-y-3 text-sm" data-slot="project-setup-controls" aria-busy={busy}>
       {replyPrompt}
-      {reply && !reply.prompt ? replyDetails : null}
-      {shortAnswers.length ? answerChoices(shortAnswers) : null}
+      {replyContext}
+      {answerChoices}
       {!interview && draft.step !== "saved" ? (
         <Action variant="ghost" disabled={busy || awaitingReply} onClick={() => { void setup.start(); }}>
           Continue with Agent
@@ -341,13 +341,6 @@ function ProjectSetupControlsScoped({
           </details> : null}
         </section>
       ) : null}
-      {moreAnswers.length ? (
-        <details key={draft.currentQuestionMessageId}>
-          <summary className={disclosureStyle}>More answers</summary>
-          <div className="mt-2">{answerChoices(moreAnswers)}</div>
-        </details>
-      ) : null}
-      {reply?.prompt ? replyDetails : null}
       {showReview ? (
         <>
           {!interview ? <ProjectSetupReviewSummary draft={draft} connected={connected} /> : null}

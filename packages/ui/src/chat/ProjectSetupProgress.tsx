@@ -119,14 +119,17 @@ export function isCompactSetupAnswer(text: string): boolean {
 
 export const disclosureStyle = "w-fit cursor-pointer text-xs font-medium text-[var(--text-secondary,var(--muted-foreground))] hover:underline";
 
-export function ProjectSetupReplyDetails({ detail, label }: { detail: string; label: string }) {
-  if (!detail) return null;
+export function ProjectSetupReplyContext({ detail, review }: { detail: string; review: boolean }) {
+  const markdown = (
+    <div className="space-y-2 break-words leading-relaxed">
+      <ReactMarkdown skipHtml components={{ img: () => null }}>{detail}</ReactMarkdown>
+    </div>
+  );
+  if (review) return markdown;
   return (
-    <details className="min-w-0">
-      <summary className={disclosureStyle}>{label}</summary>
-      <div className="mt-2 space-y-2 break-words leading-relaxed">
-        <ReactMarkdown skipHtml components={{ img: () => null }}>{detail}</ReactMarkdown>
-      </div>
+    <details className="min-w-0 space-y-2">
+      <summary className={disclosureStyle}>Read the agent’s question</summary>
+      {markdown}
     </details>
   );
 }

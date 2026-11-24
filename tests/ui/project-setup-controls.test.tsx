@@ -74,7 +74,7 @@ it("renders only the Agent's suggestions through the same answer action", () => 
   expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
 });
 
-it("shows one active question and keeps longer answers and the original context expandable", () => {
+it("shows one active question and short answers without extra disclosures", () => {
   const longAnswer = "Collect review feedback from the entire on-call rotation before changing the release process.";
   const replyText = "Let's set up your research project. I’ll help with release guidance and make it clear what you can leave to a later conversation.\n\nWhat should get reviewed? Who should sign off?";
   const setup = controller(undefined, {
@@ -83,19 +83,28 @@ it("shows one active question and keeps longer answers and the original context 
   });
   render(<ProjectSetupControls setup={setup} transport={null} replyText={replyText} />);
   expect(screen.getByText("What should get reviewed?").closest("details")).toBeNull();
-  expect(screen.getByText(/Who should sign off/).closest("details")?.open).toBe(false);
-  expect(screen.getByText(/let.s set up your research project/i).closest("details")?.open).toBe(false);
-  expect(screen.getByRole("button", { name: "Release notes" })).toBeTruthy();
-  const longChoice = screen.getByText(longAnswer).closest("button")!;
-  const choices = longChoice.closest("details")!;
-  expect(choices.open).toBe(false);
-  expect(choices.querySelector("summary")?.textContent).toBe("More answers");
-  choices.open = true;
-  fireEvent.click(longChoice);
-  expect(setup.answer).toHaveBeenCalledExactlyOnceWith(longAnswer);
+  expect(screen.queryByText(/Who should sign off/)).toBeNull();
+  expect(screen.queryByText(/let.s set up your research project/i)).toBeNull();
+  expect(screen.queryByText(longAnswer)).toBeNull();
+  expect(screen.queryByText("More answers")).toBeNull();
+  expect(screen.queryByText("More details")).toBeNull();
+  expect(screen.getByRole("button", { name: "Support docs" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Release notes" }));
+  expect(setup.answer).toHaveBeenCalledExactlyOnceWith("Release notes");
 });
 
-it("keeps a wide localized choice and a long service name fully actionable", () => {
+it("reserves space for MCP actions and omits the excess short suggestions", () => {
+  const setup = controller(undefined, {
+    ...draft, step: "mcp", proposals: [],
+    interview: { focus: "mcp", suggestions: ["Track releases", "Track reviews", "Track issues"], recommendedService: "GitHub" },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
+  expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(["Track releases", "Connect GitHub", "Skip for now"]);
+  expect(screen.queryByText("Track reviews")).toBeNull();
+  expect(screen.queryByText("Track issues")).toBeNull();
+});
+
+it("omits an oversized localized answer but keeps a long service name actionable", () => {
   const service = "Atlassian (Jira, Confluence)";
   const answer = "发布时必须征求市场和合规团队的批准";
   const setup = controller(undefined, {
@@ -105,10 +114,20 @@ it("keeps a wide localized choice and a long service name fully actionable", () 
   render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
   const serviceChoice = screen.getByText(`Connect ${service}`).closest("button")!;
   expect(serviceChoice.closest("details")?.open).toBe(false);
-  expect(screen.getByText(answer).closest("details")?.open).toBe(false);
+  expect(screen.queryByText(answer)).toBeNull();
   serviceChoice.closest("details")!.open = true;
   fireEvent.click(serviceChoice);
   expect(setup.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "connect", service });
+});
+
+it("keeps meaningful Review context readable beside explicit Save", () => {
+  const setup = controller(undefined, {
+    ...draft, interview: { focus: "review", suggestions: [] },
+  });
+  const reviewContext = "The existing AGENTS.md stays in place.";
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={`Review the project setup.\n\n${reviewContext}`} />);
+  expect(screen.getByText(reviewContext).closest("details")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save project setup" })).toBeTruthy();
 });
 
 const oversizedQuestion = "How should the release checklist handle overlapping requests from different teams when an approval arrives just before a deadline?";
