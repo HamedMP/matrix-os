@@ -36,29 +36,16 @@ Inside a Matrix OS checkout you do not need the plugin: the same skills load fro
 
 ### Claude Code
 
-`.claude/settings.json` declares the `matrix-os-dev` marketplace with auto-update on. Claude Code registers a settings-declared marketplace only from an interactive session, so first start `claude` once in a trusted Matrix OS checkout that contains this file. Until then the install command fails with `Plugin "matrix-dev" not found in marketplace "matrix-os-dev"`. Then install the plugin for your user:
+Add the marketplace and install the plugin for your user:
 
 ```sh
+claude plugin marketplace add https://raw.githubusercontent.com/HamedMP/matrix-os/main/dev/.claude-plugin/marketplace.json
 claude plugin install matrix-dev@matrix-os-dev --scope user
 ```
 
-Claude Code's `marketplace add` command cannot point at a marketplace in a subdirectory. To install from outside this repository, add the marketplace to `~/.claude/settings.json`, start `claude` once so it registers, then run the install command above:
+`.claude/settings.json` declares the same marketplace with auto-update on, so in a trusted Matrix OS checkout an interactive `claude` session registers it for you and only the install command is needed. A marketplace you add by hand does not auto-update until you turn that on for it under `/plugin` > Marketplaces.
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "matrix-os-dev": {
-      "source": {
-        "source": "github",
-        "repo": "HamedMP/matrix-os",
-        "path": "dev/.claude-plugin/marketplace.json",
-        "sparsePaths": ["dev"]
-      },
-      "autoUpdate": true
-    }
-  }
-}
-```
+The marketplace is fetched as one file and lists the plugin as the `dev/matrix-dev` folder of this repository. Keep both that way: Claude Code 2.1.331 could not install from, or update, a marketplace file addressed by a subdirectory path on a repository source.
 
 The plugin declares no version, so it tracks commits on `main`. With auto-update on, Claude Code refreshes it shortly after a session starts. To update now:
 
