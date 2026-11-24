@@ -1756,9 +1756,9 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
 
-  registerProjectTaskRoutes({ app, homePath, repository: ownerDatabaseServices?.projectTaskRepository ?? null,
-    projectManager: codingAgentProjectManager, eventPublisher: workspaceEventPublisher, collaboration: gatewayCollaboration,
-    sendPush: (reply) => channelManager.send(reply) });
+  registerProjectTaskRoutes({ app, homePath, repository: ownerDatabaseServices?.projectTaskRepository ?? null, projectManager: codingAgentProjectManager,
+    eventPublisher: workspaceEventPublisher, collaboration: gatewayCollaboration, sendPush: (reply) => channelManager.send(reply), worktreeManager: codingAgentWorktreeManager,
+    chatRepository, chatOrchestrator: canonicalChatOrchestrator, chatExecutionRoots: canonicalChatExecutionRoots, terminalRuntime: terminalWorkspaceRuntime });
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const githubSettingsStore = providerSettingsStore;
   const githubDeveloperSetup = registerGithubDeveloperSetup({
