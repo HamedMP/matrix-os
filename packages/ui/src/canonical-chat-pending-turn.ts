@@ -1,4 +1,4 @@
-import type { CanonicalChatDetailResponse, CanonicalChatMessage, CanonicalChatMessagePart } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatMessage, CanonicalChatMessagePart, CanonicalChatTurn } from "@matrix-os/contracts";
 
 /** A message the person sent whose turn the server has not confirmed yet. */
 export interface PendingCanonicalTurn {
@@ -23,15 +23,20 @@ export function withPendingCanonicalTurn(
   if (!pending || detail.record.chat.id !== pending.chatId) return detail;
   if (detail.turns.some(turn => turn.clientRequestId === pending.requestId)) return detail;
   const baseMessageSeq = detail.messages.reduce((max, message) => Math.max(max, message.seq), 0);
+  const { message, turn } = pendingCanonicalTurnRows(pending, baseMessageSeq);
+  return { ...detail, messages: [...detail.messages, message], turns: [...detail.turns, turn] };
+}
+
+/**
+ * The pending message and its turn as transcript rows after `baseMessageSeq`,
+ * for renderers that group a transcript by turn. Display only, like the above.
+ */
+export function pendingCanonicalTurnRows(pending: PendingCanonicalTurn, baseMessageSeq = 0): { message: CanonicalChatMessage; turn: CanonicalChatTurn } {
   const message = pendingCanonicalTurnMessage(pending, baseMessageSeq + 1);
-  return {
-    ...detail,
-    messages: [...detail.messages, message],
-    turns: [...detail.turns, {
-      id: message.turnId!, chatId: pending.chatId, clientRequestId: pending.requestId, baseMessageSeq,
-      inputMessageId: message.id, status: "accepted", createdAt: pending.createdAt, updatedAt: pending.createdAt,
-    }],
-  };
+  return { message, turn: {
+    id: message.turnId!, chatId: pending.chatId, clientRequestId: pending.requestId, baseMessageSeq,
+    inputMessageId: message.id, status: "accepted", createdAt: pending.createdAt, updatedAt: pending.createdAt,
+  } };
 }
 
 /**

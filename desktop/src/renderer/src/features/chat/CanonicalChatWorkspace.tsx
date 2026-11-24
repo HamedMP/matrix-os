@@ -2,7 +2,7 @@ import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-sc
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
-import { BrowserPermissionReviewProvider, BrowserPermissionReminder, withPendingCanonicalTurn } from "@matrix-os/ui";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
@@ -415,8 +415,9 @@ function CanonicalChatWorkspaceContent({
   const composerHasInput = Boolean(
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
-  const transcript = controller.detail ? canonicalChatPresentation({
-    ...withPendingCanonicalTurn(controller.detail, controller.pendingTurn),
+  const shownTranscript = controller.displayTranscript;
+  const transcript = shownTranscript ? canonicalChatPresentation({
+    ...(shownTranscript.kind === "detail" ? shownTranscript.detail : shownTranscript.transcript),
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const pendingTool = pendingSupervisedTool(transcript);
@@ -1107,7 +1108,8 @@ function CanonicalChatWorkspaceContent({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft}
+            pending={shownTranscript?.kind === "draft" ? { turns: transcript, copyText } : undefined} />
         )}
         </>}
       </SharedChatSurface>
