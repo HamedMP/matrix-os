@@ -141,13 +141,21 @@ it, for VPS and owned computers alike.
      failure closes with a coarse code (`4401` auth, `4403` revoked or
      disabled, `4409` replaced, `4429` rate limited) and no detail.
    - Admission must finish within 10 s of the upgrade.
-2. **Core stream (binary frames).** After `ready`, binary messages in both
+2. **Core bytes (binary frames).** After `ready`, binary messages in both
    directions are an opaque herdr-core byte stream, exactly what `herdr-core
    connect` would carry. The gateway is the herdr-core client (handshake,
    calls, attach, credit); the Mac pipes to its private core socket.
-3. **Control (text frames).** `ping`/`pong` every 15 s from both ends;
+3. **Core streams.** The herdr-core client opens and closes connections over
+   time (it idles one out after 60 s and reconnects after a core restart), so
+   the link carries numbered streams, one at a time: gateway
+   `{"t":"open","stream":n}` → the Mac connects to its core socket and pipes;
+   gateway `{"t":"close","stream":n}` or Mac `{"t":"end","stream":n}` ends it.
+   Binary frames always belong to the current stream; bytes that arrive after
+   a stream ended are dropped. WebSocket ordering makes this unambiguous.
+4. **Control (text frames).** `ping`/`pong` every 15 s from both ends;
    `{"t":"state","terminalsFromComputer":n}` gateway → Mac for the status
-   header; `{"t":"bye","reason":"disabled"|"signed-out"}` before a clean close.
+   header; `{"t":"bye","reason":...}` before a clean close (Mac: `disabled`,
+   `signed-out`, `quit`; gateway: `removed`, `shutdown`).
 
 ### Mac-side guard (`desktop/src/main/mac-link/guard.ts`)
 
