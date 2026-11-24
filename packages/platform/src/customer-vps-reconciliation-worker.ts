@@ -58,6 +58,7 @@ export async function runCustomerVpsReconciliationPass(deps: {
   customerVpsProxyDispatcher?: import('undici').Dispatcher;
   /** Read at run time: the capture hook is installed after the worker starts. */
   getBillingRuntimeCaptureEvent: () => BillingRuntimeCaptureEvent | undefined;
+  reconcileBillingSuspensions?: () => Promise<void>;
   sweepPrivatePreviews?: () => Promise<PrivatePreviewSweepResult>;
   sweepUnpaidVps?: () => Promise<{ checked: number; queued: number; failed: number; backupMissing: number }>;
 }): Promise<void> {
@@ -95,6 +96,13 @@ export async function runCustomerVpsReconciliationPass(deps: {
     }
   } catch (err: unknown) {
     logPlatformRouteError('billing runtime action reconciliation', err);
+  }
+  if (deps.reconcileBillingSuspensions) {
+    try {
+      await deps.reconcileBillingSuspensions();
+    } catch (error: unknown) {
+      logPlatformRouteError('customer VPS billing suspension reconciliation', error);
+    }
   }
   try {
     const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();

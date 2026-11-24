@@ -103,6 +103,27 @@ describe('unpaid VPS retention', () => {
     expect(await queue()).toEqual([]);
   });
 
+  it.each(['off', 'running'])('only uses the suspension recovery window while the provider stays off (%s)', async (finalStatus) => {
+    const suspendedAt = '2026-11-19T00:00:00.000Z';
+    await db.executor.updateTable('user_machines').set({ status: 'suspended' })
+      .where('machine_id', '=', machineId).execute();
+    await db.executor.insertInto('billing_runtime_actions').values({
+      id: '49c2ba6c-57fb-4a89-9eb2-a0bc3ea0e1d9',
+      machine_id: machineId, stripe_subscription_id: billing.stripeSubscriptionId, action: 'suspend',
+      reason: 'trial_ended_unpaid', status: 'completed', execute_after: suspendedAt, attempts: 1,
+      created_at: loss, updated_at: suspendedAt, completed_at: suspendedAt,
+    }).execute();
+    getServer.mockResolvedValueOnce({ ...provider, status: 'off' })
+      .mockResolvedValue({ ...provider, status: finalStatus });
+
+    await expect(sweep()()).resolves.toMatchObject({ queued: finalStatus === 'off' ? 1 : 0 });
+    expect(hasRecoveryCopy).toHaveBeenCalledWith(ownerId, 'primary', {
+      earliest: new Date(loss),
+      databaseEarliest: new Date('2026-11-18T22:00:00.000Z'),
+      latest: new Date(due),
+    });
+  });
+
   it('rechecks a change to the live machine binding before writing either record', async () => {
     hasRecoveryCopy.mockImplementationOnce(async () => {
       await db.executor.updateTable('user_machines').set({ hetzner_server_id: 43210 }).execute();

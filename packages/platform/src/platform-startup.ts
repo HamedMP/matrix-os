@@ -1122,6 +1122,10 @@ async function startPlatformServerWithCleanup(
         r2: coreRepoObjectStore, prefixRoot: customerVpsConfig.r2PrefixRoot,
       });
       const service = customerVpsService;
+      const { createBillingSuspensionReconciliation } = await import('./customer-vps-billing-suspension.js');
+      const reconcileBillingSuspensions = createBillingSuspensionReconciliation({
+        db, service, getServer: serverId => baseHetzner.getServer(serverId),
+      });
       const sweepPrivatePreviews = createPrivatePreviewSweep({
         db,
         service,
@@ -1139,6 +1143,7 @@ async function startPlatformServerWithCleanup(
           getBillingRuntimeCaptureEvent: () => billingRuntimeCaptureEvent,
           sweepPrivatePreviews,
           sweepUnpaidVps,
+          reconcileBillingSuspensions,
         }),
       });
     }

@@ -8,7 +8,9 @@ After Matrix publishes the updated policy and gives any required notice, set `MA
 
 For an ended subscription or failed renewal, the worker queues deletion after the three-day grace period. The clock starts when the paid term or unpaid trial ends or the renewal first fails, as applicable. The worker honors a later recorded grace deadline or paid-through date. Live Stripe payment or a replacement subscription for the same computer stops cleanup.
 
-The worker checks exact owner, runtime slot, Hetzner server identity, outstanding checkout, billing overrides, shared ownership, and the home manifest and database snapshot in R2. Missing evidence leaves the VPS available for investigation. The machine tombstone and provider deletion job commit together under the existing billing and account deletion locks. Hetzner confirmation determines when VPS costs stop. Matrix retains account, billing and recovery records.
+The worker checks exact owner, runtime slot, Hetzner server identity, outstanding checkout, billing overrides, shared ownership, and the home manifest and database snapshot in R2. The home manifest must be at most 24 hours old and the database snapshot at most two hours old. For a VPS confirmed off after a recent completed suspension for the same subscription, measure freshness at suspension. Stale or missing recovery copies leave the VPS available for review. The machine tombstone and provider deletion job commit together under the existing billing and account deletion locks. Hetzner confirmation determines when VPS costs stop. Matrix retains account, billing and recovery records.
+
+Recurring reconciliation also rechecks a bounded batch of completed billing suspensions and shuts down provider drift when the slot remains unpaid. A pending runtime action or restored billing eligibility stops that shutdown.
 
 Publish matching customer-facing billing documentation in the Matrix OS site repository before enabling the setting.
 

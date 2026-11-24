@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { claimRunningUserMachineResize, getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { claimRunningUserMachineResize, getUserMachine, insertUserMachine, updateUserMachine, upsertBillingCustomer, upsertBillingSubscription, type PlatformDB } from '../../packages/platform/src/db.js';
+import { createBillingSuspensionReconciliation } from '../../packages/platform/src/customer-vps-billing-suspension.js';
+import { runCustomerVpsReconciliationPass } from '../../packages/platform/src/customer-vps-reconciliation-worker.js';
 import { createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
 
@@ -93,6 +95,49 @@ describe('platform/customer-vps', () => {
     expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
     await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
   });
+  it.each(['canceled', 'active'] as const)('checks a completed suspension during the worker pass when billing is %s', async (status) => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff139';
+    const owner = 'user_123';
+    const start = '2026-04-20T12:00:00.000Z';
+    const now = new Date('2026-04-26T12:00:00.000Z');
+    await insertUserMachine(db, {
+      machineId, clerkUserId: owner, handle: 'alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', hetznerServerId: 123456, status: 'suspended',
+      provisionedAt: start,
+    });
+    await upsertBillingCustomer(db, { clerkUserId: owner, stripeCustomerId: 'cus_123', createdAt: start, updatedAt: start });
+    await upsertBillingSubscription(db, {
+      clerkUserId: owner, stripeCustomerId: 'cus_123', stripeSubscriptionId: 'sub_123', runtimeSlot: 'primary',
+      planSlug: 'matrix_starter', stripePriceId: 'price_starter', status, currentPeriodEnd: start,
+      gracePeriodEndsAt: null, latestEventCreatedAt: start, latestEventId: 'evt_123', updatedAt: start,
+    });
+    await db.executor.insertInto('billing_runtime_actions').values({
+      id: '49c2ba6c-57fb-4a89-9eb2-a0bc3ea0e1d9',
+      machine_id: machineId, stripe_subscription_id: 'sub_123', action: 'suspend',
+      reason: 'trial_ended_unpaid', status: 'completed', execute_after: start, attempts: 1,
+      created_at: start, updated_at: start, completed_at: start,
+    }).execute();
+    const server = { id: 123456, status: 'running', serverType: 'cpx22', publicIPv4: '203.0.113.10' };
+    const getServer = vi.fn().mockResolvedValueOnce(server).mockResolvedValueOnce(server)
+      .mockResolvedValue({ ...server, status: 'off' });
+    const { service, hetzner } = createService({ hetzner: createMockHetznerClient({ getServer }) });
+
+    await runCustomerVpsReconciliationPass({
+      db, customerVpsService: service, platformSecret: '', getBillingRuntimeCaptureEvent: () => undefined,
+      reconcileBillingSuspensions: createBillingSuspensionReconciliation({
+        db, getServer, service, now: () => now,
+      }),
+    });
+
+    if (status === 'canceled') {
+      expect(hetzner.shutdownServer).toHaveBeenCalledExactlyOnceWith(123456);
+    } else {
+      expect(getServer).not.toHaveBeenCalled();
+      expect(hetzner.shutdownServer).not.toHaveBeenCalled();
+    }
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'suspended' });
+  });
+
   it('resumes a suspended machine only after provider and runtime health recover', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff131',

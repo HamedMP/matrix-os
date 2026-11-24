@@ -5,20 +5,38 @@ import { buildCustomerVpsR2Key, validateDbLatestPointer } from './customer-vps-r
 import type { HetznerClient } from './customer-vps-hetzner.js';
 import type { PlatformDB } from './db.js';
 import type { R2Client } from './r2-client.js';
-import { createUnpaidVpsRetentionSweep } from './unpaid-vps-retention.js';
+import { createUnpaidVpsRetentionSweep, type RetentionRecoveryWindow } from './unpaid-vps-retention.js';
+
+type RecoveryStorage = Pick<R2Client, 'getObject' | 'headObject' | 'hasRecentObjectUnderPrefix'>;
+type RecoveryWindow = { earliest: Date; latest: Date };
+
+function withinWindow(date: Date | undefined, window: RecoveryWindow): boolean {
+  return !!date && date >= window.earliest && date <= window.latest;
+}
+
+function hasFreshObject(object: Awaited<ReturnType<R2Client['headObject']>>, window: RecoveryWindow): boolean {
+  return object.exists && (object.contentLength ?? 0) > 0 && withinWindow(object.lastModified, window);
+}
 
 export async function hasUnpaidVpsRecoveryCopy(options: {
-  r2: Pick<R2Client, 'getObject' | 'headObject' | 'hasObjectUnderPrefix'>;
+  r2: RecoveryStorage;
   prefixRoot: string;
-}, ownerId: string, runtimeSlot: string): Promise<boolean> {
+}, ownerId: string, runtimeSlot: string, window: RetentionRecoveryWindow): Promise<boolean> {
   const { r2, prefixRoot } = options;
   const systemPrefix = runtimeSlot === 'primary' ? 'system/db' : `system/runtime-slots/${runtimeSlot}/db`;
   const key = (relative: string) => buildCustomerVpsR2Key(prefixRoot, ownerId, relative);
   const syncPrefix = buildSyncStoragePrefix({ ownerId, runtimeSlot });
+  const signal = AbortSignal.timeout(10_000);
   try {
-    const home = await r2.headObject(`${syncPrefix}/manifest.json`, { signal: AbortSignal.timeout(10_000) });
-    if (!home.exists && !await r2.hasObjectUnderPrefix(`${syncPrefix}/manifests/`)) return false;
-    const pointer = await r2.getObject(key(`${systemPrefix}/latest`), { signal: AbortSignal.timeout(10_000) });
+    const home = await r2.headObject(`${syncPrefix}/manifest.json`, { signal });
+    if (!hasFreshObject(home, window)
+      && !await r2.hasRecentObjectUnderPrefix(`${syncPrefix}/manifests/`, {
+        earliest: window.earliest,
+        latest: window.latest,
+        namePattern: /^[1-9]\d{0,15}-[a-f0-9]{64}\.json$/,
+        signal,
+      })) return false;
+    const pointer = await r2.getObject(key(`${systemPrefix}/latest`), { signal });
     if (!pointer.body) return false;
     if (pointer.contentLength === undefined || pointer.contentLength > 512) {
       await pointer.body.cancel();
@@ -26,8 +44,14 @@ export async function hasUnpaidVpsRecoveryCopy(options: {
     }
     const snapshot = (await new Response(pointer.body).text()).trim();
     if (!snapshot.startsWith(`${systemPrefix}/snapshots/`) || !validateDbLatestPointer(snapshot)) return false;
-    const stored = await r2.headObject(key(snapshot), { signal: AbortSignal.timeout(10_000) });
-    return stored.exists;
+    const name = snapshot.slice(`${systemPrefix}/snapshots/`.length);
+    const capturedAtText = `${name.slice(0, 13)}:${name.slice(13, 15)}:00Z`;
+    if (!z.iso.datetime().safeParse(capturedAtText).success) return false;
+    const capturedAt = new Date(capturedAtText);
+    const databaseWindow = { earliest: window.databaseEarliest, latest: window.latest };
+    if (!withinWindow(capturedAt, databaseWindow)) return false;
+    const stored = await r2.headObject(key(snapshot), { signal });
+    return hasFreshObject(stored, databaseWindow);
   } catch (error: unknown) {
     if (error instanceof Error && ['NoSuchKey', 'NotFound'].includes(error.name)) return false;
     throw error;
@@ -38,7 +62,7 @@ export function createConfiguredUnpaidVpsRetention(options: {
   db: PlatformDB;
   env: NodeJS.ProcessEnv;
   getServer: HetznerClient['getServer'];
-  r2?: Pick<R2Client, 'getObject' | 'headObject' | 'hasObjectUnderPrefix'>;
+  r2?: RecoveryStorage;
   prefixRoot: string;
 }) {
   const { db, env, getServer, r2, prefixRoot } = options;
@@ -50,7 +74,7 @@ export function createConfiguredUnpaidVpsRetention(options: {
   const stripe = new Stripe(secretKey, { timeout: 10_000, maxNetworkRetries: 0 });
   return createUnpaidVpsRetentionSweep({
     db, env, policyStartsAt, getServer,
-    hasRecoveryCopy: (owner, slot) => hasUnpaidVpsRecoveryCopy({ r2, prefixRoot }, owner, slot),
+    hasRecoveryCopy: (owner, slot, window) => hasUnpaidVpsRecoveryCopy({ r2, prefixRoot }, owner, slot, window),
     async listSubscriptions(customerId) {
       const list = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100, expand: ['data.latest_invoice'] });
       if (list.has_more || list.data.some(item => item.items.has_more || typeof item.latest_invoice === 'string')) return null;

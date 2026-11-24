@@ -13,6 +13,7 @@ async function loadS3() {
 const DEFAULT_PRESIGN_EXPIRY = 900;
 const R2_READ_TIMEOUT_MS = 10_000;
 const R2_WRITE_TIMEOUT_MS = 30_000;
+const R2_RECOVERY_LIST_MAX_PAGES = 5;
 
 export interface R2ClientConfig {
   accountId?: string;
@@ -49,8 +50,11 @@ export interface R2Client {
   headObject(
     key: string,
     options?: { signal?: AbortSignal },
-  ): Promise<{ exists: boolean; etag?: string }>;
-  hasObjectUnderPrefix(prefix: string): Promise<boolean>;
+  ): Promise<{ exists: boolean; etag?: string; lastModified?: Date; contentLength?: number }>;
+  hasRecentObjectUnderPrefix(
+    prefix: string,
+    options: { earliest: Date; latest: Date; namePattern: RegExp; signal: AbortSignal },
+  ): Promise<boolean>;
   deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
@@ -253,13 +257,18 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     async headObject(
       key: string,
       options?: { signal?: AbortSignal },
-    ): Promise<{ exists: boolean; etag?: string }> {
+    ): Promise<{ exists: boolean; etag?: string; lastModified?: Date; contentLength?: number }> {
       const command = new HeadObjectCommand({ Bucket: bucket, Key: key });
       try {
         const response = await s3.send(command, {
           abortSignal: options?.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
         });
-        return { exists: true, etag: response.ETag ?? undefined };
+        return {
+          exists: true,
+          etag: response.ETag,
+          lastModified: response.LastModified,
+          contentLength: response.ContentLength,
+        };
       } catch (error: unknown) {
         const providerError = error as {
           name?: string;
@@ -276,11 +285,20 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       }
     },
 
-    async hasObjectUnderPrefix(prefix: string): Promise<boolean> {
-      const result = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1 }), {
-        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
-      });
-      return (result.Contents ?? []).some(object => object.Key?.startsWith(prefix) && (object.Size ?? 0) > 0);
+    async hasRecentObjectUnderPrefix(prefix, { earliest, latest, namePattern, signal }) {
+      let continuationToken: string | undefined;
+      for (let page = 0; page < R2_RECOVERY_LIST_MAX_PAGES; page += 1) {
+        const result = await s3.send(new ListObjectsV2Command({
+          Bucket: bucket, Prefix: prefix, MaxKeys: 1000, ContinuationToken: continuationToken,
+        }), { abortSignal: signal });
+        if (result.Contents?.some(object =>
+          object.Key?.startsWith(prefix) && namePattern.test(object.Key.slice(prefix.length)) && (object.Size ?? 0) > 0
+          && object.LastModified && object.LastModified >= earliest && object.LastModified <= latest,
+        )) return true;
+        continuationToken = result.NextContinuationToken;
+        if (!result.IsTruncated || !continuationToken) return false;
+      }
+      return false;
     },
 
     async deleteObject(

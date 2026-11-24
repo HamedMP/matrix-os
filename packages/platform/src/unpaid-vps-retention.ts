@@ -11,6 +11,14 @@ import { logPlatformRouteError } from './platform-route-utils.js';
 const LOSS_STATUSES = ['canceled', 'past_due', 'unpaid'] as const;
 const LIVE_MACHINE_STATUSES = ['running', 'suspended'] as const;
 const BATCH_SIZE = 10;
+const HOME_BACKUP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DATABASE_BACKUP_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+export interface RetentionRecoveryWindow {
+  earliest: Date;
+  databaseEarliest: Date;
+  latest: Date;
+}
 
 interface RetentionSubscription {
   id: string;
@@ -29,7 +37,7 @@ interface RetentionDependencies {
   policyStartsAt: Date;
   getServer: HetznerClient['getServer'];
   listSubscriptions(customerId: string): Promise<RetentionSubscription[] | null>;
-  hasRecoveryCopy(ownerId: string, runtimeSlot: string): Promise<boolean>;
+  hasRecoveryCopy(ownerId: string, runtimeSlot: string, window: RetentionRecoveryWindow): Promise<boolean>;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
 }
@@ -83,8 +91,32 @@ export function createUnpaidVpsRetentionSweep(deps: RetentionDependencies) {
 
   async function queueIfDue(target: {
     machine_id: string; clerk_user_id: string; runtime_slot: string; hetzner_server_id: number | null;
+    provisioned_at: string; status: string;
   }): Promise<boolean | 'backup_missing'> {
-    if (!await deps.hasRecoveryCopy(target.clerk_user_id, target.runtime_slot)) return 'backup_missing';
+    const checkedAt = now();
+    const provisionedAt = Date.parse(target.provisioned_at);
+    let referenceAt = checkedAt.getTime();
+    let suspendedSubscriptionId: string | undefined;
+    if (target.status === 'suspended' && target.hetzner_server_id !== null) {
+      const lastSuspend = await deps.db.executor.selectFrom('billing_runtime_actions')
+        .select(['completed_at', 'stripe_subscription_id']).where('machine_id', '=', target.machine_id).where('action', '=', 'suspend')
+        .where('status', '=', 'completed').where('completed_at', '>=', target.provisioned_at)
+        .orderBy('completed_at', 'desc').limit(1).executeTakeFirst();
+      const suspendedAt = dateMillis(lastSuspend?.completed_at ?? null);
+      if (lastSuspend && suspendedAt >= referenceAt - BILLING_GRACE_PERIOD_MS && suspendedAt < referenceAt) {
+        const server = await deps.getServer(target.hetzner_server_id);
+        if (server?.id === target.hetzner_server_id && server.status === 'off') {
+          referenceAt = suspendedAt;
+          suspendedSubscriptionId = lastSuspend.stripe_subscription_id;
+        }
+      }
+    }
+    const window = {
+      earliest: new Date(Math.max(provisionedAt, referenceAt - HOME_BACKUP_MAX_AGE_MS)),
+      databaseEarliest: new Date(Math.max(provisionedAt, referenceAt - DATABASE_BACKUP_MAX_AGE_MS)),
+      latest: checkedAt,
+    };
+    if (!await deps.hasRecoveryCopy(target.clerk_user_id, target.runtime_slot, window)) return 'backup_missing';
     return deps.db.transaction(async tx => {
       await sql`SET LOCAL lock_timeout = '3000ms'`.execute(tx.executor);
       await sql`SET LOCAL statement_timeout = '10000ms'`.execute(tx.executor);
@@ -93,17 +125,19 @@ export function createUnpaidVpsRetentionSweep(deps: RetentionDependencies) {
         if (!admission.newWorkAllowed) return false;
         const at = now();
         const machine = await locked.executor.selectFrom('user_machines')
-          .select(['machine_id', 'handle', 'hetzner_server_id'])
+          .select(['machine_id', 'handle', 'hetzner_server_id', 'provisioned_at', 'status'])
           .where('machine_id', '=', target.machine_id).where('clerk_user_id', '=', target.clerk_user_id)
           .where('runtime_slot', '=', target.runtime_slot).where('provisioning_class', '=', 'customer')
           .where('activation_state', '=', 'authorized').where('deleted_at', 'is', null)
           .where('status', 'in', LIVE_MACHINE_STATUSES).forUpdate().executeTakeFirst();
-        if (!machine?.hetzner_server_id || machine.hetzner_server_id !== target.hetzner_server_id) return false;
+        if (!machine?.hetzner_server_id || machine.hetzner_server_id !== target.hetzner_server_id
+          || machine.provisioned_at !== target.provisioned_at || machine.status !== target.status) return false;
         const rows = await locked.executor.selectFrom('billing_subscriptions').selectAll()
           .where('clerk_user_id', '=', target.clerk_user_id).where('runtime_slot', '=', target.runtime_slot)
           .orderBy('latest_event_created_at', 'desc').orderBy('latest_event_id', 'desc').limit(129).execute();
         const subscription = rows[0];
         if (!subscription || rows.length > 128 || !LOSS_STATUSES.some(status => status === subscription.status)
+          || (suspendedSubscriptionId && suspendedSubscriptionId !== subscription.stripe_subscription_id)
           || rows.some(row => ['active', 'trialing'].includes(row.status)) || !(deadline(subscription) <= at.getTime())) return false;
         const customer = await locked.executor.selectFrom('billing_customers').select('stripe_customer_id')
           .where('clerk_user_id', '=', target.clerk_user_id).executeTakeFirst();
@@ -133,6 +167,7 @@ export function createUnpaidVpsRetentionSweep(deps: RetentionDependencies) {
 
         const [items, server] = await Promise.all([deps.listSubscriptions(customer.stripe_customer_id), deps.getServer(serverId)]);
         if (!server || server.id !== serverId || server.deleteProtected !== false || !['running', 'off'].includes(server.status)
+          || (suspendedSubscriptionId && server.status !== 'off')
           || server.labels?.app !== 'matrix-os' || server.labels.machine_id !== machine.machine_id
           || server.labels.clerk_user_id !== owner || server.labels.runtime_slot !== slot) return false;
         if (!stillUnpaid({ items, customerId: customer.stripe_customer_id, subscriptionId: subscription.stripe_subscription_id,
@@ -157,7 +192,7 @@ export function createUnpaidVpsRetentionSweep(deps: RetentionDependencies) {
     const at = now();
     if (at < deps.policyStartsAt) return { checked: 0, queued: 0, failed: 0, backupMissing: 0 };
     const targets = await deps.db.executor.selectFrom('user_machines as m')
-      .select(['m.machine_id', 'm.clerk_user_id', 'm.runtime_slot', 'm.hetzner_server_id'])
+      .select(['m.machine_id', 'm.clerk_user_id', 'm.runtime_slot', 'm.hetzner_server_id', 'm.provisioned_at', 'm.status'])
       .where('m.provisioning_class', '=', 'customer').where('m.activation_state', '=', 'authorized')
       .where('m.deleted_at', 'is', null).where('m.hetzner_server_id', 'is not', null)
       .where('m.status', 'in', LIVE_MACHINE_STATUSES)
