@@ -298,4 +298,22 @@ describe('owned machine enrollment and machine routes', () => {
     expect(link?.machine.status).toBe('enrolling');
     expect(link?.lastHeartbeatAt).toBeNull();
   });
+
+  it('removes owned machines during account deletion without hosted-VPS settings', async () => {
+    const { createAccountDeletionAdapters } = await import('../../packages/platform/src/account-deletion/adapters.js');
+    const cf = fakeCloudflare();
+    const app = buildApp(db, cf.client);
+    const { machineId } = await enrollAndApprove(app);
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    const adapters = createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync',
+      fetch: async () => Response.json({ data: [], total_count: 0 }) });
+    const ctx = { clerkUserId: 'user_1' } as Parameters<typeof adapters.vps>[0];
+    await expect(adapters.vps(ctx)).rejects.toThrow('Owned runtime tunnel cleanup pending');
+    const revoked = await getOwnedMachineLink(db, machineId);
+    expect(revoked?.revokedAt).not.toBeNull();
+    expect(revoked?.machine.deletedAt).not.toBeNull();
+    await runOwnedTunnelWorkPass({ db, cloudflare: cf.client, hostSuffix: CONFIG.hostSuffix, ingressService: CONFIG.ingressService, now });
+    await expect(adapters.vps(ctx)).resolves.toBeUndefined();
+    expect(cf.tunnels.size).toBe(0);
+  });
 });

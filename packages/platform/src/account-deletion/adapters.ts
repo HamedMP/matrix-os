@@ -1,3 +1,4 @@
+import { revokeOwnedMachine } from '../owned-machines/repository.js';
 import { z } from 'zod/v4';
 import { eraseOwnerSites } from '../sites/account-lifecycle.js';
 import { sql, type Transaction } from 'kysely';
@@ -162,8 +163,13 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       const legacy = await db.executor.selectFrom('containers').select('handle').where('clerk_user_id','=',owner)
         .where('status','not in',['deleted','stopped']).limit(1).execute();
       if (legacy.length) throw new Error('Legacy runtime cleanup required');
-      const machineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
-      if (machineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      const allMachineRows = await db.executor.selectFrom('user_machines').selectAll().where('clerk_user_id','=',owner).limit(1001).execute();
+      if (allMachineRows.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
+      // Spec 2707: owned machines are not Hetzner servers. Revoke them (which
+      // queues their tunnel deletion) without hosted-VPS settings, and wait until
+      // the tunnel worker has removed every tunnel.
+      await cleanupOwnedMachines(db, allMachineRows.filter((machine) => machine.substrate === 'owned'));
+      const machineRows = allMachineRows.filter((machine) => machine.substrate !== 'owned');
       // PostgreSQL returns BIGINT columns as strings. Normalize before calling
       // the provider or comparing the same ID from inventory and queued rows.
       const machines = machineRows.map(machine => ({ ...machine,
@@ -384,4 +390,18 @@ async function revokeVoiceNumbers(options: AccountDeletionAdapterOptions, owner:
     path=next.toString();
   }
   throw new Error('Voice inventory capacity exceeded');
+}
+
+async function cleanupOwnedMachines(
+  db: PlatformDB, machines: ReadonlyArray<{ machine_id: string; deleted_at: string | null }>,
+): Promise<void> {
+  if (!machines.length) return;
+  for (const machine of machines) {
+    if (!machine.deleted_at) await revokeOwnedMachine(db, { machineId: machine.machine_id, now: new Date() });
+  }
+  const pending = await db.executor.selectFrom('owned_machine_links').select('machine_id')
+    .where('machine_id', 'in', machines.map((machine) => machine.machine_id))
+    .where('tunnel_state', 'not in', ['deleted', 'reclaimed'])
+    .limit(1).execute();
+  if (pending.length) throw new Error('Owned runtime tunnel cleanup pending');
 }
