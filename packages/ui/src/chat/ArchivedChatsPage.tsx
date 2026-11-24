@@ -181,11 +181,11 @@ function ArchivedChatRow({ row, projectName, selected, selecting, busy, onToggle
   onToggle(): void; onRestore(): void; onDelete(): void;
 }) {
   return <div className="chat-archive-row" data-selected={selected || undefined} data-selecting={selecting || undefined}>
-    <label className="chat-archive-check"><MessageSquare size={16} aria-hidden/><input type="checkbox" aria-label={`Select ${row.chat.title}`} checked={selected} disabled={busy} onChange={onToggle}/><Check className="chat-archive-tick" size={12} aria-hidden/></label>
+    <label className="chat-archive-check"><MessageSquare size={18} aria-hidden/><input type="checkbox" aria-label={`Select ${row.chat.title}`} checked={selected} disabled={busy} onChange={onToggle}/><Check className="chat-archive-tick" size={12} aria-hidden/></label>
     <span className="chat-archive-title">{row.chat.title}{projectName ? <span> · {projectName}</span> : null}</span>
     <time dateTime={archiveDate(row).toISOString()}>{dateLabel(archiveDate(row))}</time>
-    <div className="chat-archive-row-actions"><Tooltip content="Restore"><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={`Restore ${row.chat.title}`} disabled={busy} onClick={onRestore}><ArchiveRestore size={14} aria-hidden/></Button></Tooltip>
-      <Tooltip content="Delete"><Button variant="ghost" size="icon" className="desktop-chat-icon chat-archive-delete" aria-label={`Delete ${row.chat.title}`} disabled={busy} onClick={onDelete}><Trash2 size={14} aria-hidden/></Button></Tooltip></div>
+    <div className="chat-archive-row-actions"><Tooltip content="Restore"><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={`Restore ${row.chat.title}`} disabled={busy} onClick={onRestore}><ArchiveRestore size={16} aria-hidden/></Button></Tooltip>
+      <Tooltip content="Delete"><Button variant="ghost" size="icon" className="desktop-chat-icon chat-archive-delete" aria-label={`Delete ${row.chat.title}`} disabled={busy} onClick={onDelete}><Trash2 size={16} aria-hidden/></Button></Tooltip></div>
   </div>;
 }
 function ArchiveSelection({ count, busy, onRestore, onDelete, onClear }: { count: number; busy: boolean; onRestore(): void; onDelete(): void; onClear(): void }) {
@@ -206,10 +206,10 @@ function ArchiveGroups({ groups, projectByRef, selectedIds, selecting, busy, onT
   </div></div> : null);
 }
 function ArchiveDeleteConfirmation({ rows, busy, error, onClose, onConfirm }: { rows: Row[] | null; busy: boolean; error: string | null; onClose(): void; onConfirm(): void }) {
-  return <Dialog open={Boolean(rows)} onClose={() => { if (!busy) onClose(); }} aria-label="Delete archived chats?" style={{ maxWidth: 420, borderRadius: 12 }} className="desktop-chat-design chat-archive-confirm">
-    <h2>Delete {rows?.length === 1 ? "this chat" : `${rows?.length ?? 0} chats`} forever?</h2><p>{rows?.length === 1 ? "This permanently deletes the chat and its messages. This can’t be undone." : "This permanently deletes the selected chats and their messages. This can’t be undone."}</p>
+  return <Dialog open={Boolean(rows)} onClose={() => { if (!busy) onClose(); }} aria-label="Delete archived chats?" style={{ maxWidth: 420, borderRadius: 12, padding: "24px 24px 20px" }} className="desktop-chat-design chat-archive-confirm">
+    <h2>Delete {rows?.length === 1 ? `“${rows[0]!.chat.title}”` : `${rows?.length ?? 0} chats`} forever?</h2><p>{rows?.length === 1 ? "Its messages are deleted too. You can’t undo this." : "Their messages are deleted too. You can’t undo this."}</p>
     {error ? <p role="alert">{error}</p> : null}
-    <div><Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="destructive" size="sm" disabled={busy} onClick={onConfirm}>Delete forever</Button></div>
+    <div><Button variant="secondary" size="sm" disabled={busy} onClick={onClose}>Cancel</Button><Button variant="destructive" size="sm" disabled={busy} onClick={onConfirm}>Delete forever</Button></div>
   </Dialog>;
 }
 
