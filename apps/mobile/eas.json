@@ -56,6 +56,20 @@
     }
   },
   "submit": {
+    // CI beta targets are explicit and independent of future production changes.
+    // Signing and submission keys are stored in EAS, never in this repository.
+    "testflight": {
+      "ios": {
+        "ascAppId": "6785629815",
+        "appleTeamId": "PX4JL74Y2K"
+      }
+    },
+    "play-internal": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    },
     "production": {
       "android": {
         "track": "internal"

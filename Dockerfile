@@ -148,7 +148,7 @@ RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 # AI coding CLIs. Codex advances only after both provider protocols are verified.
 ARG CODEX_VERSION=0.162.1
 ARG OPENCODE_AI_VERSION=latest
-ARG PI_CODING_AGENT_VERSION=latest
+ARG PI_CODING_AGENT_VERSION=1.6.0
 RUN npm install -g \
     @anthropic-ai/claude-code@latest \
     "@openai/codex@${CODEX_VERSION}" \

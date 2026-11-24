@@ -27,6 +27,37 @@ const inferenceRequest = {
 };
 
 describe("scope runtime broker protocol", () => {
+  it.each<{ name: string; body: string; type: string | null; allowed: boolean; api?: boolean }>([
+    { name: "complete Responses stream", body: 'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1"}}\n\n', type: null, allowed: true },
+    { name: "HTML", body: "<html>unexpected document</html>", type: null, allowed: false },
+    { name: "plain JSON", body: '{"type":"response.completed"}', type: null, allowed: false },
+    { name: "mismatched event", body: 'event: response.completed\ndata: {"type":"unrelated"}\n\n', type: null, allowed: false },
+    { name: "incomplete stream", body: 'data: {"type":"response.created"}\n\n', type: null, allowed: false },
+    { name: "malformed frame", body: 'data: broken\n\n', type: null, allowed: false },
+    { name: "different pinned endpoint", body: 'data: {"type":"response.completed"}\n\n', type: null, api: true, allowed: false },
+    { name: "explicit HTML type", body: 'data: {"type":"response.completed"}\n\n', type: "text/html", allowed: false },
+  ])("validates a headerless pinned Codex response: $name", async ({ body, type, allowed, api }) => {
+    const broker = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home",
+      authorize: async () => ({ allowed: true, providerIdentity: { driverKind: "codex", instanceId: "codex_default" },
+        allowedModelIds: [CODEX_MODEL], allowedEgressOrigins: [] }),
+      resolveCodexIdentity: async () => {
+        const headers: Record<string, string> = { authorization: "Bearer owner-secret" };
+        if (!api) headers["chatgpt-account-id"] = "account";
+        return { url: api ? "https://api.openai.com/v1/responses" : "https://chatgpt.com/backend-api/codex/responses", headers };
+      },
+      fetchImpl: async () => new Response(new TextEncoder().encode(body), { headers: type ? { "content-type": type } : {} }),
+    });
+    try {
+      const result = await broker.handle(ScopeRuntimeBrokerRequestSchema.parse({
+        ...inferenceRequest, action: "inference.responses", path: "/v1/responses", headers: {},
+        body: JSON.stringify({ model: CODEX_MODEL, stream: true, input: [] }),
+      }));
+      expect(result.ok).toBe(allowed);
+      if (allowed) expect(result).toMatchObject({ headers: { "content-type": "text/event-stream" }, body });
+    } finally { await broker.close(); }
+  });
+
   it("accepts bounded actions and rejects host capability injection", () => {
     expect(ScopeRuntimeBrokerRequestSchema.parse(inferenceRequest)).toEqual(inferenceRequest);
     for (const injected of [
@@ -76,6 +107,28 @@ describe("scope runtime broker protocol", () => {
 });
 
 describe("scope runtime broker", () => {
+  it("uses the exact owner Claude profile only inside the broker after authorization", async () => {
+    const identity = vi.fn(async () => ({ authorization: "Bearer owner-native-secret" }));
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer owner-native-secret");
+      expect(headers.get("x-api-key")).toBeNull();
+      expect(headers.get("anthropic-beta")).toContain("oauth-2025-04-20");
+      return new Response("event: message_stop\ndata: {}\n\n", { headers: { "content-type": "text/event-stream" } });
+    });
+    let allowed = true;
+    const broker = createScopeRuntimeBroker({ homePath: "/home/matrix/home",
+      authorize: async () => allowed ? { allowed: true, accessSourceId: "owner_claude_profile",
+        allowedModelIds: [MODEL], allowedEgressOrigins: [] } : { allowed: false },
+      resolveCredentials: async () => ({ env: { HOME: "/home/matrix/home" } }),
+      resolveClaudeIdentity: identity, fetchImpl });
+    expect(await broker.handle(inferenceRequest)).toMatchObject({ ok: true });
+    allowed = false;
+    expect(await broker.handle(inferenceRequest)).toMatchObject({ ok: false, error: "action_denied" });
+    expect(identity).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    await broker.close();
+  });
   it("reauthorizes the runtime, applies the trusted access source, and never returns credentials", async () => {
     const authorize = vi.fn(async () => ({
       allowed: true as const,

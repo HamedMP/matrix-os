@@ -59,9 +59,89 @@ export interface ProviderSettingsControllerState {
   connectionAttempt: ProviderConnectionAttempt | null;
   busy: boolean;
   error: string | null;
+  /** The snapshot shown is the last verified one from an earlier open; a read has not replaced it yet. */
+  snapshotFromCache: boolean;
 }
 
+/**
+ * The last snapshot each provider identity was shown, kept in memory for the
+ * session, plus one shared non-forced read per identity. A Settings page that
+ * opens again renders its last verified state (with its own refreshedAt) at
+ * once and refreshes it, instead of staying blank for the whole server read.
+ * Never persisted; at most four identities; keyed so identities never mix.
+ */
+export interface ProviderSettingsSnapshotCache {
+  get(identityKey: string): ProviderSettingsSnapshot | undefined;
+  set(identityKey: string, snapshot: ProviderSettingsSnapshot): void;
+  read(identityKey: string, signal: AbortSignal, load: (signal: AbortSignal) => Promise<unknown>): Promise<unknown>;
+  /** Forgets every snapshot, for sign-out and test isolation. */
+  clear(): void;
+}
+
+const SNAPSHOT_CACHE_IDENTITIES = 4;
+
+export function createProviderSettingsSnapshotCache(): ProviderSettingsSnapshotCache {
+  const snapshots = new Map<string, ProviderSettingsSnapshot>();
+  const reads = new Map<string, { promise: Promise<unknown>; controller: AbortController; waiting: number }>();
+  return {
+    get: identityKey => snapshots.get(identityKey),
+    clear: () => { snapshots.clear(); for (const entry of reads.values()) entry.controller.abort(); reads.clear(); },
+    set(identityKey, snapshot) {
+      // A read that started before a newer save (for example another window's
+      // mutation) must never move the shown state backward.
+      const current = snapshots.get(identityKey);
+      if (current && current.revision > snapshot.revision) return;
+      // Later callers start a fresh read instead of joining one older than this save.
+      reads.delete(identityKey);
+      snapshots.delete(identityKey);
+      snapshots.set(identityKey, snapshot);
+      while (snapshots.size > SNAPSHOT_CACHE_IDENTITIES) snapshots.delete(snapshots.keys().next().value!);
+    },
+    read(identityKey, signal, load) {
+      let shared = reads.get(identityKey);
+      if (!shared) {
+        if (reads.size >= SNAPSHOT_CACHE_IDENTITIES) return load(signal);
+        const controller = new AbortController();
+        const entry = { controller, waiting: 0, promise: Promise.resolve<unknown>(undefined) };
+        entry.promise = load(controller.signal).finally(() => {
+          if (reads.get(identityKey) === entry) reads.delete(identityKey);
+        });
+        reads.set(identityKey, entry);
+        shared = entry;
+      }
+      const entry = shared;
+      entry.waiting += 1;
+      // The shared read stops only when every caller has gone.
+      return new Promise<unknown>((resolve, reject) => {
+        let settled = false;
+        const leave = () => {
+          if (settled) return;
+          settled = true;
+          entry.waiting -= 1;
+          if (entry.waiting === 0) {
+            entry.controller.abort();
+            // A transport that ignores the abort must not leave a dead read for later callers to join.
+            if (reads.get(identityKey) === entry) reads.delete(identityKey);
+          }
+          reject(new DOMException("Aborted", "AbortError"));
+        };
+        if (signal.aborted) { leave(); return; }
+        signal.addEventListener("abort", leave, { once: true });
+        entry.promise.then(
+          value => { if (settled) return; settled = true; entry.waiting -= 1; signal.removeEventListener("abort", leave); resolve(value); },
+          (error: unknown) => { if (settled) return; settled = true; entry.waiting -= 1; signal.removeEventListener("abort", leave); reject(error); },
+        );
+      });
+    },
+  };
+}
+
+/** One per renderer (Electron window or browser tab); shared by its Settings and Chat surfaces. */
+export const sessionProviderSettingsSnapshotCache = createProviderSettingsSnapshotCache();
+
 export interface ProviderSettingsControllerOptions {
+  /** Shows the identity's last verified snapshot on open and shares plain reads. */
+  snapshotCache?: ProviderSettingsSnapshotCache;
   identityKey: string;
   automaticCreditRefreshEnabled?: boolean;
   automaticNativeAuthRefreshEnabled?: boolean;
@@ -124,6 +204,8 @@ export class ProviderSettingsController {
   private nativeObservationPending = false;
   private mutationTail: Promise<void> = Promise.resolve();
   private disposed = false;
+  /** Set while the shown snapshot came from the cache and no read has replaced it yet. */
+  private servingCached = false;
   private readonly managedCredit: ManagedCreditRefresh;
 
   constructor(private readonly options: ProviderSettingsControllerOptions) {
@@ -133,14 +215,17 @@ export class ProviderSettingsController {
       blocked: () => this.disposed || this.state.busy,
       apply: snapshot => this.update({ snapshot }),
     });
+    const cached = options.snapshotCache?.get(options.identityKey) ?? null;
+    this.servingCached = cached !== null;
     this.state = {
       identityKey: options.identityKey,
-      snapshot: null,
+      snapshot: cached,
       capabilityRefreshRevision: 0,
-      selectedHarnessId: null,
+      selectedHarnessId: cached?.harnesses[0]?.id ?? null,
       connectionAttempt: null,
       busy: false,
       error: null,
+      snapshotFromCache: cached !== null,
     };
   }
 
@@ -231,17 +316,30 @@ export class ProviderSettingsController {
       if (signal?.aborted) request.abort();
       request.signal.throwIfAborted();
       const previous = this.state.snapshot;
-      const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
+      const cache = this.options.snapshotCache;
+      const raw = cache && !refresh && !nativeAuthOnly
+        ? await cache.read(this.options.identityKey, request.signal,
+          shared => this.options.transport.getSnapshot(shared, { refresh: false }))
+        : await this.options.transport.getSnapshot(request.signal, { refresh });
       request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
+      // Another controller may have saved a newer revision while this read ran.
+      const newer = cache?.get(this.options.identityKey);
+      if (newer && newer.revision > parsed.data.revision) parsed.data = newer;
       if (this.disposed || operationId < this.appliedOperationId) return false;
       const snapshot = nativeAuthOnly
         ? this.managedCredit.reconcileNativeSnapshot(parsed.data) : parsed.data;
       const nativeAuthChanged = previous !== null
         && nativeAuthenticationFingerprint(previous) !== nativeAuthenticationFingerprint(snapshot);
+      // The first read after opening from the cache only confirms what is shown
+      // when nothing changed, so it does not reload capabilities a second time.
+      const confirmsCached = this.servingCached && previous !== null
+        && previous.revision === snapshot.revision && !nativeAuthChanged;
+      this.servingCached = false;
       const applied = this.applySnapshot(snapshot, { operationId,
-        refreshCapabilities: !nativeAuthOnly || previous?.revision !== snapshot.revision || nativeAuthChanged });
+        refreshCapabilities: confirmsCached ? false
+          : !nativeAuthOnly || previous?.revision !== snapshot.revision || nativeAuthChanged });
       if (applied && (refresh || nativeAuthOnly && nativeAuthChanged)) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
@@ -361,7 +459,8 @@ export class ProviderSettingsController {
       && nativeAuthenticationFingerprint(this.state.snapshot) !== nativeAuthenticationFingerprint(snapshot);
     const capabilityRefreshRevision = this.state.capabilityRefreshRevision
       + (options.refreshCapabilities || nativeAuthChanged ? 1 : 0);
-    this.update({ snapshot, selectedHarnessId, connectionAttempt, capabilityRefreshRevision, error: null });
+    this.update({ snapshot, selectedHarnessId, connectionAttempt, capabilityRefreshRevision, error: null, snapshotFromCache: false });
+    this.options.snapshotCache?.set(this.options.identityKey, snapshot);
     return true;
   }
 
@@ -437,7 +536,7 @@ export function useProviderSettingsController(
       controller: new ProviderSettingsController(options),
       effectGeneration: 0,
     }),
-    [options.identityKey, options.transport, options.onCatalogChanged],
+    [options.identityKey, options.transport, options.onCatalogChanged, options.snapshotCache],
   );
   const controller = lifecycle.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);

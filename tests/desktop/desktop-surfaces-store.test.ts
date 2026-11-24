@@ -251,3 +251,42 @@ describe("desktop surfaces store", () => {
     }
   });
 });
+
+describe("tile restore bounds", () => {
+  const viewport = { width: 1200, height: 760 };
+  const store = () => useDesktopSurfaces.getState();
+
+  it("remembers an app's floating bounds once, until forgotten", () => {
+    store().reconcileTabs(["notes"], viewport);
+    const original = { ...store().surfaces.notes!.bounds };
+
+    store().rememberTileRestoreBounds("notes");
+    store().setSurfaceBounds("notes", { x: 0, y: 0, width: 600, height: 760 }, viewport);
+    store().rememberTileRestoreBounds("notes");
+    expect(store().tileRestoreBounds.notes).toEqual(original);
+
+    store().forgetTileRestoreBounds("notes");
+    expect(store().tileRestoreBounds).not.toHaveProperty("notes");
+  });
+
+  it("does not notify subscribers when there is nothing to forget", () => {
+    store().reconcileTabs(["notes"], viewport);
+    const before = store();
+    store().forgetTileRestoreBounds("notes");
+    expect(store()).toBe(before);
+  });
+
+  it("drops remembered bounds when the app closes or its tab goes away", () => {
+    store().reconcileTabs(["notes", "files"], viewport);
+    store().rememberTileRestoreBounds("notes");
+    store().rememberTileRestoreBounds("files");
+    store().rememberTileRestoreBounds("unknown");
+    expect(Object.keys(store().tileRestoreBounds).toSorted()).toEqual(["files", "notes"]);
+
+    store().closeSurface("notes");
+    expect(store().tileRestoreBounds).not.toHaveProperty("notes");
+
+    store().reconcileTabs([], viewport);
+    expect(store().tileRestoreBounds).toEqual({});
+  });
+});

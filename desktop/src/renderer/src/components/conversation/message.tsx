@@ -1,5 +1,5 @@
 import { resolveChatMessageLink } from "@matrix-os/contracts";
-import { AttachmentImage } from "@matrix-os/ui";
+import { AttachmentImage, ChatMessageFileLink } from "@matrix-os/ui";
 import { Check, Copy, FileText, Folder, WrapText } from "@renderer/lib/hugeicons";
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
@@ -519,18 +519,7 @@ export function MessageResponse({
         return <ChatFileImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
-        return (
-          <button
-            type="button"
-            aria-label={`Open ${path.label}`}
-            title={value}
-            onClick={() => callbacks.current.openFile?.(value)}
-            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
-          >
-            <FileText size={13} aria-hidden className="shrink-0" />
-            <span className="truncate">{path.label}</span>
-          </button>
-        );
+        return <ChatMessageFileLink path={value} label={path.label} onOpen={() => callbacks.current.openFile?.(value)}/>;
       }
       if (path) {
         const Icon = path.kind === "file" ? FileText : Folder;

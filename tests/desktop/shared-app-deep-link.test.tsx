@@ -2,7 +2,7 @@
 import React from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isSharedAppOpenPath, parseSharedAppDesktopUrl, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath } from "@matrix-os/contracts";
+import { isSharedAppOpenPath, parseSharedAppDesktopUrl, parseSharedAppOpenParams, sharedAppDesktopUrl, sharedAppDisplayHint, sharedAppOpenPath, sharedAppShareOpenPath } from "@matrix-os/contracts";
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "../../desktop/src/main/shared-app-deep-link";
 import { CollaborationDirectError } from "../../packages/ui/src/collaboration/direct-client";
 
@@ -29,6 +29,22 @@ describe("org link contract", () => {
     const desktop = sharedAppDesktopUrl("matrixos", link);
     expect(desktop).toBe(`matrixos://shared-app/${SCOPE}?expectedBuildId=${BUILD}&expectedShareRevision=3`);
     expect(parseSharedAppDesktopUrl(desktop, SCHEMES)).toEqual({ scopeId: SCOPE, expectedBuildId: BUILD, expectedShareRevision: "3" });
+  });
+
+  it("builds the copied org link from a share with the org id hint, and keeps hints out of the desktop link", () => {
+    const share = { scopeId: SCOPE, shareRevision: "4", organizationId: "org_2abcDEF123" };
+    const path = sharedAppShareOpenPath(share, { app: " <Sales> CRM ", org: "Finna" });
+    expect(path).toBe(`/open/shared-app/${SCOPE}?expectedShareRevision=4&app=Sales+CRM&org=Finna&orgId=org_2abcDEF123`);
+    const parsed = parseSharedAppOpenParams(SCOPE, Object.fromEntries(new URL(path, "https://app.matrix-os.com").searchParams));
+    expect(parsed).toEqual({ scopeId: SCOPE, expectedShareRevision: "4", app: "Sales CRM", org: "Finna", orgId: "org_2abcDEF123" });
+    expect(sharedAppDesktopUrl("matrixos", parsed!)).toBe(`matrixos://shared-app/${SCOPE}?expectedShareRevision=4`);
+    expect(sharedAppShareOpenPath(share, { app: "<>", org: "" })).toBe(`/open/shared-app/${SCOPE}?expectedShareRevision=4&orgId=org_2abcDEF123`);
+  });
+
+  it("still opens links copied before the org id hint existed, and rejects a malformed hint", () => {
+    expect(parseSharedAppOpenParams(SCOPE, { expectedShareRevision: "3", app: "Sales", org: "Finna" })).toEqual({ scopeId: SCOPE, expectedShareRevision: "3", app: "Sales", org: "Finna" });
+    expect(parseSharedAppOpenParams(SCOPE, { orgId: "Finna" })).toBeNull();
+    expect(parseSharedAppDesktopUrl(`matrixos://shared-app/${SCOPE}?orgId=org_2abcDEF123`, SCHEMES)).toBeNull();
   });
 
   it.each([
@@ -157,9 +173,18 @@ describe("renderer opener", () => {
     usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
     render(<SharedAppDeepLinkOpener />);
     await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ sharedAppTarget: target })])));
-    expect(get.mock.calls).toEqual([[`/api/collaboration/shared-apps/${SCOPE}`]]);
+    expect(get.mock.calls).toEqual([[`/api/collaboration/shared-apps/${SCOPE}?fields=display`]]);
     expect(usePendingSharedAppLink.getState().link).toBeNull();
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  // Fault: a link-opened window titled from the slug while the launcher showed the owner's name.
+  it("titles a link-opened app with the owner's app name", async () => {
+    const { SharedAppDeepLinkOpener, usePendingSharedAppLink, useTabs } = await opener();
+    platformWith(async () => ({ ...target, name: "Team Tracker" }));
+    usePendingSharedAppLink.getState().set({ scopeId: SCOPE });
+    render(<SharedAppDeepLinkOpener />);
+    await waitFor(() => expect(useTabs.getState().tabs).toEqual(expect.arrayContaining([expect.objectContaining({ title: "Team Tracker" })])));
   });
 
   it("never opens a scope the platform says is not shared with the member", async () => {

@@ -65,7 +65,9 @@ file so the rules have one source of truth.
   fixture limitations; redact credentials and private customer content.
 - **Keep evidence out of the repo.** Attach screenshots and recordings to the
   PR body or a PR comment; never commit them. `docs/pr-evidence/` is a legacy
-  archive and takes no new files. When an agent cannot upload, it keeps the
+  archive and takes no new files. Attach captures with
+  `scripts/pr-evidence upload <pr> <files...>` (guide: `docs/dev/pr-evidence.md`).
+  When an agent cannot upload, it keeps the
   captures outside the repo and gives the developer their paths to attach.
 - **Do not claim visual qualification without evidence.** Mockups, automated
   test results, or another surface's capture do not prove the affected running
@@ -82,6 +84,7 @@ file so the rules have one source of truth.
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest, `@vitest/coverage-v8`
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm for installs or scripts; release automation may invoke the npm CLI only for npm OIDC trusted publication
+- **npm in install tests**: the CLI install checks (`.github/workflows/cli-install-smoke.yml`, `packages/sync-client/scripts/validate-package-runners.mjs`) run `npm install`/`npm exec` on the packed `@finnaai/matrix` tarball inside throwaway prefixes and projects, because they verify what npm users receive. That is the only other allowed npm use; never use npm to install or run this repository's own dependencies.
 
 ## SDK Decisions (Spike-Verified)
 
@@ -411,7 +414,7 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 - Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
 - Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
 - Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
-- Attach captures to the PR body or comments, or link the Slack upload. Do not commit them under `docs/pr-evidence/` or anywhere else in the repo: git keeps every image in history for every clone, and a squash-merged PR still lands them on `main`.
+- Attach captures with `scripts/pr-evidence upload <pr> <files...>` (guide: `docs/dev/pr-evidence.md`), or link the Slack upload. Do not commit them under `docs/pr-evidence/` or anywhere else in the repo: git keeps every image in history for every clone, and a squash-merged PR still lands them on `main`.
 - If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
@@ -559,6 +562,7 @@ Read these on demand, not every session:
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `scripts/ci/runner-pool/README.md` -- when operating the dedicated CI host's runner pool or reading why a CI job ran on `matrix-ci`
 - `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
+- `docs/dev/pr-evidence.md` -- when attaching screenshots/recordings to a PR
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/agent-plugins.md` -- shared developer agent plugins (pstack) for Claude Code and Codex
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
@@ -645,20 +649,31 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 - `matrix shell list` groups tabs by project. `matrix shell connect --project <project> --tab <tab>` attaches to exactly one tab; closing the local client only detaches it.
 - If `matrix run -it` or `matrix shell new` fails with `zellij_failed`, run `matrix shell list` and connect to an existing tab instead of retrying the same create path.
 
+### Workflow skills and the matrix-dev plugin
+
+- Each workflow skill has one canonical copy in `.agents/skills/<name>/`, read by Codex directly and by Claude Code through a `.claude/skills/<name>` link. Do not add a second copy under `.claude/commands/`.
+- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
+- To take one change from a worktree to a merge-ready PR, use the `worktree-pr-monitor` skill; after the merge, `wrap-up`.
+
 ### Stack review monitor
 
-- For existing GitHub native stacks, use `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
+- For existing GitHub native stacks, use the `monitor-stack-reviews` skill (`.agents/skills/monitor-stack-reviews/`): `/monitor-stack-reviews <pr-or-range-or-branch>` in Claude Code.
 - That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
 - Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Unblock tickets
 
-- To clear decisions that are waiting on an author, use `.claude/commands/unblock-tickets.md` in Claude Code (`/unblock-tickets [github-login | ticket-ids | pr-numbers]`) or the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` in Codex. Keep the two files in step when either changes.
+- To clear decisions that are waiting on an author, use the `unblock-tickets` skill in `.agents/skills/unblock-tickets/` (`/unblock-tickets [github-login | ticket-ids | pr-numbers]` in Claude Code).
 - It takes the current user's tickets from the Linear MCP server, reads the live PR, CI, Greptile, and agent-terminal state, asks one multiple-choice question per waiting item, and carries out each answer. An answer authorizes only the action named in the chosen option; every merge and review gate above still applies.
 
 ### Daily update
 
-- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use `.claude/commands/daily-update.md` in Claude Code (`/daily-update [date | yesterday | today] [github-login]`) or the `daily-update` skill in `.agents/skills/daily-update/` in Codex. Keep the two files in step. It is read-only and posts nothing.
+- To write a paste-ready summary of what someone shipped, started, and moved forward on a day, use the `daily-update` skill in `.agents/skills/daily-update/` (`/daily-update [date | yesterday | today] [github-login]` in Claude Code). It is read-only and posts nothing.
+
+### Wrap up
+
+- To close out a chat whose work has shipped, use the `wrap-up` skill in `.agents/skills/wrap-up/` (`/wrap-up [pr-numbers | ticket-ids] [--keep-open]` in Claude Code).
+- It checks that the chat's PRs are merged and their post-merge runs passed, removes its worktrees and branches, marks its Linear tickets Done, reports, and closes the chat's terminal. It never merges or deploys, and it leaves unmerged, uncommitted, or unpushed work untouched.
 
 ### Backlog
 

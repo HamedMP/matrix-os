@@ -72,7 +72,8 @@ nginxIt('updates an existing VPS atomically, preserves API authentication and is
  await configuration(root, original); migrate(root);
  const path = join(root, 'etc/nginx/sites-available/matrix'), changed = await readFile(path, 'utf8');
  expect(changed).toContain('proxy_read_timeout 300s;');
- expect(changed.match(/proxy_set_header Authorization "Bearer fixture-only";/g)).toHaveLength(2);
+ // The publishing and speech locations each clone the API authentication.
+ expect(changed.match(/proxy_set_header Authorization "Bearer fixture-only";/g)).toHaveLength(3);
  expect(changed).toContain(original.slice(original.indexOf('  location /api/')));
  migrate(root); expect(await readFile(path, 'utf8')).toBe(changed);
  const prerequisites = await readFile('distro/customer-vps/host-bin/matrix-prepare-host-prerequisites', 'utf8');
@@ -95,4 +96,47 @@ it('gives self-hosted publishing the same timeout and preserves its bearer inclu
  const publish = installer.match(/location ~ "\^\/api\/apps\/[^\n]+\/site\\\$" \{([\s\S]*?)\n  \}/)?.[1];
  expect(publish).toContain('proxy_read_timeout 300s;');
  expect(publish).toContain('include /opt/matrix/env/gateway-auth-token.conf;');
+});
+async function upload(root: string, path: string, bytes: number) {
+ return new Promise<number>((resolve, reject) => {
+  const req = request({ socketPath: join(root, 'front.sock'), path, method: 'POST', timeout: 10000,
+   headers: { host: 'preview.example', 'content-length': bytes, 'content-type': 'application/octet-stream' } }, res => {
+   res.resume(); res.on('end', () => resolve(res.statusCode!));
+  });
+  req.on('timeout', () => req.destroy(Error('request deadline'))); req.on('error', reject); req.end(Buffer.alloc(bytes));
+ });
+}
+nginxIt('lets an existing VPS accept a ten-minute dictation upload while other API paths keep the 10 MB limit', async () => {
+ // Fault: nginx answered 413 for any recording over 10 MB (about five and a half
+ // minutes of 16 kHz PCM16) before the gateway saw it.
+ const root = await fixture();
+ const upstream = createServer((req, res) => { req.resume(); req.on('end', () => res.end('transcribed')); });
+ await new Promise<void>(resolve => upstream.listen(join(root, 'up.sock'), resolve));
+ try {
+  const original = `server { listen unix:${root}/front.sock; server_name _;\n  client_max_body_size 10m;\n  location /api/ {\n    proxy_pass http://unix:${root}/up.sock:;\n  }\n}\n`;
+  // The helper only recognises the production upstream, so migrate first and localize after.
+  await configuration(root, original.replace(`http://unix:${root}/up.sock:`, 'http://127.0.0.1:4000')); migrate(root);
+  const path = join(root, 'etc/nginx/sites-available/matrix'), migrated = await readFile(path, 'utf8');
+  expect(migrated).toContain('# matrix-speech-upload-limit-v1\n  location = /api/speech/transcriptions {\n    client_max_body_size 21m;\n    proxy_read_timeout 90s;');
+  // The publishing block must stay directly above the API location: helpers
+  // from earlier bundles verify exactly that after a rollback.
+  expect(migrated).toContain('    proxy_read_timeout 300s;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n  location /api/ {');
+  expect(migrated.indexOf('# matrix-speech-upload-limit-v1')).toBeLessThan(migrated.indexOf('# matrix-sites-publish-timeout-v1'));
+  migrate(root); expect(await readFile(path, 'utf8')).toBe(migrated);
+  await writeFile(path, migrated.replaceAll('http://127.0.0.1:4000', `http://unix:${root}/up.sock:`).replace('proxy_read_timeout 90s;', 'proxy_read_timeout 5s;'));
+  await writeFile(join(root, 'etc/nginx/nginx.conf'), (await readFile(join(root, 'etc/nginx/nginx.conf'), 'utf8')).replace('proxy_read_timeout 80ms;', 'proxy_read_timeout 5s;'));
+  const child = spawn('/usr/sbin/nginx', ['-p', root, '-c', join(root, 'etc/nginx/nginx.conf'), '-g', 'daemon off; master_process off;'], { stdio: 'ignore' }); children.push(child);
+  await waitForSocket(join(root, 'front.sock'), child);
+  const tenMinutes = 600 * 16_000 * 2 + 4_096; // PCM16 audio plus multipart framing
+  expect(await upload(root, '/api/speech/transcriptions', tenMinutes)).toBe(200);
+  expect(await upload(root, '/api/other', tenMinutes)).toBe(413);
+  expect(await upload(root, '/api/speech/transcriptions/extra', tenMinutes)).toBe(413);
+ } finally { await new Promise<void>(resolve => upstream.close(() => resolve())); }
+});
+it('provisions the same speech upload location for self-hosted installs', async () => {
+ const installer = await readFile('scripts/install-server.sh', 'utf8');
+ const speech = installer.match(/location = \/api\/speech\/transcriptions \{([\s\S]*?)\n  \}/)?.[1];
+ expect(speech).toContain('client_max_body_size 21m;');
+ expect(speech).toContain('proxy_read_timeout 90s;');
+ expect(speech).toContain('include /opt/matrix/env/gateway-auth-token.conf;');
 });

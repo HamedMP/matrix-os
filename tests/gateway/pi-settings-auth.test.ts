@@ -114,7 +114,7 @@ it.each([
   expect(result).toMatchObject({ code: 1, stdout: '{"type":"failed"}\n', stderr: `[provider-workflow] Pi native authentication failed: ${category}\n` });
 });
 
-it.each(["0.99.2", "1.0.0"])("discovers only the verified managed Pi %s package and strips operator credentials", async version => {
+it.each(["0.99.2", "1.0.0", "1.6.0"])("discovers only the verified managed Pi %s package and strips operator credentials", async version => {
   const { mkdtemp, mkdir, writeFile, symlink, rm } = await import("node:fs/promises");
   const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
   const { discoverPiSettingsAuth } = await import("../../packages/gateway/src/ai-providers/pi-settings-auth.js");

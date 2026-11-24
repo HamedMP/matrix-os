@@ -11,7 +11,7 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 - delegates Homebrew and recognized pnpm global installations to their package manager; and
 - preserves existing profiles, settings and sign-ins.
 
-The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. Existing npm-global packaging limitations remain tracked in ENG-300; this release does not claim to fix them.
+The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. `0.3.22` and earlier crash after `npm install -g` (ENG-300); the packaging fix described under Preflight reaches users with the next published version.
 
 ## Versioning
 
@@ -23,12 +23,39 @@ The updater changes only the invoking CLI. It does not update a Matrix computer 
 ## Preflight
 
 The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
-with `pnpm --config.node-linker=hoisted`, as the release workflows do: plain
-`npm pack` preserves `workspace:*`, and a registry-only dependency cannot
-resolve this private package. The dedicated CLI workflow publishes that exact
+with `node ./scripts/pack-cli.mjs --pack-destination <dir>` from
+`packages/sync-client`, as the release workflows do. It runs
+`pnpm pack --config.node-linker=hoisted` (plain `npm pack` preserves
+`workspace:*`, and a registry-only dependency cannot resolve this private
+package), then removes the dependency lists from the bundled contracts
+manifest. npm treats a bundled package's dependencies as already bundled when
+they sit beside it, which is the layout of `npm install -g` and Homebrew, and
+installs empty `zod` and `micromark` directories. The CLI declares the same
+packages at the same ranges, so npm installs them for the CLI and contracts
+resolves them from there; `pack-cli.mjs` fails if a contracts dependency is
+missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
+`pnpm publish` of this package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
-package-runner check; it verifies bundled contract files and installs the
-tarball outside the repo.
+package-runner check; it verifies bundled contract files and runs the
+tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
+
+The CLI also declares `fsevents` under `optionalDependencies`. On
+`npm install -g`, npm gives a package that bundles dependencies a hard
+dependency on every package installed beside it. `tsx` pulls in `fsevents` as
+an optional dependency whose build always fails on macOS (it ships a prebuilt
+binary and no `binding.gyp`); normally npm ignores that failure, but the hard
+dependency made it fatal and the install aborted. Declaring `fsevents` optional
+in the CLI keeps the failure harmless. Do not remove the entry or the
+`bundledDependencies` declaration: without the declaration npm prunes the
+contracts files on the next `npm install` in a project, and Homebrew's repack
+drops them.
+
+The `CLI Install Smoke` workflow checks the packed tarball the way users
+install it: `npm install -g` into a clean prefix on macOS and Linux (Node 20
+and 24), a project install followed by a second install, and the Homebrew
+formula on macOS, each ending in `matrix --version`. `CLI Release` calls it and
+will not publish unless it passes; pull requests that touch CLI packaging or
+the formula run it too.
 
 Run these from the repo root before dispatching the release workflow:
 
@@ -73,6 +100,22 @@ Manual releases must be dispatched from `main`. If npm publication succeeded
 but a downstream release job failed, select the existing `cli-v<version>` tag
 as the workflow ref and rerun with `allow_existing_npm=true`; this preserves the
 published source revision while completing the GitHub release and Homebrew work.
+
+## Installer Host
+
+`https://get.matrix-os.com` is served by the `matrix-get-worker` Cloudflare
+Worker in `packages/get-worker`. It returns `scripts/install.sh` at `/` and
+`/install.sh`, and 404 for every other path. The script is bundled into the
+Worker at deploy time, so the `Installer Worker` workflow redeploys it on every
+push to `main` that changes `scripts/install.sh` or the Worker, then checks that
+the live response is byte-identical to the committed script. To redeploy by
+hand, dispatch that workflow from `main` with `deploy=true`.
+
+Verify the host at any time:
+
+```bash
+curl -fsSL https://get.matrix-os.com | cmp - scripts/install.sh
+```
 
 ## Post-Release Verification
 

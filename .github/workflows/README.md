@@ -87,6 +87,13 @@ runners (Ubuntu 24.04 for E2E), including their normal OS dependency setup.
 
 ## Release Artifacts
 
+Native mobile beta releases run manually from `main`:
+`mobile-ios-testflight.yml` builds and submits to TestFlight, and
+`mobile-android-internal.yml` builds an AAB and submits to Google Play internal
+testing. Both use EAS cloud builds from Ubuntu GitHub runners, separate GitHub
+environments, and EAS-managed signing/submission credentials. See the
+[operator setup and recovery guide](../../docs/dev/mobile-shell.md#native-beta-releases).
+
 Matrix OS does not publish customer runtime Docker images. The customer runtime
 ships only as immutable VPS host bundles registered in platform Postgres.
 Docker remains supported for local development and CI validation only;
@@ -123,6 +130,7 @@ OTA payloads.
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), manual only for releases (publish `main` to `preview`, promote to `production`, or roll back); merging to `main` publishes nothing | Required for mobile OTA publishing; path-filtered, so not a required PR check |
+| `pr-evidence-playback.yml` | PR evidence video playback in Chromium and WebKit on a GitHub-hosted runner | Non-draft PRs touching `packages/pr-evidence-worker/` or its tests, manual | No; path-filtered |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 

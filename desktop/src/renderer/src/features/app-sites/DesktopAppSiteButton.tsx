@@ -66,8 +66,8 @@ export function DesktopAppSiteButton({
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          submissions={client && share.site
-            ? <><SocialPreviewSection appSlug={appSlug} client={client} site={share.site} /><SiteSubmissionsSection appSlug={appSlug} client={client} /></> : null}
+          submissions={share.site
+            ? <><SocialPreviewSection appSlug={appSlug} client={client} site={share.site} /><SiteSubmissionsSection appSlug={appSlug} client={client} formsDeclared={share.site.config.forms.length > 0} /></> : null}
         />
       ) : null}
     </AppSiteSharePopover>

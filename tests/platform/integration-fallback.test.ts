@@ -4,6 +4,7 @@ import { createApp } from '../../packages/platform/src/main.js';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
 import { createApiClient } from '../../desktop/src/renderer/src/lib/api.js';
+import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { cleanupProxyRoutingTest, JWT_SECRET, setupProxyRoutingTest, stubOrchestrator } from './proxy-routing-test-utils.js';
 
 describe('unconfigured managed integrations', () => {
@@ -44,6 +45,27 @@ describe('unconfigured managed integrations', () => {
 
   it('returns unavailable for public discovery without requiring a login', async () => {
     expect((await app().request('/api/integrations/available', { headers: { host: 'app.matrix-os.com' } })).status).toBe(503);
+  });
+
+  it('reports missing dependencies after authenticating the gateway instead of rejecting a valid machine token', async () => {
+    const server = app();
+    const response = await server.request('/internal/containers/alice/integrations', {
+      headers: { authorization: `Bearer ${buildPlatformVerificationToken('alice', 'platform-secret')}` },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'integrations_unavailable' });
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('keeps gateway authentication and signed delegation checks when integrations are unconfigured', async () => {
+    const server = app();
+    const path = '/internal/containers/alice/integrations';
+    expect((await server.request(path)).status).toBe(401);
+    expect((await server.request(path, { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect((await server.request(path, { headers: {
+      authorization: `Bearer ${buildPlatformVerificationToken('alice', 'platform-secret')}`,
+      'x-platform-user-id': 'user_alice', 'x-platform-verified': 'forged',
+    } })).status).toBe(401);
   });
 
   it('preserves configured routes', async () => {

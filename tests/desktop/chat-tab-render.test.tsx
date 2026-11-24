@@ -156,13 +156,13 @@ describe("ChatTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not render the full-height empty-state spacer when messages exist", () => {
+  it("bottom-aligns a nonempty transcript without the empty-state spacer", () => {
     const { container } = render(<ChatTab />);
 
     expect(container.textContent).toContain("hello");
     expect(container.querySelector(".h-full.items-center.justify-center")).toBeNull();
     expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
-      .toContain("justify-start");
+      .toContain("justify-end");
     expect(container.querySelector('[data-slot="message-scroller-content"]')?.className)
       .not.toContain("30vh");
   });

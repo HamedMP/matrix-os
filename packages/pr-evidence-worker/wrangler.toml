@@ -1,0 +1,22 @@
+name = "matrix-pr-evidence"
+main = "src/index.ts"
+# Matches the newest date the pinned wrangler's local workerd supports, so `wrangler dev` runs.
+compatibility_date = "2026-06-02"
+account_id = "63a1787d41e5df7aee344eab876fffe8"
+
+# Custom domain: Cloudflare creates the DNS record and certificate on deploy.
+routes = [
+  { pattern = "evidence.matrix-os.com", custom_domain = true }
+]
+
+[[r2_buckets]]
+binding = "EVIDENCE"
+bucket_name = "matrix-pr-evidence"
+
+[vars]
+GITHUB_REPO = "HamedMP/matrix-os"
+PUBLIC_ORIGIN = "https://evidence.matrix-os.com"
+
+# UPLOAD_TICKET_SECRET must be provisioned before deployment (>= 32 random bytes):
+#   openssl rand -base64 48 | wrangler secret put UPLOAD_TICKET_SECRET
+# The Worker returns 503 for uploads until this secret is set. Reads keep working.

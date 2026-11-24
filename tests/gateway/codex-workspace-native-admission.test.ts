@@ -71,3 +71,39 @@ it("releases proved predispatch API-key registration without a subscription bind
   expect(f.runtime.startSession).not.toHaveBeenCalled();
   expect(f.admission.releaseFailedStart).toHaveBeenCalledWith("owner", "sess_native", undefined, proof);
 });
+
+describe("one full native admission per Codex send", () => {
+  function receiptFixture() {
+    const f = fixture();
+    const receipt = Object.freeze({ binding });
+    let revoked = false;
+    const admission = Object.assign(f.admission, {
+      startWithReceipt: vi.fn(async () => ({ binding, receipt })),
+      validateWithReceipt: vi.fn(async () => receipt),
+      confirm: vi.fn(async () => { if (revoked) throw new Error("Selected Codex account is unavailable"); }),
+    });
+    return { ...f, admission, receipt, revokeConfirm: () => { revoked = true; } };
+  }
+  it("runs one full check on a follow-up and confirms it after watch", async () => {
+    const f = receiptFixture();
+    await f.provider.resumeTurn!({ ...f.base, signal: new AbortController().signal, turn: { turnId: "turn_native", message: "Continue" } });
+    expect(f.admission.validateWithReceipt).toHaveBeenCalledTimes(1);
+    expect(f.admission.confirm).toHaveBeenCalledWith("owner", f.receipt, "sess_native");
+    expect(f.admission.validate).not.toHaveBeenCalled();
+    expect(f.control.submitTurn).toHaveBeenCalledTimes(1);
+  });
+  it("runs one full check on a first turn and confirms it after watch", async () => {
+    const f = receiptFixture();
+    await f.provider.startThread({ ...f.base, request: { providerId: "codex", prompt: "Inspect", clientRequestId: "req_receipt" } });
+    expect(f.admission.startWithReceipt).toHaveBeenCalledTimes(1);
+    expect(f.admission.start).not.toHaveBeenCalled();
+    expect(f.admission.validate).not.toHaveBeenCalled();
+    expect(f.admission.confirm).toHaveBeenCalledWith("owner", f.receipt, "sess_native");
+  });
+  it("blocks the continuation when the post-watch confirm fails", async () => {
+    const f = receiptFixture();
+    f.events.watch.mockImplementationOnce(async () => { f.revokeConfirm(); return {}; });
+    await expect(f.provider.resumeTurn!({ ...f.base, signal: new AbortController().signal, turn: { turnId: "turn_native", message: "Continue" } })).rejects.toThrow("unavailable");
+    expect(f.control.submitTurn).not.toHaveBeenCalled();
+  });
+});

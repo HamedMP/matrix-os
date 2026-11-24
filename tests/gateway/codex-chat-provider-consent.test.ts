@@ -193,6 +193,7 @@ it("requests native account identity when revalidating a bound Codex chat", asyn
     refresh: false,
     includeNativeAccountMetadata: true,
     includeNativeAccountUsage: false,
+    nativeAccountHarnesses: ["codex"],
   });
   expect(catalog.instances[0]).toMatchObject({
     id: "codex_default",

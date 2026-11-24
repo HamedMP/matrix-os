@@ -1,4 +1,4 @@
-import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinkCreateResponseSchema, SiteAccessLinksResponseSchema, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationsCapabilitySchema, type SiteEmailInvitationsCapability, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage, SiteSocialSettingsSchema, SiteSocialUpdateSchema, type SiteSocialSettings, type SiteSocialUpdate } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationsCapabilitySchema, type SiteEmailInvitationsCapability, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage, SiteSocialSettingsSchema, SiteSocialUpdateSchema, type SiteSocialSettings, type SiteSocialUpdate } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 
 type SiteEmailInvitationCreateResponse = z.infer<typeof SiteEmailInvitationCreateResponseSchema>;
@@ -17,9 +17,6 @@ export interface SiteClient {
   rollback(app: string, value: { versionId: string; baseRevision: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
-  accessLinks(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteAccessLinksResponse>;
-  createAccessLink(app: string, value: { baseRevision: number }, signal: AbortSignal): Promise<SiteAccessLinkCreateResponse>;
-  revokeAccessLink(app: string, linkId: string, signal: AbortSignal): Promise<void>;
   emailInvitationCapabilities?(app: string, signal: AbortSignal): Promise<SiteEmailInvitationsCapability>;
   emailInvitations(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteEmailInvitationPage>;
   createEmailInvitations(app: string, value: { baseRevision: number; emailAddresses: string[] }, signal: AbortSignal): Promise<SiteEmailInvitationCreateResponse>;
@@ -80,9 +77,6 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
       const value = await transport.get<{ manifest?: { publishing?: unknown } }>(`/api/apps/${encodeURIComponent(app)}/manifest`, { signal });
       return SitePublishingSchema.parse(value.manifest?.publishing ?? { data: {}, forms: [] });
     },
-    accessLinks: async (app, signal, cursor = null) => SiteAccessLinksResponseSchema.parse(await transport.get(`${sitePath(app)}/access-links?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),
-    createAccessLink: async (app, value, signal) => SiteAccessLinkCreateResponseSchema.parse(await transport.post(`${sitePath(app)}/access-links`, SiteAccessLinkCreateRequestSchema.parse(value), { signal })),
-    revokeAccessLink: async (app, linkId, signal) => { await transport.delete(`${sitePath(app)}/access-links/${encodeURIComponent(linkId)}`, undefined, { signal }); },
     emailInvitationCapabilities: async (app, signal) => SiteEmailInvitationsCapabilitySchema.parse(
       await transport.get(`${sitePath(app)}/email-invitation-capabilities`, { signal })),
     emailInvitations: async (app, signal, cursor = null) => SiteEmailInvitationPageSchema.parse(

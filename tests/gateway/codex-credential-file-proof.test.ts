@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { createCodexCredentialFileProofReader } from "../../packages/gateway/src/ai-providers/codex-credential-file-proof.js";
+import { createCodexCredentialFileEvidenceReader, createCodexCredentialFileProofReader } from "../../packages/gateway/src/ai-providers/codex-credential-file-proof.js";
 
 const roots: string[] = [];
 const auth = (credential = "private-fixture-token") => JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: credential, refresh_token: "private-fixture-refresh" } });
@@ -81,4 +81,38 @@ it.each([
   const f = await fixture(); await writeFile(f.file, JSON.stringify(value));
   const read = createCodexCredentialFileProofReader({ homePath: f.home, allowApiKey: true });
   expect(await read()).toBeNull();
+});
+
+// ENG-523: token refresh rewrites auth.json; the stable identity names the account.
+it("derives a stable private account identity that survives token refresh", async () => {
+  const f = await fixture();
+  const session = (access: string, accountId?: string) => JSON.stringify({ auth_mode: "chatgpt", last_refresh: access,
+    tokens: { access_token: access, refresh_token: `${access}-refresh`, ...(accountId ? { account_id: accountId } : {}) } });
+  const read = createCodexCredentialFileEvidenceReader({ homePath: f.home });
+  await writeFile(f.file, session("first-token", "synthetic-account-a"));
+  const first = await read();
+  expect(first?.identity).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(first)).not.toContain("synthetic-account");
+  await writeFile(f.file, session("refreshed-token", "synthetic-account-a"));
+  const refreshed = await read();
+  expect(refreshed?.proof).not.toBe(first?.proof);
+  expect(refreshed?.identity).toBe(first?.identity);
+  await writeFile(f.file, session("refreshed-token", "synthetic-account-b"));
+  expect((await read())?.identity).not.toBe(first?.identity);
+  await writeFile(f.file, session("refreshed-token"));
+  expect(await read()).toMatchObject({ identity: null, proof: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  expect((await read())?.proof).toBe(await f.read());
+});
+
+it("binds a file-backed API key identity to a hash of the key, never the key", async () => {
+  const f = await fixture();
+  const read = createCodexCredentialFileEvidenceReader({ homePath: f.home, allowApiKey: true });
+  await writeFile(f.file, JSON.stringify({ OPENAI_API_KEY: "synthetic-key-first" }));
+  const first = await read();
+  expect(first?.identity).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(first)).not.toContain("synthetic-key");
+  await writeFile(f.file, JSON.stringify({ auth_mode: "apikey", tokens: null, OPENAI_API_KEY: "synthetic-key-first" }));
+  expect((await read())?.identity).toBe(first?.identity);
+  await writeFile(f.file, JSON.stringify({ OPENAI_API_KEY: "synthetic-key-second" }));
+  expect((await read())?.identity).not.toBe(first?.identity);
 });

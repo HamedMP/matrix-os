@@ -35,9 +35,9 @@ describe("navigation through the actual runtime transport", () => {
       getPrincipal: () => ({ userId: "navigation_owner", source: "jwt" }) });
     const { client, requests } = transport(app);
     expect(CanonicalChatNavigationResponseSchema.parse(await client.navigation!())).toEqual(empty);
-    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=1000"]);
+    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=100"]);
     expect(requests[0]!.searchParams.has("fundingVersion")).toBe(false);
-    expect(navigation).toHaveBeenCalledExactlyOnceWith({ type: "personal", ownerId: "navigation_owner" }, { version: 1, limit: 1000 });
+    expect(navigation).toHaveBeenCalledExactlyOnceWith({ type: "personal", ownerId: "navigation_owner" }, { version: 1, limit: 100 });
   });
   it("uses the same independent versioned endpoint from Web", async () => {
     const app = createCanonicalChatRoutes({ service: { navigation: async () => empty } as unknown as CanonicalChatRouteService,
@@ -45,7 +45,7 @@ describe("navigation through the actual runtime transport", () => {
     const { fetchFn, requests } = transport(app);
     const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
     expect(await client.navigation!()).toEqual(empty);
-    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=1000"]);
+    expect(requests.map(url => url.pathname + url.search)).toEqual(["/api/chat-navigation?version=1&limit=100"]);
   });
   it("reaches the existing legacy loader only for a confirmed unsupported 404", async () => {
     const app = new Hono();

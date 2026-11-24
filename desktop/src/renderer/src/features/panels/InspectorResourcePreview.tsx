@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePreviewDescriptorSchema, type FilePreviewDescriptor } from "@matrix-os/contracts";
-import { FilePreviewContent, FilePreviewActions, copyFileImage, savePreviewBlob, filePreviewContentUrl, filePreviewMetadataUrl } from "@matrix-os/ui";
+import { ChatInspectorFileHeader, FilePreviewContent, FilePreviewActions, copyFileImage, savePreviewBlob, filePreviewContentUrl, filePreviewMetadataUrl } from "@matrix-os/ui";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useDesktopFileDownload } from "../files/use-file-download";
@@ -82,9 +82,9 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
     }}
     onCopyImage={descriptor.kind === "image" ? async () => copyFileImage(await loadBlob(contentUrl, 50 * 1024 * 1024), isCurrent) : undefined}>
     <div className="flex min-h-0 flex-1 flex-col" tabIndex={0} aria-label={`File preview ${descriptor.name}`}>
-    <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
-      <span className="min-w-0 truncate text-xs">{descriptor.name}</span>
-      {["markdown", "text", "html"].includes(descriptor.kind) ? <button type="button" aria-label={`Edit ${descriptor.name}`} className="rounded px-2 py-1 text-xs hover:bg-[var(--bg-hover)]" onClick={() => {
+    <ChatInspectorFileHeader name={descriptor.name} path={target.path} expandLabel={`Edit ${descriptor.name}`}
+      onCopy={async () => { if (!isCurrent()) throw new Error("PreviewUnavailable"); await navigator.clipboard.writeText(target.path); }}
+      onExpand={["markdown", "text", "html"].includes(descriptor.kind) ? () => {
         if (!isCurrent()) return;
         setEditError(false);
         void openResourceInDesktopEditor(resource, isCurrent).then((opened) => {
@@ -93,11 +93,12 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
           const id = useTabs.getState().activeTabId;
           if (id) useDesktopSurfaces.getState().activateSurface(id);
         }).catch((error: unknown) => { console.warn("[file-preview] editor unavailable", error instanceof Error ? error.name : "UnknownError"); if (isCurrent()) setEditError(true); });
-      }}>Edit</button> : null}
+
+      } : undefined}>
       {editError ? <span role="alert" className="text-xs">Could not open Editor. Try again.</span> : null}
       {download.message ? <span role={download.error ? "alert" : "status"} className="text-xs">{download.message}</span> : null}
       {projectDownloadTooLarge ? <p className="text-xs">Project downloads are available for files up to 50 MiB.</p> : null}
-    </header>
+    </ChatInspectorFileHeader>
     <DesktopFilePreviewViewport kind={descriptor.kind}>
       <DesktopFilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
     </DesktopFilePreviewViewport>

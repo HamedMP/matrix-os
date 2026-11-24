@@ -102,6 +102,9 @@ export function ChatPromptInput({
               maxWidth: "100%",
             }}
             onKeyDown={(e) => {
+              // Enter confirms an IME candidate before it can submit a prompt.
+              // Safari can report the final composition key as keyCode 229.
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (onTextareaKeyDown?.(e)) return;
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

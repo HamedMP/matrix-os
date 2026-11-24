@@ -21,6 +21,17 @@
         "source": "github",
         "repo": "cursor/plugins"
       }
+    },
+    "matrix-os-dev": {
+      "source": {
+        "source": "github",
+        "repo": "HamedMP/matrix-os",
+        "path": "dev/.claude-plugin/marketplace.json",
+        "sparsePaths": [
+          "dev"
+        ]
+      },
+      "autoUpdate": true
     }
   },
   "enabledPlugins": {

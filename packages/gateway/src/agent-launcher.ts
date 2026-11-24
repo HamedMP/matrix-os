@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -10,9 +10,11 @@ import {
   type AgentModelOption,
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { createDetectionCache, credentialFileFingerprint, executableFingerprint } from "./agent-detection-cache.js";
+import { homedir } from "node:os";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
-import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 import { INTEGRATION_READ_GUIDANCE } from "./chat/integration-read-guidance.js";
 import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
@@ -79,6 +81,8 @@ export interface AgentLaunchInput {
   matrixDriveContext?: boolean;
   matrixIntegrationRead?: boolean;
   matrixCustomMcpScope?: "call" | "discovery" | "chat_call" | "chat_discovery" | "preview_drive_call";
+  /** Server-issued run capability for the Matrix Core MCP server (Codex); never a renderer DTO. */
+  matrixCoreMcp?: { scope: "call" | "discovery"; token: string };
 }
 
 export interface AgentLaunchSpec {
@@ -99,6 +103,8 @@ type CommandRunner = (
 const execFileAsync = promisify(execFile);
 const DETECT_TIMEOUT_MS = 5_000;
 const DETECT_CACHE_TTL_MS = 5_000;
+/** A recent probe scan may answer at once (with a background refresh) for this long. */
+const DETECT_STALE_WINDOW_MS = 5 * 60_000;
 const ProviderEventPathSchema = z.string()
   .trim()
   .min(1)
@@ -184,6 +190,7 @@ function pathWithMatrixAgentBins(runtimeHome: string, nodePrefix = matrixNodePre
 
 export function buildAgentRuntimeEnvironment(runtimeHome?: string): Record<string, string> {
   const executionEnv: Record<string, string> = {};
+  if (process.env.MATRIX_CODEX_SEND_TIMINGS === "1") executionEnv.MATRIX_CODEX_SEND_TIMINGS = "1";
   for (const key of ["MATRIX_CODEX_TOOL_DEADLINE_MS", "MATRIX_CODEX_COMMAND_DEADLINE_MS", "MATRIX_CODEX_NO_PROGRESS_MS", "MATRIX_CODEX_TURN_DEADLINE_MS"]) {
     const value = Number(process.env[key]);
     if (Number.isSafeInteger(value) && value > 0 && value <= 86_400_000) {
@@ -230,14 +237,16 @@ const ClaudeEditPermissionRuleSchema = z.string()
 const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
+  z.enum(MATRIX_CORE_MCP_DISCOVERY_TOOLS),
+  z.enum(MATRIX_CORE_MCP_CALL_TOOLS),
   z.enum(MATRIX_INTEGRATION_DISCOVERY_TOOLS),
   z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
   z.enum(MATRIX_INTEGRATION_READ_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
-    // Twenty writable roots plus fixed built-in, Custom MCP and company Drive wrappers.
-    allow: z.array(ClaudeAllowRuleSchema).max(28).optional(),
+    // Twenty writable roots plus fixed built-in, Custom MCP, Core MCP and company Drive wrappers.
+    allow: z.array(ClaudeAllowRuleSchema).max(33).optional(),
     ask: z.array(z.enum(MATRIX_INTEGRATION_ACTION_TOOLS)).max(4).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
@@ -310,7 +319,8 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
   const mcpTools = input.matrixCustomMcp
     ? [...(input.matrixIntegrationRead && !chatIntegrations ? MATRIX_INTEGRATION_READ_TOOLS : []), ...(!previewDrive && input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(previewDrive ? [MATRIX_INTEGRATION_DISCOVERY_TOOLS[0], MATRIX_INTEGRATION_DISCOVERY_TOOLS[2]]
       : chatIntegrations ? MATRIX_INTEGRATION_DISCOVERY_TOOLS : []), ...(previewDrive ? [] : mode === "read-only" || claudePermissionMode(input) === "default"
-      ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
+      ? [...MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, ...MATRIX_CORE_MCP_DISCOVERY_TOOLS]
+      : [...MATRIX_CUSTOM_MCP_TOOLS, ...MATRIX_CORE_MCP_DISCOVERY_TOOLS, ...MATRIX_CORE_MCP_CALL_TOOLS])]
     : [];
   if (mode === "read-only") {
     return ClaudeLaunchSettingsSchema.parse({
@@ -360,7 +370,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     permissionMode,
     "--strict-mcp-config",
     ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
-      surface: "claude", customMcpScope: input.matrixCustomMcp
+      surface: "claude", customMcpScope: input.matrixCustomMcp && effectiveMcpScope !== "preview_drive_call"
         ? discoveryOnly ? "discovery" : "call" : "none",
     }) + (input.matrixCustomMcp && input.matrixIntegrationRead && (effectiveMcpScope === "call" || effectiveMcpScope === "discovery") ? `\n\n${INTEGRATION_READ_GUIDANCE}` : "")] : []),
     ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext, input.matrixIntegrationRead)] : []),
@@ -469,6 +479,20 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
   });
 }
 
+const MatrixCoreMcpLaunchSchema = z.object({
+  scope: z.enum(["call", "discovery"]),
+  token: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
+
+/** Codex receives the scoped stdio server; the bearer travels only in the child environment. */
+function codexCoreMcp(input: AgentLaunchInput, env: Record<string, string>): string[] {
+  if (!input.matrixCoreMcp) return [];
+  const core = MatrixCoreMcpLaunchSchema.parse(input.matrixCoreMcp);
+  env[MATRIX_MCP_RUN_TOKEN_ENV] = core.token;
+  env.MATRIX_MCP_HARNESS = "codex";
+  return codexMatrixMcpConfigArgs(core.scope);
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = parsed === "codex" && input.codexExecutable
@@ -476,12 +500,14 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
     : AGENTS[parsed].command;
   const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
   const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
+  const coreArgs = parsed === "codex" ? codexCoreMcp(input, env) : [];
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
     case "codex":
       {
         const args = [
+          ...coreArgs,
           "--ask-for-approval",
           input.approvalPolicy ?? "never",
           ...codexSandboxArgs(input.sandbox),
@@ -504,6 +530,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
             CODEX_VERIFIED_VERSION,
             command,
             ...(nativePolicy?.args ?? []),
+            ...coreArgs,
             appServerConfig,
           ],
           cwd: input.cwd,
@@ -531,11 +558,6 @@ export function createAgentLauncher(options: {
   const codexHome = process.env.CODEX_HOME;
   const now = options.now ?? Date.now;
   type DetectionResult = { agents: AgentStatus[] };
-  let installationScanInFlight: Promise<DetectionResult> | null = null;
-  let installationScanCache: { result: DetectionResult; expiresAt: number } | null = null;
-  let credentialScanInFlight: Promise<DetectionResult> | null = null;
-  let credentialScanCache: { result: DetectionResult; expiresAt: number } | null = null;
-  let credentialScanGeneration = 0;
 
   function commandFor(id: SupportedAgent): string {
     return id === "codex" && options.codexExecutable
@@ -604,49 +626,43 @@ export function createAgentLauncher(options: {
     }
   }
 
-  async function detectAgentInstallations(): Promise<DetectionResult> {
-    const cached = installationScanCache;
-    if (cached && now() < cached.expiresAt) return cached.result;
-    if (installationScanInFlight) return installationScanInFlight;
+  // Transient probe failures are re-probed synchronously; definite answers
+  // (installed, missing, signed in, signed out) may be served while refreshing.
+  const servableWhenStale = (result: DetectionResult) => result.agents.every(agent =>
+    agent.installState !== "unknown" && agent.authState !== "error" && agent.workspaceCompatibility !== "unsupported");
+  const probedExecutables = () => executableFingerprint(SupportedAgentSchema.options.map(commandFor));
+  const installationScans = createDetectionCache<DetectionResult>({
+    scan: () => Promise.all(SupportedAgentSchema.options.map(probeInstallation)).then((agents) => ({ agents })),
+    now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
+    fingerprint: probedExecutables, label: "installation probe",
+  });
+  const credentialFiles = () => {
+    const home = detectEnv.HOME ?? process.env.HOME ?? homedir();
+    return [join(codexHome ?? join(home, ".codex"), "auth.json"), join(home, ".claude", ".credentials.json"), join(home, ".claude.json")];
+  };
+  const credentialScans = createDetectionCache<DetectionResult>({
+    scan: () => Promise.all([probeCredentials("claude"), probeCredentials("codex")]).then((agents) => ({ agents })),
+    now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
+    // Executables plus credential files: never serve a stale "signed in" after a logout outside Matrix.
+    fingerprint: async () => {
+      const [executables, credentials] = await Promise.all([
+        executableFingerprint([commandFor("claude"), commandFor("codex")]), credentialFileFingerprint(credentialFiles()),
+      ]);
+      return executables === null || credentials === null ? null : `${executables}#${credentials}`;
+    },
+    label: "credential probe",
+  });
 
-    const scan = Promise.all(SupportedAgentSchema.options.map(probeInstallation))
-      .then((agents) => ({ agents }));
-    installationScanInFlight = scan;
-    try {
-      const result = await scan;
-      installationScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
-      return result;
-    } finally {
-      if (installationScanInFlight === scan) installationScanInFlight = null;
-    }
+  async function detectAgentInstallations(): Promise<DetectionResult> {
+    return installationScans.read();
   }
 
   async function detectAgentCredentials(): Promise<DetectionResult> {
-    const cached = credentialScanCache;
-    if (cached && now() < cached.expiresAt) return cached.result;
-    if (credentialScanInFlight) return credentialScanInFlight;
-
-    const generation = credentialScanGeneration;
-    const scan = Promise.all([
-      probeCredentials("claude"),
-      probeCredentials("codex"),
-    ]).then((agents) => ({ agents }));
-    credentialScanInFlight = scan;
-    try {
-      const result = await scan;
-      if (generation === credentialScanGeneration) {
-        credentialScanCache = { result, expiresAt: now() + DETECT_CACHE_TTL_MS };
-      }
-      return result;
-    } finally {
-      if (credentialScanInFlight === scan) credentialScanInFlight = null;
-    }
+    return credentialScans.read();
   }
 
   function invalidateCredentialDetection(): void {
-    credentialScanGeneration += 1;
-    credentialScanCache = null;
-    credentialScanInFlight = null;
+    credentialScans.invalidate();
   }
 
   async function observeCodexLocalCredential(input: {
@@ -670,18 +686,20 @@ export function createAgentLauncher(options: {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const detected = await Promise.race([
-        detectAgentCredentials(),
+        // Local evidence is a five-second receipt: never answer it from a stale scan.
+        credentialScans.read("fresh"),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => reject(new Error("Codex local observation timed out")), DETECT_TIMEOUT_MS);
           timer.unref?.();
         }),
       ]);
       const status = detected.agents.find((agent) => agent.id === "codex");
-      const cached = credentialScanCache;
-      if (!status || !cached || cached.result !== detected || now() >= cached.expiresAt
+      const cached = credentialScans.current();
+      const expiresAt = cached ? cached.verifiedAt + DETECT_CACHE_TTL_MS : 0;
+      if (!status || !cached || cached.result !== detected || now() >= expiresAt
         || status.workspaceCompatibility !== "compatible") return unknown;
-      const checkedAt = new Date(cached.expiresAt - DETECT_CACHE_TTL_MS).toISOString();
-      const staleAfter = new Date(cached.expiresAt).toISOString();
+      const checkedAt = new Date(cached.verifiedAt).toISOString();
+      const staleAfter = new Date(expiresAt).toISOString();
       if (status.authState === "ok" && status.credentialMode === "chatgpt") {
         return { accessSourceId: "owner_openai_profile", state: "present_unverified", checkedAt, staleAfter };
       }

@@ -106,6 +106,13 @@ describe("platform Gemini Live proxy", () => {
             resize_started_at: null,
             resize_target_server_type: null,
             attempt: 1,
+            // Columns every migrated user_machines row carries (NOT NULL with defaults).
+            substrate: "vps",
+            generation: 1,
+            substrate_ref: null,
+            private_address: null,
+            last_activity_at: null,
+            started_at: null,
           },
         }),
         platformSecret,

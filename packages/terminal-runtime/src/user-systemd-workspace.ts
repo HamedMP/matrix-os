@@ -97,13 +97,14 @@ export function createUserSystemdWorkspaceLifecycle(options: {
       return targetFromDescriptor(logicalSessionName, { ...existing, lifecycle: "running" });
     },
 
-    async ensureWorkspaceSession(logicalSessionNameInput, sizeInput) {
+    async ensureWorkspaceSession(logicalSessionNameInput, sizeInput, operation = {}) {
+      const bounded = operation.deadline === undefined ? [] : [{ deadline: operation.deadline }] as const;
       const logicalSessionName = LogicalWorkspaceSessionSchema.parse(logicalSessionNameInput);
       CanonicalSizeSchema.parse(sizeInput);
       const runtimeId = workspaceRuntimeId(logicalSessionName);
       const existing = await options.controller.get(runtimeId);
       if (existing) {
-        const running = await options.controller.start(runtimeId);
+        const running = await options.controller.start(runtimeId, ...bounded);
         return targetFromDescriptor(logicalSessionName, running);
       }
 
@@ -122,7 +123,7 @@ export function createUserSystemdWorkspaceLifecycle(options: {
         displayName: logicalSessionName,
         cwd: homePath,
         layoutPath,
-      });
+      }, ...bounded);
       return targetFromDescriptor(logicalSessionName, created);
     },
 

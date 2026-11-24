@@ -9,6 +9,16 @@ import {
 } from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
 
+/** 48 KiB becomes 64 KiB of base64, leaving 32 KiB for the complete directory envelope. */
+export const COLLABORATIVE_APP_ICON_MAX_BYTES = 48 * 1024;
+export const COLLABORATIVE_APP_ICON_MAX_DIMENSION = 96;
+export const CollaborativeAppThumbnailSchema = z.object({
+  contentType: z.literal("image/png"),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  base64: z.string().min(16).max(4 * Math.ceil(COLLABORATIVE_APP_ICON_MAX_BYTES / 3))
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+}).strict();
+
 export const COLLABORATION_HTTP_BODY_LIMIT = 96 * 1024;
 export const COLLABORATION_MESSAGE_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_PAGE_LIMIT = 100;
@@ -584,6 +594,8 @@ export const CollaborationAiRequestSchema = z.object({
   selection: CanonicalChatModelSelectionSchema,
   retryOfRequestId: CollaborationResourceIdSchema.optional(),
   runId: CollaborationResourceIdSchema.optional(),
+  /** Canonical prompt identity for inline status; absent until the request is claimed. */
+  messageId: CollaborationResourceIdSchema.optional(),
   /** S09: why the home lost an `interrupted` run; only the requesting member may resubmit it. */
   interruptedReason: z.enum(["gateway_restart", "scope_runtime_crash", "run_unit_exit", "control_partition"]).optional(),
   /** S09: who cancelled a `cancelled` request (the requesting member or the scope owner). */
@@ -841,7 +853,7 @@ export const CollaborationDirectoryEventSchema = z.object({
   audience: z.enum(["members", "organization", "current_membership"]).optional(),
   /** Opaque owner-home grant pointer for explicit organization activation; never an authorization claim. */
   organizationGrantId: CollaborationIdSchema.optional(),
-  /** Exact app routing metadata only; owner records and credentials never enter the directory. */
+  /** Exact app routing metadata plus bounded presentation; owner records and credentials never enter the directory. */
   app: z.object({
     appId: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
     catalogId: CollaborationIdSchema,
@@ -850,6 +862,12 @@ export const CollaborationDirectoryEventSchema = z.object({
     buildId: z.string().regex(/^[a-f0-9]{64}$/),
     shareRevision: z.number().int().positive(),
     state: z.enum(["active", "needs_recheck", "stopped"]),
+    /** Owner manifest display name, bounded; launchers fall back to the slug when absent. */
+    name: boundedDisplayText(120, 512).optional(),
+    /** Presentation failure never invalidates routing metadata. Bytes are verified server-side. */
+    thumbnail: CollaborativeAppThumbnailSchema.optional().catch(undefined),
+    /** Accepted for rolling compatibility with the original preview; never resolves external bytes. */
+    iconSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   }).strict().optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
