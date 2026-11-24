@@ -11,6 +11,7 @@ import {
   claimOwnedTunnelWork,
   createOwnedEnrollment,
   getOwnedMachineLink,
+  purgeExpiredOwnedEnrollments,
   lapseUndeliveredOwnedEnrollments,
   listOwnedMachineLinks,
   markOwnedEnrollmentDelivered,
@@ -211,6 +212,16 @@ describe('owned machine repository', () => {
       .where('user_code', '=', fresh.userCode).execute();
     expect((await approve(db, fresh.userCode, 'user_1', late)).ok).toBe(true);
     expect(await listOwnedMachineLinks(db, 'user_1')).toHaveLength(1);
+  });
+
+  it('keeps uncollected approvals through the purge until their machine is released', async () => {
+    const { userCode, deviceCodeHash } = await enroll(db);
+    await approve(db, userCode);
+    const muchLater = new Date(NOW.getTime() + 10 * 86_400_000);
+    await pollOwnedEnrollment(db, deviceCodeHash, muchLater, 0);
+    expect(await purgeExpiredOwnedEnrollments(db, muchLater, 500)).toBe(0);
+    expect(await lapseUndeliveredOwnedEnrollments(db, muchLater, 10)).toBe(1);
+    expect(await purgeExpiredOwnedEnrollments(db, muchLater, 500)).toBe(1);
   });
 
   it('refuses delivery after the delivery window even if the poll raced it', async () => {

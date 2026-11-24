@@ -584,6 +584,10 @@ export async function purgeExpiredOwnedEnrollments(db: PlatformDB, before: Date,
     DELETE FROM owned_machine_enrollments WHERE enrollment_id IN (
       SELECT enrollment_id FROM owned_machine_enrollments
       WHERE expires_at < ${before} AND status IN ('pending', 'expired', 'delivered', 'denied')
+        -- Keep an uncollected approval until its machine is released, so the
+        -- sweep can still find it and free the owner's slot.
+        AND NOT (machine_id IS NOT NULL AND delivered_at IS NULL AND EXISTS (
+          SELECT 1 FROM owned_machine_links l WHERE l.machine_id = owned_machine_enrollments.machine_id AND l.revoked_at IS NULL))
       ORDER BY expires_at LIMIT ${limit}
     ) RETURNING enrollment_id
   `.execute(db.executor);
