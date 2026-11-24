@@ -3,7 +3,7 @@ import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
-import type { CanonicalChatDetailResponse, CanonicalChatTurnAdmissionResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatTurnAdmissionResponse, CanonicalCreateChatTurnRequest, BotCreationDraftPatch } from "@matrix-os/contracts";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
 import { clientFixture, saved } from "../../desktop/chat-agents-fixture.js";
 
@@ -17,7 +17,7 @@ const question = "Which group should this agent help first?";
 const suggestedReplies = ["New colleagues", "Support agents"];
 const now = "2026-11-23T08:00:00.000Z";
 
-function fixture() {
+function fixture(modelPatch: BotCreationDraftPatch = patch, recap?: string) {
   const client = clientFixture({ matrix: true });
   const detail: CanonicalChatDetailResponse = {
     record: {
@@ -41,14 +41,18 @@ function fixture() {
         role: "user", state: "committed", parts: input.parts });
       if (snapshot.intent === "open") {
         detail.messages.push({ id: `msg_setup_agent${turn}`, chatId: detail.record.chat.id, runId: admitted.run.id, createdAt: now, seq: detail.messages.length + 1,
-          role: "assistant", state: "committed", parts: [{ type: "text", text: question }] });
+          role: "assistant", state: "committed", parts: [{ type: "text", text: "I reviewed the whole draft. " + question }] });
         detail.activities = [{ id: `activity_setup0${turn}`, chatId: detail.record.chat.id, runId: admitted.run.id, occurredAt: now, type: "bot.setup.question",
           sessionId: snapshot.sessionId, baseDraftRevision: snapshot.draftRevision, proposalId: `proposal_setup0${turn}`, question, suggestedReplies }];
       } else detail.activities = [{
         id: "activity_setup01", chatId: detail.record.chat.id, runId: admitted.run.id,
         occurredAt: now, type: "bot.draft.proposed", sessionId: snapshot.sessionId, baseDraftRevision: snapshot.draftRevision,
-        proposalId: "proposal_setup01", patch
+        proposalId: "proposal_setup01", patch: modelPatch
       }];
+      if (snapshot.intent === "reply" && recap) detail.messages.push({
+        id: `msg_setup_confirm${turn}`, chatId: detail.record.chat.id, runId: admitted.run.id, createdAt: now, seq: detail.messages.length + 1,
+        role: "assistant", state: "committed", parts: [{ type: "text", text: recap }],
+      });
       detail.runs = [{ ...admitted.run, status: "completed" }];
       return admitted;
     }),
@@ -62,15 +66,21 @@ function send() {
 }
 
 it("previews a real scoped proposal in the scratch form and creates only after the owner confirms", async () => {
-  const client = fixture();
+  const recap = "Named the agent Onboarding guide and added Gmail to the brief.";
+  const client = fixture(patch, recap);
   render(<React.StrictMode><ChatAgentsPanel client={client} onClose={vi.fn()}/></React.StrictMode>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
   fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   expect(await screen.findByText(question)).toBeVisible();
   expect(screen.getAllByText(question)).toHaveLength(1);
+  expect(screen.queryByText(/I reviewed the whole draft/)).toBeNull();
   expect(screen.queryByText("Start agent setup.")).toBeNull();
   fireEvent.click(await screen.findByRole("button", { name: "New colleagues" }));
-  expect(await screen.findByText(patch.instructions)).toBeVisible();
+  await screen.findByRole("region", { name: "Configuration preview" });
+  expect(screen.queryByText(patch.instructions)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
+  expect(screen.getByText(patch.instructions)).toBeVisible();
+  expect(screen.getByText(recap)).toBeVisible();
   expect(client.create).not.toHaveBeenCalled();
   expect(screen.queryByRole("group", { name: "Suggested replies" })).toBeNull();
   expect(client.setupChat.admitTurn).toHaveBeenCalledTimes(2);
@@ -89,20 +99,22 @@ it("discarding a proposed edit preserves saved instructions, and reopening permi
   fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
   await screen.findByRole("button", { name: "New colleagues" });
   send();
-  expect(await screen.findByText(patch.instructions)).toBeVisible();
+  await screen.findByText(/^Updated name, instructions,/);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(client.update).not.toHaveBeenCalled();
   fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
   fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
+  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(saved.instructions)).toBeVisible();
   await screen.findByRole("button", { name: "New colleagues" });
   send();
-  expect(await screen.findByText(patch.instructions)).toBeVisible();
+  await screen.findByText(/^Updated name, instructions,/);
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(client.update).toHaveBeenCalledTimes(1));
   expect(client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ baseRevision: saved.revision, ...patch }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit Onboarding guide" }));
   fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
+  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(patch.instructions)).toBeVisible();
 });
 
@@ -146,6 +158,8 @@ it("waits for scoped resources and retains the same unsaved setup when opening r
   fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "My unsaved helper" } });
+  expect(screen.queryByRole("button", { name: "MCP settings" })).toBeNull();
+  fireEvent.click(screen.getByText("Skills, sources & permissions"));
   fireEvent.click(screen.getByRole("button", { name: "MCP settings" }));
   expect(onOpenResourceSettings).toHaveBeenCalledWith("mcp");
   fireEvent.click(screen.getByRole("button", { name: "Integration settings" }));
@@ -159,4 +173,22 @@ it("waits for scoped resources and retains the same unsaved setup when opening r
   expect(client.setupChat.create).toHaveBeenCalledTimes(1);
   expect(client.setupChat.admitTurn).toHaveBeenCalledTimes(1);
   expect(client.create).not.toHaveBeenCalled();
+});
+
+it("reviews only the latest actual change and preserves the complete draft behind a disclosure", async () => {
+  const client = fixture({ name: saved.name, instructions: patch.instructions });
+  client.list.mockResolvedValue({ enabled: true, agents: [saved] as never[] });
+  render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+  await screen.findByRole("button", { name: "New colleagues" });
+  send();
+  expect(await screen.findByText("Updated instructions.")).toBeVisible();
+  expect(screen.queryByText(patch.instructions)).toBeNull();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
+  expect(screen.getByText(patch.instructions)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: saved.instructions } });
+  expect(screen.queryByText("Updated instructions.")).toBeNull();
+  expect(client.update).not.toHaveBeenCalled();
 });

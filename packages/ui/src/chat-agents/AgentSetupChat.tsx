@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import {
-  botDraftPatchMatchesChoices, isManagedCustomBot, type BotCreationSnapshot, type BotRecipeSetupContext, type CanonicalProviderCatalog,
+  botDraftPatchMatchesChoices, isManagedCustomBot, type BotCreationDraftPatch, type BotCreationSnapshot, type BotRecipeSetupContext, type CanonicalProviderCatalog,
   type ChatAgent, type ChatAgentRecipeCatalog
 } from "@matrix-os/contracts";
 import { ChatPromptInput } from "../chat/composer/ChatPromptInput.js";
@@ -12,6 +12,19 @@ import { useCreationConversation } from "./useCreationConversation.js";
 import { AgentSetupResources } from "./AgentSetupResources.js";
 import { AgentSetupTranscript } from "./AgentSetupTranscript.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "./theme.js";
+
+function describeChanges(draft: AgentDraft, patch: BotCreationDraftPatch): string {
+  const changed: string[] = [];
+  for (const field of ["name", "description", "instructions"] as const) {
+    if (patch[field] !== undefined && patch[field] !== draft[field]) changed.push(field);
+  }
+  if (patch.recipe !== undefined) {
+    if (JSON.stringify(patch.recipe?.skills ?? []) !== JSON.stringify(draft.recipe?.skills ?? [])) changed.push("skills");
+    if (JSON.stringify(patch.recipe?.integrations ?? []) !== JSON.stringify(draft.recipe?.integrations ?? [])) changed.push("sources");
+    if ((patch.recipe?.output ?? "") !== (draft.recipe?.output ?? "")) changed.push("expected output");
+  }
+  return changed.length ? `Updated ${new Intl.ListFormat("en").format(changed)}.` : "No configuration changes.";
+}
 
 export function AgentSetupChat({ client, draft, editing, catalog, recipes, connections, pending, change,
   seed = { kind: "scratch" }, resourcesLoading = false, recipeContext, children, reviewInitially = false, onOpenResourceSettings, onRefreshResources }: {
@@ -39,6 +52,8 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     setRevision(currentRevision);
   }
   const [review, setReview] = useState(reviewInitially);
+  const [proposal, setProposal] = useState<{ id: string; revision: number; summary: string } | null>(null);
+
   const [resourceVisit, setResourceVisit] = useState(0);
   const refreshOnReturn = useEffectEvent(() => onRefreshResources?.());
   useEffect(() => {
@@ -65,27 +80,38 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
   };
   const conversation = useCreationConversation({
     client, snapshot, catalog, ready: !resourcesLoading && !pending,
-    onProposal(proposal) {
-      if (pending || proposal.sessionId !== sessionId || proposal.baseDraftRevision !== snapshot.draftRevision
-        || lastApplied.current === snapshot.draftRevision || !botDraftPatchMatchesChoices(snapshot, proposal.patch)) return false;
-      if (proposal.patch.recipe !== undefined && (!editableRecipe || draft.recipe?.jevInboxLabeling)) return false;
+    onProposal(next) {
+      if (pending || next.sessionId !== sessionId || next.baseDraftRevision !== snapshot.draftRevision
+        || lastApplied.current === snapshot.draftRevision || !botDraftPatchMatchesChoices(snapshot, next.patch)) return false;
+      if (next.patch.recipe !== undefined && (!editableRecipe || draft.recipe?.jevInboxLabeling)) return false;
       lastApplied.current = snapshot.draftRevision;
-      change(proposal.patch);
+      setProposal({ id: next.proposalId, revision: next.baseDraftRevision + 1, summary: describeChanges(draft, next.patch) });
+      change(next.patch);
       setReview(true);
       return true;
     },
   });
-  const send = async () => {
-    if (await conversation.send(conversation.text)) conversation.setText("");
+  const send = async (suggestion?: string) => {
+    if (proposal && (suggestion || conversation.text.trim())) {
+      setReview(false);
+      setProposal(null);
+    }
+    if (suggestion) await conversation.answer(suggestion);
+    else if (await conversation.send(conversation.text)) conversation.setText("");
   };
   const disabled = pending || !conversation.available || conversation.busy || Boolean(conversation.activeRunId);
   const question = conversation.question?.baseDraftRevision === currentRevision.number ? conversation.question : null;
+  const currentProposal = proposal?.revision === currentRevision.number ? proposal : null;
+  const proposedRun = currentProposal && conversation.detail?.activities.find(item => item.type === "bot.draft.proposed" && item.proposalId === currentProposal.id)?.runId;
+  const confirmation = proposedRun && conversation.detail?.messages.filter(message => message.role === "assistant"
+    && message.chatId === conversation.detail?.record.chat.id && message.runId === proposedRun).at(-1)
+    ?.parts.flatMap(part => part.type === "text" ? [part.text] : []).join("").trim();
+  const summary = currentProposal?.summary !== "No configuration changes." && confirmation && confirmation.length <= 140 && !/[\r\n]/.test(confirmation) ? confirmation : currentProposal?.summary;
   return <section aria-label="Agent setup conversation" className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4">
     <div className="grid min-w-0 content-start gap-4">
-      {recipeContext ? <AgentSetupResources context={recipeContext} catalog={recipes} /> : null}
       <AgentSetupTranscript detail={conversation.detail} questions={conversation.questions}
-        openingMessageId={conversation.openingMessageId} question={question} disabled={disabled}
-        onAnswer={value => { void conversation.answer(value); }} />
+        openingMessageId={conversation.openingMessageId} question={question} reviewing={Boolean(proposal) && !disabled} disabled={disabled}
+        onAnswer={value => { void send(value); }} />
       {conversation.busy ? <p role="status" className="text-sm" style={chatAgentMutedStyle}>Thinking…</p> : null}
       {resourcesLoading ? <p role="status" className="text-sm" style={chatAgentMutedStyle}>Loading setup resources…</p> : null}
       {!resourcesLoading && !pending && !conversation.available && !conversation.accessLost ? <p className="text-sm" role="status">Setup Chat is unavailable.</p> : null}
@@ -96,14 +122,17 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
       </div> : null}
       {conversation.activeRunId && !conversation.busy ? <button type="button" className={`${chatAgentButtonClass} justify-self-start`}
         onClick={() => void conversation.refresh()}>Check setup progress</button> : null}
-      {children ? review ? <section className="grid gap-3 rounded-xl border p-4" aria-label="Configuration preview">
-        <h3 className="text-sm font-semibold">Configuration preview</h3>
+      <AgentSetupResources context={recipeContext} recipe={recipe} catalog={recipes}>
         {onOpenResourceSettings ? <div className="flex flex-wrap gap-2" aria-label="Resource settings">
           <button type="button" className={chatAgentButtonClass} disabled={pending} onClick={() => openSettings("integrations")}>Integration settings</button>
           <button type="button" className={chatAgentButtonClass} disabled={pending} onClick={() => openSettings("mcp")}>MCP settings</button>
           {resourceVisit > 0 && onRefreshResources ? <button type="button" className={chatAgentButtonClass} disabled={pending || resourcesLoading}
             onClick={onRefreshResources}>Check resources</button> : null}
         </div> : null}
+      </AgentSetupResources>
+      {children ? review ? <section key={proposal?.id ?? "manual"} className="grid gap-3 rounded-xl border p-4" aria-label="Configuration preview">
+        <h3 className="text-sm font-semibold">Configuration preview</h3>
+        {summary ? <p className="text-sm" role="status">{summary}</p> : null}
         {children}
       </section> : <button type="button" className="justify-self-start text-sm underline underline-offset-4"
         disabled={pending} onClick={() => setReview(true)}>Review configuration</button> : null}

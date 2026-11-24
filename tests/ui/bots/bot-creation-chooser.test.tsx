@@ -321,6 +321,8 @@ it("uses the selected native recipe version and confirms the reviewed configurat
     seed: { kind: "recipe", ...ref }, draft: expect.objectContaining({ name: recipe.name, instructions: context.instructions }),
   }) }));
   expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Recipe resources" })).toBeNull();
+  fireEvent.click(screen.getByText("Skills, sources & permissions"));
   expect(screen.getByRole("region", { name: "Recipe resources" })).toHaveTextContent("Gmail");
   fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));

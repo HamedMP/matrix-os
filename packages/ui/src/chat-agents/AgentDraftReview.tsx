@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
+import * as Collapsible from "@radix-ui/react-collapsible";
 import type { ChatAgentRecipeCatalog } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
 import type { AgentDraft } from "./AgentEditor.js";
@@ -21,11 +22,13 @@ export function AgentDraftReview({ draft, catalog, models, children }: {
     ["Model", model?.modelLabel ?? draft.selection?.model],
   ].filter(([, value]) => value);
   return <>
-    {!editing && rows.length > 0 ? <dl className="grid gap-2 text-sm">
+    {!editing && rows.length > 0 ? <Collapsible.Root>
+      <Collapsible.Trigger type="button" className="text-sm underline underline-offset-4">Configuration details</Collapsible.Trigger>
+      <Collapsible.Content><dl className="mt-2 grid gap-2 text-sm">
       {rows.map(([label, value]) => <div key={label} className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-3">
         <dt style={chatAgentMutedStyle}>{label}</dt><dd className="min-w-0 whitespace-pre-wrap break-words">{value}</dd>
       </div>)}
-    </dl> : null}
+    </dl></Collapsible.Content></Collapsible.Root> : null}
     <button type="button" className="justify-self-start text-sm underline underline-offset-4" aria-expanded={editing} aria-controls={fieldsId}
       onClick={() => setEditing(value => !value)}>{editing ? "Show preview" : "Edit configuration"}</button>
     {editing ? <div id={fieldsId} className="grid gap-3">{children}</div> : null}
