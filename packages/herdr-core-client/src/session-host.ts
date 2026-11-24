@@ -61,6 +61,11 @@ export interface HerdrSessionHostOptions {
   idleMs?: number;
   now?: () => number;
   random?: () => number;
+  /**
+   * How long one core call may take. A desktop link (spec 2716) waits for the
+   * owner's approval on the desktop, so it allows longer than a local core.
+   */
+  callTimeoutMs?: number;
 }
 
 export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: HcSessionSink) {
@@ -89,7 +94,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     });
     try {
       const opened = await Promise.race([
-        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: CALL_TIMEOUT_MS }),
+        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS }),
         abandoned,
       ]);
       return restrictHcConnection(opened, ALLOWED_METHODS);
