@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { BotCreationSnapshotSchema, BotCreationDraftSchema, BotCreationDraftPatchSchema, CanonicalCreateChatTurnRequestSchema, BotToolRequestSchema } from "@matrix-os/contracts";
+import { BotCreationSnapshotSchema, BotSetupQuestionSchema, BotCreationDraftSchema, BotCreationDraftPatchSchema, CanonicalCreateChatTurnRequestSchema, BotToolRequestSchema } from "@matrix-os/contracts";
 
 export const snapshot = { sessionId: "creation_test", draftRevision: 0, seed: { kind: "scratch" }, draft: { name: "", description: "", instructions: "", selection: null } };
 it("accepts incomplete bounded drafts and lossless options, recipe removal and executor intent", () => {
@@ -30,4 +30,16 @@ it("validates the real turn snapshot and strictly advertised broker patch", () =
   expect(CanonicalCreateChatTurnRequestSchema.parse(input).botCreation).toEqual(snapshot);
   expect(BotToolRequestSchema.parse({ toolCallId: "draft_tool", capability: "bot.creation.propose", args: { patch: { name: "Planner" } } }).capability).toBe("bot.creation.propose");
   expect(BotToolRequestSchema.safeParse({ toolCallId: "draft_tool", capability: "bot.creation.propose", args: { patch: { name: "Planner" }, ownerId: "other" } }).success).toBe(false);
+});
+
+it("keeps new setup questions compact while reopening older saved suggestions without truncation", () => {
+  const question = { question: "Which customers do you support?", suggestedReplies: ["New customers", "Returning customers"] };
+  const request = (args: typeof question) => BotToolRequestSchema.safeParse({ toolCallId: "ask_setup", capability: "bot.creation.propose", args }).success;
+  expect(request(question)).toBe(true);
+  const longer = { ...question, question: "Tell me more. ".repeat(12) + "What should I do?" };
+  expect(request(longer)).toBe(false);
+  expect(request({ ...question, suggestedReplies: ["A".repeat(60), "Existing customers"] })).toBe(false);
+  expect(request({ ...question, question: "Here are the current settings.\nWhich customers do you support?" })).toBe(false);
+  const stored = { ...longer, proposalId: "proposal_previous", sessionId: "setup_previous", baseDraftRevision: 0 };
+  expect(BotSetupQuestionSchema.parse(stored)).toEqual(stored);
 });

@@ -42,14 +42,21 @@ export const BotDraftProposalSchema = z.object({
   baseDraftRevision: BotCreationSnapshotSchema.shape.draftRevision,
   patch: BotCreationDraftPatchSchema,
 }).strict();
-export const BotSetupQuestionInputSchema = z.object({
-  question: canonicalBoundedText(800, 3200),
-  suggestedReplies: z.array(canonicalBoundedText(100, 400)).min(2).max(3)
-    .refine(replies => new Set(replies.map(reply => reply.trim().toLowerCase())).size === replies.length, {
-      message: "Preferred replies must be distinct",
-    }),
-}).strict();
-export const BotSetupQuestionSchema = BotDraftProposalSchema.omit({ patch: true }).extend(BotSetupQuestionInputSchema.shape).strict();
+function setupQuestionFields(questionLimit: number, replyLimit: number) {
+  return {
+    question: canonicalBoundedText(questionLimit, questionLimit * 4),
+    suggestedReplies: z.array(canonicalBoundedText(replyLimit, replyLimit * 4)).min(2).max(3)
+      .refine(replies => new Set(replies.map(reply => reply.trim().toLowerCase())).size === replies.length, {
+        message: "Preferred replies must be distinct",
+      }),
+  };
+}
+const compactQuestion = setupQuestionFields(140, 48);
+export const BotSetupQuestionInputSchema = z.object(compactQuestion).strict()
+  .refine(({ question, suggestedReplies }) => [question, ...suggestedReplies].every(text => !/[\r\n\u2028\u2029]/.test(text)),
+    { message: "Use a single line for the question and each reply" });
+// Existing setup activities can contain longer questions; preserve them on replay.
+export const BotSetupQuestionSchema = BotDraftProposalSchema.omit({ patch: true }).extend(setupQuestionFields(800, 100)).strict();
 export type BotSetupQuestion = z.infer<typeof BotSetupQuestionSchema>;
 export type BotCreationDraft = z.infer<typeof BotCreationDraftSchema>;
 export type BotCreationDraftPatch = z.infer<typeof BotCreationDraftPatchSchema>;
