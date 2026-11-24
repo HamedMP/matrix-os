@@ -97,6 +97,14 @@ describe("Terminal window", () => {
     expect(previews()).toEqual(["computer:pr2"]);
     fireEvent.change(screen.getByRole("textbox", { name: "Filter spaces" }), { target: { value: "" } });
 
+    // A filter that matches nothing says so and offers to clear it (ux-guide: empty states).
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter spaces" }), { target: { value: "nothing-here" } });
+    expect(screen.getByText("No spaces match “nothing-here”")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect((screen.getByRole("textbox", { name: "Filter spaces" }) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByText(/No spaces match/)).toBeNull();
+    expect(shown()).toEqual(["local", "computer:primary", "computer:two"]);
+
     const kinds = screen.getByRole("group", { name: "Kinds of spaces" });
     fireEvent.click(within(kinds).getByRole("button", { name: "Additional" }));
     expect(within(kinds).getByRole("button", { name: "Additional" }).getAttribute("aria-pressed")).toBe("false");

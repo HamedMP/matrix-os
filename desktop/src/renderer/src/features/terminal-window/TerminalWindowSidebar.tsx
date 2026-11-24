@@ -12,7 +12,8 @@ import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
 import { AllSpacesRow, SpaceList, inOrder, orderedSpaces, spaceId, type SpaceEntry } from "./SidebarSpaces";
-import { filterActive, filterSpaces, type SpaceGroup } from "./spaces-filter";
+import { filterActive, filterSpaces, spacesEmptyMessage, type SpaceGroup } from "./spaces-filter";
+import { Button } from "../../design/primitives";
 import { SpacesFilterBar } from "./SpacesFilterBar";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
@@ -262,6 +263,16 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
       <SpaceList label="Machines" entries={entries} styles={props.spaceStyles}
         expanded={props.expandedSpaces} onToggleExpanded={props.onToggleSpaceExpanded}
         onStyle={props.onSpaceStyle} onReorder={reorder} />
+      {query.trim() !== "" && entries.length === 0 && previews.length === 0 ? (
+        // An empty result says so and offers the way back (ux-guide: empty states).
+        <div role="status" className="flex items-center gap-2 px-3 py-1 text-[12px]" style={secondaryText}>
+          <span className="min-w-0 truncate">{spacesEmptyMessage(query)}</span>
+          <Button variant="ghost" onClick={() => props.onSpacesQuery("")} className="shrink-0"
+            style={{ height: 20, padding: "0 6px", fontSize: 12 }}>
+            Clear filter
+          </Button>
+        </div>
+      ) : null}
       {previews.length > 0 ? (
         <div>
           <button type="button" aria-expanded={previewsOpen} onClick={props.onTogglePreviews}

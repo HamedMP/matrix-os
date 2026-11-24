@@ -73,3 +73,8 @@ export function filterActive(query: string, hidden: readonly SpaceGroup[]): bool
 export function computerSpaceGroup(computer: { kind: string; label: string }): SpaceGroup {
   return computer.kind === "preview" ? "preview" : computer.label === "Main Computer" ? "main" : "additional";
 }
+
+/** The line Spaces shows when a typed filter matches nothing. */
+export function spacesEmptyMessage(query: string): string {
+  return `No spaces match “${query.trim().slice(0, SPACES_QUERY_MAX)}”`;
+}
