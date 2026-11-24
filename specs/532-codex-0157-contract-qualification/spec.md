@@ -2,6 +2,8 @@
 
 Latest exact qualification is [0.172.0 / ENG-571](evidence/qualification-01720.md). Earlier evidence covers [0.169.1 through 0.171.0](evidence/qualification-01710.md) and [0.169.0](evidence/qualification-01690.md). Historical evidence below remains scoped to its recorded version.
 
+Managed pin: [0.171.0 / ENG-541](evidence/promotion-01710.md) is the installed/runtime-selected release. Statements below that the pin stays at an earlier version describe the time of that qualification.
+
 **Status:** Exact 0.157.0 contract records implemented. Review and final-head CI remain required; installer promotion is out of scope.
 
 The scheduled Codex provider contract workflow resolved published `@openai/codex@0.157.0` and failed on both `linux-x64` and `darwin-arm64` at the intentional `latestVerifiedVersion` guard. The installed customer tool remains pinned to 0.156.1. This work qualifies the **exact** 0.157.0 exec JSONL source and experimental app-server protocol against Matrix's provider adapter; it does not promote the customer installer, permit arbitrary future versions, or change Claude MCP behavior.

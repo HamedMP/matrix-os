@@ -50,12 +50,12 @@ function threadDeleteContract(schema: Schema) {
 }
 
 // The discard relies on thread/delete from the retained generated schemas, not an invented call.
-it("uses the thread/delete request retained unchanged from the verified Codex version through 0.171", () => {
-  expect(CODEX_VERIFIED_VERSION).toMatch(/^0\.162\./);
-  const verified = threadDeleteContract(appServerSchema("0162"));
-  expect(verified.branches).toHaveLength(1);
-  expect(verified.branches[0]).toMatchObject({ required: ["id", "method", "params"], properties: { params: { $ref: "#/definitions/v2/ThreadDeleteParams" } } });
-  expect(verified.params).toMatchObject({ required: ["threadId"], properties: { threadId: { type: "string" } } });
-  expect(Object.keys(verified.params.properties)).toEqual(["threadId"]);
-  expect(threadDeleteContract(appServerSchema("0171"))).toEqual(verified);
+it("keeps the managed Codex thread/delete contract compatible with 0.162", () => {
+  const managedFixtureId = CODEX_VERIFIED_VERSION.split(".").slice(0, 2).join("");
+  const managed = threadDeleteContract(appServerSchema(managedFixtureId));
+  expect(managed.branches).toHaveLength(1);
+  expect(managed.branches[0]).toMatchObject({ required: ["id", "method", "params"], properties: { params: { $ref: "#/definitions/v2/ThreadDeleteParams" } } });
+  expect(managed.params).toMatchObject({ required: ["threadId"], properties: { threadId: { type: "string" } } });
+  expect(Object.keys(managed.params.properties)).toEqual(["threadId"]);
+  expect(managed).toEqual(threadDeleteContract(appServerSchema("0162")));
 });
