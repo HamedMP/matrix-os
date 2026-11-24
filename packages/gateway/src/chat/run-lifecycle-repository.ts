@@ -392,7 +392,7 @@ export class ChatRunLifecycleRepository {
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
       await assertPrivateRoutineRun(trx, owner, chatId, runId);
-      const proposals = activities.filter(activity => activity.type === "bot.draft.proposed");
+      const proposals = activities.filter(activity => activity.type === "bot.draft.proposed" || activity.type === "bot.setup.question");
       if (proposals.length) {
         if (owner.type !== "personal" || current.collaboration || current.project_id || current.lifecycle !== "active"
           || new Set(proposals.map(proposal => proposal.id)).size !== 1
@@ -400,10 +400,11 @@ export class ChatRunLifecycleRepository {
         const saved = await trx.selectFrom("chat_runs").selectAll().where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirstOrThrow();
         for (const proposal of proposals) assertBotDraftProposalAuthority(toRun(saved), {
           type: proposal.type, proposalId: proposal.proposalId, sessionId: proposal.sessionId,
-          baseDraftRevision: proposal.baseDraftRevision, patch: proposal.patch,
+          baseDraftRevision: proposal.baseDraftRevision,
+          ...("patch" in proposal ? { patch: proposal.patch } : { question: proposal.question, suggestedReplies: proposal.suggestedReplies }),
         });
         const previous = await trx.selectFrom("chat_run_events").select("id").where("run_id", "=", runId)
-          .where(sql<string>`event->>'type'`, "=", "bot.draft.proposed").limit(1).executeTakeFirst();
+          .where(sql<string>`event->>'type'`, "in", ["bot.draft.proposed", "bot.setup.question"]).limit(1).executeTakeFirst();
         if (previous && previous.id !== proposals[0]!.id) throw new ChatConflictError(chatId, Number(current.revision));
       }
       if (expectedInputClaim) {

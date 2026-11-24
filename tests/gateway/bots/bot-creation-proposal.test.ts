@@ -65,3 +65,22 @@ it("allows available Skill and source intent but rejects an invented account bef
   expect(events).toHaveLength(1);
   await tools.closeRun(scoped.runId);
 });
+
+it("records a model's preferred replies on the admitted setup run without changing its draft", async () => {
+  const { tools, events, signal, authority } = setup();
+  const botCreation = { ...snapshot, intent: "open" as const };
+  const scoped = { ...binding, botCreation };
+  authority.mockResolvedValue({ permissionMode: "supervised", botCreation });
+  await tools.open(scoped, event => events.push(event));
+  const args = { question: "Where should the brief draw from?", suggestedReplies: ["Existing notes", "My calendar", "Decide later"] };
+  const command = { capability: "bot.creation.propose", toolCallId: "ask_sources", args };
+  expect(BotToolRequestSchema.safeParse({ ...command, args: { ...args, grant: true } }).success).toBe(false);
+  expect(BotToolRequestSchema.safeParse({ ...command, args: { ...args, suggestedReplies: ["Yes", " yes "] } }).success).toBe(false);
+  await tools.dispatch(scoped, BotToolRequestSchema.parse(command), signal.signal);
+  const event = CanonicalProviderRunEventSchema.parse(events[0]);
+  expect(event).toMatchObject({ type: "bot.setup.question", ...args, sessionId: snapshot.sessionId, baseDraftRevision: 3 });
+  expect(activityPersistenceId(binding.runId, event)).toBe(activityPersistenceId(binding.runId, event));
+  await expect(tools.dispatch(scoped, request("also_patch"), signal.signal)).rejects.toThrow();
+  expect(events).toHaveLength(1);
+  await tools.closeRun(binding.runId);
+});

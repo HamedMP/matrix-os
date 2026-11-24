@@ -35,7 +35,8 @@ export async function prepareChatSessionContext(input: {
   resumeState: unknown; context?: ChatRunContext;
 }): Promise<ChatRunContext | undefined> {
   const context = contextForChatSession(input.context, input.resumeState);
-  if (input.resumeState !== undefined || input.instanceId === MATRIX_BOT_INSTANCE_ID || input.throughSeq === 0) return context;
+  // Managed Pi resumes the setup Chat's own tool conversation, including preferred replies.
+  if (context?.botCreation || input.resumeState !== undefined || input.instanceId === MATRIX_BOT_INSTANCE_ID || input.throughSeq === 0) return context;
   // Retry preserves the original admitted history, not replies from its failed attempt.
   if (context?.history && context.history.throughSeq === input.throughSeq) return context;
   const detail = await input.repository.getDetailPage(input.owner, input.chatId, {

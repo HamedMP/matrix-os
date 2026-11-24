@@ -1,3 +1,4 @@
+import type { BotCreationSnapshot } from "@matrix-os/contracts";
 import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
 import { sql, type Expression, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
@@ -38,6 +39,19 @@ export async function assertPrivateRoutineRequest(executor: Executor, owner: Cha
   if (owner.type !== "personal" || await hasNonPrivateChatScope(executor, owner, chatId) || !await slackRulePublicationCurrent(executor,owner.ownerId,chatId,requestId)) {
     throw new ChatConflictError(chatId, 0);
   }
+}
+
+/** Managed Pi stores its transcript by owner and Chat; a setup Chat may resume only its own seed/session.
+ * Called under the Chat row lock for direct and queued admissions before any content is written. */
+export async function assertPrivateChatAdmission(executor: Executor, owner: ChatOwner, chatId: string,
+  requestId: string, setup?: BotCreationSnapshot): Promise<void> {
+  await assertPrivateRoutineRequest(executor, owner, chatId, requestId);
+  const history = executor.selectFrom("chat_runs").select("id").where("chat_id", "=", chatId);
+  const incompatible = setup
+    ? history.where(sql<boolean>`(context_snapshot->'botCreation'->>'sessionId' IS DISTINCT FROM ${setup.sessionId}
+      OR context_snapshot->'botCreation'->'seed' IS DISTINCT FROM ${JSON.stringify(setup.seed)}::jsonb)`)
+    : history.where(sql<boolean>`context_snapshot->'botCreation' IS NOT NULL`);
+  if (await incompatible.limit(1).executeTakeFirst()) throw new ChatConflictError(chatId, 0);
 }
 
 /** Preserve private source identity when an automatic queue is steered into an ordinary turn or retried. */

@@ -6,14 +6,17 @@ import { registerCanonicalChatEventHttpRoute } from "../../../packages/gateway/s
 const stamp = "2026-10-14T00:00:00.000Z";
 const record = CanonicalChatRecordSchema.parse({ chat: { id: "chat_wire", ownerScope: { type: "personal", ownerId: "owner" }, title: "Wire", lifecycle: "active", attention: "none", revision: 0, messageCount: 0, createdAt: stamp, updatedAt: stamp } });
 const proposal: CanonicalChatRunActivity = { type: "bot.draft.proposed", id: "activity_wire", chatId: "chat_wire", runId: "run_wire", occurredAt: stamp, proposalId: "proposal_wire", sessionId: "creation_wire", baseDraftRevision: 0, patch: { name: "Planner" } };
-const detail = { record, messages: [], turns: [], runs: [], activities: [proposal] };
-it.each([undefined, "0", "1"])("negotiates HTTP activity projection at Bot drafting wire %s", async version => {
+const question: CanonicalChatRunActivity = { type: "bot.setup.question", id: "activity_q", chatId: "chat_wire", runId: "run_setup", occurredAt: stamp, proposalId: "proposal_q", sessionId: "creation_wire", baseDraftRevision: 0, question: "Which source?", suggestedReplies: ["Calendar", "Email"] };
+const detail = { record, messages: [], turns: [], runs: [], activities: [proposal, question] };
+const projected = (version?: string) => version === "2" ? detail.activities : version === "1" ? [proposal] : [];
+
+it.each([undefined, "0", "1", "2"])("negotiates HTTP activity projection at Bot drafting wire %s", async version => {
   const app = createCanonicalChatRoutes({ getPrincipal: () => ({ userId: "owner", source: "jwt" }), service: { getDetail: async () => detail } as unknown as CanonicalChatRouteService });
   const response = await app.request(`/api/chats/chat_wire${version === undefined ? "" : `?botCreationVersion=${version}`}`);
   expect(response.status).toBe(200);
-  expect((await response.json()).activities).toEqual(version === "1" ? [proposal] : []);
+  expect((await response.json()).activities).toEqual(projected(version));
 });
-it.each([undefined, "0", "1"])("negotiates live/replay SSE activity projection at Bot drafting wire %s", async version => {
+it.each([undefined, "0", "1", "2"])("negotiates live/replay SSE activity projection at Bot drafting wire %s", async version => {
   const app = new Hono();
   registerCanonicalChatEventHttpRoute({ app, getPrincipal: () => ({ userId: "owner", source: "jwt" }), stream: { open: async ({ sink }) => {
     sink.send({ type: "chat.content", event: { cursor: 1, chatId: "chat_wire", revision: 0, eventType: "run.activity", createdAt: stamp }, content: detail });
@@ -23,10 +26,10 @@ it.each([undefined, "0", "1"])("negotiates live/replay SSE activity projection a
   const reader = response.body!.getReader();
   try {
     const frame = JSON.parse(new TextDecoder().decode((await reader.read()).value).split("data: ")[1]!.trim());
-    expect(frame.content.activities).toEqual(version === "1" ? [proposal] : []);
+    expect(frame.content.activities).toEqual(projected(version));
   } finally { await reader.cancel(); }
 });
-it.each(["2", "1&botCreationVersion=0"])("rejects unsupported/duplicate drafting versions before transport attach", async version => {
+it.each(["3", "1&botCreationVersion=0"])("rejects unsupported/duplicate drafting versions before transport attach", async version => {
   const getDetail = vi.fn();
   const app = createCanonicalChatRoutes({ getPrincipal: () => ({ userId: "owner", source: "jwt" }), service: { getDetail } as unknown as CanonicalChatRouteService });
   expect((await app.request(`/api/chats/chat_wire?botCreationVersion=${version}`)).status).toBe(400);

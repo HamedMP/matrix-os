@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { canonicalEncodedByteLength, canonicalReferenceId } from "#canonical-chat-primitives";
+import { canonicalBoundedText, canonicalEncodedByteLength, canonicalReferenceId } from "#canonical-chat-primitives";
 import { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
 import { ChatAgentRecipeSchema } from "#chat-agent-recipe";
 
@@ -23,7 +23,11 @@ export const BotCreationDraftPatchSchema = BotCreationDraftSchema.pick({ name: t
 export const BotCreationSnapshotSchema = z.object({
   sessionId: canonicalReferenceId(128),
   draftRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  seed: z.object({ kind: z.literal("scratch") }).strict(),
+  intent: z.enum(["open", "reply"]).optional(),
+  seed: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("scratch") }).strict(),
+    z.object({ kind: z.literal("recipe"), recipeId: canonicalReferenceId(128), version: canonicalReferenceId(64) }).strict(),
+  ]),
   choices: z.object({
     skills: z.array(canonicalReferenceId(160)).max(256),
     services: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,79}$/)).max(128),
@@ -38,6 +42,15 @@ export const BotDraftProposalSchema = z.object({
   baseDraftRevision: BotCreationSnapshotSchema.shape.draftRevision,
   patch: BotCreationDraftPatchSchema,
 }).strict();
+export const BotSetupQuestionInputSchema = z.object({
+  question: canonicalBoundedText(800, 3200),
+  suggestedReplies: z.array(canonicalBoundedText(100, 400)).min(2).max(3)
+    .refine(replies => new Set(replies.map(reply => reply.trim().toLowerCase())).size === replies.length, {
+      message: "Preferred replies must be distinct",
+    }),
+}).strict();
+export const BotSetupQuestionSchema = BotDraftProposalSchema.omit({ patch: true }).extend(BotSetupQuestionInputSchema.shape).strict();
+export type BotSetupQuestion = z.infer<typeof BotSetupQuestionSchema>;
 export type BotCreationDraft = z.infer<typeof BotCreationDraftSchema>;
 export type BotCreationDraftPatch = z.infer<typeof BotCreationDraftPatchSchema>;
 export type BotCreationSnapshot = z.infer<typeof BotCreationSnapshotSchema>;

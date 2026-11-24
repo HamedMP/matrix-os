@@ -203,6 +203,20 @@ describe("bot agent loop", () => {
       .toMatchObject({ toolCallId: sdkId });
   });
 
+  it("completes a displayed setup question in one inference and retains the model's choices in history", async () => {
+    const args = { question: "Which sources should the brief use?", suggestedReplies: ["Calendar", "Email", "Both"] };
+    const { handle, route } = scripted([
+      fauxAssistantMessage(fauxToolCall("ask_bot_setup_question", args, { id: "setup_question" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Redundant follow-up")),
+    ]);
+    const { broker, tools, saves } = memoryBroker();
+    const result = await run({ broker, route, command: command({ capabilities: ["bot.creation.propose"] }) });
+    expect(result).toMatchObject({ status: "completed", toolActions: 1 });
+    expect(tools).toEqual([expect.objectContaining({ capability: "bot.creation.propose", args })]);
+    expect(handle.getPendingResponseCount()).toBe(1);
+    expect(JSON.stringify(saves[0]?.messages)).toContain(args.question);
+  });
+
   it("ends the turn waiting for the person after a blocking question", async () => {
     const { handle, route } = scripted([
       fauxAssistantMessage(fauxToolCall("ask_person", { header: "Competitor", question: "Which company?", options: ["Acme", "Globex"], blocking: true }, { id: "call_ask" }), { stopReason: "toolUse" }),

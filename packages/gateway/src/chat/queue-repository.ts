@@ -1,6 +1,6 @@
 import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
 import { hasOwnerHttpInput, promotedOwnerHttpInput, type OwnerHttpInputProvenance } from "./owner-http-input.js";
-import { assertPrivateRoutineRequest, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
+import { assertPrivateChatAdmission, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
 import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
@@ -612,7 +612,7 @@ export class ChatQueueRepository {
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
-      await assertPrivateRoutineRequest(trx, owner, chatId, clientRequestId);
+      await assertPrivateChatAdmission(trx, owner, chatId, clientRequestId);
       if (chat.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }

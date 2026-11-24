@@ -1,4 +1,4 @@
-import { BotCreationDraftPatchSchema } from "#bot-creation-draft";
+import { BotCreationDraftPatchSchema, BotSetupQuestionInputSchema } from "#bot-creation-draft";
 import { SlackRuleOperationSchema } from "#bots/slack-rules";
 import { RoutineCliOperationSchema } from "#bots/routine-cli";
 import { BotToolDisplaySchema } from "#bots/tool-display";
@@ -60,7 +60,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
-  capability("bot.creation.propose", z.object({ patch: BotCreationDraftPatchSchema }).strict()),
+  capability("bot.creation.propose", z.union([z.object({ patch: BotCreationDraftPatchSchema }).strict(), BotSetupQuestionInputSchema])),
   capability("slack.rules", SlackRuleOperationSchema),
   capability("browser.action", SharedBrowserActionSchema),
   capability("github.developer", GithubDeveloperActionSchema),

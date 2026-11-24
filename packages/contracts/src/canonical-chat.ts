@@ -1,6 +1,6 @@
 import { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
 export { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
-import { BotDraftProposalSchema } from "#bot-creation-draft";
+import { BotSetupQuestionSchema, BotDraftProposalSchema } from "#bot-creation-draft";
 import { RoutineChatReceiptPartSchema } from "#routine-chat-receipt";
 import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "#browser-chat-approval";
 import { CanonicalChatCommandPreviewSchema } from "#command-preview";
@@ -508,6 +508,7 @@ export const CanonicalChatToolOutputTextSchema = canonicalSafeErrorText(4_000, 1
 
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({ type: z.literal("bot.draft.proposed"), ...BotDraftProposalSchema.shape }).strict(),
+  CanonicalChatRunActivityBaseSchema.extend({ type: z.literal("bot.setup.question"), ...BotSetupQuestionSchema.shape }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
     status: z.enum([

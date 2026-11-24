@@ -44,3 +44,17 @@ it("rejects a removed or shared private drafting Chat before dispatch on revalid
   get.mockResolvedValue({ chat: { id: "chat_draft", lifecycle: "archived", collaboration: null } });
   await expect(context.revalidate(owner, "chat_draft", admitted?.context)).rejects.toThrow();
 });
+
+it("grounds setup in listed recipe declarations before a model run can start", async () => {
+  const { context } = setup();
+  const seed = { kind: "recipe" as const, recipeId: "personal-daily-brief", version: "2026-09-27.1" };
+  const draft = { ...botCreation, intent: "open" as const, seed };
+  const admitted = await context.prepare(owner, "chat_draft", { ...input, botCreation: draft });
+  expect(admitted?.context?.botCreation).toEqual(draft);
+  const { createManagedPiSystemPrompt } = await import("../../../packages/gateway/src/chat/managed-pi-system-prompt.js");
+  const prompt = await createManagedPiSystemPrompt()({ owner, context: admitted?.context });
+  expect(prompt).toContain("ask_bot_setup_question");
+  expect(prompt).toContain("google_calendar");
+  expect(prompt).toContain("gmail");
+  await expect(context.prepare(owner, "chat_draft", { ...input, botCreation: { ...draft, seed: { ...seed, version: "future" } } })).rejects.toThrow();
+});

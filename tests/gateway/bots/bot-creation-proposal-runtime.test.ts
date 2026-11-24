@@ -1,3 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { fauxProvider, fauxAssistantMessage, fauxToolCall, fauxText } from "@earendil-works/pi-ai";
+import { runBotTurn } from "../../../packages/bot-runtime/src/loop.js";
+import { createBotBrokerActions } from "../../../packages/gateway/src/bots/broker-actions.js";
+import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
+import { createBotSessionsRepository } from "../../../packages/gateway/src/bots/repositories/sessions.js";
+import { createBotCheckpointsRepository } from "../../../packages/gateway/src/bots/repositories/checkpoints.js";
+import { createManagedPiSessionsRepository } from "../../../packages/gateway/src/chat/managed-pi-sessions.js";
+import { createManagedPiCheckpointsRepository } from "../../../packages/gateway/src/chat/managed-pi-checkpoints.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,13 +30,23 @@ import { sql, type Kysely } from "kysely";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
 import type { BotBrokerClient } from "../../../packages/bot-runtime/src/broker-client.js";
 
-it("carries an actual admitted draft tool through runtime, canonical persistence and owner-scoped wire readback", async () => {
+it.each([
+  { activity: "bot.draft.proposed", tool: "propose_bot_draft", args: { patch: { name: "Planner", instructions: "Help plan the day." } } },
+  { activity: "bot.setup.question", tool: "ask_bot_setup_question", args: { question: "Which days should the brief cover?", suggestedReplies: ["Weekdays", "Every day"] } },
+] as const)("carries an admitted $activity through the runtime, canonical persistence and owner wire readback", async fixture => {
   // Deterministic tool fixture exercises the production bridge; it is not model/live acceptance.
   const { db, destroy } = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   const home = await mkdtemp(join(tmpdir(), "bot-creation-proposal-"));
   const lifetime = new AbortController(); const registry = new BotRuntimeRegistry();
   const providerSnapshot = makeAiProviderSnapshot();
-  const createRuntime = vi.fn(async (input: unknown) => { void input; return { runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "1", state: "running" }; });
+  const model = fauxProvider({ models: [{ id: "claude-sonnet-5", input: ["text"], contextWindow: 128000, maxTokens: 8192 }] });
+  const contexts: string[] = [];
+  model.setResponses([
+    fauxAssistantMessage(fauxToolCall(fixture.tool, fixture.args, { id: "setup_event" }), { stopReason: "toolUse" }),
+    fauxAssistantMessage(fauxText("I have the details.")),
+  ].map(response => context => { contexts.push(JSON.stringify(context)); return response; }));
+  let generation = 0;
+  const createRuntime = vi.fn(async (input: unknown) => { void input; return { runtimeHandle: `runtime_${(++generation).toString(16).padStart(32, "0")}`, executionGeneration: "1", state: "running" }; });
   const host = { available: true, client: { createRuntime, renewRuntime: vi.fn(async () => undefined), stopRuntime: vi.fn(async () => undefined), runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { runId: string } }) => {
     const binding = registry.lookupRun({ ...request, runId: request.command.runId });
     if (!binding || !("kind" in binding)) throw new Error("Missing managed binding");
@@ -35,19 +54,35 @@ it("carries an actual admitted draft tool through runtime, canonical persistence
     expect(spec.capabilities).toEqual(["bot.creation.propose"]);
     expect(spec.systemPrompt).toContain("configure a Bot creation draft");
     expect(spec.turn).toMatchObject({ text: expect.stringContaining("creation_runtime") });
-    const tools = createBotTools({ capabilities: spec.capabilities, broker: { tool: (input: Parameters<typeof ownerTools.dispatch>[1]) => ownerTools.dispatch(binding, input, lifetime.signal) } as unknown as BotBrokerClient, state: { waitingForPerson: false, effectUnknown: false } });
-    expect(tools.map(tool => tool.name)).toEqual(["propose_bot_draft"]);
-    await tools[0]!.execute("model_tool_fixture", { patch: { name: "Planner", instructions: "Help plan the day." } }, lifetime.signal);
-    await vi.waitFor(async () => expect((await repository.getDetailPage({ type: "personal", ownerId: OWNER }, binding.chatId, { limit: 100 }))!.activities.some(activity => activity.type === "bot.draft.proposed")).toBe(true), { timeout: 5000 });
-    const persisted = (await repository.getDetailPage({ type: "personal", ownerId: OWNER }, binding.chatId, { limit: 100 }))!.activities.find(activity => activity.type === "bot.draft.proposed")!;
+    const call = async (body: Record<string, unknown>) => {
+      const frame = { version: 1, requestId: randomUUID(), runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration, runId: binding.runId, ...body };
+      const reply = await actions.handleFrame(frame);
+      if (!reply?.ok) throw new Error("Setup bridge rejected " + body.action);
+      return reply.result;
+    };
+    const broker: BotBrokerClient = {
+      loadSession: () => call({ action: "bot.session.load" }) as never,
+      saveSession: session => call({ action: "bot.session.save", session }) as never,
+      event: async event => { await call({ action: "bot.event", event }); },
+      tool: tool => call({ action: "bot.tool", tool }) as never,
+    };
+    const reply = await runBotTurn({ command: { ...spec, version: 1, kind: "bot.run", runId: binding.runId }, broker,
+      bridgeOrigin: "http://127.0.0.1:41000", route: { provider: model.provider, model: model.getModel() } });
+    if (reply.toolActions === 0) return { ok: true, reply };
+    await vi.waitFor(async () => expect((await repository.getDetailPage({ type: "personal", ownerId: OWNER }, binding.chatId, { limit: 100 }))!.activities.some(activity => activity.type === fixture.activity)).toBe(true), { timeout: 5000 });
+    const persisted = (await repository.getDetailPage({ type: "personal", ownerId: OWNER }, binding.chatId, { limit: 100 }))!.activities.find(activity => activity.type === fixture.activity)!;
     await expect(repository.appendRunActivities({ type: "personal", ownerId: OWNER }, binding.chatId, binding.runId,
       [{ ...persisted, id: "activity_second", proposalId: "proposal_second" } as typeof persisted])).rejects.toThrow();
     expect(await repository.appendRunActivities({ type: "personal", ownerId: OWNER }, binding.chatId, binding.runId, [persisted])).toBe(0);
-    return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 1, sessionRevision: 1 } };
+    return { ok: true, reply };
   } } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots: { resolve: vi.fn() } });
   const ownerTools = createManagedPiOwnerTools({ authority: admission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding) });
   const runtime = createManagedPiRuntime({ admission, ownerTools, host, providers: { getSnapshot: async () => providerSnapshot }, lifetime: lifetime.signal, forgetRun: () => undefined, cancelInference: binding => registry.cancelInference(binding) });
+  const actions = createBotBrokerActions({ db, registry, sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
+    managedSessions: createManagedPiSessionsRepository(db), managedCheckpoints: createManagedPiCheckpointsRepository(db),
+    runs: runtime.runs, events: runtime.events, tools: createBotToolDispatcher({ homePath: home, managedWorkspace: admission.workspace, managedTools: ownerTools }),
+    inference: { homePath: home, lifetime: lifetime.signal } });
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const agentContext = new ChatAgentContext({ repository, agents: { get: vi.fn() }, botChats: { directBot: async (owner, chatId) => (await createBotBindingsRepository(db).forChat({ ownerId: owner.ownerId, chatId }))[0]?.botId ?? null }, enabled: () => true });
   const catalog = { getCatalog: async () => ({ revision: "creation_test", drivers: [{ kind: "matrix_pi" as const, displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" as const }], instances: managedPiChatInstances(providerSnapshot).map(instance => ({ ...instance, catalogRevision: "creation_test" })) }) };
@@ -55,20 +90,44 @@ it("carries an actual admitted draft tool through runtime, canonical persistence
   const owner = { type: "personal" as const, ownerId: OWNER };
   try {
     await repository.create(owner, { id: "chat_creation_runtime", clientRequestId: "req_creation_chat", title: "Create Bot" });
-    const botCreation = BotCreationSnapshotSchema.parse({ sessionId: "creation_runtime", draftRevision: 7, seed: { kind: "scratch" }, draft: { name: "", description: "", instructions: "", selection: null } });
+    const botCreation = BotCreationSnapshotSchema.parse({ sessionId: "creation_runtime", draftRevision: 7, intent: "reply", seed: { kind: "scratch" }, draft: { name: "", description: "", instructions: "", selection: null } });
     const accepted = await orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, "chat_creation_runtime", { clientRequestId: "req_creation_turn", baseRevision: 0, parts: [{ type: "text", text: "Create a daily planner draft" }], selection: { instanceId: "matrix_pi_default", model: "claude-sonnet-5" }, interactionMode: "default", permissionMode: "supervised", botCreation });
     expect(accepted.run.context?.botCreation).toEqual(botCreation);
     await vi.waitFor(async () => expect((await repository.get(owner, accepted.run.chatId))?.activeRun).toBeUndefined(), { timeout: 10_000 });
     const detail = await repository.getDetailPage(owner, accepted.run.chatId, { limit: 100 });
     expect(detail!.runs[0]?.status).toBe("completed");
-    expect(detail!.activities.filter(activity => activity.type === "bot.draft.proposed")).toEqual([expect.objectContaining({ sessionId: "creation_runtime", baseDraftRevision: 7, patch: { name: "Planner", instructions: "Help plan the day." } })]);
+    expect(detail!.activities.filter(activity => activity.type === fixture.activity)).toEqual([expect.objectContaining({ sessionId: "creation_runtime", baseDraftRevision: 7, ...fixture.args })]);
     CanonicalChatDetailResponseSchema.parse(projectChatBotCreationResponse(detail, "1"));
     const legacy = projectChatBotCreationResponse(detail, "0");
-    expect(legacy!.activities.some(activity => activity.type === "bot.draft.proposed")).toBe(false);
+    expect(legacy!.activities.some(activity => activity.type === fixture.activity)).toBe(false);
     expect(legacy!.runs[0]?.context).not.toHaveProperty("botCreation");
     expect(await repository.getDetailPage({ type: "personal", ownerId: "other_owner" }, accepted.run.chatId, { limit: 100 })).toBeNull();
     expect(await db.selectFrom("bot_chat_bindings").selectAll().execute()).toEqual([]);
     expect(createRuntime.mock.calls[0]?.[0]).toMatchObject({ sandbox: { worktree: { mode: "ro" } } });
+    // A private Pi transcript belongs to one setup conversation and seed, across all its turns.
+    const nextTurn = { clientRequestId: "req_other_setup", baseRevision: detail!.record.chat.revision,
+      parts: [{ type: "text" as const, text: "Start another agent." }], selection: accepted.run.selection,
+      interactionMode: "default", permissionMode: "supervised" };
+    for (const different of [
+      { ...botCreation, sessionId: "creation_other" },
+      { ...botCreation, seed: { kind: "recipe" as const, recipeId: "personal-daily-brief", version: "2026-09-27.1" } },
+      undefined,
+    ]) await expect(orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, accepted.run.chatId,
+      { ...nextTurn, botCreation: different })).rejects.toThrow();
+    expect(createRuntime).toHaveBeenCalledTimes(1);
+
+    if (fixture.activity === "bot.setup.question") {
+      const answer = "Weekdays, particularly Monday morning";
+      const followup = await orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, accepted.run.chatId,
+        { ...nextTurn, parts: [{ type: "text", text: answer }], botCreation: { ...botCreation, intent: "reply" } });
+      expect(followup.run.context?.history).toBeUndefined();
+      await vi.waitFor(async () => expect((await repository.get(owner, accepted.run.chatId))?.activeRun).toBeUndefined());
+      expect(contexts).toHaveLength(2);
+      for (const text of ["Create a daily planner draft", fixture.args.question, answer]) expect(contexts[1]).toContain(text);
+      const second = await repository.getDetailPage(owner, accepted.run.chatId, { limit: 100 });
+      expect(second!.runs.find(item => item.id === followup.run.id)?.status).toBe("completed");
+    }
+
     // An archived shared scope can outlive the Chat's visible collaboration marker.
     const reusedChat = "chat_previous_shared_scope";
     await repository.create(owner, { id: reusedChat, clientRequestId: "req_shared_chat", title: "Previously shared" });

@@ -1,3 +1,4 @@
+import { recipeSetupContext } from "../bots/recipe-setup-context.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { isManagedCustomBot } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "../bots/custom-procedure.js";
@@ -129,6 +130,8 @@ export class ChatAgentContext {
     const directBotId = await this.options.botChats?.directBot(owner, chatId);
     if (input.botCreation) {
       await this.assertDraftChat(owner, chatId, directBotId);
+      const seed = input.botCreation.seed;
+      if (seed.kind === "recipe" && !recipeSetupContext(seed)) throw new ChatAgentContextError("context_unavailable");
       if (input.executionRoot || input.routineCreation
         || input.permissionMode !== "supervised"
         || input.selection.instanceId !== "matrix_pi_default" || input.selection.options?.length

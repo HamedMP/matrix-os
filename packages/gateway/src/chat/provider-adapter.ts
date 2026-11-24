@@ -1,4 +1,4 @@
-import { BotDraftProposalSchema, ChatRunContextSchema } from "@matrix-os/contracts";
+import { BotSetupQuestionSchema, BotDraftProposalSchema, ChatRunContextSchema } from "@matrix-os/contracts";
 import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "@matrix-os/contracts";
 import { PlaintextToolPreviewSchema } from "./plaintext-tool-preview.js";
 import {
@@ -28,6 +28,7 @@ const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Z
 
 export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
   BotDraftProposalSchema.extend({ type: z.literal("bot.draft.proposed") }).strict(),
+  BotSetupQuestionSchema.extend({ type: z.literal("bot.setup.question") }).strict(),
   z.object({
     type: z.literal("assistant.delta"),
     messageId: SafeProviderRefSchema.optional(),

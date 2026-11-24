@@ -250,14 +250,20 @@ export function createManagedPiOwnerTools(deps: {
       }
       if (request.capability === "bot.creation.propose") {
         const snapshot = run.binding.botCreation;
-        if (!snapshot || run.proposed || !botDraftPatchMatchesChoices(snapshot, request.args.patch)) throw new BotBrokerActionError("denied");
-        const proposal = CanonicalProviderRunEventSchema.parse({ type: "bot.draft.proposed",
+        if (!snapshot || run.proposed) throw new BotBrokerActionError("denied");
+        const args = request.args;
+        if ("patch" in args ? !botDraftPatchMatchesChoices(snapshot, args.patch) : !snapshot.intent) {
+          throw new BotBrokerActionError("denied");
+        }
+        const proposal = CanonicalProviderRunEventSchema.parse({
+          type: "patch" in args ? "bot.draft.proposed" : "bot.setup.question",
           proposalId: `proposal_${randomUUID().replaceAll("-", "")}`, sessionId: snapshot.sessionId,
-          baseDraftRevision: snapshot.draftRevision, patch: request.args.patch });
+          baseDraftRevision: snapshot.draftRevision, ...args,
+        });
         // No await between the one-proposal claim and emission; concurrent tool calls cannot both win.
         run.proposed = true;
         run.emit(proposal);
-        return text({ proposed: true });
+        return text("patch" in args ? { proposed: true } : { questionDisplayed: true, awaitOwnerReply: true });
       }
       if (request.capability === "integration.inventory") {
         const rows = await deps.integrations!.inventory(binding.ownerId, signal);
