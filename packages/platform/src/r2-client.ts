@@ -50,6 +50,7 @@ export interface R2Client {
     key: string,
     options?: { signal?: AbortSignal },
   ): Promise<{ exists: boolean; etag?: string }>;
+  hasObjectUnderPrefix(prefix: string): Promise<boolean>;
   deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
@@ -81,6 +82,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     GetObjectCommand,
     PutObjectCommand,
     HeadObjectCommand,
+    ListObjectsV2Command,
     DeleteObjectCommand,
     CreateMultipartUploadCommand,
     ListMultipartUploadsCommand,
@@ -272,6 +274,13 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         }
         throw error;
       }
+    },
+
+    async hasObjectUnderPrefix(prefix: string): Promise<boolean> {
+      const result = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, MaxKeys: 1 }), {
+        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+      });
+      return (result.Contents ?? []).some(object => object.Key?.startsWith(prefix) && (object.Size ?? 0) > 0);
     },
 
     async deleteObject(

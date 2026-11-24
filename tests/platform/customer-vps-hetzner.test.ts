@@ -176,13 +176,14 @@ describe('platform/customer-vps-hetzner', () => {
     );
   });
 
-  it('maps provider server type from server reads', async () => {
+  it('maps provider server type and deletion protection from server reads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       server: {
         id: 123456,
         status: 'running',
         server_type: { name: 'cpx32' },
         public_net: { ipv4: { ip: '203.0.113.10' } },
+        protection: { delete: true },
       },
     }), { status: 200 }));
     const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
@@ -192,6 +193,7 @@ describe('platform/customer-vps-hetzner', () => {
       status: 'running',
       serverType: 'cpx32',
       publicIPv4: '203.0.113.10',
+      deleteProtected: true,
     });
   });
 });

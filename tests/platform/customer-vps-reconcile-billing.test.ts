@@ -67,12 +67,12 @@ describe('platform/customer-vps', () => {
     expect(hetzner.powerOffServer).not.toHaveBeenCalled();
     await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status: 'running' });
   });
-  it('suspends a delinquent machine left resuming by a superseded action', async () => {
+  it.each(['resuming', 'suspended'] as const)('checks Hetzner when Matrix reports a delinquent machine as %s', async (status) => {
     const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff135';
     await insertUserMachine(db, {
       machineId, clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
       provisioningClass: 'customer', hetznerServerId: 123456, publicIPv4: '203.0.113.10',
-      status: 'resuming', imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
+      status, imageVersion: 'v1', provisionedAt: '2026-04-26T12:00:00.000Z',
     });
     const { service, hetzner } = createService({
       hetzner: createMockHetznerClient({

@@ -236,7 +236,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!current || current.deletedAt) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      if (current.status === 'suspended') return;
       if (current.hetznerServerId === null) {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
       }
@@ -252,7 +251,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
         }
         claimed = transitioned;
-      } else if (current.status !== 'suspending') {
+      } else if (current.status !== 'suspending' && current.status !== 'suspended') {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
       }
       const providerServerId = claimed.hetznerServerId;
@@ -287,6 +286,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
       }
       if (shouldContinue && !(await shouldContinue())) return;
+      if (claimed.status === 'suspended') return;
       const completed = await completeUserMachineBillingSuspend(
         deps.db,
         claimed.machineId,

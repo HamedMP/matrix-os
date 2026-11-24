@@ -59,8 +59,19 @@ export async function runCustomerVpsReconciliationPass(deps: {
   /** Read at run time: the capture hook is installed after the worker starts. */
   getBillingRuntimeCaptureEvent: () => BillingRuntimeCaptureEvent | undefined;
   sweepPrivatePreviews?: () => Promise<PrivatePreviewSweepResult>;
+  sweepUnpaidVps?: () => Promise<{ checked: number; queued: number; failed: number; backupMissing: number }>;
 }): Promise<void> {
   const { db, customerVpsService } = deps;
+  if (deps.sweepUnpaidVps) {
+    try {
+      const result = await deps.sweepUnpaidVps();
+      if (result.queued > 0 || result.failed > 0 || result.backupMissing > 0) {
+        console.log(`[platform] unpaid VPS retention checked=${result.checked} queued=${result.queued} failed=${result.failed} backupMissing=${result.backupMissing}`);
+      }
+    } catch (error: unknown) {
+      logPlatformRouteError('unpaid VPS retention sweep', error);
+    }
+  }
   try {
     const result = await customerVpsService.reconcileProvisioning();
     if (result.checked > 0) {
