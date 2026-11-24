@@ -494,7 +494,13 @@ export function createIngress(deps: IngressDeps): Ingress {
       }
       lines.push("connection: close");
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);
-      up.pipe(socket);
+      // A VM that drops mid-body must not leave the client (and its slot) open
+      // until the idle timeout.
+      pipeline(up, socket, (error) => {
+        if (!error) return;
+        log("ingress.declined_upgrade_relay_failed", { id: entry.id, ...errorFields(error) });
+        socket.destroy();
+      });
     });
     upstream.once("error", (error) => {
       log("ingress.upstream_failed", { id: entry.id, upgrade: true, ...errorFields(error) });
