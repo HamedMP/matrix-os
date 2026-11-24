@@ -2,16 +2,25 @@
 
 import { useMemo } from "react";
 import { ProjectConversationList, useMinuteClock, type ChatAgentClient } from "@matrix-os/ui";
+import {
+  ProjectBoard, ProjectViewSwitch, boardPreferencesKey, createHttpProjectBoardClient, isProjectBoardSlug, taskSessionTarget,
+  type ProjectHomeView, type TaskSession,
+} from "@matrix-os/ui/project-board";
 import { FolderOpen } from "@/lib/hugeicons";
+import { openTerminalSession } from "@/lib/terminal-session-open";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { WebProjectAgentContext } from "./WebProjectAgentContext";
+import { projectBoardStorage } from "./project-home-view";
 import { useWebProjectHistory, type ChatRunStatusChange } from "./useWebProjectHistory";
 import type { WebProject } from "./web-projects";
 
 const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
 
-/** Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat. */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true }: {
+/**
+ * Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat.
+ * The Board view shows the project's task board from the gateway's task routes.
+ */
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, view = "overview", onViewChange, onProjectChatsChanged, detailsTaskId = null }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -30,6 +39,72 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   botClient?: ChatAgentClient;
   onSelectChat?: (chatId: string) => void;
   active?: boolean;
+  view?: ProjectHomeView;
+  onViewChange?: (view: ProjectHomeView) => void;
+  /** The board created or opened a task's chat; the rail reloads its project chats. */
+  onProjectChatsChanged?: () => void;
+  /** A task whose details to open on the board, from a chat's ticket header. */
+  detailsTaskId?: string | null;
+}) {
+  if (view === "board") {
+    return <div className="flex min-h-0 flex-1 flex-col" data-slot="chat-project-board">
+      <ProjectHomeHeader name={project.name} view={view} onViewChange={onViewChange} className="px-5 pb-3 pt-5" />
+      <WebProjectBoard key={`${identity}/${project.id}`} gatewayUrl={gatewayUrl} project={project} onSelectChat={onSelectChat}
+        onProjectChatsChanged={onProjectChatsChanged} detailsTaskId={detailsTaskId} active={active} />
+    </div>;
+  }
+  return <WebProjectOverview project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority}
+    conversations={conversations} historyIncomplete={historyIncomplete} historyRefreshKey={historyRefreshKey} historyRunStatusChange={historyRunStatusChange}
+    knownChatIds={knownChatIds} botClient={botClient} onSelectChat={onSelectChat} active={active} onViewChange={onViewChange} />;
+}
+
+/** The project's board over the owner's gateway. Cards open their chat in this Chats window; terminals open in the durable Terminal window. */
+function WebProjectBoard({ gatewayUrl, project, onSelectChat, onProjectChatsChanged, detailsTaskId, active }: {
+  gatewayUrl: string; project: WebProject; onSelectChat?: (chatId: string) => void; onProjectChatsChanged?: () => void;
+  detailsTaskId: string | null; active: boolean;
+}) {
+  const client = useMemo(() => isProjectBoardSlug(project.slug) ? createHttpProjectBoardClient({ gatewayUrl, projectSlug: project.slug }) : null,
+    [gatewayUrl, project.slug]);
+  const openSession = (session: TaskSession) => {
+    const target = taskSessionTarget(session.ref);
+    if (target) openTerminalSession(`${target.workspaceId}:${target.tabId}`);
+  };
+  if (!client) return <p role="alert" className="px-5 py-16 text-center text-[13px] text-muted-foreground">This project's board isn't available.</p>;
+  return <ProjectBoard client={client} preferencesKey={boardPreferencesKey("web", project.id)} storage={projectBoardStorage()} active={active}
+    onOpenSession={openSession} detailsTaskId={detailsTaskId} onOpenChat={onSelectChat ? (task) => {
+      if (!task.chatId) return;
+      // A task created on the board made its chat server-side; the rail reloads so it lists it.
+      onProjectChatsChanged?.();
+      onSelectChat(task.chatId);
+    } : undefined} />;
+}
+
+function ProjectHomeHeader({ name, view, onViewChange, className }: { name: string; view: ProjectHomeView; onViewChange?: (view: ProjectHomeView) => void; className?: string }) {
+  return <div className={`flex min-w-0 items-center gap-2.5 ${className ?? ""}`}>
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-hover)] text-foreground">
+      <FolderOpen size={17} aria-hidden />
+    </span>
+    <h1 className="min-w-0 truncate text-[20px] font-medium leading-7 text-foreground" style={{ fontFamily: "var(--font-heading)" }}>
+      {name}
+    </h1>
+    {onViewChange ? <div className="ml-auto"><ProjectViewSwitch view={view} onChange={onViewChange} /></div> : null}
+  </div>;
+}
+
+function WebProjectOverview({ project, gatewayUrl, identity, isCurrentAuthority, conversations, historyIncomplete, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active, onViewChange }: {
+  project: WebProject;
+  gatewayUrl: string;
+  identity: string;
+  isCurrentAuthority?: () => boolean;
+  conversations: readonly RenameableConversation[];
+  historyIncomplete: boolean;
+  historyRefreshKey?: number;
+  historyRunStatusChange?: ChatRunStatusChange;
+  knownChatIds?: ReadonlySet<string>;
+  botClient?: ChatAgentClient;
+  onSelectChat?: (chatId: string) => void;
+  active: boolean;
+  onViewChange?: (view: ProjectHomeView) => void;
 }) {
   const nowMs = useMinuteClock(active);
   const listed = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
@@ -39,14 +114,7 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   return (
     <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]" data-slot="chat-project-home">
       <div className="mx-auto w-full max-w-[808px] px-6 pb-4 pt-5">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-hover)] text-foreground">
-            <FolderOpen size={17} aria-hidden />
-          </span>
-          <h1 className="min-w-0 truncate text-[20px] font-medium leading-7 text-foreground" style={{ fontFamily: "var(--font-heading)" }}>
-            {project.name}
-          </h1>
-        </div>
+        <ProjectHomeHeader name={project.name} view="overview" onViewChange={onViewChange} />
         <WebProjectAgentContext project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority} />
         {/* No snippet: the navigation projection carries no message excerpt, only the title. */}
         <ProjectConversationList projectName={project.name} records={history.records} status={status} nowMs={nowMs}

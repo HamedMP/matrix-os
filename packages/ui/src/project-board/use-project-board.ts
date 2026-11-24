@@ -56,6 +56,9 @@ function requestId(): string {
  * signals and applies card moves optimistically: a move shows at once and snaps
  * back with a generic notice if the client rejects it.
  */
+/** A resync this soon after a load started is redundant. */
+const FRESH_LOAD_MS = 1_500;
+
 export function useProjectBoard(client: ProjectBoardClient, options: { includeArchived?: boolean } = {}): ProjectBoardState {
   const includeArchived = options.includeArchived ?? false;
   const [server, setServer] = useState<{ client: ProjectBoardClient; tasks: readonly ProjectTask[] } | null>(null);
@@ -70,8 +73,10 @@ export function useProjectBoard(client: ProjectBoardClient, options: { includeAr
   const moveQueue = useRef(new Map<string, { seq: number; tail: Promise<void> }>());
   const moveSeq = useRef(0);
 
+  const lastLoadStarted = useRef(0);
   const refresh = useCallback(async () => {
     const current = (generation.current += 1);
+    lastLoadStarted.current = Date.now();
     try {
       const tasks = await client.listTasks({ includeArchived });
       if (generation.current !== current) return;
@@ -96,7 +101,10 @@ export function useProjectBoard(client: ProjectBoardClient, options: { includeAr
     void refresh();
     // A burst of change signals (one poll can carry several) costs one refetch.
     let queued = false;
-    return client.subscribe(() => {
+    return client.subscribe((event) => {
+      // A resync asks to refetch in case changes were missed; a load that just started already covers it.
+      // A change in that sub-second gap is picked up by the next periodic resync.
+      if (event.type === "board.resync" && Date.now() - lastLoadStarted.current < FRESH_LOAD_MS) return;
       if (queued) return;
       queued = true;
       queueMicrotask(() => { queued = false; void refresh(); });

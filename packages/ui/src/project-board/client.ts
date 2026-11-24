@@ -92,4 +92,7 @@ export interface StartedTaskWork {
 
 export const PROJECT_BOARD_EVENT_TYPES = ["task.created", "task.updated", "task.moved", "task.deleted", "task.comment_added"] as const;
 export type ProjectBoardEventType = (typeof PROJECT_BOARD_EVENT_TYPES)[number];
-export interface ProjectBoardEvent { type: ProjectBoardEventType; taskId: string; revision: number }
+export interface ProjectBoardTaskEvent { type: ProjectBoardEventType; taskId: string; revision: number }
+/** Changes may have been missed (for example while the change feed was starting): refetch whatever is shown. */
+export interface ProjectBoardResyncEvent { type: "board.resync" }
+export type ProjectBoardEvent = ProjectBoardTaskEvent | ProjectBoardResyncEvent;
