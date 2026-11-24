@@ -301,6 +301,17 @@ describe("Terminal window ssh machines", () => {
     expect(await within(machines).findByText("Not updated: this name now belongs to a different machine. Check it, then try again.")).toBeTruthy();
   });
 
+  // Fault detected (Greptile, #3579): a removed Windows machine's warning came back on the next machine with its name.
+  it("forgets a machine's Windows and changed-machine notes once it is removed", async () => {
+    installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false }] });
+    const { result } = renderHook(() => useSshMachines());
+    await act(async () => { await result.current.update({ name: "win", target: "me@winbox", state: "connected", temporary: false }); });
+    expect(result.current.coreUnsupported).toEqual(["win"]);
+    await act(async () => { await result.current.remove("win"); });
+    expect(result.current.coreUnsupported).toEqual([]);
+    expect(result.current.coreChanged).toEqual([]);
+  });
+
   // Nima, #3579/#3662: a Windows target is refused with a clear reason, not a generic failure.
   it("says when a machine's core cannot be updated from here", async () => {
     installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false, version: "0.1.14" } as never] });

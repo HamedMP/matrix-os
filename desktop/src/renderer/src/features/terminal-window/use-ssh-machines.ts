@@ -75,7 +75,13 @@ export function useSshMachines() {
     try {
       removed = (await invoke("local-terminal:machine-remove", { name })).ok;
       // A failure belongs to the machine it happened on, not to the next one that takes its name.
-      if (removed) setCoreFailed((current) => current.filter((entry) => entry !== name));
+      if (removed) {
+        // Every note about its core belongs to that machine, not to the next one that takes its name.
+        const forget = (current: string[]) => current.filter((entry) => entry !== name);
+        setCoreFailed(forget);
+        setCoreChanged(forget);
+        setCoreUnsupported(forget);
+      }
     } catch (error: unknown) {
       console.warn("[terminal-window] remove machine failed:", error instanceof Error ? error.name : "UnknownError");
     }
