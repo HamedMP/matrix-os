@@ -135,17 +135,19 @@ confirm() {
   if ! guard 2>/dev/null || ! systemctl is-active --quiet "$UNIT"; then
     die "the revert already happened (or the window expired): the hostd firewall is NOT in place; re-run provision-host.sh and confirm within 10 minutes"
   fi
-  systemctl stop "$REVERT.timer"
-  # The timer could have fired between the checks and the stop.
-  systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
   # The rules on disk must be the ones loaded: a re-run that installed other
   # files and died before arming would otherwise get its untested rules
-  # approved, and loaded at the next reload or boot with no revert.
+  # approved, and loaded at the next reload or boot with no revert. Checked
+  # while the revert timer is still armed, so a refused confirm leaves it
+  # running and the window still restores access.
   local current loaded=""
   current="$(fingerprint)"
   if [ -f "$LOADED" ]; then loaded="$(head -c 64 "$LOADED")"; fi
   [ -n "$loaded" ] && [ "$current" = "$loaded" ] ||
-    die "the rules on disk are not the ones loaded (an interrupted provisioning run?); the firewall is NOT confirmed; re-run provision-host.sh and confirm"
+    die "the rules on disk are not the ones loaded (an interrupted provisioning run?); the firewall is NOT confirmed and the revert stays armed; re-run provision-host.sh and confirm"
+  systemctl stop "$REVERT.timer"
+  # The timer could have fired between the checks and the stop.
+  systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
   install -d -m 0755 "$(dirname "$CONFIRMED")"
   printf '%s\n' "$loaded" >"$CONFIRMED.tmp"
   mv -f "$CONFIRMED.tmp" "$CONFIRMED"

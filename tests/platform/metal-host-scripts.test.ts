@@ -553,6 +553,9 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     expect(result.out).toMatch(/not the ones loaded/i);
     expect(has(`enabled-${FW}`)).toBe(false);
     expect(existsSync(marker)).toBe(true);
+    // The refused confirm leaves the revert armed: waiting out the window still
+    // restores access if the loaded rules block it.
+    expect(has(`active-${TIMER}`)).toBe(true);
     // Confirming what is actually loaded still works once the files match it again.
     await writeFile(template, (await readFile(template, "utf8")).replace("udp dport 41643 accept", "udp dport 41642 accept"));
     expect((await nft("confirm")).code).toBe(0);
