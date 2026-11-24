@@ -39,6 +39,8 @@ export interface TerminalLiveOwnership {
   role(key: string, viewerId: string): TerminalLiveRole;
   leaseEpoch(key: string, viewerId: string): number | null;
   allowsMutation(key: string, viewerId: string): boolean;
+  /** Live (non-stale) attached viewers across all terminals. */
+  attachedViewerCount(): number;
   close(): void;
 }
 
@@ -167,6 +169,12 @@ export function createTerminalLiveOwnership(
     },
     allowsMutation(key, viewerId) {
       return role(key, viewerId) === "writer";
+    },
+    attachedViewerCount() {
+      sweep();
+      let count = 0;
+      for (const entry of terminals.values()) count += entry.viewers.size;
+      return count;
     },
     close() {
       if (closed) return;
