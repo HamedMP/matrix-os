@@ -278,7 +278,7 @@ it("preserves approved interview questions in both transcripts without showing r
   expect(projectCanonicalTranscript(detail).map(message => message.id)).toEqual([owner.id, question.id]);
 });
 
-it("shows ordinary Web Chat suggestions only outside active project setup", async () => {
+it("shows ordinary Web Chat suggestions only in mobile layout outside active project setup", async () => {
   const { ChatApp } = await import("../../shell/src/components/ChatApp");
   const props = {
     messages: [
@@ -296,10 +296,12 @@ it("shows ordinary Web Chat suggestions only outside active project setup", asyn
   });
   try {
     const { rerender } = render(<ChatApp {...props} />);
+    expect(screen.queryByRole("group", { name: "Suggested messages" })).toBeNull();
+    rerender(<ChatApp {...props} mobile />);
     expect(screen.getByRole("group", { name: "Suggested messages" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "What can you do?" })).toBeTruthy();
     webSetup.active = true;
-    rerender(<ChatApp {...props} />);
+    rerender(<ChatApp {...props} mobile />);
     expect(screen.queryByRole("group", { name: "Suggested messages" })).toBeNull();
     expect(screen.getByText("Who should see the archive?")).toBeTruthy();
   } finally {
