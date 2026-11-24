@@ -139,8 +139,11 @@ bottom status bar.
   inset and do not repeat the machine's name. Agents is the full list of
   terminals; in Spaces, terminals appear only when a project's chevron lists
   that project's terminals inline under it (same rows, never a filter).
-- Done means finished since the person last looked. Opening the terminal marks
-  it seen; seen is shared across the person's windows and devices.
+- Done means finished since the person last looked. A pane that receives a
+  confirmed exit after its final output keeps the xterm buffer. A pane that
+  opens a finished terminal or loses its attachment reads retained text from
+  herdr-core. After the selected pane displays the output, the app marks it
+  seen. A failed history read leaves it unread and offers a retry.
 - A row shows the agent icon, the project in bold then " · title" muted, the
   time since the last change right-aligned in a fixed column, and a status mark
   (spinner, amber dot for needs you, filled dot, ring) in a fixed last column,
@@ -217,9 +220,13 @@ shell there with `terminal.run` and `on`. Remove forgets the machine
 
 When the dial fails because ssh does not know the host's key, needs a password,
 or `hc` is missing there, the form says so and offers **Open in terminal**: a
-local terminal running `ssh <target>` (fixed argv built in the main process),
-where the person checks the fingerprint or types their password themselves,
-then retries.
+local terminal where the person checks the fingerprint or answers a password
+or one-time code. Plain SSH uses the bundled core's interactive Add or Login
+against the private core. Connections with an explicit port or custom OpenSSH
+fields use a private OpenSSH control socket shared by the interactive login
+and the next batch dial. A machine saved with a legacy custom command may
+need to be removed and added again to use the shared socket. Removing the
+entry leaves its remote terminals running.
 
 Added 2026-11-22 (Hamed):
 
@@ -401,18 +408,20 @@ event stream. Each layer's own tests do not replace this one.
     only the target and name in its own data directory (the app's userData).
   - Host keys are verified by OpenSSH against `~/.ssh/known_hosts`; the app
     never passes `StrictHostKeyChecking=no` or any option that weakens host
-    key checks. The only `-o` option it ever passes is `BatchMode=yes`. An
-    unknown or changed key fails the dial, and the person accepts a new key
+    key checks. Batch SSH refuses interactive prompts. An unknown or changed
+    key fails the dial, and the person accepts a new key
     only in a real terminal running ssh (same port, identity and jump host),
     where OpenSSH shows the fingerprint.
   - The target is validated in the main process (letters, digits, `.`, `-`,
     `_`, optional `user@` and `:port`, at most 255 characters, never starting
     with `-`), the name with herdr-core's terminal-name rules. A plain target
     reaches `machine.add` as `target` and `name` only.
-  - With custom ssh fields or a Tailscale SSH peer, `machine.add` also gets a
-    `via` line, built only by the main process from fixed parts: `ssh -o
-    BatchMode=yes [-p <port>] [-i '<path>'] [-J '<jump>'] -- '<user@host>'`,
-    or `tailscale ssh -- '<user@host>'`. Each value is checked against its own
+  - With an inline port, custom ssh fields, or a Tailscale SSH peer, Add and
+    Install share a `via` command built by the main process. OpenSSH receives
+    the port as an explicit `-p` argument. The app keeps any OpenSSH control
+    socket in its existing private runtime directory, scoped to the destination
+    and SSH options. Idle login masters expire after ten minutes.
+    Tailscale SSH uses its own command and auth flow. Each value is checked against its own
     strict pattern (port 1-65535; a path of letters, digits, `.`, `_`, `-`,
     `/` and a leading `~/`; a jump host as a target) and single-quoted. The
     renderer sends only these fields, never a command; any other `via` is
@@ -421,6 +430,11 @@ event stream. Each layer's own tests do not replace this one.
     `:machine-connect`, `:ssh-login`, `:tailscale-peers`, Terminal window
     only, each with a strict Zod schema. Errors reach the window as
     herdr-core's stable kinds, never messages.
+  - `local-terminal:history` is restricted to the trusted Electron Terminal
+    window by the same main/preload sender policy. It accepts only a valid
+    Herdr terminal address with a finished fact and returns at most 64,000
+    characters from the private core's existing history. This IPC is local to
+    the app and adds no browser or gateway endpoint.
 - The exit record is written by the tab's launcher inside the owner's runtime
   directory (0700), named by tab id (validated), never by user input.
 - Shortcuts run only in the trusted Terminal window renderer; no new IPC

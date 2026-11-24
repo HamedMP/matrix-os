@@ -5,7 +5,7 @@
 import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions } from "../../shared/local-terminals";
-import { sshLoginArgv, sshVia } from "./ssh-command";
+import { herdrMachineAddArgv, sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
@@ -17,7 +17,6 @@ import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
 } from "./hc-events";
-
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
 const LONGEST_SOCKET_NAME = `${SESSION}.holder.00000000.sock`;
@@ -195,6 +194,24 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     now,
   });
 
+  // The install path uses the same command as Add and can reuse its login.
+  const sharedSshVia = (target: string, ssh: SshOptions | undefined, tailscale: string | null) =>
+    sshVia(target, ssh, tailscale, options.runtimeDir);
+
+  function runLogin(argv: string[], title: string, size: { cols: number; rows: number }) {
+    return sessions.run({
+      argv, cwd: options.home,
+      env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
+      labels: { [TERMINAL_TITLE_LABEL]: title.slice(0, 64) },
+      size, no_parent: true, no_notify: true, wait: false,
+    });
+  }
+
+  function openSshLogin(target: string, size: { cols: number; rows: number }, ssh: SshOptions | undefined, shared: boolean) {
+    const argv = sshLoginArgv(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null, shared ? options.runtimeDir : undefined);
+    return runLogin(["/usr/bin/env", ...CORE_ONLY_ENV.flatMap((name) => ["-u", name]), ...argv], `ssh ${target}`, size);
+  }
+
   /** A real folder under home, resolved through symlinks; anything else is refused. */
   async function folderUnderHome(folder: string): Promise<string> {
     const home = await realpath(options.home);
@@ -275,20 +292,15 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     /**
-     * A terminal on this device running `ssh <target>`: where the person checks
-     * a host key they have not accepted yet, or types a password, themselves.
-     * The target was validated (never an option); `--` ends ssh's options anyway.
+     * Opens the interactive Add or SSH login in a local terminal. The
+     * password, code, or new host key confirmation stays with OpenSSH.
      */
-    sshLogin(target: string, size: { cols: number; rows: number }, ssh?: SshOptions): Promise<string | null> {
-      const unset = CORE_ONLY_ENV.flatMap((name) => ["-u", name]);
-      // `user@host:port` is herdr-core's form; OpenSSH takes the port as `-p`. No BatchMode: the person answers here.
-      return sessions.run({
-        argv: ["/usr/bin/env", ...unset, ...sshLoginArgv(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)],
-        cwd: options.home,
-        env: { TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "MatrixOS" },
-        labels: { [TERMINAL_TITLE_LABEL]: `ssh ${target}`.slice(0, 64) },
-        size, no_parent: true, no_notify: true, wait: false,
-      });
+    async sshLogin(target: string, size: { cols: number; rows: number }, ssh?: SshOptions, name?: string): Promise<string | null> {
+      if (sharedSshVia(target, ssh, ssh?.tailscaleSsh ? findTailscale() : null)) return openSshLogin(target, size, ssh, true);
+      // The pinned CLI handles the interactive login for plain targets and
+      // registers the machine on success. This uses the core's own socket.
+      const binary = await prepare();
+      return runLogin(herdrMachineAddArgv(binary, target, name), `ssh ${target}`, size);
     },
 
     /** Machines this core reaches over ssh, with their line state now and how the app added them. */
@@ -314,14 +326,22 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       ]);
       if (!current) return null;
       const saved = entry && machineSshMatches(entry, current) ? entry : undefined;
-      const target = saved?.target ?? current.target;
-      // A machine added with a command (via) elsewhere has no target to ssh to.
-      if (!target || !SshTargetSchema.safeParse(target).success) return null;
-      return this.sshLogin(target, size, saved?.ssh);
+      const coreTarget = current.target.replace(/^ssh:\/\//, "");
+      const target = saved?.target ?? coreTarget;
+      if (!SshTargetSchema.safeParse(target).success) return null;
+      if (current.state === "needs_login" && SshTargetSchema.safeParse(coreTarget).success) {
+        // Older plain entries use Herdr's socket, so let the pinned CLI log in
+        // to that existing entry using the same private session.
+        const binary = await prepare();
+        return runLogin([binary, "machine", "login", "--", name], `ssh ${target}`, size);
+      }
+      const managed = saved !== undefined && !saved.ssh?.tailscaleSsh
+        && sharedSshVia(target, saved.ssh, null)?.slice(0, 255) === current.target;
+      return openSshLogin(target, size, saved?.ssh, managed);
     },
 
     async addMachine(input: { target: string; name?: string; ssh?: SshOptions }): Promise<AddMachineResult> {
-      const via = sshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
+      const via = sharedSshVia(input.target, input.ssh, input.ssh?.tailscaleSsh ? findTailscale() : null);
       const result = await addMachine(await ensure(), { target: input.target, ...(input.name ? { name: input.name } : {}), ...(via ? { via } : {}) });
       if (result.ok) {
         try {
@@ -355,6 +375,12 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     /** Dials a machine now (after a login in a terminal) instead of at its next retry. */
     async connectMachine(name: string): Promise<void> {
       await (await ensure()).call("machine.connect", { machine: name }, 30_000);
+    },
+
+    /** Reads the retained output without attaching to an exited process. */
+    async history(id: string): Promise<string> {
+      if (!events.fact(id)?.finished) throw new LocalTerminalUnknownError();
+      return sessions.history(id);
     },
 
     /** Removes a finished terminal from the list; the core refuses a live one. */

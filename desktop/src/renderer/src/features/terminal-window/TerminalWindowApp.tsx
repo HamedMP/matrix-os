@@ -8,7 +8,9 @@ import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
 import { useAppearance } from "../../stores/appearance";
 import TerminalView from "../terminal/TerminalView";
+import { FinishedTerminalOutput } from "./FinishedTerminalOutput";
 import { createPaneAttachManager } from "../terminal/terminal-runtime";
+import type { ShellSocketState } from "../../lib/shell-socket";
 import type { AttachManager } from "../terminal/attach-manager";
 import { DesktopTerminalAgentLogo } from "../terminal/DesktopTerminalAgentLogo";
 import { TERMINAL_AGENT_OPTIONS, type TerminalAgentId } from "../terminal/terminal-agent-options";
@@ -195,8 +197,9 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+function LivePaneTerminal({ sessionName, focused, findRequest, onPaneAction, onSocketState }: {
   sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+  onSocketState(state: ShellSocketState): void;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
   useEffect(() => {
@@ -207,9 +210,33 @@ const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequ
   }, []);
   if (!manager) return null;
   return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    onPaneAction={onPaneAction} onSocketState={onSocketState} reservedKeys={isTerminalWindowShortcut}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
+}
+
+const PaneTerminal = memo(function PaneTerminal({
+  terminalKey, sessionName, finishedId, focused, findRequest, onPaneAction, onFinishedOutput,
+}: {
+  terminalKey: string; sessionName: string; finishedId: string | null; focused: boolean; findRequest: number;
+  onPaneAction(action: TerminalPaneAction): void;
+  onFinishedOutput(key: string): () => void;
+}) {
+  const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
+
+  useEffect(() => {
+    if (finishedId && socketState === "ended" && focused) return onFinishedOutput(terminalKey);
+    return undefined;
+  }, [finishedId, focused, onFinishedOutput, socketState, terminalKey]);
+
+  // Hold the live view while the stream drains. Keep it after a confirmed
+  // exit, or read saved output if this pane never received the final screen.
+  if (finishedId && socketState !== "attached" && socketState !== "ended") {
+    return <FinishedTerminalOutput terminalKey={terminalKey} terminalId={finishedId} focused={focused}
+      findRequest={findRequest} onDisplayed={onFinishedOutput} />;
+  }
+  return <LivePaneTerminal sessionName={sessionName} focused={focused} findRequest={findRequest}
+    onPaneAction={onPaneAction} onSocketState={setSocketState} />;
 });
 
 function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
@@ -266,8 +293,10 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         // A session change remounts each pane so it attaches again with the new credentials.
         return (
           <>
-            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
-              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} terminalKey={leaf.terminal}
+              sessionName={sessionName} focused={focused} finishedId={view.status.finishedTerminalId(leaf.terminal)}
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction}
+              onFinishedOutput={view.status.finishedOutputDisplayed} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>
         );

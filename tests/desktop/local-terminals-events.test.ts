@@ -133,9 +133,9 @@ describe("local terminal events", () => {
     const h = harness();
     h.events.start();
     h.cores[0]!.hello();
-    h.cores[0]!.snapshot([terminal("vps/t4", { parent: "t2" })]);
+    h.cores[0]!.snapshot([terminal("vps/t1b0", { parent: "t2" })]);
     await vi.advanceTimersByTimeAsync(100);
-    expect(h.latest()).toEqual([expect.objectContaining({ id: "vps/t4", parent: "vps/t2" })]);
+    expect(h.latest()).toEqual([expect.objectContaining({ id: "vps/t1b0", parent: "vps/t2" })]);
   });
 
   it("drops terminals it cannot read and strips control characters from titles", async () => {

@@ -36,7 +36,7 @@ export function useTerminalWindow() {
   const ready = machines.state.status === "ready" ? machines.state : null;
   const cloud = useComputerTerminals(ready?.platformHost ?? null, ready?.sessionKey ?? "");
   const local = useLocalTerminals();
-  const ssh = useSshMachines();
+  const ssh = useSshMachines(local.state);
   // The ssh target whose login terminal did not start, shown on its machine row.
   const [sshLoginFailed, setSshLoginFailed] = useState<string | null>(null);
   const sidebar = useSidebarPrefs();
@@ -144,10 +144,10 @@ export function useTerminalWindow() {
     clearActive();
     setLocalOpen({ id, title });
   }, [clearActive]);
-  const openSshLogin = useCallback(async (target: string, options?: SshOptions): Promise<boolean> => {
+  const openSshLogin = useCallback(async (target: string, options?: SshOptions, name?: string): Promise<boolean> => {
     const chosen = localChoice.current;
     const cloudChosen = cloudActive.current;
-    const id = await ssh.sshLogin(target, options);
+    const id = await ssh.sshLogin(target, options, name);
     setSshLoginFailed(id ? null : target);
     if (!id) return false;
     showLogin(id, `ssh ${target}`, chosen, cloudChosen);

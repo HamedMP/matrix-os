@@ -75,11 +75,15 @@ export function registerLocalTerminalIpc(
         return id && !id.includes("/") ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:machine-login", error); return unavailable(); }
     },
-    "local-terminal:ssh-login": async ({ target, ssh, cols, rows }) => {
+    "local-terminal:ssh-login": async ({ target, name, ssh, cols, rows }) => {
       try {
-        const id = await host.sshLogin(target, { cols, rows }, ssh);
+        const id = await host.sshLogin(target, { cols, rows }, ssh, name);
         return id && !id.includes("/") ? { status: "ready", id } : { status: "rate-limited" };
       } catch (error: unknown) { logFailure("local-terminal:ssh-login", error); return unavailable(); }
+    },
+    "local-terminal:history": async ({ id }) => {
+      try { return { ok: true, text: await host.history(id) }; }
+      catch (error: unknown) { logFailure("local-terminal:history", error); return { ok: false }; }
     },
     "local-terminal:remove": async ({ id }) => {
       try { await host.remove(id); return { ok: true }; }

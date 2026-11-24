@@ -101,6 +101,17 @@ describe("Terminal window ssh machines", () => {
     expect((within(dialog).getByRole("textbox", { name: "ssh address" }) as HTMLInputElement).disabled).toBe(false);
   });
 
+  it("offers an interactive login when Add needs a password or one-time code", async () => {
+    const invoke = installOperator({ add: () => ({ ok: false, reason: "needs_login" }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Open in terminal" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:ssh-login", { target: "me@box", cols: 100, rows: 30 }));
+  });
+
   it("refuses an address that is not one before asking the core", async () => {
     const invoke = installOperator();
     render(<TerminalWindowApp />);

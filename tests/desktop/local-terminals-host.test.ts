@@ -246,17 +246,80 @@ describe("local terminal host against a scripted core", () => {
   // Spec 2706 layer 7.
   it("starts a shell on an added machine and an ssh login terminal with a fixed argv", async () => {
     const runs: Array<Record<string, unknown>> = [];
-    let next = 3;
     const { host } = start((core, call) => {
-      if (call.method === "terminal.run") { runs.push(call.params); core.reply(call.id, { result: { address: runs.length === 1 ? `t${next++}` : `t${next++}` } }); }
+      if (call.method === "terminal.run") {
+        runs.push(call.params);
+        core.reply(call.id, { result: { address: runs.length === 1 ? "t1b0" : "t4" } });
+      }
     });
-    expect(await host.create({ cols: 80, rows: 24 }, { machine: "vps" })).toBe("vps/t3");
+    expect(await host.create({ cols: 80, rows: 24 }, { machine: "vps" })).toBe("vps/t1b0");
     expect(runs[0]).toEqual({ on: "vps", size: { cols: 80, rows: 24 }, no_parent: true, no_notify: true, wait: false });
     expect(await host.sshLogin("can@10.0.0.7:2222", { cols: 80, rows: 24 })).toBe("t4");
     expect(runs[1]).toMatchObject({ labels: { "matrix.title": "ssh can@10.0.0.7:2222" } });
     const argv = runs[1]!.argv as string[];
     // Fault detected (Greptile, #3570): OpenSSH does not read a trailing :port.
-    expect(argv.slice(argv.indexOf("ssh"))).toEqual(["ssh", "-p", "2222", "--", "can@10.0.0.7"]);
+    expect(argv.slice(-4)).toEqual(["-p", "2222", "--", "can@10.0.0.7"]);
+    expect(argv).toEqual(expect.arrayContaining(["ssh", "-S", "ControlMaster=auto", "BatchMode=no"]));
+  });
+
+  it("opens the pinned core's interactive Add and reuses Herdr's login for a legacy machine", async () => {
+    const runs: string[][] = [];
+    const { host } = start((core, call) => {
+      if (call.method === "machine.list") {
+        core.reply(call.id, { result: { machines: [{ name: "box", target: "ssh://me@box:2222", temporary: false, state: "needs_login" }] } });
+      }
+      if (call.method === "terminal.run") {
+        runs.push((call.params.argv as string[]).slice(1));
+        core.reply(call.id, { result: { address: "t4" } });
+      }
+    });
+    const size = { cols: 80, rows: 24 };
+    await expect(host.sshLogin("me@newbox", size, undefined, "new")).resolves.toBe("t4");
+    await expect(host.machineLogin("box", size)).resolves.toBe("t4");
+    expect(runs).toEqual([
+      ["machine", "add", "--name", "new", "--", "me@newbox"],
+      ["machine", "login", "--", "box"],
+    ]);
+  });
+
+  it("reopens a recorded custom SSH connection with the same private login socket", async () => {
+    let target: string | undefined;
+    let login: string[] = [];
+    const machine = () => ({ name: "box", target, state: "needs_login" });
+    const { host } = start((core, call) => {
+      if (call.method === "machine.add") {
+        target = String(call.params.via);
+        core.reply(call.id, { result: machine() });
+      }
+      if (call.method === "machine.list") core.reply(call.id, { result: { machines: [machine()] } });
+      if (call.method === "terminal.run") {
+        login = call.params.argv as string[];
+        core.reply(call.id, { result: { address: "t4" } });
+      }
+    });
+    expect(await host.addMachine({ target: "me@box:2222", name: "box" })).toMatchObject({ ok: true });
+    await expect(host.machineLogin("box", { cols: 80, rows: 24 })).resolves.toBe("t4");
+    const socket = login[login.indexOf("-S") + 1];
+    expect(socket).toMatch(/\/s-[0-9a-f]{16}$/);
+    expect(target).toContain(`-S '${socket}'`);
+    expect(login).toEqual(expect.arrayContaining(["ControlMaster=auto", "ControlPersist=600"]));
+  });
+
+  it("reads only finished terminals and caps the retained output", async () => {
+    const events = fakeEvents([{
+      id: "vps/t1b0", title: "build", status: null, statusAt: 1, turn: 0, seenTurn: null, finished: true,
+    }]);
+    const { host } = start((core, call) => {
+      if (call.method === "terminal.read") {
+        expect(call.params).toEqual({ terminal: "vps/t1b0", lines: 2_000 });
+        core.reply(call.id, { result: { text: "a".repeat(70_000) + "build result" } });
+      }
+    }, { createEvents: events.createEvents as never });
+    await host.watch();
+    await expect(host.history("t1")).rejects.toThrow("not listed");
+    const result = await host.history("vps/t1b0");
+    expect(result).toHaveLength(64_000);
+    expect(result.endsWith("build result")).toBe(true);
   });
 
   it("removes a finished terminal with herdr-core's terminal.rm", async () => {
@@ -456,10 +519,10 @@ describe("local terminal host against a scripted core", () => {
     const { host, sink, cores, lastChannel } = attaching();
     const ended = await host.attach("t1", { cols: 80, rows: 24 });
     const kept = await host.attach("t2", { cols: 80, rows: 24 });
-    cores[0]!.stream(lastChannel() - 1, HC_FRAME.CLOSE, Buffer.alloc(0));
-    expect(sink.closed.mock.calls).toEqual([[ended]]);
+    cores[0]!.stream(lastChannel() - 1, HC_FRAME.CLOSE, Buffer.from(JSON.stringify({ finished_ms: 1000 })));
+    expect(sink.closed.mock.calls).toEqual([[ended, true]]);
     cores[0]!.socket.emit("close");
-    expect(sink.closed.mock.calls).toEqual([[ended], [kept]]);
+    expect(sink.closed.mock.calls).toEqual([[ended, true], [kept, false]]);
   });
 
   it("fails an attach whose terminal ended while the core was still answering", async () => {
@@ -499,11 +562,13 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
   const coreEnv = { HOME: root, PATH: "/usr/bin:/bin", HC_SESSION: "mx", XDG_STATE_HOME: join(root, "d/state"),
     XDG_CONFIG_HOME: join(root, "d/config"), XDG_RUNTIME_DIR: join(root, "r") };
   const outputs = new Map<number, string>();
-  const closed: number[] = [];
+  const closed = new Map<number, boolean>();
+  const facts = vi.fn();
   const sink = {
+    facts,
     // Acknowledge as a window would, so the core keeps sending.
     output: (id: number, data: string) => { outputs.set(id, (outputs.get(id) ?? "") + data); host.acknowledge(id, 1); },
-    closed: (id: number) => { closed.push(id); },
+    closed: (id: number, finished: boolean) => { closed.set(id, finished); },
   };
   const until = (read: () => boolean) => vi.waitFor(() => { if (!read()) throw new Error("waiting"); }, { timeout: 10_000, interval: 50 });
   let host = createLocalTerminalHost(base, sink);
@@ -572,7 +637,33 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
   it("ends a terminal on request and reports its stream closed", async () => {
     const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
     await host.kill(terminalId);
-    await until(() => closed.includes(attachId));
+    await until(() => closed.has(attachId));
     expect(await host.list()).toEqual([]);
   }, 30_000);
+
+  it("receives the pinned core's exit confirmation after the final output", async () => {
+    const size = { cols: 100, rows: 30 };
+    const id = await host.create(size);
+    if (!id) throw new Error("test shell did not start");
+    const attachId = await host.attach(id, size);
+    host.input(attachId, "printf 'FINAL_%s\\n' output; exit\r", false);
+    await until(() => closed.has(attachId));
+    expect(closed.get(attachId)).toBe(true);
+    expect(outputs.get(attachId)).toContain("FINAL_output");
+  }, 30_000);
+
+  it("loads rendered text from the pinned core after a colored program finishes without an attached pane", async () => {
+    await host.watch();
+    const run = JSON.parse(execFileSync(binary!, [
+      "run", "--bg", "--", "/bin/sh", "-c", "printf '\\033[31msaved-output-%s\\033[0m\\n' ready",
+    ], { env: coreEnv, encoding: "utf8", timeout: 5_000 })) as { address: string };
+    await vi.waitFor(() => expect(facts).toHaveBeenLastCalledWith(expect.arrayContaining([
+      expect.objectContaining({ id: run.address, finished: true }),
+    ])), { timeout: 10_000 });
+    await expect(host.attach(run.address, { cols: 80, rows: 24 })).rejects.toMatchObject({ kind: "finished" });
+    const history = await host.history(run.address);
+    expect(history).toContain("saved-output-ready");
+    expect(history).not.toContain("\u001b");
+  }, 30_000);
+
 });

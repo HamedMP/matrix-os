@@ -4,7 +4,7 @@
 // Herdr session host are both built on this (spec 651 FR-016).
 import { z } from "zod/v4";
 import {
-  LOCAL_TERMINAL_ADDRESS_PATTERN, LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
+  LOCAL_TERMINAL_ADDRESS_PATTERN, LOCAL_TERMINAL_ID_PATTERN, LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_HISTORY_MAX_CHARS, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalStatusSchema, type LocalTerminal,
 } from "../../shared/local-terminals";
 import type { HcConnection, HcStream } from "./hc-client";
 
@@ -15,6 +15,7 @@ export const DEFAULT_MAX_ATTACHMENTS = 24;
 const CREATE_WINDOW_MS = 10_000;
 const MAX_CREATES_PER_WINDOW = 10;
 const MAX_TITLE_CHARS = 256;
+const FINISHED_HISTORY_LINES = 2_000;
 // Each entry is read on its own: a terminal the core describes in a way this
 // build does not expect is skipped instead of hiding every other terminal.
 const ListedSchema = z.object({ terminals: z.array(z.unknown()).max(LOCAL_TERMINAL_LIST_MAX) });
@@ -76,7 +77,7 @@ export function createAttachmentSlots(max = DEFAULT_MAX_ATTACHMENTS): Attachment
 
 export interface HcSessionSink {
   output(attachId: number, data: string): void;
-  closed(attachId: number): void;
+  closed(attachId: number, finished: boolean): void;
 }
 
 interface Attachment {
@@ -162,6 +163,15 @@ export function createHcSessions(options: {
       return next;
     },
 
+    /** A read-only tail of retained output for a finished terminal. */
+    async history(id: string): Promise<string> {
+      const core = await options.ensure();
+      const result = z.object({ text: z.string() }).parse(
+        await core.call("terminal.read", { terminal: id, lines: FINISHED_HISTORY_LINES }),
+      );
+      return result.text.slice(-LOCAL_TERMINAL_HISTORY_MAX_CHARS).replace(/^[\udc00-\udfff]/, "");
+    },
+
     /** Names a terminal for every client of this core: a label, so the program's own title stays. */
     async rename(id: string, name: string): Promise<void> {
       const core = await options.ensure();
@@ -201,7 +211,7 @@ export function createHcSessions(options: {
               sink.output(attachId, text.slice(offset, offset + LOCAL_TERMINAL_MAX_OUTPUT_CHARS));
             }
           },
-          onClose: () => { if (forget(attachId)) sink.closed(attachId); },
+          onClose: (finished) => { if (forget(attachId)) sink.closed(attachId, finished); },
         });
       } catch (error: unknown) {
         if (attachments.get(attachId) === attachment) forget(attachId);
@@ -252,7 +262,7 @@ export function createHcSessions(options: {
     /** The connection is gone: every attachment has ended, and the window is told. */
     connectionLost(): void {
       for (const attachId of [...attachments.keys()]) {
-        if (forget(attachId)) sink.closed(attachId);
+        if (forget(attachId)) sink.closed(attachId, false);
       }
     },
 

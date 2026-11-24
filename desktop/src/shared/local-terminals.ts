@@ -13,14 +13,17 @@ const MAX_INPUT_CHARS = 65_536;
 export const LOCAL_TERMINAL_MAX_ACK_COUNT = 4_096;
 const BYTE_STRING = /^[\u0000-\u00ff]*$/;
 export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
+export const LOCAL_TERMINAL_HISTORY_MAX_CHARS = 64_000;
 
-export const LOCAL_TERMINAL_ID_PATTERN = /^t[0-9]{1,6}[a-z]{0,2}$/;
+// Herdr 0.1.19 starts its u32 counter at 1 and encodes the suffix without vowels or l.
+const TERMINAL_ID = "t[1-9][0-9bcdfghjkmnpqrstvwxyz]{0,6}";
+export const LOCAL_TERMINAL_ID_PATTERN = new RegExp(`^${TERMINAL_ID}$`);
 export const LocalTerminalIdSchema = z.string().regex(LOCAL_TERMINAL_ID_PATTERN);
 /**
  * A terminal this core reports, here (`t7`) or on a machine it added
  * (`vps/t7`); machine names follow herdr-core's terminal-name rules.
  */
-export const LOCAL_TERMINAL_ADDRESS_PATTERN = /^(?:[a-z0-9][a-z0-9._-]{0,31}\/)?t[0-9]{1,6}[a-z]{0,2}$/;
+export const LOCAL_TERMINAL_ADDRESS_PATTERN = new RegExp(`^(?:[a-z0-9][a-z0-9._-]{0,31}/)?${TERMINAL_ID}$`);
 export const LocalTerminalAddressSchema = z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN);
 /** Live and finished terminals one facts update may carry. */
 export const LOCAL_TERMINAL_FACTS_MAX = 2_000;
@@ -76,7 +79,7 @@ export const LocalMachineSchema = z.strictObject({
 });
 export type LocalMachine = z.infer<typeof LocalMachineSchema>;
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
-export const LocalMachineAddFailureSchema = z.enum(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added", "invalid", "unavailable"]);
+export const LocalMachineAddFailureSchema = z.enum(["unreachable", "needs_login", "hc_missing", "incompatible", "name_taken", "already_added", "invalid", "unavailable"]);
 export type LocalMachineAddFailure = z.infer<typeof LocalMachineAddFailureSchema>;
 const AttachIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const Size = { cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) };
@@ -162,7 +165,15 @@ export const LOCAL_TERMINAL_INVOKE = {
   },
   // Terminals here (`t7`) and on machines this core added (`vps/t7`) take the same actions.
   "local-terminal:kill": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
-  // Removes a finished terminal (herdr-core `terminal.rm`); a live one is refused by the core.
+  // Reads a bounded tail of rendered text for a finished terminal.
+  "local-terminal:history": {
+    request: z.strictObject({ id: LocalTerminalAddressSchema }),
+    response: z.discriminatedUnion("ok", [
+      z.strictObject({ ok: z.literal(true), text: z.string().max(LOCAL_TERMINAL_HISTORY_MAX_CHARS) }),
+      z.strictObject({ ok: z.literal(false) }),
+    ]),
+  },
+  // Removes a finished terminal (herdr-core `terminal.rm`); the core refuses a live one.
   "local-terminal:remove": { request: z.strictObject({ id: LocalTerminalAddressSchema }), response: Ok },
   "local-terminal:rename": { request: z.strictObject({ id: LocalTerminalAddressSchema, name: LocalTerminalNameSchema }), response: Ok },
   // Writes a pasted file beside the terminal (herdr-core `terminal.put`) and
@@ -234,7 +245,7 @@ export const LOCAL_TERMINAL_INVOKE = {
   },
   // A terminal on this device running `ssh <target>`, where the person checks a new host key or types a password themselves.
   "local-terminal:ssh-login": {
-    request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), ...Size }),
+    request: z.strictObject({ target: SshTargetSchema, ssh: SshOptionsSchema.optional(), name: LocalMachineNameSchema.optional(), ...Size }),
     response: z.discriminatedUnion("status", [
       z.strictObject({ status: z.literal("ready"), id: LocalTerminalIdSchema }),
       z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
@@ -254,7 +265,7 @@ export const LOCAL_TERMINAL_INVOKE = {
 
 export const LOCAL_TERMINAL_EVENTS = {
   "local-terminal:output": z.strictObject({ attachId: AttachIdSchema, data: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS) }),
-  "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema }),
+  "local-terminal:closed": z.strictObject({ attachId: AttachIdSchema, finished: z.boolean() }),
   "local-terminal:facts": z.strictObject({ terminals: FactsSchema }),
 } as const;
 

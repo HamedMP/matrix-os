@@ -29,6 +29,12 @@ describe("ssh targets", () => {
 });
 
 describe("herdr-core machines", () => {
+  it("preserves the pinned core's password or code prompt for Add machine", async () => {
+    const call = vi.fn().mockRejectedValue(new HcCallError("needs_login"));
+    await expect(addMachine({ call } as unknown as HcConnection, { target: "me@box" }))
+      .resolves.toEqual({ ok: false, reason: "needs_login" });
+  });
+
   it("names a machine after its host, within herdr-core's name rules", () => {
     expect(machineNameFor("can@10.0.0.7:2222")).toBe("10.0.0.7");
     expect(machineNameFor("Deploy@Build.Example.com")).toBe("build.example.com");

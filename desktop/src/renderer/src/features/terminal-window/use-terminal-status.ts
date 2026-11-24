@@ -206,6 +206,18 @@ export function useTerminalStatus(options: {
   });
   const rows = useMemo(() => terminalStatusRows(local, available, computers.states), [local, available, computers.states]);
   const { markSeen: markComputerSeen } = computers;
+  const finishedLocalIds = useMemo(() => new Set(
+    local.status === "ready" ? local.terminals.filter((fact) => fact.finished).map((fact) => fact.id) : [],
+  ), [local]);
+  const finishedTerminalId = useCallback((key: string) => {
+    const target = terminalRowTarget(key);
+    return target?.kind === "local" && finishedLocalIds.has(target.id) ? target.id : null;
+  }, [finishedLocalIds]);
+  const [displayedFinishedOutput, setDisplayedFinishedOutput] = useState<string | null>(null);
+  const finishedOutputDisplayed = useCallback((key: string) => {
+    setDisplayedFinishedOutput(key);
+    return () => setDisplayedFinishedOutput((current) => current === key ? null : current);
+  }, []);
 
   /** The person opened this terminal: shared with their other windows and devices. */
   const markSeen = useCallback((key: string) => {
@@ -215,10 +227,11 @@ export function useTerminalStatus(options: {
       markComputerSeen(target.slot, target.ref);
       return;
     }
+    if (finishedLocalIds.has(target.id) && displayedFinishedOutput !== key) return;
     void invoke("local-terminal:seen", { id: target.id }).catch((error: unknown) => {
       console.warn("[terminal-window] mark seen failed:", error instanceof Error ? error.name : "UnknownError");
     });
-  }, [markComputerSeen]);
+  }, [displayedFinishedOutput, finishedLocalIds, markComputerSeen]);
 
-  return { rows, states: computers.states, markSeen };
+  return { rows, states: computers.states, markSeen, finishedTerminalId, finishedOutputDisplayed };
 }

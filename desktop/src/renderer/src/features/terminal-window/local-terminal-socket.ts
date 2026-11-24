@@ -42,7 +42,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
   const earlyDropped = new Map<number, number>();
   // Attachments reported closed before this socket knew its own id: a shell
   // can end in the moment between the core attaching and the reply arriving.
-  const earlyClosed = new Set<number>();
+  const earlyClosed = new Map<number, boolean>();
   let unacknowledged = 0;
   let ackScheduled = false;
 
@@ -98,12 +98,11 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
     }
   };
 
-  // The trusted core no longer holds this attachment: stop accepting typing
-  // that would go nowhere, and let the view offer to reconnect.
-  const lost = (id: number) => {
+  // Stop accepting input once the core has closed this attachment.
+  const close = (id: number, finished: boolean) => {
     if (attachId !== id || released) return;
     attachId = null;
-    events.onState("ended");
+    events.onState(finished ? "ended" : "connection-lost");
     release();
   };
 
@@ -114,7 +113,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
       // Binary input is one byte per character and can be cut anywhere.
       const end = binary ? Math.min(offset + INPUT_CHUNK_CHARS, data.length) : inputChunkEnd(data, offset);
       void invoke("local-terminal:input", { attachId: current, data: data.slice(offset, end), ...(binary ? { binary: true } : {}) })
-        .then((result) => { if (!result.ok) lost(current); })
+        .then((result) => { if (!result.ok) close(current, false); })
         .catch((error: unknown) => warn("input", error));
       offset = end;
     }
@@ -136,13 +135,10 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
         }),
         onEvent("local-terminal:closed", (event) => {
           if (attachId === null && !released) {
-            if (earlyClosed.size < MAX_EARLY_ATTACHMENTS) earlyClosed.add(event.attachId);
+            if (earlyClosed.size < MAX_EARLY_ATTACHMENTS) earlyClosed.set(event.attachId, event.finished);
             return;
           }
-          if (event.attachId !== attachId) return;
-          attachId = null;
-          events.onState("ended");
-          release();
+          close(event.attachId, event.finished);
         }),
       ];
       // The size the core was asked for; the pane may be resized before it answers.
@@ -153,7 +149,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
             if (result.ok) void invoke("local-terminal:detach", { attachId: result.attachId }).catch((error: unknown) => warn("detach", error));
             return;
           }
-          if (!result.ok) { events.onState("ended"); release(); return; }
+          if (!result.ok) { events.onState("connection-lost"); release(); return; }
           attachId = result.attachId;
           events.onOwnershipChange?.("writer");
           // The core sizes a terminal to its latest viewer: the attach size is now its grid.
@@ -167,12 +163,10 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
           if (dropped > 0) acknowledge(dropped);
           // It already ended: its last output is shown, then it reads as ended
           // instead of as a live terminal that takes no input.
-          const alreadyClosed = earlyClosed.has(result.attachId);
+          const alreadyClosed = earlyClosed.get(result.attachId);
           earlyClosed.clear();
-          if (alreadyClosed) {
-            attachId = null;
-            events.onState("ended");
-            release();
+          if (alreadyClosed !== undefined) {
+            close(result.attachId, alreadyClosed);
             return;
           }
           // Resized while attaching: the shell must learn the size now, not at the next resize.
@@ -180,11 +174,11 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
             const attached = result.attachId;
             const wanted = size;
             void invoke("local-terminal:resize", { attachId: attached, ...wanted })
-              .then((resized) => { if (!resized.ok) lost(attached); else if (attachId === attached && !released) events.onCanonicalSize?.(wanted); })
+              .then((resized) => { if (!resized.ok) close(attached, false); else if (attachId === attached && !released) events.onCanonicalSize?.(wanted); })
               .catch((error: unknown) => warn("resize", error));
           }
         })
-        .catch((error: unknown) => { warn("attach", error); if (!released) { events.onState("ended"); release(); } });
+        .catch((error: unknown) => { warn("attach", error); if (!released) { events.onState("connection-lost"); release(); } });
     },
     sendInput: (data) => send(data, false),
     sendBinary: (data) => send(data, true),
@@ -195,7 +189,7 @@ export function createLocalTerminalSocket(sessionName: string, events: ShellSock
         const wanted = size;
         void invoke("local-terminal:resize", { attachId: current, ...wanted })
           // Accepted: the xterm takes the new grid. Without this a local pane only scaled after a split or window resize.
-          .then((result) => { if (!result.ok) lost(current); else if (attachId === current && !released && size === wanted) events.onCanonicalSize?.(wanted); })
+          .then((result) => { if (!result.ok) close(current, false); else if (attachId === current && !released && size === wanted) events.onCanonicalSize?.(wanted); })
           .catch((error: unknown) => warn("resize", error));
       }
     },

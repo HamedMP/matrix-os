@@ -11,6 +11,7 @@ function setup(authorized = true) {
     list: vi.fn(async () => [{ id: "t1", title: "zsh", status: null }]),
     create: vi.fn(async (): Promise<string | null> => "t2"),
     kill: vi.fn(async () => undefined),
+    history: vi.fn(async () => "build result"),
     rename: vi.fn(async () => undefined),
     put: vi.fn(async () => "/tmp/hc/t1/shot.png"),
     attach: vi.fn(async () => 5),
@@ -53,6 +54,7 @@ describe("local terminal IPC", () => {
       "local-terminal:attach": { id: "t1", cols: 80, rows: 24 }, "local-terminal:input": { attachId: 1, data: "rm -rf ~\r" },
       "local-terminal:resize": { attachId: 1, cols: 80, rows: 24 }, "local-terminal:ack": { attachId: 1, count: 1 },
       "local-terminal:detach": { attachId: 1 },
+      "local-terminal:history": { id: "t1" },
       "local-terminal:rename": { id: "t1", name: "review" },
       "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
       "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:remove": { id: "t1" },
@@ -64,7 +66,7 @@ describe("local terminal IPC", () => {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
       expect(authorize).toHaveBeenLastCalledWith({ sender: "window" }, channel);
     }
-    for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach, host.watch, host.seen, host.addMachine, host.sshLogin]) {
+    for (const method of [host.list, host.create, host.kill, host.attach, host.input, host.resize, host.acknowledge, host.detach, host.watch, host.seen, host.history, host.addMachine, host.sshLogin]) {
       expect(method).not.toHaveBeenCalled();
     }
   });
@@ -72,11 +74,19 @@ describe("local terminal IPC", () => {
   // Fault detected (Greptile, #3567): terminals on added machines were listed but could not be opened, renamed or ended.
   it("takes the same actions on a terminal of an added machine", async () => {
     const { host, invoke } = setup();
-    expect(await invoke("local-terminal:attach", { id: "vps/t7", cols: 80, rows: 24 })).toEqual({ ok: true, attachId: 5 });
+    expect(await invoke("local-terminal:attach", { id: "vps/t1b0", cols: 80, rows: 24 })).toEqual({ ok: true, attachId: 5 });
     expect(await invoke("local-terminal:rename", { id: "vps/t7", name: "deploy" })).toEqual({ ok: true });
     expect(await invoke("local-terminal:kill", { id: "vps/t7" })).toEqual({ ok: true });
-    expect(host.attach).toHaveBeenCalledWith("vps/t7", { cols: 80, rows: 24 });
+    expect(host.attach).toHaveBeenCalledWith("vps/t1b0", { cols: 80, rows: 24 });
     await expect(invoke("local-terminal:kill", { id: "-vps/t7" })).rejects.toThrow("invalid request");
+  });
+
+  it("returns only bounded saved output through the Terminal window's IPC", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:history", { id: "vps/t1b0" })).toEqual({ ok: true, text: "build result" });
+    expect(host.history).toHaveBeenCalledWith("vps/t1b0");
+    host.history.mockRejectedValueOnce(new Error("private runtime details"));
+    expect(await invoke("local-terminal:history", { id: "vps/t1b0" })).toEqual({ ok: false });
   });
 
   // Spec 2706 layer 7.
@@ -105,8 +115,8 @@ describe("local terminal IPC", () => {
     expect(await invoke("local-terminal:create", { cols: 80, rows: 24, machine: "vps" })).toEqual({ status: "ready", id: "vps/t3" });
     expect(host.create).toHaveBeenLastCalledWith({ cols: 80, rows: 24 }, { machine: "vps" });
     await expect(invoke("local-terminal:create", { cols: 80, rows: 24, machine: "vps", agent: "claude" })).rejects.toThrow("invalid request");
-    expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
-    expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined);
+    expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", name: "lab", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
+    expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined, "lab");
     await expect(invoke("local-terminal:ssh-login", { target: "-oProxyCommand=sh", cols: 80, rows: 24 })).rejects.toThrow("invalid request");
   });
 
