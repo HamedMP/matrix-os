@@ -909,6 +909,40 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_BROWSER_ACCOUNT=matrix-browser MATRIX_SYSTEM
       expect(body.indexOf("restore_saved_access_mode")).toBeLessThan(body.indexOf("ask_access_mode"));
     });
 
+    // Review P1 (Nima, #3531 review 6045446199): the old public-only installer
+    // never wrote MATRIX_ACCESS_MODE, so a flagless upgrade picked Tailscale and
+    // skipped the existing-public guard.
+    describe("a legacy public install with no recorded access mode", () => {
+      function legacy(site: string | null, env = "MATRIX_SELF_HOSTED=1\nMATRIX_HANDLE=box\n") {
+        const hostEnv = join(dir, "legacy-host.env");
+        writeFileSync(hostEnv, env);
+        const siteFile = join(dir, "matrix-self-host");
+        if (site !== null) writeFileSync(siteFile, site);
+        return (flags: string) => run(`parse_args ${flags}
+MATRIX_HOST_ENV_FILE="${hostEnv}" MATRIX_NGINX_SITE_FILE="${siteFile}" restore_saved_access_mode >/dev/null
+printf '%s|%s\n' "$OPT_ACCESS" "$PREVIOUS_ACCESS_MODE"`);
+      }
+      const publicSite = 'server {\n  listen 80 default_server;\n  server_name _;\n  auth_basic "Matrix OS";\n}\n';
+
+      it("stays public on a flagless upgrade", () => {
+        const result = legacy(publicSite)("");
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout.trim()).toBe("public|public");
+      });
+
+      it("still honors an explicit --access, guarded as a switch away from public", () => {
+        const result = legacy(publicSite)("--access tailscale");
+        expect(result.stdout.trim()).toBe("tailscale|public");
+      });
+
+      it("does not invent a public install from a private site or a fresh machine", () => {
+        const privateSite = "server {\n  listen 127.0.0.1:80 default_server;\n  listen unix:/run/matrix-nginx/tailnet.sock;\n}\n";
+        expect(legacy(privateSite)("").stdout.trim()).toBe("tailscale|");
+        expect(legacy(null)("").stdout.trim()).toBe("tailscale|");
+        expect(legacy(publicSite, "MATRIX_HANDLE=box\n")("").stdout.trim()).toBe("tailscale|");
+      });
+    });
+
     it("keeps the public listener and fails loudly when private access is not ready", () => {
       const calls = join(dir, "switch-calls");
       const result = run(`tailscale_status_line() { printf 'NeedsLogin\\t\\t\\n'; }
@@ -920,11 +954,62 @@ PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= M
       expect(result.stdout + result.stderr).toMatch(/keeping your public/i);
       expect(readFileSync(calls, "utf8")).toContain("write_env public");
       const ready = run(`tailscale_status_line() { printf 'Running\\tbox.ts.net\\talice@example.com\\n'; }
-PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net require_private_access_ready`);
+PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net TAILNET_SERVE_PORT=443 require_private_access_ready`);
       expect(ready.status, ready.stderr).toBe(0);
       const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
       expect(main.indexOf("require_private_access_ready")).toBeGreaterThan(main.indexOf("configure_tailscale_serve"));
       expect(main.indexOf("require_private_access_ready")).toBeLessThan(main.indexOf("configure_nginx"));
+    });
+
+    // Review P1 (Nima, #3531 review 6045446199): with Tailscale signed in but both
+    // Serve commands failing, the installer still replaced the public site and
+    // reported success, because the later checks only hit the local socket.
+    function serveFixture(serveExit: number, status: string) {
+      const bin = join(dir, "serve-bin");
+      spawnSync("mkdir", ["-p", bin]);
+      writeFileSync(join(bin, "tailscale"), `#!/bin/sh
+case "$1 $2" in
+  "serve --bg") exit ${serveExit} ;;
+  "serve status") printf '%s' '${status}' ;;
+esac
+exit 0
+`);
+      chmodSync(join(bin, "tailscale"), 0o755);
+      const calls = join(dir, "serve-calls");
+      const result = run(`tailscale_status_line() { printf 'Running\tbox.ts.net\talice@example.com\n'; }
+write_env() { printf 'write_env %s\n' "$OPT_ACCESS" >>"${calls}"; }
+nginx() { echo "nginx $*" >>"${calls}"; }
+systemctl() { echo "systemctl $*" >>"${calls}"; }
+verify_public_websocket() { :; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net
+configure_tailscale_serve
+require_private_access_ready
+echo switched-to-private`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+      return { result, calls: existsSync(calls) ? readFileSync(calls, "utf8") : "" };
+    }
+    const published = (port: number) => JSON.stringify({ Web: { [`box.ts.net:${port}`]: { Handlers: { "/": { Proxy: "unix:/run/matrix-nginx/tailnet.sock" } } } } });
+
+    it("keeps a public install public and fails when Tailscale Serve cannot publish Matrix", () => {
+      const { result, calls } = serveFixture(1, "{}");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("switched-to-private");
+      expect(result.stdout + result.stderr).toMatch(/Tailscale Serve/);
+      expect(result.stdout + result.stderr).toMatch(/keeping your public listener/i);
+      expect(calls).toContain("write_env public");
+    });
+
+    it("does not trust a Serve command that exits 0 but publishes nothing for Matrix's socket", () => {
+      const other = JSON.stringify({ Web: { "box.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } } } });
+      const { result, calls } = serveFixture(0, other);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("switched-to-private");
+      expect(calls).toContain("write_env public");
+    });
+
+    it("switches a public install to private only once Serve publishes Matrix's socket", () => {
+      const { result } = serveFixture(0, published(443));
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("switched-to-private");
     });
 
     it("never reports private access verified without an authenticated request", () => {

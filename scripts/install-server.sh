@@ -660,6 +660,7 @@ EOF
 # Private modes: only Tailscale Serve (root) reaches nginx's root-only unix socket, so
 # only it presents a tailnet identity; the loopback listener refuses one before auth.
 TAILNET_SOCKET=/run/matrix-nginx/tailnet.sock
+TAILNET_SERVE_PORT=""
 nginx_private_identity_map() {
   cat <<'EOF'
 map "$remote_addr|$http_tailscale_user_login" $matrix_forged_identity {
@@ -850,6 +851,9 @@ restore_saved_access_mode() {
   local env="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}" mode server
   PREVIOUS_ACCESS_MODE="$(read_env_value "$env" MATRIX_ACCESS_MODE 2>/dev/null || true)"
   PREVIOUS_SHELL_ORIGIN="$(read_env_value "$env" SHELL_ORIGIN 2>/dev/null || true)"
+  if [ -z "$PREVIOUS_ACCESS_MODE" ] && legacy_public_install "$env"; then
+    PREVIOUS_ACCESS_MODE=public
+  fi
   [ "$OPT_ACCESS_EXPLICIT" != "1" ] && [ -z "$OPT_LOGIN_SERVER" ] || return 0
   mode="$PREVIOUS_ACCESS_MODE"
   case "$mode" in tailscale|headscale|public) ;; *) return 0 ;; esac
@@ -862,6 +866,17 @@ restore_saved_access_mode() {
   log "Keeping access mode ${mode}; pass --access to change it"
 }
 
+# legacy_public_install <host.env>: the public-only installer before access modes
+# wrote no MATRIX_ACCESS_MODE. Its install is a self-host host.env plus an nginx
+# site listening on port 80 on every address; a private site listens only on
+# loopback and the tailnet socket.
+legacy_public_install() {
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  [ "$(read_env_value "$1" MATRIX_SELF_HOSTED 2>/dev/null || true)" = "1" ] || return 1
+  [ -f "$site" ] && [ ! -L "$site" ] || return 1
+  grep -Eq '^[[:space:]]*listen[[:space:]]+(\[::\]:)?80([[:space:]]|;)' "$site"
+}
+
 # require_private_access_ready: before a public install's listener is replaced by
 # private-only nginx, the private network must be signed in with a recorded
 # owner and address. Otherwise the saved mode stays public and nothing changes.
@@ -871,7 +886,11 @@ require_private_access_ready() {
   local requested="$OPT_ACCESS"
   line="$(tailscale_status_line)"
   if [ "${line%%$'\t'*}" = "Running" ] && [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ] && [ -n "$MATRIX_TAILNET_URL" ]; then
-    return 0
+    [ -n "$TAILNET_SERVE_PORT" ] && return 0
+    # Signed in, but nothing on the tailnet reaches Matrix yet: replacing the
+    # public site now would leave no way in.
+    restore_previous_listener || fail "Tailscale Serve did not publish Matrix on your private network, and public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager"
+    fail "Tailscale Serve did not publish Matrix on your private network; keeping your public listener. Check: sudo tailscale serve status, then rerun the installer with --access ${requested}"
   fi
   restore_previous_listener || fail "private access is not ready (sign-in did not finish), and public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager"
   fail "private access is not ready (sign-in did not finish); keeping your public listener. Sign in with: sudo tailscale up, then rerun the installer with --access ${requested}"
@@ -1075,10 +1094,25 @@ record_tailscale_owner() {
   fi
 }
 
+# tailnet_serve_published <port>: Tailscale Serve reports a handler on <port>
+# that proxies to Matrix's tailnet socket. A zero exit from `tailscale serve`
+# alone is not trusted.
+tailnet_serve_published() {
+  local port
+  for port in $(timeout 30 tailscale serve status --json 2>>"$MATRIX_INSTALL_LOG" | matrix_serve_ports); do
+    [ "$port" != "$1" ] || return 0
+  done
+  return 1
+}
+
+# Sets TAILNET_SERVE_PORT only once Serve publishes Matrix's socket; a public
+# install is never switched away from without it (require_private_access_ready).
 configure_tailscale_serve() {
+  TAILNET_SERVE_PORT=""
   if [ "$OPT_ACCESS" = "headscale" ]; then
     timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
+    tailnet_serve_published 80 && TAILNET_SERVE_PORT=80
   else
     if ! timeout 60 tailscale serve --bg --yes --https=443 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1; then
       # Certificates are off for this tailnet. Tailnet traffic is already
@@ -1087,7 +1121,14 @@ configure_tailscale_serve() {
         || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
       MATRIX_TAILNET_URL="${MATRIX_TAILNET_URL/#https:/http:}"
       warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 unix:${TAILNET_SOCKET}"
+      tailnet_serve_published 80 && TAILNET_SERVE_PORT=80
+    else
+      tailnet_serve_published 443 && TAILNET_SERVE_PORT=443
     fi
+  fi
+  if [ -z "$TAILNET_SERVE_PORT" ]; then
+    warn "Tailscale Serve did not report Matrix on your private network. Check: sudo tailscale serve status"
+    return 0
   fi
   ok "Matrix is served on your private network only"
 }
