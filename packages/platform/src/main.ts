@@ -141,6 +141,7 @@ import { createSessionRoutingMiddleware } from './session-routing-middleware.js'
 import { runtimeProxyBodyLimitBytes } from './runtime-proxy-fetch.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { proxyLegacyRouteToSubstrate } from './substrates/legacy-proxy-route.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -732,6 +733,7 @@ export function createApp(deps: {
   const speechUploadBodyLimit = bodyLimit({
     maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
   });
+  const substrates = deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv);
   app.use('*', (c, next) => (
     runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
       ? speechUploadBodyLimit(c, next)
@@ -757,7 +759,7 @@ export function createApp(deps: {
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError: logPlatformRouteError,
-    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv),
+    substrates,
   }));
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
@@ -943,6 +945,11 @@ export function createApp(deps: {
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
+    // Platform-secret callers are not the owner, so they reach an on-demand runtime only while it is routable.
+    if (runningMachine && runningMachine.substrate !== 'vps') {
+      return proxyLegacyRouteToSubstrate(c, { db, substrates, machine: runningMachine, path, queryString: qs,
+        vpsDispatcher: customerVpsProxyDispatcher, logRouteError: logPlatformRouteError });
+    }
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {
