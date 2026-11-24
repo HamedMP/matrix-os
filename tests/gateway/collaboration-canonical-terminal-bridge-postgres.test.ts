@@ -67,6 +67,29 @@ describe("canonical terminal collaboration bridge", () => {
     await expect(bridge.registry.get(terminalId)).rejects.toThrow("Shared terminal is unavailable");
   });
 
+  it("checks a collaborator write only after the earlier write reached the terminal (Greptile on #3675)", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    await bridge.registry.bindCollaboration(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration, contributorControl: true,
+    });
+    let releaseFirst!: () => void;
+    runtime.writeInput.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseFirst = resolve; }));
+    let paused = false;
+    const first = bridge.runtime.input({ terminalId, scopeId, incarnation: eligible.sessionIncarnation, data: "slow", revalidate: async () => undefined });
+    const second = bridge.runtime.input({ terminalId, scopeId, incarnation: eligible.sessionIncarnation, data: "late",
+      revalidate: async () => { if (paused) throw new Error("input_paused"); } });
+    await vi.waitFor(() => expect(runtime.writeInput).toHaveBeenCalledTimes(1));
+    // The owner takes control while the first write is still on its way.
+    paused = true;
+    releaseFirst();
+    await first;
+    await expect(second).rejects.toThrow("input_paused");
+    expect(runtime.writeInput).toHaveBeenCalledTimes(1);
+  });
+
   it("binds only the current owner tab and persists its exact incarnation", async () => {
     const repository = new CollaborationRepository(fixture.db);
     await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
