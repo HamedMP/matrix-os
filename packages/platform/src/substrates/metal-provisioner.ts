@@ -111,6 +111,8 @@ export interface MetalProvisionerDeps {
    */
   goldenVersion: string;
   config: CustomerVpsConfig;
+  /** The platform's public app origin (appOrigin(env)); omitted means the gateway default. */
+  publicAppOrigin?: string;
   cloudInitTemplate?: string;
   now?: () => Date;
   machineIdFactory?: () => string;
@@ -144,7 +146,25 @@ function errorCode(error: unknown): string {
  * 32 KiB limit, stays byte-identical. Returns null unless the template has
  * exactly one such line.
  */
-export function withMetalServerEnv(userData: string, machineId: string): string | null {
+/**
+ * The platform's app origin as a guest env line, so the VM's gateway trusts
+ * Browser/Cloud desktop requests from it (the gateway otherwise assumes
+ * https://app.matrix-os.com). Only a bare https origin is written.
+ */
+function publicAppOriginLine(indent: string, origin: string | undefined): string {
+  if (origin === undefined) return '';
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return '';
+    if (url.origin !== origin.replace(/\/$/, '')) return '';
+    return `\n${indent}MATRIX_PUBLIC_APP_URL=${url.origin}`;
+  } catch (error) {
+    if (error instanceof TypeError) return '';
+    throw error;
+  }
+}
+
+export function withMetalServerEnv(userData: string, machineId: string, publicAppOrigin?: string): string | null {
   const escaped = machineId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^([ \\t]*)MATRIX_MACHINE_ID=${escaped}$`, 'gm');
   const matches = [...userData.matchAll(pattern)];
@@ -155,7 +175,8 @@ export function withMetalServerEnv(userData: string, machineId: string): string 
   // shared update check's default 8x-download headroom refuses the second
   // update on a 40 GiB disk. An update needs ~4.3x (download + unpacked app).
   const added = `\n${indent}MATRIX_SERVER_PROVIDER=metal\n${indent}MATRIX_SERVER_REF=${machineId}`
-    + `\n${indent}MATRIX_UPDATE_EXPANSION_FACTOR=5`;
+    + `\n${indent}MATRIX_UPDATE_EXPANSION_FACTOR=5`
+    + publicAppOriginLine(indent, publicAppOrigin);
   return userData.slice(0, at) + added + userData.slice(at);
 }
 
@@ -317,6 +338,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
           targetBundleSha256: bundleSha256,
         }),
         input.machineId,
+        deps.publicAppOrigin,
       );
       if (userData === null) {
         log('user_data_unrenderable', { machineId: input.machineId });

@@ -175,7 +175,7 @@ describe('metal provisioner', () => {
     return fake;
   }
 
-  function provisioner(overrides: { machineIds?: string[]; imageVersion?: string; db?: PlatformDB } = {}) {
+  function provisioner(overrides: { machineIds?: string[]; imageVersion?: string; db?: PlatformDB; publicAppOrigin?: string } = {}) {
     const machineIds = [...(overrides.machineIds ?? [MACHINE_ID])];
     return createMetalProvisioner({
       db: overrides.db ?? db,
@@ -197,6 +197,7 @@ describe('metal provisioner', () => {
         expiresAt: '2026-11-21T13:00:00.000Z',
       }),
       postgresPasswordFactory: () => 'postgres-secret',
+      ...(overrides.publicAppOrigin !== undefined ? { publicAppOrigin: overrides.publicAppOrigin } : {}),
       log: (event: string) => { logs.push(event); },
     });
   }
@@ -252,6 +253,8 @@ describe('metal provisioner', () => {
     // The 40 GiB disk keeps the app and its rollback copy (~4.2 GiB each); the
     // shared 8x-download update check would refuse every update after the first.
     expect(spec.userData).toMatch(/^\s*MATRIX_UPDATE_EXPANSION_FACTOR=5$/m);
+    // Production VMs keep the gateway's built-in app origin default.
+    expect(spec.userData).not.toContain('MATRIX_PUBLIC_APP_URL=');
     expect(spec.userData).toContain('MATRIX_REGISTRATION_TOKEN=registration-token');
     expect(spec.userData).not.toMatch(/\{\{[A-Za-z0-9_]+\}\}/);
     expect(new TextEncoder().encode(spec.userData).byteLength).toBeLessThanOrEqual(64 * 1024);
@@ -701,6 +704,22 @@ describe('metal provisioner', () => {
     expect(await db.executor.selectFrom('metal_vm_deletions').select(['machine_id', 'metal_vm_id']).execute())
       .toEqual([{ machine_id: MACHINE_ID, metal_vm_id: 'vm_0123456789abcdef01234567' }]);
   });
+  it('gives a VM its platform app origin so Browser and Cloud desktop accept requests from it', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await provisioner({ publicAppOrigin: 'https://metal-preview.matrix-os.com' })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    const spec = host.createVm.mock.calls[0]![0] as HostdCreateVmRequest;
+    expect(spec.userData).toMatch(/^\s*MATRIX_PUBLIC_APP_URL=https:\/\/metal-preview\.matrix-os\.com$/m);
+  });
+
+  it('leaves out an app origin that is not a bare https origin', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    await provisioner({ publicAppOrigin: 'http://evil.example\nMATRIX_X=1' })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });
+    const spec = host.createVm.mock.calls[0]![0] as HostdCreateVmRequest;
+    expect(spec.userData).not.toContain('MATRIX_PUBLIC_APP_URL=');
+    expect(spec.userData).not.toContain('MATRIX_X=1');
+  });
 });
 
 describe('metal VM deletion drainer', () => {
@@ -799,4 +818,5 @@ describe('metal VM deletion drainer', () => {
     // Not due yet: the next pass leaves it alone.
     expect(await drainer().drainOnce()).toEqual({ completed: 0, retried: 0 });
   });
+
 });

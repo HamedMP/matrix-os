@@ -1,5 +1,6 @@
 import type { CustomerVpsConfig } from '../customer-vps-config.js';
 import type { PlatformDB } from '../db.js';
+import { appOrigin } from '../origins.js';
 import { createHostdClient, createHostdDispatcher } from './hostd-client.js';
 import { loadMetalSubstrateConfig } from './metal-config.js';
 import { createMetalHostsRepository } from './metal-hosts-repository.js';
@@ -142,6 +143,7 @@ export function createConfiguredMetalRuntime(input: {
     ...(metal.poolMaxDataPercent !== undefined ? { poolMaxDataPercent: metal.poolMaxDataPercent } : {}),
     ...(metal.poolMaxMetadataPercent !== undefined ? { poolMaxMetadataPercent: metal.poolMaxMetadataPercent } : {}),
     config: input.customerVps.config,
+    publicAppOrigin: appOrigin(input.env),
     drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
     ...(input.customerVps.cloudInitTemplate ? { cloudInitTemplate: input.customerVps.cloudInitTemplate } : {}),
   });
