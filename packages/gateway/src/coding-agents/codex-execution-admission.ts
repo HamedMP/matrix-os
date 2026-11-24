@@ -120,11 +120,15 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
     const principal = row.nativeAccountGeneration;
     // Unchanged credentials under legacy consent: record the same-account alias
     // here too, so every entry point upgrades without a Settings or Chat visit.
+    // Fail closed (retryable, generic) when that upgrade cannot be saved: admitting
+    // without it would strand consent at the next token refresh.
     if (!savedCodexConsentMatches(principal, current, alias)) {
-      try { await upgradeCodexConsentAlias(resolve(options.homePath), principal, metadata!); }
+      let upgraded = false;
+      try { upgraded = await upgradeCodexConsentAlias(resolve(options.homePath), principal, metadata!) !== null; }
       catch (error: unknown) {
         console.warn("[native-codex] Consent upgrade unavailable:", error instanceof Error ? error.name : "UnknownError");
       }
+      if (!upgraded) reject();
     }
     const configurationFingerprint = nativeCodexConfigurationFingerprint(row);
     const binding = createHash("sha256").update(JSON.stringify({

@@ -475,6 +475,19 @@ describe("Codex consent alias after the durable-generation upgrade", () => {
     f.change({ principal: "private_owner_profile_B", generation: "durable_owner_B" });
     await expect(f.admission.confirm("owner", receipt, "sess_receipt_alias")).rejects.toThrow("unavailable");
   });
+  it("fails closed and retryably when the required consent upgrade cannot be saved", async () => {
+    const f = await fixture();
+    f.change({ generation: "durable_owner_A" });
+    const blocked = join(f.homePath, "system/ai-providers/codex-consent-alias.json");
+    await mkdir(blocked); // an unwritable alias path
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(f.admission.start("owner", "sess_blocked")).rejects.toThrow("Selected Codex account is unavailable");
+    } finally { warn.mockRestore(); }
+    await rm(blocked, { recursive: true });
+    await expect(f.admission.start("owner", "sess_blocked")).resolves.toEqual(expect.any(String));
+    expect(JSON.parse(await readFile(blocked, "utf8"))).toMatchObject({ saved: sha("private_owner_profile_A"), durable: sha("durable_owner_A") });
+  });
   it("ignores an alias for a different saved generation", async () => {
     const f = await fixture();
     await writeFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"),
