@@ -5,6 +5,7 @@ import { link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile 
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
+import { TerminalRuntimeStorageError } from "./errors.js";
 import { createTerminalCapacityAdmission } from "./user-systemd-capacity.js";
 import { probeKeeperReadiness } from "./user-systemd-readiness.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
@@ -264,9 +265,9 @@ async function writeDescriptorExclusive(
   descriptor: UserSystemdTerminalDescriptor,
 ): Promise<UserSystemdTerminalDescriptor> {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const tempPath = join(directory, `.${randomUUID()}.tmp`);
   try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(tempPath, `${JSON.stringify(descriptor, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     try {
       await link(tempPath, path);
@@ -290,6 +291,9 @@ async function writeDescriptorExclusive(
       }
       return existing.data;
     }
+  } catch (error: unknown) {
+    if (error instanceof TerminalRuntimeIdentityExistsError) throw error;
+    throw new TerminalRuntimeStorageError(error);
   } finally {
     await rm(tempPath, { force: true }).catch((err: unknown) => {
       if (!isErrnoCode(err, "ENOENT")) {
@@ -304,9 +308,9 @@ async function writeDescriptorAtomic(
   descriptor: UserSystemdTerminalDescriptor,
 ): Promise<void> {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const tempPath = join(directory, `.${randomUUID()}.tmp`);
   try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(tempPath, `${JSON.stringify(descriptor, null, 2)}\n`, { flag: "wx", mode: 0o600 });
     await rename(tempPath, path);
   } catch (err: unknown) {
@@ -315,7 +319,7 @@ async function writeDescriptorAtomic(
         console.warn("[terminal-runtime] failed to remove descriptor temp file");
       }
     });
-    throw err;
+    throw new TerminalRuntimeStorageError(err);
   }
 }
 
@@ -477,19 +481,19 @@ export function createUserSystemdTerminalRuntime(options: {
   }
 
   async function ensureDescriptorRoot(): Promise<void> {
-    await mkdir(descriptorRoot, { recursive: true, mode: 0o700 });
     try {
+      await mkdir(descriptorRoot, { recursive: true, mode: 0o700 });
       const [homeReal, descriptorReal, stats] = await Promise.all([
         realpath(homePath),
         realpath(descriptorRoot),
         lstat(descriptorRoot),
       ]);
       if (!stats.isDirectory() || stats.isSymbolicLink() || !pathIsWithin(homeReal, descriptorReal)) {
-        throw new InvalidTerminalRuntimeRequestError();
+        throw new TerminalRuntimeStorageError();
       }
     } catch (err: unknown) {
-      if (err instanceof InvalidTerminalRuntimeRequestError) throw err;
-      throw new InvalidTerminalRuntimeRequestError();
+      if (err instanceof TerminalRuntimeStorageError) throw err;
+      throw new TerminalRuntimeStorageError(err);
     }
   }
 
@@ -558,7 +562,7 @@ export function createUserSystemdTerminalRuntime(options: {
       stats = await lstat(path);
     } catch (err: unknown) {
       if (isErrnoCode(err, "ENOENT")) return null;
-      throw new TerminalRuntimeUnavailableError(err);
+      throw new TerminalRuntimeStorageError(err);
     }
     if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024) {
       throw new InvalidTerminalRuntimeRequestError();
@@ -567,8 +571,9 @@ export function createUserSystemdTerminalRuntime(options: {
     try {
       rawDescriptor = JSON.parse(await readFile(path, "utf8"));
     } catch (err: unknown) {
+      if (isErrnoCode(err, "ENOENT")) return null;
       if (err instanceof SyntaxError) throw new InvalidTerminalRuntimeRequestError();
-      throw new TerminalRuntimeUnavailableError(err);
+      throw new TerminalRuntimeStorageError(err);
     }
     const descriptor = DescriptorSchema.safeParse(rawDescriptor);
     if (!descriptor.success || descriptor.data.runtimeId !== parsed.data) {
@@ -584,7 +589,7 @@ export function createUserSystemdTerminalRuntime(options: {
       entries = await readdir(descriptorRoot, { withFileTypes: true });
     } catch (err: unknown) {
       if (isErrnoCode(err, "ENOENT")) return [];
-      throw new TerminalRuntimeUnavailableError();
+      throw new TerminalRuntimeStorageError(err);
     }
     const descriptors: UserSystemdTerminalDescriptor[] = [];
     const descriptorEntries = entries

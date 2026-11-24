@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
+import { TerminalRuntimeStorageError } from "./errors.js";
 import type { createUserSystemdTerminalRuntime } from "./user-systemd-controller.js";
 import type { WorkspaceZellijLifecycle, WorkspaceZellijTarget } from "./zellij-adapter.js";
 
@@ -24,18 +25,19 @@ function isErrnoCode(error: unknown, code: string): boolean {
 }
 
 async function writeLayoutExclusive(path: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  let existingLayout: string | undefined;
   try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     await writeFile(temporaryPath, WORKSPACE_LAYOUT, { flag: "wx", mode: 0o600 });
     try {
       await link(temporaryPath, path);
     } catch (error: unknown) {
       if (!isErrnoCode(error, "EEXIST")) throw error;
-      if (await readFile(path, "utf8") !== WORKSPACE_LAYOUT) {
-        throw new Error("Terminal workspace layout conflicts");
-      }
+      existingLayout = await readFile(path, "utf8");
     }
+  } catch (error: unknown) {
+    throw new TerminalRuntimeStorageError(error);
   } finally {
     try {
       await rm(temporaryPath, { force: true });
@@ -46,6 +48,9 @@ async function writeLayoutExclusive(path: string): Promise<void> {
         });
       }
     }
+  }
+  if (existingLayout !== undefined && existingLayout !== WORKSPACE_LAYOUT) {
+    throw new Error("Terminal workspace layout conflicts");
   }
 }
 

@@ -17,10 +17,11 @@ import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import {
-  DEFAULT_RESTORE_RETRY_BUDGET_MS,
+  DEFAULT_RESTORE_BUDGET_MS,
   isSessionScopedRestoreFailure,
   sessionScoped,
   WorkspaceRestoreRetries,
+  WorkspaceRestoreTimeoutError,
 } from "./workspace-restore-retry.js";
 import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
@@ -127,7 +128,7 @@ export interface TerminalRuntimeOptions {
   viewerTtlMs?: number;
   /** Base backoff for retrying a workspace whose startup restore failed (default 30 s, capped at 10 min). */
   restoreRetryBaseMs?: number;
-  /** Total time one background restore retry may hold the workspace queue (default 10 s). */
+  /** Time budget for one startup restore or background retry (default 10 s). */
   restoreRetryBudgetMs?: number;
   sweepIntervalMs?: number;
   observerCloseTimeoutMs?: number;
@@ -213,7 +214,7 @@ export class TerminalRuntime {
   private untrackedPaneClosures = 0;
   private observerRetryQueued = false;
   private readonly restoreRetries: WorkspaceRestoreRetries;
-  private readonly restoreRetryBudgetMs: number;
+  private readonly restoreBudgetMs: number;
   private shuttingDown = false;
   private acceptingObserverEvents = true;
 
@@ -233,8 +234,8 @@ export class TerminalRuntime {
     this.viewerTtlMs = options.viewerTtlMs ?? 2 * 60_000;
     this.observerCloseTimeoutMs = z.number().int().min(1).max(30_000).parse(options.observerCloseTimeoutMs ?? 5_000);
     this.restoreRetries = new WorkspaceRestoreRetries({ baseMs: options.restoreRetryBaseMs });
-    this.restoreRetryBudgetMs = z.number().int().min(1).max(60_000)
-      .parse(options.restoreRetryBudgetMs ?? DEFAULT_RESTORE_RETRY_BUDGET_MS);
+    this.restoreBudgetMs = z.number().int().min(1).max(60_000)
+      .parse(options.restoreRetryBudgetMs ?? DEFAULT_RESTORE_BUDGET_MS);
     this.sweepTimer = setInterval(() => {
       void this.sweepStaleViewers().catch((error: unknown) => {
         console.error("[terminal-runtime] stale viewer sweep failed", error instanceof Error ? error.name : "unknown_error");
@@ -262,7 +263,7 @@ export class TerminalRuntime {
     for (const workspace of await this.listWorkspaces()) {
       if (workspace.status === "stopped") continue;
       try {
-        await this.reconcileWorkspace(workspace.id);
+        await this.reconcileWorkspace(workspace.id, this.restoreBudgetMs);
       } catch (error) {
         if (this.shuttingDown || !isSessionScopedRestoreFailure(error)) throw error;
         this.restoreRetries.fail(workspace.id, error);
@@ -433,20 +434,21 @@ export class TerminalRuntime {
     });
   }
 
-  private reconcileWorkspace(workspaceId: string): Promise<void> {
-    return this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(workspaceId));
+  private reconcileWorkspace(workspaceId: string, budgetMs?: number): Promise<void> {
+    return this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(workspaceId, {
+      deadline: budgetMs === undefined ? undefined : Date.now() + budgetMs,
+    }));
   }
 
   /**
-   * `deadline` bounds a background restore attempt: it is passed to every
-   * Zellij call and checked between tabs, so the attempt releases the shared
-   * workspace queue within its budget even when the session stops answering.
+   * Pass the restore deadline down to session commands and check it between
+   * tabs so an unresponsive session does not monopolize the workspace queue.
    */
   private async reconcileWorkspaceNow(workspaceId: string, options: ZellijOperationOptions = {}): Promise<void> {
     const bounded = options.deadline === undefined ? [] as const : [{ deadline: options.deadline }] as const;
     const checkDeadline = () => {
       if (options.deadline !== undefined && Date.now() >= options.deadline) {
-        throw new TerminalRuntimeError("unavailable", "Terminal restore attempt timed out");
+        throw new WorkspaceRestoreTimeoutError();
       }
     };
     const workspace = await this.requireRuntimeWorkspace(workspaceId);
@@ -526,6 +528,7 @@ export class TerminalRuntime {
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
+      checkDeadline();
       await this.restartObserver(workspaceId);
       this.restoreRetries.clear(workspaceId);
     } finally {
@@ -1176,9 +1179,7 @@ export class TerminalRuntime {
           const status = (await this.store.getRuntimeWorkspace(id))?.status;
           return status !== undefined && status !== "stopped";
         },
-        reconcile: (id) => this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(id, {
-          deadline: Date.now() + this.restoreRetryBudgetMs,
-        })),
+        reconcile: (id) => this.reconcileWorkspace(id, this.restoreBudgetMs),
         shuttingDown: () => this.shuttingDown,
       });
       if (this.shuttingDown) return;

@@ -18,7 +18,8 @@ import {
   TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
-import { parseZellijStructuredOutput } from "./zellij-structured-output.js";
+import type { ZellijStructuredCommand } from "./errors.js";
+import { parseZellijStructuredOutput, type ZellijInventorySchema } from "./zellij-structured-output.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
@@ -28,6 +29,7 @@ import { ArchiveTabInventorySchema, ArchivePaneInventorySchema, archivedTabRunti
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
 const MAX_ATTACHMENT_HANDSHAKE_BYTES = 1024 * 1024;
+const STRUCTURED_COMMAND_ATTEMPTS = 10;
 const STRUCTURED_READINESS_ATTEMPTS = 20;
 const SWITCH_SESSION_RECONNECT_SEQUENCE = "\x1b[2J";
 const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
@@ -230,7 +232,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     if (requested.length === 0) return {};
 
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
+      sessionName, "list-tabs",
       z.array(TabSchema).max(10_000),
       binaryPath,
       operationDeadline,
@@ -566,7 +568,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     }
     if (action.type === "focus") {
       const panes = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+        sessionName, "list-panes",
         z.array(PaneGeometrySchema).max(10_000),
         binaryPath,
       );
@@ -587,14 +589,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
     const deadline = Date.now() + TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS;
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"], ArchiveTabInventorySchema, binaryPath,
+      sessionName, "list-tabs", ArchiveTabInventorySchema, binaryPath,
       deadline,
     );
     const matches = tabs.filter((tab) => tab.name === internalName);
     if (matches.length === 0 && !expected) return undefined;
     if (matches.length > 1) throw new Error("Terminal tab identity is ambiguous");
     const panes = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-panes", "--all", "--json"], ArchivePaneInventorySchema, binaryPath,
+      sessionName, "list-panes", ArchivePaneInventorySchema, binaryPath,
       deadline,
     );
     return archivedTabRuntimeIdentity(tabs, panes, internalName, expected);
@@ -658,7 +660,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     if (internalNames.length === 0) return {};
     const requested = new Set(internalNames);
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
+      sessionName, "list-tabs",
       z.array(TabSchema).max(10_000),
       binaryPath,
       deadline,
@@ -666,7 +668,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const requestedTabs = tabs.filter((tab) => requested.has(tab.name));
     if (requestedTabs.length === 0) return {};
     const panes = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+      sessionName, "list-panes",
       z.array(PaneSchema).max(10_000),
       binaryPath,
       deadline,
@@ -881,25 +883,30 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   }
 
   private async readStructuredJson<T>(
-    args: string[],
-    schema: z.ZodType<T>,
+    sessionName: string,
+    command: ZellijStructuredCommand,
+    schema: ZellijInventorySchema<T>,
     binaryPath = this.binaryPath,
     operationDeadline?: number,
   ): Promise<T> {
+    const args = ["--session", sessionName, "action", command];
+    if (command === "list-panes") args.push("--all");
+    args.push("--json");
     let lastError: unknown;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 1; attempt <= STRUCTURED_COMMAND_ATTEMPTS; attempt += 1) {
       try {
         const raw = await this.run(
           args,
           binaryPath,
           remainingCommandTimeout(operationDeadline),
         );
-        return parseZellijStructuredOutput(raw, schema);
+        return parseZellijStructuredOutput(raw, schema, command);
       } catch (error) {
         lastError = error;
-        // A caller's deadline bounds every retry, not only each command.
-        if (operationDeadline !== undefined && Date.now() >= operationDeadline) break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+        const retryDelayMs = 50 * attempt;
+        if (attempt === STRUCTURED_COMMAND_ATTEMPTS) break;
+        if (operationDeadline !== undefined && Date.now() + retryDelayMs >= operationDeadline) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
       }
     }
     throw lastError instanceof Error ? lastError : new Error("Zellij structured command failed");
@@ -914,7 +921,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const requested = new Set(tabIds);
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const panes = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+        sessionName, "list-panes",
         z.array(PaneSchema).max(10_000),
         binaryPath,
         operationDeadline,
@@ -934,7 +941,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   ): Promise<number> {
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const tabs = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-tabs", "--json"],
+        sessionName, "list-tabs",
         z.array(TabSchema).max(10_000),
         binaryPath,
         operationDeadline,
@@ -1026,7 +1033,8 @@ function createCommandRunner(options: {
     const child = nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
-      timeout: timeoutMs ?? options.timeoutMs,
+      timeout: Math.min(timeoutMs ?? options.timeoutMs, options.timeoutMs),
+      killSignal: "SIGKILL",
       maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
     }, (error, stdout, stderr) => {
       if (error) {

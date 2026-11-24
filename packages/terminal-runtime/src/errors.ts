@@ -66,49 +66,25 @@ export function terminalRuntimeErrorFromDetails(input: {
   return new TerminalRuntimeError(input.code);
 }
 
+/** Storage failures stay fatal even when a session adapter encounters them. */
+export class TerminalRuntimeStorageError extends TerminalRuntimeError {
+  constructor(cause?: unknown) {
+    super("unavailable", "Terminal runtime storage unavailable", { cause });
+    this.name = "TerminalRuntimeStorageError";
+  }
+}
+
+export type ZellijStructuredCommand = "list-tabs" | "list-panes";
 export type ZellijOutputErrorReason = "non_json" | "schema_invalid";
 
-const ZELLIJ_OUTPUT_SNIPPET_MAX = 160;
-// CSI sequences (colors, cursor moves) and OSC sequences (titles, hyperlinks).
-const ANSI_SEQUENCE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
-const CONTROL_CHARACTERS = /[\x00-\x1f\x7f-\x9f]+/g;
-// Long opaque runs may be credentials; Zellij output never needs them for diagnosis.
-const TOKEN_LIKE_RUN = /[A-Za-z0-9+/=_-]{48,}/g;
-
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_SEQUENCE, "");
-}
-
-/** Bounded, ANSI-free, control-free, token-redacted excerpt that is safe for server logs. */
-export function zellijOutputSnippet(output: string): string {
-  const cleaned = stripAnsi(output.slice(0, 4_096))
-    .replace(CONTROL_CHARACTERS, " ")
-    .replace(TOKEN_LIKE_RUN, "[redacted]")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned.length > ZELLIJ_OUTPUT_SNIPPET_MAX
-    ? `${cleaned.slice(0, ZELLIJ_OUTPUT_SNIPPET_MAX - 3)}...`
-    : cleaned;
-}
-
-/**
- * Zellij answered a structured (`--json`) command with output that is not the
- * expected JSON, e.g. a stale older-generation server printing a coloured
- * "session not found" line. The snippet is for server logs only; clients see
- * the generic `unavailable` message.
- */
+/** A structured Zellij response was unreadable. Keep only diagnostic metadata. */
 export class ZellijOutputError extends TerminalRuntimeError {
-  readonly reason: ZellijOutputErrorReason;
-  readonly snippet: string;
-
-  constructor(reason: ZellijOutputErrorReason, snippet: string, options?: ErrorOptions) {
-    super("unavailable", undefined, options);
+  constructor(
+    readonly command: ZellijStructuredCommand,
+    readonly reason: ZellijOutputErrorReason,
+    readonly invalidFields: readonly string[] = [],
+  ) {
+    super("unavailable");
     this.name = "ZellijOutputError";
-    this.reason = reason;
-    this.snippet = snippet;
-  }
-
-  static fromOutput(reason: ZellijOutputErrorReason, output: string, options?: ErrorOptions): ZellijOutputError {
-    return new ZellijOutputError(reason, zellijOutputSnippet(output), options);
   }
 }

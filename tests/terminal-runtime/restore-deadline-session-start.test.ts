@@ -83,6 +83,87 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+describe("production startup restore", () => {
+  it("skips a hung Zellij inventory in time for a healthy workspace to attach", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-startup-"));
+    dirs.push(homePath);
+    const healthy = new HealthyZellij();
+    const store = new TerminalWorkspaceStore({ homePath });
+    const seed = new TerminalRuntime({ store, zellij: healthy });
+    const bad = await seed.ensureWorkspace();
+    const good = await seed.ensureWorkspace({ projectId: "good" });
+    const badTab = await seed.createTab(bad.id, { name: "bad", cwd: "" });
+    const goodTab = await seed.createTab(good.id, { name: "good", cwd: "projects/good" });
+    await seed.shutdown();
+
+    const badSession = (await store.getRuntimeWorkspace(bad.id))!.zellijSessionName;
+    const binaryPath = join(homePath, "zellij");
+    const inventoryStarted = join(homePath, "inventory-started");
+    await writeFile(binaryPath, [
+      "#!/bin/sh",
+      'if [ "$1" = "list-sessions" ]; then printf "%s\\n" "$TEST_ZELLIJ_SESSION"; exit 0; fi',
+      'if [ "$4" = "list-tabs" ]; then : > "$TEST_INVENTORY_STARTED"; exec /bin/sleep 3; fi',
+      "exit 1",
+      "",
+    ].join("\n"), { mode: 0o700 });
+    const production = new ZellijCliRuntimeAdapter({
+      homePath, binaryPath, timeoutMs: 800,
+      env: { TEST_ZELLIJ_SESSION: badSession, TEST_INVENTORY_STARTED: inventoryStarted },
+    });
+    await production.ensureSession(badSession);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runtime = new TerminalRuntime({
+      store,
+      zellij: routeSession(healthy, production, () => badSession),
+      restoreRetryBudgetMs: 600,
+    });
+    try {
+      const startedAt = Date.now();
+      await runtime.restoreAll();
+      expect(await exists(inventoryStarted)).toBe(true);
+      const viewer = await runtime.attach({ workspaceId: good.id, tabId: goodTab.id }, {
+        viewerId: "desktop",
+        send: () => undefined,
+      });
+      await viewer.detach();
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(await store.getTab({ workspaceId: bad.id, tabId: badTab.id })).toMatchObject({ status: "running" });
+    } finally {
+      await runtime.shutdown();
+    }
+  }, 15_000);
+
+  it.each(["terminal-runtimes", "zellij/runtime-layouts"])(
+    "fails startup when shared runtime storage at %s is unusable",
+    async (unusableRoot) => {
+      const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-storage-"));
+      dirs.push(homePath);
+      const store = new TerminalWorkspaceStore({ homePath });
+      await store.ensureWorkspace();
+      await mkdir(join(homePath, "system", "zellij"), { recursive: true });
+      await writeFile(join(homePath, "system", unusableRoot), "");
+      const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+      const controller = createUserSystemdTerminalRuntime({
+        homePath,
+        generation: `gen_${"a".repeat(64)}`,
+        runCommand,
+      });
+      const zellij = new ZellijCliRuntimeAdapter({
+        homePath,
+        workspaceLifecycle: createUserSystemdWorkspaceLifecycle({ homePath, controller }),
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const runtime = new TerminalRuntime({ store, zellij });
+      try {
+        await expect(runtime.restoreAll()).rejects.toThrow(/runtime storage unavailable/i);
+        expect(runCommand).not.toHaveBeenCalled();
+      } finally {
+        await runtime.shutdown();
+      }
+    },
+  );
+});
+
 describe("background restore deadline on the production session-start path", () => {
   it("ends a hung session start within the budget so a healthy attach is not held", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-deadline-home-"));
