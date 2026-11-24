@@ -201,7 +201,16 @@ export function transitionProjectSetupInterview(current: ProjectSetupDraft, acti
     case "stage_skill": {
       if (current.interview.focus !== "skill") throw new ProjectSetupError("invalid");
       const skill = projectSetupSkill(action.content);
+      delete pending.interview.skillSkipped;
       return { draft: { ...pending, skill: { ...skill, source: "user" } }, userText: `Use the ${skill.name} skill in this project.` };
+    }
+    case "choose_skill": {
+      if (current.interview.focus !== "skill" || action.choice !== "skip") throw new ProjectSetupError("invalid");
+      const draft = { ...pending, answers: { ...pending.answers }, interview: { ...pending.interview, skillSkipped: true as const },
+        proposals: pending.proposals.filter(file => !file.path.endsWith("/SKILL.md") || ["saved", "already_present"].includes(file.status)) };
+      delete draft.answers.skillInstructions;
+      if (!draft.proposals.some(file => file.path === draft.skill?.path)) delete draft.skill;
+      return { draft, userText: "Continue without a skill." };
     }
     case "choose_mcp":
       if (!["mcp", "review"].includes(current.interview.focus)) throw new ProjectSetupError("invalid");
@@ -284,6 +293,7 @@ export function applyProjectSetupInterview(current: ProjectSetupDraft, text: str
     focus,
     suggestions: blocked ? [] : [...new Set(generated.suggestions)],
     ...(service && ["mcp", "review"].includes(generated.focus) ? { recommendedService: service.name } : {}),
+    ...(current.interview?.skillSkipped && !generated.answers?.skillInstructions && !generated.review?.skill ? { skillSkipped: true } : {}),
   };
   draft.step = focusToStep[focus];
   if (generated.review) {
@@ -337,6 +347,7 @@ export function projectSetupInterviewPrompt(draft: ProjectSetupDraft, context: P
     "Resolve the project purpose, working preferences, repeatable work or integration requirements only when relevant. If only one setup item is requested, leave the other items undecided. Use actual MCP connection facts, do not assume Linear or imply you authorized or connected anything.",
     "Recommend an existing relevant Skill when appropriate. Suggest a bounded new Skill only for repeatable work the owner asked to configure. For review, show what the owner asked for and propose complete Markdown only for requested items. For AGENTS.md guidance, include the confirmed purpose and preferences in answers, even when there are no special preferences. Omit review.guidance to keep the current draft; use null only when the owner asks to drop the proposed guidance. Existing files are preserved.",
     "Keep the owner's selected Skill manifest when stagedSkill is present. Use review.skill: null only if the owner asks to remove the proposed Skill. Saved files stay on disk.",
+    "If skillSkipped is true, proceed without a Skill unless the owner explicitly changes that choice.",
     "When revising a proposed file, preserve unrelated sections. A reviewedDraft path with no content still has a full draft in Review. Keep that file unchanged and use Review for direct Markdown edits. A null interpreted answer is an existing answer not shown here.",
     "Do not use tools, run commands, create files, connect services, or claim that anything was saved. Use Markdown text without image embeds. The owner can authorize in Settings or review and explicitly save files through the app.",
     'Return only one JSON object: {"reply":"one short primary question or next step","focus":"intent|guidance|skill|mcp|review","suggestions":["up to three optional answers the owner could send"],"recommendedService":"optional exact catalog name","answers":{"purpose":"optional updated fact","guidance":"optional updated fact","skillInstructions":"optional updated fact"},"review":{"guidance":"optional full AGENTS.md Markdown","skill":{"name":"lowercase-hyphenated-slug","description":"plain description","instructions":"Skill body Markdown"}}}. Omit unchanged answers, use null to clear a corrected fact, and provide review only when focus is review. An empty review is valid for tools-only setup. Omit unavailable optional keys.',
@@ -358,6 +369,7 @@ export function projectSetupInterviewPrompt(draft: ProjectSetupDraft, context: P
     reviewedDraft,
     requestedConnection: draft.mcp,
     stagedSkill: userSelectedSkill?.name,
+    skillSkipped: draft.interview?.skillSkipped,
   };
   const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
   let remaining = 58 * 1024 - Buffer.byteLength(instructions) - jsonBytes(data) - 1;

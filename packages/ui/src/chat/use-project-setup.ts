@@ -168,7 +168,8 @@ export function useProjectSetup(options: Options) {
   const dispatch = async (action: ProjectSetupAction): Promise<boolean> => {
     const draft = stateRef.current.draft;
     if (!actionsAllowed.current || !client || !draft || draft.projectId !== projectId) return false;
-    const followUp = action.type === "stage_skill" || (action.type === "choose_mcp" && action.choice === "skip");
+    const followUp = action.type === "stage_skill"
+      || ((action.type === "choose_mcp" || action.type === "choose_skill") && action.choice === "skip");
     const canonicalAction = followUp && draft.interview && strictSelection
       ? { ...action, selection: strictSelection }
       : "selection" in action && action.selection

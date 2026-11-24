@@ -1130,8 +1130,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
   // A newly opened setup Chat can be absent from navigation until its first detail arrives.
+  const sharedRecord = activeRecord && "collaboration" in activeRecord.chat
+    && activeRecord.chat.collaboration?.mode === "shared";
   const checkoutPending = sameAuthority && detailLoading && !selectedDetailError
-    && (!activeRecord || (Boolean(activeRecord.projectId) && activeRecord.chat.collaboration?.mode !== "shared"));
+    && (!activeRecord || (Boolean(activeRecord.projectId) && !sharedRecord));
   const projectedSharedChat = sharedChatMembershipFromProjection(selectedDetail?.record.chat.collaboration);
   const collaborationView = (sameAuthority ? selectedCollaborationView : null)
     ?? (projectedSharedChat && activeRecord

@@ -112,6 +112,18 @@ it("keeps a skipped legacy Skill marked skipped after advancing to MCP and revie
   expect(skill()?.dataset.state).toBe("skipped");
 });
 
+it("submits a Skill skip choice and shows it after the interview advances", () => {
+  const interview = { focus: "skill" as const, suggestions: [] };
+  const setup = controller(undefined, { ...draft, step: "skill", interview });
+  const { rerender } = render(<ProjectSetupControls setup={setup} transport={null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Skip skill" }));
+  expect(setup.dispatch).toHaveBeenCalledWith({ type: "choose_skill", choice: "skip" });
+  rerender(<ProjectSetupProgress projectName="Portfolio" draft={{
+    ...draft, step: "mcp", interview: { ...interview, focus: "mcp", skillSkipped: true },
+  }} />);
+  expect(screen.getByText("Skills").closest("li")?.dataset.state).toBe("skipped");
+});
+
 it("renders only the Agent's suggestions through the same answer action", () => {
   const setup = controller(undefined, {
     ...draft, step: "guidance", proposals: [],

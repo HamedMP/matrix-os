@@ -237,9 +237,7 @@ function ProjectSetupControlsScoped({
               Create a skill
             </Action> : null}
             {!interview ? <SkillSourceButtons {...{ busy, setSource, loadInstalledSkills, readInstalledSkill }} /> : null}
-            <Action disabled={busy} variant={interview ? "ghost" : undefined} onClick={() => interview
-              ? void setup.answer("Continue without a skill.")
-              : dispatch({ type: "choose_skill", choice: "skip" })}>
+            <Action disabled={busy} variant={interview ? "ghost" : undefined} onClick={() => dispatch({ type: "choose_skill", choice: "skip" })}>
               {interview ? "Skip skill" : "Skip for now"}
             </Action>
           </div>

@@ -19,6 +19,7 @@ export const ProjectSetupInterviewSchema = z.object({
   suggestions: z.array(z.string().trim().min(1).max(160)).max(3),
   recommendedService: mcpServiceName.optional(),
   mcpHandoff: z.literal(true).optional(),
+  skillSkipped: z.literal(true).optional(),
 }).strict();
 export type ProjectSetupInterview = z.infer<typeof ProjectSetupInterviewSchema>;
 
@@ -56,7 +57,7 @@ export type ProjectSetupDraft = z.infer<typeof ProjectSetupDraftSchema>;
 
 export const ProjectSetupActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("answer"), text: answer }).strict(),
-  z.object({ type: z.literal("choose_skill"), choice: z.enum(["create", "skip"]) }).strict(),
+  z.object({ type: z.literal("choose_skill"), choice: z.enum(["create", "skip"]), selection: CanonicalChatModelSelectionSchema.optional() }).strict(),
   z.object({ type: z.literal("stage_skill"), content: markdown, selection: CanonicalChatModelSelectionSchema.optional() }).strict(),
   z.object({
     type: z.literal("choose_mcp"), choice: z.enum(["connect", "skip"]),

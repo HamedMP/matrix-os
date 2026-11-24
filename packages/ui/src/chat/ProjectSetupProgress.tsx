@@ -26,7 +26,7 @@ function projectSetupProgress(draft: ProjectSetupDraft | null): ProgressState[] 
   const legacyAfterSkills = !draft.interview && ["mcp", "review", "saved"].includes(draft.step);
   const skills = focus === "skill" || (!focus && ["skill", "skill_instructions"].includes(draft.step))
     ? "current" : draft.skill ? "complete" : draft.answers.skillInstructions ? "described"
-      : legacyAfterSkills ? "skipped" : "incomplete";
+      : (legacyAfterSkills || draft.interview?.skillSkipped) ? "skipped" : "incomplete";
   const mcp = focus === "mcp" || (!focus && draft.step === "mcp")
     ? "current" : draft.mcp.state === "not_requested" ? "incomplete" : draft.mcp.state;
   return [guidance, skills, mcp];

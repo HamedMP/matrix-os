@@ -124,6 +124,29 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   expect(revised.proposals).toEqual([]);
 });
 
+it("keeps an explicit Skill skip through the next reply and clears it when the owner stages a Skill", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const initial = beginProjectSetupInterview(initialProjectSetup("chat_skip", "project_ops", "Store operations", "msg_setup"));
+  const prompted = applyProjectSetupInterview(initial, JSON.stringify({
+    reply: "Would a handoff Skill help?", focus: "skill", suggestions: [],
+  }), context).draft;
+  const skipped = transitionProjectSetupInterview(prompted, { type: "choose_skill", choice: "skip" });
+  expect(skipped.userText).toBe("Continue without a skill.");
+  const mcp = applyProjectSetupInterview(skipped.draft, JSON.stringify({
+    reply: "Do you need connected tools?", focus: "mcp", suggestions: [],
+  }), context).draft;
+  expect(mcp.interview).toMatchObject({ focus: "mcp", skillSkipped: true });
+  expect(mcp.skill).toBeUndefined();
+  const revisited = applyProjectSetupInterview(mcp, JSON.stringify({
+    reply: "Which Skill would you like to use?", focus: "skill", suggestions: [],
+  }), context).draft;
+  const selected = transitionProjectSetupInterview(revisited, {
+    type: "stage_skill", content: "---\nname: shift-handoff\ndescription: Check shift handoff\n---\nConfirm break coverage.",
+  }).draft;
+  expect(selected.interview?.skillSkipped).toBeUndefined();
+  expect(selected.skill).toMatchObject({ name: "shift-handoff", source: "user" });
+});
+
 it.each(["pending", "failed", "conflict"] as const)("supplies complete %s drafts and the latest correction to the interview", status => {
   const context = { project: { name: "Portfolio" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
