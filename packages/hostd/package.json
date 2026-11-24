@@ -6,10 +6,12 @@
   "exports": {
     "./ch-client": "./src/ch-client.ts",
     "./guest-client": "./src/guest-client.ts",
-    "./memory-controller": "./src/memory-controller.ts"
+    "./memory-controller": "./src/memory-controller.ts",
+    "./api": "./src/api.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build:hostd": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/hostd/main.mjs '--banner:js=import { createRequire as __hostdCreateRequire } from \"node:module\"; const require = __hostdCreateRequire(import.meta.url);'",
     "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
   },
   "dependencies": {
