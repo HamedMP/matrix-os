@@ -96,7 +96,8 @@
 .chat-search-open-archive span { flex: 1; }
 .chat-search-footer { display: flex; gap: 12px; padding: 8px 16px; font-size: 12px; line-height: 16px; color: var(--chat-muted); border-top: 1px solid var(--chat-divider); }
 .chat-inspector-tabs { height: 48px; flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; padding: 8px 8px 0 12px; border-bottom: 1px solid var(--chat-divider); }
-.chat-inspector-tabs > [role="tablist"] { display: flex; min-width: 0; overflow-x: auto; gap: 8px; }
+.chat-inspector-tabs > [role="tablist"] { display: flex; min-width: 0; overflow-x: auto; gap: 8px; scrollbar-width: none; }
+.chat-inspector-tabs > [role="tablist"]::-webkit-scrollbar { display: none; }
 .chat-inspector-tab { display: flex; flex-shrink: 0; height: 40px; position: relative; gap: 6px; padding: 0 8px; color: var(--chat-muted); }
 .chat-inspector-tab > button { display: flex; align-items: center; justify-content: center; gap: 6px; background: transparent; padding: 0; border: 0; font: 500 14px/20px Geist, sans-serif; color: inherit; white-space: nowrap; }
 .chat-inspector-tab > button[role="tab"] span { max-width: 128px; overflow: hidden; text-overflow: ellipsis; }
