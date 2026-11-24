@@ -75,6 +75,7 @@ import { CollaborationRevocationEnforcer, ProjectAccessRevocationEnforcer } from
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { TeamTerminalInputModes } from "./team-terminal-input-mode.js";
+import { TeamTerminalService } from "./team-terminal-service.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
@@ -369,6 +370,8 @@ export async function createGatewayCollaboration(options: {
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let teamTerminalInputModes: TeamTerminalInputModes | undefined;
+  let teamTerminals: TeamTerminalService | undefined;
+  let teamTerminalName: ((terminalId: string) => Promise<string | null>) | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectChatAssignments: ProjectChatAssignmentCoordinator | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
@@ -388,6 +391,7 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.notifyScopeRevoked(scopeId, actorId);
       terminalEventRegistry?.notifyScopeRevoked(scopeId, actorId);
       if (actorId === undefined) teamTerminalInputModes?.clearScope(scopeId);
+      if (actorId === undefined) teamTerminals?.clearScope(scopeId);
       if (actorId === undefined) terminalControl?.invalidateScope(scopeId);
       else terminalControl?.invalidateActor(scopeId, actorId);
       if (sharedAiRuntime?.available) await sharedAiRuntime.revokeScope(scopeId, actorId);
@@ -690,11 +694,17 @@ export async function createGatewayCollaboration(options: {
     async checkSharedAiControlLease(): Promise<void> {
       await controlLossWatchdog?.check();
     },
+    /** Spec 2710: the owner's side of team terminals, for the terminal events feed and the owner's own tab input. */
+    teamTerminalOwnerFeed(): Pick<TeamTerminalService, "noteOwnerInput" | "onOwnerEntries" | "ownerEntries"> | undefined {
+      return teamTerminals;
+    },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
       runtime: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["runtime"];
       executionEligibility: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["executionEligibility"];
       connectOutput: NonNullable<ConstructorParameters<typeof CollaborationTerminalEventRegistry>[0]["connectOutput"]>;
+      /** Spec 2710: the owner's tab name, shown to members under Team. */
+      terminalName?(terminalId: string): Promise<string | null>;
     }): { available: true } {
       if (registered || closing || terminalAdapter) {
         throw new Error("Shared terminal must be initialized exactly once before route registration");
@@ -728,6 +738,7 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         revocations: revocationEnforcer,
         inputModes: teamTerminalInputModes,
+        team: () => teamTerminals,
       });
       terminalEventRegistry = new CollaborationTerminalEventRegistry({
         authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
@@ -735,6 +746,12 @@ export async function createGatewayCollaboration(options: {
         projectTerminal: (metadata) => terminalDispatcher!.project(metadata),
         connectOutput: input.connectOutput,
         startTimers: options.startTimers,
+      });
+      teamTerminalName = input.terminalName;
+      teamTerminals = new TeamTerminalService({
+        registry: terminalEventRegistry,
+        inputModes: teamTerminalInputModes,
+        resolveParticipant,
       });
       return { available: true };
     },
@@ -847,6 +864,7 @@ export async function createGatewayCollaboration(options: {
         ...(executionPolicies ? { executionPolicies } : {}),
         ...(resourceServices ? { resources: resourceServices } : {}),
         ...(standaloneScope ? { standaloneScope } : {}),
+        ...(teamTerminalName ? { teamTerminalName } : {}),
         ...(organizationDrive ? { organizationDrive } : {}),
         ...(collaborativeAppReadiness ? { collaborativeAppReadiness } : {}),
         onScopeCommitted: async (scopeId) => {
@@ -951,6 +969,8 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      teamTerminals?.close();
+      teamTerminals = undefined;
       teamTerminalInputModes?.clear();
       teamTerminalInputModes = undefined;
       terminalControl?.close();
@@ -1001,6 +1021,8 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      teamTerminals?.close();
+      teamTerminals = undefined;
       teamTerminalInputModes?.clear();
       teamTerminalInputModes = undefined;
       terminalControl?.close();

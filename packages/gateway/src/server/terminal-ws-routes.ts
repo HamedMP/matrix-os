@@ -27,6 +27,8 @@ interface TerminalWebSocketRouteOptions {
   terminalWorkspaceProjectAdmission: ReturnType<typeof createTerminalWorkspaceProjectAdmission>;
   /** Records human keystrokes so automated sends wait for an unfinished draft. */
   terminalInputActivity?: TerminalInputActivity;
+  /** Spec 2710: attributes typing in a shared tab to the person at this socket; content never leaves the call. */
+  teamTerminals?(): { noteOwnerInput(ref: { workspaceId: string; tabId: string }, data: string, actorId?: string): void } | undefined;
   captureTerminalEvent(event: string, properties?: Record<string, string | number | boolean | undefined>): void;
   getPrincipal(context: Context): RequestPrincipal;
   logBestEffortFailure(context: string, error: unknown): void;
@@ -39,7 +41,7 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
   const {
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity, captureTerminalEvent, getPrincipal,
+    terminalWorkspaceProjectAdmission, terminalInputActivity, teamTerminals, captureTerminalEvent, getPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   } = options;
   app.get(
@@ -247,6 +249,13 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
                   if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
                     stream.send(frame);
                     if (frame.type === "input" || frame.type === "binary") terminalInputActivity?.record(refResult.data);
+                    const teamFeed = frame.type === "input" || frame.type === "binary" ? teamTerminals?.() : undefined;
+                    if (teamFeed && principal && (frame.type === "input" || frame.type === "binary")) {
+                      // Only the size and whether Enter was pressed are kept downstream.
+                      const typed = frame.type === "input" ? frame.data : Buffer.from(frame.dataBase64, "base64").toString("latin1");
+                      try { teamFeed.noteOwnerInput(refResult.data, typed, principal.userId); }
+                      catch (attributionError) { logBestEffortFailure("Terminal input attribution failed", attributionError); }
+                    }
                   } else {
                     ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
                   }

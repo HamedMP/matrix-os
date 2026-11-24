@@ -211,6 +211,12 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         registry: terminalBridge.registry,
         runtime: terminalBridge.runtime,
         connectOutput: terminalBridge.connectOutput,
+        terminalName: async (terminalId) => {
+          const [workspaceId, tabId] = terminalId.split(":");
+          const workspaces = await terminalWorkspaceRuntime.listWorkspaces();
+          const name = workspaces.find((workspace) => workspace.id === workspaceId)?.tabs.find((tab) => tab.id === tabId)?.name;
+          return name ? name.slice(0, 256) : null;
+        },
         executionEligibility: {
           profileId: "scope-runtime-terminal-v1",
           profileVersion: 1,

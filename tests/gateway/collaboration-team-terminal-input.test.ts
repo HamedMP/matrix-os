@@ -45,7 +45,8 @@ function setup(options: { contributorControl?: boolean } = {}) {
   };
   const control = new TerminalControlCoordinator({ startTimer: false });
   const inputModes = new TeamTerminalInputModes();
-  const dispatcher = new CollaborationTerminalDispatcher({ authority, terminal, control, inputModes });
+  const team = { subscribe: vi.fn(() => true), noteSharedInput: vi.fn(), inputModeChanged: vi.fn() };
+  const dispatcher = new CollaborationTerminalDispatcher({ authority, terminal, control, inputModes, team: () => team });
   const send = (actorId: string, type: "input_shared" | "paste_shared", data = "echo hi\r") => dispatcher.dispatch({
     scopeId, actorId, connectionId: `connection_${actorId}`,
     action: { type, clientRequestId: requestId, incarnation, connectionId: `connection_${actorId}`, data },
@@ -54,7 +55,7 @@ function setup(options: { contributorControl?: boolean } = {}) {
     scopeId, actorId, connectionId: `connection_${actorId}`,
     action: { type: "input_mode", clientRequestId: requestId, incarnation, mode },
   });
-  return { dispatcher, runtime, control, roles, send, setMode, inputModes, terminal };
+  return { dispatcher, runtime, control, roles, send, setMode, inputModes, terminal, team };
 }
 
 describe("team terminal shared input (spec 2710 J3-J6)", () => {
@@ -190,6 +191,25 @@ describe("owner control holds on every write path (Greptile on #3675)", () => {
     await expect(setMode("user_owner", "owner")).resolves.toMatchObject({ inputMode: "owner" });
     expect(inputModes.size).toBe(2);
     expect(inputModes.get("20000000-0000-4000-8000-000000000999", incarnation)).toBe("owner");
+describe("team terminal presence hooks (spec 2710)", () => {
+  it("lets a viewer watch presence, which is read access", async () => {
+    const { dispatcher, team, control } = setup();
+    await expect(dispatcher.dispatch({
+      scopeId, actorId: "user_viewer", connectionId: "connection_user_viewer",
+      action: { type: "presence_subscribe", clientRequestId: requestId, incarnation },
+    })).resolves.toEqual({ scopeId, subscribed: true });
+    expect(team.subscribe).toHaveBeenCalledWith(scopeId, "connection_user_viewer");
+    control.close();
+  });
+
+  it("attributes only input that was written, and announces mode changes", async () => {
+    const { send, setMode, team, control } = setup();
+    await send("user_editor", "input_shared", "ls\r");
+    await expect(send("user_viewer", "input_shared", "rm\r")).rejects.toMatchObject({ code: "forbidden" });
+    expect(team.noteSharedInput).toHaveBeenCalledTimes(1);
+    expect(team.noteSharedInput).toHaveBeenCalledWith(scopeId, "user_editor", "ls\r");
+    await setMode("user_owner", "owner");
+    expect(team.inputModeChanged).toHaveBeenCalledWith(scopeId);
     control.close();
   });
 });

@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import { z } from "zod/v4";
-import { TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contracts";
+import { TerminalTabIdSchema, TerminalWorkspaceIdSchema, type TeamTerminalOwnerEntry } from "@matrix-os/contracts";
 import { readPreviewTerminalOwner } from "../auth.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { terminalRuntimeOwnerAccess } from "../shell/workspace-routes.js";
@@ -29,7 +29,10 @@ export function registerTerminalEventWebSocket(options: {
   hub: TerminalEventHub;
   getPrincipal(context: Context): RequestPrincipal;
   terminalOwnerIds: readonly string[];
+  /** Spec 2710: team terminal presence for the owner; its service drops the listener on shutdown. */
+  teamTerminals?(): { onOwnerEntries(listener: (entries: TeamTerminalOwnerEntry[]) => void): () => void } | undefined;
 }): void {
+  options.teamTerminals?.()?.onOwnerEntries((entries) => options.hub.publishTeam(entries));
   options.app.get(TERMINAL_EVENTS_WS_PATH, options.upgradeWebSocket((c) => {
     let handle: TerminalEventSubscription | null = null;
     return {

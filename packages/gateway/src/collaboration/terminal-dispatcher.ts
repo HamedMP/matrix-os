@@ -48,7 +48,15 @@ export interface CollaborationTeamTerminalInputModeChanged {
 export type CollaborationTerminalDispatchResult =
   | CollaborationTerminalActionResult
   | CollaborationTeamTerminalInputAccepted
-  | CollaborationTeamTerminalInputModeChanged;
+  | CollaborationTeamTerminalInputModeChanged
+  | { scopeId: string; subscribed: true };
+
+/** Spec 2710 presence hooks; absent means presence is unavailable. */
+export interface CollaborationTeamTerminalHooks {
+  subscribe(scopeId: string, connectionId: string): boolean;
+  noteSharedInput(scopeId: string, actorId: string, data: string): void;
+  inputModeChanged(scopeId: string): void;
+}
 
 export class CollaborationTerminalDispatcherError extends Error {
   constructor(public readonly code: CollaborationTerminalDispatcherErrorCode) {
@@ -101,7 +109,7 @@ export class CollaborationTerminalDispatcher {
     authority: { authorize(input: {
       scopeId: string;
       actorId: string;
-      action: "control_execution";
+      action: "control_execution" | "read";
     }): Promise<AuthorizedCollaborationContext> };
     terminal: CollaborationTerminalRuntime;
     control: TerminalControlCoordinator;
@@ -110,6 +118,8 @@ export class CollaborationTerminalDispatcher {
     revocations?: { isRevoked(scopeId: string, actorId: string): boolean };
     /** Spec 2710: shared input and the owner's take-control switch; absent means team input is unavailable. */
     inputModes?: TeamTerminalInputModes;
+    /** Late-bound: the presence service is built after this dispatcher. */
+    team?: () => CollaborationTeamTerminalHooks | undefined;
   }) {}
 
   /** The current team input mode of a bound terminal (spec 2710). */
@@ -175,6 +185,7 @@ export class CollaborationTerminalDispatcher {
     try {
       const action = CollaborationTeamTerminalActionSchema.parse(input.action);
       assertConnection(action, input.connectionId);
+      if (action.type === "presence_subscribe") return await this.subscribePresence(input);
       const context = await this.options.authority.authorize({
         scopeId: input.scopeId,
         actorId: input.actorId,
@@ -222,6 +233,16 @@ export class CollaborationTerminalDispatcher {
     }
   }
 
+  /** Any current member, viewers included, may watch presence; it is read access. */
+  private async subscribePresence(input: { scopeId: string; actorId: string; connectionId: string }): Promise<{ scopeId: string; subscribed: true }> {
+    const context = await this.options.authority.authorize({ scopeId: input.scopeId, actorId: input.actorId, action: "read" });
+    if (context.actorId !== input.actorId || context.scopeId !== input.scopeId || context.resourceKind !== "terminal") {
+      throw new CollaborationTerminalDispatcherError("not_found");
+    }
+    if (!this.options.team?.()?.subscribe(input.scopeId, input.connectionId)) throw new CollaborationTerminalDispatcherError("unavailable");
+    return { scopeId: input.scopeId, subscribed: true };
+  }
+
   private assertNotPaused(identity: Pick<TerminalControlIdentity, "scopeId" | "incarnation" | "role">): void {
     if (identity.role !== "owner" && this.options.inputModes?.get(identity.scopeId, identity.incarnation) === "owner") {
       throw new CollaborationTerminalDispatcherError("input_paused");
@@ -253,6 +274,7 @@ export class CollaborationTerminalDispatcher {
       const holder = this.options.control.current(identity.scopeId, identity.terminalId, identity.incarnation);
       if (holder && holder.actorId !== identity.actorId) this.options.control.invalidateActor(identity.scopeId, holder.actorId);
     }
+    this.options.team?.()?.inputModeChanged(identity.scopeId);
     return { scopeId: identity.scopeId, incarnation: identity.incarnation, inputMode: mode };
   }
 
@@ -306,6 +328,7 @@ export class CollaborationTerminalDispatcher {
     };
     if (action.type === "input_shared") await this.options.terminal.input(runtimeInput);
     else await this.options.terminal.paste(runtimeInput);
+    this.options.team?.()?.noteSharedInput(identity.scopeId, identity.actorId, action.data);
     return { action: "accepted", shared: true };
   }
 
