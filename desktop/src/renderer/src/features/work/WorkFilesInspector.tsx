@@ -304,7 +304,7 @@ function WorkInspectorContent({
       const result = await api.post<{ tab: { id: string; name: string; status: TerminalSessionSummary["status"]; createdAt: string; updatedAt: string } }>(
         `/api/terminal/workspaces/${encodeURIComponent(ensured.workspace.id)}/tabs`,
         {
-        name: "Chat terminal",
+        name: "Terminal",
         cwd: "",
         chatId,
         },
@@ -465,8 +465,8 @@ function WorkInspectorContent({
                 type="button"
                 aria-label="Add inspector tab"
                 onClick={() => { if (detail && tabs.length === 1 && tabs[0]?.kind === "files" && !selectedFile && attachableSessions.length === 0) openPicker(); }}
-                className="mb-1 flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                style={{ color: "var(--text-tertiary)" }}
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                style={{ color: "var(--text-secondary)" }}
               >
                 <Plus size={16} aria-hidden />
               </button>
@@ -474,13 +474,12 @@ function WorkInspectorContent({
             <DropdownMenu.Portal>
               <DropdownMenu.Content
                 align="end"
-                sideOffset={6}
-                className="z-[100] min-w-52 rounded-lg border p-1"
-                style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+                sideOffset={4}
+                className="z-[100] w-[220px] rounded-xl border p-1"
+                style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "0 12px 16px -4px rgba(36,35,35,0.08), 0 4px 6px -2px rgba(36,35,35,0.03), 0 2px 2px -1px rgba(36,35,35,0.04)" }}
               >
-                {selected.kind === "files" ? <InspectorMenuItem label={fileTreeVisible ? "Hide file tree" : "Show file tree"} icon={<FileCode2 size={14}/>} onSelect={() => useInspectorFileViews.getState().update(viewKey, { treeVisible: !fileTreeVisible })}/> : null}
-                <InspectorMenuItem label="New tab" icon={<Plus size={14}/>} onSelect={openPicker}/>
                 <InspectorMenuItem label="Files" icon={<InspectorToolIcon kind="files"/>} onSelect={() => chooseTool("files")} />
+                {detail || resolveDraftChatId ? <InspectorMenuItem label="New terminal" icon={<SquareTerminal size={14} />} onSelect={() => { void createTerminal(); }} /> : null}
                 {detail ? <InspectorMenuItem label="Side chat" icon={<InspectorToolIcon kind="side-chat"/>} onSelect={() => {
                   setTabs(current => current.some(tab => tab.id === SIDE_CHAT_TAB.id) ? current : [...current, SIDE_CHAT_TAB]);
                   setSelectedId(SIDE_CHAT_TAB.id);
@@ -489,13 +488,10 @@ function WorkInspectorContent({
                   setTabs((current) => current.some((tab) => tab.id === BROWSER_TAB.id) ? current : [...current, BROWSER_TAB]);
                   setSelectedId(BROWSER_TAB.id);
                 }} />
-                {detail || resolveDraftChatId ? (
-                  <>
-                    <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
-                    <InspectorMenuItem label="New terminal" icon={<SquareTerminal size={14} />} onSelect={() => { void createTerminal(); }} />
-                  </>
-                ) : null}
-                {attachableSessions.length > 0 ? <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} /> : null}
+                <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-xsoft)" }} />
+                <InspectorMenuItem label="New tab" icon={<Plus size={14}/>} onSelect={openPicker}/>
+                {selected.kind === "files" ? <InspectorMenuItem label={fileTreeVisible ? "Hide file tree" : "Show file tree"} icon={<FileCode2 size={14}/>} onSelect={() => useInspectorFileViews.getState().update(viewKey, { treeVisible: !fileTreeVisible })}/> : null}
+                {attachableSessions.length > 0 ? <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-xsoft)" }} /> : null}
                 {attachableSessions.map((session) => (
                   <InspectorMenuItem
                     key={session.id}
@@ -554,7 +550,7 @@ function WorkInspectorContent({
               aria-valuemax={1200}
               aria-valuenow={Math.round(fileTreeHeight)}
               tabIndex={0}
-              className="group/file-resize relative z-10 h-2 shrink-0 cursor-row-resize outline-none"
+              className="group/file-resize relative z-10 flex h-3 shrink-0 cursor-row-resize items-center justify-center border-y outline-none" style={{ borderColor: "var(--border-xsoft)" }}
               onPointerDown={startFileTreeResize}
               onKeyDown={(event) => {
                 if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -562,7 +558,7 @@ function WorkInspectorContent({
                 resizeFileTree(fileTreeHeight + (event.key === "ArrowDown" ? 16 : -16));
               }}
             >
-              <span className="absolute inset-x-0 top-[3px] h-px bg-[var(--border-subtle)]" /><GripHorizontal aria-hidden size={12} className="absolute left-1/2 top-[-2px] -translate-x-1/2"/>
+              <GripHorizontal aria-hidden size={14}/>
             </div>
           ) : null}
           <div
@@ -632,15 +628,15 @@ function TerminalTab({ sessionId, sessions, chatId, active, onNewTerminal, creat
   const directory = summary ? runtimeTerminalTabs(summary).find(tab => tab.refKey === sessionId)?.cwd : undefined;
   const session = sessions.find((candidate) => candidate.id === sessionId && candidate.attachable);
   if (!session) return <p className="p-4 text-sm" style={{ color: "var(--text-tertiary)" }}>This terminal is unavailable.</p>;
-  return <><header className="desktop-chat-design chat-inspector-terminal-header"><span aria-label="Terminal working directory" title={directory || "Home directory"}>{directory || "~"}</span><Button variant="ghost" size="sm" onClick={onNewTerminal} disabled={creating}><Plus size={14} aria-hidden/>New terminal</Button></header>
+  return <><header className="desktop-chat-design chat-inspector-terminal-header"><span aria-label="Terminal working directory" title={directory || "Home directory"}>{directory || "~"}</span><Button variant="ghost" size="sm" onClick={onNewTerminal} disabled={creating}><Plus size={16} aria-hidden/>New terminal</Button></header>
     <TerminalView sessionName={session.id} chatId={chatId} active={active} controlsHost={null} /></>;
 }
 
 function InspectorMenuItem({ label, icon, onSelect }: { label: string; icon: ReactNode; onSelect: () => void }) {
-  const shortcut = label === "Files" ? "⌘P" : label === "New terminal" ? "⌃`" : label === "Side chat" ? "⌥⌘S" : undefined;
+  const shortcut = label === "Files" ? "⌘P" : label === "New terminal" ? "⌃`" : label === "Side chat" ? "⌥⌘S" : label === "Browser" ? "⌘T" : undefined;
   return (
-    <DropdownMenu.Item aria-label={label} className="flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)]" style={{ color: "var(--text-primary)" }} onSelect={onSelect}>
-      {icon}
+    <DropdownMenu.Item aria-label={label} className="flex h-8 cursor-default items-center gap-1.5 rounded-lg px-2 text-sm leading-5 outline-none data-[highlighted]:bg-[var(--bg-hover)]" style={{ color: "var(--text-primary)" }} onSelect={onSelect}>
+      <span aria-hidden className="flex shrink-0" style={{ color: "var(--text-secondary)" }}>{icon}</span>
       <span className="flex-1">{label}</span>{shortcut ? <kbd aria-hidden className="text-xs" style={{ color: "var(--text-secondary)", fontFamily: "inherit" }}>{shortcut}</kbd> : null}
     </DropdownMenu.Item>
   );

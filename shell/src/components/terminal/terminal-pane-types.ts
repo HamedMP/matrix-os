@@ -18,6 +18,8 @@ export interface TerminalPaneProps {
   shouldCacheOnUnmount?: (paneId: string) => boolean;
   shouldDestroyOnUnmount?: (paneId: string) => boolean | string;
   allowRemoteResize?: boolean;
+  /** Embedded hosts with their own chrome (Chat inspector) omit the pane controls row. */
+  showControls?: boolean;
   suppressNativeKeyboard?: boolean;
   /**
    * The CSS transform scale applied to the canvas ancestor. When the canvas is

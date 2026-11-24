@@ -395,8 +395,8 @@ describe("Work Files and Terminal inspector", () => {
           ? { workspace: { id: WORKSPACE_ID } }
           : {
               tab: {
-                id: refKey(body.name ?? "Chat terminal").split(":")[1],
-                name: body.name ?? "Chat terminal",
+                id: refKey(body.name ?? "Terminal").split(":")[1],
+                name: body.name ?? "Terminal",
                 status: "running",
                 createdAt: NOW,
                 updatedAt: NOW,
@@ -524,7 +524,7 @@ describe("Work Files and Terminal inspector", () => {
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
-      expect.objectContaining({ chatId: "chat_fresh", name: "Chat terminal" }),
+      expect.objectContaining({ chatId: "chat_fresh", name: "Terminal" }),
     ));
     expect((await screen.findByTestId("work-terminal")).getAttribute("data-chat")).toBe("chat_fresh");
   });
@@ -548,7 +548,7 @@ describe("Work Files and Terminal inspector", () => {
     await waitFor(() => expect(resolveDraftChatId).toHaveBeenCalledOnce());
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
       `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`,
-      expect.objectContaining({ chatId: "chat_from_draft", name: "Chat terminal" }),
+      expect.objectContaining({ chatId: "chat_from_draft", name: "Terminal" }),
     ));
     expect((await screen.findByTestId("work-terminal")).getAttribute("data-chat")).toBe("chat_from_draft");
     expect(onDraftTerminalCreated).toHaveBeenCalledWith(

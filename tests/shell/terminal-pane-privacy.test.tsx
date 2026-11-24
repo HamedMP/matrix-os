@@ -468,4 +468,19 @@ describe("TerminalPane session replay privacy", () => {
     expect(diagnostics).not.toContain("photo.jpg");
     expect(diagnostics).not.toContain("session-main");
   });
+
+  it("omits the pane controls row for an embedded Chat inspector terminal while the terminal still attaches", async () => {
+    const standalone = render(<TerminalPane paneId="controls-default" cwd="" theme={theme}
+      isFocused sessionId={TERMINAL_REF_KEY} isClosing={false}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} onFocus={() => {}} />);
+    expect(standalone.getByRole("group", { name: "Terminal pane controls" })).toBeTruthy();
+    standalone.unmount();
+
+    const embedded = render(<TerminalPane paneId="controls-hidden" cwd="" theme={theme} showControls={false}
+      isFocused sessionId={TERMINAL_REF_KEY} isClosing={false}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} onFocus={() => {}} />);
+    await waitFor(() => expect(stubTerminal.customKeyEventHandler).toBeTypeOf("function"));
+    expect(embedded.queryByRole("group", { name: "Terminal pane controls" })).toBeNull();
+    expect(embedded.container.querySelector("[data-terminal-viewport]")).toBeTruthy();
+  });
 });
