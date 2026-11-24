@@ -35,7 +35,7 @@ it.each(["send", "queue", "edit"] as const)("preserves the draft and attachment 
   await setSharedComposerText(editor, "Synthetic upload draft");
   const file = new File(["synthetic"], "notes.txt", { type: "text/plain" });
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: mode === "queue" ? "Queue next" : "Send" }));
   await waitFor(() => expect(api.putBytes).toHaveBeenCalledTimes(1));
   act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
   await act(async () => {
@@ -48,7 +48,7 @@ it.each(["send", "queue", "edit"] as const)("preserves the draft and attachment 
   expect(editor.textContent).toBe("Synthetic upload draft");
   expect(screen.getByText("notes.txt")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(false);
+  expect(screen.getByRole("button", { name: mode === "queue" ? "Queue next" : "Send" }).hasAttribute("disabled")).toBe(false);
 });
 
 it("settles the original signed-in Queue draft after its authenticated client is refreshed before ACK", async () => {
@@ -66,7 +66,7 @@ it("settles the original signed-in Queue draft after its authenticated client is
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(editor, "Submitted once before client refresh");
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["marker"], "refresh-marker.txt", { type: "text/plain" })] } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
   await waitFor(() => expect(client.queueTurn).toHaveBeenCalledOnce());
   view.rerender(<CanonicalChatWorkspace {...props} client={replacement}/>);
   await act(async () => {

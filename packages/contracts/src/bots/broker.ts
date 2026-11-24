@@ -147,7 +147,8 @@ export const BotToolResultSchema = z.discriminatedUnion("ok", [
 export const BotEventSchema = z.object({
   seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   event: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("assistant_delta"), text: z.string().min(1).max(16 * 1024) }).strict(),
+    z.object({ type: z.literal("assistant_delta"), text: z.string().min(1).max(16 * 1024),
+      messageId: canonicalReferenceId(128).optional() }).strict(),
     z.object({
       type: z.literal("tool_progress"),
       toolCallId: ToolCallIdSchema,

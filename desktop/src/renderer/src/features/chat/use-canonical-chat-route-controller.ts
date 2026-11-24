@@ -1,3 +1,4 @@
+import { applyChatSteeringReceipt } from "./canonical-chat-steering-receipt";
 import { useDesktopRoutineConfirmation } from "./use-desktop-routine-confirmation";
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
@@ -560,7 +561,8 @@ export function useCanonicalChatRouteController({
       : undefined;
     if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === current.record.chat.id);
     try {
       const response = await client.steerRun(current.record.chat.id, activeRun.runId, {
         clientRequestId: canonicalChatRequestId(),
@@ -569,27 +571,9 @@ export function useCanonicalChatRouteController({
       });
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      updateDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
-          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
-        const messages = currentDetail.messages.some((message) => message.id === response.message.id)
-          ? currentDetail.messages
-          : [...currentDetail.messages, response.message];
-        const next = {
-          ...currentDetail,
-          record: response.steering === "accepted" ? {
-            ...currentDetail.record,
-            chat: {
-              ...currentDetail.record.chat,
-              revision: currentDetail.record.chat.revision + 2,
-              messageCount: currentDetail.record.chat.messageCount + 1,
-              updatedAt: response.message.createdAt,
-            },
-          } : currentDetail.record,
-          messages,
-        };
-        return next;
-      });
+      updateDetail((currentDetail) => applyChatSteeringReceipt(
+        currentDetail, current, response,
+      ));
       setError(null);
       return response;
     } catch (error: unknown) {
@@ -718,7 +702,8 @@ export function useCanonicalChatRouteController({
       : undefined;
     if (!current || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return null;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === current.record.chat.id);
     try {
       const response = await client.steerQueuedTurn(
         current.record.chat.id,
@@ -732,34 +717,16 @@ export function useCanonicalChatRouteController({
       );
       if (!isCurrentScope()) return null;
       detailRequestSequence.current += 1;
-      updateDetail((currentDetail) => {
-        if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
-          || currentDetail.record.chat.revision > current.record.chat.revision) return currentDetail;
-        const messages = currentDetail.messages.some((message) => message.id === response.message.id)
-          ? currentDetail.messages
-          : [...currentDetail.messages, response.message];
-        const next = {
-          ...currentDetail,
-          record: response.steering === "accepted" ? {
-            ...currentDetail.record,
-            chat: {
-              ...currentDetail.record.chat,
-              revision: currentDetail.record.chat.revision + 2,
-              messageCount: currentDetail.record.chat.messageCount + 1,
-              updatedAt: response.message.createdAt,
-            },
-          } : currentDetail.record,
-          messages,
-          queuedTurns: (currentDetail.queuedTurns ?? []).filter((turn) => turn.id !== queuedTurnId),
-        };
-        return next;
-      });
+      updateDetail((currentDetail) => applyChatSteeringReceipt(
+        currentDetail, current, response, queuedTurnId,
+      ));
       setError(null);
       return response;
     } catch (error: unknown) {
       console.warn("[canonical-chat] queued steer failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return null;
       await loadDetail(current.record.chat.id);
+      if (!isCurrentScope()) return null;
       setError("The queued message could not steer this Run. It remains in Queue.");
       return null;
     }

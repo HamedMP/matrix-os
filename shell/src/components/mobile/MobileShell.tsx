@@ -25,6 +25,7 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
 import { toast } from "sonner";
 import { MobileLauncher } from "./MobileLauncher";
+import { MobileShellHeader } from "./MobileShellHeader";
 import { useSharedLauncherApps } from "@/hooks/useSharedLauncherApps";
 import { MobileDock } from "./MobileDock";
 import { MobileAppIcon } from "./MobileAppIcon";
@@ -461,28 +462,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}
     >
-      <header
-        className="flex items-center justify-between px-4 text-xs"
-        style={{ height: 28, color: "var(--muted-foreground)" }}
-      >
-        <span data-testid="mobile-shell-clock" style={{ fontWeight: 600 }}>{time}</span>
-        <span style={{ opacity: 0.7 }}>{view === "app" && top ? top.app.name : "Matrix OS"}</span>
-        <button
-          type="button"
-          aria-label="Command palette"
-          onClick={() => onOpenCommandPalette?.()}
-          style={{
-            background: "transparent",
-            border: "none",
-            color: "inherit",
-            fontSize: 16,
-            opacity: 0.7,
-            padding: 0,
-          }}
-        >
-          ⌘
-        </button>
-      </header>
+      <MobileShellHeader time={time} title={view === "app" && top ? top.app.name : "Matrix OS"}
+        onOpenCommandPalette={onOpenCommandPalette} />
 
       <main className="relative flex-1 overflow-hidden">
         {/* App stack: keep mounted to preserve state (terminal sessions etc).

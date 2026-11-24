@@ -48,6 +48,7 @@ import {
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, withPendingCanonicalTurn, type PendingCanonicalTurn } from "@matrix-os/ui";
 import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
+import { queueShellChatTurn } from "./canonical-chat-queue-submission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -575,7 +576,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           ...(projectSkillProjectId ? { executionRoot: { kind: "project" as const, projectId: projectSkillProjectId } } : {}),
         };
         const requestScope = record.chat.id;
-        let operation = record.activeRun && (options.resources?.length || projectSkillProjectId) ? "queue" as const : "send" as const;
+        let operation = record.activeRun ? "queue" as const : "send" as const;
         {
           const { clientRequestId: _generatedId, baseRevision: _revision, ...semanticInput } = input;
           const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, draftRequestId ?? options.clientRequestId);
@@ -583,7 +584,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           operation = attempt.operation;
         }
         if (operation === "queue") {
-          const queued = await client.queueTurn(record.chat.id, input);
+          const queued = await queueShellChatTurn(client, mentionRequests, record.chat.id, input);
           if (!isCurrent()) return false;
           turnAdmitted = true;
           mentionRequests.accepted(requestScope, input.clientRequestId);

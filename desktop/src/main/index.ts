@@ -1,3 +1,4 @@
+import { installRendererRecovery } from "./renderer-recovery";
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
 import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
@@ -278,6 +279,10 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     win.on("page-title-updated", (event) => { event.preventDefault(); win.setTitle(desktopDevRunTitle(devRunLabel)); });
   }
   bindPreviewStartupAcknowledgement(win.webContents);
+  installRendererRecovery(win, {
+    showMessage: (options) => dialog.showMessageBox(win, options),
+    reportError: (error) => logMainError("renderer recovery failed", error),
+  });
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {

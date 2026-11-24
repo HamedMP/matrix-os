@@ -188,7 +188,7 @@ it.each([false, true])("retries a mentioned draft through its original operation
   await setSharedComposerText(editor, "@mee");
   fireEvent.click(await screen.findByRole("option", { name: /Meeting notes/ }));
   await appendSharedComposerText(editor, " Summarize");
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: initiallyActive ? "Queue next" : "Send" }));
   const original = initiallyActive ? client.queueTurn : client.admitTurn;
   const other = initiallyActive ? client.admitTurn : client.queueTurn;
   await waitFor(() => expect(original).toHaveBeenCalledTimes(1));
@@ -197,7 +197,7 @@ it.each([false, true])("retries a mentioned draft through its original operation
     for (const listener of [...listeners]) listener({ type: "chat.changed", chatId: canonicalChatRecord.chat.id, cursor: 100, revision: 100, eventType: "chat.updated" });
   });
   await waitFor(() => expect(vi.mocked(client.getDetail).mock.calls.length).toBeGreaterThan(reads));
-  const retryButton = await screen.findByRole("button", { name: "Send" });
+  const retryButton = await screen.findByRole("button", { name: initiallyActive ? "Send" : "Queue next" });
   await waitFor(() => expect((retryButton as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(retryButton);
   await waitFor(() => expect(original).toHaveBeenCalledTimes(2));

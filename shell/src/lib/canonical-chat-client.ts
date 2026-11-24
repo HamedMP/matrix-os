@@ -189,7 +189,9 @@ export function canonicalShellChatFailureMessage(error: unknown): string {
 export function isDefinitiveCanonicalChatRejection(error: unknown): boolean {
   return error instanceof CanonicalShellChatRequestError
     && error.status >= 400
-    && error.status < 500;
+    && error.status < 500
+    // A timeout can arrive after the server committed the request.
+    && error.status !== 408;
 }
 
 export function createCanonicalShellChatClient(options: {

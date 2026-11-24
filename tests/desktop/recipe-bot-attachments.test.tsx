@@ -79,7 +79,7 @@ it.each(["completed", "running"] as const)("clears stale capacity feedback when 
     new File([new Uint8Array(10 * 1024 * 1024)], "first.bin"),
     new File([new Uint8Array(10 * 1024 * 1024)], "second.bin"), new File(["x"], "extra.txt"),
   ] } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: status === "running" ? "Queue next" : "Send" }));
   expect(await screen.findByText(/Attachments must total 20 MiB/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove extra.txt" }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
@@ -107,8 +107,8 @@ it.each(["completed", "running"] as const)("uploads native image and file inputs
   const editor = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(editor, "Read these submitted inputs");
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["pixels"], "image.png", { type: "image/png" }), new File(["marker"], "marker.txt", { type: "text/plain" })] } });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: status === "running" ? "Queue next" : "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: status === "running" ? "Queue next" : "Send" }));
   const transport = status === "running" ? client.queueTurn : client.admitTurn;
   await waitFor(() => expect(transport).toHaveBeenCalled());
   expect(putBytes).toHaveBeenCalledTimes(2);
@@ -137,7 +137,7 @@ it("clears the signed-in Bot composer text and attachment after Queue acknowledg
   const editor = screen.getByRole("textbox", { name: "Reply to chat" });
   await setSharedComposerText(editor, "Queue this uploaded marker");
   fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["marker"], "queued-marker.txt", { type: "text/plain" })] } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: "Queue next" }));
   await waitFor(() => expect(client.queueTurn).toHaveBeenCalledOnce());
   await waitFor(() => expect(editor.textContent).toBe(""));
   expect(screen.queryByRole("button", { name: "Remove queued-marker.txt" })).toBeNull();

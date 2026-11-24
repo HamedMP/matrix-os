@@ -325,7 +325,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.changes.outputs.source_sha }}
+          # Review size belongs to the PR head, not the newer-main merge candidate.
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 

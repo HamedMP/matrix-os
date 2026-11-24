@@ -47,7 +47,7 @@ async function pendingAdmission(mode: "send" | "queue" | "edit", withReference =
     await waitFor(() => expect(screen.getByTestId("composer-reference-token-file-notes.md")).toBeTruthy());
   }
   if (!withReference) fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["synthetic"], "original.txt", { type: "text/plain" })] } });
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: mode === "queue" ? "Queue next" : "Send" }));
   await waitFor(() => expect(request).toHaveBeenCalledOnce());
   const success = mode === "send" ? { record, message: fixture.messages[0]!, turn: fixture.turns[0]!, run: fixture.runs[0]!, admission: "accepted" }
     : { queuedTurn: queued, queueDepth: 1 };
@@ -270,7 +270,7 @@ it.each(["send", "queue"] as const)("allocates a new resource-mention request ID
   await setSharedComposerText(original, "Original admission draft @notes");
   fireEvent.click(await screen.findByRole("option", { name: /notes.md/ }));
   await waitFor(() => expect(screen.getByTestId("composer-reference-token-file-notes.md")).toBeTruthy());
-  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  fireEvent.click(screen.getByRole("button", { name: mode === "queue" ? "Queue next" : "Send" }));
   await waitFor(() => expect(pending.request).toHaveBeenCalledTimes(2));
   const second = vi.mocked(pending.request).mock.calls[1]![1];
   expect(second.parts).toEqual(first.parts);

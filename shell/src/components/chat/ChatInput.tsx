@@ -112,7 +112,7 @@ export function ChatInput({
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
-  const mayQueue = referenceCount > 0;
+  const mayQueue = Boolean(activeRunId);
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -157,7 +157,7 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
+  const canSend = (!busy || mayQueue) && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);
@@ -395,7 +395,7 @@ export function ChatInput({
           status={<ChatSpeechQuotaStatus speech={speech} />}
           trailingControls={(
             <>
-              <ChatSpeechInputButton speech={speech} disabled={busy && !mayQueue} />
+              <ChatSpeechInputButton speech={speech} disabled={sending} />
               {botControls ?? toolbarControls}
             </>
           )}

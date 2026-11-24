@@ -49,6 +49,7 @@ export default defineConfig({
       "@matrix-os/terminal-runtime/native-host-lifecycle": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-lifecycle.ts"),
       "@matrix-os/terminal-runtime/generation-lock": path.resolve(__dirname, "packages/terminal-runtime/src/generation-lock.ts"),
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
+      "@matrix-os/ui/button": path.resolve(__dirname, "packages/ui/src/Button.tsx"),
       "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
       "@matrix-os/ui/shortcuts": path.resolve(__dirname, "packages/ui/src/shortcuts/index.ts"),

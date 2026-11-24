@@ -827,6 +827,7 @@ function CanonicalChatWorkspaceContent({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
+        sendLabel={activeRun && !editingQueuedTurn ? "Queue next" : "Send"}
         disabled={controller.status === "loading" || uploadingAttachments}
         canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0

@@ -38,6 +38,11 @@ describe("PR size CI lane", () => {
     expect(jobs["ci-results"].needs).toContain("pr-size");
   });
 
+  it("measures the PR head rather than charging newer main changes from its merge candidate", () => {
+    const checkout = jobs["pr-size"].steps.find((step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"));
+    expect(checkout.with.ref).toBe("${{ github.event.pull_request.head.sha }}");
+  });
+
   it("leaves PR size to its own lane instead of the source-only pattern scan", () => {
     const scan = jobs.patterns.steps.find(({ name }: { name?: string }) => name === "Run CLAUDE.md pattern scanner on changed files");
     expect(scan.run).not.toContain("--pr");
