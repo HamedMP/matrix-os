@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspaceV2 from "../../desktop/src/renderer/src/features/files/redesign/FilesWorkspaceV2";
 import { activeNavIdForPath, buildFilesNav, pathForNavId } from "../../desktop/src/renderer/src/features/files/redesign/files-locations";
 import { gridMove, typeaheadMatch } from "../../desktop/src/renderer/src/features/files/redesign/use-entry-navigation";
+import { resolveFilesRedesign } from "../../desktop/src/renderer/src/features/files/redesign/use-files-redesign-flag";
 import { useBrowserViewPreference } from "../../desktop/src/renderer/src/features/files/browser-view-preference";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -41,6 +42,17 @@ function makeApi() {
 function renderWorkspace() {
   return render(<Tooltip.Provider><FilesWorkspaceV2 /></Tooltip.Provider>);
 }
+
+describe("Files redesign flag", () => {
+  it("stays on the current Files layout unless PostHog turns the flag on or a dev build opts in", () => {
+    expect(resolveFilesRedesign({ flag: true, hasSource: false, devOptIn: false })).toBe(false);
+    expect(resolveFilesRedesign({ flag: true, hasSource: false, devOptIn: true })).toBe(true);
+    expect(resolveFilesRedesign({ flag: null, hasSource: true, devOptIn: false })).toBeNull();
+    expect(resolveFilesRedesign({ flag: false, hasSource: true, devOptIn: false })).toBe(false);
+    expect(resolveFilesRedesign({ flag: true, hasSource: true, devOptIn: false })).toBe(true);
+    expect(resolveFilesRedesign({ flag: false, hasSource: true, devOptIn: true })).toBe(true);
+  });
+});
 
 describe("Files redesign locations", () => {
   it("lists only Matrix home folders that exist, with managed ones locked", () => {
