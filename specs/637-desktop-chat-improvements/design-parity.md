@@ -1,6 +1,6 @@
 # Figma parity correction · ENG-461
 
-The November 16 side-by-side audit supersedes the previous visual-readiness assessment. UI PRs #3320 and #3321 remain drafts until new equivalent-state Web and Electron screenshots and recordings match the original Figma section 2343:13253. No Slack messages are authorized.
+The November 16 side-by-side audit supersedes the previous visual-readiness assessment. The existing PRs stay out of draft at the requester’s instruction; final review readiness still requires fresh equivalent-state Web and Electron captures against Figma section 2343:13253, trusted Greptile 5/5 and green CI. No Slack messages are authorized.
 
 ## Correction sequence
 
