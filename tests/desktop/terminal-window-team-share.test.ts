@@ -117,3 +117,24 @@ describe("team terminal owner flow (spec 2710 J1, J5, J6)", () => {
       expect.objectContaining({ type: "input_mode", incarnation, mode: "owner" }));
   });
 });
+
+describe("whole-computer sharing from the owner's dialog (spec 2710 layer 6)", () => {
+  it("shares the computer with exactly this terminal's live grants, and stops it", async () => {
+    const { shareComputer, stopSharingComputer } = await import("@desktop/renderer/src/features/terminal-window/share/team-share");
+    const api = fakeApi({ get: (path) => path.endsWith("/grants")
+      ? [grant("20000000-0000-4000-8000-000000000001", "contributor"), grant("20000000-0000-4000-8000-000000000002", "viewer", "revoked")]
+      : scope() });
+    await shareComputer(api, scopeId);
+    expect(api.put).toHaveBeenCalledWith(`/api/collaboration/scopes/${scopeId}/terminal/team/computer`,
+      { grants: [{ audience: { kind: "organization" }, preset: "contributor" }] });
+    await stopSharingComputer(api, scopeId);
+    expect(api.delete).toHaveBeenCalledWith(`/api/collaboration/scopes/${scopeId}/terminal/team/computer`, expect.objectContaining({ expectedRevision: "3" }));
+  });
+
+  it("refuses to share a computer before anyone has access to this terminal", async () => {
+    const { shareComputer } = await import("@desktop/renderer/src/features/terminal-window/share/team-share");
+    const api = fakeApi({ get: (path) => path.endsWith("/grants") ? [] : scope() });
+    await expect(shareComputer(api, scopeId)).rejects.toBeInstanceOf(TeamShareError);
+    expect(api.put).not.toHaveBeenCalled();
+  });
+});

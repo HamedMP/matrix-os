@@ -137,6 +137,8 @@ export interface CollaborationRouteOptions {
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
   /** Spec 2710: the owner's tab name and grid for a canonical terminal id; absent means neither is shown. */
+  /** Spec 2710 layer 6: whole-computer sharing; absent means the routes report unavailable. */
+  teamComputers?: import("./team-computer-share.js").TeamComputerShareService;
   teamTerminalInfo?(terminalId: string): Promise<{ name: string; size?: { cols: number; rows: number } } | null>;
   projectLifecycle?: Pick<
     ReturnType<typeof createCollaborationProjectLifecycle>,

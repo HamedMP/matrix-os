@@ -11,6 +11,7 @@ import {
   CollaborationTerminalConnectionIdSchema,
   CollaborationTerminalIncarnationSchema,
 } from "#collaboration";
+import { CollaborationAudienceSchema, CollaborationPresetSchema } from "#collaboration-capabilities";
 import { boundedDisplayText, boundedText } from "#legacy-contract-primitives";
 
 /**
@@ -149,7 +150,33 @@ export const TeamTerminalProjectionSchema = z.object({
   role: CollaborationRoleSchema,
   status: z.enum(["active", "exited"]),
   inputMode: CollaborationTeamTerminalInputModeSchema,
+  /** Layer 6: this terminal is one of a whole shared computer's, and this person may open new tabs there. */
+  computerShared: z.boolean().optional(),
+  canOpenTabs: z.boolean().optional(),
   /** The terminal's own grid; collaborators render at this size because only the owner resizes. */
   size: z.object({ cols: z.number().int().min(1).max(1_000), rows: z.number().int().min(1).max(1_000) }).strict().optional(),
 }).strict();
 export type TeamTerminalProjection = z.infer<typeof TeamTerminalProjectionSchema>;
+
+export const TEAM_COMPUTER_MAX_GRANTS = 32;
+export const TEAM_COMPUTER_MAX_TABS = 64;
+
+/** Spec 2710 layer 6: who a whole shared computer is shared with; every tab on it gets these grants. */
+export const TeamComputerGrantSchema = z.object({
+  audience: CollaborationAudienceSchema,
+  preset: CollaborationPresetSchema,
+}).strict();
+
+export const TeamComputerShareRequestSchema = z.object({
+  grants: z.array(TeamComputerGrantSchema).min(1).max(TEAM_COMPUTER_MAX_GRANTS),
+}).strict();
+
+export const TeamComputerShareSchema = z.object({
+  shared: z.boolean(),
+  /** Owner only: the people and roles every tab is shared with. */
+  grants: z.array(TeamComputerGrantSchema).max(TEAM_COMPUTER_MAX_GRANTS).optional(),
+  canOpenTabs: z.boolean(),
+}).strict();
+export type TeamComputerShare = z.infer<typeof TeamComputerShareSchema>;
+
+export const TeamComputerTabCreatedSchema = z.object({ scopeId: CollaborationIdSchema }).strict();

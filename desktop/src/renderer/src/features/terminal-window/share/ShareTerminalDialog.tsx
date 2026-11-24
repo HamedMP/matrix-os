@@ -5,6 +5,7 @@ import { AudienceGrantPicker, Button, Dialog, DialogFooter, DialogTitle, Input, 
 import type { CollaborationScope } from "@matrix-os/contracts";
 import { useTeamCollaborationState, type TeamCollaboration, type TeamCollaborationState, type TeamOrganization } from "./use-team-collaboration";
 import { MAX_LABEL, TYPING_FAILED, useShareFlow, type ShareStep } from "./use-share-flow";
+import { ComputerShareToggle } from "./ComputerShareToggle";
 
 export interface ShareTarget {
   slot: string;
@@ -107,6 +108,7 @@ function SharedAccess({ api, step, onSyncTyping, onPendingChange }: {
         </div>
       ) : null}
       <AudienceGrantPicker api={api} scope={step.scope} onRefresh={() => onSyncTyping(step.scope)} onPendingChange={onPendingChange} />
+      <ComputerShareToggle api={api} scopeId={step.scope.id} />
     </>
   );
 }

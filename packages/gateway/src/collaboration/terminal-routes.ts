@@ -2,12 +2,17 @@
 import {
   CollaborationIdSchema,
   CollaborationTeamTerminalActionSchema,
+  TeamComputerShareRequestSchema,
+  TeamComputerShareSchema,
+  TeamComputerTabCreatedSchema,
   TeamTerminalLabelRequestSchema,
   TeamTerminalProjectionSchema,
 } from "@matrix-os/contracts";
+import { TeamComputerShareError } from "./team-computer-share.js";
 import { CollaborationAuthorizationError } from "./authority.js";
 import { readTeamTerminalLabel, writeTeamTerminalLabel } from "./team-terminal-labels.js";
 import type { Hono } from "hono";
+import { z } from "zod/v4";
 import {
   authorize,
   requireTerminalDispatcher,
@@ -62,6 +67,7 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
       role: context.role,
       status: terminal.status,
       inputMode: dispatcher.inputMode(scopeId, terminal.incarnation),
+      ...(await computerAccess(options, scopeId, context.role)),
       ...(TeamTerminalProjectionSchema.shape.size.safeParse(info?.size).data ? { size: info!.size } : {}),
     }));
   }));
@@ -78,6 +84,63 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
     return c.json({ scopeId, computerLabel: input.computerLabel.trim() });
   }));
 
+  // Spec 2710 layer 6: whole-computer sharing, reached through any of its terminals' scopes.
+  routes.get("/api/collaboration/scopes/:scopeId/terminal/team/computer", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const computers = requireTeamComputers(options);
+    const policy = await computers.policy();
+    const shared = Boolean(policy) && (context.role === "owner" || await computers.isComputerScope(scopeId));
+    return c.json(TeamComputerShareSchema.parse({
+      shared,
+      ...(context.role === "owner" && policy ? { grants: policy.grants } : {}),
+      canOpenTabs: shared && context.role !== "viewer",
+    }));
+  }));
+
+  routes.put("/api/collaboration/scopes/:scopeId/terminal/team/computer", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const input = TeamComputerShareRequestSchema.parse(value);
+    const context = await authorize(options, c, bytes, "manage_members", scopeId);
+    if (context.role !== "owner" || context.resourceKind !== "terminal") {
+      throw new CollaborationAuthorizationError("forbidden", "Owner terminal access is required");
+    }
+    const computers = requireTeamComputers(options);
+    const computerLabel = await readTeamTerminalLabel(options.repository.db, scopeId) ?? "Computer";
+    const shared = await computers.share({ organizationId: context.organizationId, computerLabel, grants: input.grants });
+    return c.json({ shared: true, terminals: shared });
+  }));
+
+  routes.delete("/api/collaboration/scopes/:scopeId/terminal/team/computer", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "manage_members", scopeId);
+    if (context.role !== "owner") throw new CollaborationAuthorizationError("forbidden", "Owner terminal access is required");
+    await requireTeamComputers(options).stop();
+    return c.json({ shared: false });
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/terminal/team/tabs", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    z.object({}).strict().parse(value);
+    // Opening a tab is shell access: the same authority as typing (no viewers).
+    const context = await authorize(options, c, bytes, "control_execution", scopeId);
+    const computers = requireTeamComputers(options);
+    if (context.role === "viewer" || (context.role !== "owner" && !await computers.isComputerScope(scopeId))) {
+      throw new CollaborationAuthorizationError("forbidden", "Shared computer access is required");
+    }
+    try {
+      return c.json(TeamComputerTabCreatedSchema.parse({ scopeId: await computers.openTab(context.actorId) }), 201);
+    } catch (error: unknown) {
+      if (error instanceof TeamComputerShareError) {
+        // Too many new tabs reads as unavailable: the client waits and tries again.
+        throw new CollaborationAuthorizationError(error.code === "forbidden" ? "forbidden" : "unavailable", "Shared computer is unavailable");
+      }
+      throw error;
+    }
+  }));
+
   // S07 review: the owner's explicit opt-in (or withdrawal) for Contributor control of a shared host shell.
   routes.patch("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
@@ -86,4 +149,15 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
     const context = await authorize(options, c, bytes, "manage_members", scopeId);
     return c.json(await requireTerminalDispatcher(options.terminalDispatcher).setContributorControl(context, setting));
   }));
+}
+
+function requireTeamComputers(options: CollaborationRouteOptions) {
+  if (!options.teamComputers) throw new CollaborationAuthorizationError("unavailable", "Shared computers are unavailable");
+  return options.teamComputers;
+}
+
+async function computerAccess(options: CollaborationRouteOptions, scopeId: string, role: string): Promise<{ computerShared?: boolean; canOpenTabs?: boolean }> {
+  if (!options.teamComputers) return {};
+  const computerShared = await options.teamComputers.isComputerScope(scopeId);
+  return computerShared ? { computerShared, canOpenTabs: role !== "viewer" } : {};
 }

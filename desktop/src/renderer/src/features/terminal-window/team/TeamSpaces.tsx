@@ -2,7 +2,7 @@
 // explicitly shared with this person appear, under the computer they run on
 // ("Nima's team-dev-1"), with this person's role.
 import { useState } from "react";
-import { Users } from "lucide-react";
+import { Plus, Users } from "lucide-react";
 import { groupTeamTerminals, roleLabel, teamRowKey, type TeamTerminal } from "./team-terminals";
 import type { TeamTerminalsState } from "./use-team-terminals";
 
@@ -54,11 +54,40 @@ function TeamRow({ terminal, selected, onOpen, onAccept }: {
   );
 }
 
-export function TeamSpaces({ state, selectedKey, onOpen, onAccept, onRetry }: {
+/** Layer 6: a shared computer's `+`, for people who may open tabs there. */
+function NewTabButton({ group, onOpenTab, onOpen }: {
+  group: { name: string; terminals: TeamTerminal[] };
+  onOpenTab(fromScopeId: string): Promise<string | null>;
+  onOpen(key: string): void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const from = group.terminals.find((terminal) => terminal.kind === "ready" && terminal.projection.canOpenTabs);
+  if (!from) return null;
+  const open = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const created = await onOpenTab(from.scopeId);
+      if (created) onOpen(teamRowKey(created));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" aria-label={`New terminal on ${group.name}`} title="New terminal on this shared computer" disabled={busy}
+      onClick={() => { void open(); }}
+      className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50">
+      <Plus size={12} aria-hidden="true" />
+    </button>
+  );
+}
+
+export function TeamSpaces({ state, selectedKey, onOpen, onAccept, onOpenTab, onRetry }: {
   state: TeamTerminalsState;
   selectedKey: string | null;
   onOpen(key: string): void;
   onAccept(terminal: Extract<TeamTerminal, { kind: "pending" }>): Promise<boolean>;
+  onOpenTab(fromScopeId: string): Promise<string | null>;
   onRetry(): void;
 }) {
   if (state.status === "idle") return null;
@@ -78,7 +107,10 @@ export function TeamSpaces({ state, selectedKey, onOpen, onAccept, onRetry }: {
         ? <p className="px-2 text-[12px]" style={secondaryText}>Terminals teammates share with you appear here.</p> : null}
       {state.status === "ready" ? groupTeamTerminals(state.terminals).map((group) => (
         <div key={group.id}>
-          <p className="truncate px-2 pt-1 text-[12px] font-medium">{group.name}</p>
+          <div className="flex items-center gap-1 px-2 pt-1">
+            <p className="min-w-0 flex-1 truncate text-[12px] font-medium">{group.name}</p>
+            <NewTabButton group={group} onOpenTab={onOpenTab} onOpen={onOpen} />
+          </div>
           <ul aria-label={group.name} className="flex flex-col">
             {group.terminals.map((terminal) => (
               <TeamRow key={terminal.scopeId} terminal={terminal} selected={selectedKey === teamRowKey(terminal.scopeId)}

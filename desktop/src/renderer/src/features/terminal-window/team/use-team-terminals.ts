@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { onEvent } from "../../../lib/operator";
 import { registerAlternateTerminalSockets } from "../../terminal/terminal-runtime";
 import type { TeamCollaboration } from "../share/use-team-collaboration";
-import { acceptTeamTerminal, listTeamTerminals, TEAM_SESSION_PREFIX, type TeamTerminal } from "./team-terminals";
+import { acceptTeamTerminal, listTeamTerminals, openTeamComputerTab, TEAM_SESSION_PREFIX, type TeamTerminal } from "./team-terminals";
 import { clearTeamSessions, updateTeamSession } from "./team-session-store";
 import { createTeamTerminalSocket } from "./team-terminal-socket";
 
@@ -72,5 +72,22 @@ export function useTeamTerminals(team: TeamCollaboration, enabled: boolean) {
     }
   }, [load, team]);
 
-  return { state, retry: () => { void load(); }, accept };
+  /** Opens a new tab on a shared computer, joins it, and returns it to show. */
+  const openTab = useCallback(async (fromScopeId: string): Promise<string | null> => {
+    const api = team.api();
+    if (!api) return null;
+    try {
+      const scopeId = await openTeamComputerTab(api, fromScopeId);
+      const terminals = await listTeamTerminals(api);
+      const created = terminals.find((terminal) => terminal.scopeId === scopeId);
+      if (created?.kind === "pending") await acceptTeamTerminal(api, created);
+      await load(true);
+      return scopeId;
+    } catch (error: unknown) {
+      console.warn("[terminal-window] shared computer tab failed:", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }, [load, team]);
+
+  return { state, retry: () => { void load(); }, accept, openTab };
 }

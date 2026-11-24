@@ -64,6 +64,14 @@ describe("collaboration gateway routes", () => {
   let nonce: number;
   let chatScope: CollaborationChatScopeService;
   let terminalAdapter: CollaborationTerminalAdapter;
+  // Spec 2710 layer 6: the route decisions are tested here; the service has its own suite.
+  const teamComputers = {
+    policy: vi.fn(async () => ({ organizationId: "org_matrix_team", computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "contributor" }] })),
+    isComputerScope: vi.fn(async () => true),
+    share: vi.fn(async () => 1),
+    stop: vi.fn(async () => undefined),
+    openTab: vi.fn(async () => "10000000-0000-4000-8000-0000000000f1"),
+  };
   let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -273,6 +281,7 @@ describe("collaboration gateway routes", () => {
       chatExecutionAdapter,
       terminalAdapter,
       terminalDispatcher,
+      teamComputers: teamComputers as never,
       projectLifecycle,
       projectScope,
       projectSharing,
@@ -710,6 +719,27 @@ describe("collaboration gateway routes", () => {
     expect(await projection.json()).toMatchObject({ scopeId: scope.id, computerLabel: "team-dev-1", role: "owner", inputMode: "shared", status: "active" });
     const unsafe = await signedJson({ actorId: collaborationActors.owner, scopeId: scope.id, method: "PUT", path: labelPath, body: { computerLabel: "x".repeat(65) } });
     expect(unsafe.status).toBe(400);
+  });
+
+  it("lets only the owner share the whole computer, and never lets a viewer open tabs (spec 2710 layer 6)", async () => {
+    await shareTerminal();
+    const base = `/api/collaboration/scopes/${collaborationIds.scope}/terminal/team`;
+    const owner = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "PUT", path: `${base}/computer`,
+      body: { grants: [{ audience: { kind: "organization" }, preset: "contributor" }] } });
+    expect(owner.status).toBe(200);
+    expect(teamComputers.share).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org_matrix_team" }));
+    const read = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET", path: `${base}/computer` });
+    expect(await read.json()).toMatchObject({ shared: true, canOpenTabs: true, grants: [{ preset: "contributor" }] });
+    const editorShare = await signedJson({ actorId: collaborationActors.editor, scopeId: collaborationIds.scope, method: "PUT", path: `${base}/computer`,
+      body: { grants: [{ audience: { kind: "organization" }, preset: "contributor" }] } });
+    expect(editorShare.status).toBeGreaterThanOrEqual(400);
+    const viewerTab = await signedJson({ actorId: collaborationActors.viewer, scopeId: collaborationIds.scope, method: "POST", path: `${base}/tabs`, body: {} });
+    expect(viewerTab.status).toBeGreaterThanOrEqual(400);
+    expect(teamComputers.openTab).not.toHaveBeenCalled();
+    const stopped = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "DELETE", path: `${base}/computer`,
+      deleteConditions: { clientRequestId: request(96), expectedRevision: "1", expectedMemberRevision: "1" } });
+    expect(stopped.status).toBe(200);
+    expect(teamComputers.stop).toHaveBeenCalled();
   });
 
   it("refuses a team terminal share from a non-owner", async () => {

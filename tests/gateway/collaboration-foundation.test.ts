@@ -83,6 +83,10 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   // Spec 2710 team terminal projection and the owner's computer label.
   ["GET", "/api/collaboration/scopes/:scopeId/terminal/team"],
   ["PUT", "/api/collaboration/scopes/:scopeId/terminal/team/label"],
+  ["GET", "/api/collaboration/scopes/:scopeId/terminal/team/computer"],
+  ["PUT", "/api/collaboration/scopes/:scopeId/terminal/team/computer"],
+  ["DELETE", "/api/collaboration/scopes/:scopeId/terminal/team/computer"],
+  ["POST", "/api/collaboration/scopes/:scopeId/terminal/team/tabs"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/terminal"],
   ["GET", "/api/collaboration/scopes/:scopeId/project"],
   ["GET", "/api/collaboration/scopes/:scopeId/project/overview"],
@@ -224,13 +228,13 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
   it("registers the versioned migrations in order and records every version idempotently", async () => {
     // S12 adds migration 12 (resource catalog); 13 is the S10 project Git migration below it.
     // Migration 17 adds immutable Provider Settings route provenance to shared runs.
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
   });
 
   it("rolls back the collaborative-app DDL and migration marker as one transaction", async () => {
