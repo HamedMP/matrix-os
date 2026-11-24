@@ -28,6 +28,8 @@ import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
 import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
+import { DesktopLinkPanel } from "./DesktopLinkPanel";
+import { useDesktopLink } from "./use-desktop-link";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
 
@@ -317,12 +319,16 @@ function windowTitle(view: TerminalWindowView): string {
   return "Terminal";
 }
 
+const NO_COMPUTERS: readonly MatrixComputer[] = [];
+
 export default function TerminalWindowApp() {
   const loadAppearance = useAppearance((state) => state.load);
   const view = useTerminalWindow();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
+  const desktopLink = useDesktopLink();
+  const desktopLinkComputers = view.machines.state.status === "ready" ? view.machines.state.computers : NO_COMPUTERS;
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
   const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
@@ -392,7 +398,7 @@ export default function TerminalWindowApp() {
           onToggleRail={view.sidebar.toggleRail}
           width={prefs.width}
           onResize={view.sidebar.setWidth}
-          notices={notice}
+          notices={<>{notice}<DesktopLinkPanel link={desktopLink} computers={desktopLinkComputers} /></>}
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

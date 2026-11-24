@@ -331,6 +331,21 @@ describe("createAppMenuTemplate", () => {
     }
   });
 
+  it("offers Stop Computers Using This Device in the macOS app menu when the Desktop link is wired (spec 2716)", () => {
+    const appMenu = (template: ReturnType<typeof createAppMenuTemplate>) =>
+      template[0]!.submenu as Array<{ label?: string; click?: () => void }>;
+    expect(appMenu(createAppMenuTemplate(options({ platform: "darwin" }))).some((item) => item.label === "Stop Computers Using This Device")).toBe(false);
+    const stopDesktopLink = vi.fn();
+    const item = appMenu(createAppMenuTemplate(options({ platform: "darwin", stopDesktopLink }))).find((entry) => entry.label === "Stop Computers Using This Device");
+    item!.click!();
+    expect(stopDesktopLink).toHaveBeenCalledTimes(1);
+    // Linux and Windows have it in the File menu.
+    for (const platform of ["linux", "win32"] as const) {
+      const file = createAppMenuTemplate(options({ platform, stopDesktopLink })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string }>;
+      expect(file.some((entry) => entry.label === "Stop Computers Using This Device")).toBe(true);
+    }
+  });
+
   it("lists third-party notices under Help only when the build ships them", () => {
     const help = (template: ReturnType<typeof createAppMenuTemplate>) =>
       template.find((item) => item.role === "help")!.submenu as Array<{ label?: string; click?: () => void }>;

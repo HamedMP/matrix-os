@@ -71,6 +71,7 @@ import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_EVENTS, TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
+import { DESKTOP_LINK_EVENTS, DESKTOP_LINK_INVOKE } from "./desktop-link";
 import { SHORTCUT_EVENTS, SHORTCUT_INVOKE } from "./shortcuts-ipc";
 
 const Empty = z.object({}).strict();
@@ -166,6 +167,7 @@ export const INVOKE_CHANNELS = {
   ...TERMINAL_WINDOW_INVOKE,
   ...SHARED_APP_DEEP_LINK_INVOKE,
   ...LOCAL_TERMINAL_INVOKE,
+  ...DESKTOP_LINK_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
@@ -547,6 +549,7 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
+  ...DESKTOP_LINK_EVENTS,
   ...TERMINAL_WINDOW_EVENTS,
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,

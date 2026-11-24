@@ -724,7 +724,7 @@ if (!gotLock) {
         facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;
-      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), safeStorage, localTerminals: localTerminalHost, auth, computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener) });
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), safeStorage, localTerminals: localTerminalHost, auth, computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
@@ -914,7 +914,7 @@ if (!gotLock) {
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
       terminalMenu = installAppMenu({
-        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command),
+        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command), stopDesktopLink: () => void desktopLink?.disableAll(),
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
         thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,

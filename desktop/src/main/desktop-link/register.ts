@@ -6,6 +6,7 @@ import { hostname, release } from "node:os";
 import type { SafeStorageLike } from "../auth/credential-store";
 import { createPairingKeyStore, type PairingSafeStorage } from "../desktop-pairing/key-store";
 import type { LocalTerminalHost } from "../local-terminals/host";
+import { registerDesktopLinkIpc } from "./ipc";
 import { createDesktopLinkPreferenceStore } from "./preferences";
 import { createDesktopLinkService, type DesktopLinkService, type DesktopLinkSocket } from "./service";
 
@@ -24,6 +25,12 @@ export interface DesktopLinkMainOptions {
   powerMonitor: PowerMonitorLike;
   /** Registers the quit hook: every link says goodbye and closes as the app quits. */
   quitting(listener: () => void): void;
+  /** The Terminal window's controls: status, switch on and off. */
+  ipc?: {
+    ipcMain: Parameters<typeof registerDesktopLinkIpc>[0];
+    authorizeSender: Parameters<typeof registerDesktopLinkIpc>[2];
+    emit: Parameters<typeof registerDesktopLinkIpc>[3];
+  };
   /** What the computer shows for this device; the macOS computer name when available. */
   deviceName?: string;
 }
@@ -47,6 +54,7 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
     createSocket: (url, headers) => new WebSocket(url, { headers } as unknown as string[]) as unknown as DesktopLinkSocket,
   });
   options.quitting(() => service.dispose());
+  if (options.ipc) registerDesktopLinkIpc(options.ipc.ipcMain, service, options.ipc.authorizeSender, options.ipc.emit);
   const wake = () => service.wake();
   options.powerMonitor.on("resume", wake);
   options.powerMonitor.on("unlock-screen", wake);
