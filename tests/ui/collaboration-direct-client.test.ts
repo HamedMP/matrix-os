@@ -429,6 +429,42 @@ describe("collaboration direct client", () => {
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
   });
 
+  it("subscribes a team terminal to presence after ready and sends input only on a live socket (spec 2710)", async () => {
+    const direct = client();
+    const presence = vi.fn();
+    const rejected = vi.fn();
+    let send: ((action: unknown) => boolean) | null = null;
+    const incarnation = `terminal-${"a".repeat(32)}`;
+    direct.subscribeTerminal(scopeId, {
+      onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: vi.fn(),
+      onPresence: presence, onInputRejected: rejected, onSender: (next) => { send = next; },
+    });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const socket = world.sockets[0]! as typeof world.sockets[number] & { readyState?: number };
+    socket.readyState = 1;
+    socket.onopen?.();
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.ready", connectionId: "connection_1", scopeId, resourceId: "terminal-1", authorityGeneration: "1", incarnation, sequence: "0", terminal: terminalProjection() }) });
+    const sent = socket.sent.map((value: string) => JSON.parse(value) as { type: string });
+    expect(sent.some((frame) => frame.type === "presence_subscribe")).toBe(true);
+    expect(send).not.toBeNull();
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.presence", scopeId, incarnation, inputMode: "owner", participants: [], marks: [] }) });
+    expect(presence).toHaveBeenCalledWith(expect.objectContaining({ inputMode: "owner" }));
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.input_rejected", scopeId, incarnation, clientRequestId: "50000000-0000-4000-8000-000000000001", code: "input_paused" }) });
+    expect(rejected).toHaveBeenCalledWith(expect.objectContaining({ code: "input_paused" }));
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.onclose?.();
+    expect(send).toBeNull();
+  });
+
+  it("keeps rejecting team frames on a stream that did not ask for them", async () => {
+    const direct = client();
+    direct.subscribeTerminal(scopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: vi.fn() });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const socket = world.sockets[0]!;
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.presence", scopeId, incarnation: `terminal-${"a".repeat(32)}`, inputMode: "shared", participants: [], marks: [] }) });
+    expect(socket.close).toHaveBeenCalledWith(1008, "Invalid frame");
+  });
+
   it("judges a terminal stream by its own socket: a healthy event stream does not vouch for it", async () => {
     vi.useFakeTimers();
     const direct = client();

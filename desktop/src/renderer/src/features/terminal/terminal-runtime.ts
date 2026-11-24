@@ -7,16 +7,31 @@ import { useConnection } from "../../stores/connection";
 
 let manager: AttachManager | null = null;
 
-// The Terminal window registers a factory for terminals that are not gateway
-// sockets (local ones). Sessions are matched by name prefix.
-let alternateSockets: { prefix: string; create(sessionName: string, events: ShellSocketEvents): SocketControl } | null = null;
+// The Terminal window registers factories for terminals that are not gateway
+// sockets (local ones, and teammates' shared ones). Sessions are matched by
+// name prefix; a handful of kinds exist, so the registry is small and capped.
+type SocketFactory = (sessionName: string, events: ShellSocketEvents) => SocketControl;
+const MAX_ALTERNATE_SOCKETS = 4;
+const alternateSockets = new Map<string, SocketFactory>();
+let legacyPrefix: string | null = null;
 
-export function setAlternateTerminalSockets(factory: typeof alternateSockets): void {
-  alternateSockets = factory;
+export function setAlternateTerminalSockets(factory: { prefix: string; create: SocketFactory } | null): void {
+  if (legacyPrefix) alternateSockets.delete(legacyPrefix);
+  legacyPrefix = factory?.prefix ?? null;
+  if (factory) alternateSockets.set(factory.prefix, factory.create);
+}
+
+/** Adds sockets for one more session prefix; the returned function removes them. */
+export function registerAlternateTerminalSockets(prefix: string, create: SocketFactory): () => void {
+  if (!alternateSockets.has(prefix) && alternateSockets.size >= MAX_ALTERNATE_SOCKETS) throw new Error("Terminal socket kinds are full");
+  alternateSockets.set(prefix, create);
+  return () => { if (alternateSockets.get(prefix) === create) alternateSockets.delete(prefix); };
 }
 
 function createSocket(sessionName: string, events: ShellSocketEvents, chatId?: string): SocketControl {
-  if (alternateSockets && sessionName.startsWith(alternateSockets.prefix)) return alternateSockets.create(sessionName, events);
+  for (const [prefix, create] of alternateSockets) {
+    if (sessionName.startsWith(prefix)) return create(sessionName, events);
+  }
   const { platformHost, runtimeSlot } = useConnection.getState();
   return new ShellSocket({
     baseUrl: platformHost,

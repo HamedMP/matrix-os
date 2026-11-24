@@ -10,8 +10,12 @@ import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationEventFrameSchema,
   CollaborationIdSchema,
+  CollaborationTeamTerminalInputRejectedFrameSchema,
+  CollaborationTeamTerminalPresenceFrameSchema,
   CollaborationTerminalFrameSchema,
   type CollaborationSignedConnectionTicket,
+  type CollaborationTeamTerminalInputRejectedFrame,
+  type CollaborationTeamTerminalPresenceFrame,
   type CollaborationTerminalFrame,
 } from "@matrix-os/contracts";
 import { encodeBase64UrlJson, possessionPayload, signPayload, type ProofKeyPair } from "./direct-crypto.js";
@@ -49,6 +53,14 @@ export interface DirectTerminalHandlers {
   onRefreshRequired(): void | Promise<void>;
   onUnavailable(): void;
   onDisconnected(): void;
+  /**
+   * Spec 2710 team terminals. With `onPresence`, the stream asks for presence
+   * frames after each `terminal.ready`; `onSender` receives a send function that
+   * works until the socket closes. Released callers set none of these.
+   */
+  onPresence?(frame: CollaborationTeamTerminalPresenceFrame): void;
+  onInputRejected?(frame: CollaborationTeamTerminalInputRejectedFrame): void;
+  onSender?(send: ((action: unknown) => boolean) | null): void;
 }
 
 type Purpose = "events" | "terminal";
@@ -321,9 +333,39 @@ export function createDirectStreams(deps: {
         if (stopped) return;
         if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) { socket.close(1008, "Invalid frame"); return; }
         try {
-          const frame = CollaborationTerminalFrameSchema.parse(JSON.parse(event.data) as unknown);
+          const raw = JSON.parse(event.data) as unknown;
+          const teamType = typeof raw === "object" && raw !== null ? (raw as { type?: unknown }).type : undefined;
+          if (teamType === "terminal.presence" && handlers.onPresence) {
+            const frame = CollaborationTeamTerminalPresenceFrameSchema.parse(raw);
+            if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
+            handlers.onPresence(frame);
+            return;
+          }
+          if (teamType === "terminal.input_rejected" && handlers.onInputRejected) {
+            const frame = CollaborationTeamTerminalInputRejectedFrameSchema.parse(raw);
+            if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
+            handlers.onInputRejected(frame);
+            return;
+          }
+          const frame = CollaborationTerminalFrameSchema.parse(raw);
           if (frame.scopeId !== parsedScopeId) throw new Error("Scope mismatch");
-          if (frame.type === "terminal.ready") { sequence = maxSequence(sequence, frame.sequence); handlers.onReady(frame); }
+          if (frame.type === "terminal.ready") {
+            sequence = maxSequence(sequence, frame.sequence);
+            handlers.onReady(frame);
+            if (handlers.onSender || handlers.onPresence) {
+              const send = (action: unknown): boolean => {
+                if (stopped || socket.readyState !== 1) return false;
+                const value = JSON.stringify(action);
+                if (value.length > MAX_SOCKET_FRAME_CHARS) return false;
+                socket.send(value);
+                return true;
+              };
+              if (handlers.onPresence) {
+                send({ type: "presence_subscribe", clientRequestId: crypto.randomUUID(), incarnation: frame.incarnation });
+              }
+              handlers.onSender?.(send);
+            }
+          }
           else if (frame.type === "terminal.output") {
             const next = BigInt(frame.sequence);
             // A refresh replaces the transcript, so output that arrives while one is still
@@ -348,7 +390,7 @@ export function createDirectStreams(deps: {
           socket.close(1008, "Invalid frame");
         }
       };
-      socket.onclose = () => { clearHeartbeat(); };
+      socket.onclose = () => { clearHeartbeat(); handlers.onSender?.(null); };
     }, (accessUnavailable) => {
       if (stopped) return;
       if (accessUnavailable) { stopped = true; clearHeartbeat(); handlers.onUnavailable(); }

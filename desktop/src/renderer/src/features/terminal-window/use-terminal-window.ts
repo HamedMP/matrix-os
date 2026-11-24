@@ -24,6 +24,7 @@ import { useLocalTerminals } from "./use-local-terminals";
 import { useSidebarPrefs } from "./use-sidebar-prefs";
 import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
 import { inOrder } from "./SidebarSpaces";
+import { teamRowKey, teamScopeFromKey } from "./team/team-terminals";
 import { useTerminalMachines } from "./use-terminal-machines";
 import {
   computerMachineId, localMachine, localRowKey, sshMachineId, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
@@ -52,6 +53,8 @@ export function useTerminalWindow() {
   // A local terminal and a cloud terminal are never attached at once. The
   // title is kept so the pane can stay, labelled, after its program exits.
   const [localOpen, setLocalOpen] = useState<{ id: string; title: string } | null>(null);
+  // Spec 2710: a teammate's shared terminal on screen, by its share; never attached with another.
+  const [teamOpen, setTeamOpen] = useState<string | null>(null);
   // Each Cmd+F belongs to the terminal it was pressed on.
   const [find, setFind] = useState<{ request: number; key: string | null }>({ request: 0, key: null });
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -77,7 +80,7 @@ export function useTerminalWindow() {
   const cloudActive = useRef(cloud.active);
   useEffect(() => { cloudActive.current = cloud.active; }, [cloud.active]);
 
-  const selectedKey = localOpen ? localRowKey(localOpen.id)
+  const selectedKey = teamOpen ? teamRowKey(teamOpen) : localOpen ? localRowKey(localOpen.id)
     : cloud.active ? `${computerMachineId(cloud.active.slot)}|${cloud.active.refKey}` : null;
   // Next, previous and numbers follow the agents list as shown, with a machine opened as its own tab.
   const visibleRows = useMemo(() => filterRows(status.rows, sidebar.prefs.filter), [status.rows, sidebar.prefs.filter]);
@@ -107,23 +110,33 @@ export function useTerminalWindow() {
 
   const openLocal = useCallback((id: string, title?: string) => {
     localChoice.current += 1;
+    setTeamOpen(null);
     clearActive();
     setLocalOpen({ id, title: title ?? localTerminals.find((terminal) => terminal.id === id)?.title ?? "Terminal" });
   }, [clearActive, localTerminals]);
   const openCloud = useCallback((slot: string, refKey: string) => {
     localChoice.current += 1;
     setLocalOpen(null);
+    setTeamOpen(null);
     open(slot, refKey);
   }, [open]);
 
   const select = useCallback((key: string) => {
+    const shared = teamScopeFromKey(key);
+    if (shared) {
+      localChoice.current += 1;
+      setLocalOpen(null);
+      clearActive();
+      setTeamOpen(shared);
+      return;
+    }
     const target = terminalRowTarget(key);
     if (!target) return;
     const name = status.rows.find((row) => row.key === key)?.name;
     if (target.kind === "local") openLocal(target.id, name);
     else openCloud(target.slot, terminalRefKey(target.ref));
     markSeen(key);
-  }, [markSeen, openCloud, openLocal, status.rows]);
+  }, [clearActive, markSeen, openCloud, openLocal, status.rows]);
 
   const createLocal = useCallback((launch: { agent?: LocalTerminalAgent; machine?: string } = {}) => {
     const chosen = localChoice.current;
@@ -133,6 +146,7 @@ export function useTerminalWindow() {
       if (!id || localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
       localChoice.current += 1;
       clearActive();
+      setTeamOpen(null);
       setLocalOpen({ id, title: "Terminal" });
     });
   }, [clearActive, cloud.active, local]);
@@ -142,6 +156,7 @@ export function useTerminalWindow() {
     if (localChoice.current !== chosen || cloudActive.current !== cloudChosen) return;
     localChoice.current += 1;
     clearActive();
+    setTeamOpen(null);
     setLocalOpen({ id, title });
   }, [clearActive]);
   const openSshLogin = useCallback(async (target: string, options?: SshOptions): Promise<boolean> => {
@@ -166,6 +181,7 @@ export function useTerminalWindow() {
   const createCloud = useCallback((slot: string) => {
     localChoice.current += 1;
     setLocalOpen(null);
+    setTeamOpen(null);
     void create(slot);
   }, [create]);
 
@@ -281,14 +297,19 @@ export function useTerminalWindow() {
    * is confirmed, then leaves its tab, and the pane beside it takes focus.
    */
   const close = useCallback((key: string) => {
-    const target = terminalRowTarget(key);
-    if (!target) return;
     const ended = () => {
       forgetTab(key);
       const successor = dropTerminal(key);
       if (successor && selectedRef.current === key) select(successor);
       return successor;
     };
+    // A teammate's terminal is only stopped watching here; its program keeps running for its owner.
+    if (teamScopeFromKey(key)) {
+      if (!ended()) setTeamOpen((current) => (current && teamRowKey(current) === key ? null : current));
+      return;
+    }
+    const target = terminalRowTarget(key);
+    if (!target) return;
     if (target.kind === "local") {
       const finished = local.state.status === "ready" && local.state.facts.some((fact) => fact.id === target.id && fact.finished);
       // Closing a running terminal's pane ends it and takes it off the list, as Herdr does.
@@ -312,7 +333,7 @@ export function useTerminalWindow() {
 
   /** Closes a terminal's pane by ending it: a finished one goes at once, a running program asks first. */
   const requestClose = useCallback((key: string) => {
-    if (isFinished(key, local.state, status.states)) { close(key); return; }
+    if (teamScopeFromKey(key) || isFinished(key, local.state, status.states)) { close(key); return; }
     setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
   }, [close, local.state, status.rows, status.states]);
 
@@ -320,6 +341,7 @@ export function useTerminalWindow() {
   const deselect = useCallback(() => {
     localChoice.current += 1;
     setLocalOpen(null);
+    setTeamOpen(null);
     clearActive();
   }, [clearActive]);
 

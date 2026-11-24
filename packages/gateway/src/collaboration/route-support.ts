@@ -136,8 +136,8 @@ export interface CollaborationRouteOptions {
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
-  /** Spec 2710: the owner's tab name for a canonical terminal id; absent means it is shown by id. */
-  teamTerminalName?(terminalId: string): Promise<string | null>;
+  /** Spec 2710: the owner's tab name and grid for a canonical terminal id; absent means neither is shown. */
+  teamTerminalInfo?(terminalId: string): Promise<{ name: string; size?: { cols: number; rows: number } } | null>;
   projectLifecycle?: Pick<
     ReturnType<typeof createCollaborationProjectLifecycle>,
     "apply" | "getOperation"

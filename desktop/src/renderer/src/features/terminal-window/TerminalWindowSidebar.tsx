@@ -45,6 +45,8 @@ export interface TerminalWindowSidebarProps {
   machines: readonly SidebarMachine[];
   /** Shown below the machines: the Matrix computers' loading, sign-in or error state. */
   machinesStatus?: ReactNode;
+  /** Spec 2710: terminals teammates shared with this person, below the machines. */
+  team?: ReactNode;
   /** Spaces whose terminals are listed inline under them. */
   expandedSpaces: readonly string[];
   onToggleSpaceExpanded(id: string): void;
@@ -235,6 +237,7 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
       <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
       {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
+      {props.team ?? null}
     </div>
   );
 }
