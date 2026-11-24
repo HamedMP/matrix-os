@@ -68,8 +68,8 @@ export function terminalRuntimeErrorFromDetails(input: {
 
 /** Storage failures stay fatal even when a session adapter encounters them. */
 export class TerminalRuntimeStorageError extends TerminalRuntimeError {
-  constructor(cause?: unknown) {
-    super("unavailable", "Terminal runtime storage unavailable", { cause });
+  constructor(cause?: unknown, message = "Terminal runtime storage unavailable") {
+    super("unavailable", message, { cause });
     this.name = "TerminalRuntimeStorageError";
   }
 }

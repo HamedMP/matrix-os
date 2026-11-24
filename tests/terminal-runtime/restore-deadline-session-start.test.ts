@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -133,15 +133,21 @@ describe("production startup restore", () => {
     }
   }, 15_000);
 
-  it.each(["terminal-runtimes", "zellij/runtime-layouts"])(
-    "fails startup when shared runtime storage at %s is unusable",
-    async (unusableRoot) => {
+  it.each([
+    { root: "terminal-runtimes", kind: "file", message: "Terminal runtime storage unavailable" },
+    { root: "zellij/runtime-layouts", kind: "file", message: "Terminal runtime storage unavailable" },
+    { root: "terminal-runtimes", kind: "symlink", message: "Invalid terminal runtime request" },
+  ])(
+    "fails startup when shared runtime storage at $root is a $kind",
+    async ({ root, kind, message }) => {
       const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-storage-"));
       dirs.push(homePath);
       const store = new TerminalWorkspaceStore({ homePath });
       await store.ensureWorkspace();
       await mkdir(join(homePath, "system", "zellij"), { recursive: true });
-      await writeFile(join(homePath, "system", unusableRoot), "");
+      const blockedPath = join(homePath, "system", root);
+      if (kind === "symlink") await symlink(homePath, blockedPath);
+      else await writeFile(blockedPath, "");
       const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
       const controller = createUserSystemdTerminalRuntime({
         homePath,
@@ -155,7 +161,7 @@ describe("production startup restore", () => {
       vi.spyOn(console, "error").mockImplementation(() => undefined);
       const runtime = new TerminalRuntime({ store, zellij });
       try {
-        await expect(runtime.restoreAll()).rejects.toThrow(/runtime storage unavailable/i);
+        await expect(runtime.restoreAll()).rejects.toThrow(message);
         expect(runCommand).not.toHaveBeenCalled();
       } finally {
         await runtime.shutdown();

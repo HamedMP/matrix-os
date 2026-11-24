@@ -489,7 +489,7 @@ export function createUserSystemdTerminalRuntime(options: {
         lstat(descriptorRoot),
       ]);
       if (!stats.isDirectory() || stats.isSymbolicLink() || !pathIsWithin(homeReal, descriptorReal)) {
-        throw new TerminalRuntimeStorageError();
+        throw new TerminalRuntimeStorageError(undefined, "Invalid terminal runtime request");
       }
     } catch (err: unknown) {
       if (err instanceof TerminalRuntimeStorageError) throw err;
