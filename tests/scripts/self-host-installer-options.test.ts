@@ -996,7 +996,9 @@ MATRIX_INSTALL_LOG=/dev/null stop_matrix_tailscale_serve`);
       expect(main).toContain('[ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve');
       expect(main.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(main.indexOf("configure_nginx"));
       const restore = readFileSync(script, "utf8").split("\nrestore_previous_listener() {")[1]!.split("\n}\n")[0]!;
-      expect(restore.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(restore.indexOf("systemctl reload nginx"));
+      // Found live: a reload cannot trade private nginx's 127.0.0.1:80 for 0.0.0.0:80.
+      expect(restore).not.toContain("systemctl reload nginx");
+      expect(restore.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(restore.indexOf("systemctl restart nginx"));
     });
 
     it("never keeps a stale tailnet origin for a public install", () => {

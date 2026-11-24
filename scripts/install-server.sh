@@ -1912,7 +1912,8 @@ restore_previous_listener() {
   stop_matrix_tailscale_serve
   if [ -f "$backup" ]; then
     cp -f "$backup" "$site"
-    nginx -t >>"$MATRIX_INSTALL_LOG" 2>&1 && systemctl reload nginx >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    # A restart, not a reload: a reload cannot trade 127.0.0.1:80 for 0.0.0.0:80.
+    nginx -t >>"$MATRIX_INSTALL_LOG" 2>&1 && systemctl restart nginx >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || warn "could not restore the public nginx site; see /var/log/nginx/error.log"
   fi
   OPT_ACCESS=public
