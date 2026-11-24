@@ -165,6 +165,9 @@ describe("Files redesign workspace", () => {
     const report = await screen.findByRole("option", { name: "report.pdf" });
     fireEvent.click(report);
     expect(report.getAttribute("aria-selected")).toBe("true");
+    // Selection alone never opens the panel, so the grid does not reflow under a double-click.
+    expect(screen.queryByRole("complementary")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
     const details = await screen.findByRole("complementary", { name: "Details for report.pdf" });
     expect(within(details).getByText("PDF · 2.4 MB")).toBeTruthy();
     fireEvent.click(within(details).getByRole("tab", { name: "Details" }));
@@ -172,6 +175,8 @@ describe("Files redesign workspace", () => {
 
     fireEvent.click(screen.getByRole("option", { name: "README.md" }), { metaKey: true });
     expect(screen.queryByRole("complementary", { name: /Details for/ })).toBeNull();
+    // The open panel stays mounted with a placeholder instead of collapsing.
+    expect(screen.getByRole("complementary", { name: "Details" }).textContent).toContain("2 items selected");
     expect(screen.getByRole("toolbar", { name: "2 selected" })).toBeTruthy();
     expect(screen.getByText("2 of 5 selected")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("toolbar", { name: "2 selected" })).getByRole("button", { name: "Clear" }));
@@ -219,12 +224,15 @@ describe("Files redesign workspace", () => {
     await screen.findByRole("option", { name: "theme.json" });
     expect(screen.queryByRole("button", { name: "Upload files" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New" })).toBeNull();
+    // The sidebar keeps the New button's space so its rows do not jump.
+    expect(screen.getByRole("navigation", { name: "Files locations" }).firstElementChild?.firstElementChild?.className).toContain("h-8");
     expect(screen.getAllByText("Managed").length).toBeGreaterThan(0);
   });
 
   it("opens the focused file with Enter even when another file is selected", async () => {
     renderWorkspace();
     fireEvent.click(await screen.findByRole("option", { name: "README.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
     await screen.findByRole("complementary", { name: "Details for README.md" });
     fireEvent.keyDown(screen.getByRole("option", { name: "report.pdf" }), { key: "Enter" });
     expect(await screen.findByRole("complementary", { name: "Details for report.pdf" })).toBeTruthy();

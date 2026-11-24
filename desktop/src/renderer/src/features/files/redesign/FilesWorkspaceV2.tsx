@@ -51,7 +51,8 @@ export default function FilesWorkspaceV2() {
   const [drivesOpened, setDrivesOpened] = useState(false);
   const [requestedDrive, setRequestedDrive] = useState<{ scopeId: string; id: string | undefined }>();
   const [refreshes, setRefreshes] = useState<Record<string, number>>({});
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  // Opened with ⌘I or the panel button; selection alone never opens it (see FolderPane).
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const nextId = useRef(1);
   const panes = useRef(new Map<string, FolderPaneHandle>());
   const root = useFolderListing("");
@@ -163,7 +164,7 @@ export default function FilesWorkspaceV2() {
               entries={newEntries}
               trigger={<Button variant="secondary" size="sm" className="mt-2 w-full justify-start"><Icon icon={Plus} size="sm" />New<Icon icon={ChevronDown} size="xs" className="ml-auto" /></Button>}
             />
-          ) : undefined}
+          ) : <div aria-hidden="true" className="mt-2 h-8" />}
           sections={nav.sections}
           footer={nav.footer}
           activeId={activeNavId}

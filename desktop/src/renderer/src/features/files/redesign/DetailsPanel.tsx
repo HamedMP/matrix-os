@@ -137,6 +137,24 @@ export function DetailsPanel({
   );
 }
 
+/**
+ * What the open details panel shows without a single selection. The panel
+ * stays mounted at the same width, so selecting never reflows the grid.
+ */
+export function DetailsPlaceholder({ count, onClose }: { count: number; onClose: () => void }) {
+  return (
+    <aside aria-label="Details" className="flex h-full min-h-0 w-[360px] shrink-0 flex-col border-l border-ds-tint-neutral-border bg-ds-background font-ds-sans">
+      <div className="flex justify-end px-5 pt-5">
+        <IconButton label="Close details" shortcut="⌘I" size="xs" onClick={onClose}><Icon icon={X} size="sm" /></IconButton>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 pb-16 text-center">
+        <p className="text-ds-ui font-medium text-ds-foreground">{count > 1 ? `${count} items selected` : "Nothing selected"}</p>
+        <p className="text-ds-ui-sm text-ds-muted-foreground">{count > 1 ? "Select one item to see its details." : "Select a file or folder to see its details."}</p>
+      </div>
+    </aside>
+  );
+}
+
 async function copyPath(path: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(`~/${path}`);

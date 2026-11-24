@@ -11,7 +11,7 @@ import { UploadStatusList } from "../browser-views";
 import { previewKindForPath } from "../FilePreviewPane";
 import { canMoveFileToTrash } from "../FileTrashControls";
 import { useFileUploads } from "../use-file-uploads";
-import { DetailsPanel } from "./DetailsPanel";
+import { DetailsPanel, DetailsPlaceholder } from "./DetailsPanel";
 import { FolderContent } from "./FolderContent";
 import { FilesHeader, FilesStatusBar, FilesTopBar, type FilesView } from "./FilesHeader";
 import { countSummary, type FolderAccess } from "./file-presentation";
@@ -157,7 +157,6 @@ export function FolderPane({
 
   const single = nav.selection.selected.length === 1 ? nav.selection.selected[0]! : null;
   const singleEntry = single ? byPath.get(single) : undefined;
-  const showDetails = detailsOpen && singleEntry !== undefined && single !== null;
 
   const openFilter = () => { setFilterOpen(true); requestAnimationFrame(() => filterRef.current?.focus()); };
   const shortcuts: Record<PaneShortcut, (() => void) | null> = {
@@ -250,7 +249,7 @@ export function FolderPane({
           <UploadStatusList uploads={uploads.uploads} onRetry={uploads.retry} onRemove={uploads.remove} />
           <FilesStatusBar total={visible.length} selected={nav.selection.selected.length} />
         </div>
-        {showDetails && singleEntry && single ? (
+        {detailsOpen && singleEntry && single ? (
           <DetailsPanel
             key={single}
             entry={singleEntry}
@@ -264,6 +263,8 @@ export function FolderPane({
             downloadPending={downloadPending}
             onTrash={canMoveFileToTrash(single) && !isManagedBrowserPath(single) ? () => onRequestTrash(single, singleEntry.type) : undefined}
           />
+        ) : detailsOpen ? (
+          <DetailsPlaceholder count={nav.selection.selected.length} onClose={() => onDetailsOpenChange(false)} />
         ) : null}
       </div>
       {!readOnly ? (
