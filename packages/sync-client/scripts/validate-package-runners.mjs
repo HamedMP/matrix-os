@@ -125,6 +125,24 @@ try {
     throw new Error(`npm install -g did not print ${packInfo.version}: ${globalOutput}`);
   }
 
+  // npm prunes files it does not know about on the next install in a project,
+  // so the bundled contracts must still be there after a second install.
+  const projectDir = join(tempRoot, "npm-project");
+  await mkdir(projectDir, { recursive: true });
+  const projectHomes = {
+    cwd: projectDir,
+    home: join(tempRoot, "npm-project-home"),
+    pnpmHome: join(tempRoot, "npm-project-pnpm-home"),
+  };
+  await run("npm", ["init", "--yes"], projectHomes);
+  await run("npm", ["install", tarball], projectHomes);
+  await run("npm", ["install", "is-number"], projectHomes);
+  const projectRun = await run(join(projectDir, "node_modules", ".bin", "matrix"), ["--version"], projectHomes);
+  const projectOutput = projectRun.stdout + projectRun.stderr;
+  if (!projectOutput.includes(packInfo.version)) {
+    throw new Error(`project install did not print ${packInfo.version} after a second install: ${projectOutput}`);
+  }
+
   console.log(`Package-runner validation: ok (${packInfo.name}@${packInfo.version})`);
 } finally {
   await rm(tempRoot, { recursive: true, force: true });

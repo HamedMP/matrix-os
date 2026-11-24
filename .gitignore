@@ -133,6 +133,13 @@ skills-lock.json
 !.agents/skills/daily-update/**
 !.agents/skills/release-notes/
 !.agents/skills/release-notes/**
+# Release runbooks for platform Cloud Run and host-bundle stable promotion
+!.agents/skills/release-platform/
+!.agents/skills/release-platform/**
+!.claude/skills/release-platform
+!.agents/skills/release-matrix-stable/
+!.agents/skills/release-matrix-stable/**
+!.claude/skills/release-matrix-stable
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**

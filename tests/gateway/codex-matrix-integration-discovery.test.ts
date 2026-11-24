@@ -4,7 +4,7 @@ import { startCodexStartupRunner, waitForStartupText } from "../helpers/codex-st
 it.each([
   { method: "thread/start", providerThreadId: undefined },
   { method: "thread/resume", providerThreadId: "existing-provider-thread" },
-])("gives Codex the safe Matrix integration fallback on $method", async ({ method, providerThreadId }) => {
+])("gives Codex compact Core discovery before the safe integration fallback on $method", async ({ method, providerThreadId }) => {
   const runner = await startCodexStartupRunner({ failures: 0, providerThreadId });
   try {
     await waitForStartupText(runner.eventPath, "turn.completed");
@@ -15,7 +15,14 @@ it.each([
     expect(start?.developerInstructions).toContain("matrix-app-builder");
     expect(start?.developerInstructions).toContain("Only use tools present in this run");
     expect(start?.developerInstructions).not.toContain("mcp__matrix-os-ipc__manage_cron");
-    expect(start?.developerInstructions).toContain("matrix-integrations inventory");
+    const instructions = start?.developerInstructions ?? "";
+    expect(Buffer.byteLength(instructions)).toBeLessThan(2_000);
+    expect(instructions).toContain("Matrix Core MCP");
+    expect(instructions).toContain("search_tools");
+    expect(instructions).toContain("describe_tool");
+    expect(instructions).toContain("call_tool");
+    expect(instructions).toContain("matrix-integrations inventory");
+    expect(instructions.indexOf("Matrix Core MCP")).toBeLessThan(instructions.indexOf("matrix-integrations inventory"));
     expect(start?.developerInstructions).toContain("matrix-integrations describe");
     expect(start?.developerInstructions).toContain("matrix-integrations call");
     expect(start?.developerInstructions).toContain("exact action ID");

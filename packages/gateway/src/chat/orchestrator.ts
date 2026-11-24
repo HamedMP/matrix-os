@@ -92,7 +92,6 @@ import {
 } from "./shared-execution-coordinator.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
-const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const STEER_FINALIZE_ATTEMPTS = 2;
 
 export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-errors.js";
@@ -163,6 +162,7 @@ function mapSteerFinalizationError(error: unknown): never {
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingDispatch = new Set<string>();
+  private readonly reservedDispatch = new Set<string>();
   private readonly queueDispatches = new Set<string>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
@@ -236,7 +236,9 @@ export class CanonicalChatOrchestrator {
     const coordinatorOptions: SharedChatExecutionCoordinatorOptions = {
       repository: options.repository,
       isClosing: () => this.closing,
-      atCapacity: (owner) => this.atCapacity(owner),
+      atCapacity: () => this.atCapacity(),
+      reserveDispatchSlot: runId => this.reserveDispatchSlot(runId),
+      releaseDispatchSlot: runId => { this.reservedDispatch.delete(runId); },
       hasActiveRun: (owner, chatId) => [...this.active.values()].some((entry) => (
         entry.chatId === chatId && entry.owner.type === owner.type
         && entry.owner.ownerId === owner.ownerId
@@ -276,14 +278,10 @@ export class CanonicalChatOrchestrator {
     return this.pendingDispatch.size + this.queueDispatches.size + this.sharedExecution.pendingCount;
   }
 
-  private atCapacity(owner: ChatOwner): boolean {
+  private atCapacity(reservedRunId?: string): boolean {
     if (this.options.executionAdmissionFence?.blocked) return true;
-    if (this.active.size >= MAX_ACTIVE_RUNS_GLOBAL) return true;
-    let ownerActive = 0;
-    for (const entry of this.active.values()) {
-      if (entry.owner.type === owner.type && entry.owner.ownerId === owner.ownerId) ownerActive += 1;
-    }
-    return ownerActive >= MAX_ACTIVE_RUNS_PER_OWNER;
+    const ownReservation = reservedRunId && this.reservedDispatch.has(reservedRunId) ? 1 : 0;
+    return this.active.size + this.reservedDispatch.size - ownReservation >= MAX_ACTIVE_RUNS_GLOBAL;
   }
 
   private assertOpen(): void {
@@ -314,14 +312,25 @@ export class CanonicalChatOrchestrator {
     }
   }
 
-  private reservePendingDispatch(runId: string): void {
-    if (!this.pendingDispatch.has(runId) && this.pendingDispatch.size >= MAX_ACTIVE_RUNS_GLOBAL) {
+  private reserveDispatchSlot(runId: string): void {
+    this.assertOpen();
+    if (this.atCapacity(runId)) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
         503,
       );
     }
+    this.reservedDispatch.add(runId);
+  }
+
+  private reservePendingDispatch(runId: string): void {
+    this.reserveDispatchSlot(runId);
     this.pendingDispatch.add(runId);
+  }
+
+  private releasePendingDispatch(runId: string): void {
+    this.pendingDispatch.delete(runId);
+    this.reservedDispatch.delete(runId);
   }
 
   async admitTurn(
@@ -336,8 +345,8 @@ export class CanonicalChatOrchestrator {
       assertPersonalExecutionAllowed: (scope, id) => this.assertPersonalExecutionAllowed(scope, id),
       reconcileActiveRuns: (scope) => this.reconcileActiveRuns(scope),
       reservePendingDispatch: (id) => this.reservePendingDispatch(id),
-      releasePendingDispatch: (id) => { this.pendingDispatch.delete(id); },
-      atCapacity: (scope) => this.atCapacity(scope),
+      releasePendingDispatch: (id) => this.releasePendingDispatch(id),
+      atCapacity: (_owner, runId) => this.atCapacity(runId),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, inputValue, provenance);
@@ -365,10 +374,10 @@ export class CanonicalChatOrchestrator {
       findTurnAdmission: repository.findTurnAdmission.bind(repository), finishRun: repository.finishRun.bind(repository),
     }, assertOpen: () => this.assertOpen(),
       assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
-      atCapacity: owner => this.atCapacity(owner),
+      atCapacity: (_owner, runId) => this.atCapacity(runId),
       hasStoppingExecution: (owner, chatId) => hasStoppingChatExecution(this.active.values(), owner, chatId),
       reservePendingDispatch: runId => this.reservePendingDispatch(runId),
-      releasePendingDispatch: runId => { this.pendingDispatch.delete(runId); },
+      releasePendingDispatch: runId => this.releasePendingDispatch(runId),
       registerDispatch: (owner, message, run, adapter, root, state, identity) => {
         void this.startDispatch(owner, message, run, adapter, root, state, undefined, undefined, undefined, undefined, identity);
         return { registered: true };
@@ -418,8 +427,8 @@ export class CanonicalChatOrchestrator {
       assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
       reconcileActiveRuns: (owner) => this.reconcileActiveRuns(owner),
       reservePendingDispatch: (runId) => this.reservePendingDispatch(runId),
-      releasePendingDispatch: (runId) => { this.pendingDispatch.delete(runId); },
-      atCapacity: (owner) => this.atCapacity(owner),
+      releasePendingDispatch: (runId) => this.releasePendingDispatch(runId),
+      atCapacity: (_owner, runId) => this.atCapacity(runId),
       hasStoppingExecution: (owner, chatId, admissionKey) => hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, turnId, inputValue);
@@ -439,6 +448,7 @@ export class CanonicalChatOrchestrator {
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
     this.assertOpen();
+    this.reserveDispatchSlot(run.id);
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId, nativeScheduled,
@@ -470,6 +480,7 @@ export class CanonicalChatOrchestrator {
       ...(sharedScopeId ? { sharedScopeId } : {}),
       completion,
     });
+    this.reservedDispatch.delete(run.id);
     return completion;
   }
 
@@ -484,7 +495,7 @@ export class CanonicalChatOrchestrator {
   }
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
-    if (this.closing || this.atCapacity(owner)) return;
+    if (this.closing || this.atCapacity()) return;
     try {
       await this.assertPersonalExecutionAllowed(owner, chatId);
     } catch (error: unknown) {
@@ -499,63 +510,69 @@ export class CanonicalChatOrchestrator {
     if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
     this.queueDispatches.add(key);
     try {
-      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(owner); offset += 1) {
+      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(); offset += 1) {
+        const runId = id("run_");
+        this.reserveDispatchSlot(runId);
         try {
-          await this.options.agentContext?.revalidate(owner, chatId);
-        } catch (error: unknown) {
-          // An unsupported thread must not block this owner's unrelated Chats.
-          if (error instanceof BotEntryError && error.code === "unavailable") return;
-          throw error;
-        }
-        const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
-        const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
-          chatId,
-          turnId: id("cturn_"),
-          runId: id("run_"),
-          messageId: id("msg_"),
-          claimedAt: timestamp,
-        });
-        if (!claimed) return;
-        const adapter = this.options.adapters.get(claimed.run.driverKind);
-        let resolvedRoot: ResolvedChatExecutionRoot | undefined;
-        let resumeState: unknown;
-        try {
-          if (!adapter) throw new Error("Queued Provider adapter unavailable");
-          if (claimed.run.executionRoot) {
-            if (!this.options.executionRoots) throw new Error("Queued execution root resolver unavailable");
-            resolvedRoot = await this.options.executionRoots.resolve(owner, claimed.run.executionRoot);
-            if (resolvedRoot.fingerprint !== claimed.run.executionRootFingerprint) {
-              throw new Error("Queued execution root provenance changed");
-            }
+          try {
+            await this.options.agentContext?.revalidate(owner, chatId);
+          } catch (error: unknown) {
+            // An unsupported thread must not block this owner's unrelated Chats.
+            if (error instanceof BotEntryError && error.code === "unavailable") return;
+            throw error;
           }
-          resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
-            ...claimed.run,
-            repository: this.options.repository, owner, chatId, adapter,
-            executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
-            mode: "follow_up",
-          });
-          this.startDispatch(
-            owner,
-            claimed.message,
-            { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
-            adapter,
-            resolvedRoot,
-            resumeState,
-          );
-          return;
-        } catch (error: unknown) {
-          console.warn(
-            "[chat/orchestrator] Queued Run preparation failed:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-          await this.options.repository.finishRun(owner, {
+          const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
+          const claimed = await this.options.repository.claimNextQueuedTurn(owner, {
             chatId,
-            runId: claimed.run.id,
-            outcome: "failed",
-            completedAt: timestamp,
-            diagnostic: diagnoseChatRunFailure(error, "preparation"),
+            turnId: id("cturn_"),
+            runId,
+            messageId: id("msg_"),
+            claimedAt: timestamp,
           });
-          continue;
+          if (!claimed) return;
+          const adapter = this.options.adapters.get(claimed.run.driverKind);
+          let resolvedRoot: ResolvedChatExecutionRoot | undefined;
+          let resumeState: unknown;
+          try {
+            if (!adapter) throw new Error("Queued Provider adapter unavailable");
+            if (claimed.run.executionRoot) {
+              if (!this.options.executionRoots) throw new Error("Queued execution root resolver unavailable");
+              resolvedRoot = await this.options.executionRoots.resolve(owner, claimed.run.executionRoot);
+              if (resolvedRoot.fingerprint !== claimed.run.executionRootFingerprint) {
+                throw new Error("Queued execution root provenance changed");
+              }
+            }
+            resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+              ...claimed.run,
+              repository: this.options.repository, owner, chatId, adapter,
+              executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
+              mode: "follow_up",
+            });
+            this.startDispatch(
+              owner,
+              claimed.message,
+              { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
+              adapter,
+              resolvedRoot,
+              resumeState,
+            );
+            return;
+          } catch (error: unknown) {
+            console.warn(
+              "[chat/orchestrator] Queued Run preparation failed:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+            await this.options.repository.finishRun(owner, {
+              chatId,
+              runId: claimed.run.id,
+              outcome: "failed",
+              completedAt: timestamp,
+              diagnostic: diagnoseChatRunFailure(error, "preparation"),
+            });
+            continue;
+          }
+        } finally {
+          this.reservedDispatch.delete(runId);
         }
       }
     } finally {
@@ -563,7 +580,7 @@ export class CanonicalChatOrchestrator {
     }
   }
 
-  private async dispatch(
+  private dispatch(
     owner: ChatOwner,
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
@@ -576,6 +593,25 @@ export class CanonicalChatOrchestrator {
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
     const sendTiming = chatSendTimingsEnabled() ? createChatDispatchTimer(run.id, run.driverKind) : undefined;
+    const go = () => this.dispatchRun(owner, message, run, adapter, controller, resolvedRoot, resumeState,
+      promptOverride, sharedScopeId, nativeScheduled, sendTiming);
+    // Sub-stages recorded deep in the launch path join this run via the timing context.
+    return sendTiming ? sendTiming.run(go) : go();
+  }
+
+  private async dispatchRun(
+    owner: ChatOwner,
+    message: CanonicalChatMessage,
+    run: CanonicalChatRun,
+    adapter: CanonicalChatProviderAdapter,
+    controller: AbortController,
+    resolvedRoot?: ResolvedChatExecutionRoot,
+    resumeState?: unknown,
+    promptOverride?: string,
+    sharedScopeId?: string,
+    nativeScheduled?: NativeScheduledPhaseIdentity,
+    sendTiming?: ReturnType<typeof createChatDispatchTimer>,
+  ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
@@ -1145,7 +1181,7 @@ export class CanonicalChatOrchestrator {
   private async reconcileOwnerActiveRuns(owner: ChatOwner): Promise<number> {
     const reconciled = await reconcileOwnerChatRuns({
       repository: this.options.repository, adapters: this.options.adapters,
-      isActiveOrPreparing: (runId, chatId) => this.active.has(runId) || this.pendingDispatch.has(runId)
+      isActiveOrPreparing: (runId, chatId) => this.active.has(runId) || this.reservedDispatch.has(runId)
         || this.sharedExecution.isPreparingChat(chatId),
       assertPersonalExecutionAllowed: (scope, chatId) => this.assertPersonalExecutionAllowed(scope, chatId),
       persistActivities: (scope, run, events, at) => this.persistActivities(scope, run, events, at),

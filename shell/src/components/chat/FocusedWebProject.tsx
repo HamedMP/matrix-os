@@ -1,17 +1,20 @@
 "use client";
 
-import { ChatRailSection, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import { ChatRailOrderContext, ChatRailSection, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { ChevronLeft } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats } from "./usePagedProjectChats";
 import { WebChatLifecycleGroups } from "./WebChatLifecycleGroups";
-import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus } from "./WebProjectsNav";
+import { ProjectChatPaging, ProjectChatRows, ProjectChatStatus, withRenamedProjectTitles, type ProjectTitleOverrides } from "./WebProjectsNav";
 import type { WebProject } from "./web-projects";
+import { orderWebChatRows } from "./useWebChatRailOrder";
+import { WebProjectArchiveAction } from "./WebProjectsNav";
+import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 /** Sidebar narrowed to one project, as on Electron Desktop: its chats by lifecycle, older chats below, and a way back. */
-export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle,
-  onSelectChat, renderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery }: {
+export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, scopeKey, activeChatId, activeChatTitle, renamedTitles = {},
+  onSelectChat, renderRow, renderOlderRow, onBack, onOpenHome, mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion = 0, chatReadStateUpdates }: {
   project: WebProject;
   gatewayUrl: string;
   /** The project's chats from navigation, pinned ones included. */
@@ -20,22 +23,31 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   scopeKey?: string;
   activeChatId?: string;
   activeChatTitle?: string;
+  renamedTitles?: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   renderRow(chat: RenameableConversation): ReactNode;
+  /** ProjectChatRows supplies the ordering wrapper for this action row. */
+  renderOlderRow?(chat: RenameableConversation, nowMs: number): ReactNode;
   onBack(): void;
   onOpenHome?: () => void;
   mobile: boolean;
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
+  onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  refreshVersion?: number | string;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
-  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true);
+  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"), chatReadStateUpdates);
   const [olderExpanded, setOlderExpanded] = useState(true);
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();
   // Paged rows only fill in Chats outside navigation; listed ones keep their lifecycle section.
-  const older = filterChatsByImportSource(fetched.filter(chat => !listedChatIds.has(chat.id)
+  const order = useContext(ChatRailOrderContext);
+  const unorderedOlder = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
+  const older = orderWebChatRows(unorderedOlder, order.chatIds, row=>row.id);
   const empty = chats.length === 0 && older.length === 0;
   return <>
     <div className="matrix-web-project-header" data-mobile={mobile || undefined}>
@@ -49,6 +61,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
           {project.name}
         </button>
       ) : <h2 title={project.name}>{project.name}</h2>}
+    {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
     </div>
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
@@ -61,7 +74,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
     {older.length > 0 || (!empty && (error || hasMore || capped)) ? <ChatRailSection label="Older chats" count={older.length}
       expanded={olderExpanded} onExpandedChange={setOlderExpanded}>
       <ProjectChatRows rows={older.map(chat => ({ kind: "fetched", chat } as const))} projectId={project.id} nowMs={nowMs}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={() => null} mobile={mobile} />
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={renderOlderRow ?? renderRow} mobile={mobile} />
       {error ? <ProjectChatStatus rowCount={older.length} loading={false} error mobile={mobile} retry={retry} hasMore={hasMore} filtered={false} /> : null}
       <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore} capped={capped}
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />

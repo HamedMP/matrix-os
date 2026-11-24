@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { CanonicalChatRun } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
+import { legacyClaudeChatArgs } from "../../packages/gateway/src/chat/claude-legacy-launch-guidance.js";
 import { resolveClaudeSessionSource } from "../../packages/gateway/src/chat/claude-session-source.js";
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
@@ -46,7 +48,7 @@ describe("Claude protected recovery launch plan", () => {
       resume: true, cancellation: true, worktrees: "optional", interactionModes: ["default"], permissionModes: ["supervised"],
     } };
 
-  it("reproduces the completed Run source with Browser configured without opening any Run capability", async () => {
+  it.each([false, true])("reproduces the completed Run source with Browser without opening Run capabilities (previous prompt: %s)", async legacy => {
     const nativeSessions = pool();
     const spawn = vi.fn(spawnFn);
     const matrixMcp = createMatrixMcpCapabilityRegistry({ configuredOwnerId: input.owner.ownerId });
@@ -69,12 +71,23 @@ describe("Claude protected recovery launch plan", () => {
       expect(original.args).toContain("--mcp-config");
       expect(issue).toHaveBeenCalledOnce();
       expect(open).toHaveBeenCalledOnce();
+      const sourceArgs = legacy ? legacyClaudeChatArgs(original.args)! : original.args;
+      const sourceFingerprint = legacy ? (await resolveClaudeSessionSource({
+        homePath: "/owner", command: original.command, cwd: original.cwd, args: sourceArgs, env: original.env, input,
+      })).fingerprint : original.sourceFingerprint;
+      if (legacy) {
+        expect(sourceFingerprint).not.toBe(original.sourceFingerprint);
+        const guidance = sourceArgs[sourceArgs.indexOf("--append-system-prompt") + 1]!;
+        expect(createHash("sha256").update(guidance).digest("hex")).toBe(
+          "8cef40c4c2c914baea0d7959ea217dcf3e37e05099e64382c3f9db7229dda5e5",
+        );
+      }
       const recovery = { owner: input.owner, run, state: { sessionId }, sessionId,
-        expectedSourceFingerprint: original.sourceFingerprint, signal: input.signal };
+        expectedSourceFingerprint: sourceFingerprint, signal: input.signal };
       const plan = await adapter.prepareNativeRecovery(recovery);
-      expect(plan).toMatchObject({ command: "/qualified/claude", cwd: "/owner", sessionId, sourceFingerprint: original.sourceFingerprint,
+      expect(plan).toMatchObject({ command: "/qualified/claude", cwd: "/owner", sessionId, sourceFingerprint,
         env: { ANTHROPIC_API_KEY: "owner-key", HOME: "/owner" } });
-      expect(plan?.args).toEqual(original.args.filter((_arg, index, args) =>
+      expect(plan?.args).toEqual(sourceArgs.filter((_arg, index, args) =>
         args[index] !== "--mcp-config" && args[index - 1] !== "--mcp-config"));
       expect(plan?.args).not.toContain("--resume");
       expect(JSON.stringify(plan)).not.toContain("ambient-");

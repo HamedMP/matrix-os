@@ -85,4 +85,10 @@ describe("native Chat catalog freshness after coding discovery", () => {
     expect(result.instances[0]?.availability).toBe("available");
     expect(codingModels).not.toHaveBeenCalled();
   });
+
+  it("observes only the Codex native identity for a Codex send", async () => {
+    const { service, settings } = fixture();
+    await service.getCatalog(principal, { instanceId: "codex_default", model: "gpt-test" });
+    expect(settings).toHaveBeenCalledWith(expect.objectContaining({ includeNativeAccountMetadata: true, nativeAccountHarnesses: ["codex"] }));
+  });
 });

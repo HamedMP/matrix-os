@@ -1,0 +1,54 @@
+[
+  {
+    "path": "/definitions/v2/AppToolConfig/properties/approvals_reviewer",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/BedrockSetupParams/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/CodexErrorInfo/anyOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/DaybreakAvailability",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/LoginAccountParams/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ModelAccessPrograms/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ModelAccessPrograms/properties/daybreakAvailability",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/Thread/properties/daybreakProgramPropagationEnrolled",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeFrameChannels/description",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeItem/oneOf",
+    "operation": "restore"
+  },
+  {
+    "path": "/definitions/v2/ThreadRealtimeSessionInputReason",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadSampleParams/properties/model",
+    "operation": "remove"
+  },
+  {
+    "path": "/definitions/v2/ThreadStartParams/properties/daybreakProgramPropagationEnrolled",
+    "operation": "remove"
+  }
+]

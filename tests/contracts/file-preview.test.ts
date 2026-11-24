@@ -5,7 +5,55 @@ import {
   FileResourceRefSchema,
   classifyFilePreview,
   normalizeChatFileReference,
+  canonicalChatFileScope,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatExecutionRootRef,
 } from "../../packages/contracts/src/index.js";
+import { createCanonicalChatFixture } from "./fixtures/canonical-chat";
+
+function fileScopeDetail(projectId?: string, roots: CanonicalChatExecutionRootRef[] = [], activeIndex?: number): Pick<CanonicalChatDetailResponse, "record" | "runs"> {
+  const snapshot = createCanonicalChatFixture("completed").snapshot;
+  const { project: _project, providerBinding: _binding, activeRun: _active, ...chat } = snapshot.chat;
+  const runs = roots.map((executionRoot, index) => ({ ...snapshot.runs[0]!, id: `run_scope_${index}`, executionRoot }));
+  return { record: { chat, ...(projectId ? { projectId } : {}), ...(activeIndex === undefined ? {} : {
+    activeRun: { runId: runs[activeIndex]!.id, turnId: runs[activeIndex]!.turnId, status: "running" as const },
+  }) }, runs };
+}
+
+describe("canonical chat file scope", () => {
+  it("waits for verified detail instead of defaulting an unresolved chat to Home", () => {
+    expect(canonicalChatFileScope(null)).toEqual({ kind: "unavailable" });
+  });
+  it("uses owner Home for a global chat regardless of historical run roots", () => {
+    expect(canonicalChatFileScope(fileScopeDetail(undefined, [{ kind: "worktree", projectId: "other", worktreeId: "wt_other" }]))).toEqual({ kind: "home" });
+  });
+  it("keeps a project without a run on its primary checkout", () => {
+    expect(canonicalChatFileScope(fileScopeDetail("project_one"))).toEqual({ kind: "project", projectId: "project_one" });
+  });
+  it("uses the named active run even when a later array entry exists", () => {
+    expect(canonicalChatFileScope(fileScopeDetail("project_one", [
+      { kind: "worktree", projectId: "project_one", worktreeId: "wt_active" },
+      { kind: "project", projectId: "project_one" },
+    ], 0))).toEqual({ kind: "project", projectId: "project_one", worktreeId: "wt_active" });
+  });
+  it("uses the newest committed run when no run is active", () => {
+    expect(canonicalChatFileScope(fileScopeDetail("project_one", [
+      { kind: "project", projectId: "project_one" },
+      { kind: "worktree", projectId: "project_one", worktreeId: "wt_latest" },
+    ]))).toEqual({ kind: "project", projectId: "project_one", worktreeId: "wt_latest" });
+  });
+  it("does not fall back to the primary checkout when the active run is missing", () => {
+    const value = fileScopeDetail("project_one", [{ kind: "project", projectId: "project_one" }], 0);
+    value.record.activeRun!.runId = "run_missing";
+    expect(canonicalChatFileScope(value)).toEqual({ kind: "unavailable" });
+  });
+  it.each([
+    { kind: "worktree" as const, projectId: "other_project", worktreeId: "wt_other" },
+    { kind: "bot_workspace" as const, botId: "bot_fixtureone" },
+  ])("rejects a run root outside the chat project: $kind", root => {
+    expect(canonicalChatFileScope(fileScopeDetail("project_one", [root]))).toEqual({ kind: "unavailable" });
+  });
+});
 
 describe("file preview contracts", () => {
   it("classifies formats without executing or guessing a viewer", () => {

@@ -1,4 +1,5 @@
 import { openBackgroundLaunchChannel, validPrivateLaunch, type BackgroundPrivateControl, type ManagedLaunchChannel, type PrivateLaunchSpawn } from "./background-launch-channel.js";
+import { recordChatSendStage, startChatSendStage } from "./chat/send-timing.js";
 import { execFile } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
 import { lstat, mkdir, opendir, chmod, realpath, open, rm, writeFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { constants } from "node:fs";
 import { withBackgroundRuntimeLock } from "./background-runtime-lock.js";
+import { sweepCodexBrowserTokenDirs } from "./coding-agents/codex-browser-bootstrap.mjs";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
 
 export const BackgroundAgentRefSchema = z.object({ id: z.string().regex(/^bg_[a-f0-9]{32}$/) }).strict();
@@ -38,10 +40,12 @@ export function createBackgroundAgentRuntime(options: {
   maxJobs?: number;
   spawnPrivate?: PrivateLaunchSpawn;
   withLock?: typeof withBackgroundRuntimeLock;
+  /** Removes dead Codex runners' Browser bearer temp directories (startup + hourly). */
+  sweepBrowserTokens?: () => Promise<number>;
 }): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void> } {
   const home = resolve(options.homePath);
   const root = join(home, "system", "background-agents");
-  const maxJobs = z.number().int().min(1).max(128).parse(options.maxJobs ?? 32);
+  const maxJobs = z.number().int().min(1).max(128).parse(options.maxJobs ?? 64);
   const runCommand = options.runCommand ?? runDefault;
   const uid = process.getuid?.();
   const env = { ...process.env, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` };
@@ -56,9 +60,15 @@ export function createBackgroundAgentRuntime(options: {
     if (closed) return Promise.reject(new Error("Background runtime closed"));
     if (waiting >= 64) return Promise.reject(new Error("Background runtime capacity reached"));
     waiting++;
+    const queuedAt = startChatSendStage();
     const operation = tail.then(async () => {
+      recordChatSendStage("background_queue_wait", queuedAt);
       await privateDirectory(root);
-      return withLock(join(root, ".admission.lock"), fn);
+      const flockAt = startChatSendStage();
+      return withLock(join(root, ".admission.lock"), () => {
+        recordChatSendStage("background_flock", flockAt);
+        return fn();
+      });
     }).finally(() => { waiting--; });
     tail = operation.catch((error: unknown) => {
       console.warn("[background-agent] operation failed", error instanceof Error ? error.name : "UnknownError");
@@ -144,11 +154,21 @@ export function createBackgroundAgentRuntime(options: {
       if (!live.get(unit(ref))) await rm(dir, { recursive: true });
     }
   });
+  const sweepBrowserTokens = options.sweepBrowserTokens ?? (() => sweepCodexBrowserTokenDirs());
+  function sweepBrowserTokenDirs() {
+    void sweepBrowserTokens().catch((error: unknown) => {
+      console.warn("[background-agent] Browser bearer sweep deferred", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
   function scheduleSweep() {
     if (sweepTimer || closed) return;
-    sweepTimer = setInterval(() => { void sweep().catch((error: unknown) => {
-      console.warn("[background-agent] retention sweep deferred", error instanceof Error ? error.name : "UnknownError");
-    }); }, 60 * 60_000);
+    sweepBrowserTokenDirs();
+    sweepTimer = setInterval(() => {
+      void sweep().catch((error: unknown) => {
+        console.warn("[background-agent] retention sweep deferred", error instanceof Error ? error.name : "UnknownError");
+      });
+      sweepBrowserTokenDirs();
+    }, 60 * 60_000);
     sweepTimer.unref();
   }
   scheduleSweep();
@@ -157,6 +177,7 @@ export function createBackgroundAgentRuntime(options: {
     stop,
     start: async (input) => {
       SessionIdSchema.parse(input.sessionId);
+      const inventoryAt = startChatSendStage();
       let active = 0;
       let retained = 0;
       const refs = await records();
@@ -176,6 +197,7 @@ export function createBackgroundAgentRuntime(options: {
           if (await descriptorSession(dir) === input.sessionId) throw new BackgroundSessionRunningError();
         }
       }
+      recordChatSendStage("background_inventory", inventoryAt);
       if (active >= maxJobs || retained >= MAX_RECORDS) throw new Error("Background runtime capacity reached");
       const ref = { id: `bg_${randomUUID().replaceAll("-", "")}` };
       const dir = join(root, ref.id);
@@ -187,6 +209,7 @@ export function createBackgroundAgentRuntime(options: {
       try {
         await input.onPrepared?.(ref);
         const privateControl = input.privateControl && validPrivateLaunch(input.launch) ? input.privateControl : undefined;
+        const spawnAt = startChatSendStage();
         const serviceArgs = [
           "--user", "--quiet", "--collect", `--unit=${unit(ref)}`,
           "--slice=matrix-terminal.slice", "--service-type=exec",
@@ -208,7 +231,10 @@ export function createBackgroundAgentRuntime(options: {
             }
           } catch (error) { console.warn("[background-agent] Private control unavailable", error instanceof Error ? error.name : "UnknownError"); }
         } else await run("/usr/bin/systemd-run", serviceArgs);
+        recordChatSendStage("systemd_run_spawned", spawnAt);
+        const activeAt = startChatSendStage();
         if (!await isRunning(ref)) throw new Error("Background runtime exited during startup");
+        recordChatSendStage("unit_active", activeAt);
       } catch (error: unknown) {
         // Keep the private descriptor if stop cannot be confirmed, for recovery/admission.
         await stop(ref);
