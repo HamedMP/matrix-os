@@ -41,6 +41,11 @@ on:
         required: true
         default: false
         type: boolean
+      expected_sha:
+        description: Approved commit SHA (40 characters); the run stops before building if the ref has moved
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -167,6 +172,13 @@ jobs:
         with:
           # Source ancestry must survive squash merges and ordinary main deployments.
           fetch-depth: 0
+
+      # First real step: a moved ref stops the run before any image is built or
+      # any traffic is switched.
+      - name: Require the approved commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: bash scripts/ci/assert-expected-sha.sh
 
       - name: Validate funded pricing review configuration
         run: bash scripts/ci/platform-funded-pricing-env.sh >> "$GITHUB_ENV"
