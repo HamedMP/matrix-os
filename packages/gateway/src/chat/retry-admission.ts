@@ -174,7 +174,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     try {
       if (!admitted.alreadyAccepted) {
         const stopping = deps.hasStoppingExecution(owner, chatId);
-        if (stopping || deps.atCapacity(owner)) {
+        if (stopping || deps.atCapacity(owner, run.id)) {
           await deps.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,

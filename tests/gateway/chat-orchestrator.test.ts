@@ -1934,9 +1934,12 @@ describe("CanonicalChatOrchestrator", () => {
     ]));
   });
 
-  it("limits one owner to eight concurrent Runs without consuming the global registry", async () => {
+  it.each([false, true])("allows 64 concurrent Runs and rejects the 65th across owners: %s", async (multipleOwners) => {
     const provider = adapter(async function* (input) {
-      await new Promise<void>((resolve) => input.signal.addEventListener("abort", () => resolve(), { once: true }));
+      await new Promise<void>((resolve) => {
+        if (input.signal.aborted) resolve();
+        else input.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
       yield { type: "run.completed", outcome: "aborted" };
     });
     const orchestrator = new CanonicalChatOrchestrator({
@@ -1945,29 +1948,33 @@ describe("CanonicalChatOrchestrator", () => {
       adapters: new CanonicalChatProviderRegistry([provider]),
       now: () => new Date("2026-08-26T00:00:00.000Z"),
     });
-    for (let index = 0; index < 9; index += 1) {
-      await repository.create(owner, {
-        id: `chat_concurrent_${index}`,
-        clientRequestId: `req_create_concurrent_${index}`,
-        title: `Concurrent ${index}`,
-      });
-    }
-    for (let index = 0; index < 8; index += 1) {
-      await orchestrator.admitTurn(principal, owner, `chat_concurrent_${index}`, {
-        clientRequestId: `req_concurrent_turn_${index}`,
-        baseRevision: 0,
-        parts: [{ type: "text", text: `run ${index}` }],
-        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-        interactionMode: "default",
-        permissionMode: "supervised",
-      });
-    }
-
+    const runOwner = (index: number) => multipleOwners && index % 2 === 1
+      ? { ...owner, ownerId: "owner_concurrent_other" } : owner;
     try {
-      await expect(orchestrator.admitTurn(principal, owner, "chat_concurrent_8", {
-        clientRequestId: "req_concurrent_turn_8",
+      for (let index = 0; index < 65; index += 1) {
+        await repository.create(runOwner(index), {
+          id: `chat_concurrent_${index}`,
+          clientRequestId: `req_create_concurrent_${index}`,
+          title: `Concurrent ${index}`,
+        });
+      }
+      for (let index = 0; index < 64; index += 1) {
+        const scope = runOwner(index);
+        await orchestrator.admitTurn({ ...principal, userId: scope.ownerId }, scope, `chat_concurrent_${index}`, {
+          clientRequestId: `req_concurrent_turn_${index}`,
+          baseRevision: 0,
+          parts: [{ type: "text", text: `run ${index}` }],
+          selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        });
+      }
+
+      expect(orchestrator.activeCount).toBe(64);
+      await expect(orchestrator.admitTurn(principal, owner, "chat_concurrent_64", {
+        clientRequestId: "req_concurrent_turn_64",
         baseRevision: 0,
-        parts: [{ type: "text", text: "run 8" }],
+        parts: [{ type: "text", text: "run 64" }],
         selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
         interactionMode: "default",
         permissionMode: "supervised",
@@ -1975,9 +1982,9 @@ describe("CanonicalChatOrchestrator", () => {
     } finally {
       await orchestrator.close();
     }
-    const rejected = await repository.exportChat(owner, "chat_concurrent_8");
-    expect(rejected?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
-  });
+    const rejected = await repository.exportChat(owner, "chat_concurrent_64");
+    expect(rejected?.runs).toEqual([]);
+  }, 60_000);
 
   it("commits successful output at the former text-delta activity boundary", async () => {
     await repository.create(owner, {

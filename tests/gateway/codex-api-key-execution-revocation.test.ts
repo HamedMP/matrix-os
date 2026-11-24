@@ -16,6 +16,8 @@ async function fixture(stopSession: (id: string) => Promise<void>) {
   const readMetadata = async () => loggedIn ? bindNativeAccountMetadata({
     authMethod: "api_key", accountLabel: "API key", checkedAt: new Date(Date.now() - 1000).toISOString(), staleAfter: new Date(Date.now() + 30_000).toISOString(),
   }, async () => loggedIn, "synthetic-exact-key", { credentialIdentityBound: true }) : null;
+  const invalidateIdentity = vi.fn();
+  Object.assign(readMetadata, { invalidateIdentity });
   const guard = createNativeProviderProfileGuard({ homePath, registry: {
     listProfileSessions: async () => [], get: async () => { throw new Error("unexpected login lookup"); }, observeAgentLiveness: async () => "stopped",
   } });
@@ -32,7 +34,7 @@ async function fixture(stopSession: (id: string) => Promise<void>) {
     codexNativeAccountMetadataReader: readMetadata, prepareNativeCodexRevocation: () => admission.prepareRevocation() });
   const independent = join(homePath, "matrix-ai-grant.json");
   await writeFile(independent, JSON.stringify({ enabled: true, grant: "synthetic-independent-connection" }));
-  return { homePath, store, admission, run, independent,
+  return { homePath, store, admission, run, independent, invalidateIdentity,
     cleanup: async () => { service.close(); await rm(homePath, { recursive: true, force: true }); } };
 }
 
@@ -58,6 +60,9 @@ it("awaits exact API-key work stop before CLI logout and successful Settings rec
     await expect(f.admission.start("owner", "sess_key_concurrent")).rejects.toThrow("unavailable");
     release(); await mutation;
     expect(f.run).toHaveBeenCalledOnce();
+    // Revocation and the completed logout both drop any reused admission identity.
+    expect(f.invalidateIdentity.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(f.invalidateIdentity.mock.invocationCallOrder.at(-1)).toBeGreaterThan(f.run.mock.invocationCallOrder[0]!);
     expect(stop).toHaveBeenCalledExactlyOnceWith("sess_key_active");
     expect(order).toEqual(["stop:sess_key_active", "receipt"]);
     const config = JSON.parse(await readFile(f.store.configurationPath, "utf8"));

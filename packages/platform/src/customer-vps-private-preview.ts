@@ -15,6 +15,7 @@ import {
 } from './database/private-previews.js';
 import { CustomerVpsError, logCustomerVpsError } from './customer-vps-errors.js';
 import { resolveHostBundleRef } from './customer-vps-host-bundle.js';
+import { resolvePreviewServerType } from './customer-vps-config.js';
 import { getProvisioningJobByMachineId, sealProvisioningPayload } from './customer-vps-provisioning-jobs.js';
 import { activeProvisionResponse, triggerMachineSystemUpdate } from './customer-vps-support.js';
 import { defaultDeveloperToolsForServerType } from './developer-tools.js';
@@ -98,7 +99,7 @@ export function createCustomerVpsPrivatePreviews(
       registrationToken: registration.token,
       postgresPassword: postgresPasswordFactory(),
     }, deps.config.platformSecret);
-    const serverType = deps.config.serverType;
+    const serverType = resolvePreviewServerType(deps.config, deps.config.location);
 
     const existing = await runInPlatformTransaction(deps.db, async (trx) => {
       // The owner lock serializes the quota count, the one-per-PR lookup, and

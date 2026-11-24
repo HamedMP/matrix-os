@@ -1,3 +1,4 @@
+import { createThreadStateQueue } from "./thread-state-queue.js";
 import { CODING_PREPARATION_TIMEOUT_MS, createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
 import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
@@ -238,7 +239,7 @@ export interface CodingAgentThreadStore {
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false; recordEndOffset?: number },
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
@@ -685,34 +686,17 @@ export function createCodingAgentThreadStore(
   const activeInitialRuns = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   const maxInitialRuns = Math.max(1, Math.min(options.maxTurnDispatches ?? MAX_INITIAL_RUNS, MAX_INITIAL_RUNS));
   const initialRunTimeoutMs = explicitCodingRunTimeout(options.turnDispatchTimeoutMs);
-  let queue = Promise.resolve();
-
-  async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
-    const run = queue.then(async () => {
-      const current = await readState(options.homePath);
-      const { state, result } = await fn(current);
-      const persisted = trimState(state);
-      await writeState(options.homePath, persisted);
-      await publishThreadProjectionChanges({
-        changes: deriveThreadProjectionChanges({
-          previous: current.threads,
-          next: persisted.threads,
-          toSummary: stripOwner,
-        }),
-        publisher: options.projectionPublisher,
-        logFailure: (err) => logCodingAgentWarning("thread projection publish failed", err),
-      });
-      return result;
-    });
-    queue = run.then(() => undefined, () => undefined);
-    return run;
-  }
-
-  async function inspect<T>(fn: (state: StoredThreadState) => T | Promise<T>, missingIsEmpty = true): Promise<T> {
-    const run = queue.then(async () => fn(await readState(options.homePath, missingIsEmpty)));
-    queue = run.then(() => undefined, () => undefined);
-    return run;
-  }
+  const stateQueue = createThreadStateQueue<StoredThreadState>({
+    read: (missingIsEmpty) => readState(options.homePath, missingIsEmpty),
+    write: (state) => writeState(options.homePath, state),
+    trim: trimState,
+    publishChanges: (previous, next) => publishThreadProjectionChanges({
+      changes: deriveThreadProjectionChanges({ previous: previous.threads, next: next.threads, toSummary: stripOwner }),
+      publisher: options.projectionPublisher,
+      logFailure: (err) => logCodingAgentWarning("thread projection publish failed", err),
+    }),
+  });
+  const { mutate, inspect } = stateQueue;
 
   function providerFor(providerId: string): CodingAgentProviderAdapter {
     const provider = providers.find((candidate) => candidate.providerId === providerId);
@@ -1245,7 +1229,7 @@ export function createCodingAgentThreadStore(
         } : {}),
       };
       return { state: nextState, result };
-    });
+    }, { timeQueueWait: true });
     if (!result.existing) {
       publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
       if (result.backgroundDispatch) startInitialRun(result.backgroundDispatch);
@@ -1429,7 +1413,7 @@ export function createCodingAgentThreadStore(
               dispatch: { thread: nextThread, turn },
             },
           };
-        });
+        }, { timeQueueWait: true });
         publish(principal.userId, threadId, result.eventsToPublish);
         if (result.dispatch) {
           turnDispatcher.start(reservation, {
@@ -1459,7 +1443,7 @@ export function createCodingAgentThreadStore(
     },
     async steerTurn(principal, threadId, requestValue) {
       const request = CodingAgentSteerRequestSchema.parse(requestValue);
-      await queue;
+      await stateQueue.drain();
       const state = await readState(options.homePath);
       const thread = state.threads.find((candidate) =>
         candidate.ownerId === principal.userId && candidate.id === threadId
@@ -1491,7 +1475,7 @@ export function createCodingAgentThreadStore(
       await Promise.allSettled([...activeInitialRuns.values()].map((entry) => entry.promise));
       activeInitialRuns.clear();
       await turnDispatcher.shutdown();
-      await queue;
+      await stateQueue.drain();
       await recoverActiveTurnsInternal(true);
     },
     async listThreads(principal) {
@@ -1633,9 +1617,11 @@ export function createCodingAgentThreadStore(
         if (cursor) {
           WorkspaceSessionIdSchema.parse(cursor.sessionId);
           z.number().int().min(0).max(16 * 1024 * 1024).parse(cursor.offset);
+          if (cursor.recordEndOffset !== undefined) z.number().int().min(cursor.offset).max(16 * 1024 * 1024).parse(cursor.recordEndOffset);
           if (thread.providerResumeState?.conversationId !== cursor.sessionId) throw new Error("Provider cursor identity mismatch");
           if (thread.providerResumeState.eventGeneration !== cursor.generation) throw new Error("Provider observation generation changed");
           if (cursor.checkpoint !== false && (thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
+          if (cursor.recordEndOffset !== undefined && (thread.providerEventOffset ?? -1) >= cursor.recordEndOffset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
         }
         const existingEventIds = new Set(
           state.events

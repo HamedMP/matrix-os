@@ -25,16 +25,17 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
 
-it("reveals a collapsed Web Chat sidebar before focusing its Search input", async () => {
+it("opens and focuses Search while the Web Chat sidebar stays collapsed", async () => {
   render(<ChatApp messages={[]} busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
-  const search = screen.getByRole("textbox", { name: "Search chats" });
+  const search = screen.getByRole("button", { name: "Search chats" });
   const sidebar = search.closest("aside")!;
   fireEvent.click(screen.getByRole("button", { name: "Close Chat sidebar" }));
   expect(sidebar.className).toContain("w-0");
   act(() => { expect(requestChatSearchShortcut()).toBe(true); });
-  expect(sidebar.className).toContain("w-[260px]");
-  expect(document.activeElement).toBe(search);
+  expect(sidebar.className).toContain("w-0");
+  const input = await screen.findByRole("combobox", { name: "Search chats" });
+  expect(document.activeElement).toBe(input);
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 

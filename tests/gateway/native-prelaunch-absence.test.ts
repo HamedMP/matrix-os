@@ -29,6 +29,8 @@ async function fixture() {
   });
   const sessions = createCodexExecutionSessions(homePath);
   const admission = { ...actualAdmission, start: vi.fn(async (owner: string, id?: string) => { await sessions.register(owner, id, binding); return binding; }), validate: vi.fn(async () => undefined),
+    // Drop the receipt fast path so the provider uses the stubbed start/validate.
+    startWithReceipt: undefined, validateWithReceipt: undefined, confirm: undefined,
     releaseFailedStart: vi.fn(actualAdmission.releaseFailedStart) };
   const events = { healthCheck: vi.fn(), watch: vi.fn(async () => { throw new Error("watch unavailable"); }), unwatch: vi.fn(), markStopped: vi.fn() };
   const provider = createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex", runtime, codexAdmission: admission, codexEvents: events as never });

@@ -47,7 +47,7 @@ describe('platform/customer-vps', () => {
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
     expect(vi.mocked(hetzner.createServer).mock.calls[1]?.[0]).toMatchObject({
       name: 'matrix-pr-897',
-      serverType: 'cpx22',
+      serverType: 'cx23',
     });
     // The customer primary is authorized at request, claim, and provider-mutation
     // boundaries. Operator preview calls remain outside customer billing checks.

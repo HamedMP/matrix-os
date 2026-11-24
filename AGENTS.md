@@ -84,6 +84,7 @@ file so the rules have one source of truth.
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest, `@vitest/coverage-v8`
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm for installs or scripts; release automation may invoke the npm CLI only for npm OIDC trusted publication
+- **npm in install tests**: the CLI install checks (`.github/workflows/cli-install-smoke.yml`, `packages/sync-client/scripts/validate-package-runners.mjs`) run `npm install`/`npm exec` on the packed `@finnaai/matrix` tarball inside throwaway prefixes and projects, because they verify what npm users receive. That is the only other allowed npm use; never use npm to install or run this repository's own dependencies.
 
 ## SDK Decisions (Spike-Verified)
 
