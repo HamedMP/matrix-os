@@ -39,7 +39,7 @@ import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import {
   admitFreeDailySpend, assertFreeModel, grantFreeMonthlyAllowance, type FreeAllowanceGrant, type FreeFundingConfig,
 } from "./free-tier/funded-policy.js";
-import { isFreeMetalRuntime } from "./free-tier/free-runtime.js";
+import { freeMetalMachine, isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -83,8 +83,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // A free metal runtime (ENG-520 P7) may be granted its monthly allowance below, and the grant
       // takes the exclusive deletion fence. Take it first here so the fence is never upgraded from
       // shared under the billing owner lock, which could deadlock two admissions for one owner.
-      const free = await isFreeMetalRuntime(trx.executor, credential.machine_id);
-      const ownerFence = free ? withAccountDeletionOwnerLock : withAccountDeletionFundingLock;
+      const freeBeforeLock = await isFreeMetalRuntime(trx.executor, credential.machine_id);
+      const ownerFence = freeBeforeLock ? withAccountDeletionOwnerLock : withAccountDeletionFundingLock;
       await ownerFence(trx, credential.owner_id, async (_locked, admission) => {
         if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
       });
@@ -103,7 +103,13 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
         "status", "activation_state", "deleted_at",
+        // Reread under the billing owner lock, which every entitlement write takes: the plan may have
+        // changed while admission waited for it.
+        freeMetalMachine("user_machines.machine_id").as("free_metal"),
       ]).where("machine_id", "=", credential.machine_id).forNoKeyUpdate().executeTakeFirst();
+      const free = machine?.free_metal === true;
+      // A runtime that became free needs the exclusive fence taken above; the caller retries.
+      if (free && !freeBeforeLock) throw new AiFundedPolicyError("busy");
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")

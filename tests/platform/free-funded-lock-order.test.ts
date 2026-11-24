@@ -18,17 +18,21 @@ import { insertFreeMetalRuntime } from './free-funded-test-helper.js';
  */
 
 const calls: string[] = [];
+/** Runs on the admission's own connection when a fence lock is taken, to commit a plan change "while it waited". */
+let onLock: ((executor: PlatformDB['executor'], lane: 'exclusive' | 'shared') => Promise<void>) | undefined;
 vi.mock('../../packages/platform/src/account-deletion/repository.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../packages/platform/src/account-deletion/repository.js')>();
   return {
     ...actual,
     lockAccountDeletionOwner: vi.fn(async (...args: Parameters<typeof actual.lockAccountDeletionOwner>) => {
       calls.push('exclusive');
-      return actual.lockAccountDeletionOwner(...args);
+      await actual.lockAccountDeletionOwner(...args);
+      await onLock?.(args[0] as PlatformDB['executor'], 'exclusive');
     }),
     lockAccountDeletionOwnerShared: vi.fn(async (...args: Parameters<typeof actual.lockAccountDeletionOwnerShared>) => {
       calls.push('shared');
-      return actual.lockAccountDeletionOwnerShared(...args);
+      await actual.lockAccountDeletionOwnerShared(...args);
+      await onLock?.(args[0] as PlatformDB['executor'], 'shared');
     }),
   };
 });
@@ -48,14 +52,15 @@ describe('free funded admission lock order with account deletion configured', ()
       .set({ enabled: true, allowed_model_ids: JSON.stringify(['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS]), revision: 1 })
       .where('policy_id', '=', 'default').execute();
   });
-  afterEach(async () => { vi.unstubAllEnvs(); await destroyTestPlatformDb(db); });
+  afterEach(async () => { onLock = undefined; vi.unstubAllEnvs(); await destroyTestPlatformDb(db); });
 
-  async function authorizeOnce(identity: { ownerId: string; machineId: string; runtimeSlot: string }, modelId: string) {
+  async function authorizeOnce(identity: { ownerId: string; machineId: string; runtimeSlot: string }, modelId: string, arm?: () => void) {
     await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, identity.machineId, { now: NOV.toISOString(), env: ENV }));
     const repo = createAiFundedPolicyRepository({ db, credentialHashSecret: 'h'.repeat(32), now: () => NOV,
       freeFunding: { dailyFundedSpendMicrousd: 100_000_000 } });
     const { credential } = await repo.issueRuntimeCredential(identity);
     calls.length = 0;
+    arm?.();
     await repo.authorize({ credential: credential.token, requestId: 'request_lock_order', modelId, maxCostMicrousd: 1_000,
       billingMode: 'usage' });
     return [...calls];
@@ -80,5 +85,45 @@ describe('free funded admission lock order with account deletion configured', ()
     const order = await authorizeOnce(identity, FREE_MANAGED_MODEL_ID);
     expect(order[0]).toBe('shared');
     expect(order).not.toContain('exclusive');
+  });
+
+  /** Switches the owner's stored plan the first time the given fence lane is taken. */
+  function switchPlanOnLock(lane: 'exclusive' | 'shared', source: 'free' | 'stripe') {
+    let done = false;
+    onLock = async (executor, taken) => {
+      if (done || taken !== lane) return;
+      done = true;
+      await executor.updateTable('billing_entitlements').set({ source }).execute();
+    };
+  }
+
+  it('rereads the plan under the owner locks: an upgrade that lands while admission waits is funded as paid', async () => {
+    const identity = { ownerId: 'user_upgrade', machineId: 'metal-upgrade', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: 'upgrade', at: NOV });
+    await authorizeOnce(identity, FREE_MANAGED_MODEL_ID, () => switchPlanOnLock('exclusive', 'stripe'));
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(0);
+    expect(await db.executor.selectFrom('ai_funded_usage_reservations').select('free_funded').execute())
+      .toEqual([{ free_funded: false }]);
+  });
+
+  it('refuses as busy, for a retry, when a downgrade to free lands while a paid admission waits', async () => {
+    const identity = { ownerId: 'user_downgrade', machineId: 'metal-downgrade', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: 'downgrade', at: NOV });
+    await db.executor.updateTable('billing_entitlements').set({ source: 'stripe' }).execute();
+    await expect(authorizeOnce(identity, FREE_MANAGED_MODEL_ID, () => switchPlanOnLock('shared', 'free'))).rejects.toMatchObject({ code: 'busy' });
+    expect(await db.executor.selectFrom('ai_funded_usage_reservations').select('reservation_id').execute()).toHaveLength(0);
+  });
+
+  it('a funding read whose owner upgraded while it waited grants no free allowance', async () => {
+    const identity = { ownerId: 'user_readup', machineId: 'metal-readup', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: 'readup', at: NOV });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, identity.machineId, { now: NOV.toISOString(), env: ENV }));
+    const repo = createAiFundedPolicyRepository({ db, credentialHashSecret: 'h'.repeat(32), now: () => NOV,
+      freeFunding: { dailyFundedSpendMicrousd: 100_000_000 } });
+    switchPlanOnLock('exclusive', 'stripe');
+    await repo.getRuntimeFundingSummary(identity);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(0);
   });
 });

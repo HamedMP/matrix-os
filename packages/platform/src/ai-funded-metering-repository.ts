@@ -141,15 +141,18 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     // A free metal runtime's read can grant the monthly allowance (ENG-520 P7), which takes the
     // account-deletion and billing owner locks; admission takes those before the funded owner lock,
     // so this read takes them first too. Paid reads keep their original single lock.
-    const free = await isFreeMetalRuntime(options.db.executor, identity.machineId);
-    const inAdmissionOrder = <T>(outer: PlatformDB, work: (trx: PlatformDB, newWorkAllowed: boolean) => Promise<T>) => free
+    const freeBeforeLock = await isFreeMetalRuntime(options.db.executor, identity.machineId);
+    const inAdmissionOrder = <T>(outer: PlatformDB, work: (trx: PlatformDB, newWorkAllowed: boolean) => Promise<T>) => freeBeforeLock
       ? withAccountDeletionOwnerLock(outer, identity.ownerId, (trx, admission) => work(trx, admission.newWorkAllowed))
       : work(outer, true);
-    // A free runtime with no daily ceiling configured is refused every funded request, so it reads as not ready.
-    const freeFundable = !free || options.freeFunding?.dailyFundedSpendMicrousd !== undefined;
     return options.db.transaction(async (outer) => inAdmissionOrder(outer, async (trx, newWorkAllowed) => {
       // Match admission lock order before machine, balance, and grant row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      // Reread under the locks, as admission does: an upgrade while this read waited grants no free allowance.
+      const free = await isFreeMetalRuntime(trx.executor, identity.machineId);
+      if (free && !freeBeforeLock) throw new AiFundedPolicyError("busy");
+      // A free runtime with no daily ceiling configured is refused every funded request, so it reads as not ready.
+      const freeFundable = !free || options.freeFunding?.dailyFundedSpendMicrousd !== undefined;
       await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
