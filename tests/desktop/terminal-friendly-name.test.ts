@@ -10,6 +10,9 @@ describe("a terminal's friendly name", () => {
     expect(friendlyTerminalName({ name: "me@box:~/src", space: "matrix-os" })).toBe("Terminal in matrix-os");
     expect(friendlyTerminalName({ name: "me@box:~$", space: undefined })).toBe("Terminal");
     expect(friendlyTerminalName({ name: "root@vps:/var/log#", space: "ops" })).toBe("Terminal in ops");
+    // Fault detected (Greptile, #3642): a prompt with a spaced path kept the raw title.
+    expect(friendlyTerminalName({ name: "me@box:~/My Projects", space: undefined })).toBe("Terminal");
+    expect(friendlyTerminalName({ name: "me@box: ~/My Projects/site $", space: "site" })).toBe("Terminal in site");
     // Fault detected (Greptile, #3642): chosen names ending in a prompt-like sign became "Terminal".
     expect(friendlyTerminalName({ name: "C#", space: undefined })).toBe("C#");
     expect(friendlyTerminalName({ name: "Build 100%", space: undefined })).toBe("Build 100%");
