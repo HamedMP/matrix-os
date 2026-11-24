@@ -65,7 +65,7 @@ it("keeps an unapplied Skill edit when applying guidance moves Web review to a d
       eligible: true, openChat: vi.fn(), messages: [
         { id: "msg_review", role: "assistant" }, { id: "msg_generated", role: "assistant", requestId: "run_draft" },
       ] });
-    return <div key={setup.messageId} data-testid="review-message" data-message-id={setup.messageId}>{setup.controls}</div>;
+    return <div key={setup.messageId} data-testid="review-message" data-message-id={setup.messageId}>{setup.controls?.()}</div>;
   }
   const view = render(<Workspace />);
   const guidance = await screen.findByRole("region", { name: "Review AGENTS.md" });

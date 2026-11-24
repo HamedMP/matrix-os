@@ -8,7 +8,7 @@ import {
   projectSetupGenerationResultId,
 } from "../../packages/ui/src/chat/project-setup-presentation";
 import { ProjectSetupAcceptedNote } from "../../packages/ui/src/chat/ProjectSetupProgress";
-import type { ProjectSetupController } from "../../packages/ui/src/chat/use-project-setup";
+import { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "../../packages/ui/src/chat/use-project-setup";
 import type { ProjectSetupDraft } from "@matrix-os/contracts";
 
 afterEach(cleanup);
@@ -224,19 +224,30 @@ it("says the skill description is accepted without claiming that a skill file ex
   expect(screen.queryByText(/skill ready/i)).toBeNull();
 });
 
-it("can recover a generation that completes after polling stops without starting another run", () => {
+it("can recover a generation that completes after polling stops without starting another run", async () => {
   vi.useFakeTimers();
   try {
-    const dispatch = vi.fn(async () => true);
     const running = { ...draft, generation: { runId: "run_draft", status: "running" as const } };
-    const { rerender } = render(<ProjectSetupControls setup={controller(dispatch, running)} transport={null} />);
-    act(() => vi.advanceTimersByTime(125_000));
-    expect(dispatch).toHaveBeenCalledTimes(60);
+    const client = {
+      get: vi.fn(async () => ({ draft: running })),
+      post: vi.fn(async () => ({ draft: running })),
+      patch: vi.fn<ProjectSetupTransport["patch"]>(async () => ({ draft: running })),
+    } satisfies ProjectSetupTransport;
+    function Review() {
+      const setup = useProjectSetup({ client, scope: "owner:computer", projectId: draft.projectId, chatId: draft.chatId, eligible: true });
+      return <ProjectSetupControls setup={setup} transport={client} />;
+    }
+    render(<Review />);
+    await act(async () => {});
+    await act(async () => { await vi.advanceTimersByTimeAsync(125_000); });
+    expect(client.patch).toHaveBeenCalledTimes(60);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Check draft status" }));
-    expect(dispatch).toHaveBeenCalledTimes(61);
-    expect(dispatch).toHaveBeenLastCalledWith({ type: "sync_generation" });
-    rerender(<ProjectSetupControls setup={controller(dispatch)} transport={null} />);
+    client.patch.mockResolvedValueOnce({ draft });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check draft status" })); });
+    expect(client.patch).toHaveBeenCalledTimes(61);
+    expect(client.patch.mock.calls.map(([, body]) => body)).toEqual(
+      Array.from({ length: 61 }, () => expect.objectContaining({ action: { type: "sync_generation" } })),
+    );
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
   } finally {
     vi.useRealTimers();
