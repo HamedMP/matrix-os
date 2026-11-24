@@ -53,6 +53,7 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -912,6 +913,7 @@ async function startPlatformServerWithCleanup(
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
+  const substrateRegistry = createPlatformSubstrateRegistry(db, process.env);
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
@@ -1226,7 +1228,7 @@ async function startPlatformServerWithCleanup(
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
-    substrateRegistry: createPlatformSubstrateRegistry(db),
+    substrateRegistry,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
@@ -1288,6 +1290,7 @@ async function startPlatformServerWithCleanup(
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
+          closeUpstreamDispatchers(),
           customMcpShutdown?.(),
           coreRepo.shutdown(),
         ]);
