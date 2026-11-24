@@ -273,12 +273,23 @@ if ! lvs "$VG/$SWAP_LV" >/dev/null 2>&1; then
   free_extents_g="$(vgs --noheadings --units g --nosuffix -o vg_free "$VG" | awk '{print int($1)}')"
   if [ "$free_extents_g" -ge "${swap_size%G}" ]; then
     lvcreate --yes --size "$swap_size" --name "$SWAP_LV" "$VG"
-    mkswap -L hostd-swap "/dev/$VG/$SWAP_LV" >/dev/null
   else
     log "not enough free space in $VG for a $swap_size swap LV; skipping swap"
   fi
 fi
 if lvs "$VG/$SWAP_LV" >/dev/null 2>&1; then
+  # Checked apart from the LV's existence: a run interrupted between lvcreate
+  # and mkswap leaves the LV unformatted, and the retry finishes the job.
+  swap_dev="/dev/$VG/$SWAP_LV"
+  swap_type="$(blkid -p -s TYPE -o value "$swap_dev" 2>/dev/null || true)"
+  case "$swap_type" in
+    swap) ;;
+    "")
+      log "formatting $swap_dev as swap"
+      mkswap -L hostd-swap "$swap_dev" >/dev/null
+      ;;
+    *) die "$swap_dev holds a $swap_type signature, not swap; inspect it before provisioning" ;;
+  esac
   swap_line="/dev/vmvg/hostd-swap none swap sw,pri=10 0 0"
   grep -qF "$swap_line" /etc/fstab || printf '%s\n' "$swap_line" >>/etc/fstab
   has "$(readlink -f "/dev/$VG/$SWAP_LV")" swapon --show=NAME --noheadings || swapon --priority 10 "/dev/$VG/$SWAP_LV"

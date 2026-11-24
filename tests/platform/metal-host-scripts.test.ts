@@ -208,6 +208,21 @@ describe("metal host scripts", () => {
     expect(provision.indexOf("for pkg in")).toBeLessThan(provision.indexOf("pvcreate"));
   });
 
+  it("formats a swap LV left unformatted by an interrupted run, checked apart from the LV's existence", async () => {
+    const provision = await readFile(`${DIR}/provision-host.sh`, "utf8");
+    const swap = provision.slice(provision.indexOf("# Swap is a plain (thick) LV"), provision.indexOf("matrix-hostd-zswap.conf"));
+    const create = swap.slice(0, swap.indexOf("\nfi\n"));
+    // Creating the LV does not format it; the signature check that follows does.
+    expect(create).toContain("lvcreate");
+    expect(create).not.toContain("mkswap");
+    const signature = swap.indexOf('blkid -p -s TYPE -o value "$swap_dev"');
+    expect(signature).toBeGreaterThan(swap.indexOf("lvcreate"));
+    expect(swap.indexOf("mkswap -L hostd-swap")).toBeGreaterThan(signature);
+    expect(swap.indexOf("mkswap -L hostd-swap")).toBeLessThan(swap.indexOf("swapon --priority"));
+    // Never formats over another signature.
+    expect(swap).toMatch(/\*\) die "[^"]*not swap/);
+  });
+
   it("holds a host-wide lock from before any golden build check or cleanup until the process exits", async () => {
     const build = await readFile(`${DIR}/build-golden-disk.sh`, "utf8");
     const lock = build.indexOf("flock --nonblock 9");
