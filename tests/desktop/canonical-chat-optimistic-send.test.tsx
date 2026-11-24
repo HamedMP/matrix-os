@@ -4,6 +4,9 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@t
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import { CanonicalNewChatContent } from "@desktop/renderer/src/features/chat/CanonicalNewChatContent";
+import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
+import { pendingCanonicalTurnRows } from "@matrix-os/ui";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -117,4 +120,28 @@ it("does not carry a pending draft send into the next New Chat", async () => {
     await act(async () => { created.resolve(createdRecord); await sending; });
     expect(hook.result.current.pendingTurn).toBeNull();
   } finally { hook.unmount(); }
+});
+
+// Greptile on #3633: the pending transcript remounted the composer, so state it
+// holds itself (selected project skills) was gone when a failed send returned
+// the draft. The composer keeps its place while the transcript swaps in.
+function StatefulComposer() {
+  const [selected, setSelected] = React.useState(false);
+  return <button type="button" aria-pressed={selected} onClick={() => setSelected(true)}>Skill</button>;
+}
+
+it.each([true, false])("keeps the composer mounted while a new Chat's pending message shows (welcome=%s)", (showWelcome) => {
+  const { message, turn } = pendingCanonicalTurnRows({ requestId: "req_skill", chatId: "", parts: [{ type: "text", text: "Use the skill" }], createdAt: "2026-11-24T00:00:00.000Z" });
+  const turns = canonicalChatPresentation({ messages: [message], turns: [turn], runs: [], activities: [] });
+  const props = { projectId: "matrix-os", showWelcome, workspaceLayout: "wide" as const, composer: <StatefulComposer />, onSelect: () => undefined };
+  const view = render(<CanonicalNewChatContent {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Skill" }));
+
+  view.rerender(<CanonicalNewChatContent {...props} pending={{ turns, copyText: async () => undefined }} />);
+  expect(screen.getByText("Use the skill")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Skill" }).getAttribute("aria-pressed")).toBe("true");
+
+  view.rerender(<CanonicalNewChatContent {...props} />);
+  expect(screen.queryByText("Use the skill")).toBeNull();
+  expect(screen.getByRole("button", { name: "Skill" }).getAttribute("aria-pressed")).toBe("true");
 });
