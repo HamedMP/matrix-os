@@ -146,7 +146,9 @@ export function FolderPane({
   const reloadRef = useRef(reload);
   useEffect(() => { reloadRef.current = reload; }, [reload]);
   const onUploaded = useCallback(() => reloadRef.current(), []);
-  const uploads = useFileUploads({ api, browserScope: `${runtimeSlot}|${authGeneration}`, currentPath: path, enabled: !readOnly, onUploaded });
+  // Always enabled: entering a read-only folder must not drop uploads queued for
+  // another folder. Read-only folders simply offer no upload controls.
+  const uploads = useFileUploads({ api, browserScope: `${runtimeSlot}|${authGeneration}`, currentPath: path, enabled: true, onUploaded });
   const enqueue = useCallback((files: File[], destination = path) => uploads.enqueue(files, destination), [path, uploads]);
 
   const goBack = () => { if (history.backPath !== null) { history.moveBack(); onPathChange(history.backPath); } };

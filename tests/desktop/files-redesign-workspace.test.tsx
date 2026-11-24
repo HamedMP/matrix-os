@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspaceV2 from "../../desktop/src/renderer/src/features/files/redesign/FilesWorkspaceV2";
 import { activeNavIdForPath, buildFilesNav, pathForNavId } from "../../desktop/src/renderer/src/features/files/redesign/files-locations";
 import { gridMove, typeaheadMatch } from "../../desktop/src/renderer/src/features/files/redesign/use-entry-navigation";
-import { resolveFilesRedesign } from "../../desktop/src/renderer/src/features/files/redesign/use-files-redesign-flag";
+import { createSharedFlag, resolveFilesRedesign } from "../../desktop/src/renderer/src/features/files/redesign/use-files-redesign-flag";
 import { useBrowserViewPreference } from "../../desktop/src/renderer/src/features/files/browser-view-preference";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -51,6 +51,31 @@ describe("Files redesign flag", () => {
     expect(resolveFilesRedesign({ flag: false, hasSource: true, devOptIn: false })).toBe(false);
     expect(resolveFilesRedesign({ flag: true, hasSource: true, devOptIn: false })).toBe(true);
     expect(resolveFilesRedesign({ flag: false, hasSource: true, devOptIn: true })).toBe(true);
+  });
+});
+
+describe("shared Files flag subscription", () => {
+  it("subscribes once for every consumer and falls back to off after the timeout", () => {
+    vi.useFakeTimers();
+    try {
+    let emit: ((value: boolean | undefined) => void) | null = null;
+    const subscribe = vi.fn((_key: string, listener: (value: boolean | undefined) => void) => { emit = listener; return () => undefined; });
+    const flag = createSharedFlag({ subscribe }, "desktop-files-redesign", 4000);
+    const seen: Array<boolean | null> = [];
+    const stops = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(() => flag.subscribe(() => seen.push(flag.getSnapshot())));
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(flag.getSnapshot()).toBeNull();
+    emit!(true);
+    expect(flag.getSnapshot()).toBe(true);
+    expect(seen).toHaveLength(10);
+    stops.forEach((stop) => stop());
+    const late = createSharedFlag({ subscribe: vi.fn(() => () => undefined) }, "desktop-files-redesign", 4000);
+    late.subscribe(() => undefined);
+    vi.advanceTimersByTime(4000);
+    expect(late.getSnapshot()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -218,6 +243,10 @@ describe("Files redesign workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Apps" }));
     await screen.findByRole("option", { name: "team-tracker" });
     expect(screen.getByText(/^one\.txt:/)).toBeTruthy();
+    expect(screen.getByText(/^four\.txt:/)).toBeTruthy();
+    LIST["/api/files/list?path=system"] = { entries: [{ name: "theme.json", type: "file", size: 10 }] };
+    fireEvent.click(screen.getByRole("button", { name: /^System/ }));
+    await screen.findByRole("option", { name: "theme.json" });
     expect(screen.getByText(/^four\.txt:/)).toBeTruthy();
     expect(api.putBytes).toHaveBeenCalledTimes(3);
   });
