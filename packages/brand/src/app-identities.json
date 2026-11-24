@@ -180,5 +180,19 @@
     "darkAccent": "#f6adaa",
     "wash": "#fcebe7",
     "glow": "#f4d3ce"
+  },
+  "docs": {
+    "name": "Indigo",
+    "accent": "#4652a8",
+    "darkAccent": "#b3baf5",
+    "wash": "#ebedfb",
+    "glow": "#d6daf5"
+  },
+  "sheets": {
+    "name": "Fern",
+    "accent": "#2b6b45",
+    "darkAccent": "#90d6a8",
+    "wash": "#e3f2e8",
+    "glow": "#c7e5d1"
   }
 }

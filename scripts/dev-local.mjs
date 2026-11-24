@@ -291,6 +291,8 @@ export async function startLocalDevelopment({
       localInfrastructureCommands.stopApplicationContainers.slice(1),
       { signal },
     );
+    // Office apps import this git-ignored copy of packages/office/src.
+    await runCommand(process.execPath, ["scripts/sync-office-engine.mjs"], options);
     await runCommand("pnpm", ["--filter", "@matrix-os/gateway", "build:native"], options);
     await runCommand(buildCommand[0], buildCommand.slice(1), options);
     // Configured platform integrations consume the emitted gateway modules.
