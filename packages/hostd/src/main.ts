@@ -174,18 +174,26 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
   log("hostd.started", { apiPort: config.apiPort, ingressPort: config.ingressPort });
 
   let closing: Promise<void> | null = null;
+  // Stops accepting at once (server.close() refuses new connections
+  // synchronously), then bounds the whole drain, memory loop included, by one
+  // deadline that starts now: systemd kills hostd soon after it.
   async function shutdown(): Promise<void> {
-    await memory.stop();
-    await ingress.close();
-    await closeServer(api);
     const drainMs = overrides.drainTimeoutMs ?? DRAIN_TIMEOUT_MS;
     let timer: NodeJS.Timeout | undefined;
-    const drained = await Promise.race([
-      lifecycle.idle().then(() => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), drainMs);
-      }),
-    ]);
+    const deadline = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), drainMs);
+    });
+    const listenersClosed = Promise.all([ingress.close(), closeServer(api)]);
+    const work = (async () => {
+      await Promise.all([memory.stop(), listenersClosed]);
+      await lifecycle.idle();
+      return true as const;
+    })();
+    // A drain that fails after the deadline won is still logged, not unhandled.
+    work.then(undefined, (error: unknown) =>
+      log("hostd.drain_failed", { error: error instanceof Error ? error.name : String(error) }),
+    );
+    const drained = await Promise.race([work, deadline]);
     clearTimeout(timer);
     if (!drained) log("hostd.drain_timeout", { timeoutMs: drainMs });
     await health?.close();
