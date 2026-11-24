@@ -65,6 +65,19 @@ describe("matrix-dev plugin", () => {
     );
   });
 
+  // The plugin can be invoked from any repository, where these skills would
+  // otherwise run git/gh against the wrong repo or miss their scripts.
+  it.each([
+    ["release-platform", "platform-cloud-run.yml"],
+    ["release-matrix-stable", "host-bundle-release.yml"],
+  ])("%s refuses to run outside a Matrix OS checkout", async (name, workflowFile) => {
+    const skill = await read(`.agents/skills/${name}/SKILL.md`);
+    const guard = skill.indexOf('test "$(gh repo view --json nameWithOwner -q .nameWithOwner)" = "HamedMP/matrix-os"');
+    expect(guard).toBeGreaterThan(-1);
+    expect(skill).toContain(`test -f .github/workflows/${workflowFile}`);
+    expect(guard).toBeLessThan(skill.indexOf("gh workflow run"));
+  });
+
   it("is listed in a dev marketplace that customers do not see", async () => {
     const marketplace = await readJson("dev/.claude-plugin/marketplace.json");
     expect(marketplace.name).toBe("matrix-os-dev");
