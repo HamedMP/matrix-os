@@ -54,7 +54,7 @@ function setup(options: { contributorControl?: boolean } = {}) {
     scopeId, actorId, connectionId: `connection_${actorId}`,
     action: { type: "input_mode", clientRequestId: requestId, incarnation, mode },
   });
-  return { dispatcher, runtime, control, roles, send, setMode, inputModes };
+  return { dispatcher, runtime, control, roles, send, setMode, inputModes, terminal };
 }
 
 describe("team terminal shared input (spec 2710 J3-J6)", () => {
@@ -137,6 +137,63 @@ describe("team terminal shared input (spec 2710 J3-J6)", () => {
   });
 });
 
+describe("owner control holds on every write path (Greptile on #3675)", () => {
+  it("pauses a legacy controller too, and refuses new leases, while the owner has control", async () => {
+    const { dispatcher, setMode, runtime, control } = setup();
+    const acquired = await dispatcher.dispatch({
+      scopeId, actorId: "user_editor", connectionId: "connection_user_editor",
+      action: { type: "acquire", clientRequestId: requestId, incarnation, connectionId: "connection_user_editor" },
+    }) as { terminal: { controller?: { leaseEpoch: string } } };
+    const leaseEpoch = acquired.terminal.controller!.leaseEpoch;
+    await setMode("user_owner", "owner");
+    await expect(dispatcher.dispatch({
+      scopeId, actorId: "user_editor", connectionId: "connection_user_editor",
+      action: { type: "input", clientRequestId: requestId, incarnation, connectionId: "connection_user_editor", leaseEpoch, data: "x" },
+    })).rejects.toMatchObject({ code: expect.stringMatching(/input_paused|stale_lease/) });
+    await expect(dispatcher.dispatch({
+      scopeId, actorId: "user_editor_b", connectionId: "connection_user_editor_b",
+      action: { type: "acquire", clientRequestId: requestId, incarnation, connectionId: "connection_user_editor_b" },
+    })).rejects.toMatchObject({ code: "input_paused" });
+    expect(runtime.input).not.toHaveBeenCalled();
+    control.close();
+  });
+
+  it("re-reads the owner's host-shell opt-in right before the write", async () => {
+    const { send, runtime, control, terminal } = setup();
+    runtime.input.mockImplementationOnce(async (input: { revalidate(): Promise<void> }) => {
+      terminal.get.mockResolvedValue({ ...(await terminal.get.getMockImplementation()!()), contributorControl: false });
+      await input.revalidate();
+    });
+    await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "forbidden" });
+    control.close();
+  });
+
+  it("refuses a new owner-only entry at capacity instead of dropping a live restriction", () => {
+    const modes = new TeamTerminalInputModes({ maxEntries: 1 });
+    modes.set(scopeId, incarnation, "owner");
+    expect(() => modes.set("10000000-0000-4000-8000-000000000002", incarnation, "owner")).toThrow();
+    expect(modes.get(scopeId, incarnation)).toBe("owner");
+    modes.set("10000000-0000-4000-8000-000000000002", incarnation, "shared");
+    expect(modes.get(scopeId, incarnation)).toBe("owner");
+  });
+
+  it("makes room only by dropping restrictions whose terminals ended", async () => {
+    const { setMode, inputModes, control, terminal } = setup();
+    const live = await terminal.get.getMockImplementation()!();
+    terminal.get.mockImplementation(async (_scope: string, id: string) => (id === "main:tab_gone" ? null : live) as typeof live);
+    // Fill the store: one live restriction, the rest for terminals that no longer exist.
+    inputModes.set("20000000-0000-4000-8000-000000000999", incarnation, "owner", terminalId);
+    for (let index = 0; index < 255; index += 1) {
+      inputModes.set(`20000000-0000-4000-8000-${String(index).padStart(12, "0")}`, incarnation, "owner", "main:tab_gone");
+    }
+    expect(inputModes.size).toBe(256);
+    await expect(setMode("user_owner", "owner")).resolves.toMatchObject({ inputMode: "owner" });
+    expect(inputModes.size).toBe(2);
+    expect(inputModes.get("20000000-0000-4000-8000-000000000999", incarnation)).toBe("owner");
+    control.close();
+  });
+});
+
 describe("TeamTerminalInputModes", () => {
   it("defaults to shared, forgets a scope and stays bounded", () => {
     const modes = new TeamTerminalInputModes({ maxEntries: 2 });
@@ -145,12 +202,10 @@ describe("TeamTerminalInputModes", () => {
     expect(modes.get(scopeId, incarnation)).toBe("owner");
     expect(modes.get(scopeId, "terminal-ffffffffffffffffffffffffffffffff")).toBe("shared");
     modes.set("10000000-0000-4000-8000-000000000002", incarnation, "owner");
-    modes.set("10000000-0000-4000-8000-000000000003", incarnation, "owner");
     expect(modes.size).toBe(2);
-    expect(modes.get(scopeId, incarnation)).toBe("shared");
-    modes.clearScope("10000000-0000-4000-8000-000000000003");
+    modes.clearScope("10000000-0000-4000-8000-000000000002");
     expect(modes.size).toBe(1);
-    modes.set("10000000-0000-4000-8000-000000000002", incarnation, "shared");
+    modes.set(scopeId, incarnation, "shared");
     expect(modes.size).toBe(0);
   });
 });

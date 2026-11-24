@@ -211,7 +211,9 @@ export class CollaborationTerminalDispatcher {
         role: context.role,
         connectionId: input.connectionId,
       };
-      if (action.type === "input_mode") return this.setInputMode(identity, action.mode);
+      if (action.type === "input_mode") return await this.setInputMode(identity, action.mode);
+      // Owner control pauses every collaborator write path, the legacy lease actions included.
+      if (action.type !== "stop" && action.type !== "release") this.assertNotPaused(identity);
       if (action.type === "input_shared" || action.type === "paste_shared") return await this.applySharedInput(action, identity, terminal);
       const result = await this.apply(action, identity, terminal);
       return CollaborationTerminalActionResultSchema.parse(result);
@@ -220,9 +222,37 @@ export class CollaborationTerminalDispatcher {
     }
   }
 
-  private setInputMode(identity: TerminalControlIdentity, mode: CollaborationTeamTerminalInputMode): CollaborationTeamTerminalInputModeChanged {
-    if (identity.role !== "owner" || !this.options.inputModes) throw new CollaborationTerminalDispatcherError("forbidden");
-    this.options.inputModes.set(identity.scopeId, identity.incarnation, mode);
+  private assertNotPaused(identity: Pick<TerminalControlIdentity, "scopeId" | "incarnation" | "role">): void {
+    if (identity.role !== "owner" && this.options.inputModes?.get(identity.scopeId, identity.incarnation) === "owner") {
+      throw new CollaborationTerminalDispatcherError("input_paused");
+    }
+  }
+
+  private async setInputMode(identity: TerminalControlIdentity, mode: CollaborationTeamTerminalInputMode): Promise<CollaborationTeamTerminalInputModeChanged> {
+    const modes = this.options.inputModes;
+    if (identity.role !== "owner" || !modes) throw new CollaborationTerminalDispatcherError("forbidden");
+    try {
+      modes.set(identity.scopeId, identity.incarnation, mode, identity.terminalId);
+    } catch (error: unknown) {
+      if (!(error instanceof RangeError)) throw error;
+      // At capacity, drop only restrictions whose terminals ended or were replaced, then try once more.
+      for (const entry of modes.restrictions()) {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- bounded (at most the cap) and only at capacity.
+        const live = entry.terminalId ? await this.options.terminal.get(entry.scopeId, entry.terminalId) : null;
+        if (!live || live.incarnation !== entry.incarnation || live.status !== "active") modes.clearScope(entry.scopeId);
+      }
+      try {
+        modes.set(identity.scopeId, identity.incarnation, mode, identity.terminalId);
+      } catch (retry: unknown) {
+        if (retry instanceof RangeError) throw new CollaborationTerminalDispatcherError("capacity");
+        throw retry;
+      }
+    }
+    if (mode === "owner") {
+      // A collaborator holding a legacy lease loses it at once.
+      const holder = this.options.control.current(identity.scopeId, identity.terminalId, identity.incarnation);
+      if (holder && holder.actorId !== identity.actorId) this.options.control.invalidateActor(identity.scopeId, holder.actorId);
+    }
     return { scopeId: identity.scopeId, incarnation: identity.incarnation, inputMode: mode };
   }
 
@@ -248,9 +278,14 @@ export class CollaborationTerminalDispatcher {
         throw new CollaborationTerminalDispatcherError("forbidden");
       }
       if (context.role === "owner") return;
+      // The owner may withdraw host-shell access while this frame waits: read it again.
+      const current = await this.options.terminal.get(identity.scopeId, identity.terminalId);
+      if (!current || current.incarnation !== metadata.incarnation || current.status !== "active") {
+        throw new CollaborationTerminalDispatcherError("not_found");
+      }
       if (!terminalControlAllowed({
         role: context.role,
-        policy: { taskProfile: metadata.taskProfile ?? "host_shell", contributorControl: metadata.contributorControl === true },
+        policy: { taskProfile: current.taskProfile ?? "host_shell", contributorControl: current.contributorControl === true },
       })) throw new CollaborationTerminalDispatcherError("forbidden");
       if (this.options.inputModes!.get(identity.scopeId, identity.incarnation) === "owner") {
         throw new CollaborationTerminalDispatcherError("input_paused");
@@ -298,6 +333,7 @@ export class CollaborationTerminalDispatcher {
         actorId: identity.actorId,
       });
       this.options.control.invalidateScope(identity.scopeId);
+      this.options.inputModes?.clearScope(identity.scopeId);
       return { terminal: await this.project({ ...metadata, status: "exited" }), action: "stopped" };
     }
 
@@ -321,6 +357,7 @@ export class CollaborationTerminalDispatcher {
       leaseEpoch: epoch,
       revalidate: async () => {
         await this.options.control.assertHeld(leasedIdentity);
+        this.assertNotPaused(identity);
       },
     };
     if (action.type === "input") await this.options.terminal.input({ ...runtimeInput, data: action.data });

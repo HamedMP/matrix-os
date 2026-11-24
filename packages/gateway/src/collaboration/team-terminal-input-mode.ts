@@ -11,7 +11,7 @@ const DEFAULT_MAX_ENTRIES = 256;
  * control again, so a lost entry never blocks anyone wrongly.
  */
 export class TeamTerminalInputModes {
-  private readonly entries = new Map<string, string>();
+  private readonly entries = new Map<string, { incarnation: string; terminalId: string }>();
   private readonly maxEntries: number;
 
   constructor(options: { maxEntries?: number } = {}) {
@@ -25,20 +25,21 @@ export class TeamTerminalInputModes {
   }
 
   get(scopeId: string, incarnation: string): CollaborationTeamTerminalInputMode {
-    return this.entries.get(scopeId) === incarnation ? "owner" : "shared";
+    return this.entries.get(scopeId)?.incarnation === incarnation ? "owner" : "shared";
   }
 
-  set(scopeId: string, incarnation: string, mode: CollaborationTeamTerminalInputMode): void {
+  set(scopeId: string, incarnation: string, mode: CollaborationTeamTerminalInputMode, terminalId = ""): void {
     this.entries.delete(scopeId);
     if (mode === "shared") return;
-    // The cap is above the per-runtime shared-terminal cap (64), so eviction
-    // only bounds memory; an evicted entry reads as shared.
-    while (this.entries.size >= this.maxEntries) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-    }
-    this.entries.set(scopeId, incarnation);
+    // A live restriction is never dropped to make room: a new one is refused.
+    // The cap is above the per-runtime shared-terminal cap (64).
+    if (this.entries.size >= this.maxEntries) throw new RangeError("Input mode capacity reached");
+    this.entries.set(scopeId, { incarnation, terminalId });
+  }
+
+  /** Every restriction, so an owner at capacity can drop the ones whose terminals ended. */
+  restrictions(): Array<{ scopeId: string; incarnation: string; terminalId: string }> {
+    return [...this.entries].map(([scopeId, entry]) => ({ scopeId, ...entry }));
   }
 
   clearScope(scopeId: string): void {
