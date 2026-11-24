@@ -1581,6 +1581,13 @@ apply_update() {
           sudo install -d -o matrix -g matrix -m 0750 "$workload_root"
         fi
       done
+      # The supervisor admits only the exact pinned Codex and reads it once at
+      # start. Upgrade an older managed binary first; the background developer
+      # tools service would land it too late. Bounded, and never blocks the update.
+      if [ -x "$BIN_DIR/matrix-install-developer-tools" ] \
+        && ! sudo /usr/bin/timeout --kill-after=30 600 "$BIN_DIR/matrix-install-developer-tools" --codex-upgrade-only; then
+        log "WARN: managed Codex upgrade deferred; shared Codex Chat stays unavailable until the scope runtime restarts"
+      fi
       sudo systemctl enable matrix-scope-runtime.service
       sudo systemctl start matrix-scope-runtime.service
       log "Collaboration scope runtime service enabled"

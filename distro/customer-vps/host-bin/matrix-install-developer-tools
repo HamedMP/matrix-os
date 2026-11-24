@@ -6,7 +6,7 @@ if [ -r /opt/matrix/env/host.env ]; then
 fi
 
 MODE="${1:-}"
-if [ "$#" -gt 1 ] || { [ -n "$MODE" ] && [ "$MODE" != "--sandbox-only" ] && [ "$MODE" != "--tools-only" ]; }; then
+if [ "$#" -gt 1 ] || { [ -n "$MODE" ] && [ "$MODE" != "--sandbox-only" ] && [ "$MODE" != "--tools-only" ] && [ "$MODE" != "--codex-upgrade-only" ]; }; then
   printf 'matrix-install-developer-tools: unsupported arguments\n' >&2
   exit 64
 fi
@@ -15,7 +15,7 @@ TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"
-CODEX_VERSION="0.162.1"
+CODEX_VERSION="0.171.0"
 CLAUDE_CODE_VERSION="2.1.280"
 NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 
@@ -149,6 +149,23 @@ is_tool_installed() {
   fi
   grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "$NODE_PREFIX/bin/${bin_name}" ]
 }
+
+if [ "$MODE" = "--codex-upgrade-only" ]; then
+  # The scope supervisor admits only the exact pinned Codex and reads the
+  # installed version once at start. The updater runs this before starting it,
+  # so a pin change does not leave shared Codex Chat disabled until a restart.
+  # Never installs Codex for an owner who does not have it.
+  if [ ! -x "$NODE_PREFIX/bin/codex" ] || codex_version_is_current; then
+    exit 0
+  fi
+  mkdir -p "$STATE_DIR"
+  log "upgrading managed Codex before the scope runtime starts"
+  if /opt/matrix/bin/matrix-install-tool-pack codex >>"$STATE_DIR/codex.log" 2>&1 && codex_version_is_current; then
+    exit 0
+  fi
+  log "managed Codex upgrade failed; the developer tools service will retry"
+  exit 1
+fi
 
 if [ "$MODE" != "--sandbox-only" ]; then
   if ! ensure_terminal_runtime; then

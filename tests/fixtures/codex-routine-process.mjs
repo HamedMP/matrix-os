@@ -1,14 +1,17 @@
-// Named native/model transport fixture; exact 0.162.1 JSON schemas validate consumed native contracts.
+// Named native/model transport fixture; exact retained JSON schemas validate consumed native contracts.
+// The managed 0.171.0 release by default; `schemaVersion: "0162"` keeps the historical boundary.
 import Ajv from "codex-fixture-ajv";
 import { readFile, appendFile, writeFile } from "node:fs/promises";
 import { closeSync, readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { createInterface } from "node:readline";
-const schema = JSON.parse(gunzipSync(readFileSync(new URL("./codex-0162/app-server-schema-0162.json.gz", import.meta.url))).toString("utf8"));
+const config = JSON.parse(await readFile(process.env.TEST_ROUTINE_NATIVE_FILE, "utf8"));
+const schemaVersion = config.schemaVersion ?? "0171";
+if (schemaVersion !== "0162" && schemaVersion !== "0171") throw new Error("Unknown fixture schema version");
+const schema = JSON.parse(gunzipSync(readFileSync(new URL(`./codex-${schemaVersion}/app-server-schema-${schemaVersion}.json.gz`, import.meta.url))).toString("utf8"));
 const ajv = new Ajv({ schemaId: "auto", unknownFormats: "ignore", logger: false });
 const check = name => ajv.compile({ $ref: "#/definitions/" + name, definitions: schema.definitions });
 const client = check("ClientRequest"), output = check("DynamicToolCallResponse"), server = check("ServerRequest");
-const config = JSON.parse(await readFile(process.env.TEST_ROUTINE_NATIVE_FILE, "utf8"));
 const record = value => appendFile(config.records, JSON.stringify(value) + "\n");
 const emit = value => process.stdout.write(JSON.stringify(value) + "\n");
 const started = config.dynamicToolLifecycle ? check("v2/ItemStartedNotification") : undefined;
@@ -52,7 +55,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     if (!client(message)) throw new Error("Fixture rejected native client contract: " + JSON.stringify(client.errors));
     if (message.method === "initialize") {
       if (message.params?.capabilities?.experimentalApi !== true) throw new Error("Missing experimental API");
-      emit({ id: message.id, result: { userAgent: "named-codex-0162-fixture" } });
+      emit({ id: message.id, result: { userAgent: `named-codex-${schemaVersion}-fixture` } });
     } else if (message.method === "thread/start" || message.method === "thread/resume") {
       if (message.method === "thread/resume" && Object.hasOwn(message.params, "dynamicTools")) throw new Error("Unsupported resume field");
       if (config.historyFile) await restoreHistory(message);

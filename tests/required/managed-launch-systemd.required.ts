@@ -26,7 +26,7 @@ it.each(["Gateway close", "wrapper protocol close", "wrapper output overflow"] a
   try {
     const config = join(home, "fixture.json"), executable = join(home, "named-native-fixture.mjs");
     await writeFile(config, JSON.stringify({ records: join(home, "native.jsonl"), controlFile: join(home, "native-control"), holdAfterResult: true }));
-    await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.162.1'); else { process.env.TEST_ROUTINE_NATIVE_FILE = ${JSON.stringify(config)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
+    await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.171.0'); else { process.env.TEST_ROUTINE_NATIVE_FILE = ${JSON.stringify(config)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
     await chmod(executable, 0o700);
     const launch = await createAgentLauncher({ codexExecutable: executable }).buildLaunch({ agent: "codex", cwd: home, prompt: "Named transport fixture", runtimeHome: home,
       providerEventPath: join(home, "events.jsonl"), codexRoutinePrivate: true, sandbox: { enabled: true, writableRoots: [home] } });
