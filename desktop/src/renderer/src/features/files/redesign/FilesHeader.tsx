@@ -96,13 +96,13 @@ export function FilesHeader({
     ] : []),
   ];
   return (
-    <header className="flex shrink-0 items-start gap-4 px-6 pt-5 pb-4 font-ds-sans">
-      <div className="min-w-0 flex-1">
+    <header className="flex shrink-0 flex-wrap items-start gap-x-4 gap-y-3 px-6 pt-5 pb-4 font-ds-sans">
+      <div className="min-w-40 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="truncate text-ds-ui-lg font-semibold text-ds-foreground" title={title}>{title}</h2>
           {titleAdornment}
         </div>
-        <p className="text-ds-ui-sm text-ds-muted-foreground">{summary}</p>
+        <p data-files-summary className="truncate text-ds-ui-sm whitespace-nowrap text-ds-muted-foreground">{summary}</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {onSearch ? <IconButton label="Search" shortcut="⌘F" variant="secondary" onClick={onSearch}><Icon icon={Search} size="sm" /></IconButton> : null}

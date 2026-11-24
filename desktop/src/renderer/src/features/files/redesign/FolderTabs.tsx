@@ -1,7 +1,7 @@
 import { Folder, Plus, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Icon, IconButton, pillTabClass, rovingIndex } from "../../../design/ds";
-import { cn } from "../../../lib/cn";
+import { dsCn as cn } from "../../../design/ds";
 
 export interface FolderTabModel {
   id: string;

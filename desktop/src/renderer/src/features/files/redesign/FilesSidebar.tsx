@@ -1,6 +1,6 @@
 import { Lock } from "lucide-react";
 import type { ReactNode } from "react";
-import { cn } from "../../../lib/cn";
+import { dsCn as cn } from "../../../design/ds";
 
 export interface NavItemModel {
   id: string;

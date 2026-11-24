@@ -1,6 +1,6 @@
 import type { KeyboardEvent, MouseEvent, Ref } from "react";
 import { Badge } from "../../../design/ds";
-import { cn } from "../../../lib/cn";
+import { dsCn as cn } from "../../../design/ds";
 import type { BrowserEntry } from "../browser-entries";
 import { entryDragProps } from "./entry-drag";
 import { entryMeta, type FolderAccess } from "./file-presentation";

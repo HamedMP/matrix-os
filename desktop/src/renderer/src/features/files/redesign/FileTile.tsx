@@ -1,6 +1,6 @@
 import { File, FileArchive, FileAudio, FileCode, FileText, FileVideo, Folder, FolderLock, Image, type LucideIcon } from "lucide-react";
 import { Icon, type IconSize } from "../../../design/ds";
-import { cn } from "../../../lib/cn";
+import { dsCn as cn } from "../../../design/ds";
 import { kindForEntry, type FileKind } from "../file-kind";
 import { tileToneForFile, tileToneForFolder, type FolderAccess, type TileTone } from "./file-presentation";
 

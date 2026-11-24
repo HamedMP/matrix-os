@@ -21,11 +21,11 @@ import {
   tileToneForFile,
 } from "../../desktop/src/renderer/src/features/files/redesign/file-presentation";
 import { FileCard, type EntryHandlers } from "../../desktop/src/renderer/src/features/files/redesign/FileCard";
-import { FileRow, FileTable } from "../../desktop/src/renderer/src/features/files/redesign/FileTable";
+import { FILE_TABLE_COLUMNS, FileRow, FileTable } from "../../desktop/src/renderer/src/features/files/redesign/FileTable";
 import { SelectionBar } from "../../desktop/src/renderer/src/features/files/redesign/SelectionBar";
 import { FilesSidebar } from "../../desktop/src/renderer/src/features/files/redesign/FilesSidebar";
 import { FolderTabs } from "../../desktop/src/renderer/src/features/files/redesign/FolderTabs";
-import { FilesStatusBar } from "../../desktop/src/renderer/src/features/files/redesign/FilesHeader";
+import { FilesHeader, FilesStatusBar } from "../../desktop/src/renderer/src/features/files/redesign/FilesHeader";
 
 afterEach(cleanup);
 
@@ -252,6 +252,20 @@ describe("FolderTabs focus", () => {
     fireEvent.keyDown(projects, { key: "Delete" });
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Matrix home" })));
     expect(screen.getByRole("tab", { name: "Matrix home" }).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("narrow window layout", () => {
+  it("keeps list names readable and the header count on one line", () => {
+    expect(FILE_TABLE_COLUMNS.split(" ")[1]).toBe("minmax(160px,1fr)");
+    render(
+      <Tooltip.Provider>
+        <FilesHeader title="Matrix home" summary="7 folders, 4 files" view="grid" onViewChange={vi.fn()} sortKey="name" sortDirection="asc" onSortChange={vi.fn()} />
+      </Tooltip.Provider>,
+    );
+    const summary = screen.getByText("7 folders, 4 files");
+    expect(summary.className).toContain("whitespace-nowrap");
+    expect(summary.closest("header")?.className).toContain("flex-wrap");
   });
 });
 

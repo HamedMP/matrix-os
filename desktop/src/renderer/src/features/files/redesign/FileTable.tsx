@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { ReactNode, Ref } from "react";
 import { Badge, Checkbox, Icon, type CheckedState } from "../../../design/ds";
-import { cn } from "../../../lib/cn";
+import { dsCn as cn } from "../../../design/ds";
 import type { BrowserEntry, BrowserSortDirection, BrowserSortKey } from "../browser-entries";
 import { formatEntrySize, formatModified } from "../format";
 import { entryDragProps } from "./entry-drag";
@@ -9,7 +9,8 @@ import type { EntryHandlers } from "./FileCard";
 import { kindLabel, type FolderAccess } from "./file-presentation";
 import { FileTile } from "./FileTile";
 
-export const FILE_TABLE_COLUMNS = "40px minmax(0,1fr) 120px 96px 140px 112px";
+// The name column keeps at least 160px so names stay readable in a narrow window.
+export const FILE_TABLE_COLUMNS = "32px minmax(160px,1fr) 96px 80px 128px 96px";
 
 function SortableHeader({
   label,
