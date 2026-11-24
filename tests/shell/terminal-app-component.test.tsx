@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +131,11 @@ function json(body: unknown, status = 200): Response {
 
 const HERDR_WORKSPACE_ID = "tws_00000000000000000000006865726472";
 const HERDR_TAB_ID = `tt_${"9".repeat(32)}`;
+const DESKTOP_DEVICE_ID = "a5".repeat(32);
+const DESKTOP_MACHINE = {
+  deviceId: DESKTOP_DEVICE_ID, name: "Studio Mac", revision: 1, state: "online",
+  enrolledAt: "2026-11-25T10:00:00.000Z", lastSeenAt: "2026-11-25T10:00:00.000Z",
+};
 
 function herdrList(tabIds: string[]): Response {
   return new Response(JSON.stringify({
@@ -484,6 +490,42 @@ describe("TerminalApp workspace contract", () => {
     await settle();
     expect(screen.queryByText("No shell sessions yet")).toBeNull();
     expect(screen.getByRole("button", { name: "Open claude" })).toBeTruthy();
+  });
+
+  // Fault detected (ENG-574 live check): with no Matrix tabs, Web Desktop hid the sidebar
+  // behind its empty view, so a linked desktop's terminals could not be started or opened.
+  it("shows a linked desktop on Web Desktop when there are no Matrix tabs", async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [] });
+      if (url.endsWith("/api/desktop-link/machines")) return new Response(JSON.stringify({ machineId: "4ab40e59-2f6e-4715-8d58-61b010b1cb14", machines: [DESKTOP_MACHINE] }));
+      if (url.endsWith(`/api/desktop-link/machines/${DESKTOP_DEVICE_ID}/terminals`)) return new Response(JSON.stringify({ sessions: [] }));
+      return fallback(input, init);
+    });
+    render(<TerminalApp desktopParity />);
+    for (let turn = 0; turn < 8; turn += 1) await settle();
+    expect(screen.queryByText("No shell sessions yet")).toBeNull();
+    expect(screen.getByRole("region", { name: "Desktops" })).toBeTruthy();
+  });
+
+  // Fault detected (ENG-574 live check): while this computer's shell list was unavailable,
+  // an open desktop terminal was listed again as a local shell named by its raw workspace id.
+  it("never lists a linked desktop's open terminal as one of this computer's shells", async () => {
+    const desktopRef = `${desktopLinkWorkspaceId(DESKTOP_DEVICE_ID)}:${SECOND_TAB_ID}`;
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/terminal/workspaces")) return json({ error: "Terminal operation failed" }, 503);
+      if (url.endsWith("/api/terminal/layout") && !init?.method) return json({
+        activeTabId: "saved-tab", sidebarOpen: true,
+        tabs: [{ id: "saved-tab", label: "mac", paneTree: { type: "pane", id: "p1", cwd: "~", sessionId: desktopRef } }],
+      });
+      return fallback(input, init);
+    });
+    const { container } = render(<TerminalApp desktopParity />);
+    for (let turn = 0; turn < 8; turn += 1) await settle();
+    expect(container.textContent).not.toContain(desktopLinkWorkspaceId(DESKTOP_DEVICE_ID));
   });
 
   it("creates a tab under the ensured workspace", async () => {

@@ -24,6 +24,7 @@ import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import { useTerminalAgentEvents } from "../../stores/terminal-agent-events";
 import { mergeTerminalAgentStatus } from "@matrix-os/ui/terminal-agents";
 import { DesktopHerdrSessions } from "./DesktopHerdrSessions";
+import { ElectronDesktopMachines } from "./ElectronDesktopMachines";
 import { herdrDesktopSessionFromRefKey } from "./herdr-desktop-session";
 import {
   parseTerminalAgentStatuses,
@@ -433,7 +434,7 @@ export default function TerminalsTab({
         }}
         deletingName={deleteTarget && isShellBusy(deleteTarget.name) ? deleteTarget.name : null}
         onDelete={setDeleteTarget}
-        extra={<DesktopHerdrSessions api={api} selectedName={selectedName} onOpen={openHerdrSession} />}
+        extra={<><DesktopHerdrSessions api={api} selectedName={selectedName} onOpen={openHerdrSession} /><ElectronDesktopMachines api={api} selectedName={selectedName} onOpen={openHerdrSession} /></>}
       />
     )}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

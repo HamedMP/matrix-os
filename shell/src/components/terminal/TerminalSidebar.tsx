@@ -45,6 +45,8 @@ import { TERMINAL_MONO_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalSidebar } from "./DesktopTerminalSidebar";
 import { shouldShowHerdrSessions } from "@matrix-os/ui/herdr-sessions";
 import { ShellHerdrSessions, useShellHerdrSessions } from "./ShellHerdrSessions";
+import { ShellDesktopMachines, useShellDesktopMachines } from "./ShellDesktopMachines";
+import { desktopLinkDevicePrefix } from "@matrix-os/contracts/desktop-link";
 import type { DesktopTerminalSessionState } from "./useDesktopTerminalSessionState";
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
@@ -238,6 +240,7 @@ export function LocalTerminalSidebar({
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
   const herdr = useShellHerdrSessions();
+  const desktops = useShellDesktopMachines();
   const shellRefreshStateRef = useRef<ShellRefreshState>({
     shells: [],
     authoritative: false,
@@ -527,6 +530,8 @@ export function LocalTerminalSidebar({
       if (!isCanonicalShellSessionId(sessionId)) continue;
       const terminalRef = parseTerminalRefKey(sessionId);
       if (!terminalRef) continue;
+      // A linked desktop's terminals list under "Desktops", never as this computer's shells (spec 2716).
+      if (desktopLinkDevicePrefix(terminalRef.workspaceId)) continue;
       syntheticShells.push({
         name: sessionId,
         workspaceId: terminalRef.workspaceId,
@@ -577,7 +582,8 @@ export function LocalTerminalSidebar({
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   // Herdr rows count too: a computer with only Herdr sessions must still show the sidebar.
   const herdrSessionCount = shouldShowHerdrSessions(herdr.list) ? herdr.list.sessions.length : 0;
-  const desktopSessionCount = (shellsAuthoritative ? shells.length : 0) + herdrSessionCount;
+  // A linked desktop keeps the sidebar open even with no shells, so its terminals can be started.
+  const desktopSessionCount = (shellsAuthoritative ? shells.length : 0) + herdrSessionCount + desktops.desktops.machines.length;
   const desktopSessionsReady = shellsAuthoritative || Boolean(shellsError);
   const desktopSessionName = shells.find((shell) => shell.name === activeShellName)?.subtitle?.trim();
   useEffect(() => {
@@ -818,7 +824,10 @@ export function LocalTerminalSidebar({
   ) : null;
   const statusDotStyles = <style>{SHELL_STATUS_DOT_CSS}</style>;
   const herdrSessions = (
-    <ShellHerdrSessions herdr={herdr} selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />
+    <>
+      <ShellHerdrSessions herdr={herdr} selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />
+      <ShellDesktopMachines desktops={desktops} selectedSessionId={activePaneSessionId ?? null} onOpen={openActiveShell} />
+    </>
   );
 
   if (desktopParity) {

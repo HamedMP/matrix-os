@@ -184,6 +184,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
   api.get("/machines", async (c) => {
     const listed = await devices.list();
     return c.json(DesktopLinkMachineListSchema.parse({
+      machineId,
       machines: listed.map((device) => ({
         deviceId: device.deviceId,
         name: device.name,

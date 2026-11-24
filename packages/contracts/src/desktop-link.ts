@@ -69,6 +69,8 @@ export const DesktopLinkMachineSchema = z.strictObject({
 });
 export type DesktopLinkMachine = z.infer<typeof DesktopLinkMachineSchema>;
 export const DesktopLinkMachineListSchema = z.strictObject({
+  /** This computer, so a client can build the `If-Match` tag to remove a desktop. */
+  machineId: z.uuid(),
   machines: z.array(DesktopLinkMachineSchema).max(DESKTOP_LINK_MAX_DEVICES),
 });
 export const DesktopLinkEnrolmentSchema = z.strictObject({
