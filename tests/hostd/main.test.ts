@@ -376,6 +376,8 @@ describe("hostd main (production defaults)", () => {
       updatedAt: "2026-11-21T00:00:00.000Z",
     };
     await store.put(vm);
+    // The VM is live, so startup reconcile keeps its running record.
+    active.add(`matrix-vm@${vm.id}.service`);
     // Only the exec is faked: no host command may run in a test.
     hostd = await startHostd(config, { exec, lifecycleConfig: { trimSettleMs: 0 } });
     await hostd.memory.tick();
