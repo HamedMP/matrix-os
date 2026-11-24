@@ -413,6 +413,31 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(hostd.createVm).not.toHaveBeenCalled();
   });
 
+  it('lets a former paid owner whose old paid checkout led to a since-canceled subscription take the free plan', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    // The checkout that started the old subscription stays `paid` forever.
+    await insertCheckoutAttempt(db, { id: 'att-past', clerkUserId: OWNER, stripeSessionId: 'cs_past', status: 'paid',
+      createdAt: '2026-09-01T00:00:00.000Z', resolvedAt: '2026-09-01T00:05:00.000Z' });
+    await insertSubscriptionRow(db, { id: 'sub_old', runtimeSlot: 'primary', status: 'canceled' });
+    const response = await request(routesFor().routes, FREE);
+    expect(response.status).toBe(202);
+    expect(await metalRows()).toHaveLength(1);
+  });
+
+  it('still refuses a former paid owner whose new paid checkout has no subscription event yet', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, endedPaid());
+    await insertSubscriptionRow(db, { id: 'sub_old', runtimeSlot: 'primary', status: 'canceled' });
+    // Paid after the old subscription's last event: the new subscription's webhook has not landed.
+    await insertCheckoutAttempt(db, { id: 'att-new', clerkUserId: OWNER, stripeSessionId: 'cs_new', status: 'paid',
+      createdAt: new Date(Date.now() - 60_000).toISOString(), resolvedAt: new Date(Date.now() - 30_000).toISOString() });
+    const response = await request(routesFor().routes, FREE);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'checkout_pending' });
+    expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
   it('offers the free plan to a former paid owner on the implicit path as well', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     await upsertBillingEntitlement(db, endedPaid());

@@ -2,7 +2,6 @@ import { sql } from 'kysely';
 import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import {
   getActiveUserMachineByClerkId,
-  getSettlingCheckoutAttempt,
   type PlatformDB,
 } from '../db.js';
 import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
@@ -80,14 +79,23 @@ type Admission =
   | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' | 'checkout_pending' };
 
 /**
- * A paid checkout for the free slot is in flight: any `paid` or `open` attempt
- * (whatever its age; a Stripe session stays open for up to 24 hours) or an
- * active prebilling intent. This is exactly the journey's free-plan rule
- * (`!checkoutAttempt`, from the same getSettlingCheckoutAttempt query), so
- * billing status, provisioning, and the journey always agree.
+ * A paid checkout for the free slot is in flight: any `open` attempt (whatever
+ * its age; a Stripe session stays open for up to 24 hours), a `paid` attempt
+ * no subscription event for the slot has followed yet, or an active
+ * prebilling intent. A `paid` attempt stays `paid` forever, so one whose
+ * subscription has since been recorded (and maybe canceled) is history, not
+ * a payment still settling. The journey settles only pre-activation, so it
+ * offers the free plan to the same former paid owners.
  */
 async function paidCheckoutPending(db: PlatformDB, clerkUserId: string): Promise<boolean> {
-  if (await getSettlingCheckoutAttempt(db, clerkUserId, FREE_RUNTIME_SLOT)) return true;
+  const attempt = await db.executor.selectFrom('billing_checkout_attempts as a').select('a.id')
+    .where('a.clerk_user_id', '=', clerkUserId).where('a.runtime_slot', '=', FREE_RUNTIME_SLOT)
+    .where((eb) => eb.or([eb('a.status', '=', 'open'), eb.and([eb('a.status', '=', 'paid'),
+      eb.not(eb.exists(eb.selectFrom('billing_subscriptions as s').select(sql<number>`1`.as('one'))
+        .whereRef('s.clerk_user_id', '=', 'a.clerk_user_id').whereRef('s.runtime_slot', '=', 'a.runtime_slot')
+        .where(sql<boolean>`s.latest_event_created_at::timestamptz >= a.created_at::timestamptz`)))])]))
+    .limit(1).executeTakeFirst();
+  if (attempt) return true;
   return Boolean(await getActivePrebillingIntent(db, clerkUserId, FREE_RUNTIME_SLOT));
 }
 
