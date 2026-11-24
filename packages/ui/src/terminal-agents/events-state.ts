@@ -1,4 +1,4 @@
-import { ProjectIdSchema, SafeDisplayStringSchema, TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contracts";
+import { ProjectIdSchema, SafeDisplayStringSchema, TeamTerminalOwnerEntrySchema, TerminalTabIdSchema, TerminalWorkspaceIdSchema, type TeamTerminalOwnerEntry } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { terminalFactsKey, type TerminalTabFacts } from "./attention.js";
 
@@ -39,6 +39,7 @@ const AttentionKeySchema = z.string().regex(/^tws_[0-9a-f]{32}:tt_[0-9a-f]{32}$/
 const AttentionSchema = z.strictObject({ doneAt: z.string().max(64), seen: z.boolean() });
 // The gateway sends attention only for tabs its snapshot carries.
 const MAX_ATTENTION = MAX_SNAPSHOT_ENTRIES;
+const MAX_TEAM_TABS = 64;
 
 /** Every `/ws/terminal/events` server frame, checked before anything is stored. */
 export const TerminalEventsFrameSchema = z.discriminatedUnion("type", [
@@ -49,6 +50,11 @@ export const TerminalEventsFrameSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("attention"), seq: SeqSchema,
     tabs: z.record(AttentionKeySchema, AttentionSchema).refine((tabs) => Object.keys(tabs).length <= MAX_ATTENTION),
+  }),
+  // Spec 2710: who watches and types in each shared tab; at most the 64 a computer shares.
+  z.strictObject({
+    type: z.literal("team"), seq: SeqSchema,
+    tabs: z.record(AttentionKeySchema, TeamTerminalOwnerEntrySchema).refine((tabs) => Object.keys(tabs).length <= MAX_TEAM_TABS),
   }),
   z.strictObject({ type: z.literal("heartbeat"), seq: SeqSchema }),
   z.strictObject({ type: z.literal("missed"), seq: SeqSchema }),
@@ -66,6 +72,8 @@ export interface TerminalEventsState {
    * `tabs`. Absent until the gateway sends one: an older gateway does not.
    */
   attention?: Record<string, TerminalTabAttention>;
+  /** Spec 2710: shared tabs someone is watching, keyed like `tabs`. Absent from older gateways. */
+  team?: Record<string, TeamTerminalOwnerEntry>;
 }
 
 export interface TerminalTabAttention {
@@ -101,11 +109,12 @@ export function reduceTerminalEvents(state: TerminalEventsState, input: unknown)
     for (const facts of parsed.slice(0, MAX_TABS)) tabs[terminalFactsKey(facts.ref)] = facts;
     // A new connection's attention comes in its own frame right after; the old one must not
     // outlive it (a gateway that sends none would otherwise keep stale seen marks).
-    const { attention: _previous, ...rest } = state;
-    void _previous;
+    const { attention: _previous, team: _team, ...rest } = state;
+    void _previous; void _team;
     return { ...rest, connected: true, seq: frame.seq, tabs };
   }
   if (frame.type === "attention") return { ...state, seq: frame.seq, attention: frame.tabs };
+  if (frame.type === "team") return { ...state, seq: frame.seq, team: frame.tabs };
   if (frame.type !== "event") return state;
   const { event, seq } = frame;
   const key = terminalFactsKey(event.ref);

@@ -35,7 +35,7 @@ describe("resolveRuntimeTarget", () => {
 
 type Sent = { requestHeaders?: Record<string, string>; cancel?: boolean };
 
-function setup(tokens: Record<string, string | "unavailable">) {
+function setup(tokens: Record<string, string | "unavailable">, accountToken: string | null = null) {
   type BeforeSend = (details: { id: number; url: string; requestHeaders: Record<string, string> }, callback: (response: Sent) => void) => void;
   type Completed = (details: { id: number; url: string; statusCode: number }) => void;
   type Failed = (details: { id: number }) => void;
@@ -57,7 +57,7 @@ function setup(tokens: Record<string, string | "unavailable">) {
     unauthorized: vi.fn(),
     confirmed: vi.fn(),
   };
-  const installed = installTerminalWindowAuth(session, { broker, getGatewayOrigin: () => GATEWAY });
+  const installed = installTerminalWindowAuth(session, { broker, getGatewayOrigin: () => GATEWAY, accountToken: () => accountToken });
   let lastId = 0;
   const sendRaw = (url: string, requestHeaders: Record<string, string> = {}) =>
     new Promise<Sent>((resolve) => { lastId = nextId++; beforeSend({ id: lastId, url, requestHeaders }, resolve); });
@@ -145,5 +145,25 @@ describe("Terminal window gateway authentication", () => {
     installed.clear();
     complete(socket, 401);
     expect(broker.unauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe("Terminal window team collaboration authentication (spec 2710)", () => {
+  it("signs platform collaboration and organization requests as the account, never with a computer bearer", async () => {
+    const { broker, send } = setup({ primary: "primary-token" }, "account-token");
+    expect((await send(`${GATEWAY}/api/collaboration/shared?limit=50`)).Authorization).toBe("Bearer account-token");
+    expect((await send(`${GATEWAY}/api/collaboration/connections`)).Authorization).toBe("Bearer account-token");
+    expect((await send(`${GATEWAY}/api/organizations/org_team/members`)).Authorization).toBe("Bearer account-token");
+    expect(broker.credential).not.toHaveBeenCalled();
+    // Terminal routes keep the computer bearer.
+    expect((await send(`${GATEWAY}/api/terminal/workspaces`)).Authorization).toBe("Bearer primary-token");
+  });
+
+  it("sends a collaboration request with no bearer when signed out, and never to another origin", async () => {
+    const { send } = setup({ primary: "primary-token" }, null);
+    expect((await send(`${GATEWAY}/api/collaboration/shared`, { Authorization: "Bearer forged" })).Authorization).toBeUndefined();
+    const other = setup({ primary: "primary-token" }, "account-token");
+    expect((await other.send("https://evil.example/api/collaboration/shared")).Authorization).toBeUndefined();
+    expect((await other.send(`${GATEWAY}/api/collaboration/shared?runtime=review`)).Authorization).toBeUndefined();
   });
 });

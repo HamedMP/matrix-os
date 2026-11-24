@@ -181,6 +181,7 @@ export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.j
 export { LegacyLiveAccessButton } from "./collaboration/LegacyLiveAccessButton.js";
 export { LegacyResourceAccessButton } from "./collaboration/LegacyResourceAccessButton.js";
 export { LegacyTerminalAccessButton } from "./collaboration/LegacyTerminalAccessButton.js";
+export { AudienceGrantPicker } from "./collaboration/AudienceGrantPicker.js";
 export { ProjectSharingDialog } from "./collaboration/ProjectSharingDialog.js";
 export { ProjectSharingButton } from "./collaboration/ProjectSharingButton.js";
 export {
