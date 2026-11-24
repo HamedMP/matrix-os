@@ -133,7 +133,9 @@ it, for VPS and owned computers alike.
 1. **Admission (text frames, JSON, Zod-validated, each ≤ 4 KiB).**
    - Gateway → `{"t":"challenge","nonce":<32 random bytes b64url>,"computer":<machine id>}`.
    - Mac → `{"t":"proof","deviceId","sig","app":{"version","os"},"name"}`.
-     `sig` is Ed25519 over `matrix-mac-link/v1\n<ownerId>\n<computer machine id>\n<deviceId>\n<revision>\n<nonce>`.
+     `sig` is Ed25519 over the domain-separated message
+     `JSON.stringify(["matrix-mac-link-v1", ownerId, computerMachineId, deviceId, revision, nonce])`,
+     built by the shared proof helper (see Device identity).
    - Gateway verifies the device is enrolled for this owner, not revoked, the
      revision matches and the signature is valid. Then `{"t":"ready"}`. Any
      failure closes with a coarse code (`4401` auth, `4403` revoked or
@@ -206,13 +208,25 @@ the confirmation says so.
 
 ### Device identity
 
-An Ed25519 key pair per Electron profile and computer, created in Electron main
-(`node:crypto`), private key encrypted with the same `safeStorage` the app's
-credential store already uses, file mode `0600` in `userData`. Device ID =
-SHA-256 of the public SPKI bytes. This matches 2698 (ENG-495). If 2698 merges
-first, this spec uses its key store; otherwise layer 3 lands the key store in
-a shape 2698 can adopt, and the two teams agree the module before layer 3
-(open question 1).
+**One key module, shared with 2698 (ENG-495).** The Mac's device key is the
+one 2698 (#3483) already defines; this spec adds no second key store:
+
+- Key store: `desktop/src/main/desktop-pairing/key-store.ts`,
+  `createPairingKeyStore(userData, safeStorage)` → `load` / `loadOrCreate`
+  `({ ownerId, origin })`. Ed25519 created in Electron main, PKCS#8 private key
+  encrypted with `safeStorage` (refuses `basic_text`), `0600` file under
+  `userData/desktop-pairing/`, device ID = SHA-256 of the public SPKI bytes.
+- Proof messages: `packages/contracts/src/desktop-pairing.ts`. Mac link adds
+  `macLinkProofMessage()` beside `desktopPairingProofMessage()`, sharing the
+  same domain-separated `proofMessage(domain, …)` helper with domain
+  `matrix-mac-link-v1`, so a pairing or Chat-action signature can never be
+  replayed as a link proof and the reverse.
+- Enrolments stay per purpose: 2698 keeps `desktop_pairings` (one Mac per
+  owner and computer, Chat actions); this spec keeps `mac_link_devices`. One
+  key, two independent consents and revocations.
+- Ownership: whichever PR merges first lands the module at that exact path;
+  the other rebases onto it. Layer 2 (gateway) does not depend on it; layer 3
+  (Electron) does.
 
 ## Security architecture
 
@@ -409,14 +423,17 @@ layer 2 starts, the stack bases on it or waits; it does not copy the client.
 
 ## Risks and open questions
 
-1. **2698 overlap (ENG-495, Yuhan).** Both specs need a Mac device key. Agree
-   one key module before layer 3. Recommendation: one key store, separate
-   enrolments per purpose.
-2. **Which terminals the computer sees.** v1 shows every terminal in the app's
-   private core, including ones the person opened locally on the Mac. The
-   alternative is "only terminals the computer started". Reviewer call; the
-   guard can filter `terminal.list` by `matrix.from` if we choose the narrower
-   option.
+1. **2698 overlap (ENG-495, Yuhan).** Resolved as above: one key module at
+   `desktop/src/main/desktop-pairing/key-store.ts`, separate enrolments per
+   purpose. Flagged on #3483 for Yuhan's agreement.
+2. **Which terminals the computer sees. Decision (Hamed, 2026-11-24):** the
+   computer sees every terminal in the Mac app's private core, including ones
+   the person opened locally. It is the same owner, it matches Herdr's machine
+   model (a machine shows all its terminals) and the current setup.
+   *Rejected alternative:* only terminals the computer started (`matrix.from`
+   filter in the guard). It hides local agents from the computer's agents and
+   breaks parity. Left open for Nima's review comment; switching is a guard
+   filter, not a protocol change.
 3. **Full shell access.** A terminal on the Mac is the macOS user's shell. A
    compromised computer gateway can run anything the user can. Mitigations:
    off by default, per-computer opt-in, visible indicator, instant off, guard
