@@ -49,6 +49,7 @@ const FileViewSchema = z.object({
   scrollTop: z.number().min(0).max(100_000_000).default(0),
   treeVisible: z.boolean().default(true),
   treeWidth: z.number().min(220).max(2000).default(300),
+  treeHeight: z.number().min(120).max(1200).default(240),
   selectedFile: FileResourceRefSchema.nullable().default(null),
 });
 export type InspectorFileView = z.infer<typeof FileViewSchema>;
@@ -86,5 +87,45 @@ export const useInspectorFileViews = create<{
   merge: (saved, current) => {
     const parsed = FileViewsSchema.safeParse(saved);
     return parsed.success ? { ...current, views: parsed.data.views } : current;
+  },
+}));
+
+const LayoutSchema = z.object({
+  width: z.number().int().min(240).max(820).default(400),
+  selectedTabId: z.string().min(1).max(200).default("files"),
+  openTabIds: z.array(z.string().min(1).max(200)).max(12).default(["files"]),
+}).strict();
+type Layout = z.infer<typeof LayoutSchema>;
+const EntrySchema = z.object({ key: z.string().min(1).max(2048), layout: LayoutSchema }).strict();
+const EntriesSchema = z.array(EntrySchema).max(32);
+
+export function chatInspectorLayoutKey(userId: string, runtimeSlot: string, chatId: string): string {
+  return JSON.stringify([
+    z.string().min(1).max(256).parse(userId),
+    z.string().min(1).max(512).parse(runtimeSlot),
+    z.string().min(1).max(200).parse(chatId),
+  ]);
+}
+
+export const useChatInspectorLayout = create<{
+  entries: Array<{ key: string; layout: Layout }>;
+  get(key: string): Layout | null;
+  update(key: string, patch: Partial<Layout>): void;
+}>()(persist((set, get) => ({
+  entries: [],
+  get: key => get().entries.find(entry => entry.key === key)?.layout ?? null,
+  update: (key, patch) => set(state => {
+    const previous = state.entries.find(entry => entry.key === key)?.layout;
+    const layout = LayoutSchema.parse({ ...previous, ...patch });
+    const entry = EntrySchema.parse({ key, layout });
+    return { entries: [...state.entries.filter(current => current.key !== key), entry].slice(-32) };
+  }),
+}), {
+  name: "matrix-chat-inspector-layout-v1",
+  storage: createJSONStorage(() => localStorage),
+  partialize: state => ({ entries: state.entries }),
+  merge: (saved, current) => {
+    const parsed = EntriesSchema.safeParse((saved as { entries?: unknown } | null)?.entries);
+    return parsed.success ? { ...current, entries: parsed.data } : current;
   },
 }));

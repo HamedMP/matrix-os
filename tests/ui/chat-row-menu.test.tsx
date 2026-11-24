@@ -10,7 +10,7 @@ it('opens the same supported actions from ellipsis and separates destructive act
   fireEvent.keyDown(screen.getByRole('button',{name:'Actions'}),{key:'Enter'});
   const menu=await screen.findByRole('menu');
   expect(screen.getByRole('separator')).toBeTruthy();
-  expect(screen.getAllByRole('menuitem').map(item=>item.textContent)).toEqual(['Copy chat ID','Rename','Delete']);
+  expect(screen.getAllByRole('menuitem')).toEqual(['Rename','Copy chat ID','Delete'].map(name=>screen.getByRole('menuitem',{name,exact:true})));
   fireEvent.click(screen.getByRole('menuitem',{name:'Rename'}));
   expect(rename).toHaveBeenCalledOnce();expect(remove).not.toHaveBeenCalled();
   fireEvent.contextMenu(screen.getByRole('button',{name:'Chat row'}));
@@ -51,7 +51,7 @@ it('highlights every menu item with the hover surface, not the accent fill', asy
   fireEvent.keyDown(screen.getByRole('button', {name: 'Actions'}), {key: 'Enter'});
   await screen.findByRole('menu');
   const items = screen.getAllByRole('menuitem');
-  expect(items.map(item => item.textContent)).toEqual(['Mark as unread', 'Copy chat ID', 'Move to project›', 'Delete']);
+  expect(items).toEqual([screen.getByRole('menuitem',{name:'Mark as unread',exact:true}),screen.getByRole('menuitem',{name:/^Move to project/}),screen.getByRole('menuitem',{name:'Copy chat ID',exact:true}),screen.getByRole('menuitem',{name:'Delete',exact:true})]);
   for (const item of items) {
     expect(item.className, item.textContent ?? '').toContain('focus:bg-[var(--bg-hover,var(--accent))]');
     expect(item.className, item.textContent ?? '').not.toMatch(/(?:^|\s)focus:bg-accent(?:\s|$)/);

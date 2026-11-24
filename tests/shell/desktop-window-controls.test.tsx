@@ -19,6 +19,7 @@ import {
 
 const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown;visible?: boolean}}));
 const publishingProps=vi.hoisted(()=>({current: null as null | {appSlug: string;portalContainer?: HTMLElement | null;portalContainerRef?: React.RefObject<HTMLElement | null>}}));
+vi.mock("@/components/ChatApp", () => ({ ChatApp: ({ windowControls }: { windowControls?: React.ReactNode }) => <section aria-label="Chat content">{windowControls}</section> }));
 vi.mock("@/components/AppViewer", () => ({
   AppViewer: (props: {onOpenApp: unknown;visible?: boolean}) => { viewerProps.current=props; return <div data-testid="app-viewer" />; },
 }));
@@ -30,6 +31,20 @@ vi.mock("@/components/app-sites/AppSiteButton", () => ({
 }));
 
 describe("web desktop window controls", () => {
+  it("keeps pointer close, minimize and restore controls in maximized Chat", () => {
+    const win: AppWindow={id:"chat-controls",title:"Chat",path:"__chat__",x:20,y:20,width:640,height:480,minimized:false,zIndex:10};
+    const close=vi.fn(),minimize=vi.fn(),restore=vi.fn(),noop=vi.fn();
+    const view=render(<DesktopWindow win={win} chat={{} as never} dockPosition="bottom" fullscreenWindowId={win.id}
+      interacting={false} minimizingIds={new Set()} onAnimateMinimize={minimize} onCloseWindow={close}
+      onDragEnd={noop} onDragMove={noop} onDragStart={noop} onFocusWindow={noop} onOpenWindow={noop}
+      onResizeInteractionChange={noop} onToggleFullscreen={restore} topInset={38}/>);
+    expect(view.container.querySelector('[data-slot="card-header"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Close",exact:true}));
+    fireEvent.click(screen.getByRole("button",{name:"Minimize",exact:true}));
+    fireEvent.click(screen.getByRole("button",{name:"Fullscreen",exact:true}));
+    expect(close).toHaveBeenCalledWith(win.id);expect(minimize).toHaveBeenCalledWith(win.id);expect(restore).toHaveBeenCalledWith(win.id);
+    view.unmount();
+  });
   it("hides a fullscreen Browser with the yellow control and restores the same window from the launcher", () => {
     resetWindowManagerLayoutPersistenceForTests();
     useWindowManager.setState({
@@ -117,6 +132,17 @@ describe("web desktop window controls", () => {
     expect(frame.style.top).toBe("38px");
     // The launch bar hides while an app is maximized, so the frame keeps inset-0's bottom edge.
     expect(Number.parseFloat(frame.style.bottom || "0")).toBe(0);
+  });
+
+  it("starts maximized desktop Chat below the global bar without a duplicate title row", () => {
+    const win: AppWindow={id:"chat",title:"Chat",path:"__chat__",x:20,y:20,width:640,height:480,minimized:false,zIndex:10};
+    const noop=vi.fn();
+    const view=render(<DesktopWindow win={win} dockPosition="bottom" fullscreenWindowId={win.id}
+      interacting={false} minimizingIds={new Set()} onAnimateMinimize={noop} onCloseWindow={noop}
+      onDragEnd={noop} onDragMove={noop} onDragStart={noop} onFocusWindow={noop} onOpenWindow={noop}
+      onResizeInteractionChange={noop} onToggleFullscreen={noop} topInset={38}/>);
+    expect(view.container.querySelector('[data-slot="card-header"]')).toBeNull();
+    view.unmount();
   });
 
   it("keeps floating windows below the desktop header", () => {

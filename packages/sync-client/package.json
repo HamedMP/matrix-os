@@ -78,6 +78,9 @@
     "ws": "^8.19.0",
     "zod": "^4.6.6"
   },
+  "optionalDependencies": {
+    "fsevents": "~2.3.3"
+  },
   "devDependencies": {
     "@types/node": "^25.2.3",
     "@types/picomatch": "^4.0.0",

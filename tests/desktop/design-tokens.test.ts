@@ -83,7 +83,10 @@ function contrastRatio(a: string, b: string): number {
 describe("design token references", () => {
   it("resolves every var(--name) reference to a definition", () => {
     const files = collectSources(RENDERER_SRC);
-    const defined = buildDefinitions(files);
+    // Shared Chat components import their semantic CSS alongside the renderer.
+    const sharedCss = collectSources(path.resolve(RENDERER_SRC, "../../../../packages/ui/src"))
+      .filter(file => file.endsWith(".css"));
+    const defined = buildDefinitions([...files, ...sharedCss]);
 
     const missing = new Map<string, Set<string>>();
     for (const file of files) {

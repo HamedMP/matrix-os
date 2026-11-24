@@ -22,7 +22,7 @@ describe("Navigation section states", () => {
     expect(toggle).toHaveBeenCalledOnce();
   });
 
-  it("keeps uppercase Projects creation in its header and quiet empty attention headings", () => {
+  it("keeps Figma Projects icon and creation in its header and quiet empty attention headings", () => {
     const create = vi.fn();
     render(<WorkRailGroups model={buildWorkRailModel([], [])} sections={{ pinned: true, projects: false, needsYou: true, working: true, done: false }} onToggle={vi.fn()} onCreateProject={create} renderProject={() => null} renderChat={() => null} bots={[]} sharedProjects={[]} organizationDrives={null} />);
     expect(screen.queryByRole("button", { name: "Pinned" })).toBeNull();
@@ -30,8 +30,8 @@ describe("Navigation section states", () => {
     expect(screen.getByRole("button", { name: "Needs you" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
     const projects = screen.getByRole("button", { name: "Projects" });
-    expect(projects.querySelector(".work-rail-section-icon")).toBeNull();
-    expect(projects.closest(".work-rail-group-heading")).toBeNull();
+    expect(projects.querySelector(".work-rail-section-icon")).not.toBeNull();
+    expect(projects.closest(".work-rail-group-heading")).toBeTruthy();
     const createButton = screen.getByRole("button", { name: "Create project" });
     expect(createButton.closest('[data-slot="chat-sidebar-section-heading"]')).toBeTruthy();
     expect(screen.queryByText("New project")).toBeNull();
@@ -53,7 +53,7 @@ it("opens supported actions from row ellipsis and keeps Delete separated and con
   fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
   const deleteItem = await screen.findByRole("menuitem", { name: "Delete" });
   expect(deleteItem.previousElementSibling?.getAttribute("role")).toBe("separator");
-  expect(screen.getAllByRole("menuitem").map(item => item.textContent)).toEqual(["Pin", "Rename", "Delete"]);
+  expect(screen.getAllByRole("menuitem")).toEqual(["Pin", "Rename", "Delete"].map(name => screen.getByRole("menuitem", { name, exact: true })));
   expect(remove).not.toHaveBeenCalled();
   fireEvent.click(deleteItem);
   expect(remove).toHaveBeenCalledOnce();

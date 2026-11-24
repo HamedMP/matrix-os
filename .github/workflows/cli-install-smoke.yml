@@ -1,0 +1,174 @@
+name: CLI Install Smoke
+
+# Installs the publishable CLI tarball the way users do and runs it. npm
+# versions are immutable, so the CLI Release workflow calls this before it
+# publishes; pull requests that touch CLI packaging run it too, because the
+# release itself is the worst place to learn an install path is broken.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cli-install-smoke.yml"
+      - ".github/workflows/cli-release.yml"
+      - "homebrew-tap/**"
+      - "packages/sync-client/package.json"
+      - "packages/sync-client/bin/**"
+      - "packages/sync-client/scripts/**"
+      - "packages/contracts/package.json"
+  workflow_call:
+    inputs:
+      artifact:
+        description: Name of an artifact in the calling run that holds the packed CLI tarball
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-install-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pack:
+    name: Pack CLI for smoke test
+    # A calling release workflow has already packed the exact tarball it publishes.
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pack CLI package
+        id: pack
+        working-directory: packages/sync-client
+        run: |
+          set -euo pipefail
+          TARBALL="$(node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP" | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).tarball')"
+          test -f "$TARBALL"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-npm-package-smoke
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 1
+
+  npm-global:
+    name: npm install -g (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: pack
+    if: ${{ !cancelled() && (needs.pack.result == 'success' || needs.pack.result == 'skipped') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        node: [20, 24]
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact || 'cli-npm-package-smoke' }}
+          path: dist/npm-package
+
+      - name: Install the tarball globally into a clean prefix and run it
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$PWD/dist/npm-package" -maxdepth 1 -type f -name '*.tgz' -print)"
+          test -f "$TARBALL"
+          EXPECTED_VERSION="$(tar -xOf "$TARBALL" package/package.json | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')"
+          PREFIX="$RUNNER_TEMP/matrix-global-prefix"
+          export HOME="$RUNNER_TEMP/matrix-smoke-home"
+          mkdir -p "$PREFIX" "$HOME"
+          cd "$RUNNER_TEMP"
+          npm install --global --prefix "$PREFIX" "$TARBALL"
+          ACTUAL="$("$PREFIX/bin/matrix" --version)"
+          echo "matrix --version: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_VERSION"
+
+      # npm prunes files it does not know about on the next install in a
+      # project. The CLI must survive that, so its vendored files have to be
+      # declared, not merely present in the tarball.
+      - name: Install the tarball as a project dependency, install again, and run it
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$PWD/dist/npm-package" -maxdepth 1 -type f -name '*.tgz' -print)"
+          EXPECTED_VERSION="$(tar -xOf "$TARBALL" package/package.json | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).version')"
+          export HOME="$RUNNER_TEMP/matrix-project-home"
+          PROJECT="$RUNNER_TEMP/matrix-project"
+          mkdir -p "$HOME" "$PROJECT"
+          cd "$PROJECT"
+          npm init -y >/dev/null
+          npm install "$TARBALL"
+          npm install is-number
+          ACTUAL="$(./node_modules/.bin/matrix --version)"
+          echo "matrix --version after a second install: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_VERSION"
+
+  homebrew:
+    name: brew install (macOS)
+    needs: pack
+    if: ${{ !cancelled() && (needs.pack.result == 'success' || needs.pack.result == 'skipped') }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      # Only the formula is needed; it is the file the release mirrors into the tap.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: homebrew-tap
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact || 'cli-npm-package-smoke' }}
+          path: dist/npm-package
+
+      # Homebrew's stock npm install repacks the unpacked sources with
+      # `npm pack`, which keeps only files npm itself would pack. Install
+      # through the real formula, pointed at this tarball, to prove that path.
+      - name: Install the tarball through the Homebrew formula and run it
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "$PWD/dist/npm-package" -maxdepth 1 -type f -name '*.tgz' -print)"
+          test -f "$TARBALL"
+          EXPECTED_VERSION="$(tar -xOf "$TARBALL" package/package.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          SHA256="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
+          export TARBALL SHA256 EXPECTED_VERSION
+
+          brew tap-new --no-git matrix-os/smoke
+          FORMULA="$(brew --repository matrix-os/smoke)/Formula/matrix.rb"
+          cp homebrew-tap/Formula/matrix.rb "$FORMULA"
+          python3 - "$FORMULA" <<'PY'
+          import os, re, pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text()
+          text, urls = re.subn(r'url\s+"[^"]*"', 'url "file://' + os.environ["TARBALL"] + '"', text, count=1)
+          text, shas = re.subn(r'sha256\s+"[^"]*"', 'sha256 "' + os.environ["SHA256"] + '"', text, count=1)
+          text, versions = re.subn(r'version\s+"[^"]*"', 'version "' + os.environ["EXPECTED_VERSION"] + '"', text, count=1)
+          assert (urls, shas, versions) == (1, 1, 1), (urls, shas, versions)
+          path.write_text(text)
+          PY
+
+          brew install matrix-os/smoke/matrix
+          brew test matrix-os/smoke/matrix
+          ACTUAL="$("$(brew --prefix)/bin/matrix" --version)"
+          echo "matrix --version: $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_VERSION"

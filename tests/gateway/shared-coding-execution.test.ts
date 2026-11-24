@@ -608,6 +608,7 @@ describe("shared coding execution (S09)", () => {
       };
       const coordinator = new SharedChatExecutionCoordinator({
         repository, isClosing: () => false, atCapacity: () => false, hasActiveRun: () => true,
+        reserveDispatchSlot: vi.fn(), releaseDispatchSlot: vi.fn(),
         getActiveRun: (runId) => (runId === claimed.run.id ? active as never : undefined),
         startDispatch: () => { throw new Error("unexpected dispatch"); }, now: () => new Date(now),
       });
@@ -661,6 +662,7 @@ describe("shared coding execution (S09)", () => {
       const second = await repository.enqueueSharedQueuedTurn(owner, aiRequest(87, otherEditor, 2));
       const coordinator = new SharedChatExecutionCoordinator({
         repository, isClosing: () => false, atCapacity: () => false, hasActiveRun: () => false,
+        reserveDispatchSlot: vi.fn(), releaseDispatchSlot: vi.fn(),
         getActiveRun: () => undefined, startDispatch: () => { throw new Error("unexpected dispatch"); }, now: () => new Date(now),
       });
       const createAdapter = vi.fn(async () => { throw new SharedChatRunPreparationError("unavailable"); });

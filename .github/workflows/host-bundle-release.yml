@@ -6,6 +6,7 @@
 # Version format: v{YYYY.MM.DD}-{run_number} (date-based, monotonically increasing)
 #
 # Flow:
+#   0. dev-bundle-gate — stop if a pinned expected_sha is not the commit being built
 #   1. ci-gate — wait for same-SHA CI and verify all CI jobs succeeded
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
@@ -65,6 +66,11 @@ on:
         required: false
         default: ""
         type: string
+      expected_sha:
+        description: "Approved commit SHA (40 characters); the run stops before building if the ref has moved"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -85,6 +91,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      # Every other job waits on this one, so a moved ref stops the run before
+      # anything is built, published, or deployed.
+      - name: Require the approved commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: bash scripts/ci/assert-expected-sha.sh
 
       - name: Decide whether to build
         id: decision

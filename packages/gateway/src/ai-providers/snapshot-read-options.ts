@@ -12,6 +12,11 @@ export interface ProviderSnapshotReadOptions {
   admissionScope?: "managed_matrix" | "canonical_matrix";
   /** Trusted runtime-owner-only identity/allowance enrichment; never renderer input. */
   includeNativeAccountMetadata?: boolean;
+  /**
+   * Admission for one selected harness: observe only these native identities.
+   * Omitted means every installed native harness. Never renderer input.
+   */
+  nativeAccountHarnesses?: readonly ("codex" | "hermes" | "claude_code")[];
   /** Server-verified runtime owner only: repair an existing saved native selection. */
   recoverNativeConnection?: boolean;
   /** Foreground login completion verifies identity independently of quota. */
