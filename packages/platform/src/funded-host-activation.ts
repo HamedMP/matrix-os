@@ -24,9 +24,10 @@ export type FundedHostActivationRead = { status: 'ready'; configuration: FundedH
 /**
  * The platform origin funded AI configures guests against. Production always
  * uses https://app.matrix-os.com. Only an explicitly pinned preview platform
- * (PLATFORM_PREVIEW=true, MATRIX_FUNDED_AI_PREVIEW_PIN=1 set by the preview
- * workflow, and no Hetzner token) uses its own public origin, which must then
- * pair with the reviewed preview relay. A pinned preview without a usable
+ * (PLATFORM_PREVIEW=true, MATRIX_FUNDED_AI_PREVIEW_PIN=1, and no Hetzner token)
+ * uses its own public origin, which must then pair with the reviewed preview
+ * relay. preview-platform.yml sets the pin only when the deployed public origin
+ * and relay are both reviewed; every other preview keeps the production pair. A pinned preview without a usable
  * origin returns null: it emits nothing rather than the production pair.
  */
 export function fundedPlatformOrigin(env: NodeJS.ProcessEnv): string | null {

@@ -79,7 +79,7 @@ describe('reviewed funded-AI origin pairs', () => {
   });
 
   it('never sets the preview-pin flag in the production platform workflow', () => {
-    // The preview platform workflow sets |MATRIX_FUNDED_AI_PREVIEW_PIN=1 (preview CI layer).
+    // Only preview-platform.yml sets |MATRIX_FUNDED_AI_PREVIEW_PIN=1, for a reviewed preview origin and relay.
     expect(readFileSync('.github/workflows/platform-cloud-run.yml', 'utf8')).not.toContain('MATRIX_FUNDED_AI_PREVIEW_PIN');
   });
 

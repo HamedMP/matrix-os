@@ -1,9 +1,13 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fundedHostActivationRevisionInput } from '@matrix-os/contracts';
+import {
+  FUNDED_PREVIEW_PLATFORM_ORIGINS, FUNDED_PREVIEW_RELAY_ORIGIN, fundedHostActivationRevisionInput, fundedPlatformOriginMatchesGuest,
+} from '@matrix-os/contracts';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { FREE_MANAGED_MODEL_ID } from '../../packages/platform/src/free-tier/funded-policy.js';
-import { fundedPlatformOrigin } from '../../packages/platform/src/funded-host-activation.js';
+import { fundedPlatformOrigin, isAdmittedFundedOriginPair } from '../../packages/platform/src/funded-host-activation.js';
 import {
   createManagedFeatureActivator,
   createManagedFeatureResumeTrigger,
@@ -371,5 +375,51 @@ describe('vps activation', () => {
       expect(options.dispatcher).toBe(dispatcher);
       expect(new Headers(options.headers).get('x-matrix-host-auth')).toBeNull();
     }
+  });
+});
+
+/**
+ * The preview deployment's own settings (spec 2691, ENG-520): the preview
+ * workflow pins the preview funded-AI pair only when the deployed public origin
+ * and relay are both reviewed, and guests take that public origin as their
+ * PLATFORM_INTERNAL_URL. Faults detected: a preview that never pins (guests on
+ * a preview platform receive the production origin and reject it), and a pin
+ * set for an unreviewed origin or relay.
+ */
+describe('preview workflow funded-AI pin', () => {
+  const workflow = readFileSync('.github/workflows/preview-platform.yml', 'utf8');
+  const block = /# BEGIN funded-preview-pin[^\n]*\n([\s\S]*?)\n\s*# END funded-preview-pin/.exec(workflow)?.[1];
+
+  function pinFor(publicUrl: string, relay: string): string {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `${block}\nprintf '%s' "$funded_preview_pin"`], {
+      encoding: 'utf8', env: { PATH: '/usr/bin:/bin', PREVIEW_PUBLIC_URL: publicUrl, MATRIX_FUNDED_AI_RELAY_URL: relay },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout;
+  }
+
+  it('deploys the pin, and the deployed origins form the reviewed pair guests accept', () => {
+    expect(block).toBeDefined();
+    expect(workflow).toContain('funded_ai_env_bindings="${funded_ai_env_bindings}${funded_preview_pin}"');
+    // The guest's PLATFORM_INTERNAL_URL is PLATFORM_PUBLIC_URL, and the platform's own origin is MATRIX_APP_ORIGIN.
+    for (const binding of ['PLATFORM_PREVIEW=true', 'PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}', 'MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}']) {
+      expect(workflow).toContain(`|${binding}|`);
+    }
+    expect(workflow).not.toContain('HETZNER_API_TOKEN');
+    for (const publicUrl of FUNDED_PREVIEW_PLATFORM_ORIGINS) {
+      const pin = pinFor(`${publicUrl}/`, FUNDED_PREVIEW_RELAY_ORIGIN);
+      expect(pin).toBe('|MATRIX_FUNDED_AI_PREVIEW_PIN=1');
+      const origin = fundedPlatformOrigin({
+        PLATFORM_PREVIEW: 'true', MATRIX_FUNDED_AI_PREVIEW_PIN: '1', MATRIX_APP_ORIGIN: `${publicUrl}/`, PLATFORM_PUBLIC_URL: `${publicUrl}/`,
+      });
+      expect(isAdmittedFundedOriginPair(origin, FUNDED_PREVIEW_RELAY_ORIGIN)).toBe(true);
+      expect(fundedPlatformOriginMatchesGuest(origin, `${publicUrl}/`)).toBe(true);
+    }
+  });
+
+  it('leaves a per-PR or unreviewed preview, or any other relay, on the production pair', () => {
+    expect(pinFor('https://pr-12---matrix-platform-preview-jqxkjdhtkq-ey.a.run.app', FUNDED_PREVIEW_RELAY_ORIGIN)).toBe('');
+    expect(pinFor('https://metal-preview.matrix-os.com', relayOrigin)).toBe('');
+    expect(pinFor('https://metal-preview.matrix-os.com.evil.test', FUNDED_PREVIEW_RELAY_ORIGIN)).toBe('');
   });
 });
