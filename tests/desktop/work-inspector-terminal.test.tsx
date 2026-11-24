@@ -6,11 +6,11 @@ import type { CanonicalChatDetailResponse, CanonicalSideChatSnapshot, CanonicalS
 import { SideChatPanel } from "@matrix-os/ui";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
-import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
-import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
 import { CanonicalChatClientProvider } from "@desktop/renderer/src/features/chat/CanonicalChatClientContext";
 import { SideChatDraftContext, WorkArchiveProvider, WorkArchiveOutlet, useWorkArchiveNavigation } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
+import { ResponsiveWorkInspector } from "@desktop/renderer/src/features/work/WorkTab";
 import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
@@ -471,6 +471,7 @@ describe("Work Files and Terminal inspector", () => {
     expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
     expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
     expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    fireEvent.click(screen.getByRole("button", { name: "Filter files" }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
     fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
@@ -489,6 +490,8 @@ describe("Work Files and Terminal inspector", () => {
 
   it("hides and restores the file tree while preserving its search", () => {
     render(<WorkFilesInspector scope={{ kind: "home", chatId: "chat" }} projects={[]} active />);
+    expect(screen.queryByRole("searchbox", { name: "Filter files" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Filter files" }));
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter files" }), { target: { value: "notes" } });
     fireEvent.pointerDown(screen.getByRole("button", { name: "Add inspector tab" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("menuitem", { name: "Hide file tree" }));
@@ -653,9 +656,9 @@ describe("Work Files and Terminal inspector", () => {
     expect(useConnection.getState().api?.delete).not.toHaveBeenCalled();
   });
 
-  it("opens side chat from the inspector shortcut without creating a main turn", () => {
+  it.each([{key:"s"},{key:"ß",code:"KeyS"}])("opens side chat from the inspector shortcut without creating a main turn (%o)", (event) => {
     render(<WorkFilesInspector detail={detail("chat_shortcut")} projects={[]} active />);
-    fireEvent.keyDown(window, { key: "s", metaKey: true, altKey: true });
+    fireEvent.keyDown(window, { ...event, metaKey: true, altKey: true });
     expect(screen.getByRole("tab", { name: "Side chat" }).getAttribute("aria-selected")).toBe("true");
     expect(useConnection.getState().api!.post).not.toHaveBeenCalled();
   });
@@ -883,4 +886,17 @@ describe("Work Files and Terminal inspector", () => {
       vi.useRealTimers();
     }
   });
+
+
+it('retains an unsent native side question through inspector tab switches',async()=>{
+ const connection=useConnection.getState();
+ const client={getSideChat:vi.fn(async()=>({threadId:null,messages:[]})),createSideChat:vi.fn(),askSideChat:vi.fn()} as unknown as CanonicalChatClient;
+ render(<CanonicalChatClientProvider api={connection.api} client={client} runtimeSlot={connection.runtimeSlot} authGeneration={connection.authGeneration}><SideChatDraftContext.Provider value={{pending:null,request:vi.fn(),consume:vi.fn()}}><WorkFilesInspector detail={detail('chat_side_draft')} projects={[]} active/></SideChatDraftContext.Provider></CanonicalChatClientProvider>);
+ fireEvent.click(screen.getByRole('button',{name:'Add inspector tab'}));fireEvent.click(screen.getByRole('button',{name:/Side chat/}));
+ await screen.findByText(/Ask about this chat/);
+ fireEvent.change(screen.getByRole('textbox',{name:'Ask side chat'}),{target:{value:'Unsent question'}});
+ fireEvent.click(screen.getByRole('tab',{name:'Files'}));fireEvent.click(screen.getByRole('tab',{name:'Side chat'}));
+ expect((screen.getByRole('textbox',{name:'Ask side chat'}) as HTMLTextAreaElement).value).toBe('Unsent question');
+});
+
 });

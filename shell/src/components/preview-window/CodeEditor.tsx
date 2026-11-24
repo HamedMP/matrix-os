@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: this whole module is code-split via React.lazy() at its only consumer (PreviewTab.tsx imports CodeEditor with `lazy(() => import("./CodeEditor"))`), so the entire @codemirror/* graph is already a separate chunk loaded on demand. CodeMirror is mounted imperatively into a ref in the effect below, so an extra in-effect dynamic import() would only add a redundant code-split layer plus async/unmount race handling with no bundle benefit.
+// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: this whole module is code-split via React.lazy() at its consumers (PreviewTab.tsx and ChatFilePanel.tsx import CodeEditor with `lazy(() => import("./CodeEditor"))`), so the entire @codemirror/* graph is already a separate chunk loaded on demand. CodeMirror is mounted imperatively into a ref in the effect below, so an extra in-effect dynamic import() would only add a redundant code-split layer plus async/unmount race handling with no bundle benefit.
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
-// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: see note on the @codemirror/view import above; this module is loaded via React.lazy() at PreviewTab.tsx, so EditorState ships in that on-demand chunk rather than the initial bundle.
+// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: see note on the @codemirror/view import above; this module is loaded via React.lazy() at its consumers, so EditorState ships in that on-demand chunk rather than the initial bundle.
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
@@ -51,9 +51,10 @@ interface CodeEditorProps {
   content: string;
   filename: string;
   onChange?: (value: string) => void;
+  readOnly?: boolean;
 }
 
-export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
+export function CodeEditor({ content, filename, onChange, readOnly = false }: CodeEditorProps) {
   const theme = useTheme();
   const [themeCompartment] = useState(() => new Compartment());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,6 +71,9 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
       doc: content,
       extensions: [
         lineNumbers(),
+        EditorState.readOnly.of(readOnly),
+        EditorView.editable.of(!readOnly),
+        EditorView.contentAttributes.of(readOnly ? { "aria-label": `Preview ${filename}`, "aria-readonly": "true" } : {}),
         highlightActiveLine(),
         highlightSelectionMatches(),
         history(),
@@ -96,7 +100,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
       viewRef.current = null;
     };
     // react-doctor-disable-next-line react-doctor/exhaustive-deps -- `content` is intentionally omitted: it only seeds the editor's initial `doc` on (re)creation. Ongoing external content changes are applied in-place by the separate effect below; adding `content` here would destroy and rebuild the editor on every keystroke, dropping cursor/scroll/undo state.
-  }, [filename]); // Re-create editor when filename changes
+  }, [filename, readOnly]); // Re-create editor when filename changes
 
   useEffect(() => {
     const view = viewRef.current;

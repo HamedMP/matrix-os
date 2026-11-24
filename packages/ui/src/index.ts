@@ -342,7 +342,7 @@ export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 export { ChatRailSection } from "./chat/ChatRailSection.js";
 export { SideChatPanel, type SideChatClient } from "./chat/SideChatPanel.js";
 export { ArchivedChatsPage, type ChatArchiveClient } from "./chat/ArchivedChatsPage.js";
-export { ChatInspectorTabs, ChatInspectorNewTab, ChatInspectorFileHeader, InspectorToolIcon, type InspectorTabItem, type InspectorTool } from "./chat/ChatInspectorTabs.js";
+export { ChatInspectorFileRoot, ChatMessageFileLink, ChatInspectorTabs, ChatInspectorNewTab, ChatInspectorFileHeader, InspectorToolIcon, type InspectorTabItem, type InspectorTool } from "./chat/ChatInspectorTabs.js";
 export { ChatInspectorResizeHandle } from "./chat/ChatInspectorTabs.js";
 export { ChatMenuActionLabel } from "./chat/ChatContextMenu.js";
 export { ChatSourceFilterMenu } from "./chat/ChatContextMenu.js";

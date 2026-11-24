@@ -106,12 +106,14 @@ export function AssistantBubble({
   content,
   attachments,
   openAttachment,
+  openFile,
   loadImage,
   onAction,
 }: {
   content: string;
   attachments?: ChatMessage["attachments"];
   openAttachment?: (path: string) => boolean | void;
+  openFile?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
   onAction?: (text: string) => void;
 }) {
@@ -134,7 +136,7 @@ export function AssistantBubble({
         {planSteps && <Plan steps={planSteps} />}
         {taskData && <Task task={taskData} />}
         {displayContent && (
-          <RichContent onAction={onAction} openFile={openAttachment}>
+          <RichContent onAction={onAction} openFile={openFile ?? openAttachment}>
             {displayContent}
           </RichContent>
         )}

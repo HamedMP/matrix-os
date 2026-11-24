@@ -4,6 +4,8 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CanonicalChatNavigationResponseSchema, FUNDED_AI_READINESS_TIMEOUTS, type CanonicalChatRecord } from "@matrix-os/contracts";
 import { effectiveNarrowPane } from "@desktop/renderer/src/features/work/work-responsive-layout";
+import { HostedWorkSidebar } from "@desktop/renderer/src/features/work/HostedWorkSidebar";
+import { WorkSurfaceRuntimeProvider } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { desktopProviderCatalogCache, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
@@ -1137,7 +1139,7 @@ describe("WorkTab rail integration", () => {
     const hostedMain = within(hostedMainElement);
     expect(hostedMain.queryByRole("heading", { name: "Global chat" })).toBeNull();
     expect(hostedMain.queryByRole("button", { name: "Toggle Chat sidebar" })).toBeNull();
-    expect(hostedMainElement.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(hostedMainElement.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
     expect(screen.getByTestId("left-pane-width").textContent).toBe("240");
     expect(screen.getByTestId("right-pane-width").textContent).toBe("400");
     expect(within(screen.getByTestId("hosted-chat-main")).queryByRole("navigation", { name: "Chat navigation" })).toBeNull();
@@ -1157,6 +1159,16 @@ describe("WorkTab rail integration", () => {
 
     fireEvent.click(hideInspector);
     expect(screen.getByRole("button", { name: "Show inspector" })).toBeTruthy();
+
+    // Below the combined 360px chat and 240px inspector minimum widths, the
+    // exclusive inspector must begin below the still-interactive window toolbar.
+    resizeWork(599);
+    fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const narrowInspector = screen.getByRole("complementary", { name: "Chat inspector" }).parentElement!;
+    expect(narrowInspector.style.top).toBe("48px");
+    expect(screen.getByRole("button", { name: "Rename Global chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Hide inspector" }));
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 
   it("renames the active Chat from a single click on the center header", async () => {
@@ -1278,7 +1290,7 @@ describe("WorkTab rail integration", () => {
     await screen.findByText("Chat center");
 
     expect(screen.getByTestId("draft-chrome").textContent).toBe("");
-    expect(document.querySelector("[data-work-main-header]")?.className).toContain("h-12");
+    expect(document.querySelector("[data-chat-header-reserved=true]")).toBeTruthy();
   });
 
   it("returns a stale narrow inspector to Chat when Work becomes inactive", async () => {
@@ -1411,8 +1423,30 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByText("Chat center")).toBeTruthy();
     expect(inspectorProps.active.at(-1)).toBe(false);
   });
+  it("reserves hosted toolbar space for Agents and Schedules without offsetting the inspector", async () => {
+    const tab = { id: "hosted-agent-spacing", kind: "work" as const, title: "Chat", workRoute: "chat" as const, closable: false };
+    function Hosted() {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <WorkSurfaceRuntimeProvider active><HostedWorkSidebar tab={tab} active/>
+        <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
+          <WorkTab route="chat" active visible initialChatId="chat_global" initialChatView="conversation"/>
+        </SurfaceChromeContext.Provider></WorkSurfaceRuntimeProvider>;
+    }
+    const view = render(<Hosted/>);
+    const root = view.container.querySelector<HTMLElement>("[data-chat-header-reserved]")!;
+    expect(root.style.paddingTop).toBe("");
+    for (const name of ["Agents", "Schedules"]) {
+      fireEvent.click(await screen.findByRole("button", { name, exact: true }));
+      await waitFor(() => expect(root.style.paddingTop).toBe("3rem"));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Close schedules" }));
+    await waitFor(() => expect(root.style.paddingTop).toBe(""));
+  });
 });
 
 it("keeps narrow archive navigation available when the page has no inspector", () => {
  expect(effectiveNarrowPane({layout:"narrow",navigationOpen:true,inspectorOpen:false,narrowPane:"rail",narrowPaneRouteKey:"archive"},"archive",false)).toBe("rail");
+
+
 });
