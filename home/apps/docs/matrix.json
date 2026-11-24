@@ -2,7 +2,7 @@
   "name": "Docs",
   "description": "Edit .docx documents with tracked changes, comments and agent edits you accept or reject",
   "category": "productivity",
-  "icon": "document",
+  "icon": "v3-docs",
   "author": "system",
   "version": "0.1.0",
   "slug": "docs",

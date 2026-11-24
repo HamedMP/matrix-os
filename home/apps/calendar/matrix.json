@@ -2,7 +2,7 @@
   "name": "Calendar",
   "description": "Google and Outlook calendars with free-busy overlays and agent proposals you approve",
   "category": "productivity",
-  "icon": "calendar",
+  "icon": "v3-calendar",
   "author": "system",
   "version": "0.1.0",
   "slug": "calendar",

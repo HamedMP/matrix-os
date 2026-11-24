@@ -9,6 +9,9 @@ import { AgendaView } from "./AgendaView";
 import { MonthView } from "./MonthView";
 import { TimeGrid } from "./TimeGrid";
 
+/** The launcher artwork, shown where the app introduces itself. */
+const appArtwork = new URL("../../../../system/icons/v3-calendar.png", import.meta.url).href;
+
 export interface CalendarMainProps {
   store: CalendarStore;
   state: CalendarState;
@@ -40,7 +43,7 @@ export function CalendarMain(props: CalendarMainProps) {
   if (noAccounts && state.accountsStatus === "ready") {
     return (
       <EmptyState
-        icon={<CalendarDays />}
+        icon={<img className="oui-empty__artwork" src={appArtwork} alt="" width={80} height={80} draggable={false} />}
         headline="Connect a calendar"
         description="Connect Google Calendar or Outlook in Settings, Integrations. Your events appear here, and invites go out only after you confirm."
         action={{ label: "Check again", onClick: () => void store.loadAccounts() }}

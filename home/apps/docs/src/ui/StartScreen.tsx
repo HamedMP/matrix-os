@@ -4,6 +4,9 @@ import { FilePlus2, FileText, FileType2, FolderOpen, HardDrive } from "lucide-re
 import { AppFrame, EmptyState, Spinner } from "../../../_shared/office-ui";
 import { type RecentFile, type SessionError, directoryOf } from "../session/index";
 
+/** The launcher artwork, shown where the app introduces itself. */
+const appArtwork = new URL("../../../../system/icons/v3-docs.png", import.meta.url).href;
+
 export interface StartScreenProps {
   recents: readonly RecentFile[];
   loading: boolean;
@@ -68,7 +71,7 @@ export function StartScreen({ recents, loading, error, onNewBlank, onOpen, onOpe
           </h2>
           {recents.length === 0 ? (
             <EmptyState
-              icon={<FileText />}
+              icon={<img className="oui-empty__artwork" src={appArtwork} alt="" width={80} height={80} draggable={false} />}
               headline="No recent documents"
               description="Documents you open appear here."
               action={loading ? undefined : { label: "Browse files…", onClick: onOpen }}

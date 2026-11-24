@@ -10,6 +10,9 @@ import { MailWorkspace } from "./MailWorkspace";
 import { useMailAccounts, type AccountsLoader } from "./use-mail-accounts";
 import { useMailStore, type StoreFactory } from "./use-mail-store";
 
+/** The launcher artwork, shown where the app introduces itself. */
+const appArtwork = new URL("../../../../system/icons/v3-mail.png", import.meta.url).href;
+
 export interface MailRootProps {
   loadAccounts?: AccountsLoader;
   createStore?: StoreFactory;
@@ -50,7 +53,7 @@ export function MailRoot(props: MailRootProps) {
         <AppFrame className="mail-app" title="Mail" titleIcon={<Mail size={18} />}>
           <div className="mail-onboarding">
             <EmptyState
-              icon={<Plug />}
+              icon={<img className="oui-empty__artwork" src={appArtwork} alt="" width={80} height={80} draggable={false} />}
               headline="Connect your mail"
               description="Open Settings > Integrations and connect Gmail or Outlook. Your mail stays in your account; Mail reads it through that connection, and nothing is sent without your click."
               action={{ label: "I have connected an account", onClick: reload }}

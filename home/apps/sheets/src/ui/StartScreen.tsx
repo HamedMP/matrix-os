@@ -1,8 +1,11 @@
 /** What Sheets shows with no workbook open: recent files and ways to start. */
-import { ClipboardPaste, FileSpreadsheet, FolderOpen, Laptop, Plus, Table } from "lucide-react";
+import { ClipboardPaste, FileSpreadsheet, FolderOpen, Laptop, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, Spinner } from "../../../_shared/office-ui";
 import type { RecentFile, RecentFiles } from "../session";
+
+/** The launcher artwork, shown where the app introduces itself. */
+const appArtwork = new URL("../../../../system/icons/v3-sheets.png", import.meta.url).href;
 
 export interface StartScreenProps {
   recents: RecentFiles;
@@ -68,7 +71,7 @@ export function StartScreen({ recents, opening, onNew, onOpen, onOpenLocal, onIm
         <h2 id="sheets-recent-heading">Recent workbooks</h2>
         {files === null && <Spinner label="Loading recent workbooks" />}
         {files !== null && files.length === 0 && (
-          <EmptyState icon={<Table />} headline="No recent workbooks" description="Workbooks you open or save appear here. Open one from Files or start a new one." />
+          <EmptyState icon={<img className="oui-empty__artwork" src={appArtwork} alt="" width={80} height={80} draggable={false} />} headline="No recent workbooks" description="Workbooks you open or save appear here. Open one from Files or start a new one." />
         )}
         {files !== null && files.length > 0 && (
           <ul className="sheets-start__list">

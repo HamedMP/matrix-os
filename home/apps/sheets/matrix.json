@@ -2,7 +2,7 @@
   "name": "Sheets",
   "description": "Edit .xlsx and .csv spreadsheets with formulas and agent cell changes you review",
   "category": "productivity",
-  "icon": "grid",
+  "icon": "v3-sheets",
   "author": "system",
   "version": "0.1.0",
   "storage": {

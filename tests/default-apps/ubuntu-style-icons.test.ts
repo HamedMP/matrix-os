@@ -42,7 +42,7 @@ describe("distinct bundled app artwork", () => {
     expect(data[3]).toBeLessThan(12);
   });
 
-  it.each(["chess", "clock", "expense-tracker", "app-gallery", "minesweeper", "pomodoro-timer", "resource-manager", "snake", "solitaire", "task-manager", "tetris", "weather", "calculator", "2048", "backgammon", "game-center", "todo"])(
+  it.each(["chess", "clock", "expense-tracker", "app-gallery", "minesweeper", "pomodoro-timer", "resource-manager", "snake", "solitaire", "task-manager", "tetris", "weather", "calculator", "2048", "backgammon", "game-center", "todo", "mail", "calendar", "docs", "sheets"])(
     "renders %s with a transparent, independent silhouette",
     async (stem) => {
       const png = await readFile(`home/system/icons/v3-${stem}.png`);
@@ -61,6 +61,10 @@ describe("distinct bundled app artwork", () => {
       calculator: "home/apps/calculator/matrix.json",
       "expense-tracker": "home/apps/expense-tracker/matrix.json",
       todo: "home/apps/todo/matrix.json",
+      mail: "home/apps/mail/matrix.json",
+      calendar: "home/apps/calendar/matrix.json",
+      docs: "home/apps/docs/matrix.json",
+      sheets: "home/apps/sheets/matrix.json",
     };
     for (const [stem, path] of Object.entries(manifests)) {
       const manifest = JSON.parse(await readFile(path, "utf8")) as { icon: string };
