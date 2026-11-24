@@ -59,7 +59,7 @@ export function EmptyState({
   composerKey: string;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
-  pending?: boolean;
+  pending: boolean;
   mobile: boolean;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
