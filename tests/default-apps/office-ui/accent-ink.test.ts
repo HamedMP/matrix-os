@@ -16,7 +16,11 @@ const read = (...parts: string[]) => readFileSync(join(APPS, ...parts), "utf-8")
 
 const KIT = read("_shared", "office-ui", "office-ui.css");
 /** App stylesheets held to the ink rule; each office app adds its own. */
-const APP_SHEETS: Record<string, string> = {};
+const APP_SHEETS: Record<string, string> = {
+  "docs/styles.css": read("docs", "src", "styles.css"),
+  "docs/editor.css": read("docs", "src", "editor", "editor.css"),
+  "docs/review.css": read("docs", "src", "ui", "review", "review.css"),
+};
 
 type Rgb = [number, number, number];
 const hex = (value: string): Rgb => [1, 3, 5].map((at) => Number.parseInt(value.slice(at, at + 2), 16)) as Rgb;

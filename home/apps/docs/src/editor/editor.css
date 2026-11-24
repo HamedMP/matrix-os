@@ -1,0 +1,332 @@
+/* Docs editor: a continuous sheet of page width on a muted desk.
+   Colours come from the shared --app-* tokens; author colours are hues that
+   read on both light and dark sheets. */
+
+.doc-editor-host {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  background: var(--app-muted);
+}
+
+.doc-editor {
+  --doc-font: "Calibri", "Carlito", "Helvetica Neue", Arial, sans-serif;
+  --doc-sheet: var(--app-card);
+  --doc-ink: var(--app-fg);
+  --doc-rule: var(--app-border);
+  --doc-author-1: hsl(210 80% 45%);
+  --doc-author-2: hsl(350 70% 48%);
+  --doc-author-3: hsl(150 60% 34%);
+  --doc-author-4: hsl(28 85% 44%);
+  --doc-author-5: hsl(275 55% 52%);
+  --doc-author-6: hsl(185 70% 34%);
+  --doc-author-7: hsl(325 65% 46%);
+  --doc-author-8: hsl(95 50% 34%);
+  padding: 24px 16px 96px;
+  box-sizing: border-box;
+}
+
+.doc-page {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0 auto;
+  background: var(--doc-sheet);
+  color: var(--doc-ink);
+  border: 1px solid var(--doc-rule);
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--app-fg) 12%, transparent);
+  font-family: var(--doc-font);
+  font-size: 11pt;
+  line-height: 1.3;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-content {
+  flex: 1 1 auto;
+  outline: none;
+  cursor: text;
+  overflow-wrap: anywhere;
+  caret-color: var(--doc-ink);
+}
+
+/* The sheet and the caret show where the owner types; the app-wide focus ring would frame the text column. */
+:root .doc-content[contenteditable]:focus-visible {
+  outline: none;
+}
+
+.doc-header,
+.doc-footer {
+  color: var(--app-muted-fg);
+  font-size: 9.5pt;
+  user-select: none;
+}
+
+.doc-header:not(:empty) {
+  margin-bottom: 12pt;
+  padding-bottom: 6pt;
+  border-bottom: 1px dashed var(--doc-rule);
+}
+
+.doc-footer:not(:empty) {
+  margin-top: 24pt;
+  padding-top: 6pt;
+  border-top: 1px dashed var(--doc-rule);
+}
+
+.doc-notes:not(:empty) {
+  margin-top: 28pt;
+  padding-top: 8pt;
+  border-top: 1px solid var(--doc-rule);
+  font-size: 9.5pt;
+}
+
+.doc-note + .doc-note {
+  margin-top: 4pt;
+}
+
+/* ---------------------------------------------------------------- paragraphs */
+
+.doc-p {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  white-space: pre-wrap;
+  tab-size: 36pt;
+  min-height: 1.3em;
+}
+
+/* A paragraph that runs on into the one before it (final and original views). */
+.doc-p > .doc-p {
+  display: inline;
+  margin: 0 !important;
+  text-indent: 0 !important;
+}
+
+.doc-p > .doc-p > .doc-num,
+.doc-p > .doc-p > br[data-doc-filler] {
+  display: none;
+}
+
+.doc-p[data-heading="1"] { font-size: 16pt; }
+.doc-p[data-heading="2"] { font-size: 13pt; }
+.doc-p[data-heading="3"] { font-size: 12pt; }
+
+.doc-num {
+  display: inline-block;
+  text-indent: 0;
+  padding-right: 0.5em;
+  box-sizing: border-box;
+  user-select: none;
+  white-space: pre;
+}
+
+.doc-tab {
+  white-space: pre;
+}
+
+.doc-sup {
+  vertical-align: super;
+  font-size: 0.75em;
+}
+
+.doc-sub {
+  vertical-align: sub;
+  font-size: 0.75em;
+}
+
+.doc-link {
+  color: var(--oui-accent-ink, var(--app-primary));
+  text-decoration: underline;
+  cursor: text;
+}
+
+.doc-field {
+  background: color-mix(in srgb, var(--app-fg) 6%, transparent);
+  border-radius: 2px;
+}
+
+.doc-note-ref {
+  color: var(--oui-accent-ink, var(--app-primary));
+  font-size: 0.75em;
+  padding: 0 1px;
+}
+
+.doc-object {
+  user-select: all;
+}
+
+.doc-image {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 24pt;
+  min-height: 18pt;
+  max-width: 100%;
+  padding: 2pt 6pt;
+  border: 1px dashed var(--doc-rule);
+  border-radius: 3px;
+  background: var(--app-muted);
+  color: var(--app-muted-fg);
+  font-size: 8.5pt;
+  vertical-align: bottom;
+  overflow: hidden;
+}
+
+.doc-object[data-object="other"]::before {
+  content: "\25A1";
+  color: var(--app-muted-fg);
+}
+
+.doc-object[data-object="page-break"],
+.doc-object[data-object="column-break"] {
+  display: block;
+  height: 0;
+  margin: 10pt 0;
+  border-top: 1px dashed var(--doc-rule);
+}
+
+.doc-page-break-before {
+  border-top: 1px dashed var(--doc-rule);
+  padding-top: 10pt;
+}
+
+.doc-section-break {
+  height: 0;
+  margin: 12pt 0;
+  border-top: 1px dashed var(--doc-rule);
+  user-select: none;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.doc-table {
+  border-collapse: collapse;
+  max-width: 100%;
+  margin: 4pt 0;
+  table-layout: fixed;
+}
+
+.doc-cell {
+  border: 1px solid var(--doc-rule);
+  padding: 3pt 5pt;
+  vertical-align: top;
+  font-weight: inherit;
+  text-align: inherit;
+}
+
+.doc-row-rev-insert > .doc-cell {
+  background: color-mix(in srgb, var(--app-success) 10%, transparent);
+}
+
+.doc-row-rev-delete > .doc-cell {
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+}
+
+/* ---------------------------------------------------------------- tracked changes */
+
+[data-author-color="1"] { --doc-author: var(--doc-author-1); }
+[data-author-color="2"] { --doc-author: var(--doc-author-2); }
+[data-author-color="3"] { --doc-author: var(--doc-author-3); }
+[data-author-color="4"] { --doc-author: var(--doc-author-4); }
+[data-author-color="5"] { --doc-author: var(--doc-author-5); }
+[data-author-color="6"] { --doc-author: var(--doc-author-6); }
+[data-author-color="7"] { --doc-author: var(--doc-author-7); }
+[data-author-color="8"] { --doc-author: var(--doc-author-8); }
+
+.doc-rev-insert {
+  color: var(--doc-author);
+  text-decoration: underline;
+  text-decoration-color: var(--doc-author);
+}
+
+.doc-rev-delete {
+  color: var(--doc-author);
+  text-decoration: line-through;
+  text-decoration-color: var(--doc-author);
+}
+
+.doc-rev-moveFrom {
+  color: var(--doc-author);
+  text-decoration: line-through double;
+  text-decoration-color: var(--doc-author);
+}
+
+.doc-rev-moveTo {
+  color: var(--doc-author);
+  text-decoration: underline double;
+  text-decoration-color: var(--doc-author);
+}
+
+.doc-rev-format {
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--doc-author) 35%, transparent);
+}
+
+.doc-mark {
+  padding-left: 1px;
+  user-select: none;
+}
+
+/* The bar in the margin of a paragraph that carries a change. */
+.doc-changed::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -14pt;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--doc-author, var(--app-muted-fg));
+}
+
+.doc-cell .doc-changed::before {
+  left: -4pt;
+}
+
+.doc-changed-format::before {
+  width: 3px;
+  background: repeating-linear-gradient(to bottom, var(--doc-author, var(--app-muted-fg)) 0 3px, transparent 3px 5px);
+}
+
+/* ---------------------------------------------------------------- comments and highlights */
+
+.doc-comment {
+  background: color-mix(in srgb, var(--app-warning) 22%, transparent);
+}
+
+.doc-hl-search {
+  background: color-mix(in srgb, var(--app-warning) 45%, transparent);
+}
+
+.doc-hl-search.is-current {
+  background: color-mix(in srgb, var(--app-warning) 80%, transparent);
+  outline: 1px solid var(--app-warning);
+}
+
+.doc-hl-comment {
+  background: color-mix(in srgb, var(--app-warning) 50%, transparent);
+  box-shadow: inset 0 -2px 0 var(--app-warning);
+}
+
+.doc-hl-proposal {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
+  box-shadow: inset 0 -2px 0 var(--oui-accent-ink, var(--app-primary));
+}
+
+.doc-page[data-view-mode="original"] .doc-content {
+  cursor: default;
+}
+
+@media (max-width: 720px) {
+  .doc-editor {
+    padding: 8px 4px 64px;
+  }
+
+  .doc-page {
+    width: 100% !important;
+    padding: 24pt 18pt !important;
+  }
+}
