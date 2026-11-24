@@ -13,6 +13,7 @@ import { DesktopResourceSharing } from "./DesktopResourceSharing";
 import { DesktopOrganizationDrivesView } from "./DesktopOrganizationDrivesView";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
 import { openExactFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { openFileWithDefaultApp, openWithFailureMessage, openWithTargetPath } from "./office-open-with";
 
 export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
@@ -120,6 +121,16 @@ export default function FilesWorkspace() {
   useEffect(() => {
     if (newItemRequest !== null) newItemInputRef.current?.focus();
   }, [newItemRequest]);
+
+  const openWithDefaultApp = useCallback((path: string) => {
+    const connection = useConnection.getState();
+    if (!connection.api) return;
+    const { runtimeSlot: slot, authGeneration: generation } = connection;
+    const isCurrent = () => useConnection.getState().runtimeSlot === slot && useConnection.getState().authGeneration === generation;
+    void openFileWithDefaultApp(path, { api: connection.api.forRuntime(slot), isCurrent }).then((result) => {
+      if (result.status === "failed") toast.error(openWithFailureMessage(result.app, path));
+    });
+  }, []);
 
   const updateTabPath = useCallback((tabId: string, path: string) => {
     setTabs((current) => current.map((tab) => tab.id === tabId
@@ -275,7 +286,11 @@ export default function FilesWorkspace() {
         <button type="button" aria-label="Open Matrix home in new tab" onClick={() => openFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
       </div>
       <div data-testid="files-workspace-panes" data-layout={previewSelection ? "preview" : "browser"} className={`grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${previewSelection ? "grid-rows-[minmax(220px,40%)_minmax(0,1fr)] md:grid-cols-[minmax(320px,3fr)_minmax(300px,2fr)] md:grid-rows-1" : "grid-rows-1"}`} style={{ background: "var(--bg-surface)" }}>
-        <div data-testid="files-home-content" className="flex min-h-0 min-w-0 flex-col">
+        <div data-testid="files-home-content" role="presentation" className="flex min-h-0 min-w-0 flex-col" onDoubleClick={(event) => {
+          // Rows double-click to open; a file with a default app opens in that app.
+          const target = openWithTargetPath(event.target, previewSelection?.path ?? null, previewSelection?.entry.sizeBytes);
+          if (target) openWithDefaultApp(target);
+        }}>
           {tabs.map((tab) => {
             const active = tab.id === visibleActiveTabId;
             return (
@@ -319,6 +334,7 @@ export default function FilesWorkspace() {
               onEdit={(path) => {
                 if (!openExactFileInDesktopEditor(path)) toast.error("The file could not be opened in the editor.");
               }}
+              onOpenWith={openWithDefaultApp}
               onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))}
             />
           </Suspense>

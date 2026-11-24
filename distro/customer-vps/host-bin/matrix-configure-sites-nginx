@@ -16,6 +16,11 @@ LOCATION = 'location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site$" {'
 # default read budget. Only the exact transcription path gets the larger limits.
 SPEECH_MARKER = "# matrix-speech-upload-limit-v1"
 SPEECH_LOCATION = "location = /api/speech/transcriptions {"
+# Docs and Sheets save a file of up to 10 MiB as base64 in a JSON envelope of
+# about 13.4 MiB. Only the exact app file path gets the larger body limit.
+FILES_MARKER = "# matrix-app-file-upload-limit-v1"
+FILES_LOCATION = "location = /api/bridge/files {"
+FILES_BODY_LIMIT = "15m"
 API = re.compile(r"(?m)^(?P<indent>[ \t]*)location /api/ \{\n(?P<body>(?:[^\n{}]*\n)+?)(?P=indent)\}")
 MAX_BYTES = 1024 * 1024
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
@@ -53,6 +58,9 @@ def upgrade(text):
     speech = (indent + SPEECH_MARKER + "\n" + indent + SPEECH_LOCATION + "\n"
               + indent + "  client_max_body_size 21m;\n" + indent + "  proxy_read_timeout 90s;\n"
               + re.sub(r"(?m)^[ \t]*client_max_body_size[^;\n]*;\n", "", body) + indent + "}\n\n")
+    files = (indent + FILES_MARKER + "\n" + indent + FILES_LOCATION + "\n"
+             + indent + "  client_max_body_size " + FILES_BODY_LIMIT + ";\n"
+             + re.sub(r"(?m)^[ \t]*client_max_body_size[^;\n]*;\n", "", body) + indent + "}\n\n")
     if MARKER in text:
         if text.count(MARKER) != 1 or block + match[0] not in text:
             raise ValueError("Changed managed publishing location")
@@ -65,11 +73,22 @@ def upgrade(text):
     if SPEECH_MARKER in text:
         if text.count(SPEECH_MARKER) != 1 or speech + block + match[0] not in text:
             raise ValueError("Changed managed speech location")
-        return text
-    if SPEECH_LOCATION in text:
+    elif SPEECH_LOCATION in text:
         raise ValueError("Unrecognized speech location")
-    anchor = text.index(block + match[0])
-    return text[:anchor] + speech + text[anchor:]
+    else:
+        anchor = text.index(block + match[0])
+        text = text[:anchor] + speech + text[anchor:]
+    # The app file block goes above the speech block for the same reason: the
+    # three locations below it stay exactly as earlier helpers expect them.
+    managed = speech + block + match[0]
+    if FILES_MARKER in text:
+        if text.count(FILES_MARKER) != 1 or files + managed not in text:
+            raise ValueError("Changed managed app file location")
+        return text
+    if FILES_LOCATION in text:
+        raise ValueError("Unrecognized app file location")
+    anchor = text.index(managed)
+    return text[:anchor] + files + text[anchor:]
 
 
 def replace(fd, name, data, info):

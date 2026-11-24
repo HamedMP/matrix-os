@@ -1,6 +1,7 @@
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, CollaborationSafeErrorCodeSchema, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
+import { registerNativeAppFilesIpc, type NativeAppFilesRequester } from "./native-app-files";
 export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
 import { nativeBrowserProduct } from "../../shared/browser-products";
@@ -74,6 +75,7 @@ interface NativeAppBridgeOptions {
   aiRequest: (slug: string, input: AppAiInput, signal?: AbortSignal) => Promise<unknown>;
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
   aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
+  filesRequest?: NativeAppFilesRequester;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
   collaborationRequest?: (slug: string, request: NativeAppCollaborationRequest) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown>;
@@ -524,6 +526,7 @@ export class NativeAppBridge {
         aiRoutes: (sender) => this.aiRoutes(sender),
       });
     }
+    if (this.options.filesRequest) registerNativeAppFilesIpc(ipcMain, this.options.filesRequest, (sender) => this.authorizeCapability(sender));
     if (this.options.resolveApp || this.options.openApp) {
       if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependencies are required");
       ipcMain.handle(NATIVE_APP_OPEN_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {

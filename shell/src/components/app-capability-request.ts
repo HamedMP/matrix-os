@@ -1,4 +1,10 @@
 import { prepareAppAiRequest } from "./app-ai-request";
+import {
+  APP_FILES_BRIDGE_PATH, APP_FILE_TIMEOUT_MS, AppFileErrorBodySchema, AppFileInputSchema, AppFileListReplySchema, AppFileMkdirReplySchema,
+  AppFileReadReplySchema, AppFileStatReplySchema, AppFileWriteReplySchema, MAX_APP_FILE_REQUEST_BYTES, appFileReplyBytes, appFileRequestBytes,
+  type AppFileKind,
+} from "@matrix-os/contracts/app-files";
+import type { z } from "zod/v4";
 import { AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appCapabilityReplyBytes, APP_CAPABILITY_TIMEOUT_MS } from "@matrix-os/contracts";
 
 /** Requests supplied by apps never choose the authenticated app identity. */
@@ -17,6 +23,7 @@ export function prepareAppCapabilityRequest(app: string, init: RequestInit): Req
 
 export { MAX_APP_BRIDGE_REPLY_BYTES };
 export function appBridgeTimeoutMs(url: string): number {
+  if (url === APP_FILES_BRIDGE_PATH) return APP_FILE_TIMEOUT_MS;
   const galleryInstall = /^\/api\/app-gallery\/[a-z][a-z0-9-]{0,47}\/install$/.test(url);
   return galleryInstall || url === "/api/bridge/ai" || url.startsWith("/api/bridge/ai/routes?") || url === "/api/bridge/capabilities" ? APP_CAPABILITY_TIMEOUT_MS : 10_000;
 }
@@ -30,7 +37,11 @@ function replyBytes(request?: {url:string;init:RequestInit}): number {
 
 /** Bound the body while reading, rather than buffering an unlimited JSON reply. */
 export async function readAppBridgeResponse(response: Response, request?: {url:string;init:RequestInit}): Promise<unknown> {
-  const maxBytes = replyBytes(request);
+  if (request?.url === APP_FILES_BRIDGE_PATH) return readAppFileResponse(response, request.init);
+  return readBoundedJson(response, replyBytes(request));
+}
+
+async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
   if (!response.body?.getReader) {
     const text = await response.text();
     if (new TextEncoder().encode(text).length > maxBytes) throw new Error("App response unavailable");
@@ -57,6 +68,7 @@ export async function readAppBridgeResponse(response: Response, request?: {url:s
 
 
 export function prepareAppBridgeFetch(app: string, url: string, init: RequestInit): { url: string; init: RequestInit } {
+  if (url === APP_FILES_BRIDGE_PATH) return { url, init: prepareAppFileRequest(app, init) };
   if (url === "/api/bridge/ai") return { url, init: prepareAppAiRequest(app, init) };
   if (url === "/api/bridge/ai/routes") return { url: `${url}?app=${encodeURIComponent(AppIdentitySchema.parse(app))}`, init: { method: "GET" } };
   if (url === "/api/bridge/capabilities") return { url, init: prepareAppCapabilityRequest(app, init) };
@@ -82,4 +94,71 @@ export function prepareAppBridgeFetch(app: string, url: string, init: RequestIni
     return { url, init: { method: "POST", headers: { "content-type": "application/json" }, body } };
   }
   return { url, init };
+}
+
+// ---------------------------------------------------------------- app files
+
+/** Kind of each bound file request, so the reply can be bounded without re-parsing a large body. */
+const appFileRequestKinds = new WeakMap<RequestInit, AppFileKind>();
+const APP_FILE_REPLY_SCHEMAS: Record<AppFileKind, z.ZodType> = {
+  "files.list": AppFileListReplySchema,
+  "files.stat": AppFileStatReplySchema,
+  "files.read": AppFileReadReplySchema,
+  "files.write": AppFileWriteReplySchema,
+  "files.mkdir": AppFileMkdirReplySchema,
+};
+
+function utf8BytesWithin(text: string, maxBytes: number): boolean {
+  if (text.length > maxBytes) return false;
+  return text.length * 3 <= maxBytes || new TextEncoder().encode(text).length <= maxBytes;
+}
+
+/**
+ * Binds the trusted app identity to a file request. The app sends only the
+ * input; any `app` it names is dropped. Only a write may use the large body cap.
+ */
+export function prepareAppFileRequest(app: string, init: RequestInit): RequestInit {
+  AppIdentitySchema.parse(app);
+  if (init.method !== "POST" || typeof init.body !== "string" || !utf8BytesWithin(init.body, MAX_APP_FILE_REQUEST_BYTES)) {
+    throw new Error("Invalid app file request");
+  }
+  const raw: unknown = JSON.parse(init.body);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid app file request");
+  const candidate: Record<string, unknown> = { ...raw };
+  delete candidate.app;
+  const input = AppFileInputSchema.parse(candidate);
+  const maxBytes = appFileRequestBytes(input.kind);
+  const body = JSON.stringify({ app, input });
+  if (!utf8BytesWithin(init.body, maxBytes) || !utf8BytesWithin(body, maxBytes)) throw new Error("Invalid app file request");
+  const bound: RequestInit = { method: "POST", headers: { "content-type": "application/json" }, body };
+  appFileRequestKinds.set(bound, input.kind);
+  return bound;
+}
+
+function appFileKindOf(init: RequestInit): AppFileKind {
+  const known = appFileRequestKinds.get(init);
+  if (known) return known;
+  if (typeof init.body !== "string") throw new Error("Invalid app file request");
+  const parsed: unknown = JSON.parse(init.body);
+  if (!parsed || typeof parsed !== "object" || !("input" in parsed)) throw new Error("Invalid app file request");
+  return AppFileInputSchema.parse(parsed.input).kind;
+}
+
+/**
+ * A success reply must match the reply schema of its kind; anything else is
+ * refused. A failure reply passes on only as the contract's error body; the
+ * frame maps a missing body to a code by status.
+ */
+async function readAppFileResponse(response: Response, init: RequestInit): Promise<unknown> {
+  const kind = appFileKindOf(init);
+  if (!response.ok) {
+    try {
+      const failure = AppFileErrorBodySchema.safeParse(await readBoundedJson(response, MAX_APP_BRIDGE_REPLY_BYTES));
+      return failure.success ? failure.data : null;
+    } catch (error: unknown) {
+      console.warn("[app-bridge] file error body unavailable", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
+  }
+  return APP_FILE_REPLY_SCHEMAS[kind].parse(await readBoundedJson(response, appFileReplyBytes(kind)));
 }

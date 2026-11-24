@@ -35,8 +35,8 @@ import {
   createNativeAppQueryRequester,
   createNativeAppCollaborationRequester,
   createNativeAppGatewayRequester,
-  createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
+import { createNativeAppOwnerRequesters } from "./embeds/native-app-owner-requesters";
 import {
   abortCodingAgentThread,
   createCodingAgentSourcePullRequest,
@@ -95,7 +95,6 @@ import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
-import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
@@ -536,15 +535,8 @@ if (!gotLock) {
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
           sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
         },
-        capabilityRequest: createNativeAppCapabilityRequester({
-          getGatewayOrigin: () => auth.getGatewayOrigin(),
-          getToken: () => auth.getToken(),
-        }),
-        aiRoutesRequest: createNativeAppAiRoutesRequester({
-          getGatewayOrigin: () => auth.getGatewayOrigin(),
-          getToken: () => auth.getToken(),
-        }),
-        aiRequest: createNativeAppAiRequester({
+        // Capabilities, AI, and the app file bridge (files.* and open requests).
+        ...createNativeAppOwnerRequesters({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),
         }),

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { parse } from 'yaml';
+import { APP_FILE_MAX_BYTES, MAX_APP_FILE_REQUEST_BYTES } from '../../packages/contracts/src/app-files';
 
 const helper = resolve('distro/customer-vps/host-bin/matrix-configure-sites-nginx');
 // The production-host integration cases require its nginx binary; generic CI
@@ -72,8 +73,8 @@ nginxIt('updates an existing VPS atomically, preserves API authentication and is
  await configuration(root, original); migrate(root);
  const path = join(root, 'etc/nginx/sites-available/matrix'), changed = await readFile(path, 'utf8');
  expect(changed).toContain('proxy_read_timeout 300s;');
- // The publishing and speech locations each clone the API authentication.
- expect(changed.match(/proxy_set_header Authorization "Bearer fixture-only";/g)).toHaveLength(3);
+ // The publishing, speech and app file locations each clone the API authentication.
+ expect(changed.match(/proxy_set_header Authorization "Bearer fixture-only";/g)).toHaveLength(4);
  expect(changed).toContain(original.slice(original.indexOf('  location /api/')));
  migrate(root); expect(await readFile(path, 'utf8')).toBe(changed);
  const prerequisites = await readFile('distro/customer-vps/host-bin/matrix-prepare-host-prerequisites', 'utf8');
@@ -139,4 +140,57 @@ it('provisions the same speech upload location for self-hosted installs', async 
  expect(speech).toContain('client_max_body_size 21m;');
  expect(speech).toContain('proxy_read_timeout 90s;');
  expect(speech).toContain('include /opt/matrix/env/gateway-auth-token.conf;');
+});
+nginxIt('lets an existing VPS accept the save of a 10 MiB document while other API paths keep the 10 MB limit', async () => {
+ // Fault: nginx answered 413 for the save of any document over about 7.5 MiB
+ // (base64 in a JSON envelope) before the gateway saw it, so the owner could
+ // open the file in Docs or Sheets and never save it.
+ const root = await fixture();
+ const upstream = createServer((req, res) => { req.resume(); req.on('end', () => res.end('saved')); });
+ await new Promise<void>(resolve => upstream.listen(join(root, 'up.sock'), resolve));
+ try {
+  const original = `server { listen unix:${root}/front.sock; server_name _;\n  client_max_body_size 10m;\n  location /api/ {\n    proxy_set_header Authorization "Bearer fixture-only";\n    proxy_pass http://127.0.0.1:4000;\n  }\n}\n`;
+  await configuration(root, original); migrate(root);
+  const path = join(root, 'etc/nginx/sites-available/matrix'), migrated = await readFile(path, 'utf8');
+  expect(migrated).toContain('# matrix-app-file-upload-limit-v1\n  location = /api/bridge/files {\n    client_max_body_size 15m;\n    proxy_set_header Authorization "Bearer fixture-only";\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n  # matrix-speech-upload-limit-v1\n');
+  // Helpers from earlier bundles verify that the speech, publishing and API
+  // locations follow each other directly; the new location sits above all three.
+  expect(migrated).toContain('    proxy_read_timeout 90s;\n    proxy_set_header Authorization "Bearer fixture-only";\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n  # matrix-sites-publish-timeout-v1\n');
+  expect(migrated).toContain('    proxy_read_timeout 300s;\n    proxy_set_header Authorization "Bearer fixture-only";\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n  location /api/ {');
+  migrate(root); expect(await readFile(path, 'utf8')).toBe(migrated);
+  await writeFile(path, migrated.replaceAll('http://127.0.0.1:4000', `http://unix:${root}/up.sock:`));
+  await writeFile(join(root, 'etc/nginx/nginx.conf'), (await readFile(join(root, 'etc/nginx/nginx.conf'), 'utf8')).replace('proxy_read_timeout 80ms;', 'proxy_read_timeout 5s;'));
+  const child = spawn('/usr/sbin/nginx', ['-p', root, '-c', join(root, 'etc/nginx/nginx.conf'), '-g', 'daemon off; master_process off;'], { stdio: 'ignore' }); children.push(child);
+  await waitForSocket(join(root, 'front.sock'), child);
+  expect(await upload(root, '/api/bridge/files', MAX_APP_FILE_REQUEST_BYTES)).toBe(200);
+  expect(await upload(root, '/api/bridge/files', 16 * 1024 * 1024)).toBe(413);
+  expect(await upload(root, '/api/bridge/data', MAX_APP_FILE_REQUEST_BYTES)).toBe(413);
+  expect(await upload(root, '/api/bridge/files/extra', MAX_APP_FILE_REQUEST_BYTES)).toBe(413);
+ } finally { await new Promise<void>(resolve => upstream.close(() => resolve())); }
+});
+it('upgrades a VPS that an earlier helper already gave the speech location, and only once', async () => {
+ const upgrade = (text: string) => execFileSync('/usr/bin/python3', ['-I', '-B', '-c', 'import sys\nfrom importlib.machinery import SourceFileLoader\nsys.stdout.write(SourceFileLoader("matrix_nginx", sys.argv[1]).load_module().upgrade(sys.stdin.read()))', helper], { input: text, encoding: 'utf8', timeout: 15000 });
+ const api = '  location /api/ {\n    proxy_pass http://127.0.0.1:4000;\n  }';
+ const publishing = '  # matrix-sites-publish-timeout-v1\n  location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site$" {\n    proxy_read_timeout 300s;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n';
+ const speech = '  # matrix-speech-upload-limit-v1\n  location = /api/speech/transcriptions {\n    client_max_body_size 21m;\n    proxy_read_timeout 90s;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n';
+ const files = '  # matrix-app-file-upload-limit-v1\n  location = /api/bridge/files {\n    client_max_body_size 15m;\n    proxy_pass http://127.0.0.1:4000;\n  }\n\n';
+ const wrap = (locations: string) => `server {\n  client_max_body_size 10m;\n${locations}\n}\n`;
+ const upgraded = wrap(files + speech + publishing + api);
+ expect(upgrade(wrap(speech + publishing + api))).toBe(upgraded);
+ expect(upgrade(wrap(publishing + api))).toBe(upgraded);
+ expect(upgrade(upgraded)).toBe(upgraded);
+ // An owner-edited or foreign location for the same path is never rewritten.
+ expect(() => upgrade(wrap('  location = /api/bridge/files {\n    return 204;\n  }\n\n' + speech + publishing + api))).toThrow();
+ expect(() => upgrade(upgraded.replace('client_max_body_size 15m;', 'client_max_body_size 1m;'))).toThrow();
+});
+it('sizes the app file location for the largest save the file contract allows', async () => {
+ const megabytes = Number((await readFile(helper, 'utf8')).match(/FILES_BODY_LIMIT = "(\d+)m"/)?.[1]);
+ expect(megabytes * 1024 * 1024).toBeGreaterThanOrEqual(MAX_APP_FILE_REQUEST_BYTES);
+ // The envelope is the file as base64 plus bounded JSON framing.
+ expect(MAX_APP_FILE_REQUEST_BYTES).toBeGreaterThan(Math.ceil(APP_FILE_MAX_BYTES / 3) * 4);
+});
+it('provisions the same app file location for self-hosted installs, in the layout the helper keeps', async () => {
+ const installer = await readFile('scripts/install-server.sh', 'utf8');
+ const location = installer.match(/# matrix-app-file-upload-limit-v1\n  location = \/api\/bridge\/files \{([\s\S]*?)\n  \}\n\n  # matrix-speech-upload-limit-v1\n/)?.[1];
+ expect(location).toBe('\n    client_max_body_size 15m;\n    include /opt/matrix/env/gateway-auth-token.conf;\n    proxy_pass http://127.0.0.1:4000;');
 });

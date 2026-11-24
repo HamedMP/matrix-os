@@ -8,6 +8,8 @@ import {
   MAX_APP_KV_REQUEST_BYTES,
   type CollaborationParticipant,
 } from "@matrix-os/contracts";
+import { APP_FILES_BRIDGE_PATH, MAX_APP_FILE_REQUEST_BYTES } from "@matrix-os/contracts/app-files";
+import { buildFilesBridgeSource } from "./os-bridge-files";
 
 export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
@@ -296,7 +298,7 @@ export function buildBridgeScript(
 
 	  function parentFetch(url, init, timeoutMs) {
 	    return new Promise(function(resolve, reject) {
-        var dataLimit = url === "/api/bridge/query" ? ${MAX_APP_DATABASE_REQUEST_BYTES} : url === "/api/bridge/data" ? ${MAX_APP_KV_REQUEST_BYTES} : 0;
+        var dataLimit = url === "/api/bridge/query" ? ${MAX_APP_DATABASE_REQUEST_BYTES} : url === "/api/bridge/data" ? ${MAX_APP_KV_REQUEST_BYTES} : url === ${JSON.stringify(APP_FILES_BRIDGE_PATH)} ? ${MAX_APP_FILE_REQUEST_BYTES} : 0;
         var frame = JSON.stringify({url:url, init:init || {}});
 	      if (pendingFetches.length >= 32 || (dataLimit
           ? !init || typeof init.body !== "string" || utf8Bytes(init.body) > dataLimit || utf8Bytes(frame) > dataLimit * 2 + ${MAX_APP_CAPABILITY_BYTES}
@@ -318,7 +320,9 @@ export function buildBridgeScript(
 	            json: function() { return Promise.resolve(e.data.body); }
 	          });
 	        } else {
-	          reject(new Error("MatrixOS bridge fetch failed"));
+          var failure = new Error("MatrixOS bridge fetch failed");
+          if (e.data && typeof e.data.status === "number") failure.status = e.data.status;
+	          reject(failure);
 	        }
 	      };
 	      window.parent.postMessage(
@@ -522,6 +526,8 @@ export function buildBridgeScript(
     design: currentDesign,
 
     app: { name: app },
+
+    files: ${buildFilesBridgeSource()},
 
     collaboration: {
       participant: ${participantJson === "null" ? "null" : `Object.freeze(${participantJson})`},
