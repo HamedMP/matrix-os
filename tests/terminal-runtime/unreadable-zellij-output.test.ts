@@ -73,6 +73,26 @@ describe("unreadable Zellij structured output", () => {
     expect((error as ZellijOutputError).reason).toBe("schema_invalid");
   });
 
+  it("stops retrying a structured read once the caller's deadline passes", async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(() => new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("zellij command timed out")), 3_000);
+    }));
+    const adapter = new ZellijCliRuntimeAdapter({ homePath: "/home/matrix", run });
+    const startedAt = Date.now();
+
+    const error = await rejectionOf(adapter.findTabsByInternalName(
+      "matrix-w-0123456789abcdef0123456789abcdef",
+      ["matrix-tab-0123456789abcdef0123456789abcdef"],
+      { deadline: startedAt + 5_000 },
+    ));
+
+    expect(error).toBeInstanceOf(Error);
+    // Without the deadline the read makes ten 3 s attempts (over 30 s).
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(6_500);
+    expect(run.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
   it("bounds the log snippet and redacts long token-like runs", () => {
     const error = ZellijOutputError.fromOutput(
       "non_json",
@@ -123,9 +143,9 @@ class RestoreZellij implements ZellijRuntimeAdapter {
     return { tabId, paneId: `terminal_${tabId}` };
   }
 
-  findTabsByInternalName(sessionName: string, internalNames: string[]) {
+  findTabsByInternalName(sessionName: string, internalNames: string[], options?: { deadline?: number }) {
     // Real CLI parsing path, so the production output reaches the runtime unchanged.
-    return this.cli.findTabsByInternalName(sessionName, internalNames);
+    return this.cli.findTabsByInternalName(sessionName, internalNames, options);
   }
 
   async openAttachment(): Promise<ZellijAttachment> {
@@ -185,6 +205,130 @@ describe("runtime startup with one unreadable Zellij session", () => {
     await vi.waitFor(() => expect(zellij.subscribed.has(badSession)).toBe(true), { timeout: 15_000, interval: 25 });
     expect(await store.getTab({ workspaceId: bad.id, tabId: badTab.id }))
       .toMatchObject({ status: "running" });
+    await runtime.shutdown();
+  }, 30_000);
+});
+
+async function seedTwoWorkspaces(zellij: ZellijRuntimeAdapter) {
+  const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-unreadable-"));
+  homes.push(homePath);
+  const first = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij });
+  const good = await first.ensureWorkspace({ projectId: "good" });
+  const bad = await first.ensureWorkspace({ projectId: "bad" });
+  const goodTab = await first.createTab(good.id, { name: "good", cwd: "projects/good" });
+  const badTab = await first.createTab(bad.id, { name: "bad", cwd: "projects/bad" });
+  await first.shutdown();
+  const probe = new TerminalWorkspaceStore({ homePath });
+  return {
+    homePath,
+    good,
+    bad,
+    goodTab,
+    badTab,
+    goodSession: (await probe.getRuntimeWorkspace(good.id))!.zellijSessionName,
+    badSession: (await probe.getRuntimeWorkspace(bad.id))!.zellijSessionName,
+  };
+}
+
+describe("startup restore failure classification", () => {
+  it("keeps a store write failure during restore fatal so the service does not look healthy", async () => {
+    const zellij = new RestoreZellij();
+    const seeded = await seedTwoWorkspaces(zellij);
+    zellij.subscribed.clear();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    class FullDiskStore extends TerminalWorkspaceStore {
+      override async activateTab(...args: Parameters<TerminalWorkspaceStore["activateTab"]>) {
+        void args;
+        throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+      }
+    }
+    const runtime = new TerminalRuntime({ store: new FullDiskStore({ homePath: seeded.homePath }), zellij });
+
+    await expect(runtime.restoreAll()).rejects.toMatchObject({ code: "ENOSPC" });
+    await runtime.shutdown();
+  });
+
+  it("skips a session-scoped Zellij failure for one workspace and restores the rest", async () => {
+    const zellij = new RestoreZellij();
+    const seeded = await seedTwoWorkspaces(zellij);
+    zellij.subscribed.clear();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const ensureSession = zellij.ensureSession.bind(zellij);
+    zellij.ensureSession = async (sessionName: string) => {
+      if (sessionName === seeded.badSession) throw new Error("Terminal workspace failed to start");
+      return ensureSession(sessionName);
+    };
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath: seeded.homePath }), zellij });
+
+    await expect(runtime.restoreAll()).resolves.toBeUndefined();
+    expect(zellij.subscribed.has(seeded.goodSession)).toBe(true);
+    expect(zellij.subscribed.has(seeded.badSession)).toBe(false);
+    await runtime.shutdown();
+  });
+});
+
+describe("background restore retries", () => {
+  it("bounds a hung workspace retry so an attach on a healthy workspace is not blocked past the budget", async () => {
+    const zellij = new RestoreZellij();
+    const seeded = await seedTwoWorkspaces(zellij);
+    zellij.subscribed.clear();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    zellij.unreadableSessions.add(seeded.badSession);
+
+    // Store I/O is real, so each fake-time step also yields a real
+    // millisecond for the file system to settle.
+    const realSetTimeout = globalThis.setTimeout;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    const pump = async (until: () => boolean, maxMs: number) => {
+      const start = Date.now();
+      while (!until() && Date.now() - start < maxMs) {
+        await vi.advanceTimersByTimeAsync(50);
+        await new Promise<void>((resolve) => realSetTimeout(resolve, 1));
+      }
+    };
+    const runtime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath: seeded.homePath }),
+      zellij,
+      sweepIntervalMs: 1_000,
+      restoreRetryBaseMs: 1,
+      restoreRetryBudgetMs: 5_000,
+    });
+    let restored = false;
+    void runtime.restoreAll().then(() => { restored = true; });
+    await pump(() => restored, 10_000);
+    expect(restored).toBe(true);
+    expect(zellij.subscribed.has(seeded.badSession)).toBe(false);
+
+    // The stale session now stops answering: each structured read waits for
+    // its command timeout (30 s, ten attempts) unless the caller's deadline
+    // cuts it short, the way the real runner kills the child at timeoutMs.
+    zellij.unreadableSessions.delete(seeded.badSession);
+    let hungStarted = false;
+    const findTabs = zellij.findTabsByInternalName.bind(zellij);
+    zellij.findTabsByInternalName = async (sessionName, internalNames, options) => {
+      if (sessionName !== seeded.badSession) return findTabs(sessionName, internalNames, options);
+      hungStarted = true;
+      const waitMs = options?.deadline === undefined ? 300_000 : Math.max(0, options.deadline - Date.now());
+      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      throw new Error("Terminal runtime operation timed out");
+    };
+
+    await pump(() => hungStarted, 10_000);
+    expect(hungStarted).toBe(true);
+
+    const startedAt = Date.now();
+    let attached = false;
+    const attach = runtime.attach({ workspaceId: seeded.good.id, tabId: seeded.goodTab.id }, {
+      viewerId: "desktop",
+      send: () => undefined,
+    }).then((viewer) => { attached = true; return viewer; });
+    await pump(() => attached, 400_000);
+
+    expect(attached).toBe(true);
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(5_000 + 1_000);
+    await (await attach).detach();
+    vi.useRealTimers();
     await runtime.shutdown();
   }, 30_000);
 });

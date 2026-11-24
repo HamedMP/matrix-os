@@ -3,6 +3,27 @@ import { ZellijOutputError } from "./errors.js";
 const DEFAULT_BASE_MS = 30_000;
 const MAX_DELAY_MS = 10 * 60_000;
 const DEFAULT_MAX_ENTRIES = 1_024;
+/** Total time one background restore attempt may hold the workspace queue. */
+export const DEFAULT_RESTORE_RETRY_BUDGET_MS = 10_000;
+
+// Errors raised by a workspace's own Zellij session or native host. Only these
+// may be skipped at startup; store, config and other failures stay fatal.
+const sessionScopedFailures = new WeakSet<object>();
+
+/** Run a session-scoped adapter call, tagging any failure as belonging to that workspace. */
+export async function sessionScoped<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (typeof error === "object" && error !== null) sessionScopedFailures.add(error);
+    throw error;
+  }
+}
+
+export function isSessionScopedRestoreFailure(error: unknown): boolean {
+  if (error instanceof ZellijOutputError) return true;
+  return typeof error === "object" && error !== null && sessionScopedFailures.has(error);
+}
 
 /**
  * Workspaces whose restore failed. Each is retried with exponential backoff so
@@ -49,7 +70,11 @@ export class WorkspaceRestoreRetries {
     console.error(`[terminal-runtime] ${event}`, workspaceRestoreFailureFields(workspaceId, error));
   }
 
-  /** Retry every due workspace; the caller runs this on the workspace mutation chain. */
+  /**
+   * Retry every due workspace, one at a time. The caller queues each
+   * `reconcile` separately on the workspace mutation chain with a bounded
+   * deadline, so one hung session never holds the queue for the others.
+   */
   async retryDue(input: {
     isActive: (workspaceId: string) => Promise<boolean>;
     reconcile: (workspaceId: string) => Promise<void>;
