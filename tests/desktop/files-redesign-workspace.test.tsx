@@ -195,7 +195,7 @@ describe("Files redesign workspace", () => {
   it("opens folders on double-click and navigates from the sidebar", async () => {
     renderWorkspace();
     fireEvent.doubleClick(await screen.findByRole("option", { name: "notes" }));
-    expect(await screen.findByText("This folder is empty.")).toBeTruthy();
+    expect(await screen.findByText("This folder is empty")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "notes" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(await screen.findByRole("option", { name: "README.md" })).toBeTruthy();
@@ -257,6 +257,53 @@ describe("Files redesign workspace", () => {
     await screen.findByRole("option", { name: "theme.json" });
     expect(screen.getByText(/^four\.txt:/)).toBeTruthy();
     expect(api.putBytes).toHaveBeenCalledTimes(3);
+  });
+
+  it("clears the drop overlay when files land on a folder card", async () => {
+    renderWorkspace();
+    const notes = await screen.findByRole("option", { name: "notes" });
+    const file = new File(["x"], "dropped.txt", { type: "text/plain" });
+    const dataTransfer = { items: [{ kind: "file", getAsFile: () => file }], files: [file], types: ["Files"] };
+    fireEvent.dragEnter(screen.getByTestId("files-redesign-listing"), { dataTransfer });
+    expect(screen.getByText("Drop to upload to Matrix home")).toBeTruthy();
+    fireEvent.drop(notes, { dataTransfer });
+    expect(screen.queryByText("Drop to upload to Matrix home")).toBeNull();
+  });
+
+  it("guides an empty folder with an explanation and actions", async () => {
+    renderWorkspace();
+    fireEvent.doubleClick(await screen.findByRole("option", { name: "notes" }));
+    expect(await screen.findByText("This folder is empty")).toBeTruthy();
+    expect(screen.getByText("Upload files or create a file to get started.")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Upload files" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "New file" })).toBeTruthy();
+  });
+
+  it("offers to clear a filter that matches nothing", async () => {
+    renderWorkspace();
+    await screen.findByRole("option", { name: "apps" });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Filter Matrix home" }), { target: { value: "zzz" } });
+    expect(await screen.findByText("No matches")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(await screen.findByRole("option", { name: "apps" })).toBeTruthy();
+  });
+
+  it("refreshes every open folder tab after a Trash change", async () => {
+    renderWorkspace();
+    await screen.findByRole("option", { name: "apps" });
+    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
+    fireEvent.click(screen.getAllByRole("tab")[0]!);
+    fireEvent.click(await screen.findByRole("option", { name: "report.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    const details = await screen.findByRole("complementary", { name: "Details for report.pdf" });
+    fireEvent.pointerDown(within(details).getByRole("button", { name: "More actions" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: /Move to Trash/ }));
+    const listCalls = () => api.get.mock.calls.filter(([path]) => path === "/api/files/list?path=").length;
+    const before = listCalls();
+    fireEvent.click(await screen.findByRole("button", { name: /^Move to Trash$/ }));
+    await waitFor(() => expect(listCalls()).toBeGreaterThanOrEqual(before + 2));
   });
 
   it("drops the previous computer's listing after a runtime switch", async () => {

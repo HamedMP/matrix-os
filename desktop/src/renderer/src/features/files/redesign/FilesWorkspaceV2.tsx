@@ -59,7 +59,12 @@ export default function FilesWorkspaceV2() {
 
   const bump = useCallback((tabId: string) => setRefreshes((current) => ({ ...current, [tabId]: (current[tabId] ?? 0) + 1 })), []);
   const { request: requestNewItem, cancelForTab, dialog: createItemDialog } = useCreateItemDialog(bump);
-  const trash = useFileTrash(true, () => bump(activeTabId));
+  // A Trash move or restore can change any open folder, not just the active one.
+  const trash = useFileTrash(true, () => setRefreshes((current) => {
+    const next = { ...current };
+    for (const tab of tabs) if (!tab.project) next[tab.id] = (current[tab.id] ?? 0) + 1;
+    return next;
+  }));
 
   useEffect(() => {
     setTabs([HOME_TAB]);

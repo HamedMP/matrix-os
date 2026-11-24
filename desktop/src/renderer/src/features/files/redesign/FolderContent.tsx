@@ -1,4 +1,4 @@
-import { FolderOpen } from "lucide-react";
+import { FilePlus, FolderOpen, SearchX, Upload } from "lucide-react";
 import { useMemo, type RefObject } from "react";
 import { Button, Icon } from "../../../design/ds";
 import { isManagedBrowserPath, type BrowserEntry, type BrowserSortDirection, type BrowserSortKey } from "../browser-entries";
@@ -11,6 +11,42 @@ import type { useEntryNavigation } from "./use-entry-navigation";
 import type { ListingStatus } from "./use-folder-listing";
 
 type EntryNavigation = ReturnType<typeof useEntryNavigation>;
+
+/** UX-guide empty state: icon tile, Bricolage headline, description, actions. */
+function EmptyState({ icon, title, description, children }: { icon: typeof FolderOpen; title: string; description: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-2 py-16 text-center">
+      <span aria-hidden="true" className="flex size-12 items-center justify-center rounded-lg border border-ds-tint-neutral-border bg-ds-tint-neutral-fill text-ds-tint-neutral-text">
+        <Icon icon={icon} size="lg" />
+      </span>
+      <h3 className="mt-2 font-ds-heading text-[20px] leading-7 font-medium text-ds-foreground">{title}</h3>
+      <p className="max-w-80 text-ds-ui-sm text-ds-muted-foreground">{description}</p>
+      {children ? <div className="mt-3 flex items-center gap-2">{children}</div> : null}
+    </div>
+  );
+}
+
+/** Empty folder or a filter with no matches, each with its next step. */
+function FolderEmptyState({ filterActive, onUpload, onNewFile, onClearFilter }: { filterActive: boolean; onUpload?: () => void; onNewFile?: () => void; onClearFilter: () => void }) {
+  if (filterActive) {
+    return (
+      <EmptyState icon={SearchX} title="No matches" description="Nothing in this folder matches the filter. Try a different name.">
+        <Button variant="secondary" size="sm" onClick={onClearFilter}>Clear filter</Button>
+      </EmptyState>
+    );
+  }
+  const writable = Boolean(onUpload || onNewFile);
+  return (
+    <EmptyState
+      icon={FolderOpen}
+      title="This folder is empty"
+      description={writable ? "Upload files or create a file to get started." : "Matrix OS manages this folder. Files appear here when Matrix adds them."}
+    >
+      {onUpload ? <Button variant="secondary" size="sm" onClick={onUpload}><Icon icon={Upload} size="sm" />Upload files</Button> : null}
+      {onNewFile ? <Button variant="primary" size="sm" onClick={onNewFile}><Icon icon={FilePlus} size="sm" />New file</Button> : null}
+    </EmptyState>
+  );
+}
 
 /** The body of a folder: loading, error, empty, the list table, or the grid sections. */
 export function FolderContent({
@@ -28,6 +64,9 @@ export function FolderContent({
   onSort,
   gridRef,
   onDropFiles,
+  onUpload,
+  onNewFile,
+  onClearFilter,
 }: {
   title: string;
   status: ListingStatus;
@@ -43,6 +82,10 @@ export function FolderContent({
   onSort: (key: BrowserSortKey) => void;
   gridRef: RefObject<HTMLDivElement | null>;
   onDropFiles: (files: File[], destination: string) => void;
+  /** Empty-state actions; omitted in read-only folders. */
+  onUpload?: () => void;
+  onNewFile?: () => void;
+  onClearFilter: () => void;
 }) {
   const selected = useMemo(() => new Set(nav.selection.selected), [nav.selection.selected]);
 
@@ -55,14 +98,7 @@ export function FolderContent({
       </div>
     );
   }
-  if (entries.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 py-16 text-center">
-        <Icon icon={FolderOpen} size="lg" className="text-ds-muted-foreground" />
-        <p className="text-ds-ui text-ds-muted-foreground">{filterActive ? "No files match this filter." : "This folder is empty."}</p>
-      </div>
-    );
-  }
+  if (entries.length === 0) return <FolderEmptyState filterActive={filterActive} onUpload={onUpload} onNewFile={onNewFile} onClearFilter={onClearFilter} />;
 
   const entryProps = (entry: BrowserEntry, index: number) => {
     const entryPath = order[index]!;

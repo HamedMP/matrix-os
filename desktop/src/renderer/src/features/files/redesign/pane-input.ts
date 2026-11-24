@@ -36,6 +36,11 @@ export function useDropUpload(enabled: boolean, onFiles: (files: File[]) => void
         if (depth.current === 0) setActive(false);
       },
       onDragOver: (event: DragEvent<HTMLDivElement>) => { if (hasRegularDroppedFiles(event.dataTransfer)) event.preventDefault(); },
+      // Capture phase: a folder card that takes the drop stops it bubbling, but the overlay must still clear.
+      onDropCapture: () => {
+        depth.current = 0;
+        setActive(false);
+      },
       onDrop: (event: DragEvent<HTMLDivElement>) => {
         if (!hasRegularDroppedFiles(event.dataTransfer)) return;
         event.preventDefault();

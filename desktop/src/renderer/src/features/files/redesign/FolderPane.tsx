@@ -234,6 +234,9 @@ export function FolderPane({
               }}
               gridRef={folderGridRef}
               onDropFiles={enqueue}
+              onUpload={readOnly ? undefined : () => fileInputRef.current?.click()}
+              onNewFile={canCreate ? () => onRequestCreate("file", path) : undefined}
+              onClearFilter={() => setFilter("")}
             />
             {drop.active ? (
               <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-xl border-2 border-dashed border-ds-border-strong bg-ds-accent text-ds-ui font-medium text-ds-foreground">
