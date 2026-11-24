@@ -192,6 +192,31 @@ treats them the same way:
 - An offline owned machine shows as offline (`host_offline`) in the same way
   as a stopped VPS.
 
+## Sharing a whole computer (layer 6)
+
+The owner can share every terminal on a computer with the same people,
+from any of that computer's shared terminals ("Share whole computer").
+
+- The owner gateway keeps one policy per computer (`collaboration_team_computer_shares`,
+  migration 19): organization, computer label and up to 32 grants (audience +
+  Viewer/Editor). Each tab stays its own terminal scope, listed in
+  `collaboration_team_computer_scopes`, so roles, revocation, presence and caps
+  are exactly the per-terminal ones.
+- A sync pass gives every live owner tab (at most 64) a scope and the policy's
+  grants, and records the host-shell opt-in when any grant is Editor. It runs
+  after a policy change, after a tab is opened through the share, and every
+  15 s; one failing tab never blocks the rest. It adds and updates grants and
+  never removes ones the owner added by hand.
+- Editors (not Viewers) may open a new tab in the computer's main workspace:
+  `POST /api/collaboration/scopes/:scopeId/terminal/team/tabs`, authorized as
+  `control_execution` on a computer-shared scope, at most 10 a minute per
+  person. The tab is shared before its scope is returned.
+- Stopping removes the policy first (so nothing new is shared), then revokes
+  every live grant on the computer's tabs and re-checks their sockets.
+- Routes: `GET`/`PUT`/`DELETE /api/collaboration/scopes/:scopeId/terminal/team/computer`
+  (read for members, owner-only changes), all behind the collaboration body
+  limit and direct-session auth.
+
 ## Security architecture
 
 ### Auth matrix

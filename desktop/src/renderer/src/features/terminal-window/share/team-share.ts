@@ -7,6 +7,7 @@ import {
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
   CollaborationTerminalSchema,
+  TeamComputerShareSchema,
   type CollaborationScope,
   type CollaborationTeamTerminalInputMode,
 } from "@matrix-os/contracts";
@@ -114,4 +115,25 @@ export async function findTeamTerminal(api: TeamShareApi, input: { runtimeId: st
   ));
   if (!preflight.existingScopeId) return null;
   return CollaborationScopeSchema.parse(await api.get(scopePath(preflight.existingScopeId)));
+}
+
+
+/** Spec 2710 layer 6: whether this computer is shared as a whole. */
+export async function readComputerShare(api: TeamShareApi, scopeId: string): Promise<boolean> {
+  return TeamComputerShareSchema.parse(await api.get(`${scopePath(scopeId)}/terminal/team/computer`)).shared;
+}
+
+/** Shares every tab on the computer with the people this terminal is shared with. */
+export async function shareComputer(api: TeamShareApi, scopeId: string): Promise<void> {
+  if (!api.put) throw new TeamShareError("unavailable");
+  const grants = (await liveGrants(api, scopeId)).map((grant) => ({ audience: grant.audience, preset: grant.preset }));
+  if (grants.length === 0) throw new TeamShareError("not_shareable");
+  await api.put(`${scopePath(scopeId)}/terminal/team/computer`, { grants });
+}
+
+export async function stopSharingComputer(api: TeamShareApi, scopeId: string): Promise<void> {
+  const scope = CollaborationScopeSchema.parse(await api.get(scopePath(scopeId)));
+  await api.delete(`${scopePath(scopeId)}/terminal/team/computer`, {
+    clientRequestId: requestId(), expectedRevision: scope.revision, expectedMemberRevision: scope.revision,
+  });
 }

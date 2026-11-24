@@ -409,7 +409,7 @@ export default function TerminalWindowApp() {
           machines={machines}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
           team={<TeamSpaces state={teamTerminals.state} selectedKey={view.selectedKey} onOpen={view.select}
-            onAccept={teamTerminals.accept} onRetry={teamTerminals.retry} />}
+            onAccept={teamTerminals.accept} onOpenTab={teamTerminals.openTab} onRetry={teamTerminals.retry} />}
           expandedSpaces={prefs.expandedSpaces}
           onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
           onOpenInTab={view.openInTab}

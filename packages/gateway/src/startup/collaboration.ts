@@ -211,6 +211,15 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         registry: terminalBridge.registry,
         runtime: terminalBridge.runtime,
         connectOutput: terminalBridge.connectOutput,
+        listTerminals: async () => (await terminalWorkspaceRuntime.listWorkspaces())
+          .flatMap((workspace) => workspace.tabs
+            .filter((tab) => tab.accessScope === "owner" && (tab.status === "running" || tab.status === "idle"))
+            .map((tab) => `${workspace.id}:${tab.id}`)),
+        openTerminal: async () => {
+          const workspace = await terminalWorkspaceRuntime.ensureWorkspace();
+          const tab = await terminalWorkspaceRuntime.createTab(workspace.id, { name: "Terminal", cwd: "", accessScope: "owner" });
+          return `${workspace.id}:${tab.id}`;
+        },
         terminalInfo: async (terminalId) => {
           const [workspaceId, tabId] = terminalId.split(":");
           const workspaces = await terminalWorkspaceRuntime.listWorkspaces();

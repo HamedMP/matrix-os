@@ -78,7 +78,7 @@ describe("Team section (spec 2710 J2)", () => {
   it("shows each terminal with this person's role, and opens a pending share by accepting it first", async () => {
     const onOpen = vi.fn();
     const onAccept = vi.fn(async () => true);
-    render(<TeamSpaces selectedKey={null} onOpen={onOpen} onAccept={onAccept} onRetry={vi.fn()} state={{ status: "ready", terminals: [
+    render(<TeamSpaces selectedKey={null} onOpen={onOpen} onAccept={onAccept} onOpenTab={vi.fn()} onRetry={vi.fn()} state={{ status: "ready", terminals: [
       { kind: "ready", scopeId: scopeA, ownerId: "user_nima", runtimeId, projection: projection(scopeA, "viewer") as never },
       { kind: "pending", scopeId: scopeB, ownerId: "user_nima", runtimeId, grantId: "20000000-0000-4000-8000-000000000001" },
     ] }} />);
@@ -91,7 +91,7 @@ describe("Team section (spec 2710 J2)", () => {
   });
 
   it("says where shared terminals will appear when there are none", () => {
-    render(<TeamSpaces selectedKey={null} onOpen={vi.fn()} onAccept={vi.fn()} onRetry={vi.fn()} state={{ status: "ready", terminals: [] }} />);
+    render(<TeamSpaces selectedKey={null} onOpen={vi.fn()} onAccept={vi.fn()} onOpenTab={vi.fn()} onRetry={vi.fn()} state={{ status: "ready", terminals: [] }} />);
     expect(screen.getByText("Terminals teammates share with you appear here.")).toBeTruthy();
   });
 });
@@ -211,5 +211,25 @@ describe("Shared pane header text (spec 2710 who-typed-what)", () => {
     expect(lastSubmitted(state, now)).toBe("Yuhan pressed Enter · 5s ago");
     expect(teamPaneNotice(state, now)).toBe("The owner has control.");
     expect(teamPaneNotice({ ...state, rejected: { code: "input_paused", at: now - 1_000 } }, now)).toBe("The owner has control. Your typing is paused.");
+  });
+});
+
+describe("Shared computer (spec 2710 layer 6)", () => {
+  it("offers a new tab on a computer this person may open tabs on, and opens what it returns", async () => {
+    const onOpen = vi.fn();
+    const onOpenTab = vi.fn(async () => scopeC);
+    render(<TeamSpaces selectedKey={null} onOpen={onOpen} onAccept={vi.fn()} onOpenTab={onOpenTab} onRetry={vi.fn()} state={{ status: "ready", terminals: [
+      { kind: "ready", scopeId: scopeA, ownerId: "user_nima", runtimeId, projection: { ...projection(scopeA, "editor"), computerShared: true, canOpenTabs: true } as never },
+    ] }} />);
+    fireEvent.click(screen.getByRole("button", { name: "New terminal on Nima's team-dev-1" }));
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(teamRowKey(scopeC)));
+    expect(onOpenTab).toHaveBeenCalledWith(scopeA);
+  });
+
+  it("offers no new tab to a viewer or on a terminal shared on its own", () => {
+    render(<TeamSpaces selectedKey={null} onOpen={vi.fn()} onAccept={vi.fn()} onOpenTab={vi.fn()} onRetry={vi.fn()} state={{ status: "ready", terminals: [
+      { kind: "ready", scopeId: scopeA, ownerId: "user_nima", runtimeId, projection: projection(scopeA, "editor") as never },
+    ] }} />);
+    expect(screen.queryByRole("button", { name: /New terminal on/ })).toBeNull();
   });
 });
