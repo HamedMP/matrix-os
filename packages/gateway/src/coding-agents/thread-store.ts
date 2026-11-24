@@ -1,3 +1,4 @@
+import { recordChatSendStage, startChatSendStage } from "../chat/send-timing.js";
 import { createThreadStateQueue } from "./thread-state-queue.js";
 import { CODING_PREPARATION_TIMEOUT_MS, createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
