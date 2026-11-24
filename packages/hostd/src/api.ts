@@ -91,7 +91,7 @@ const CreateVmRequest = z.strictObject({
   goldenVersion: z.string().regex(SAFE_VERSION),
 });
 
-const ExpectedGeneration = z.int().min(1).optional();
+const ExpectedGeneration = z.int().min(0).optional();
 const ResumeRequest = z.strictObject({ budgetMs: z.int().min(0), expectedGeneration: ExpectedGeneration });
 const SuspendRequest = z.strictObject({ expectedGeneration: ExpectedGeneration });
 const PolicyRequest = z.strictObject({ tier: z.enum(["free", "paid"]), maxMiB: mib(131_072) });
