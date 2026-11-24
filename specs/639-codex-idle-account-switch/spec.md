@@ -29,9 +29,12 @@ Public documentation update: prepare a separate matrix-os-site PR describing Cod
 
 Execution admission must request identity without optional usage. The Settings
 usage reader has a five-second cooldown and may retain a failed observation;
-that cache must never substitute for a fresh account proof at launch or resume.
-Keep the private principal verification, owner checks, current consent, profile
-guard, and session registration unchanged.
+that cache must never substitute for identity authorization at launch or resume.
+The identity-only admission read is already on main via #3631 (ENG-540).
+This follow-up retains its fingerprint-checked identity reuse, invalidation
+hooks, Codex-only snapshots, and same-send admission receipts. Keep private
+principal verification, owner checks, current consent, profile guards, and
+session registration unchanged.
 
 When a Settings snapshot privately classifies its identity observation as
 `checking`, reobserve at most once. Check the revocation fence, profile, and
