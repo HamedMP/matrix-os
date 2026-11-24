@@ -183,6 +183,13 @@ the confirmation says so.
   given a socket adapter over the WebSocket, with acceptance
   `acceptsMacCore` (0.1.x from the pinned desktop version's minimum, features
   `framed`, `attach`, `shell`, `events`).
+- **Reuse 2701's adapter**: each admitted link gets its own
+  `createHerdrAdapter({ open })` (ENG-519, `packages/gateway/src/herdr/adapter.ts`),
+  whose `open()` returns an `HcSocket` over the link instead of a
+  `herdr-core connect` child. Listing, attach, credit backpressure, viewer caps,
+  idle sweep and the browser attach socket (`herdr/ws.ts`) are reused per Mac,
+  not rewritten. The Mac terminal routes below are thin wrappers that pick the
+  adapter by `deviceId`.
 - **Second allowlist**: the gateway wraps the connection with
   `restrictHcConnection` (2701) using the same method list, so it never even
   tries what the Mac would refuse.
