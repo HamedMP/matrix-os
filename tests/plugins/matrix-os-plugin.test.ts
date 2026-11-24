@@ -43,7 +43,7 @@ describe("Matrix OS coding-agent plugin", () => {
       mcpServers: {
         "matrix-remote-computer": {
           type: "http",
-          url: "https://api.matrix-os.com/mcp",
+          url: "https://app.matrix-os.com/mcp",
         },
       },
     });
