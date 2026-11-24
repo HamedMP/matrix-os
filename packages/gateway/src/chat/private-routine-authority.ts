@@ -1,3 +1,4 @@
+import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import type { BotCreationSnapshot } from "@matrix-os/contracts";
 import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
 import { sql, type Expression, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
@@ -28,6 +29,20 @@ export async function hasNonPrivateChatScope(executor: QueryExecutorProvider, ow
   return result.rows[0]!.non_private;
 }
 
+/** A source (or destination) must be an active, personal Chat with no wider audience. */
+export async function privateBotSourceChat(db: Executor, owner: ChatOwner, chatId: string) {
+  if (owner.type !== "personal" || isRoutineDirectChatId(chatId)) return undefined;
+  return db.selectFrom("chats").select("title")
+    .where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", owner.ownerId)
+    .where("lifecycle", "=", "active").where("project_id", "is", null).where("collaboration", "is", null)
+    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM bot_chat_bindings binding
+        WHERE binding.chat_id = chats.id AND binding.kind <> 'direct' AND binding.removed_at IS NULL)`)
+    .where(eb => eb.not(hasNonPrivateChatScopeSql(eb.ref("chats.owner_type"), eb.ref("chats.owner_id"), eb.ref("chats.id"))))
+    .where(eb => eb.not(eb.exists(eb.selectFrom("chat_shares").select("id")
+      .whereRef("chat_shares.chat_id", "=", "chats.id").where("expires_at", ">", new Date()))))
+    .executeTakeFirst();
+}
+
 function isPrivateAutomaticRequest(requestId: string): boolean {
   return requestId.startsWith("req_routine_") || requestId.startsWith("req_slack_summary_");
 }
@@ -44,7 +59,8 @@ export async function assertPrivateRoutineRequest(executor: Executor, owner: Cha
 /** Managed Pi stores its transcript by owner and Chat; a setup Chat may resume only its own seed/session.
  * Called under the Chat row lock for direct and queued admissions before any content is written. */
 export async function assertPrivateChatAdmission(executor: Executor, owner: ChatOwner, chatId: string,
-  requestId: string, setup?: BotCreationSnapshot): Promise<void> {
+  requestId: string, setup?: BotCreationSnapshot, selectedChats = false): Promise<void> {
+  if (selectedChats && !await privateBotSourceChat(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
   await assertPrivateRoutineRequest(executor, owner, chatId, requestId);
   const history = executor.selectFrom("chat_runs").select("id").where("chat_id", "=", chatId);
   const incompatible = setup
@@ -73,9 +89,11 @@ export async function assertPrivateRoutineTurn(executor: Executor, owner: ChatOw
 /** Use the persisted turn, including retries whose run request ID changes. */
 export async function assertPrivateRoutineRun(executor: Executor, owner: ChatOwner, chatId: string, runId: string): Promise<void> {
   const run = await executor.selectFrom("chat_runs")
-    .select(["turn_id", sql<boolean>`context_snapshot->'botCreation' IS NOT NULL`.as("drafting")])
+    .select(["turn_id", sql<boolean>`context_snapshot ? 'botCreation'`.as("privateContext"),
+      sql<boolean>`context_snapshot ? 'botChatSources'`.as("selectedSource")])
     .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
-  if (run?.drafting && await hasNonPrivateChatScope(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
+  if (run?.selectedSource && !await privateBotSourceChat(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
+  if (run?.privateContext && await hasNonPrivateChatScope(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
   if (run) await assertPrivateRoutineTurn(executor, owner, chatId, run.turn_id);
 }
 

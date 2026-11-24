@@ -104,7 +104,7 @@ export function ChatInput({
   const slashAnchorRef = useRef<HTMLDivElement|null>(null);
   const queryMatch = /(?:^|\s)@([^\s@]*)$/.exec(input);
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
-  const permissionResources = botConsentResources.length ? botConsentResources : resources;
+  const permissionResources = botConsentResources.length ? [...resources, ...botConsentResources] : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
   const mayQueue = referenceCount > 0;

@@ -1,3 +1,4 @@
+import type { BotSelectedChatReader, SelectedBotChats } from "../chat/bot-selected-chat.js";
 import { SLACK_SUMMARY_SYSTEM, type SlackSummaryRunAuthority } from "./slack-summary-run.js";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
@@ -90,6 +91,7 @@ export interface BotTurnHandle {
 }
 
 interface ActiveRun {
+  selectedChats?: SelectedBotChats;
   readonlySummary?: true;
   ownerId: string;
   chatId: string;
@@ -117,6 +119,7 @@ export class BotTurnError extends Error {
 export function createBotTaskOrchestrator(deps: {
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   slackSummaries?: SlackSummaryRunAuthority;
+  selectedChatReader?: BotSelectedChatReader;
   slackThreadContext?(input: { ownerId: string; botId: string; chatId: string; signal: AbortSignal }): Promise<string | undefined>;
   assertSource?(binding: import("./runtime-registry.js").PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   bindings: Pick<BotBindingsRepository, "forChat">;
@@ -325,6 +328,7 @@ export function createBotTaskOrchestrator(deps: {
       return { status: interruptedStatus() };
     }
     if (!botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
+    if (run.selectedChats && (group || run.selectedChats.botId !== botId || !deps.selectedChatReader)) return { status: "blocked", blockedReason: "policy_denied" };
     let recipe;
     try {
       if (isManagedCustomBot(agent) && (!deps.resolveProcedure || !sameCustomCoordinatorSelection(input.selection, agent.selection))) return { status: "failed" };
@@ -339,6 +343,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       isolatedModel = !group && !input.readonlySummary ? deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
         botId, recipeRef: agent.recipeRef }) : undefined;
+      if (isolatedModel && run.selectedChats) return { status: "blocked", blockedReason: "policy_denied" };
       if (isolatedModel) {
         selection = recipeCoordinatorSelection(input.selection, agent.selection);
         deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
@@ -556,6 +561,20 @@ export function createBotTaskOrchestrator(deps: {
     }
   }
 
+  async function selectedChatReference(binding: import("./runtime-registry.js").BotRuntimeBinding): Promise<string | undefined> {
+    const run = active.get(binding.runId);
+    const selected = run?.selectedChats;
+    if (!run || !selected) return undefined;
+    if (!deps.selectedChatReader || run.stopping || run.finished || run.signal.aborted
+      || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId || selected.botId !== binding.botId
+      || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration
+      || binding.group || binding.readonlySummary || binding.requestClass !== "interactive" || isRoutineDirectChatId(binding.chatId)) throw new BotBrokerActionError("denied");
+    if (await runBotSetupStep(() => directBot(binding.ownerId, binding.chatId), run.signal) !== selected.botId) throw new BotBrokerActionError("denied");
+    const reference = await runBotSetupStep(() => deps.selectedChatReader!.read({ type: "personal", ownerId: binding.ownerId }, binding.chatId, selected), run.signal);
+    if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+    return reference;
+  }
+
   const runSource: BotRunSource = {
     async loadRunSpec(binding) {
       const run = active.get(binding.runId);
@@ -574,11 +593,12 @@ export function createBotTaskOrchestrator(deps: {
         if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
         return { ...spec, systemPrompt: withApprovedRoutineOccurrence(spec.systemPrompt) };
       }
-      let prepared = spec;
+      const selected = !isManagedPiBinding(binding) ? await selectedChatReference(binding) : undefined;
+      let prepared = selected ? { ...spec, selectedChatReference: selected } : spec;
       if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "interactive" && deps.routineExecution?.describeChatPhase) {
         const phase = await runBotSetupStep(() => deps.routineExecution!.describeChatPhase!(binding), run.signal);
         if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
-        if (phase) prepared = { ...spec, systemPrompt: spec.systemPrompt + phase };
+        if (phase) prepared = { ...prepared, systemPrompt: spec.systemPrompt + phase };
       }
       const readSlackContext = deps.slackThreadContext;
       if (!readSlackContext || isManagedPiBinding(binding) || binding.group || binding.requestClass !== "interactive"
@@ -628,6 +648,8 @@ export function createBotTaskOrchestrator(deps: {
 
   return {
     runSource,
+    selectedChatReference,
+    hasSelectedChats: (runId: string) => Boolean(active.get(runId)?.selectedChats),
     eventSink,
     publishRoutineAction(binding: import("./runtime-registry.js").BotRuntimeBinding, event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent) {
       const run = active.get(binding.runId);
@@ -648,11 +670,12 @@ export function createBotTaskOrchestrator(deps: {
       return result;
     },
     /** Starts one turn. Events stream until the run's outcome is known. */
-    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string; readonlySummary?: true }): BotTurnHandle {
+    start(input: { selectedChats?: SelectedBotChats; ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string; readonlySummary?: true }): BotTurnHandle {
       if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
       const prelaunch = new AbortController();
-      const run: ActiveRun = { ...(input.readonlySummary ? { readonlySummary: true as const } : {}), ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), setupAbort: prelaunch, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      if (input.selectedChats && (input.readonlySummary || input.backgroundTaskId || isRoutineDirectChatId(input.chatId))) throw new BotTurnError("invalid_request");
+      const run: ActiveRun = { ...(input.selectedChats ? { selectedChats: input.selectedChats } : {}), ...(input.readonlySummary ? { readonlySummary: true as const } : {}), ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), setupAbort: prelaunch, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
       active.set(input.runId, run);
       const onAbort = () => {
         void stopRuntime(run, input.runId, "cancelled").catch((error: unknown) => {

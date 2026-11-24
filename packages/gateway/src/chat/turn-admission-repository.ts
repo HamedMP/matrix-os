@@ -102,7 +102,7 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
       if (run.context?.botCreation && (current.project_id || await hasNonPrivateChatScope(trx, owner, input.chatId))) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
-      await assertPrivateChatAdmission(trx, owner, input.chatId, turn.clientRequestId, run.context?.botCreation);
+      await assertPrivateChatAdmission(trx, owner, input.chatId, turn.clientRequestId, run.context?.botCreation, Boolean(run.context?.botChatSources));
       if (current.collaboration !== null) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }

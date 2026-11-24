@@ -7,11 +7,13 @@ import { parseJson, toMessage } from "./records.js";
 import { chatContextRequestHash } from "./agent-context.js";
 
 /** The browser selected one creation payload. A queue edit or steer cannot reuse that decision. */
-export function hasAttestedCreationChoice(snapshot: unknown): boolean {
-  return snapshot != null && ChatRunContextSchema.parse(parseJson(snapshot)).routineCreation === "matrix";
+export function hasPinnedTurnContext(snapshot: unknown): boolean {
+  const context = snapshot != null ? ChatRunContextSchema.parse(parseJson(snapshot)) : undefined;
+  return context?.routineCreation === "matrix" || Boolean(context?.botChatSources);
 }
 
 export function validateQueuedAgentDriver(context: ChatRunContext | undefined, driver: string, chatId: string, revision: number) {
+  if (context?.botChatSources && driver !== "matrix_bot") throw new ChatConflictError(chatId, revision);
   if (context?.agent && !isChatAgentDriver(driver)) throw new ChatConflictError(chatId, revision);
   if (context?.drives?.length && driver !== "claude_code") throw new ChatConflictError(chatId, revision);
 }

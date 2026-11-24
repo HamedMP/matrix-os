@@ -1,7 +1,7 @@
 import { sql, type Kysely, type QueryExecutorProvider } from "kysely";
 import type { ChatDatabase } from "./database.js";
-/** Transitional guard: an audience policy must authorize any copied drive material. */
-export async function hasCompanyDriveMaterial(db: QueryExecutorProvider, chatId: string): Promise<boolean> {
+/** These sources carry personal audience restrictions even after a turn finishes. */
+export async function hasAudienceRestrictedChatMaterial(db: QueryExecutorProvider, chatId: string): Promise<boolean> {
     const result = await sql<{
         present: boolean;
     }> `
@@ -9,10 +9,10 @@ export async function hasCompanyDriveMaterial(db: QueryExecutorProvider, chatId:
       select 1 from chat_messages where chat_id = ${chatId}
       and parts @> '[{"type":"resource_reference","resource":{"kind":"organization_drive"}}]'::jsonb
     ) or exists (
-      select 1 from chat_runs where chat_id = ${chatId} and context_snapshot ? 'drives'
+      select 1 from chat_runs where chat_id = ${chatId} and (context_snapshot ? 'drives' or context_snapshot ? 'botChatSources')
     ) or exists (
       select 1 from chat_queued_turns where chat_id = ${chatId}
-      and (context_snapshot ? 'drives'
+      and (context_snapshot ? 'drives' or (status = 'queued' and context_snapshot ? 'botChatSources')
         or parts @> '[{"type":"resource_reference","resource":{"kind":"organization_drive"}}]'::jsonb)
     ) as present
   `.execute(db);
@@ -26,6 +26,10 @@ export async function bootstrapCompanyDriveSharingIndexes<Database extends ChatD
             await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
             await sql`SET LOCAL statement_timeout = '30s'`.execute(trx);
             await sql`SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('company_drive_sharing_indexes'))`.execute(trx);
+            await sql`CREATE INDEX IF NOT EXISTS idx_chat_runs_bot_sources ON chat_runs(chat_id)
+              WHERE context_snapshot ? 'botChatSources'`.execute(trx);
+            await sql`CREATE INDEX IF NOT EXISTS idx_chat_queue_bot_sources ON chat_queued_turns(chat_id)
+              WHERE status = 'queued' AND context_snapshot ? 'botChatSources'`.execute(trx);
             await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_company_drive ON chat_messages(chat_id)
               WHERE parts @> '[{"type":"resource_reference","resource":{"kind":"organization_drive"}}]'::jsonb`.execute(trx);
             await sql`CREATE INDEX IF NOT EXISTS idx_chat_runs_company_drive ON chat_runs(chat_id)
@@ -38,7 +42,7 @@ export async function bootstrapCompanyDriveSharingIndexes<Database extends ChatD
         const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
         if (code !== "55P03" && code !== "57014") throw error;
         // Only optional index deadlines are deferred. Privacy still executes and fails closed.
-        // The transaction has rolled back; the next bootstrap retries all three indexes.
+        // The transaction has rolled back; the next bootstrap retries the indexes.
         console.warn("[chat/drive-sharing] Optional indexes deferred after database deadline", code);
     }
 }

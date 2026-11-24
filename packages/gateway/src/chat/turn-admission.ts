@@ -100,8 +100,9 @@ export async function admitCanonicalTurn(
     }
     const record = await deps.repository.get(owner, chatId);
     if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
+    const ownerInput = admittedOwnerHttpInput(principal, owner, provenance);
     let prepared;
-    try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
+    try { prepared = await deps.agentContext?.prepare(owner, chatId, input, ownerInput); }
     catch (error: unknown) { return mapRepositoryError(error); }
     if (input.botCreation && !prepared?.context?.botCreation) throw new CanonicalChatOrchestrationError(
       safeError("capability_mismatch", "Bot drafting is unavailable in this Chat."), 400);
@@ -253,7 +254,7 @@ export async function admitCanonicalTurn(
     try {
       deps.assertOpen();
       admitted = await deps.repository.admitTurn(owner, {
-        ...admittedOwnerHttpInput(principal, owner, provenance),
+        ...ownerInput,
         chatId,
         baseRevision: input.baseRevision,
         requestHash,
