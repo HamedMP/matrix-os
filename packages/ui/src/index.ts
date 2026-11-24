@@ -340,6 +340,12 @@ export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 
 export { ChatRailSection } from "./chat/ChatRailSection.js";
+export { SideChatPanel, type SideChatClient } from "./chat/SideChatPanel.js";
+export { ArchivedChatsPage, type ChatArchiveClient } from "./chat/ArchivedChatsPage.js";
+export { ChatInspectorTabs, ChatInspectorNewTab, ChatInspectorFileHeader, InspectorToolIcon, type InspectorTabItem, type InspectorTool } from "./chat/ChatInspectorTabs.js";
+export { ChatInspectorResizeHandle } from "./chat/ChatInspectorTabs.js";
+export { ChatMenuActionLabel } from "./chat/ChatContextMenu.js";
+export { ChatSourceFilterMenu } from "./chat/ChatContextMenu.js";
 export { SupervisedToolApprovalBar, SupervisedToolApprovalCard } from "./chat/SupervisedToolApprovalCard.js";
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
@@ -407,3 +413,4 @@ export { routineOriginChatEligible } from "./chat/routine-origin.js";
 export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
+export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";

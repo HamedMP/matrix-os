@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { HostedWorkSidebar } from "@desktop/renderer/src/features/work/HostedWorkSidebar";
-import { WorkSurfaceRuntimeProvider, useWorkSurfaceRuntime } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
+import { WorkSurfaceRuntimeProvider, useWorkSurfaceRuntime, useWorkArchiveNavigation, WorkArchiveOutlet } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { CanonicalChatTitleProjection } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -99,6 +99,31 @@ afterEach(() => {
 });
 
 describe("HostedWorkSidebar", () => {
+  it("shares archive navigation between hosted sidebar and main content and resets it for replacement authority", async () => {
+    function SidebarArchiveLink() {
+      const archive = useWorkArchiveNavigation();
+      return <button onClick={() => archive?.show()}>Open the archived list</button>;
+    }
+    const client = { list: vi.fn(async () => ({ items: [] })) } as never;
+    render(<WorkSurfaceRuntimeProvider active={false}><SidebarArchiveLink/><WorkArchiveOutlet client={client} projects={[]}><p>Main conversation</p></WorkArchiveOutlet></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
+    expect(await screen.findByRole("heading", { name: "Archived chats" })).toBeTruthy();
+    expect(screen.getByText("Main conversation").closest("[hidden]")).not.toBeNull();
+    act(() => useConnection.setState({ authGeneration: 2 }));
+    expect(screen.getByText("Main conversation").closest("[hidden]")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Archived chats" })).toBeNull();
+  });
+  it("leaves the archive when an existing bot conversation is selected", async () => {
+    function ArchiveLink(){const archive=useWorkArchiveNavigation();return <button onClick={()=>archive?.show()}>Open archives</button>;}
+    const client={list:vi.fn(async()=>({items:[]}))} as never;
+    render(<WorkSurfaceRuntimeProvider active={false}><ArchiveLink/><HostedWorkSidebar tab={{id:"work",kind:"work",title:"Chat",workRoute:"chat",closable:false}} active/>
+      <WorkArchiveOutlet client={client} projects={[]}><p>Main conversation</p></WorkArchiveOutlet></WorkSurfaceRuntimeProvider>);
+    fireEvent.click(screen.getByRole("button",{name:"Open archives"}));
+    await screen.findByRole("heading",{name:"Archived chats"});
+    fireEvent.click(screen.getByRole("button",{name:"Open recipe bot"}));
+    expect(screen.queryByRole("heading",{name:"Archived chats"})).toBeNull();
+    expect(screen.getByText("Main conversation")).toBeTruthy();
+  });
   it.each([['chat', true, true], ['chat', false, false], ['project', true, false], ['projects', true, false]] as const)('advertises New Chat only for the focused Chat route (%s, %s)', (route, focused, expected) => {
     render(<HostedWorkSidebar tab={{id:'hint',kind:'work',title:'Work',workRoute:route,closable:false}} active searchShortcutActive={focused} />);
     expect(screen.getByRole('button', {name:'New chat',exact:true}).getAttribute('data-shortcut-active')).toBe(String(expected));
