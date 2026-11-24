@@ -473,6 +473,10 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     if (active.provisioningClass === 'private-preview') {
       throw new CustomerVpsError(409, 'invalid_state', 'Destroy the Private Preview and start it again');
     }
+    // Recovery rebuilds on Hetzner; a metal runtime has no recovery path yet (ENG-520).
+    if (active.substrate === 'metal') {
+      throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot recover');
+    }
     // This R2 check is an advisory fast-fail before the DB claim. The
     // claimUserMachineRecovery WHERE clause below remains the authoritative
     // concurrency guard; keeping the backup check before the claim avoids

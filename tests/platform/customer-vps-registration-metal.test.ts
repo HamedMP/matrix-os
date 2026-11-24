@@ -3,6 +3,8 @@ import { getUserMachine, insertUserMachine, type PlatformDB } from '../../packag
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { RegisterRequestSchema } from '../../packages/platform/src/customer-vps-schema.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
+import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
+import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
 
 /**
@@ -63,6 +65,29 @@ describe('customer VPS registration for metal runtimes', () => {
       .select(['machine_id', 'metal_host_id', 'metal_vm_id', 'reason', 'completed_at']).execute())
       .toEqual([{ machine_id: METAL_MACHINE_ID, metal_host_id: 'host-a', metal_vm_id: 'vm_0123456789abcdef01234567', reason: 'delete', completed_at: null }]);
     expect(hetzner.deleteServer).not.toHaveBeenCalled();
+  });
+
+  it('refuses to recover a metal machine before changing its row or calling Hetzner', async () => {
+    const { service, hetzner } = createService();
+    await insertMetalRow(db, { status: 'running' });
+    await expect(service.recover({ clerkUserId: 'user_metal', runtimeSlot: 'primary', allowEmpty: true }))
+      .rejects.toMatchObject({ status: 409, code: 'invalid_state' });
+    expect(await getUserMachine(db, METAL_MACHINE_ID)).toMatchObject({ status: 'running', substrate: 'metal' });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
+  it('account deletion of a metal-only owner needs no Hetzner client and stays pending until the VM teardown completes', async () => {
+    const { service } = createService();
+    await insertMetalRow(db, { status: 'running' });
+    const adapters = createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync', customerVpsService: service,
+      fetch: async () => Response.json({ data: [], total_count: 0 }) });
+    const ctx = { clerkUserId: 'user_metal', appleTokens: [] };
+    await expect(adapters.vps(ctx)).rejects.toThrow('Runtime cleanup pending');
+    expect((await getUserMachine(db, METAL_MACHINE_ID))?.status).toBe('deleted');
+    await expect(eraseOwnerPlatformData(db, 'user_metal')).rejects.toThrow('runtime_cleanup_pending');
+
+    await db.executor.updateTable('metal_vm_deletions').set({ completed_at: '2026-04-26T12:00:00.000Z' }).execute();
+    await expect(adapters.vps(ctx)).resolves.toBeUndefined();
   });
 
   it('registration accepts metal with serverRef and rejects a wrong serverRef', async () => {

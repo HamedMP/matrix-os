@@ -100,7 +100,12 @@ esac
   }
 
   async function calls(): Promise<string[]> {
-    return (await readFile(join(root, 'installed-calls'), 'utf8').catch(() => '')).split('\n').filter(Boolean);
+    // No calls file means the installer requested nothing; any other read error fails the test.
+    const text = await readFile(join(root, 'installed-calls'), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+    return text.split('\n').filter(Boolean);
   }
 
   it('the golden validation host.env installs nothing, and sanitize removes it before cloning', async () => {

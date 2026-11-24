@@ -176,7 +176,8 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
           lease_expires_at:null,revision:sql`revision + 1`}).where('clerk_user_id','=',owner).execute();
         return;
       }
-      if (!options.customerVpsService || !options.hetzner?.listServersByLabel) throw new Error('Runtime cleanup configuration unavailable');
+      if (!options.customerVpsService || (machines.some(machine => machine.substrate !== 'metal')
+        && !options.hetzner?.listServersByLabel)) throw new Error('Runtime cleanup configuration unavailable');
       if (machines.some((machine)=>machine.recovery_encrypted_payload && !machine.recovery_create_action_id
         && !machine.hetzner_server_id)) {
         // An empty label scan cannot prove an ambiguously accepted create never reached the provider.
@@ -190,7 +191,7 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
           .map((machine)=>machine.recovery_create_action_id!)])];
       if (actionIds.length>1000) throw new Error('Runtime cleanup capacity exceeded');
       for (const actionId of actionIds) {
-        if (!options.hetzner.getAction) throw new Error('Runtime create reconciliation unavailable');
+        if (!options.hetzner?.getAction) throw new Error('Runtime create reconciliation unavailable');
         const action = await options.hetzner.getAction(actionId);
         if (!action || action.status==='running') throw new Error('Runtime provider create pending');
       }
@@ -212,20 +213,31 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
             if (!(error instanceof CustomerVpsError && error.status === 404 && error.code === 'not_found')) throw error;
           }
         }
+        if (machine.substrate === 'metal') {
+          // A metal VM has no Hetzner server; only a completed hostd teardown of every generation proves it gone.
+          const open = await db.executor.selectFrom('metal_vm_deletions').select('id').where('machine_id','=',machine.machine_id)
+            .where('completed_at','is',null).limit(1).execute();
+          const done = await db.executor.selectFrom('metal_vm_deletions').select('id').where('machine_id','=',machine.machine_id)
+            .where('generation','=',machine.generation).limit(1).execute();
+          if (open.length || (machine.metal_host_id && !done.length)) throw new Error('Runtime cleanup pending');
+          continue;
+        }
+        const hetzner = options.hetzner;
+        if (!hetzner?.listServersByLabel) throw new Error('Runtime cleanup configuration unavailable');
         const queued = await db.executor.selectFrom('provider_deletion_queue').select('provider_server_id')
           .where('machine_id','=',machine.machine_id).limit(1001).execute();
         if (queued.length > 1000) throw new Error('Runtime cleanup capacity exceeded');
         const serverIds = [...new Set([machine.hetzner_server_id, machine.recovery_old_server_id,
           ...queued.map((row)=>parseNullableProviderActionId(row.provider_server_id))].filter((id): id is number => id !== null))];
-        const orphans = await options.hetzner.listServersByLabel(`machine_id=${machine.machine_id}`);
+        const orphans = await hetzner.listServersByLabel(`machine_id=${machine.machine_id}`);
         if (orphans.length > 100) throw new Error('Runtime cleanup capacity exceeded');
         for (const server of orphans) {
           if (server.labels?.clerk_user_id !== owner) throw new Error('Runtime ownership mismatch');
           if (!serverIds.includes(server.id)) serverIds.push(server.id);
         }
         for (const serverId of serverIds) {
-          if (await options.hetzner.getServer(serverId)) await options.hetzner.deleteServer(serverId);
-          if (await options.hetzner.getServer(serverId)) throw new Error('Runtime cleanup pending');
+          if (await hetzner.getServer(serverId)) await hetzner.deleteServer(serverId);
+          if (await hetzner.getServer(serverId)) throw new Error('Runtime cleanup pending');
         }
         await db.executor.updateTable('provider_deletion_queue').set({ completed_at: new Date().toISOString(), last_error: null })
           .where('machine_id','=',machine.machine_id).where('completed_at','is',null).execute();
