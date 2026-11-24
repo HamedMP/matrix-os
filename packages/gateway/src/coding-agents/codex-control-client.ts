@@ -1,4 +1,5 @@
 import { CodexBrowserLeaseSchema, CodexBrowserBindSchema, CodexBrowserStartSchema } from "./codex-browser-bootstrap.mjs";
+import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "../chat/send-timing.js";
 import { lstat } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { extname, resolve } from "node:path";
@@ -212,6 +213,10 @@ export function createCodexControlClient(options: {
     async prepareBrowser(input) {
       const browser = CodexBrowserLeaseSchema.parse(input.browser);
       const deadline = Date.now() + 5_000;
+      // The bind is acknowledged only after the runner's native session (process,
+      // account proof, thread start, Browser MCP readiness) is up; time it apart
+      // from the release round trip.
+      const bindStartedAt = startChatSendStage();
       for (;;) {
         input.signal.throwIfAborted();
         try { await send(input.sessionId, { type: "browser_bind", ...browser, clientRequestId: `req_bind_${browser.attemptId}` }, 30_000); break; }
@@ -220,8 +225,9 @@ export function createCodexControlClient(options: {
           await new Promise(resolve => setTimeout(resolve, 25));
         }
       }
+      recordChatSendStage("browser_bind", bindStartedAt);
       input.signal.throwIfAborted();
-      await send(input.sessionId, { type: "browser_start", attemptId: browser.attemptId, clientRequestId: `req_start_${browser.attemptId}` });
+      await timeChatSendStage("browser_release", () => send(input.sessionId, { type: "browser_start", attemptId: browser.attemptId, clientRequestId: `req_start_${browser.attemptId}` }));
     },
     hibernate(input) {
       return send(input.sessionId, { type: "hibernate", providerThreadId: input.providerThreadId,

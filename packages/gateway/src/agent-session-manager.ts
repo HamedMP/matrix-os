@@ -1,4 +1,5 @@
 import { launchPreparedWorkspaceTerminal, retainWorkspaceTerminalPrincipal, workspaceTerminalPrincipal, type WorkspaceTerminalLaunch } from "./terminal/workspace-launch.js";
+import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "./chat/send-timing.js";
 import { nativeCodexRoutineAdmission } from "./chat/codex-routine-source.js";
 import { nativeBrowserExecution } from "./chat/native-browser-execution-context.js";
 import { createSessionStartGuard, SessionStartBusyError, type CleanSessionStartFailure, type SessionStartScope } from "./session-start-guard.js";
@@ -405,13 +406,15 @@ export function createAgentSessionManager(options: {
     let nativeCodexSubscription: NativeCodexSubscriptionLaunch | undefined;
     try {
       nativeCodexSubscription = request.kind === "agent" && request.agent === "codex"
-        ? await options.resolveNativeCodexSubscription?.(request.ownerId, sessionId) : undefined;
+        ? await timeChatSendStage("native_launch_admission", async () => options.resolveNativeCodexSubscription?.(request.ownerId, sessionId)) : undefined;
     } catch (error: unknown) {
       await logSessionStartupFailure("launch_preflight", sessionId, error);
       return cleanFailure(failure(400, "sandbox_unavailable", "Agent sandbox is unavailable"));
     }
+    const lockRequestedAt = startChatSendStage();
     const startAdmitted = async (lockedRuntime?: BackgroundAgentRuntime): Promise<{ ok: true; status: 201; session: WorkspaceSessionView } | Failure> => {
       if (request.runtimePreference === "background") {
+        recordChatSendStage("background_lock_wait", lockRequestedAt);
         const previous = await readSession(homePath, sessionId);
         if (previous?.runtime.type === "background") {
           try {
@@ -463,6 +466,7 @@ export function createAgentSessionManager(options: {
       const startedAt = nowIso(options.now);
       let launch;
       let coreMcp: ReturnType<NonNullable<typeof options.issueMatrixCoreMcp>> = null;
+      const launchBuildStartedAt = startChatSendStage();
       try {
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
         const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
@@ -490,6 +494,7 @@ export function createAgentSessionManager(options: {
             ...(coreMcp ? { matrixCoreMcp: { scope: coreMcp.scope, token: coreMcp.token } } : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };
+        recordChatSendStage("launch_build", launchBuildStartedAt);
       } catch (err: unknown) {
         coreMcp?.revoke();
         await logSessionStartupFailure("launch_preflight", sessionId, err);
@@ -521,11 +526,11 @@ export function createAgentSessionManager(options: {
         lastActivityAt: startedAt,
       };
       if (request.runtimePreference === "background") {
-        const started = await startBackgroundSession({
+        const started = await timeChatSendStage("launch_request", () => startBackgroundSession({
           runtime: lockedRuntime ?? options.backgroundRuntime!, session, launch,
           ...(request.agent === "codex" && nativeCodexRoutineAdmission(request.ownerId ?? "") ? { privateControl: nativeCodexRoutineAdmission(request.ownerId ?? "")!.launch(sessionId) } : {}),
           persist: (value) => writeSession(homePath, value),
-        });
+        }));
         if (started.ok) {
           if (coreMcp) trackCoreMcp(sessionId, coreMcp);
           return { ok: true, status: 201, session: decorateSession(started.session) };
